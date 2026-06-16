@@ -221,14 +221,39 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
         cfg.headless, cfg.domain_allowlist,
     )
 
-    # AD-706f: credential vault — opt-in via cfg.credential_vault.enabled AND
-    # auth.crew_scope_token non-empty. Honest-degrade silently when either
-    # precondition fails (runtime.credential_vault stays None).
+    # AD-706f / AD-1016: credential vault — opt-in via cfg.credential_vault.enabled.
+    # Backend selector (cfg.credential_vault.backend):
+    #   "file" (default): EncryptedFileCredentialVault — requires a non-empty
+    #     auth.crew_scope_token (Fernet KEK derivation). Honest-degrade to None.
+    #   "keychain" (AD-1016): KeyringCredentialBackend over the OS keychain, which
+    #     is already encrypted at rest — so it requires enabled=True but NOT a
+    #     crew_scope_token (the metadata sidecar holds no secret values).
     runtime.credential_vault = None
     vault_cfg = getattr(cfg, "credential_vault", None)
     auth_cfg = getattr(config, "auth", None)
     crew_token = getattr(auth_cfg, "crew_scope_token", "") if auth_cfg else ""
-    if vault_cfg is not None and vault_cfg.enabled and crew_token:
+    backend = getattr(vault_cfg, "backend", "file") if vault_cfg is not None else "file"
+    if vault_cfg is not None and vault_cfg.enabled and backend == "keychain":
+        try:
+            from pathlib import Path
+            from probos.security.keyring_backend import KeyringCredentialBackend
+            vault = KeyringCredentialBackend(
+                service_name=vault_cfg.keyring_service_name,
+                index_path=Path(vault_cfg.keyring_index_path),
+            )
+            runtime.credential_vault = vault
+            n_refs = len(getattr(vault, "_refs", {}))
+            logger.info(
+                "AD-1016 keychain credential backend enabled (%d credentials indexed)",
+                n_refs,
+            )
+        except Exception:
+            logger.warning(
+                "AD-1016: keychain credential backend construction failed; "
+                "runtime.credential_vault stays None (vault disabled this run)",
+                exc_info=True,
+            )
+    elif vault_cfg is not None and vault_cfg.enabled and crew_token:
         try:
             from pathlib import Path
             from probos.tools.browser.credentials import (
@@ -252,7 +277,7 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
                 "runtime.credential_vault stays None (vault disabled this run)",
                 exc_info=True,
             )
-    elif vault_cfg is not None and vault_cfg.enabled and not crew_token:
+    elif vault_cfg is not None and vault_cfg.enabled and backend == "file" and not crew_token:
         logger.warning(
             "AD-706f: credential_vault.enabled=True but auth.crew_scope_token "
             "is empty; vault disabled. Set auth.crew_scope_token in "

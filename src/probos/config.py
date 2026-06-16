@@ -1300,11 +1300,30 @@ class CredentialVaultConfig(BaseModel):
     )
     backend: str = Field(
         default="file",
-        description="AD-706f: backend kind. v1 only supports 'file'.",
+        description=(
+            "AD-706f/AD-1016: credential backend kind. "
+            "'file' (default) = encrypted JSON vault (Fernet KEK from "
+            "auth.crew_scope_token); 'keychain' = OS keychain (DPAPI / macOS "
+            "Keychain / libsecret) with a non-secret metadata sidecar."
+        ),
     )
     file_path: str = Field(
         default="data/credential_vault.json",
         description="AD-706f: JSON sidecar path for the EncryptedFileCredentialVault.",
+    )
+    keyring_index_path: str = Field(
+        default="data/credential_keyring_index.json",
+        description=(
+            "AD-1016: non-secret metadata sidecar path for the keychain backend "
+            "(holds scope/timestamps only — never a secret value)."
+        ),
+    )
+    keyring_service_name: str = Field(
+        default="probos.credentials",
+        description=(
+            "AD-1016: OS-keychain service name for the keychain backend "
+            "(CredentialEncryptor namespace)."
+        ),
     )
     max_credentials: int = Field(
         default=100,
@@ -1319,6 +1338,17 @@ class CredentialVaultConfig(BaseModel):
             "URLs. Operators override only for explicit dev/local scenarios."
         ),
     )
+
+    @field_validator("backend")
+    @classmethod
+    def _validate_backend(cls, v: str) -> str:
+        """AD-1016: only the file and keychain backends are supported."""
+        valid = {"file", "keychain"}
+        if v not in valid:
+            raise ValueError(
+                f"credential_vault.backend must be one of {sorted(valid)}; got {v!r}"
+            )
+        return v
 
 
 class BrowserToolConfig(BaseModel):
