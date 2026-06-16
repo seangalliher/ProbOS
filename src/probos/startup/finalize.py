@@ -3267,15 +3267,44 @@ async def finalize_startup(
         runtime.eps_coordinator = None
 
     # AD-449: MCP Bridge (v1 OSS infrastructure)
+    # AD-1014: stdio/subprocess transport (default-OFF; gated by command
+    # allowlist + consent). The consent adapter is defined here so the bridge
+    # stays decoupled from HookBus — HookEvent is imported in finalize, not the
+    # bridge.
     if config.mcp.enabled:
         from probos.integrations.mcp_bridge import MCPBridge
+        from probos.hooks.bus import HookEvent
+
+        async def _mcp_consent(ctx: dict[str, Any]) -> bool:
+            hb = getattr(runtime, "hook_bus", None)
+            if hb is None:
+                return True  # no bus -> allowlist is the guard (stdio already opt-in)
+            decision = await hb.fire(HookEvent.PRE_TOOL_USE, ctx)
+            return decision.allowed  # fail-safe: refuse on ASK or DENY (no approval loop yet)
+
         runtime.mcp_bridge = MCPBridge(
             egress_policy=getattr(runtime, "egress_policy", None),
             emit_event=runtime.emit_event,
             request_timeout=config.mcp.request_timeout_seconds,
+            stdio_enabled=config.mcp.stdio_enabled,
+            command_allowlist=config.mcp.command_allowlist,
+            consent_fn=_mcp_consent,
         )
         for srv in config.mcp.servers:
             runtime.mcp_bridge.register_server(srv.url, headers=dict(srv.headers))
+        # AD-1014: inert by default (stdio_enabled=False) and inert with the
+        # default empty servers list -> byte-identical boot.
+        if config.mcp.stdio_enabled:
+            for srv in config.mcp.servers:
+                if srv.type == "stdio":
+                    await runtime.mcp_bridge.register_stdio_server(
+                        name=srv.command,
+                        command=srv.command,
+                        args=srv.args,
+                        env=srv.env,
+                        cwd=srv.cwd,
+                        timeout=srv.timeout_seconds,
+                    )
         logger.info(
             "AD-449: MCPBridge wired (%d server(s) preregistered)",
             len(config.mcp.servers),

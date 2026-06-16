@@ -1,17 +1,25 @@
-"""AD-449: MCPClient -- JSON-RPC 2.0 over Streamable HTTP."""
+"""AD-449: MCPClient -- JSON-RPC 2.0 over a pluggable transport.
+
+AD-1014: the wire I/O is delegated to a ``Transport`` (HTTP or stdio). The
+client owns payload construction, envelope validation, and the single
+``MCP_BRIDGE_*`` emission site; the transport owns the bytes. When no transport
+is supplied the client builds an ``HttpTransport`` from the session — a public
+back-compat default that keeps ``register_server`` and the existing AD-449 /
+AD-597f tests byte-identical.
+"""
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from dataclasses import replace
-from typing import Any
-
-import httpx
+from typing import TYPE_CHECKING, Any
 
 from probos.events import EventType
 from probos.integrations.mcp_bridge.session import MCPSession
+
+if TYPE_CHECKING:
+    from probos.integrations.mcp_bridge.transport import Transport
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +32,18 @@ MCP_PROTOCOL_VERSION = "2025-03-26"
 
 
 class MCPProtocolError(Exception):
-    """Raised when the server returns a JSON-RPC error or malformed payload."""
+    """Raised when the server returns a JSON-RPC error or malformed payload.
+
+    AD-1014: carries an optional ``reason`` so an (event-free) transport can name
+    the wire failure (e.g. ``spawn_failed`` / ``timeout`` / ``egress_blocked``)
+    without importing ``EventType``; the owning layer maps it onto the
+    ``MCP_BRIDGE_FAILED`` event reason. Bare ``raise MCPProtocolError("msg")``
+    still works (``reason`` defaults to ``""``).
+    """
+
+    def __init__(self, *args: Any, reason: str = "") -> None:
+        super().__init__(*args)
+        self.reason = reason
 
 
 class MCPClient:
@@ -46,6 +65,7 @@ class MCPClient:
         self,
         *,
         session: MCPSession,
+        transport: "Transport | None" = None,
         egress_policy: Any | None = None,
         emit_event: Any | None = None,
         timeout: float = 30.0,
@@ -54,15 +74,40 @@ class MCPClient:
         self._egress_policy = egress_policy
         self._emit_event = emit_event
         self._timeout = timeout
-        # AD-449: defensive getattr for __new__-bypass tests (convention #11)
-        self._http: httpx.AsyncClient | None = httpx.AsyncClient(timeout=timeout)
-        # AD-449 rev: instance-level header capture (was class attribute --
-        # shared mutable state across MCPClient instances; race risk)
-        self._last_response_headers: dict[str, str] = {}
+        # AD-1014: pluggable transport. When none is supplied, build the
+        # byte-identical HTTP transport from the session (lazy import to avoid a
+        # client<->transport import cycle). This default keeps register_server
+        # and the existing direct-construction tests unchanged.
+        if transport is None:
+            from probos.integrations.mcp_bridge.transport import HttpTransport
+
+            transport = HttpTransport(
+                server_url=session.server_url,
+                base_headers=session.headers,
+                egress_policy=egress_policy,
+                timeout=timeout,
+                initial_session_id=session.session_id,
+            )
+        self._transport: Transport = transport
 
     @property
     def session(self) -> MCPSession:
         return self._session
+
+    @property
+    def _http(self) -> Any:
+        """AD-1014 back-compat shim: the pre-AD-1014 HTTP body lived on
+        ``client._http``; the existing AD-449 tests still set it to a mock. Proxy
+        get/set to the (HTTP) transport's client so those tests stay byte-identical.
+        Returns ``None`` for non-HTTP transports (nothing reads it for those)."""
+        transport = getattr(self, "_transport", None)
+        return getattr(transport, "_http", None)
+
+    @_http.setter
+    def _http(self, value: Any) -> None:
+        transport = getattr(self, "_transport", None)
+        if transport is not None:
+            transport._http = value
 
     async def initialize(self) -> MCPSession:
         result = await self._call(
@@ -77,9 +122,9 @@ class MCPClient:
         if not isinstance(capabilities, dict):
             capabilities = {}
         # Streamable HTTP servers may set a Mcp-Session-Id header on the
-        # initialize response; capture it via the http response headers
-        # surfaced through self._last_response_headers.
-        sid = self._last_response_headers.get("mcp-session-id", "") or ""
+        # initialize response; capture it via the transport's response-direction
+        # metadata (lower-cased). stdio transports expose {} here (no headers).
+        sid = self._transport.last_metadata.get("mcp-session-id", "") or ""
         self._session = replace(
             self._session,
             session_id=sid,
@@ -108,19 +153,15 @@ class MCPClient:
         return result if isinstance(result, dict) else {}
 
     async def close(self) -> None:
-        http = getattr(self, "_http", None)
-        if http is not None:
-            await http.aclose()
-        self._http = None
+        # AD-1014: delegate teardown to the transport (HTTP closes the httpx
+        # client; stdio closes stdin, terminates the subprocess, cancels the
+        # stderr drain). Defensive getattr for __new__-bypass tests (convention #11).
+        transport = getattr(self, "_transport", None)
+        if transport is not None:
+            await transport.close()
 
     async def _call(self, *, method: str, params: dict[str, Any]) -> dict:
         url = self._session.server_url
-        # Egress policy gate (AD-456 integration; convention #3)
-        policy = self._egress_policy
-        if policy is not None and not policy.is_allowed(url):
-            self._emit_failed(method, reason="egress_blocked", url=url)
-            raise MCPProtocolError(f"egress denied for {url}")
-
         request_id = uuid.uuid4().hex
         payload = {
             "jsonrpc": JSONRPC_VERSION,
@@ -128,59 +169,36 @@ class MCPClient:
             "method": method,
             "params": params,
         }
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-            **self._session.headers,
-        }
-        if self._session.session_id:
-            headers["Mcp-Session-Id"] = self._session.session_id
 
-        http = getattr(self, "_http", None)
-        if http is None:
-            self._emit_failed(method, reason="client_closed", url=url)
-            raise MCPProtocolError("client closed")
-
+        # AD-1014: the transport owns the wire (egress gate, headers, bytes) and
+        # raises MCPProtocolError(reason=…) on any wire failure. The client is the
+        # single MCP_BRIDGE_FAILED emission site for request-time failures.
         try:
-            response = await http.post(url, content=json.dumps(payload), headers=headers)
-        except httpx.HTTPError as exc:
-            self._emit_failed(method, reason="transport_error", url=url, detail=str(exc))
-            raise MCPProtocolError(f"transport error: {exc}") from exc
-
-        # Capture headers for initialize() to extract Mcp-Session-Id
-        self._last_response_headers = {
-            k.lower(): v for k, v in response.headers.items()
-        }
-
-        if response.status_code >= 400:
+            envelope = await self._transport.request(payload)
+        except MCPProtocolError as exc:
             self._emit_failed(
-                method, reason="http_error", url=url, detail=str(response.status_code),
+                method,
+                reason=exc.reason or "transport_error",
+                url=url,
+                detail=str(exc),
             )
-            raise MCPProtocolError(
-                f"HTTP {response.status_code} from {url}"
-            )
-
-        try:
-            envelope = response.json()
-        except json.JSONDecodeError as exc:
-            self._emit_failed(method, reason="bad_json", url=url, detail=str(exc))
-            raise MCPProtocolError(f"bad JSON from {url}") from exc
+            raise
 
         if not isinstance(envelope, dict):
             self._emit_failed(method, reason="bad_envelope", url=url)
-            raise MCPProtocolError(f"bad envelope from {url}")
+            raise MCPProtocolError(f"bad envelope from {url}", reason="bad_envelope")
 
         if "error" in envelope:
             err = envelope.get("error") or {}
             msg = err.get("message", "unknown") if isinstance(err, dict) else "unknown"
             code = err.get("code", 0) if isinstance(err, dict) else 0
             self._emit_failed(method, reason="rpc_error", url=url, detail=f"{code}:{msg}")
-            raise MCPProtocolError(f"rpc error {code}: {msg}")
+            raise MCPProtocolError(f"rpc error {code}: {msg}", reason="rpc_error")
 
         result = envelope.get("result")
         if not isinstance(result, dict):
             self._emit_failed(method, reason="bad_result", url=url)
-            raise MCPProtocolError(f"bad result from {url}")
+            raise MCPProtocolError(f"bad result from {url}", reason="bad_result")
 
         self._emit_invoke(method, url=url)
         return result

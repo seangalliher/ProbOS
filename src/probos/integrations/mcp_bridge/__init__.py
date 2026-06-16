@@ -9,11 +9,19 @@ from probos.integrations.mcp_bridge.adapter import MCPToolAdapter
 from probos.integrations.mcp_bridge.bridge import MCPBridge
 from probos.integrations.mcp_bridge.client import MCPClient, MCPProtocolError
 from probos.integrations.mcp_bridge.session import MCPSession
+from probos.integrations.mcp_bridge.transport import (
+    HttpTransport,
+    StdioTransport,
+    Transport,
+)
 
 __all__ = [
+    "HttpTransport",
     "MCPBridge",
     "MCPClient",
     "MCPProtocolError",
     "MCPSession",
     "MCPToolAdapter",
+    "StdioTransport",
+    "Transport",
 ]

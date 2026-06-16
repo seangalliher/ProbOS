@@ -3517,18 +3517,46 @@ class EPSConfig(BaseModel):
 
 
 class MCPServerConfig(BaseModel):
-    """One MCP server registration entry (AD-449)."""
+    """One MCP server registration entry (AD-449; AD-1014 stdio).
 
-    url: str
+    Back-compat: existing ``{url, headers}`` entries default to ``type="http"``
+    and are unaffected. ``type="stdio"`` (AD-1014) launches ``command + args`` as
+    a subprocess (NDJSON JSON-RPC over stdin/stdout) instead of HTTP.
+    """
+
+    type: Literal["http", "stdio"] = "http"
+    url: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
+    command: str = ""
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str = ""
+    timeout_seconds: float | None = None
+
+    @model_validator(mode="after")
+    def _validate_transport(self) -> "MCPServerConfig":
+        if self.type == "http" and not self.url:
+            raise ValueError("MCPServerConfig type='http' requires a non-empty 'url'")
+        if self.type == "stdio" and not self.command:
+            raise ValueError(
+                "MCPServerConfig type='stdio' requires a non-empty 'command'"
+            )
+        return self
 
 
 class MCPConfig(BaseModel):
-    """MCP Bridge configuration (AD-449)."""
+    """MCP Bridge configuration (AD-449; AD-1014 stdio)."""
 
     enabled: bool = True
     request_timeout_seconds: float = Field(default=30.0, ge=1.0)
     servers: list[MCPServerConfig] = Field(default_factory=list)
+    # AD-1014: default-OFF gate for the whole subprocess-launch capability.
+    stdio_enabled: bool = False
+    # AD-1014: bounds *what* may be spawned (primary guard). Non-allowlisted
+    # commands are refused before any subprocess is created.
+    command_allowlist: list[str] = Field(
+        default_factory=lambda: ["uvx", "npx", "python", "node", "docker"]
+    )
 
 
 class ObservabilityBridgeConfig(BaseModel):
