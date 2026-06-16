@@ -13,12 +13,12 @@ afterEach(() => {
 const STATIONS = () => buildBridgeStations({ dmChannelCount: 4, kanbanCount: 7, totalUnread: 3 });
 
 describe('AD-946 buildPaletteCommands — flatten the station registry', () => {
-  it('returns the 12 Captain-facing launches with the expected labels', () => {
+  it('returns the 13 Captain-facing launches with the expected labels', () => {
     const cmds = buildPaletteCommands(STATIONS());
-    expect(cmds.length).toBe(12);
+    expect(cmds.length).toBe(13);
     expect(cmds.map((c) => c.label)).toEqual([
       'Ward Room', 'Chats', 'Crew', 'Personnel', 'Metrics',
-      'Notebooks', 'Records', 'Explorer', 'Work Board', 'System', "Ship's Locker", 'Settings',
+      'Notebooks', 'Records', 'Explorer', 'Work Board', 'System', "Ship's Locker", 'MCP Servers', 'Settings',
     ]);
   });
 
@@ -41,10 +41,10 @@ describe('AD-946 buildPaletteCommands — flatten the station registry', () => {
     // AD-1001b: Engineering is now action-bearing (System mirror + Ship's
     // Locker), so it surfaces ACTIONS, not an engineering:expand fallback
     // (same treatment as Communications). System is preserved via the mirror
-    // action; the Ship's Locker is the new launch.
+    // action; the Ship's Locker is the new launch. AD-1018 adds MCP Servers.
     expect(cmds.some((c) => c.id === 'engineering:expand')).toBe(false);
     const eng = cmds.filter((c) => c.station === 'Engineering');
-    expect(eng.map((c) => c.label)).toEqual(['System', "Ship's Locker"]);
+    expect(eng.map((c) => c.label)).toEqual(['System', "Ship's Locker", 'MCP Servers']);
     expect(eng.find((c) => c.label === 'System')).toBeTruthy();
   });
 

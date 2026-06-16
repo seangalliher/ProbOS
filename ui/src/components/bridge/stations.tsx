@@ -159,6 +159,10 @@ export function buildBridgeStations(ctx: {
         // mesh intents, MCP). A Ship's-Computer / Engineering concern.
         { id: 'ships-locker-toggle', label: "Ship's Locker",
           onInvoke: () => useStore.setState({ shipsLockerOpen: true }) },
+        // AD-1018: MCP Servers — the operator management surface for runtime-
+        // mutable MCP server registrations (CRUD + auth). Engineering concern.
+        { id: 'mcp-servers-toggle', label: 'MCP Servers',
+          onInvoke: () => useStore.setState({ mcpServersOpen: true }) },
       ],
       // AD-945: the four bottom-right environment toggles (sound / voice / wake-word /
       // legend), relocated from DecisionSurface into the Ship's-Computer command layer.
