@@ -1,6 +1,11 @@
 """AD-1003a: Capability Packs — cross-tool agent-plugin format (parse/validate).
-AD-1003b: read-only pack scanner (installed-pack inventory)."""
+AD-1003b: read-only pack scanner (installed-pack inventory).
+AD-1013: skills-only pack loader."""
 
+from probos.packs.loader import (
+    PackLoadResult,
+    load_pack_skills,
+)
 from probos.packs.manifest import (
     PackAuthor,
     PackManifest,
@@ -37,4 +42,6 @@ __all__ = [
     "describe_pack_contents",
     "preview_pack",
     "scan_packs",
+    "PackLoadResult",
+    "load_pack_skills",
 ]
