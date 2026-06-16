@@ -3305,12 +3305,44 @@ async def finalize_startup(
                         cwd=srv.cwd,
                         timeout=srv.timeout_seconds,
                     )
+        # AD-1015: runtime-mutable MCP server management store (default-OFF gate
+        # config.mcp.management_enabled). Config servers register FIRST (above);
+        # stored rows register SECOND so config wins — the bridge returns False on
+        # a duplicate key, so the seed loop never double-registers. A fresh DB has
+        # an empty cache -> the seed loop is a no-op -> byte-identical boot.
+        if config.mcp.management_enabled:
+            from probos.integrations.mcp_bridge.store import McpServerStore
+
+            mcp_server_store = McpServerStore(
+                db_path=str(runtime.data_dir / "mcp_servers.db")
+            )
+            await mcp_server_store.start()
+            runtime.mcp_server_store = mcp_server_store
+            for rec in mcp_server_store.list_sync():
+                if not rec.enabled:
+                    continue
+                if rec.type == "http":
+                    runtime.mcp_bridge.register_server(
+                        rec.url, headers=dict(rec.headers)
+                    )
+                else:
+                    await runtime.mcp_bridge.register_stdio_server(
+                        name=rec.name,
+                        command=rec.command,
+                        args=rec.args,
+                        env=rec.env,
+                        cwd=rec.cwd,
+                        timeout=rec.timeout_seconds,
+                    )
+        else:
+            runtime.mcp_server_store = None
         logger.info(
             "AD-449: MCPBridge wired (%d server(s) preregistered)",
             len(config.mcp.servers),
         )
     else:
         runtime.mcp_bridge = None
+        runtime.mcp_server_store = None
 
     # AD-701: Visiting Officer registry (formal external-participant registration).
     # Sourced from VesselIdentity (ontology) since runtime does not expose

@@ -3557,6 +3557,10 @@ class MCPConfig(BaseModel):
     command_allowlist: list[str] = Field(
         default_factory=lambda: ["uvx", "npx", "python", "node", "docker"]
     )
+    # AD-1015: default-OFF gate for the runtime-mutable MCP server management
+    # store + CRUD API (routers/mcp_servers.py). When False the router 404s and
+    # no store is constructed/seeded — byte-identical to prior behavior.
+    management_enabled: bool = False
 
 
 class ObservabilityBridgeConfig(BaseModel):

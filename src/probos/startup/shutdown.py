@@ -687,6 +687,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         runtime.intent_grant_store = None
         runtime.hook_bus = None  # AD-1012
 
+    # AD-1015: MCP server registration store (runtime-mutable MCP registrations)
+    if getattr(runtime, 'mcp_server_store', None):
+        await runtime.mcp_server_store.stop()
+        runtime.mcp_server_store = None
+
     # Stop Counselor Profile Store (AD-503)
     if runtime._counselor_profile_store:
         await runtime._counselor_profile_store.stop()

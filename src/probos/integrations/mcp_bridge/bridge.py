@@ -153,6 +153,21 @@ class MCPBridge:
     def get_client(self, server_url: str) -> MCPClient | None:
         return self._clients.get(server_url)
 
+    async def unregister_server(self, key: str) -> bool:
+        """AD-1015: tear down one registered client (the inverse of register).
+
+        ``key`` is the value ``_clients`` is keyed by — ``url`` for http,
+        ``name`` for stdio (the AD-1015 router derives it as
+        ``record.url if record.type == "http" else record.name``). Returns
+        ``True`` when a client was removed, ``False`` when the key was unknown.
+        Mirrors ``close_all``'s ``await client.close()`` teardown.
+        """
+        client = self._clients.pop(key, None)
+        if client is None:
+            return False
+        await client.close()
+        return True
+
     async def invoke(
         self, server_url: str, tool_name: str, arguments: dict[str, Any],
     ) -> dict:

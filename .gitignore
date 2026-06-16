@@ -112,6 +112,7 @@ data/avatar-assets/ATTRIBUTION.txt
 /*_build.txt
 /*_vitest.txt
 /*_baseline.txt
+/ad[0-9]*_*.txt
 /*_serial.txt
 /*_iso.txt
 /*_iso2.txt
