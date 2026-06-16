@@ -19,14 +19,18 @@ Credentials (``auth_kind``/``credential_ref``) are inert stored strings this AD
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from probos.cloud_pickers.tokens import CsrfStateStore, OAuthTokenBundle
 from probos.integrations.mcp_bridge.client import MCPClient
+from probos.integrations.mcp_bridge.mcp_oauth import McpOAuthError, McpOAuthProvider
 from probos.integrations.mcp_bridge.session import MCPSession
 from probos.integrations.mcp_bridge.store import (
     McpServerRecord,
@@ -35,10 +39,71 @@ from probos.integrations.mcp_bridge.store import (
 )
 from probos.integrations.mcp_bridge.transport import StdioTransport
 from probos.routers.deps import get_runtime
+from probos.tools.browser.credentials import CredentialScope
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mcp/servers", tags=["mcp-servers"])
+
+# AD-1017: the Captain identity that may read captain-only vault credentials
+# (``CredentialScope()`` empty allowed-set = captain-only).
+_CAPTAIN_ID = "captain"
+
+# AD-1017: OAuth CSRF state TTL (seconds). MCPConfig carries no OAuth-state field
+# (config.py is out of scope this AD); the in-memory store's own default is also
+# 300s. Mirrors cloud_pickers' per-runtime lazy state store.
+_OAUTH_STATE_TTL_SECONDS = 300
+
+# Per-runtime CSRF state stores keyed by id(runtime); mirrors
+# routers/cloud_pickers.py:59. Tests reset via ``_clear_state_stores()``.
+_STATE_STORES: dict[int, CsrfStateStore] = {}
+
+
+def _clear_state_stores() -> None:
+    """Test-only: drop all per-runtime CSRF stores."""
+    _STATE_STORES.clear()
+
+
+def _get_state_store(runtime: Any) -> CsrfStateStore:
+    """Lazily build (once per runtime) the OAuth CSRF state store."""
+    key = id(runtime)
+    store = _STATE_STORES.get(key)
+    if store is None:
+        store = CsrfStateStore(ttl_seconds=_OAUTH_STATE_TTL_SECONDS)
+        _STATE_STORES[key] = store
+    return store
+
+
+def _vault_or_503(runtime: Any) -> Any:
+    """Honest-degrade 503 when the credential vault was not constructed."""
+    vault = getattr(runtime, "credential_vault", None)
+    if vault is None:
+        raise HTTPException(status_code=503, detail="credential_vault_unavailable")
+    return vault
+
+
+def _static_ref(server_id: str) -> str:
+    return f"mcp:{server_id}"
+
+
+def _oauth_ref(server_id: str) -> str:
+    return f"mcp:{server_id}:oauth"
+
+
+def _oauth_secret_ref(server_id: str) -> str:
+    return f"mcp:{server_id}:oauth_secret"
+
+
+def _bundle_or_none(value: str) -> OAuthTokenBundle | None:
+    """Parse a vault-stored OAuth bundle JSON; warn + None on corruption."""
+    try:
+        return OAuthTokenBundle.model_validate_json(value)
+    except (ValueError, TypeError):
+        logger.warning(
+            "AD-1017: MCP OAuth bundle in vault is not valid OAuthTokenBundle "
+            "JSON; treating as missing (no secret logged)"
+        )
+        return None
 
 # Connection-affecting fields — a change to any of these on an enabled row forces
 # a bridge re-register (PUT). ``enabled`` is handled by the enable/disable axis.
@@ -81,6 +146,36 @@ class McpServerUpdateBody(BaseModel):
     credential_ref: str | None = None
 
 
+class CredentialBody(BaseModel):
+    """Body for ``POST /api/mcp/servers/{id}/credential`` (static token).
+
+    The token ``value`` is stored in the credential vault by ref — never on the
+    record, never echoed back. ``header_name``/``scheme`` (http) or ``env_var``
+    (stdio) are the non-secret resolution metadata persisted on the record.
+    """
+
+    value: str
+    header_name: str = "Authorization"
+    scheme: str = "Bearer"
+    env_var: str = ""
+
+
+class OAuthStartBody(BaseModel):
+    """Body for ``POST /api/mcp/servers/{id}/auth/start``.
+
+    The non-secret OAuth client config is persisted to ``record.oauth_json``;
+    ``client_secret`` (if supplied) is stashed in the vault under
+    ``mcp:{id}:oauth_secret`` — never in ``oauth_json`` or any response.
+    """
+
+    client_id: str = ""
+    client_secret: str = ""
+    authorize_url: str = ""
+    token_url: str = ""
+    scopes: list[str] = Field(default_factory=list)
+    redirect_uri: str = ""
+
+
 def _require_enabled(runtime: Any) -> None:
     """404 ``feature_disabled`` unless ``config.mcp.management_enabled`` is True."""
     cfg = getattr(getattr(runtime, "config", None), "mcp", None)
@@ -113,18 +208,92 @@ def _request_timeout(runtime: Any, record: McpServerRecord) -> float:
     return float(getattr(cfg, "request_timeout_seconds", 30.0) or 30.0)
 
 
-async def _register(bridge: Any, record: McpServerRecord) -> None:
-    """Live-register via the §4 key rule — http sync, stdio await."""
+async def _resolve_secret_value(record: McpServerRecord, runtime: Any) -> str | None:
+    """Resolve the raw secret value for a record from the credential vault.
+
+    ``static`` → the stored token; ``oauth`` → the bundle's ``access_token``.
+    Returns ``None`` (honest-degrade, warning, **no secret logged**) when there
+    is no vault, no ``credential_ref``, a vault miss, or a corrupt bundle — the
+    server then registers unauthenticated.
+    """
+    vault = getattr(runtime, "credential_vault", None)
+    if vault is None or not record.credential_ref:
+        return None
+    raw = await vault.read(
+        ref=record.credential_ref, requesting_agent_id=_CAPTAIN_ID
+    )
+    if raw is None:
+        logger.warning(
+            "AD-1017: credential vault miss for MCP server %s (auth_kind=%s, ref "
+            "present, value absent); registering unauthenticated (no secret logged)",
+            record.name,
+            record.auth_kind,
+        )
+        return None
+    if record.auth_kind == "oauth":
+        bundle = _bundle_or_none(raw)
+        if bundle is None:
+            return None
+        return bundle.access_token
+    return raw
+
+
+async def _resolve_auth_headers(
+    record: McpServerRecord, runtime: Any
+) -> dict[str, str]:
+    """Build the http auth header(s) for a record. ``{}`` for none/miss.
+
+    ``auth_kind=="none"`` → ``{}`` (register byte-identical to AD-1015).
+    ``static`` → ``{header_name: f"{scheme} {value}".strip()}`` (bare ``value``
+    when ``scheme`` is empty). ``oauth`` → ``{"Authorization": "Bearer <access>"}``.
+    """
+    if record.auth_kind == "none":
+        return {}
+    value = await _resolve_secret_value(record, runtime)
+    if value is None:
+        return {}
+    if record.auth_kind == "oauth":
+        return {"Authorization": f"Bearer {value}"}
+    name = record.auth_header_name or "Authorization"
+    scheme = record.auth_scheme
+    return {name: f"{scheme} {value}".strip() if scheme else value}
+
+
+async def _resolve_auth_env(record: McpServerRecord, runtime: Any) -> dict[str, str]:
+    """Build the stdio auth env var for a record. ``{}`` unless ``auth_env_var`` set.
+
+    The operator names the env var their server expects (e.g. ``API_KEY``); when
+    unset, stdio registers unauthenticated (http is the primary auth path).
+    """
+    if record.auth_kind == "none" or not record.auth_env_var:
+        return {}
+    value = await _resolve_secret_value(record, runtime)
+    if value is None:
+        return {}
+    return {record.auth_env_var: value}
+
+
+async def _register(runtime: Any, record: McpServerRecord) -> None:
+    """Live-register via the §4 key rule, merging resolved auth — http sync, stdio await.
+
+    ``auth_kind=="none"`` resolves to ``{}`` so the merged ``headers``/``env``
+    are byte-identical to the AD-1015 ``dict(record.headers)`` / ``dict(record.env)``.
+    """
+    bridge = getattr(runtime, "mcp_bridge", None)
     if bridge is None:
         return
     if record.type == "http":
-        bridge.register_server(record.url, headers=dict(record.headers))
+        auth_headers = await _resolve_auth_headers(record, runtime)
+        bridge.register_server(
+            record.url, headers={**record.headers, **auth_headers}
+        )
     else:
+        auth_env = await _resolve_auth_env(record, runtime)
         await bridge.register_stdio_server(
             name=record.name,
             command=record.command,
             args=list(record.args),
-            env=dict(record.env),
+            env={**record.env, **auth_env},
             cwd=record.cwd,
             timeout=record.timeout_seconds,
         )
@@ -135,6 +304,20 @@ async def _unregister(bridge: Any, key: str) -> None:
     if bridge is None:
         return
     await bridge.unregister_server(key)
+
+
+async def _reregister(runtime: Any, record: McpServerRecord) -> None:
+    """Unregister-then-register an enabled row so new auth reaches the wire.
+
+    ``register_server``/``register_stdio_server`` no-op on a duplicate key, so a
+    credential/token change on an already-registered server must drop the old
+    client first. No-op when the row is disabled.
+    """
+    if not record.enabled:
+        return
+    bridge = getattr(runtime, "mcp_bridge", None)
+    await _unregister(bridge, _bridge_key(record))
+    await _register(runtime, record)
 
 
 @router.get("")
@@ -178,7 +361,7 @@ async def create_server(
             status_code=409, detail={"error": "duplicate_name", "message": str(exc)}
         )
     if created.enabled:
-        await _register(getattr(runtime, "mcp_bridge", None), created)
+        await _register(runtime, created)
     return created.to_public_dict()
 
 
@@ -232,7 +415,7 @@ async def update_server(
     if _CONNECTION_FIELDS & set(fields) and updated.enabled:
         bridge = getattr(runtime, "mcp_bridge", None)
         await _unregister(bridge, old_key)
-        await _register(bridge, updated)
+        await _register(runtime, updated)
     return updated.to_public_dict()
 
 
@@ -261,7 +444,7 @@ async def enable_server(
     record = await store.set_enabled(server_id, True)
     if record is None:
         raise HTTPException(status_code=404, detail="not_found")
-    await _register(getattr(runtime, "mcp_bridge", None), record)
+    await _register(runtime, record)
     return record.to_public_dict()
 
 
@@ -339,3 +522,217 @@ async def test_server(
             exc_info=True,
         )
         return {"ok": False, "error": str(exc)[:300]}
+
+
+# --------------------------------------------------------------------------- #
+# AD-1017: credential + OAuth endpoints (secrets only in the vault, by ref)
+# --------------------------------------------------------------------------- #
+
+
+def _load_oauth_json(record: McpServerRecord) -> dict[str, Any]:
+    """Parse ``record.oauth_json`` (non-secret OAuth client config). ``{}`` on miss."""
+    if not record.oauth_json:
+        return {}
+    try:
+        data = json.loads(record.oauth_json)
+    except (ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _merge_oauth_config(
+    record: McpServerRecord, body: OAuthStartBody
+) -> dict[str, Any]:
+    """Merge the start body's non-secret OAuth config over the record's stored one.
+
+    The ``client_secret`` is intentionally excluded — it lives only in the vault.
+    """
+    existing = _load_oauth_json(record)
+    return {
+        "client_id": body.client_id or existing.get("client_id", ""),
+        "authorize_url": body.authorize_url or existing.get("authorize_url", ""),
+        "token_url": body.token_url or existing.get("token_url", ""),
+        "scopes": list(body.scopes) or list(existing.get("scopes", []) or []),
+        "redirect_uri": body.redirect_uri or existing.get("redirect_uri", ""),
+    }
+
+
+async def _build_oauth_provider(
+    record: McpServerRecord, runtime: Any
+) -> McpOAuthProvider:
+    """Build the per-server provider from ``oauth_json`` + the vault client_secret."""
+    vault = _vault_or_503(runtime)
+    cfg = _load_oauth_json(record)
+    secret = (
+        await vault.read(
+            ref=_oauth_secret_ref(record.id), requesting_agent_id=_CAPTAIN_ID
+        )
+        or ""
+    )
+    return McpOAuthProvider(
+        client_id=str(cfg.get("client_id", "")),
+        client_secret=secret,
+        authorize_url=str(cfg.get("authorize_url", "")),
+        token_url=str(cfg.get("token_url", "")),
+        scopes=list(cfg.get("scopes", []) or []),
+        redirect_uri=str(cfg.get("redirect_uri", "")),
+    )
+
+
+def _popup_close_html(server_id: str) -> str:
+    """The same popup-close HTML shape as the cloud-pickers callback.
+
+    No token data crosses the iframe boundary — only the (sanitized) server id.
+    """
+    safe = server_id.replace("'", "")
+    return (
+        "<html><body><script>"
+        "try{window.opener.postMessage("
+        f"{{type:'oauth_complete',provider:'mcp',server_id:'{safe}'}}"
+        ",'*');}catch(e){};"
+        "window.close();"
+        "</script></body></html>"
+    )
+
+
+@router.post("/{server_id}/credential")
+async def set_credential(
+    server_id: str,
+    body: CredentialBody,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Store a static token in the vault by ref; flip the record to ``static``.
+
+    The token ``value`` never touches the store row or the response — only the
+    non-secret ``credential_ref``/``auth_header_name``/``auth_scheme``/
+    ``auth_env_var`` are persisted. 503 when no vault.
+    """
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    vault = _vault_or_503(runtime)
+    ref = _static_ref(server_id)
+    await vault.store(ref=ref, value=body.value, scope=CredentialScope())
+    updated = await store.update(
+        server_id,
+        auth_kind="static",
+        credential_ref=ref,
+        auth_header_name=body.header_name,
+        auth_scheme=body.scheme,
+        auth_env_var=body.env_var,
+    )
+    if updated is None:  # pragma: no cover - record was just fetched
+        raise HTTPException(status_code=404, detail="not_found")
+    await _reregister(runtime, updated)
+    return updated.to_public_dict()
+
+
+@router.delete("/{server_id}/credential")
+async def delete_credential(
+    server_id: str, runtime: Any = Depends(get_runtime)
+) -> dict[str, Any]:
+    """Delete the stored credential and flip the record back to ``none``."""
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    vault = getattr(runtime, "credential_vault", None)
+    if vault is not None and record.credential_ref:
+        await vault.delete(ref=record.credential_ref)
+    updated = await store.update(server_id, auth_kind="none", credential_ref="")
+    if updated is None:  # pragma: no cover - record was just fetched
+        raise HTTPException(status_code=404, detail="not_found")
+    await _reregister(runtime, updated)
+    return updated.to_public_dict()
+
+
+@router.post("/{server_id}/auth/start")
+async def oauth_start(
+    server_id: str,
+    body: OAuthStartBody,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Persist the non-secret OAuth config + vault the client_secret; return the consent URL."""
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    vault = _vault_or_503(runtime)
+    if body.client_secret:
+        await vault.store(
+            ref=_oauth_secret_ref(server_id),
+            value=body.client_secret,
+            scope=CredentialScope(),
+        )
+    updated = await store.update(
+        server_id, oauth_json=json.dumps(_merge_oauth_config(record, body))
+    )
+    if updated is None:  # pragma: no cover - record was just fetched
+        raise HTTPException(status_code=404, detail="not_found")
+    provider = await _build_oauth_provider(updated, runtime)
+    state = _get_state_store(runtime).mint(server_id)
+    auth_url = provider.start_authorization(state=state)
+    return {"auth_url": auth_url, "state": state}
+
+
+@router.get("/{server_id}/auth/callback")
+async def oauth_callback(
+    server_id: str,
+    code: str,
+    state: str,
+    runtime: Any = Depends(get_runtime),
+) -> HTMLResponse:
+    """Consume the CSRF state, exchange ``code`` for a bundle, persist it via vault."""
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    if not _get_state_store(runtime).consume(state, server_id):
+        raise HTTPException(status_code=403, detail="invalid_state_token")
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    vault = _vault_or_503(runtime)
+    provider = await _build_oauth_provider(record, runtime)
+    try:
+        bundle = await provider.handle_callback(code=code)
+    except McpOAuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    ref = _oauth_ref(server_id)
+    await vault.store(ref=ref, value=bundle.model_dump_json(), scope=CredentialScope())
+    updated = await store.update(server_id, auth_kind="oauth", credential_ref=ref)
+    if updated is not None:
+        await _reregister(runtime, updated)
+    return HTMLResponse(_popup_close_html(server_id))
+
+
+@router.post("/{server_id}/auth/refresh")
+async def oauth_refresh(
+    server_id: str, runtime: Any = Depends(get_runtime)
+) -> dict[str, Any]:
+    """Reactive refresh: re-exchange the stored refresh_token, re-store, re-register."""
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    vault = _vault_or_503(runtime)
+    raw = await vault.read(ref=_oauth_ref(server_id), requesting_agent_id=_CAPTAIN_ID)
+    bundle = _bundle_or_none(raw) if raw else None
+    if bundle is None or not bundle.refresh_token:
+        raise HTTPException(status_code=400, detail="no_refresh_token")
+    provider = await _build_oauth_provider(record, runtime)
+    try:
+        new_bundle = await provider.refresh(refresh_token=bundle.refresh_token)
+    except McpOAuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    ref = _oauth_ref(server_id)
+    await vault.store(
+        ref=ref, value=new_bundle.model_dump_json(), scope=CredentialScope()
+    )
+    updated = await store.update(server_id, auth_kind="oauth", credential_ref=ref)
+    if updated is not None:
+        await _reregister(runtime, updated)
+    return {"refreshed": True}

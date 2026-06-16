@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sqlite3
 import time
 import uuid
 from dataclasses import dataclass, field, replace
@@ -48,10 +49,27 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     auth_kind TEXT NOT NULL DEFAULT 'none',
     credential_ref TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    auth_header_name TEXT NOT NULL DEFAULT 'Authorization',
+    auth_scheme TEXT NOT NULL DEFAULT 'Bearer',
+    auth_env_var TEXT NOT NULL DEFAULT '',
+    oauth_json TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_servers_name ON mcp_servers(name);
 """
+
+# AD-1017: non-secret auth columns added after AD-1015's schema shipped. A DB
+# created by AD-1015 lacks these columns; ``ALTER TABLE ADD COLUMN`` appends each
+# (with a default, so existing rows are fine). ``ADD COLUMN`` always appends to
+# the END of the row, so the AD-1015 CREATE-TABLE order placed these four AFTER
+# created_at/updated_at — a fresh DB and a migrated DB therefore share identical
+# positional column order (the positional ``_row_to_record`` indices stay valid).
+_AD1017_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE mcp_servers ADD COLUMN auth_header_name TEXT NOT NULL DEFAULT 'Authorization'",
+    "ALTER TABLE mcp_servers ADD COLUMN auth_scheme TEXT NOT NULL DEFAULT 'Bearer'",
+    "ALTER TABLE mcp_servers ADD COLUMN auth_env_var TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE mcp_servers ADD COLUMN oauth_json TEXT NOT NULL DEFAULT ''",
+)
 
 # --------------------------------------------------------------------------- #
 # Secret-guard denylist (single source of truth, AD-1015 §2a)
@@ -122,6 +140,15 @@ class McpServerRecord:
     enabled: bool = True
     auth_kind: str = "none"
     credential_ref: str = ""
+    # AD-1017: non-secret auth metadata. The secret VALUE never lives here — it
+    # is resolved from the credential vault by ``credential_ref`` at register
+    # time. ``oauth_json`` is the non-secret OAuth client config (client_id,
+    # authorize_url, token_url, scopes, redirect_uri); the client_secret + token
+    # bundle live in the vault.
+    auth_header_name: str = "Authorization"
+    auth_scheme: str = "Bearer"
+    auth_env_var: str = ""
+    oauth_json: str = ""
     created_at: float = 0.0
     updated_at: float = 0.0
 
@@ -146,6 +173,10 @@ class McpServerRecord:
             "enabled": self.enabled,
             "auth_kind": self.auth_kind,
             "credential_ref": self.credential_ref,
+            "auth_header_name": self.auth_header_name,
+            "auth_scheme": self.auth_scheme,
+            "auth_env_var": self.auth_env_var,
+            "oauth_json": self.oauth_json,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -255,7 +286,24 @@ class McpServerStore:
             await self._db.execute("PRAGMA synchronous=NORMAL")
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
+            await self._migrate_ad1017()
             await self._load_cache()
+
+    async def _migrate_ad1017(self) -> None:
+        """Add the AD-1017 non-secret auth columns to a pre-AD-1017 DB.
+
+        Each ``ADD COLUMN`` carries a default, so existing rows are unaffected;
+        a duplicate-column ``OperationalError`` (columns already present from a
+        fresh ``CREATE TABLE``) is the expected no-op and is swallowed.
+        """
+        if not self._db:
+            return
+        for ddl in _AD1017_MIGRATIONS:
+            try:
+                await self._db.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
+        await self._db.commit()
 
     async def stop(self) -> None:
         if self._db:
@@ -287,6 +335,10 @@ class McpServerStore:
             credential_ref=row[12],
             created_at=row[13],
             updated_at=row[14],
+            auth_header_name=row[15],
+            auth_scheme=row[16],
+            auth_env_var=row[17],
+            oauth_json=row[18],
         )
 
     async def create(self, record: McpServerRecord) -> McpServerRecord:
@@ -305,8 +357,9 @@ class McpServerStore:
             await self._db.execute(
                 "INSERT INTO mcp_servers "
                 "(id, name, type, url, headers_json, command, args_json, env_json, cwd, "
-                "timeout_seconds, enabled, auth_kind, credential_ref, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "timeout_seconds, enabled, auth_kind, credential_ref, created_at, updated_at, "
+                "auth_header_name, auth_scheme, auth_env_var, oauth_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._record_to_params(rec),
             )
             await self._db.commit()
@@ -351,7 +404,8 @@ class McpServerStore:
                 "UPDATE mcp_servers SET "
                 "name = ?, type = ?, url = ?, headers_json = ?, command = ?, args_json = ?, "
                 "env_json = ?, cwd = ?, timeout_seconds = ?, enabled = ?, auth_kind = ?, "
-                "credential_ref = ?, updated_at = ? WHERE id = ?",
+                "credential_ref = ?, auth_header_name = ?, auth_scheme = ?, auth_env_var = ?, "
+                "oauth_json = ?, updated_at = ? WHERE id = ?",
                 (
                     updated.name,
                     updated.type,
@@ -365,6 +419,10 @@ class McpServerStore:
                     int(updated.enabled),
                     updated.auth_kind,
                     updated.credential_ref,
+                    updated.auth_header_name,
+                    updated.auth_scheme,
+                    updated.auth_env_var,
+                    updated.oauth_json,
                     updated.updated_at,
                     updated.id,
                 ),
@@ -415,6 +473,10 @@ class McpServerStore:
             rec.credential_ref,
             rec.created_at,
             rec.updated_at,
+            rec.auth_header_name,
+            rec.auth_scheme,
+            rec.auth_env_var,
+            rec.oauth_json,
         )
 
 
