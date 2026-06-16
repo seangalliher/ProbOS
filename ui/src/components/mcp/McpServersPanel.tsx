@@ -20,6 +20,7 @@
  */
 import { useEffect, useState, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
+import { McpAgentAccess } from './McpAgentAccess';
 
 const _AMBER = '#f0b060';
 const _DIM = '#666680';
@@ -592,6 +593,7 @@ interface RowProps {
 
 function ServerRow(p: RowProps) {
   const s = p.server;
+  const [showAccess, setShowAccess] = useState(false);
   const summary = s.type === 'http'
     ? s.url
     : [s.command, ...(s.args || [])].filter(Boolean).join(' ');
@@ -639,6 +641,17 @@ function ServerRow(p: RowProps) {
           <button data-testid={`mcp-delete-${s.id}`} onClick={p.onAskDelete} style={{ ...btnStyle(false), color: _RED, borderColor: _RED }}>Delete</button>
         )}
       </div>
+
+      <div style={{ marginTop: 8 }}>
+        <button
+          data-testid={`mcp-access-section-${s.id}`}
+          onClick={() => setShowAccess((v) => !v)}
+          style={btnStyle(showAccess)}
+        >
+          {showAccess ? 'Hide agent access' : 'Agent access'}
+        </button>
+      </div>
+      {showAccess && <McpAgentAccess serverId={s.id} serverName={s.name} />}
     </div>
   );
 }

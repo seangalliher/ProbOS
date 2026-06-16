@@ -275,6 +275,16 @@ describe('AD-1018 McpServersPanel', () => {
     expect(useStore.getState().mcpServersOpen).toBe(false);
   });
 
+  it('mounts the Agent access section for an expanded server (AD-1019a)', async () => {
+    const deps = makeDeps();
+    render(<McpServersPanel deps={deps} />);
+    await waitFor(() => screen.getByTestId('mcp-row-srv-1'));
+    // Collapsed by default; the AD-1019a section mounts only after expansion.
+    expect(screen.queryByTestId('mcp-agent-access-srv-1')).toBeNull();
+    fireEvent.click(screen.getByTestId('mcp-access-section-srv-1'));
+    await waitFor(() => expect(screen.getByTestId('mcp-agent-access-srv-1')).toBeTruthy());
+  });
+
   it('uses NO emoji (HXI #3)', async () => {
     const deps = makeDeps();
     const { container } = render(<McpServersPanel deps={deps} />);
