@@ -3176,6 +3176,162 @@ class ProbOSRuntime:
         result["committed"] = committed
         return result
 
+    async def submit_mcp_invoke_with_consensus(
+        self,
+        server_url: str,
+        tool: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+        policy: QuorumPolicy | None = None,
+    ) -> dict[str, Any]:
+        """Invoke an MCP tool through the full consensus pipeline (AD-1019c).
+
+        The CONSENSUS-tier "two keys" gate. Mirrors
+        :meth:`submit_write_with_consensus` exactly: broadcast an ``mcp_invoke``
+        intent (the :class:`~probos.agents.mcp_consensus_proposer.McpConsensusProposer`
+        pool answers with a proposal only), evaluate quorum + red-team
+        verification, and perform the ``MCPBridge.invoke`` **commit only on
+        APPROVED with no failed verifications**.
+
+        ⚠️ era-4 / AD-362 guard: an ``IntentResult(success=True)`` from the
+        broadcast is only a *proposal* — the invoke is NEVER performed on the
+        vote. A rejected / insufficient vote performs **zero** ``MCPBridge.invoke``
+        calls. The returned dict carries ``committed`` (whether the invoke ran)
+        and ``invoke_result`` (the tool output, or ``None``).
+        """
+        result = await self.submit_intent_with_consensus(
+            intent="mcp_invoke",
+            params={
+                "server_url": server_url,
+                "tool": tool,
+                "arguments": dict(arguments or {}),
+            },
+            timeout=timeout,
+            policy=policy,
+        )
+
+        consensus = result["consensus"]
+        committed = False
+        invoke_result: Any = None
+
+        if consensus.outcome == ConsensusOutcome.APPROVED:
+            # Check if any verification flagged issues.
+            failed_verifications = [
+                v for v in result["verifications"] if not v.verified
+            ]
+            if not failed_verifications:
+                # Commit the invoke — the ONLY place MCPBridge.invoke is called
+                # for the consensus tier, gated on APPROVED (the era-4 guard).
+                if self.mcp_bridge is not None:
+                    try:
+                        invoke_result = await self.mcp_bridge.invoke(
+                            server_url, tool, dict(arguments or {})
+                        )
+                        committed = True
+                    except Exception:
+                        logger.warning(
+                            "AD-1019c: MCP invoke commit failed after approval "
+                            "(server=%s tool=%s); reporting not-committed",
+                            server_url,
+                            tool,
+                            exc_info=True,
+                        )
+                        committed = False
+                else:
+                    logger.warning(
+                        "AD-1019c: consensus approved MCP invoke but no bridge "
+                        "is wired (server=%s tool=%s); cannot commit",
+                        server_url,
+                        tool,
+                    )
+
+                await self.event_log.log(
+                    category="consensus",
+                    event="mcp_invoke_committed" if committed else "mcp_invoke_failed",
+                    detail=f"server={server_url} tool={tool}",
+                )
+                # DD-5: episode on every invoke (the consensus tier records here;
+                # OPEN/CONFIRM record in the adapter). No trust/Hebbian write for
+                # the MCP tool itself.
+                await self._store_mcp_invoke_episode(
+                    server_url=server_url,
+                    tool=tool,
+                    tier="consensus",
+                    success=committed,
+                )
+            else:
+                await self.event_log.log(
+                    category="consensus",
+                    event="mcp_invoke_blocked",
+                    detail=(
+                        f"server={server_url} tool={tool} failed_verifications="
+                        f"{len(failed_verifications)}"
+                    ),
+                )
+
+        result["committed"] = committed
+        result["invoke_result"] = invoke_result
+        return result
+
+    async def _store_mcp_invoke_episode(
+        self,
+        *,
+        server_url: str,
+        tool: str,
+        tier: str,
+        success: bool,
+        agent_id: str = "",
+    ) -> None:
+        """Persist an episode for one MCP tool invocation (AD-1019c DD-5).
+
+        Episodic completeness: every MCP invoke (all three tiers) is recorded.
+        Deliberately records only — there is **no** trust/Hebbian write
+        attributable to the MCP tool/server (recorded-not-scored). Tier-2
+        honest-degrade: a store failure is logged at debug and swallowed (the
+        invoke already happened; the episode is provenance, not correctness).
+        """
+        if self.episodic_memory is None:
+            return
+        try:
+            import time as _time
+
+            from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+
+            # Episode agent_ids MUST be sovereign ids, never raw slot ids. The
+            # invoke context carries the slot id; resolve it (unchanged when no
+            # mapping exists).
+            sovereign_ids: list[str] = []
+            if agent_id:
+                sovereign_ids = [
+                    resolve_sovereign_id_from_slot(agent_id, self.identity_registry)
+                ]
+
+            episode = Episode(
+                user_input=f"[mcp_invoke] {tool} on {server_url}",
+                timestamp=_time.time(),
+                agent_ids=sovereign_ids,
+                outcomes=[
+                    {
+                        "kind": "mcp_invoke",
+                        "success": success,
+                        "server": server_url,
+                        "tool": tool,
+                        "tier": tier,
+                    }
+                ],
+                dag_summary={},
+                anchors=AnchorFrame(channel="mcp", trigger_type="mcp_invoke"),
+            )
+            await self.episodic_memory.store(episode)
+        except Exception:
+            logger.debug(
+                "AD-1019c: failed to store MCP invoke episode (server=%s tool=%s)",
+                server_url,
+                tool,
+                exc_info=True,
+            )
+
     def _build_system_self_model(self) -> SystemSelfModel:
         """Build structured self-knowledge snapshot (AD-318)."""
         import time as _time

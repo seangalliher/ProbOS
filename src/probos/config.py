@@ -3591,6 +3591,19 @@ class MCPConfig(BaseModel):
     # store + CRUD API (routers/mcp_servers.py). When False the router 404s and
     # no store is constructed/seeded — byte-identical to prior behavior.
     management_enabled: bool = False
+    # AD-1019c: default-OFF gate for making MCP tools agent-callable (lazy
+    # adapters, find_mcp_tool, the warm workbench + idle-TTL reaper, and the
+    # tier-enforced invoke path). When False no adapters are registered,
+    # find_mcp_tool is absent and the reaper never starts — byte-identical to
+    # AD-1019b. Independent of management_enabled (convention #14 transitional
+    # flag).
+    agent_tools_enabled: bool = False
+    # AD-1019c: idle time-to-live (seconds) before a warm workbench adapter is
+    # unloaded back to the toolbox. Default 24h.
+    agent_tool_idle_ttl_seconds: float = Field(default=86_400.0, ge=1.0)
+    # AD-1019c: how often the workbench reaper sweeps for idle adapters. Default
+    # 1h.
+    agent_tool_reaper_interval_seconds: float = Field(default=3_600.0, ge=1.0)
 
 
 class ObservabilityBridgeConfig(BaseModel):

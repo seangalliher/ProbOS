@@ -575,6 +575,18 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         except Exception:
             logger.warning("AD-733-1: attachment_reaper.stop() failed", exc_info=True)
 
+    # AD-1019c: Stop MCP workbench idle-TTL reaper (before the bridge/stores it
+    # drives are torn down). Idempotent; honest-degrade on failure.
+    if getattr(runtime, 'mcp_workbench_reaper', None) is not None:
+        try:
+            await runtime.mcp_workbench_reaper.stop()
+        except Exception:
+            logger.warning(
+                "AD-1019c: mcp_workbench_reaper.stop() failed", exc_info=True
+            )
+        runtime.mcp_workbench_reaper = None
+        runtime.mcp_workbench = None
+
     # AD-986d: Stop transcript retention reaper.
     if hasattr(runtime, 'transcript_reaper') and runtime.transcript_reaper is not None:
         try:

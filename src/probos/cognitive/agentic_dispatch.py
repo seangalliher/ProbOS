@@ -23,8 +23,12 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from probos.integrations.mcp_bridge.risk import (
+    McpToolRisk,
+    resolve_tool_risk,
+)
 from probos.tools.executor import ToolExecutor
 from probos.tools.protocol import ToolResult, ToolType
 from probos.tools.registry import ToolPermissionDenied
@@ -136,6 +140,210 @@ class _MeshIntentTool:
             error=first.error or f"Mesh intent '{self._intent_name}' failed",
             output=first.result,
         )
+
+
+def _coerce_risk(value: str) -> McpToolRisk:
+    """AD-1019c DD-4: defensively coerce a free-form ``default_risk`` str.
+
+    AD-1019b validates ``default_risk`` only at the create/update boundary, so a
+    legacy/corrupt value can reach the invoke path. An unknown value **fails
+    closed**: it logs a warning and falls back to ``CONSENSUS`` (the most-gated
+    tier) — a risk classifier that cannot determine the risk must assume the
+    maximum (the Safety Budget axiom), never the minimum. The invoke wrapper is
+    additionally deny-safe (returns an error ``ToolResult``, never crashes). A
+    per-tool override still wins via :func:`resolve_tool_risk`. Never raises.
+    """
+    try:
+        return McpToolRisk(value)
+    except ValueError:
+        logger.warning(
+            "AD-1019c: unknown MCP risk tier %r; failing closed to CONSENSUS",
+            value,
+        )
+        return McpToolRisk.CONSENSUS
+
+
+# The context key carrying an explicit operator confirmation token for the
+# CONFIRM tier. The HXI affordance that supplies it is AD-1019d; absent the
+# token a CONFIRM-tier invoke is blocked (no MCPBridge.invoke).
+MCP_CONFIRM_TOKEN_KEY = "mcp_confirmation_token"
+
+
+class _McpTool:
+    """Thin Tool adapter that invokes one MCP tool through the tier gate (AD-1019c).
+
+    Mirrors :class:`_MeshIntentTool`, but instead of broadcasting a mesh intent
+    it routes the call by the tool's effective :class:`McpToolRisk` ("keys"):
+
+    - ``OPEN``      → direct ``MCPBridge.invoke`` (free once authorized).
+    - ``CONFIRM``   → blocked unless ``context[MCP_CONFIRM_TOKEN_KEY]`` is set;
+      absent → ``requires_confirmation`` outcome, **no invoke**.
+    - ``CONSENSUS`` → routed through ``consensus_invoke`` (the runtime's
+      ``submit_mcp_invoke_with_consensus``), which commits ``MCPBridge.invoke``
+      **only on APPROVED** (the era-4 guard lives in the runtime).
+
+    All deps are narrow callables/values injected by the workbench so this
+    adapter never imports the workbench (no cycle). The invoke path is wrapped
+    deny-safe: any unexpected error returns an error ``ToolResult`` rather than
+    crashing the agentic loop.
+    """
+
+    def __init__(
+        self,
+        *,
+        bridge: Any,
+        server_url: str,
+        server_name: str,
+        server_id: str,
+        tool_name: str,
+        name: str,
+        description: str,
+        input_schema: dict[str, Any],
+        server_default_risk: str,
+        risk_store: Any | None,
+        consensus_invoke: Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]],
+        authorize: Callable[[str], bool],
+        episode_writer: Callable[..., Awaitable[None]] | None = None,
+        touch: Callable[[], None] | None = None,
+    ) -> None:
+        self._bridge = bridge
+        self._server_url = server_url
+        self._server_name = server_name
+        self._server_id = server_id
+        self._tool_name = tool_name
+        self._name = name
+        self._description = description
+        self._input_schema = input_schema
+        self._server_default_risk = server_default_risk
+        self._risk_store = risk_store
+        self._consensus_invoke = consensus_invoke
+        self._authorize = authorize
+        self._episode_writer = episode_writer
+        self._touch = touch
+
+    @property
+    def tool_id(self) -> str:
+        return f"mcp:{self._server_name}:{self._tool_name}"
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def tool_type(self) -> ToolType:
+        return ToolType.MCP_SERVER
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return self._input_schema
+
+    @property
+    def output_schema(self) -> dict[str, Any]:
+        return {"type": "object"}
+
+    def effective_risk(self) -> McpToolRisk:
+        """Resolve the effective risk tier at invoke time (DD-4).
+
+        Defensively coerces the server's free-form ``default_risk`` (logs +
+        fails closed to CONSENSUS on an unknown value), then lets a per-tool
+        override win via :func:`resolve_tool_risk`.
+        """
+        server_default = _coerce_risk(self._server_default_risk)
+        override: McpToolRisk | None = None
+        if self._risk_store is not None:
+            override = self._risk_store.get_risk_sync(self._server_id, self._tool_name)
+        return resolve_tool_risk(server_default, override)
+
+    async def invoke(
+        self,
+        params: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> ToolResult:
+        agent_id = str((context or {}).get("agent_id", ""))
+        if self._touch is not None:
+            self._touch()
+        # Defense in depth: the adapter is globally registered, so re-verify the
+        # invoking agent's AD-1019b authorization for THIS tool (the dispatch
+        # scoping is the primary gate; this is the secondary, deny-safe one).
+        if not self._authorize(agent_id):
+            logger.warning(
+                "AD-1019c: agent %s not authorized for MCP tool %s; denying",
+                agent_id[:12] or "?",
+                self.tool_id,
+            )
+            return ToolResult(error=f"agent not authorized for MCP tool {self.tool_id}")
+
+        args = dict(params or {})
+        try:
+            effective = self.effective_risk()
+            if effective is McpToolRisk.OPEN:
+                out = await self._bridge.invoke(self._server_url, self._tool_name, args)
+                await self._record_episode("open", True, agent_id)
+                return ToolResult(output=out, metadata={"mcp_tier": "open"})
+
+            if effective is McpToolRisk.CONFIRM:
+                token = (context or {}).get(MCP_CONFIRM_TOKEN_KEY)
+                if not token:
+                    return ToolResult(
+                        error="requires_confirmation",
+                        metadata={
+                            "mcp_tier": "confirm",
+                            "outcome": "requires_confirmation",
+                        },
+                    )
+                out = await self._bridge.invoke(self._server_url, self._tool_name, args)
+                await self._record_episode("confirm", True, agent_id)
+                return ToolResult(output=out, metadata={"mcp_tier": "confirm"})
+
+            # CONSENSUS: the runtime broadcasts + commits on APPROVED only and
+            # stores the episode itself (no double-store here).
+            consensus_result = await self._consensus_invoke(
+                self._server_url, self._tool_name, args
+            )
+            if bool(consensus_result.get("committed")):
+                return ToolResult(
+                    output=consensus_result.get("invoke_result"),
+                    metadata={"mcp_tier": "consensus", "outcome": "approved"},
+                )
+            outcome = ""
+            cons = consensus_result.get("consensus")
+            if cons is not None:
+                outcome = getattr(getattr(cons, "outcome", None), "value", "")
+            return ToolResult(
+                error="consensus_blocked",
+                metadata={"mcp_tier": "consensus", "outcome": outcome},
+            )
+        except Exception as exc:
+            logger.warning(
+                "AD-1019c: MCP tool %s invoke failed: %s",
+                self.tool_id,
+                exc,
+                exc_info=True,
+            )
+            return ToolResult(error=str(exc))
+
+    async def _record_episode(
+        self, tier: str, success: bool, agent_id: str
+    ) -> None:
+        """DD-5 episode for the OPEN/CONFIRM tiers (consensus records in runtime)."""
+        if self._episode_writer is None:
+            return
+        try:
+            await self._episode_writer(
+                server_url=self._server_url,
+                tool=self._tool_name,
+                tier=tier,
+                success=success,
+                agent_id=agent_id,
+            )
+        except Exception:
+            logger.debug(
+                "AD-1019c: episode write failed for %s", self.tool_id, exc_info=True
+            )
 
 
 # (tool_id, intent_name, display_name, description, input_schema)
@@ -307,7 +515,26 @@ class WorkItemAgenticExecutor:
         if perm_store is not None:
             grants = perm_store.get_active_grants_sync(agent_id)
             granted_ids = [g.tool_id for g in grants if not g.is_restriction]
-        tool_ids = list(dict.fromkeys([*granted_ids, *mesh_ids]))
+
+        # AD-1019c: contribute the agent's authorized MCP workbench tools — the
+        # find_mcp_tool search tool plus any currently-warm authorized adapters.
+        # Default-OFF: gated on config.mcp.agent_tools_enabled + a wired
+        # workbench, so off ⇒ byte-identical to the AD-1007 tool set.
+        mcp_ids: list[str] = []
+        workbench = getattr(runtime, "mcp_workbench", None)
+        mcp_cfg = getattr(getattr(runtime, "config", None), "mcp", None)
+        if workbench is not None and getattr(mcp_cfg, "agent_tools_enabled", False):
+            try:
+                mcp_ids = workbench.dispatch_tool_ids(agent_id)
+            except Exception:
+                logger.warning(
+                    "AD-1019c: failed to resolve MCP workbench tools for agent "
+                    "%s; continuing without MCP tools",
+                    agent_id, exc_info=True,
+                )
+                mcp_ids = []
+
+        tool_ids = list(dict.fromkeys([*granted_ids, *mesh_ids, *mcp_ids]))
 
         tools: list[dict] = []
         if registry is not None:

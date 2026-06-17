@@ -291,6 +291,10 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     runtime.attachment_reaper = None
     # AD-986d: TranscriptReaper attribute -- async-started below (default-off).
     runtime.transcript_reaper = None
+    # AD-1019c: MCP workbench + idle-TTL reaper attributes (default-OFF gate
+    # config.mcp.agent_tools_enabled; wired in the async MCP block below).
+    runtime.mcp_workbench = None
+    runtime.mcp_workbench_reaper = None
     return True
 
 
@@ -3381,6 +3385,56 @@ async def finalize_startup(
             runtime.mcp_server_store = None
             runtime.department_tool_grant_store = None
             runtime.mcp_tool_risk_store = None
+        # AD-1019c: agent-callable MCP tools — the workbench (lazy adapters +
+        # find_mcp_tool), the consensus proposer pool (the mcp_invoke voter
+        # population, DD-1 option A), and the idle-TTL reaper. Independently
+        # default-OFF (config.mcp.agent_tools_enabled) ⇒ byte-identical to
+        # AD-1019b: no pool, no adapters, no reaper.
+        if config.mcp.agent_tools_enabled and runtime.tool_registry is not None:
+            from probos.agents.mcp_consensus_proposer import McpConsensusProposer
+            from probos.cognitive.mcp_workbench import MCPWorkbench
+            from probos.integrations.mcp_bridge.reaper import McpWorkbenchReaper
+
+            # The mcp_invoke voter population (propose-only; never executes).
+            # Sized to the default QuorumPolicy.min_votes so a CONSENSUS-tier
+            # invoke can reach quorum.
+            runtime.spawner.register_template(
+                "mcp_consensus_proposer", McpConsensusProposer
+            )
+            await runtime.create_pool(
+                "mcp_consensus", "mcp_consensus_proposer", target_size=3
+            )
+
+            workbench = MCPWorkbench(
+                tool_registry=runtime.tool_registry,
+                bridge=runtime.mcp_bridge,
+                consensus_invoke=runtime.submit_mcp_invoke_with_consensus,
+                episode_writer=runtime._store_mcp_invoke_episode,
+                server_store=runtime.mcp_server_store,
+                perm_store=runtime.tool_permission_store,
+                dept_grant_store=runtime.department_tool_grant_store,
+                risk_store=runtime.mcp_tool_risk_store,
+                ontology=runtime.ontology,
+                agent_registry=runtime.registry,
+            )
+            workbench.register_search_tool()
+            runtime.mcp_workbench = workbench
+
+            reaper = McpWorkbenchReaper(
+                workbench,
+                idle_ttl_seconds=config.mcp.agent_tool_idle_ttl_seconds,
+                interval_seconds=config.mcp.agent_tool_reaper_interval_seconds,
+            )
+            await reaper.start()
+            runtime.mcp_workbench_reaper = reaper
+            logger.info(
+                "AD-1019c: MCP workbench wired (idle_ttl=%ds, reaper_interval=%ds)",
+                int(config.mcp.agent_tool_idle_ttl_seconds),
+                int(config.mcp.agent_tool_reaper_interval_seconds),
+            )
+        else:
+            runtime.mcp_workbench = None
+            runtime.mcp_workbench_reaper = None
         logger.info(
             "AD-449: MCPBridge wired (%d server(s) preregistered)",
             len(config.mcp.servers),
@@ -3390,6 +3444,8 @@ async def finalize_startup(
         runtime.mcp_server_store = None
         runtime.department_tool_grant_store = None
         runtime.mcp_tool_risk_store = None
+        runtime.mcp_workbench = None
+        runtime.mcp_workbench_reaper = None
 
     # AD-701: Visiting Officer registry (formal external-participant registration).
     # Sourced from VesselIdentity (ontology) since runtime does not expose
