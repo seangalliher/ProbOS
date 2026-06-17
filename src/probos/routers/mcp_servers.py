@@ -825,6 +825,21 @@ async def list_server_tools(
     return result
 
 
+def _agent_department(runtime: Any, agent_id: str) -> str:
+    """Resolve the agent's canonical crew/governance department (AD-1019b).
+
+    Uses the public ontology accessor — NOT the private pool-group
+    ``runtime._get_agent_department`` (that is a notification-display concept).
+    Returns ``""`` when unavailable (honest-degrade → no dept grants fold).
+    """
+    reg = getattr(runtime, "registry", None)
+    ont = getattr(runtime, "ontology", None)
+    agent = reg.get(agent_id) if reg is not None else None
+    if agent is None or ont is None:
+        return ""
+    return ont.get_agent_department(getattr(agent, "agent_type", "")) or ""
+
+
 @router.get("/{server_id}/agents/{agent_id}/access")
 async def get_agent_access(
     server_id: str, agent_id: str, runtime: Any = Depends(get_runtime)
@@ -838,12 +853,20 @@ async def get_agent_access(
     tools, error = await _enumerate_tools(runtime, record)
     perms = getattr(runtime, "tool_permission_store", None)
     grants = perms.get_active_grants_sync(agent_id) if perms is not None else []
+    # AD-1019b: department tier grants (3-source resolver).
+    dept = _agent_department(runtime, agent_id)
+    dept_store = getattr(runtime, "department_tool_grant_store", None)
+    dept_grants = (
+        dept_store.get_active_grants_sync(dept)
+        if dept_store is not None and dept
+        else []
+    )
     # Server scope: an empty tool name folds to the server/default branches only.
-    server_enabled, _ = resolve_mcp_access(grants, record.name, "")
+    server_enabled, _ = resolve_mcp_access(grants, record.name, "", department_grants=dept_grants)
     tool_access: list[dict[str, Any]] = []
     for tool in tools:
         name = tool.get("name", "")
-        enabled, source = resolve_mcp_access(grants, record.name, name)
+        enabled, source = resolve_mcp_access(grants, record.name, name, department_grants=dept_grants)
         tool_access.append({"name": name, "enabled": enabled, "source": source})
     result: dict[str, Any] = {
         "server_enabled": server_enabled,

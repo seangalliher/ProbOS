@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     auth_header_name TEXT NOT NULL DEFAULT 'Authorization',
     auth_scheme TEXT NOT NULL DEFAULT 'Bearer',
     auth_env_var TEXT NOT NULL DEFAULT '',
-    oauth_json TEXT NOT NULL DEFAULT ''
+    oauth_json TEXT NOT NULL DEFAULT '',
+    default_risk TEXT NOT NULL DEFAULT 'open'
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_servers_name ON mcp_servers(name);
 """
@@ -69,6 +70,14 @@ _AD1017_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE mcp_servers ADD COLUMN auth_scheme TEXT NOT NULL DEFAULT 'Bearer'",
     "ALTER TABLE mcp_servers ADD COLUMN auth_env_var TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE mcp_servers ADD COLUMN oauth_json TEXT NOT NULL DEFAULT ''",
+)
+
+# AD-1019b: the tool risk-tier default column, appended AFTER the AD-1017
+# columns. Same ``ADD COLUMN``-appends-to-END invariant: a fresh CREATE TABLE and
+# an ALTER-migrated DB share identical positional order, so ``_row_to_record``'s
+# ``row[19]`` index is valid on both.
+_AD1019B_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE mcp_servers ADD COLUMN default_risk TEXT NOT NULL DEFAULT 'open'",
 )
 
 # --------------------------------------------------------------------------- #
@@ -151,6 +160,9 @@ class McpServerRecord:
     oauth_json: str = ""
     created_at: float = 0.0
     updated_at: float = 0.0
+    # AD-1019b: server-level default risk tier (open|confirm|consensus). A
+    # per-tool override (McpToolRiskStore) wins over this; non-secret config.
+    default_risk: str = "open"
 
     def to_public_dict(self) -> dict[str, Any]:
         """The single serialization seam — never emits a secret value.
@@ -179,6 +191,7 @@ class McpServerRecord:
             "oauth_json": self.oauth_json,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "default_risk": self.default_risk,
         }
 
 
@@ -287,6 +300,7 @@ class McpServerStore:
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
             await self._migrate_ad1017()
+            await self._migrate_ad1019b()
             await self._load_cache()
 
     async def _migrate_ad1017(self) -> None:
@@ -299,6 +313,23 @@ class McpServerStore:
         if not self._db:
             return
         for ddl in _AD1017_MIGRATIONS:
+            try:
+                await self._db.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
+        await self._db.commit()
+
+    async def _migrate_ad1019b(self) -> None:
+        """Add the AD-1019b ``default_risk`` column to a pre-AD-1019b DB.
+
+        Mirrors :meth:`_migrate_ad1017`: ``ADD COLUMN`` carries a default and
+        appends to the END, so existing rows and positional order are preserved;
+        the duplicate-column ``OperationalError`` on a fresh DB is a swallowed
+        no-op.
+        """
+        if not self._db:
+            return
+        for ddl in _AD1019B_MIGRATIONS:
             try:
                 await self._db.execute(ddl)
             except sqlite3.OperationalError:
@@ -339,6 +370,7 @@ class McpServerStore:
             auth_scheme=row[16],
             auth_env_var=row[17],
             oauth_json=row[18],
+            default_risk=row[19],
         )
 
     async def create(self, record: McpServerRecord) -> McpServerRecord:
@@ -358,8 +390,8 @@ class McpServerStore:
                 "INSERT INTO mcp_servers "
                 "(id, name, type, url, headers_json, command, args_json, env_json, cwd, "
                 "timeout_seconds, enabled, auth_kind, credential_ref, created_at, updated_at, "
-                "auth_header_name, auth_scheme, auth_env_var, oauth_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "auth_header_name, auth_scheme, auth_env_var, oauth_json, default_risk) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._record_to_params(rec),
             )
             await self._db.commit()
@@ -405,7 +437,7 @@ class McpServerStore:
                 "name = ?, type = ?, url = ?, headers_json = ?, command = ?, args_json = ?, "
                 "env_json = ?, cwd = ?, timeout_seconds = ?, enabled = ?, auth_kind = ?, "
                 "credential_ref = ?, auth_header_name = ?, auth_scheme = ?, auth_env_var = ?, "
-                "oauth_json = ?, updated_at = ? WHERE id = ?",
+                "oauth_json = ?, default_risk = ?, updated_at = ? WHERE id = ?",
                 (
                     updated.name,
                     updated.type,
@@ -423,6 +455,7 @@ class McpServerStore:
                     updated.auth_scheme,
                     updated.auth_env_var,
                     updated.oauth_json,
+                    updated.default_risk,
                     updated.updated_at,
                     updated.id,
                 ),
@@ -477,6 +510,7 @@ class McpServerStore:
             rec.auth_scheme,
             rec.auth_env_var,
             rec.oauth_json,
+            rec.default_risk,
         )
 
 

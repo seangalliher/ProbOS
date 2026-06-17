@@ -692,6 +692,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.mcp_server_store.stop()
         runtime.mcp_server_store = None
 
+    # AD-1019b: department-tier grant + tool-risk stores
+    if getattr(runtime, 'department_tool_grant_store', None):
+        await runtime.department_tool_grant_store.stop()
+        runtime.department_tool_grant_store = None
+    if getattr(runtime, 'mcp_tool_risk_store', None):
+        await runtime.mcp_tool_risk_store.stop()
+        runtime.mcp_tool_risk_store = None
+
     # Stop Counselor Profile Store (AD-503)
     if runtime._counselor_profile_store:
         await runtime._counselor_profile_store.stop()

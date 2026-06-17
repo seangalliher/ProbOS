@@ -3359,8 +3359,28 @@ async def finalize_startup(
                         cwd=rec.cwd,
                         timeout=rec.timeout_seconds,
                     )
+            # AD-1019b: department-tier grant store (the "department locker" of
+            # the three-tier authorization model) + per-tool risk override store.
+            from probos.integrations.mcp_bridge.department_grants import (
+                DepartmentToolGrantStore,
+            )
+            from probos.integrations.mcp_bridge.risk import McpToolRiskStore
+
+            dept_grant_store = DepartmentToolGrantStore(
+                db_path=str(runtime.data_dir / "department_tool_grants.db")
+            )
+            await dept_grant_store.start()
+            runtime.department_tool_grant_store = dept_grant_store
+
+            risk_store = McpToolRiskStore(
+                db_path=str(runtime.data_dir / "mcp_tool_risk.db")
+            )
+            await risk_store.start()
+            runtime.mcp_tool_risk_store = risk_store
         else:
             runtime.mcp_server_store = None
+            runtime.department_tool_grant_store = None
+            runtime.mcp_tool_risk_store = None
         logger.info(
             "AD-449: MCPBridge wired (%d server(s) preregistered)",
             len(config.mcp.servers),
@@ -3368,6 +3388,8 @@ async def finalize_startup(
     else:
         runtime.mcp_bridge = None
         runtime.mcp_server_store = None
+        runtime.department_tool_grant_store = None
+        runtime.mcp_tool_risk_store = None
 
     # AD-701: Visiting Officer registry (formal external-participant registration).
     # Sourced from VesselIdentity (ontology) since runtime does not expose
