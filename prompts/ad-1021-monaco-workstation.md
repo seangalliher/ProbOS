@@ -1,6 +1,6 @@
 # AD-1021 — Monaco code/text Workstation tier in the HXI (human-oversight surface for the autonomous build loop)
 
-**Epic: new — "HXI Workstation tier" (HXI Design Principle #11). Issue: TBD. Depends on: nothing (UI-first over existing store state).**
+**Epic #965 — HXI Workspaces & Workstations. Issue #966. Depends on: nothing (UI-first over existing store state).**
 **Repo: OSS (`d:\ProbOS`). AD ceiling at drafting: highest `### AD-` heading is AD-1019 (sub-letters a–e); AD-1020 is reserved by forward-reference for pack-`mcpServers`-wiring (PROGRESS.md AD-1015 note). This AD = AD-1021.**
 
 A HXI **Workstation** (HXI Principle #11, middle tier: *app embedded in the HXI, agents assist*) that gives the Captain a real editing surface to **view and collaborate on what the crew is producing** — primarily the **proposed file changes** from the autonomous Architect→Builder loop — plus a **general-purpose text editor** usable beyond code. This is **not an IDE**: no LSP, no extensions, no file tree, no git ops. It is the **human-oversight surface** for the build loop and a robust scratch editor. v1 is **UI-only over existing store state** (mirrors AD-1018 / AD-1001b "UI, no backend" slices).
@@ -11,6 +11,8 @@ A HXI **Workstation** (HXI Principle #11, middle tier: *app embedded in the HXI,
 The autonomous build loop (Northstar I: Architect → SoftwareEngineer/BuildPipeline → test-fix → commit, AD-302–320 + AD-372/375) already produces `BuildProposal.file_changes` (path/content/mode) and queues them for the Captain's merge approval. Today the only review surface is the inline IntentSurface proposal card + `llm_output` text — there is **no real editor** to read the generated code with syntax highlighting, scroll a large change, or see a create-vs-modify diff. The HXI also has **no general text-editing surface** (`ArtifactViewer` is read-only by mime; it explicitly names Monaco a *forward marker* — `ui/src/components/artifacts/ArtifactViewer.tsx:12`). AD-1021 lands that forward marker as a **Workstation tier**, framed per HXI #11: agents observe/assist, the UX nudges toward the agentic path (the editor is where you *review and steer* the crew, not where you primarily type).
 
 **Strategic boundary (do not drift into an IDE):** Cursor optimizes *human-codes-faster*; ProbOS optimizes *human-delegates-and-oversees*. This Workstation is the oversight/collaboration surface, NOT a coding IDE. Keep it a viewer+editor of agent output and scratch text.
+
+**Forward-compat (epic #965 — Workspaces & Workstations):** this is *workstation type #1*. A future **Workspace container (AD-1022)** will host multiple workstations (Monaco, shared browser, chat/MCP) bound to a backing store (initially the AD-997 execution folder, reached via the runtime API). Therefore keep `MonacoSurface` a **standalone, embeddable component** — the overlay (`WorkstationPanel`) is merely *one* host; do NOT couple the editor to the global modal, so the container can host it later without rework. Do NOT build the Workspace container here.
 
 ## Pinned design decisions
 
@@ -50,7 +52,7 @@ For `mode: 'create'` → Monaco `Editor` (read of new content). For `mode: 'modi
 - UI-only ⇒ no backend change; existing build/artifact flows byte-identical. Verify compliance with `.github/copilot-instructions.md` (HXI design principles, deps-injectable, no emoji, Vitest requirement).
 
 ## Do NOT build here
-❌ **Write-through** of human edits to the worktree / build branch / artifact (consensus-relevant → **AD-1021b**). ❌ **True repo-file diff** against the live file (needs a read endpoint → **AD-1021b**). ❌ **Agent co-editing / presence / multiplayer** (→ AD-1021c). ❌ **LSP / IntelliSense / autocomplete / extensions** — that is the IDE trap; explicitly excluded. ❌ **File tree / project explorer / multi-tab / open-arbitrary-file** — only the paths in the current proposal. ❌ **Git operations** in the Workstation. ❌ A backend endpoint of any kind in v1. ❌ A new top-level AD number — this is AD-1021. ❌ Changing `ArtifactViewer` behavior (the Workstation is additive; ArtifactViewer stays the read-only mime viewer).
+❌ **Write-through** of human edits to the worktree / build branch / artifact (consensus-relevant → **AD-1021b**). ❌ **True repo-file diff** against the live file (needs a read endpoint → **AD-1021b**). ❌ **Agent co-editing / presence / multiplayer** (→ AD-1021c). ❌ The **Workspace container / multi-workstation host** (epic #965, AD-1022) — this AD ships the standalone Monaco workstation only. ❌ **LSP / IntelliSense / autocomplete / extensions** — that is the IDE trap; explicitly excluded. ❌ **File tree / project explorer / multi-tab / open-arbitrary-file** — only the paths in the current proposal. ❌ **Git operations** in the Workstation. ❌ A backend endpoint of any kind in v1. ❌ A new top-level AD number — this is AD-1021. ❌ Changing `ArtifactViewer` behavior (the Workstation is additive; ArtifactViewer stays the read-only mime viewer).
 
 ## Files (verify each at build)
 - `ui/src/store/types.ts` — add `WorkstationDoc`.
