@@ -29,6 +29,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from probos.integrations.mcp_bridge.risk import McpToolRisk
 from probos.protocols import ConnectionFactory
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,12 @@ _SECRET_ENV_SUFFIXES: tuple[str, ...] = (
 )
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+# AD-1019b: the legal ``default_risk`` tier strings, derived from the enum so a
+# future 4th tier is covered automatically (single source of truth). The DB-read
+# path stays tolerant (a bad legacy value is not rejected on load); this is the
+# create/update *boundary* guard only (Defense in Depth).
+_VALID_RISK_TIERS: frozenset[str] = frozenset(r.value for r in McpToolRisk)
 
 
 class McpServerValidationError(ValueError):
@@ -238,6 +245,13 @@ def validate_record(
         raise McpServerValidationError(
             f"invalid type {record.type!r}: must be 'http' or 'stdio'",
             code="invalid_type",
+        )
+
+    if record.default_risk not in _VALID_RISK_TIERS:
+        raise McpServerValidationError(
+            f"invalid default_risk {record.default_risk!r}: must be one of "
+            f"{sorted(_VALID_RISK_TIERS)}",
+            code="invalid_default_risk",
         )
 
     for key, value in (record.headers or {}).items():

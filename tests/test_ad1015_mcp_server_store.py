@@ -267,3 +267,155 @@ def test_validate_non_secret_pairs_pass_through() -> None:
         env={"NODE_ENV": "production", "PORT": "8080"},
     )
     validate_record(rec, command_allowlist=_ALLOW)  # no raise
+
+
+# --------------------------------------------------------------------------- #
+# AD-1019b: default_risk column — migration positional-order + validation
+# --------------------------------------------------------------------------- #
+
+# The AD-1017-era schema (19 columns, NO default_risk). A DB created by AD-1015/
+# AD-1017 looks exactly like this; opening a McpServerStore over it must run the
+# ADD COLUMN migration and preserve the positional column order (row[0..18]).
+_PRE_1019B_SCHEMA = """
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id TEXT PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    type TEXT NOT NULL,
+    url TEXT DEFAULT '',
+    headers_json TEXT DEFAULT '{}',
+    command TEXT DEFAULT '',
+    args_json TEXT DEFAULT '[]',
+    env_json TEXT DEFAULT '{}',
+    cwd TEXT DEFAULT '',
+    timeout_seconds REAL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    auth_kind TEXT NOT NULL DEFAULT 'none',
+    credential_ref TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    auth_header_name TEXT NOT NULL DEFAULT 'Authorization',
+    auth_scheme TEXT NOT NULL DEFAULT 'Bearer',
+    auth_env_var TEXT NOT NULL DEFAULT '',
+    oauth_json TEXT NOT NULL DEFAULT ''
+);
+"""
+
+
+def test_default_risk_defaults_to_open() -> None:
+    rec = McpServerRecord(name="weather", type="http", url="https://x/mcp")
+    assert rec.default_risk == "open"
+
+
+def test_to_public_dict_includes_default_risk() -> None:
+    rec = McpServerRecord(name="weather", type="http", url="https://x/mcp")
+    assert rec.to_public_dict()["default_risk"] == "open"
+
+
+async def test_default_risk_roundtrips_and_preserves_all_fields(tmp_path) -> None:
+    """A non-default risk round-trips AND every prior field survives the reload.
+
+    Proves ``row[19]=default_risk`` did not shift the positional indices of
+    ``row[0..18]`` (the END-appended-column invariant).
+    """
+    db = str(tmp_path / "mcp_servers.db")
+    store = await _started_store(db)
+    rec = await store.create(
+        McpServerRecord(
+            name="echo",
+            type="stdio",
+            command="python",
+            args=["-m", "server"],
+            env={"NODE_ENV": "prod"},
+            auth_header_name="X-Auth",
+            auth_scheme="Token",
+            default_risk="consensus",
+        )
+    )
+    await store.stop()
+    store2 = await _started_store(db)
+    loaded = await store2.get(rec.id)
+    assert loaded is not None
+    # default_risk survived ...
+    assert loaded.default_risk == "consensus"
+    # ... and so did every field at a lower positional index (no shift).
+    assert loaded.name == "echo"
+    assert loaded.type == "stdio"
+    assert loaded.command == "python"
+    assert loaded.args == ["-m", "server"]
+    assert loaded.env == {"NODE_ENV": "prod"}
+    assert loaded.auth_header_name == "X-Auth"
+    assert loaded.auth_scheme == "Token"
+    assert loaded.oauth_json == ""
+    assert loaded.enabled is True
+    await store2.stop()
+
+
+async def test_migrate_ad1019b_adds_column_to_pre_1019b_db(tmp_path) -> None:
+    """A pre-AD-1019b DB (19 cols) migrates cleanly: default_risk → 'open',
+    and every prior field is read back at the correct positional index."""
+    from probos.storage.sqlite_factory import default_factory
+
+    db = str(tmp_path / "legacy.db")
+    # Seed a legacy DB by hand (AD-1017-era schema, no default_risk column).
+    conn = await default_factory.connect(db)
+    await conn.executescript(_PRE_1019B_SCHEMA)
+    await conn.execute(
+        "INSERT INTO mcp_servers "
+        "(id, name, type, url, headers_json, command, args_json, env_json, cwd, "
+        "timeout_seconds, enabled, auth_kind, credential_ref, created_at, updated_at, "
+        "auth_header_name, auth_scheme, auth_env_var, oauth_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "legacy-id",
+            "legacy",
+            "http",
+            "https://legacy/mcp",
+            "{}",
+            "",
+            "[]",
+            "{}",
+            "",
+            None,
+            1,
+            "none",
+            "",
+            1000.0,
+            1000.0,
+            "Authorization",
+            "Bearer",
+            "",
+            "",
+        ),
+    )
+    await conn.commit()
+    await conn.close()
+
+    # Opening a current McpServerStore runs _migrate_ad1019b (ADD COLUMN).
+    store = await _started_store(db)
+    loaded = await store.get("legacy-id")
+    assert loaded is not None
+    assert loaded.default_risk == "open"  # the migration default
+    # Prior fields read back at the correct positional index (no shift).
+    assert loaded.name == "legacy"
+    assert loaded.type == "http"
+    assert loaded.url == "https://legacy/mcp"
+    assert loaded.created_at == 1000.0
+    assert loaded.oauth_json == ""
+    await store.stop()
+
+
+def test_validate_invalid_default_risk_rejected() -> None:
+    rec = McpServerRecord(
+        name="weather", type="http", url="https://x/mcp", default_risk="banana"
+    )
+    with pytest.raises(McpServerValidationError) as exc:
+        validate_record(rec, command_allowlist=_ALLOW)
+    assert exc.value.code == "invalid_default_risk"
+
+
+@pytest.mark.parametrize("tier", ["open", "confirm", "consensus"])
+def test_validate_valid_default_risk_tiers_pass(tier: str) -> None:
+    rec = McpServerRecord(
+        name="weather", type="http", url="https://x/mcp", default_risk=tier
+    )
+    validate_record(rec, command_allowlist=_ALLOW)  # no raise

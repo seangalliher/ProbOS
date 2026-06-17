@@ -181,3 +181,90 @@ async def test_resolve_with_store_data(store: McpToolRiskStore) -> None:
         assert unknown == McpToolRisk.CONFIRM
     finally:
         await store.stop()
+
+
+# --------------------------------------------------------------------------- #
+# Real-DB persistence (tmp_path) — exercises the SQLite path that db_path=""
+# tests bypass: schema, upsert INSERT, DELETE, _load_cache (incl. the bad-value
+# ValueError guard). BF-287: cache-only tests can't catch a column misalignment.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_real_db_roundtrip_reloads_overrides(tmp_path) -> None:
+    """Overrides persist and a fresh store reloads them via _load_cache."""
+    db = str(tmp_path / "risk.db")
+    store = McpToolRiskStore(db_path=db)
+    await store.start()
+    await store.set_risk("system", "run_command", McpToolRisk.CONSENSUS)
+    await store.set_risk("weather", "get_forecast", McpToolRisk.CONFIRM)
+    await store.stop()
+
+    store2 = McpToolRiskStore(db_path=db)
+    await store2.start()
+    try:
+        assert store2.get_risk_sync("system", "run_command") == McpToolRisk.CONSENSUS
+        assert store2.get_risk_sync("weather", "get_forecast") == McpToolRisk.CONFIRM
+    finally:
+        await store2.stop()
+
+
+@pytest.mark.asyncio
+async def test_real_db_upsert_replaces_row(tmp_path) -> None:
+    """set_risk on an existing (server, tool) upserts (no duplicate row)."""
+    db = str(tmp_path / "risk.db")
+    store = McpToolRiskStore(db_path=db)
+    await store.start()
+    await store.set_risk("system", "run_command", McpToolRisk.CONSENSUS)
+    await store.set_risk("system", "run_command", McpToolRisk.CONFIRM)  # upsert
+    await store.stop()
+
+    store2 = McpToolRiskStore(db_path=db)
+    await store2.start()
+    try:
+        assert store2.get_risk_sync("system", "run_command") == McpToolRisk.CONFIRM
+        assert len(store2.list_sync()) == 1  # upsert, not a second row
+    finally:
+        await store2.stop()
+
+
+@pytest.mark.asyncio
+async def test_real_db_clear_persists(tmp_path) -> None:
+    """clear_risk hard-deletes the row; a reload does not resurrect it."""
+    db = str(tmp_path / "risk.db")
+    store = McpToolRiskStore(db_path=db)
+    await store.start()
+    await store.set_risk("system", "run_command", McpToolRisk.CONSENSUS)
+    assert await store.clear_risk("system", "run_command") is True
+    await store.stop()
+
+    store2 = McpToolRiskStore(db_path=db)
+    await store2.start()
+    try:
+        assert store2.get_risk_sync("system", "run_command") is None
+    finally:
+        await store2.stop()
+
+
+@pytest.mark.asyncio
+async def test_real_db_load_cache_skips_bad_value(tmp_path) -> None:
+    """_load_cache logs-and-ignores an unparseable risk string (defensive guard)
+    while keeping the valid rows. Only reachable with a real DB."""
+    db = str(tmp_path / "risk.db")
+    store = McpToolRiskStore(db_path=db)
+    await store.start()
+    await store.set_risk("system", "run_command", McpToolRisk.CONSENSUS)
+    # Inject a corrupt row directly, then force a cache reload.
+    await store._db.execute(
+        "INSERT INTO mcp_tool_risk (id, server_id, tool_name, risk, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("bad-id", "weather", "get_forecast", "banana", 1.0),
+    )
+    await store._db.commit()
+    await store._load_cache()
+    try:
+        # Valid row survived; corrupt row was dropped (not raised).
+        assert store.get_risk_sync("system", "run_command") == McpToolRisk.CONSENSUS
+        assert store.get_risk_sync("weather", "get_forecast") is None
+    finally:
+        await store.stop()

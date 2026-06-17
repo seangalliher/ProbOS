@@ -257,3 +257,40 @@ def test_backward_compat_no_dept_grants_arg() -> None:
     enabled, source = resolve_mcp_access(agent_grants, "weather", "get_forecast")
     assert enabled is True
     assert source == "tool"
+
+
+# --------------------------------------------------------------------------- #
+# Cross-source × cross-scope (the headline rule): a department TOOL-scope grant
+# outranks an agent SERVER-scope grant, because tool-scope (finer) beats
+# server-scope (broader) BEFORE the agent>dept origin tiebreak is consulted.
+# This is the most counterintuitive row pair in the ladder (rows 3/4 vs 5/6).
+# --------------------------------------------------------------------------- #
+
+
+def test_dept_tool_restriction_beats_agent_server_grant() -> None:
+    """A dept's tool-scope restriction overrides an agent's broad server grant."""
+    agent_grants = [_server_grant("system", is_restriction=False)]
+    dept_grants = [_tool_grant("system", "run_command", is_restriction=True)]
+    enabled, source = resolve_mcp_access(
+        agent_grants, "system", "run_command", department_grants=dept_grants
+    )
+    assert enabled is False
+    assert source == "department"
+    # ... but a DIFFERENT tool on the same server still rides the agent's
+    # server-scope grant (the dept tool-restriction is tool-scoped).
+    enabled2, source2 = resolve_mcp_access(
+        agent_grants, "system", "read_file", department_grants=dept_grants
+    )
+    assert enabled2 is True
+    assert source2 == "server"
+
+
+def test_dept_tool_grant_beats_agent_server_restriction() -> None:
+    """A dept's tool-scope grant overrides an agent's broad server restriction."""
+    agent_grants = [_server_grant("weather", is_restriction=True)]
+    dept_grants = [_tool_grant("weather", "get_forecast", is_restriction=False)]
+    enabled, source = resolve_mcp_access(
+        agent_grants, "weather", "get_forecast", department_grants=dept_grants
+    )
+    assert enabled is True
+    assert source == "department"

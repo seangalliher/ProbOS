@@ -225,3 +225,96 @@ async def test_sync_cache_coherence(store: DepartmentToolGrantStore) -> None:
         assert store.get_active_grants_sync("science") == []
     finally:
         await store.stop()
+
+
+# --------------------------------------------------------------------------- #
+# Real-DB persistence (tmp_path) — exercises the SQLite path that db_path=""
+# tests bypass entirely: schema, INSERT column alignment, _load_cache,
+# _row_to_grant field mapping, and the revoke rowcount branch (BF-287 lesson).
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_real_db_roundtrip_reloads_all_fields(tmp_path) -> None:
+    """A grant persists and a fresh store reloads it via _load_cache/_row_to_grant
+    with every field intact (proves the INSERT↔column↔_row_to_grant alignment)."""
+    db = str(tmp_path / "dtg.db")
+    tool_id = mcp_tool_tool_id("weather", "get_forecast")
+    store = DepartmentToolGrantStore(db_path=db)
+    await store.start()
+    issued = await store.issue_grant(
+        department="science",
+        tool_id=tool_id,
+        permission=ToolPermission.READ,
+        is_restriction=False,
+        reason="needs weather",
+        issued_by="captain",
+    )
+    await store.stop()
+
+    # A new store over the same DB loads its cache from disk.
+    store2 = DepartmentToolGrantStore(db_path=db)
+    await store2.start()
+    try:
+        active = store2.get_active_grants_sync("science")
+        assert len(active) == 1
+        g = active[0]
+        assert g.id == issued.id
+        assert g.agent_id == "science"  # department carried in agent_id
+        assert g.tool_id == tool_id
+        assert g.permission == ToolPermission.READ
+        assert g.is_restriction is False
+        assert g.reason == "needs weather"
+        assert g.issued_by == "captain"
+        assert g.revoked is False
+    finally:
+        await store2.stop()
+
+
+@pytest.mark.asyncio
+async def test_real_db_revoke_returns_true_then_false(tmp_path) -> None:
+    """The production revoke contract (only reachable with a real DB): True for an
+    existing grant, False for an unknown id. (Nit #5 — the db_path="" fixture
+    cannot distinguish these and always returns True.)"""
+    db = str(tmp_path / "dtg.db")
+    store = DepartmentToolGrantStore(db_path=db)
+    await store.start()
+    try:
+        grant = await store.issue_grant(
+            department="science",
+            tool_id=mcp_tool_tool_id("weather", "get_forecast"),
+            permission=ToolPermission.READ,
+            issued_by="captain",
+        )
+        assert await store.revoke_grant(grant.id) is True
+        # Already revoked → the rowcount==0 guard returns False.
+        assert await store.revoke_grant(grant.id) is False
+        # Never-existed id → False.
+        assert await store.revoke_grant("does-not-exist") is False
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_real_db_expired_grant_not_loaded(tmp_path) -> None:
+    """An already-expired grant is excluded by _load_cache's WHERE clause."""
+    import time as _time
+
+    db = str(tmp_path / "dtg.db")
+    store = DepartmentToolGrantStore(db_path=db)
+    await store.start()
+    await store.issue_grant(
+        department="science",
+        tool_id=mcp_tool_tool_id("weather", "get_forecast"),
+        permission=ToolPermission.READ,
+        issued_by="captain",
+        expires_at=_time.time() - 1.0,  # already expired
+    )
+    await store.stop()
+
+    store2 = DepartmentToolGrantStore(db_path=db)
+    await store2.start()
+    try:
+        assert store2.get_active_grants_sync("science") == []
+    finally:
+        await store2.stop()
