@@ -168,6 +168,63 @@ def _wire_classification_gate(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_workstation_types(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-1022: construct the WorkstationTypeRegistry + register OSS baseline types.
+
+    The registry is ALWAYS constructed (so a later overlay finalize hook can
+    register a commercial workstation type into it — DD-6 "the registry may still
+    be constructed; it just isn't surfaced"), but the OSS baseline types are
+    registered only when ``WorkstationsConfig.enabled``. Default-OFF ⇒ the registry
+    is dormant: empty of baselines, and the API/HXI surface stays hidden.
+
+    Must run BEFORE ``run_finalize_hooks`` so the registry exists when an overlay
+    hook tries to register into it. Log-and-degrade: a duplicate/invalid baseline
+    registration never aborts boot. Returns ``True`` when baselines were registered.
+    """
+    from probos.workstations.registry import (
+        WorkstationRender,
+        WorkstationType,
+        WorkstationTypeRegistry,
+    )
+
+    registry = WorkstationTypeRegistry()
+    runtime.workstation_type_registry = registry  # public attribute (Wave 5 convention #1)
+
+    cfg = getattr(config, "workstations", None)
+    if not cfg or not cfg.enabled:
+        logger.info(
+            "AD-1022: workstations disabled; registry constructed dormant (no baseline types)"
+        )
+        return False
+
+    # OSS baseline native types. The ``component_key`` is resolved client-side by
+    # the HXI launcher; the monaco/browser/chat React components land in their own
+    # ADs (AD-1021 et al.) — until then the launcher honest-degrades to a
+    # "not yet available" placeholder. No commercial code is referenced here.
+    baselines: tuple[tuple[str, str, str], ...] = (
+        ("monaco", "Code Editor", "monaco"),
+        ("browser", "Browser", "browser"),
+        ("chat", "Chat", "chat"),
+    )
+    registered = 0
+    for type_id, label, component_key in baselines:
+        ok = registry.register(
+            WorkstationType(
+                id=type_id,
+                label=label,
+                tier="oss",
+                render=WorkstationRender(kind="native", component_key=component_key),
+            )
+        )
+        if ok:
+            registered += 1
+    logger.info(
+        "AD-1022: workstation baseline types registered (%d/%d)",
+        registered, len(baselines),
+    )
+    return True
+
+
 def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-706: Register BrowserTool in the ToolRegistry (default-disabled).
 
@@ -4109,6 +4166,15 @@ async def finalize_startup(
         _wire_mesh_intent_tools(runtime=runtime)
     except Exception:
         logger.warning("AD-909: _wire_mesh_intent_tools failed", exc_info=True)
+
+    # AD-1022: construct the workstation-type registry + register the OSS baseline
+    # types (gated on WorkstationsConfig.enabled; default-OFF). Runs BEFORE the
+    # AD-697 run_finalize_hooks below so an overlay finalize hook can register a
+    # commercial workstation type into runtime.workstation_type_registry.
+    try:
+        _wire_workstation_types(runtime=runtime, config=config)
+    except Exception:
+        logger.warning("AD-1022: _wire_workstation_types failed", exc_info=True)
 
     # AD-706b: async portion of browser-tool wiring - start the recording reaper.
     try:

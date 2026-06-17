@@ -2938,6 +2938,20 @@ class PacksConfig(BaseModel):
     packs_dir: str = "data/packs"
 
 
+class WorkstationsConfig(BaseModel):
+    """AD-1022: HXI workstation-type surface (Experience layer).
+
+    Governs whether the runtime registers the OSS baseline workstation types and
+    surfaces ``GET /api/workstations/types`` + the HXI launcher. **Default OFF** —
+    when disabled the registry may still be constructed (so an overlay finalize
+    hook can register a commercial type into it) but no baseline types are
+    registered, the API is dormant (returns an empty list), and the HXI surface
+    is hidden ⇒ byte-identical to pre-AD-1022.
+    """
+
+    enabled: bool = False
+
+
 class QAConfig(BaseModel):
     """SystemQAAgent configuration."""
 
@@ -5508,6 +5522,7 @@ class SystemConfig(BaseModel):
     execution: ExecutionConfig = ExecutionConfig()  # AD-993/994 (default OFF)
     hooks: HooksConfig = HooksConfig()  # AD-1004 (default OFF)
     packs: PacksConfig = Field(default_factory=lambda: PacksConfig())  # AD-1003c (default OFF)
+    workstations: WorkstationsConfig = Field(default_factory=WorkstationsConfig)  # AD-1022 (default OFF)
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
     records: RecordsConfig = RecordsConfig()
