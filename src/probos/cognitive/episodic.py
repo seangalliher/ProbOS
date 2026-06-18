@@ -2276,10 +2276,10 @@ class EpisodicMemory:
         (byte-identical to AD-979a recall).
         """
         try:
-            match_query = fts_or_query(query)
-            if not match_query:
-                return dense_episodes
-            sparse_hits = await self.keyword_search(match_query, k=k * 3)
+            # BF-630: keyword_search OR-expands the natural-language query
+            # internally now (it was pre-expanded here); pass the raw query so
+            # the NL->FTS translation lives in one place. Behaviour identical.
+            sparse_hits = await self.keyword_search(query, k=k * 3)
             sparse_ids = [eid for eid, _rank in sparse_hits]
             if not sparse_ids:
                 return dense_episodes
@@ -2719,10 +2719,10 @@ class EpisodicMemory:
         to the AD-981a dense recall).
         """
         try:
-            match_query = fts_or_query(query)
-            if not match_query:
-                return dense_episodes
-            sparse_hits = await self.keyword_search(match_query, k=k * 3)
+            # BF-630: keyword_search OR-expands the natural-language query
+            # internally now (it was pre-expanded here); pass the raw query so
+            # the NL->FTS translation lives in one place. Behaviour identical.
+            sparse_hits = await self.keyword_search(query, k=k * 3)
             sparse_ids = [eid for eid, _rank in sparse_hits]
             if not sparse_ids:
                 return dense_episodes
@@ -3184,13 +3184,28 @@ class EpisodicMemory:
         """FTS5 keyword search. Returns [(episode_id, rank_score), ...].
 
         AD-567b: Secondary retrieval channel alongside ChromaDB vector search.
+
+        BF-630: the natural-language ``query`` is OR-expanded into an FTS5
+        MATCH expression via :func:`fts_or_query` before the MATCH runs.
+        Passing a raw conversational string straight to FTS5 (the pre-BF-630
+        behaviour) made it a *phrase* query -- or a hard ``fts5: syntax error``
+        on punctuation such as ``?`` -- so the keyword axis silently returned
+        nothing for real user questions like "What do you know about my dogs?".
+        OR-of-keywords matching is a strict superset of the old phrase/AND
+        behaviour, so every episode the raw query would have found is still
+        found. Centralising the translation here fixes every caller
+        (``recall_weighted``, the AD-603 anchor merge, and the hybrid fusers)
+        at once instead of each call site having to remember to pre-expand.
         """
         if self._fts_db is None or not query.strip():
+            return []
+        match_query = fts_or_query(query)
+        if not match_query:
             return []
         try:
             cursor = await self._fts_db.execute(
                 "SELECT episode_id, rank FROM episode_fts WHERE episode_fts MATCH ? ORDER BY rank LIMIT ?",
-                (query, k),
+                (match_query, k),
             )
             rows = await cursor.fetchall()
             return [(row[0], float(row[1])) for row in rows]
