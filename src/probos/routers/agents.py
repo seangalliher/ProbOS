@@ -2692,6 +2692,13 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
         )
     _params: dict[str, object] = {
         "text": message_text,
+        # BF-632: the RAW Captain message, BEFORE the HXI router prepends the
+        # visual-context block (AD-733a), project preamble (AD-793), and
+        # targeted-recall block (AD-725) onto ``text``. The per-message episodic
+        # recall query must be what the Captain actually SAID, not the visual
+        # scene description that now leads ``text`` — otherwise ``text[:200]``
+        # makes recall search for the room instead of the Captain's words.
+        "captain_message": req.message,
         "from": "hxi_profile",
         "session": bool(req.history),
         "session_history": req.history[-10:] if req.history else [],

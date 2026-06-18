@@ -178,6 +178,25 @@ def _filter_query_echoes(episodes: list[Any], query: str) -> list[Any]:
     return non_echo if non_echo else episodes
 
 
+def _dm_recall_query(params: dict[str, Any]) -> str:
+    """BF-632: the per-message episodic-recall query for a ``direct_message``.
+
+    Returns the RAW Captain message (``params['captain_message']``), NOT
+    ``params['text']``. The HXI router (``routers/agents.py:agent_chat``)
+    PREPENDS the visual-context block (AD-733a), project preamble (AD-793), and
+    targeted-recall block (AD-725) onto ``text`` so the receiving agent's LLM
+    sees them as part of the user turn — which means ``text[:200]`` is the
+    *visual scene description*, not what the Captain asked. Driving recall off
+    ``text`` made every 1:1 recall search for the room instead of the Captain's
+    words (the proven cause of the dogs never surfacing). Falls back to ``text``
+    for callers that don't set ``captain_message`` (e.g. work-item dispatch,
+    where ``text`` is already the raw task). Mirrors the prior
+    ``text[:200].strip()`` shape.
+    """
+    raw = params.get("captain_message") or params.get("text", "")
+    return raw[:200].strip()
+
+
 def _enrich_vision_messages_with_context(
     vision_messages: list[dict[str, Any]],
     user_message: str,
@@ -7718,8 +7737,10 @@ class CognitiveAgent(BaseAgent):
                 # AD-584b: Removed BF-029 "Ward Room {callsign}" query prefix.
                 # With multi-qa-MiniLM-L6-cos-v1, the QA-trained model bridges
                 # question->answer gaps without prefix workarounds.
-                captain_text = params.get("text", "")[:200]
-                query = captain_text.strip()
+                # BF-632: drive recall off the RAW Captain message, not the
+                # router-assembled params["text"] (which now leads with the
+                # prepended visual-context block — see _dm_recall_query).
+                query = _dm_recall_query(params)
             elif intent.intent == "ward_room_notification":
                 query = f"{params.get('title', '')} {params.get('text', '')}".strip()[:200]
             else:
