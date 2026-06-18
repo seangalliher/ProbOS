@@ -2687,7 +2687,78 @@ class EpisodicMemory:
             except Exception:
                 logger.debug("AD-567d: Activation tracking failed", exc_info=True)
 
+        # AD-981c: optional hybrid fusion with the FTS5 sparse axis, shard-
+        # filtered to THIS agent's own episodes (sovereign isolation, AD-397).
+        # Mirrors the global recall_with_confidence tail; the AD-981a FoK band
+        # and logging above are intentionally left as the DENSE distribution —
+        # hybrid changes WHICH owned episodes return, not the cosine confidence.
+        # Honest-degrade: an empty/failed sparse axis returns the dense list.
+        if self._hybrid_recall_enabled and self._fts_db is not None:
+            episodes = await self._fuse_dense_sparse_for_agent(
+                agent_id, query, episodes, k
+            )
+
         return episodes, confidence
+
+    async def _fuse_dense_sparse_for_agent(
+        self, agent_id: str, query: str, dense_episodes: list[Episode], k: int
+    ) -> list[Episode]:
+        """AD-981c: sovereign (shard-filtered) variant of :meth:`_fuse_dense_sparse`.
+
+        Fuses the agent's dense (cosine) ranking with the FTS5 keyword ranking
+        via Reciprocal Rank Fusion so a memory the agent owns but encoded under
+        different vocabulary than the query (the cross-session "dog" miss) is
+        surfaced. Unlike the global helper, the sparse axis (``keyword_search``)
+        runs over the GLOBAL FTS index and ``get_by_ids`` is not shard-scoped,
+        so a blind fusion would pull OTHER agents' episodes into this agent's
+        sovereign recall — an AD-397 isolation breach. Every fused episode is
+        therefore POST-FILTERED to ones this agent owns
+        (``agent_id in episode.agent_ids``) BEFORE the k-cap: the load-bearing
+        guard that keeps the sovereign shard intact. Tier-2 honest-degrade: an
+        empty/failed sparse axis returns the dense list unchanged (byte-identical
+        to the AD-981a dense recall).
+        """
+        try:
+            match_query = fts_or_query(query)
+            if not match_query:
+                return dense_episodes
+            sparse_hits = await self.keyword_search(match_query, k=k * 3)
+            sparse_ids = [eid for eid, _rank in sparse_hits]
+            if not sparse_ids:
+                return dense_episodes
+            dense_ids = [e.id for e in dense_episodes]
+            fused = reciprocal_rank_fusion(
+                [dense_ids, sparse_ids], k=self._hybrid_rrf_k
+            )
+            fused_ids = [eid for eid, _score in fused]
+            # Reuse the dense Episodes we already have; hydrate sparse-only ids.
+            have: dict[str, Episode] = {e.id: e for e in dense_episodes}
+            missing = [eid for eid in fused_ids if eid not in have]
+            if missing:
+                for ep in await self.get_by_ids(missing):
+                    have[ep.id] = ep
+            # SOVEREIGN-LEAK GUARD (AD-397): keep only episodes this agent owns,
+            # THEN cap at k. Filtering BEFORE the cap is required — capping the
+            # fused ids first could discard owned episodes that sit just below a
+            # non-owned keyword hit and silently under-return the agent's own
+            # memories. The dense episodes are already owned (the dense loop's
+            # ``is_owned`` gate), so this only ever drops sparse-hydrated hits
+            # belonging to another agent's shard.
+            owned: list[Episode] = []
+            for eid in fused_ids:
+                ep = have.get(eid)
+                if ep is None or agent_id not in ep.agent_ids:
+                    continue
+                owned.append(ep)
+                if len(owned) >= k:
+                    break
+            return owned
+        except Exception:
+            logger.debug(
+                "AD-981c: sovereign hybrid fusion failed; returning dense recall",
+                exc_info=True,
+            )
+            return dense_episodes
 
     async def recent_for_agent(self, agent_id: str, k: int = 5) -> list[Episode]:
         """BF-027: Return the k most recent episodes for a specific agent.
