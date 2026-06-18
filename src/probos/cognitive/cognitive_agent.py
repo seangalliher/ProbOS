@@ -147,6 +147,37 @@ def derive_communication_context(
     return "department_discussion"
 
 
+def _filter_query_echoes(episodes: list[Any], query: str) -> list[Any]:
+    """BF-631: drop recalled episodes that merely re-state the current query.
+
+    When the Captain asks a question, the most semantically-similar episodes are
+    frequently the Captain's OWN prior identical askings (e.g. "What do you know
+    about my dogs?"). Such a recalled "memory" carries no information for
+    answering the question — it IS the question — yet, being a near-perfect
+    match to the query text, it out-ranks and crowds the genuine answer ("My dog
+    Grim is a giant schnauzer") to the bottom of, or out of, the rendered memory
+    section.
+
+    Matching is normalized-substring (case/whitespace-insensitive): the live
+    query appearing verbatim inside an episode is a near-certain echo, so the
+    false-positive risk is low. Only substantive queries (>=12 normalized chars)
+    are filtered, and the original list is returned unchanged when every episode
+    would be dropped (all-echo => there is no answer to surface anyway).
+
+    Pure function — does not mutate ``episodes``.
+    """
+    if not query or not episodes:
+        return episodes
+    q_norm = " ".join(query.lower().split())
+    if len(q_norm) < 12:
+        return episodes
+    non_echo = [
+        ep for ep in episodes
+        if q_norm not in " ".join((getattr(ep, "user_input", "") or "").lower().split())
+    ]
+    return non_echo if non_echo else episodes
+
+
 def _enrich_vision_messages_with_context(
     vision_messages: list[dict[str, Any]],
     user_message: str,
@@ -8064,6 +8095,24 @@ class CognitiveAgent(BaseAgent):
             except Exception:
                 logger.debug("AD-568d: Source attribution computation failed")
 
+            # BF-631: drop "query-echo" recalls before rendering. When the
+            # Captain asks a question, the most semantically-similar episodes
+            # are frequently the Captain's OWN prior identical askings (e.g.
+            # "What do you know about my dogs?") — they match the query text
+            # almost perfectly yet carry zero information for answering it, and
+            # they crowd the genuine answer ("My dog Grim is a giant schnauzer")
+            # to the bottom of, or out of, the rendered memory section.
+            if episodes and query:
+                _non_echo = _filter_query_echoes(episodes, query)
+                if len(_non_echo) != len(episodes):
+                    logger.info(
+                        "BF-631: dropped %d query-echo recall(s) for agent=%s q=%r",
+                        len(episodes) - len(_non_echo),
+                        (getattr(self, "sovereign_id", None) or self.id)[:8],
+                        query[:50],
+                    )
+                    episodes = _non_echo
+
             if episodes:
                 # AD-502: Include relative timestamps on recalled memories
                 rt = getattr(self, '_runtime', None)
@@ -8118,6 +8167,21 @@ class CognitiveAgent(BaseAgent):
                     memory_list.append(mem)
 
                 observation["recent_memories"] = memory_list
+                # BF-631 DIAG: surface what the per-message recall actually fed
+                # into the prompt for a Captain DM — so we can see whether the
+                # ANSWER (not just the Captain's repeated question-echoes) lands
+                # in context. Concise INFO, direct_message only.
+                if intent.intent == "direct_message":
+                    _diag_id = (getattr(self, "sovereign_id", None) or self.id)[:8]
+                    _diag_summ = " || ".join(
+                        f"[{m.get('source', '?')}] "
+                        f"{(m.get('input', '') or m.get('reflection', '') or '')[:60]}"
+                        for m in memory_list[:8]
+                    )
+                    logger.info(
+                        "BF-631 DM-recall: agent=%s q=%r n=%d :: %s",
+                        _diag_id, query[:60], len(memory_list), _diag_summ,
+                    )
         except Exception:
             logger.warning("BF-138: Failed to fetch episodic memory context — agent will respond without memory", exc_info=True)
 
