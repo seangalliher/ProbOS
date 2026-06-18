@@ -33,6 +33,7 @@ def _make_runtime_with_tts(
     enabled: bool = True,
     backend: str = "piper",
     voice_model: str = "en_US-amy-medium",
+    voices_dir: str | None = None,
 ) -> Any:
     """Minimal runtime stub for the avatars router."""
 
@@ -41,6 +42,7 @@ def _make_runtime_with_tts(
         backend=backend,
         voice_model=voice_model,
         binary_path="tools/piper/piper.exe",
+        voices_dir=voices_dir or "tools/piper/voices",
         timeout_seconds=10.0,
         noise_scale=0.85,
         length_scale=0.92,
@@ -70,7 +72,7 @@ def _make_app(runtime: Any):
 
 def test_bf291_tts_voices_lists_only_complete_pairs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Voices with a missing .onnx.json sidecar must NOT appear in the list."""
-    voices_dir = tmp_path / "tools" / "piper" / "voices"
+    voices_dir = tmp_path / "assets" / "voices"
     voices_dir.mkdir(parents=True)
     # Complete pair — should appear.
     (voices_dir / "en_US-foo-medium.onnx").write_bytes(b"x" * 1024)
@@ -78,9 +80,13 @@ def test_bf291_tts_voices_lists_only_complete_pairs(tmp_path: Path, monkeypatch:
     # Orphan onnx, missing sidecar — must be filtered out.
     (voices_dir / "en_US-orphan-medium.onnx").write_bytes(b"x" * 1024)
 
-    monkeypatch.chdir(tmp_path)
+    # AD-1025a: the listing resolves the configured (absolute) voices_dir,
+    # NOT the CWD. chdir somewhere WITHOUT the voices to prove independence.
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
 
-    runtime = _make_runtime_with_tts()
+    runtime = _make_runtime_with_tts(voices_dir=str(voices_dir))
     client = TestClient(_make_app(runtime))
     resp = client.get("/api/avatars/tts/voices")
     assert resp.status_code == 200
@@ -92,14 +98,16 @@ def test_bf291_tts_voices_lists_only_complete_pairs(tmp_path: Path, monkeypatch:
 
 
 def test_bf291_tts_voices_parses_lang_voice_quality(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    voices_dir = tmp_path / "tools" / "piper" / "voices"
+    voices_dir = tmp_path / "assets" / "voices"
     voices_dir.mkdir(parents=True)
     (voices_dir / "en_GB-cori-high.onnx").write_bytes(b"x" * 2048)
     (voices_dir / "en_GB-cori-high.onnx.json").write_text("{}")
 
-    monkeypatch.chdir(tmp_path)
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
 
-    runtime = _make_runtime_with_tts()
+    runtime = _make_runtime_with_tts(voices_dir=str(voices_dir))
     client = TestClient(_make_app(runtime))
     resp = client.get("/api/avatars/tts/voices")
     assert resp.status_code == 200
@@ -111,23 +119,53 @@ def test_bf291_tts_voices_parses_lang_voice_quality(tmp_path: Path, monkeypatch:
     assert entry["size_mb"] >= 0
 
 
-def test_bf291_tts_voices_returns_empty_when_dir_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # No tools/piper/voices/ at all.
-    monkeypatch.chdir(tmp_path)
-    runtime = _make_runtime_with_tts()
+def test_bf291_tts_voices_returns_empty_when_dir_missing(tmp_path: Path) -> None:
+    # Configured (absolute) voices dir does not exist → empty list.
+    missing = tmp_path / "assets" / "voices"
+    runtime = _make_runtime_with_tts(voices_dir=str(missing))
     client = TestClient(_make_app(runtime))
     resp = client.get("/api/avatars/tts/voices")
     assert resp.status_code == 200
     assert resp.json()["voices"] == []
 
 
-def test_bf291_tts_voices_reports_current_voice_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    runtime = _make_runtime_with_tts(voice_model="en_US-ryan-medium")
+def test_bf291_tts_voices_reports_current_voice_model(tmp_path: Path) -> None:
+    runtime = _make_runtime_with_tts(
+        voice_model="en_US-ryan-medium",
+        voices_dir=str(tmp_path / "assets" / "voices"),
+    )
     client = TestClient(_make_app(runtime))
     resp = client.get("/api/avatars/tts/voices")
     assert resp.status_code == 200
     assert resp.json()["current"] == "en_US-ryan-medium"
+
+
+def test_ad1025a_voice_listing_anchors_relative_dir_to_install_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AD-1025a: the default RELATIVE voices_dir ('tools/piper/voices') anchors
+    to the ProbOS install root, not the CWD — reproduces the launch-from-a-
+    sibling-folder incident where the picker showed no voices."""
+    import probos.audio.tts.piper_backend as pb
+
+    fake_root = tmp_path / "install_root"
+    voices_dir = fake_root / "tools" / "piper" / "voices"
+    voices_dir.mkdir(parents=True)
+    (voices_dir / "en_US-amy-medium.onnx").write_bytes(b"x" * 1024)
+    (voices_dir / "en_US-amy-medium.onnx.json").write_text("{}")
+    monkeypatch.setattr(pb, "_probos_root", lambda: fake_root)
+
+    # CWD is a sibling folder WITHOUT tools/piper/voices (the incident).
+    cwd = tmp_path / "sibling"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+
+    runtime = _make_runtime_with_tts()  # default relative voices_dir
+    client = TestClient(_make_app(runtime))
+    resp = client.get("/api/avatars/tts/voices")
+    assert resp.status_code == 200
+    names = [v["name"] for v in resp.json()["voices"]]
+    assert "en_US-amy-medium" in names
 
 
 # --------------------------------------------------------------------------- #

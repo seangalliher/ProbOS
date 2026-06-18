@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from probos.audio.tts.piper_backend import resolve_voices_dir
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -123,12 +124,17 @@ async def tts_voices(
     cfg = getattr(runtime.config, "tts", None)
     backend = str(getattr(cfg, "backend", "browser")) if cfg is not None else "browser"
     current = str(getattr(cfg, "voice_model", "")) if cfg is not None else ""
+    voices_dir = (
+        str(getattr(cfg, "voices_dir", "tools/piper/voices"))
+        if cfg is not None else "tools/piper/voices"
+    )
 
     voices: list[dict[str, Any]] = []
     try:
-        from pathlib import Path
-
-        base = Path("tools/piper/voices").resolve()
+        # AD-1025a: anchor the voices dir to the ProbOS install root (via the
+        # shared AD-1025 helper), NOT the process CWD — so the picker lists
+        # the same voices the backend uses regardless of launch directory.
+        base = resolve_voices_dir(voices_dir)
         if base.is_dir():
             for onnx in sorted(base.glob("*.onnx")):
                 if not onnx.is_file():

@@ -51,6 +51,15 @@ def _anchor_path(configured: str) -> Path:
     return candidate.resolve()
 
 
+def resolve_voices_dir(voices_dir: str) -> Path:
+    """AD-1025a: anchor the configured Piper voices directory to the ProbOS
+    install root. Public helper shared by ``PiperBackend.synthesize`` and the
+    ``GET /api/avatars/tts/voices`` listing endpoint so both resolve the same
+    location regardless of the process CWD. Absolute as-is; relative under
+    ``_probos_root()``; NEVER the CWD. NEVER raises."""
+    return _anchor_path(voices_dir)
+
+
 def _resolve_binary_path(configured: str) -> Path | None:
     """Resolve ``configured`` against the ProbOS install root (AD-1025/DD-1):
     absolute used as-is, relative anchored to ``_probos_root()`` (NOT the
