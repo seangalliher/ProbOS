@@ -242,6 +242,7 @@ Cross-cutting: `federation/` (bridge, router, transport), `knowledge/` (Git-back
 9. **Correction feedback loop**: Human corrections are the richest learning signal. CorrectionDetector -> AgentPatcher -> hot-reload -> auto-retry -> trust/Hebbian/episodic update.
 10. **Mesh-fetch for HTTP**: Designed agents must route HTTP through `self._runtime.intent_bus.broadcast(IntentMessage(intent="http_fetch"))` — not raw httpx. This preserves governance (consensus, trust, event logging) and benefits from the per-domain rate limiter in HttpFetchAgent. The AgentDesigner template enforces this pattern.
 11. **Per-domain rate limiting**: HttpFetchAgent has a class-level `_domain_state` dict with per-domain request intervals (default 2s, CoinGecko 3s). Adaptive: reads `Retry-After` and `X-RateLimit-*` headers. Auto-retries once on 429. All mesh HTTP goes through this.
+12. **Composable cognition (agents are organisms)**: Principle #1 applied *fractally, inward*. A cognitive agent is an **organism** — a **spine** plus a set of **cognitive organs** (attention, memory, valuation, perception, dreaming, …). The **spine** is the agent's central nervous system (synchronous, in-process, private: organ composition + the cognitive cycle + intra-organ signaling); the **mesh** is the ship's nervous system across agents (asynchronous, governed) — same pattern, scale-appropriate properties. **Organs are child components**: born with the parent, die with the parent, identity namespaced under it (`{parent_id}.attention`) — **not** mesh-registered agents (organs are components; agents are mesh peers; do not build an `AttentionAgent`). A capability is an organ only if it passes the five-part test (distinct cognitive function · persistent cross-cycle state · `perceive→decide→act` shape · 1:1 ownership · introspectable); compose **organs, not neurons** — do not metastasize. **Migration MUST be behavior-preserving** (default-OFF / zero-organ byte-identical first) — moving to this model must never disrupt or break existing cognitive agents. See `docs/development/composable-cognition.md`.
 
 ### HXI Design Principles
 
@@ -266,6 +267,8 @@ Three architectural tiers mapping to the Nooplex's layered architecture:
 - **Core** (Infrastructure) — deterministic tool agents: file I/O, shell, HTTP, heartbeat. Domain-agnostic. Never removed, always available.
 - **Utility** (Meta-Cognitive) — system maintenance: introspection, QA, red team. Operate on the system, not for the user. Access to internal state.
 - **Domain** (Cognitive) — user-facing work. Where CognitiveAgents live. Designed agents land here by default. Each domain develops its own Hebbian topology.
+
+**Orthogonal layer — Cognitive Organs (intra-agent composition, AD-1033+).** The three tiers classify an agent's *mesh role*. Beneath that, a cognitive agent is *composed of* **cognitive organs** — child components on the agent's **spine**, born/die with the parent (Design Principle #12). Organs are **not** a mesh tier and **not** registered agents; they are components, with identity namespaced under the parent. The Core/Utility/Domain tiers classify the agent; organs classify its internal composition. See `docs/development/composable-cognition.md`.
 
 ### The Nooplex Connection
 

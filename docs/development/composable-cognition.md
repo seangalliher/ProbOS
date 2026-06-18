@@ -119,6 +119,12 @@ An organ may itself be a composed brain (its own sub-spine + sub-organs) — e.g
 architecture **permits** this recursion but **keeps it shallow** (1–2 levels) to
 start. Most organs are leaves; earn depth where a faculty genuinely is a sub-society.
 
+**Organs, not neurons (hard guardrail).** The granularity stops at the *organ*. We
+compose bounded faculties, not neuron-level sub-agents — decomposing an organ into a
+swarm of tiny "neurons" is over-engineering with no payoff at this scale. The
+five-part test (§2.1) is the floor: if it isn't a distinct, stateful, introspectable
+faculty, it's a plain module — not an organ, and never a neuron-agent.
+
 ## 3. The body plan (brain-region map) — and ProbOS's latent organs
 
 The organs aren't arbitrary; they map to a real cognitive architecture, and ProbOS
@@ -132,7 +138,7 @@ already has seeds of most of them:
 | **Valuation / affect** | amygdala | cognitive zones / arousal (AD-588) + affective salience (#908) |
 | **Metacognition / self-monitoring** | prefrontal | self-monitoring (AD-504), confab guard (AD-592), source attribution (AD-568) |
 | **Interoception / body sense** | insula | avatar self-observation (AD-722) |
-| **Consolidation / reflection** | default-mode network | dreaming (today a shared runtime service — a "personal vs shared" candidate) |
+| **Consolidation / reflection** | default-mode network | dreaming → **becoming a personal organ** (decided; AD-1035) so agents dream independently |
 | **Perception** | sensory cortices | the **sensorium** taxonomy (PROPRIO / INTERO / EXTERO) — already organ-flavored |
 
 The sensorium layering is the strongest tell that ProbOS has been drifting toward
@@ -210,9 +216,13 @@ synchronous) or a **shared ship faculty** (mesh service, governed, single-source
 - **Rule:** personal when it's intimate to one mind's identity/sovereignty and needs
   private synchronous access; shared when it's ship-level truth, needs governance, or
   benefits from a single source. Some capabilities are *both* (a personal
-  working-memory organ over a shared episodic store). **Open revisit:** dreaming and
-  consolidation are currently shared runtime services — candidates to become personal
-  organs.
+  working-memory organ over a shared episodic store). **Decided (2026-06-18):**
+  **dreaming becomes a personal organ** (AD-1035) — each agent dreams *independently*
+  over its own episodic shard, rather than a single shared runtime consolidation pass.
+  This unlocks per-agent dream cadence (some agents dream more than others),
+  independent dream *exploration*, and the agent *interpreting its own dreams*
+  (AD-980/#909 becomes an organ capability). The episodic *store* stays shared (per-agent
+  shards); the *dreaming faculty* becomes personal.
 
 ## 7. Realization (the attention organ is the pilot — and it carries the foundation)
 
@@ -236,21 +246,29 @@ Build order (dependency, not AD-number order):
 
 ## 8. Non-goals & guardrails
 
-- **Not a rewrite.** Concept + seam + pilot + *retroactive classification* of the
-  proto-organs (name them without rewriting) + *opportunistic* migration. Strangler-fig.
+- **Not a rewrite — and non-disruptive (load-bearing constraint).** Concept + seam +
+  pilot + *retroactive classification* of the proto-organs (name them without
+  rewriting) + *opportunistic* migration. Strangler-fig. Every step is
+  behavior-preserving (default-OFF / zero-organ byte-identical); moving the existing
+  cognitive agents to this architecture must **never disrupt or break them.** The goal
+  is a more elegant architecture that scales — not a big-bang rebuild.
 - **Don't metastasize.** The five-part test gates what becomes an organ; helpers stay
-  helpers. Resist "everything is now an organ."
+  helpers. Resist "everything is now an organ." **Organs, not neurons.**
 - **Don't network the spine.** The spine is synchronous, in-process, ungoverned.
 - **Behavior-preserving foundations.** AD-1033/1034 ship byte-identical (default-OFF /
   zero-organ); adaptivity comes later and gated.
 - **Deterministic-by-default organs** — no consensus/trust/LLM for internal calls.
 
-## 9. Open decisions (for the Captain)
+## 9. Decisions (2026-06-18)
 
-1. **Design-Principle elevation.** Should "cognitive agents are organisms — a spine
-   plus organs" become a principle in `.github/copilot-instructions.md`?
-   *Recommendation: prove it with the attention pilot, then elevate — concept first,
-   principle once it's load-bearing.*
-2. **Personal vs shared revisits.** Should dreaming/consolidation (currently shared)
-   become personal organs?
-3. **Recursion depth.** Keep at 1–2 levels until a real composite organ earns more.
+1. **Design-Principle elevation — DONE.** "Composable cognition (agents are
+   organisms)" is now **Design Principle #12** in `.github/copilot-instructions.md`,
+   with the cognitive-organ layer noted in the Agent Classification Framework. We
+   elevated *now* rather than after the pilot — the Captain judged it the right
+   foundation (and an early miss not to have started here), under the hard constraint
+   that migration stays **non-disruptive**.
+2. **Dreaming becomes a personal organ — DECIDED (AD-1035).** Agents dream
+   independently over their own shard; see §6. Unlocks dream interpretation, independent
+   exploration, and per-agent cadence.
+3. **Recursion depth — capped at the organ level.** *Organs, not neurons* (§2.7); 1–2
+   levels only, and only where a faculty genuinely is a sub-society.
