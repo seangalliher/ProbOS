@@ -2668,6 +2668,14 @@ class TTSConfig(BaseModel):
     voice is responsible for the license check until AD-738a surfaces
     a license display in the per-agent voice selector."""
 
+    voices_dir: str = "tools/piper/voices"
+    """AD-1025: directory holding the Piper voice model files
+    (``<voice_model>.onnx`` + ``.onnx.json``). A relative path resolves
+    against the ProbOS install root (NOT the process CWD); an absolute path
+    is used as-is. Default preserves the historical ``tools/piper/voices``
+    location, so existing installs need no change. Operator places the
+    files; the repo never ships them (gitignored under ``/tools/``)."""
+
     timeout_seconds: float = 10.0
     """Subprocess timeout. Piper on a sentence-length input typically
     takes 0.3-1.5s on CPU; default leaves ample headroom for cold

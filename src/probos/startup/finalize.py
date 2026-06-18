@@ -1051,7 +1051,10 @@ async def _wire_relationship_inference(
 
     from probos.knowledge.rejection_cache import SQLiteRejectionCache
 
-    data_dir = getattr(config, "data_dir", "data")
+    # AD-1025/DD-3 (BF-628 class): anchor the rejection-cache DB to the
+    # absolute runtime data dir (runtime.data_dir, AD-468), not the relative
+    # config.data_dir fallback, so the cache opens regardless of launch CWD.
+    data_dir = runtime.data_dir
     db_path = str(Path(data_dir) / "rejection_cache.sqlite")
     cache = SQLiteRejectionCache(db_path)
     try:

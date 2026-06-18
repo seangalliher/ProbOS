@@ -182,6 +182,7 @@ async def test_piper_backend_missing_voice_model_returns_none(
     backend = PiperBackend(
         binary_path=str(fake_bin),
         voice_model="missing-voice",
+        voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
     )
     assert await backend.synthesize("hi") is None
     assert any("piper voice model" in r.message for r in caplog.records)
@@ -220,6 +221,7 @@ async def test_piper_backend_subprocess_timeout_returns_none(
     )
     backend = PiperBackend(
         binary_path=str(fake_bin), voice_model="v", timeout_seconds=0.2,
+        voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
     )
     assert await backend.synthesize("hello") is None
     assert stub.killed is True
@@ -240,7 +242,10 @@ async def test_piper_backend_nonzero_exit_returns_none(
         "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
-    backend = PiperBackend(binary_path=str(fake_bin), voice_model="v")
+    backend = PiperBackend(
+        binary_path=str(fake_bin), voice_model="v",
+        voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
+    )
     assert await backend.synthesize("hi") is None
     assert any(
         "piper exit=1" in r.message and "piper: bad model" in r.message
@@ -262,7 +267,10 @@ async def test_piper_backend_zero_bytes_returns_none(
         "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
-    backend = PiperBackend(binary_path=str(fake_bin), voice_model="v")
+    backend = PiperBackend(
+        binary_path=str(fake_bin), voice_model="v",
+        voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
+    )
     assert await backend.synthesize("hi") is None
     assert any("0 bytes" in r.message for r in caplog.records)
 
@@ -279,7 +287,10 @@ async def test_piper_backend_happy_path_returns_wav(monkeypatch, tmp_path):
         "subprocess.Popen",
         _make_subprocess_factory(stub),
     )
-    backend = PiperBackend(binary_path=str(fake_bin), voice_model="v")
+    backend = PiperBackend(
+        binary_path=str(fake_bin), voice_model="v",
+        voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
+    )
     result = await backend.synthesize("hello world")
     assert result is not None
     assert result.mime == "audio/wav"
@@ -295,15 +306,16 @@ def test_resolve_binary_path_appends_exe_on_windows(monkeypatch, tmp_path):
     assert resolved.name == "piper.exe"
 
 
-def test_resolve_voice_model_requires_both_files(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
+def test_resolve_voice_model_requires_both_files(tmp_path):
+    # AD-1025: _resolve_voice_model now takes an explicit (already-anchored)
+    # voices base instead of resolving tools/piper/voices against the CWD.
     voices = tmp_path / "tools" / "piper" / "voices"
     voices.mkdir(parents=True)
     # Only the .onnx file — no .onnx.json → must return None.
     (voices / "x.onnx").write_bytes(b"")
-    assert _resolve_voice_model("x") is None
+    assert _resolve_voice_model("x", voices) is None
     (voices / "x.onnx.json").write_bytes(b"{}")
-    resolved = _resolve_voice_model("x")
+    resolved = _resolve_voice_model("x", voices)
     assert resolved is not None
     assert resolved.name == "x.onnx"
 

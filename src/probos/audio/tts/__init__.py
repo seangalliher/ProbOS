@@ -24,6 +24,7 @@ def select_backend(backend_name: str, config: "TTSConfig") -> TTSBackend:
         return PiperBackend(
             binary_path=config.binary_path,
             voice_model=config.voice_model,
+            voices_dir=config.voices_dir,
             timeout_seconds=config.timeout_seconds,
             noise_scale=config.noise_scale,
             length_scale=config.length_scale,

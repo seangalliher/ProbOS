@@ -129,6 +129,7 @@ async def test_piper_backend_applies_override_at_synthesis(monkeypatch, tmp_path
     backend = PiperBackend(
         binary_path=str(fake_bin),
         voice_model="v",
+        voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
         noise_scale=0.85,
         length_scale=1.0,
         noise_w=1.0,
@@ -163,6 +164,7 @@ async def test_piper_backend_no_emotion_uses_defaults(monkeypatch, tmp_path):
     backend = PiperBackend(
         binary_path=str(fake_bin),
         voice_model="v",
+        voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
         noise_scale=0.85,
         length_scale=1.0,
         noise_w=1.0,

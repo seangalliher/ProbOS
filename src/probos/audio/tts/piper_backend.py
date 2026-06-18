@@ -28,10 +28,35 @@ from probos.audio.tts.prosody import resolve_prosody_overrides
 logger = logging.getLogger(__name__)
 
 
+def _probos_root() -> Path:
+    """AD-1025: the ProbOS install/repo root.
+
+    ``src/probos/audio/tts/piper_backend.py`` -> ``parents[4]`` walks
+    tts->audio->probos->src->root. Mirrors ``__main__.py``'s ``project_root``
+    (``Path(__file__).resolve().parent.parent.parent`` from
+    ``src/probos/__main__.py``) -- both land on the repo root that holds the
+    bundled, gitignored ``tools/`` directory. Verified by counting segments.
+    """
+    return Path(__file__).resolve().parents[4]
+
+
+def _anchor_path(configured: str) -> Path:
+    """AD-1025 (DD-1): anchor a configured asset path to the ProbOS install
+    root, never the process CWD. An absolute path is returned resolved
+    as-is; a relative path resolves against ``_probos_root()``. NEVER raises.
+    Mirrors the bundled-tools anchor in ``__main__.py``."""
+    candidate = Path(configured)
+    if not candidate.is_absolute():
+        candidate = _probos_root() / candidate
+    return candidate.resolve()
+
+
 def _resolve_binary_path(configured: str) -> Path | None:
-    """Resolve ``configured``, auto-appending ``.exe`` on Windows. Returns
-    ``None`` if not found. NEVER raises. Mirrors the AD-721b-1 helper."""
-    p = Path(configured).resolve()
+    """Resolve ``configured`` against the ProbOS install root (AD-1025/DD-1):
+    absolute used as-is, relative anchored to ``_probos_root()`` (NOT the
+    CWD). Auto-appends ``.exe`` on Windows. Returns ``None`` if not found.
+    NEVER raises. Mirrors the AD-721b-1 helper."""
+    p = _anchor_path(configured)
     if p.is_file():
         return p
     if sys.platform == "win32" and p.suffix.lower() != ".exe":
@@ -41,13 +66,13 @@ def _resolve_binary_path(configured: str) -> Path | None:
     return None
 
 
-def _resolve_voice_model(voice_model: str) -> Path | None:
-    """Resolve the ONNX model path under ``tools/piper/voices/``. Piper
-    requires BOTH ``<name>.onnx`` and ``<name>.onnx.json`` to exist;
-    returns ``None`` if either is missing. NEVER raises."""
-    base = Path("tools/piper/voices").resolve()
-    onnx = base / f"{voice_model}.onnx"
-    json_path = base / f"{voice_model}.onnx.json"
+def _resolve_voice_model(voice_model: str, voices_base: Path) -> Path | None:
+    """Resolve the ONNX model path under ``voices_base`` (AD-1025/DD-2: the
+    caller anchors the configured ``voices_dir`` via ``_anchor_path``). Piper
+    requires BOTH ``<name>.onnx`` and ``<name>.onnx.json`` to exist; returns
+    ``None`` if either is missing. NEVER raises."""
+    onnx = voices_base / f"{voice_model}.onnx"
+    json_path = voices_base / f"{voice_model}.onnx.json"
     if not onnx.is_file() or not json_path.is_file():
         return None
     return onnx
@@ -72,6 +97,7 @@ class PiperBackend:
         self,
         binary_path: str,
         voice_model: str,
+        voices_dir: str = "tools/piper/voices",
         timeout_seconds: float = 10.0,
         noise_scale: float = 0.85,
         length_scale: float = 1.0,
@@ -80,6 +106,7 @@ class PiperBackend:
     ) -> None:
         self._binary_path = binary_path
         self._voice_model = voice_model
+        self._voices_dir = voices_dir
         self._timeout_seconds = timeout_seconds
         self._noise_scale = noise_scale
         self._length_scale = length_scale
@@ -114,15 +141,23 @@ class PiperBackend:
         binary = _resolve_binary_path(self._binary_path)
         if binary is None:
             logger.warning(
-                "AD-738: piper binary not found at %s; degrading to browser",
+                "AD-738/AD-1025: piper binary not found (configured=%r, "
+                "resolved=%s); install the binary there or set tts.binary_path "
+                "(relative paths anchor to the ProbOS root, not the CWD); "
+                "degrading to browser",
                 self._binary_path,
+                _anchor_path(self._binary_path),
             )
             return None
+        # AD-1025/DD-2: anchor the configured voices dir to the ProbOS install
+        # root (absolute as-is, relative under _probos_root()), never the CWD.
+        # Both the configured voice and the BF-291 override resolve under it.
+        voices_base = _anchor_path(self._voices_dir)
         # BF-291 / AD-738f: per-call voice override. Resolve first; on
         # failure log at DEBUG and fall back to the configured voice.
         effective_voice = self._voice_model
         if voice_override and isinstance(voice_override, str):
-            override_path = _resolve_voice_model(voice_override)
+            override_path = _resolve_voice_model(voice_override, voices_base)
             if override_path is not None:
                 effective_voice = voice_override
                 logger.debug(
@@ -132,16 +167,18 @@ class PiperBackend:
                 )
             else:
                 logger.debug(
-                    "BF-291: piper voice override %r missing under "
-                    "tools/piper/voices/; falling back to configured %r",
-                    voice_override, self._voice_model,
+                    "BF-291: piper voice override %r missing under %s; "
+                    "falling back to configured %r",
+                    voice_override, voices_base, self._voice_model,
                 )
-        model = _resolve_voice_model(effective_voice)
+        model = _resolve_voice_model(effective_voice, voices_base)
         if model is None:
             logger.warning(
-                "AD-738: piper voice model %r missing under tools/piper/voices/ "
-                "(need both <name>.onnx and <name>.onnx.json); degrading to browser",
+                "AD-738/AD-1025: piper voice model %r missing under %s "
+                "(need both <name>.onnx and <name>.onnx.json); install the "
+                "model files there or set tts.voices_dir; degrading to browser",
                 effective_voice,
+                voices_base,
             )
             return None
         # AD-738e-1: resolve per-emotion prosody overrides for THIS call.
