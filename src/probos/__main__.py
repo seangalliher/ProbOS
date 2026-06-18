@@ -70,7 +70,46 @@ def _probos_home() -> Path:
     return Path.home() / ".probos"
 
 
-def _setup_logging(log_level: str) -> None:
+def _console_log_level(log_level: str, verbose: bool) -> int:
+    """Resolve the console log handler level (AD-1026, DD-1).
+
+    Default (``verbose=False``) keeps the console quiet at WARNING+ so the
+    boot output surfaces only issues; ``verbose=True`` restores the
+    configured level (the historical behavior) for the full INFO/DEBUG
+    console stream. The rotating file handler always stays at INFO+
+    regardless of this value.
+    """
+    if verbose:
+        return getattr(logging, log_level.upper(), logging.INFO)
+    return logging.WARNING
+
+
+class _BootWarningCounter(logging.Handler):
+    """Module-level handler tallying WARNING+ records during boot (AD-1026).
+
+    Powers the end-of-boot health pointer (DD-4): after a quiet boot the
+    operator still learns that *something* was logged and where the full
+    detail lives. Counts WARNING and above only; INFO/DEBUG are ignored.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.count = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.levelno >= logging.WARNING:
+            self.count += 1
+
+
+_boot_warning_handler = _BootWarningCounter()
+
+
+def _boot_warning_count() -> int:
+    """Return WARNING+ records seen since the last ``_setup_logging`` call."""
+    return _boot_warning_handler.count
+
+
+def _setup_logging(log_level: str, verbose: bool = False) -> None:
     """Configure logging for shell mode — suppress noisy output.
 
     BF (2026-05-12): always write a rotating file log to the platform data
@@ -87,9 +126,17 @@ def _setup_logging(log_level: str) -> None:
     )
     root = logging.getLogger()
     root.setLevel(getattr(logging, log_level.upper(), logging.WARNING))
+    # AD-1026 (DD-4): reset + attach the WARNING+ counter so the end-of-boot
+    # health pointer reflects only this boot's notices.
+    _boot_warning_handler.count = 0
+    if _boot_warning_handler not in root.handlers:
+        root.addHandler(_boot_warning_handler)
     # Console handler (stderr by default — Rich Console handles stdout).
+    # AD-1026 (DD-1): quiet by default (WARNING+); --verbose restores the
+    # configured level. The file handler below stays at INFO+ either way.
     _console_h = logging.StreamHandler()
     _console_h.setFormatter(formatter)
+    _console_h.setLevel(_console_log_level(log_level, verbose))
     root.addHandler(_console_h)
     # File handler — best-effort; never block startup if the dir is missing.
     try:
@@ -401,11 +448,57 @@ def _load_config_with_fallback(config_path: Path | None) -> tuple:
     return load_config(default_path), default_path
 
 
+def _render_boot_summary(status: dict, verbose: bool) -> list[str]:
+    """Render the pool-section boot lines (AD-1026, DD-2).
+
+    Returns Rich-markup strings for the caller to print. ``verbose=True``
+    reproduces the pre-AD-1026 per-pool detail (one line per pool, plus the
+    red-team and a labelled Total line) byte-for-byte. The default collapsed
+    view returns a single ``{total} agents across {N} pools`` summary plus the
+    red-team line — but any pool below its target size still surfaces its own
+    line so a degraded boot is never hidden behind the collapse.
+    """
+    pools: dict = status.get("pools", {})
+    total_agents = status.get("total_agents", 0)
+    red_team = status.get("consensus", {}).get("red_team_agents", 0)
+    lines: list[str] = []
+
+    def _pool_line(name: str, info: dict) -> str:
+        return (
+            f"  [green]\u2713[/green] Pool [bold]{name}[/bold]: "
+            f"{info.get('current_size', 0)} {info.get('agent_type', '')} agents"
+        )
+
+    if verbose:
+        for name, info in pools.items():
+            lines.append(_pool_line(name, info))
+    else:
+        # DD-2: surface any pool that booted below its target size.
+        for name, info in pools.items():
+            if info.get("current_size", 0) < info.get("target_size", 0):
+                lines.append(_pool_line(name, info))
+        lines.append(
+            f"  [green]\u2713[/green] {total_agents} agents across "
+            f"{len(pools)} pools"
+        )
+
+    lines.append(
+        f"  [green]\u2713[/green] Red team: {red_team} verification agents"
+    )
+    if verbose:
+        lines.append(
+            f"  [green]\u2713[/green] Total: {total_agents} agents across "
+            f"{len(pools)} pools"
+        )
+    return lines
+
+
 async def _boot_runtime(
     config_path: Path | None = None,
     fresh: bool = False,
     data_dir: Path | None = None,
     console: Console | None = None,
+    verbose: bool = False,
 ) -> tuple:
     """Boot the runtime and return (runtime, config, console)."""
     if console is None:
@@ -426,7 +519,7 @@ async def _boot_runtime(
     if fresh:
         config.knowledge.restore_on_boot = False
 
-    _setup_logging(config.system.log_level)
+    _setup_logging(config.system.log_level, verbose=verbose)
 
     # Use stable data directory (not temp)
     data_path = data_dir or _default_data_dir()
@@ -490,32 +583,32 @@ async def _boot_runtime(
     with console.status("  Initializing infrastructure..."):
         await runtime.start()
 
-    # Show what was created
+    # Show what was created (AD-1026, DD-2: collapsed by default; --verbose
+    # restores the full per-pool detail).
     status = runtime.status()
-    for name, pool in runtime.pools.items():
-        info = pool.info()
-        console.print(
-            f"  [green]\u2713[/green] Pool [bold]{name}[/bold]: "
-            f"{info['current_size']} {info['agent_type']} agents"
-        )
-    console.print(
-        f"  [green]\u2713[/green] Red team: "
-        f"{status['consensus']['red_team_agents']} verification agents"
-    )
-    console.print(
-        f"  [green]\u2713[/green] Total: "
-        f"{status['total_agents']} agents across "
-        f"{len(status['pools'])} pools"
-    )
+    for _summary_line in _render_boot_summary(status, verbose):
+        console.print(_summary_line)
     console.print()
     console.print("[bold green]ProbOS ready.[/bold green]")
+
+    # AD-1026 (DD-4): when the quiet default boot logged any WARNING+, point
+    # the operator at the full file log and the --verbose flag. Verbose mode
+    # already printed the detail, so the pointer is suppressed there.
+    _boot_notices = _boot_warning_count()
+    if _boot_notices > 0 and not verbose:
+        from probos.runtime import _platform_data_dir
+        _boot_logfile = _platform_data_dir() / "logs" / "probos.log"
+        console.print(
+            f"[dim]\u26a0 {_boot_notices} notice(s) during boot \u2014 full log: "
+            f"{_boot_logfile}; rerun with --verbose for detail.[/dim]"
+        )
 
     return runtime, config, console
 
 
-async def _boot_and_run(config_path: Path | None = None, fresh: bool = False, data_dir: Path | None = None) -> None:
+async def _boot_and_run(config_path: Path | None = None, fresh: bool = False, data_dir: Path | None = None, verbose: bool = False) -> None:
     """Boot runtime and launch interactive shell."""
-    runtime, config, console = await _boot_runtime(config_path, fresh, data_dir)
+    runtime, config, console = await _boot_runtime(config_path, fresh, data_dir, verbose=verbose)
 
     console.print(
         "[dim]Type /help for commands, or enter a natural language request.[/dim]"
@@ -568,6 +661,7 @@ async def _serve(
     port: int = 18900,
     interactive: bool = False,
     discord: bool = False,
+    verbose: bool = False,
     force_unclean: bool = False,
 ) -> None:
     """Boot runtime and start the FastAPI/uvicorn server."""
@@ -643,7 +737,7 @@ async def _serve(
             pass
         raise SystemExit(4) from _exc
 
-    runtime, config, console = await _boot_runtime(config_path, fresh, data_dir, console)
+    runtime, config, console = await _boot_runtime(config_path, fresh, data_dir, console, verbose=verbose)
 
     if fresh:
         runtime._fresh_boot = True
@@ -2307,6 +2401,10 @@ def main() -> None:
     serve_parser.add_argument("--host", type=str, default="127.0.0.1", help="Bind address")
     serve_parser.add_argument("--port", type=int, default=18900, help="Bind port")
     serve_parser.add_argument("--interactive", action="store_true", help="Also run interactive shell")
+    serve_parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Detailed boot log (INFO+ on console, per-pool detail)",
+    )
     serve_parser.add_argument("--discord", action="store_true", help="Also start Discord bot adapter")
     serve_parser.add_argument(
         "--force-unclean", action="store_true",
@@ -2377,6 +2475,7 @@ def main() -> None:
                 port=args.port,
                 interactive=args.interactive,
                 discord=args.discord,
+                verbose=args.verbose,
                 force_unclean=getattr(args, "force_unclean", False),
             ))
         except KeyboardInterrupt:
@@ -2385,7 +2484,7 @@ def main() -> None:
 
     # Default: interactive shell (backward compatible)
     try:
-        asyncio.run(_boot_and_run(config_path=args.config, fresh=args.fresh, data_dir=args.data_dir))
+        asyncio.run(_boot_and_run(config_path=args.config, fresh=args.fresh, data_dir=args.data_dir, verbose=False))
     except KeyboardInterrupt:
         pass
 
