@@ -37,7 +37,7 @@ Consequences (see the research doc for the full map):
 4. **Deterministic and fast on the hot path.** No LLM call, no mesh round-trip to decide what goes in the prompt. Arbitration is arithmetic.
 5. **Behavior-preserving first.** The seam ships byte-identical (fixed priorities = today's order), then becomes adaptive behind default-OFF flags.
 6. **Auditable.** Every turn's bid competition is introspectable — "why did the agent attend to X?" is answerable from a trace.
-7. **Agent-native.** Modeled as a deterministic paired faculty with the `perceive → decide → act` shape and an identity — not a hidden helper, not a chatty mesh peer.
+7. **Composed, not federated.** Realized as a **Cognitive Organ** — a *child component* of the cognitive agent (born when the parent is born, dies when the parent dies), sharing the `perceive → decide → act` shape — **not** a registered mesh agent and **not** a hidden helper.
 
 ## 3. The decision: a per-agent deterministic Attention Faculty (paired cognitive organ)
 
@@ -45,7 +45,7 @@ Consequences (see the research doc for the full map):
 
 - **A — Mesh-level attention service.** *Rejected.* It is a **central scheduler** — the exact anti-pattern ProbOS's Design Principle #1 forbids ("no central scheduler"). It would need every agent's private working set to decide their focus, breaching **sovereignty/shard isolation (AD-397)**, and would be a throughput bottleneck and single point of failure.
 - **B — In-process helper class.** Workable and fast, but it's "just a class": no identity, no audit trail, doesn't honor the agent-native principle, and tends to accrete hidden state.
-- **C — A deterministic Attention Faculty modeled as a paired agent.** *Chosen.* In-process and synchronous (fast, intimate access), **no LLM**, with an **identity** and an **audit trail**; **subscribes to the mesh** for exogenous salience between turns. Honors "every component is an agent" without the overhead of making it a chatty mesh peer.
+- **C — A deterministic Attention Faculty as a *Cognitive Organ* (a child component of the agent).** *Chosen.* In-process and synchronous (fast, intimate access), **no LLM**, with a parent-derived **identity** and an **audit trail**; **subscribes to the mesh** for exogenous salience between turns. Honors the agent-native principle *fractally* (a faculty composing a mind) without misclassifying a component as a mesh peer.
 
 ### 3.2 Why per-agent, not mesh-level
 
@@ -54,24 +54,48 @@ Consequences (see the research doc for the full map):
 - **Sovereignty (AD-397).** An agent's working set is private to its shard; a central service would have to breach that isolation.
 - **Coordination still happens — through the mesh, as bias not control.** Per-agent faculties *subscribe* to mesh signals (an @mention, "the Captain addressed the whole room," a bridge alert, peer gossip). Those arrive as a **top-down bias** on the *local* competition — biased competition with a mesh-sourced signal — without centralizing the decision. This is the right shape: the mesh shapes attention; the agent owns it.
 
-### 3.3 Answering the Captain's question: "could the controller be a deterministic agent each cognitive agent is paired with?"
+### 3.3 Identity & lifecycle: a Cognitive Organ is a *child component*, not an agent
 
-**Yes — and it should be — with one crucial nuance about *how* it's an agent.**
+The controller is **not classified as an agent.** In ProbOS, "agent" means a
+mesh-registered peer — addressable, trust-scored, consensus-voting, independently
+spawned. A **Cognitive Organ** is none of those; it is a **child component of its
+cognitive agent**:
 
-- **It aligns with the architecture.** Modeling it as a deterministic agent honors Design Principle #1. It implements the `perceive → decide → act` lifecycle shape (perceive = gather bids + pending exogenous signals; decide = score/select/order under budget; act = emit the assembled context and any arousal/zone change), carries an identity, is introspectable, and could *learn* its salience weights over time (start deterministic; earn adaptivity).
-- **Deterministic is the correct cost profile.** It runs *every cognitive cycle, before the expensive LLM call.* Salience arbitration is arithmetic, not reasoning — a deterministic (Core-tier-style) agent, never an LLM call.
-- **The neuroscience backs the pairing.** The brain has dedicated attention circuitry — the thalamic reticular nucleus and fronto-parietal control networks — *distinct from* the cortical processors, gating and biasing them. A deterministic attention organ paired **1:1** with each cognitive agent is the computational analogue: a separate, fast gating subsystem, not part of the "reasoning cortex."
+- **Identity is derived, not peer.** The organ's identity is namespaced under its
+  parent (e.g., `{parent_id}.attention`). It is **not** in the agent registry,
+  **not** addressable as a mesh endpoint, and carries **no independent trust score,
+  vote, or consensus standing.** It exists only as a part of its parent.
+- **Lifecycle is strictly bound to the parent.** It is **born when the parent is born
+  and dies when the parent dies** — constructed inside the parent's birth and torn
+  down inside the parent's teardown. No independent spawn or death.
+- **It shares the agent *shape*, not the agent *classification*.** It implements the
+  `perceive → decide → act` cognitive-cycle shape and is introspectable/auditable, but
+  that is structural convenience, not a claim of peerhood. (Conceptually this is pure
+  Society of Mind, where "organs" and "agents" are the same thing — we keep the
+  ProbOS vocabulary crisp, **organs are components / agents are mesh peers**, to avoid
+  the confusion other agent harnesses invite by overloading "agent.")
+- **Deterministic is the default cost profile.** It runs every cognitive cycle, before
+  the expensive LLM call; salience arbitration is arithmetic, not reasoning.
 
-**The nuance — a paired *faculty*, not a chatty mesh peer:**
+**Why a child component and not a mesh peer (engineering):**
 
-- The **per-turn arbitration is a synchronous, in-process call** on the hot path. Do **not** route it through the intent bus per turn — a NATS round-trip inside prompt assembly is a latency tax on *every* reply.
-- The faculty **is** reached by the mesh **asynchronously**: exogenous events (alerts, mentions, camera-change, gossip) arrive as **intents between turns** and update the faculty's pending-bid state. So the mesh influences attention via pub/sub; the decision stays **local and synchronous.**
-- **Pairing & lifecycle:** spawned alongside its cognitive agent by the pool/spawner, owned by it, sharing the agent's identity namespace. It is a **new ProbOS pattern — a *paired faculty*** (1:1, intrinsic, deterministic, meta-cognitive) — distinct from today's *pooled/shared* agents. This is worth naming explicitly in the agent-classification framework.
+- The **per-turn arbitration is a synchronous, in-process call** on the hot path. Do
+  **not** route it through the intent bus per turn — a NATS round-trip inside prompt
+  assembly is a latency tax on *every* reply.
+- The organ **is** reached by the mesh **asynchronously**: exogenous events (alerts,
+  mentions, camera-change, gossip) arrive as intents **between** turns and update the
+  organ's pending state. The mesh *biases* attention; the parent *owns* the decision.
 
-> **Recommendation:** build it as `AttentionFaculty` — a deterministic, paired,
-> meta-cognitive agent. In-process + synchronous for arbitration; a mesh
-> subscriber for exogenous salience; identity + cognitive-journal audit trail.
-> Per-agent, definitively **not** a mesh-level service.
+**The neuroscience backs the composition.** Dedicated attention circuitry (thalamic
+reticular nucleus, fronto-parietal networks) is *distinct from* the cortical
+processors it gates — a subcortical organ, not a peer "mind." The AttentionFaculty is
+that organ for the cognitive agent.
+
+> **Recommendation:** build it as `AttentionFaculty` — a deterministic **Cognitive
+> Organ** (a child component of its cognitive agent, born and torn down with the
+> parent), **not** a registered agent. In-process + synchronous for arbitration; a
+> mesh subscriber for exogenous salience; identity namespaced under the parent with a
+> cognitive-journal audit trail. Per-agent, definitively **not** a mesh-level service.
 
 ## 4. The model: AttentionBid + Global-Workspace cycle
 
