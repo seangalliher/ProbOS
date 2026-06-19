@@ -11,11 +11,12 @@ import os
 import re
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from probos.events import EventType
 from probos.cognitive.concurrency_manager import ConcurrencyManager
@@ -26,6 +27,7 @@ from probos.types import AnchorFrame, IntentMessage, IntentResult, LLMRequest, P
 from probos.utils import format_duration
 
 if TYPE_CHECKING:
+    from probos.cognitive.attention_faculty import AttentionFaculty
     from probos.cognitive.memory_budget import MemoryBudgetManager
     from probos.cognitive.question_classifier import QuestionClassifier, RetrievalStrategySelector
     from probos.cognitive.spreading_activation import SpreadingActivationEngine
@@ -651,16 +653,66 @@ class CognitiveAgent(BaseAgent):
             )
 
     def _compose_organs(self) -> None:
-        """AD-1034: attach the organs this agent is born with. Default: none.
+        """AD-1034 / AD-1029: attach the organs this agent is born with. Default: none.
 
         Organs are *born with the parent* (Design Principle #12): this hook runs once at
         construction, right after the spine exists. The base ``CognitiveAgent`` composes
-        **zero** organs — so today this is a no-op and the running system is
-        byte-identical. Concrete organs (e.g. the ``AttentionFaculty``, AD-1029) attach
-        by overriding this hook and calling ``self._spine.attach_organ(...)``; the spine
-        never touches the mesh.
+        **zero** organs by default — so the running system is byte-identical to
+        pre-AD-1034 until an organ is composed.
+
+        AD-1029: when ``memory.attention.enabled`` is True (read via the same resolution
+        :meth:`_resolve_attention_budget` uses), compose the deterministic
+        :class:`AttentionFaculty`. Default-OFF ⇒ NO organ attached ⇒ ``_spine.has_organs``
+        stays False ⇒ the ``drive_cycle`` hook is a no-op AND ``_build_user_message`` keeps
+        the exact AD-1028 inline ``ContextAssembler`` path ⇒ byte-identical. Idempotent: a
+        second call once the faculty is composed is a no-op.
         """
-        return None
+        if self._spine.get_organ("attention") is not None:
+            return  # idempotent — the attention organ is already composed
+        _rt = getattr(self, "_runtime", None)
+        _mem_cfg = getattr(getattr(_rt, "config", None), "memory", None) if _rt else None
+        _att_cfg = getattr(_mem_cfg, "attention", None)
+        if _att_cfg is None or not getattr(_att_cfg, "enabled", False):
+            return  # default-OFF — no faculty composed (byte-identical)
+        from probos.cognitive.attention_faculty import AttentionFaculty
+        from probos.cognitive.spine import EXOGENOUS_SIGNAL_KIND
+        faculty = AttentionFaculty()
+        faculty.set_audit_emit(self._emit_attention_audit)
+        self._spine.attach_organ(faculty)
+        # Exogenous salience (mentions/alerts/camera-change/gossip) arriving between turns
+        # through the agent-owned ``deliver_exogenous`` inlet must reach the faculty's
+        # pending state; the spine inlet is the seam (the real intent bus is AD-1032).
+        self._spine.subscribe(EXOGENOUS_SIGNAL_KIND, faculty)
+
+    def _active_attention_faculty(self) -> AttentionFaculty | None:
+        """AD-1029: the composed :class:`AttentionFaculty`, or ``None`` when attention is OFF.
+
+        Default-OFF ⇒ no faculty composed ⇒ returns ``None`` ⇒ ``_build_user_message`` keeps
+        the exact AD-1028 inline ``ContextAssembler`` path (byte-identical). The spine is the
+        single owner; the ``"attention"`` organ slot only ever holds the faculty.
+        """
+        _spine = getattr(self, "_spine", None)
+        if _spine is None:
+            return None
+        return cast("AttentionFaculty | None", _spine.get_organ("attention"))
+
+    def _emit_attention_audit(self, trace: Mapping[str, Any]) -> None:
+        """AD-1029: synchronous sink for the AttentionFaculty bid-competition audit trace.
+
+        The cognitive journal (AD-431) ``record`` is async and LLM-shaped, so it is NOT a
+        clean synchronous sink for a per-turn organ trace; per the organ-audit decoupling
+        (AD-1033) the trace is routed through this lightweight sync sink — a structured
+        debug log of "why did the agent attend to X?" — NOT a new persistence layer. Never
+        raises (log-and-degrade): audit must not break the cognitive cycle.
+        """
+        try:
+            logger.debug(
+                "AD-1029 attention audit [%s]: %s",
+                getattr(self, "id", "?"),
+                dict(trace),
+            )
+        except Exception:  # log-and-degrade: audit must never break the cycle
+            logger.debug("AD-1029: attention audit sink failed", exc_info=True)
 
     async def stop(self) -> None:
         """AD-1034: detach the agent's organs at teardown, then stop.
@@ -7304,6 +7356,15 @@ class CognitiveAgent(BaseAgent):
                 _emit("active_game", [active_game_ctx, ""])
 
             _emit("captain_message", [f"Captain says: {params.get('text', '')}"])
+            # AD-1029: when the deterministic AttentionFaculty is composed (attention
+            # enabled), it DRIVES the assembler — merging any pending exogenous bids and
+            # auditing the competition. Default-OFF the faculty is None and the exact
+            # AD-1028 inline ContextAssembler path below runs unchanged (byte-identical).
+            _faculty = self._active_attention_faculty()
+            if _faculty is not None:
+                return "\n".join(
+                    _faculty.arbitrate(_bids, token_budget=self._resolve_attention_budget())
+                )
             return "\n".join(
                 ContextAssembler.assemble(_bids, token_budget=self._resolve_attention_budget())
             )
@@ -7508,6 +7569,15 @@ class CognitiveAgent(BaseAgent):
                     "Respond naturally as yourself. Share your perspective if you have something meaningful to contribute.",
                     "If this topic is outside your expertise or you have nothing to add, respond with exactly: [NO_RESPONSE]",
                 ])
+            # AD-1029: when the deterministic AttentionFaculty is composed (attention
+            # enabled), it DRIVES the assembler — merging any pending exogenous bids and
+            # auditing the competition. Default-OFF the faculty is None and the exact
+            # AD-1028 inline ContextAssembler path below runs unchanged (byte-identical).
+            _faculty = self._active_attention_faculty()
+            if _faculty is not None:
+                return "\n".join(
+                    _faculty.arbitrate(_bids, token_budget=self._resolve_attention_budget())
+                )
             return "\n".join(
                 ContextAssembler.assemble(_bids, token_budget=self._resolve_attention_budget())
             )
