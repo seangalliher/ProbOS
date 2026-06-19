@@ -349,6 +349,27 @@ class AgentWorkingMemory:
         """AD-667: List available buffer names."""
         return list(self._named_buffers.keys())
 
+    def iter_salience_entries(self) -> list[WorkingMemoryEntry]:
+        """AD-1030: flat read-only snapshot of the :class:`WorkingMemoryEntry`
+        items eligible for salience scoring.
+
+        Collects the recent-activity ring buffers (actions, reasoning,
+        conversations, observations, events) plus the named buffers. Returns a
+        NEW list of the live entries — the internal deques are never exposed.
+        Excludes pinned facts, active engagements, conclusions, and cognitive
+        state, which are not ``WorkingMemoryEntry`` items. Order is not
+        significant (callers score salience, they do not render from this).
+        """
+        out: list[WorkingMemoryEntry] = []
+        out.extend(self._recent_actions)
+        out.extend(self._recent_reasoning)
+        out.extend(self._recent_conversations)
+        out.extend(self._recent_observations)
+        out.extend(self._recent_events)
+        for _buf in self._named_buffers.values():
+            out.extend(_buf.entries)
+        return out
+
     def set_agent_context(self, context: dict[str, Any]) -> None:
         """AD-668: Update the agent context used for salience scoring."""
         self._agent_context = dict(context)

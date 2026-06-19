@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from probos.cognitive.attention_faculty import AttentionFaculty
     from probos.cognitive.memory_budget import MemoryBudgetManager
     from probos.cognitive.question_classifier import QuestionClassifier, RetrievalStrategySelector
+    from probos.cognitive.salience import SalienceWeights
     from probos.cognitive.spreading_activation import SpreadingActivationEngine
     from probos.cognitive.thought_store import ThoughtStore
     from probos.config import MemoryBudgetConfig
@@ -7131,6 +7132,122 @@ class CognitiveAgent(BaseAgent):
             return int(getattr(_att_cfg, "token_budget", _DEFAULT_ATTENTION_TOKEN_BUDGET))
         return _UNBOUNDED_ATTENTION_TOKEN_BUDGET
 
+    # ---- AD-1030: adaptive salience scoring (default-OFF) -------------------
+
+    def _attention_config(self) -> Any | None:
+        """AD-1030: the live ``AttentionConfig`` (or ``None`` when unwired)."""
+        _rt = getattr(self, "_runtime", None)
+        _mem_cfg = getattr(getattr(_rt, "config", None), "memory", None) if _rt else None
+        return getattr(_mem_cfg, "attention", None)
+
+    def _salience_scoring_enabled(self) -> bool:
+        """AD-1030: True only when adaptive salience scoring is configured ON.
+
+        Default-OFF: a missing runtime/config or an unset flag returns False ⇒
+        the AD-1029/AD-1028 fixed insertion-priority bid path runs unchanged
+        (byte-identical). This is the single gate every salience-scoring code
+        path below is guarded behind.
+        """
+        _att = self._attention_config()
+        return bool(_att is not None and getattr(_att, "salience_scoring", False))
+
+    def _salience_weights(self) -> "SalienceWeights":
+        """AD-1030: build the linear salience weights from config (defaults if absent)."""
+        from probos.cognitive.salience import SalienceWeights
+        _att = self._attention_config()
+        if _att is None:
+            return SalienceWeights()
+        return SalienceWeights(
+            w_rel=float(getattr(_att, "w_rel", 1.0)),
+            w_rec=float(getattr(_att, "w_rec", 0.5)),
+            w_imp=float(getattr(_att, "w_imp", 0.5)),
+        )
+
+    def _salience_half_life(self) -> float:
+        """AD-1030: recency decay time-constant (seconds) from config (default 1 day)."""
+        _att = self._attention_config()
+        return float(getattr(_att, "recency_half_life_seconds", 86400.0)) if _att else 86400.0
+
+    def _salience_rank_memories(
+        self, memories: list[dict], goal_vec: list[float]
+    ) -> tuple[list[dict], float]:
+        """AD-1030: order recalled memories by transparent linear salience (DESC).
+
+        Returns ``(ordered_memories, max_salience)``. Each memory's salience is
+        ``compute_salience`` over cosine relevance to the goal (the internal
+        ``_embedding`` key added at the gated recall site), exponential recency
+        (``_timestamp``), and AD-598 importance (``_importance``). A memory
+        missing those internal keys scores relevance/recency 0 (safe degrade)
+        and falls to the tail. Stable: salience ties keep the original recall
+        order. Does NOT mutate the input list. ``goal_vec`` is the only
+        non-pure input (the caller's one ``embed_text(goal)`` result).
+        """
+        from probos.cognitive.salience import (
+            compute_salience,
+            cosine_similarity,
+            recency_decay,
+        )
+        _weights = self._salience_weights()
+        _half_life = self._salience_half_life()
+        _now = time.time()
+        scored: list[tuple[float, int, dict]] = []
+        for _i, _mem in enumerate(memories):
+            _emb = _mem.get("_embedding") or []
+            _ts = float(_mem.get("_timestamp", 0.0) or 0.0)
+            _imp = float(_mem.get("_importance", 5) or 5)
+            _rel = cosine_similarity(goal_vec, _emb) if (goal_vec and _emb) else 0.0
+            _rec = recency_decay(_now - _ts, _half_life) if _ts > 0.0 else 0.0
+            _sal = compute_salience(
+                relevance=_rel, recency=_rec, importance=_imp, weights=_weights
+            )
+            scored.append((_sal, _i, _mem))
+        # Highest salience first; ties keep original recall order (stable).
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        _ordered = [t[2] for t in scored]
+        _max = scored[0][0] if scored else 0.0
+        return _ordered, _max
+
+    def _salience_score_wm_bid(self, goal_vec: list[float]) -> float | None:
+        """AD-1030: max linear salience over working-memory entries (relevance +
+        recency, NO importance — WM entries carry no importance signal).
+
+        Returns the max salience, or ``None`` when there is no working memory or
+        no scorable entry. The WM block is NOT re-ordered internally:
+        ``AgentWorkingMemory.render_context`` is a category-grouped,
+        priority-sorted, budget-evicted render with no flat per-entry ordered
+        path, so WM ships bid-salience-only (AD-1030 HARD-STOP guard c) — this
+        only adjusts the WM bid's competition weight, never its content.
+        """
+        from probos.cognitive.salience import (
+            SalienceWeights,
+            compute_salience,
+            cosine_similarity,
+            recency_decay,
+        )
+        from probos.knowledge.embeddings import embed_text
+        _wm = getattr(self, "_working_memory", None)
+        if _wm is None or not hasattr(_wm, "iter_salience_entries"):
+            return None
+        _entries = _wm.iter_salience_entries()
+        if not _entries:
+            return None
+        _w = self._salience_weights()
+        _wm_weights = SalienceWeights(w_rel=_w.w_rel, w_rec=_w.w_rec, w_imp=0.0)
+        _half_life = self._salience_half_life()
+        _max = 0.0
+        for _e in _entries:
+            _content = getattr(_e, "content", "") or ""
+            if not _content:
+                continue
+            _rel = cosine_similarity(goal_vec, embed_text(_content)) if goal_vec else 0.0
+            _rec = recency_decay(_e.age_seconds(), _half_life)
+            _sal = compute_salience(
+                relevance=_rel, recency=_rec, importance=5.0, weights=_wm_weights
+            )
+            if _sal > _max:
+                _max = _sal
+        return _max
+
     async def _build_user_message(self, observation: dict) -> str:
         """Build the user message from the observation dict.
         Override in subclasses for custom formatting.
@@ -7156,13 +7273,18 @@ class CognitiveAgent(BaseAgent):
             # prior ``"\n".join(parts)`` when nothing drops (default-OFF budget).
             _bids: list[AttentionBid] = []
 
-            def _emit(source: str, segments: list[str]) -> None:
+            def _emit(
+                source: str, segments: list[str], *, salience: float | None = None
+            ) -> None:
                 idx = len(_bids)
                 text = "\n".join(segments)
                 _bids.append(AttentionBid(
                     source=source,
                     render=(lambda _t=text: _t),
-                    salience=float(idx),
+                    # AD-1030: an explicit salience (episodic/WM when scoring is
+                    # ON) overrides the fixed insertion priority; default None ⇒
+                    # float(idx) ⇒ byte-identical to the AD-1028/1029 path.
+                    salience=float(idx) if salience is None else salience,
                     token_cost=estimate_tokens(text),
                     zone_floor=idx,
                 ))
@@ -7212,6 +7334,15 @@ class CognitiveAgent(BaseAgent):
 
             # AD-588: Introspective telemetry for self-referential queries
             captain_text = params.get("text", "")
+            # AD-1030: adaptive salience setup (default-OFF). Embed the goal (the
+            # raw Captain message) ONCE; the episodic + working-memory bids below
+            # score relevance against it. When scoring is OFF this is skipped ⇒
+            # no embedding cost and the AD-1029 fixed-priority path is unchanged.
+            _salience_on = self._salience_scoring_enabled()
+            _goal_vec: list[float] = []
+            if _salience_on and captain_text:
+                from probos.knowledge.embeddings import embed_text
+                _goal_vec = embed_text(captain_text)
             _telemetry_svc = getattr(self._runtime, '_introspective_telemetry', None) if self._runtime else None
             if _telemetry_svc and self._is_introspective_query(captain_text):
                 try:
@@ -7231,7 +7362,10 @@ class CognitiveAgent(BaseAgent):
             _wm = getattr(self, '_working_memory', None)
             wm_context = _wm.render_context() if _wm else ""
             if wm_context:
-                _emit("working_memory", [wm_context, ""])
+                _wm_salience = (
+                    self._salience_score_wm_bid(_goal_vec) if _salience_on else None
+                )
+                _emit("working_memory", [wm_context, ""], salience=_wm_salience)
 
             # AD-723a-1 (Wave 148): dispatch self-wrapped DM_ONESHOT sensorium
             # entries. Replaces the prior hand-rolled AD-722 + AD-722a manual
@@ -7265,10 +7399,19 @@ class CognitiveAgent(BaseAgent):
             memories = observation.get("recent_memories", [])
             if memories:
                 _framing = observation.get("_source_framing")
+                _epi_salience: float | None = None
+                if _salience_on:
+                    # AD-1030: order memories by salience DESC (relevance ×
+                    # recency × importance) so a high-relevance low-recency
+                    # memory can outrank a low-relevance recent one; weight the
+                    # bid by its best member.
+                    memories, _epi_salience = self._salience_rank_memories(
+                        memories, _goal_vec
+                    )
                 _emit("episodic", [
                     *self._format_memory_section(memories, source_framing=_framing),
                     "",
-                ])
+                ], salience=_epi_salience)
 
             # AD-986b: canonical transcript (the recording) — the verbatim record
             # of a room this agent took part in, rendered DISTINCT from the
@@ -7384,13 +7527,18 @@ class CognitiveAgent(BaseAgent):
             # drops (default-OFF budget).
             _bids: list[AttentionBid] = []
 
-            def _emit(source: str, segments: list[str]) -> None:
+            def _emit(
+                source: str, segments: list[str], *, salience: float | None = None
+            ) -> None:
                 idx = len(_bids)
                 text = "\n".join(segments)
                 _bids.append(AttentionBid(
                     source=source,
                     render=(lambda _t=text: _t),
-                    salience=float(idx),
+                    # AD-1030: an explicit salience (episodic/WM when scoring is
+                    # ON) overrides the fixed insertion priority; default None ⇒
+                    # float(idx) ⇒ byte-identical to the AD-1028/1029 path.
+                    salience=float(idx) if salience is None else salience,
                     token_cost=estimate_tokens(text),
                     zone_floor=idx,
                 ))
@@ -7432,6 +7580,15 @@ class CognitiveAgent(BaseAgent):
 
             # AD-588: Introspective telemetry for self-referential ward room posts
             _wr_text = f"{params.get('title', '')} {params.get('text', '')}".strip()
+            # AD-1030: adaptive salience setup (default-OFF). Embed the goal (the
+            # author's post) ONCE; the episodic + working-memory bids below score
+            # relevance against it. Skipped when scoring is OFF (no embed cost).
+            _salience_on = self._salience_scoring_enabled()
+            _goal_vec: list[float] = []
+            _wr_goal = params.get("text", "")
+            if _salience_on and _wr_goal:
+                from probos.knowledge.embeddings import embed_text
+                _goal_vec = embed_text(_wr_goal)
             _telemetry_svc = getattr(self._runtime, '_introspective_telemetry', None) if self._runtime else None
             if _telemetry_svc and self._is_introspective_query(_wr_text):
                 try:
@@ -7451,7 +7608,10 @@ class CognitiveAgent(BaseAgent):
             _wm = getattr(self, '_working_memory', None)
             wm_context = _wm.render_context() if _wm else ""
             if wm_context:
-                _emit("working_memory", ["", wm_context])
+                _wm_salience = (
+                    self._salience_score_wm_bid(_goal_vec) if _salience_on else None
+                )
+                _emit("working_memory", ["", wm_context], salience=_wm_salience)
 
             # AD-723a-2 (Wave 161): WR sibling of the AD-723a-1 DM
             # dispatcher path. Selector ``_WR_SELF_WRAPPED_KEYS`` is
@@ -7490,10 +7650,17 @@ class CognitiveAgent(BaseAgent):
             memories = observation.get("recent_memories", [])
             if memories:
                 _framing = observation.get("_source_framing")
+                _epi_salience: float | None = None
+                if _salience_on:
+                    # AD-1030: order memories by salience DESC; weight the bid by
+                    # its best member.
+                    memories, _epi_salience = self._salience_rank_memories(
+                        memories, _goal_vec
+                    )
                 _emit("episodic", [
                     "",
                     *self._format_memory_section(memories, source_framing=_framing),
-                ])
+                ], salience=_epi_salience)
 
             # AD-568a: Oracle Service cross-tier context
             if observation.get("_oracle_context"):
@@ -8352,12 +8519,23 @@ class CognitiveAgent(BaseAgent):
                 event_log = getattr(self._runtime, 'event_log', None)
 
                 memory_list = []
+                # AD-1030: enrich each memory with internal salience inputs ONLY
+                # when adaptive salience scoring is enabled. The keys are
+                # underscore-prefixed (``_embedding``/``_timestamp``/
+                # ``_importance``) and are NEVER rendered by
+                # ``_format_memory_section`` — they feed ``_salience_rank_memories``
+                # at the DM/WR bid-build. OFF ⇒ no keys added ⇒ byte-identical.
+                _salience_on = self._salience_scoring_enabled()
                 for ep in episodes:
                     mem = {
                         "input": ep.user_input[:200] if ep.user_input else "",
                         "reflection": ep.reflection[:200] if ep.reflection else "",
                         "source": getattr(ep, 'source', 'direct'),
                     }
+                    if _salience_on:
+                        mem["_embedding"] = list(ep.embedding) if ep.embedding else []
+                        mem["_timestamp"] = float(ep.timestamp or 0.0)
+                        mem["_importance"] = int(getattr(ep, "importance", 5))
                     if include_ts and ep.timestamp > 0:
                         mem["age"] = format_duration(time.time() - ep.timestamp)
 

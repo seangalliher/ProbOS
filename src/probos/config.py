@@ -907,6 +907,17 @@ class AttentionConfig(BaseModel):
     # Sized to a large model window; nothing drops at this budget for normal
     # prompts. Operators lower it to enforce a tighter context window.
     token_budget: int = Field(default=120_000, ge=1000)
+    # AD-1030: adaptive salience scoring (relevance × recency × importance) for
+    # episodic + working-memory bids. Default-OFF ⇒ the AD-1029 fixed insertion
+    # priority is byte-identical. INDEPENDENT of ``enabled`` (the budget gate):
+    # scoring re-orders/weights bids whether or not a tight budget is enforced.
+    salience_scoring: bool = False
+    # Linear salience weights (normalized at use, so absolute scale is free).
+    w_rel: float = Field(default=1.0, ge=0.0)   # relevance (goal similarity)
+    w_rec: float = Field(default=0.5, ge=0.0)   # recency (time decay)
+    w_imp: float = Field(default=0.5, ge=0.0)   # importance (AD-598)
+    # Recency decay time-constant (seconds): exp(-age / half_life). Default 1 day.
+    recency_half_life_seconds: float = Field(default=86400.0, gt=0.0)
 
 
 class MemoryConfig(BaseModel):

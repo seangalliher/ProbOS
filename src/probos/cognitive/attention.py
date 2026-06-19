@@ -202,12 +202,15 @@ class AttentionManager:
     def score_bid(self, bid: AttentionBid) -> float:
         """Score a context :class:`AttentionBid` (generalizes task scoring).
 
-        v1 returns the bid's fixed salience unchanged — the same insertion
-        priority the ``ContextAssembler`` already uses — so this is a
-        behavior-preserving seam. AD-1030 replaces the body with the real
-        ``relevance × recency × importance`` salience formula (the direct
-        generalization of :meth:`_compute_single`); the task-scoring path above
-        is untouched.
+        Returns the bid's ``salience`` unchanged — a behavior-preserving seam.
+        AD-1030 landed the real ``relevance × recency × importance`` linear
+        salience in the pure :mod:`probos.cognitive.salience` module; it is
+        applied at the DM/WR bid-build (where the per-memory/per-entry data the
+        formula needs is in scope) and written onto the episodic/working-memory
+        bids' ``salience``. So this seam continues to return whatever salience
+        the bid carries — fixed insertion priority by default, the scored value
+        when AD-1030 salience scoring is enabled. The task-scoring path
+        (:meth:`_compute_single`) is untouched.
         """
         return bid.salience
 
