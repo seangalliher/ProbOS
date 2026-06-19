@@ -622,11 +622,45 @@ class CognitiveAgent(BaseAgent):
         # AD-586: Task-contextual standing orders
         self._task_context: Any = None
 
+        # AD-1034: The cognitive spine — the agent's in-process, synchronous central
+        # nervous system. Owns organ composition, drives the organ cognitive cycle,
+        # carries the intra-organ signal channel, and provides the single governed
+        # mesh-boundary inlet (deliver_exogenous). Constructed EMPTY: no organs are
+        # registered by default, so the spine is inert and the agent is byte-identical
+        # to pre-AD-1034 until a concrete organ (AD-1029) is composed.
+        from probos.cognitive.spine import CognitiveSpine
+        self._spine = CognitiveSpine(self)
+        self._compose_organs()
+
         # Validate instructions exist
         if not self.instructions:
             raise ValueError(
                 f"{self.__class__.__name__} requires non-empty instructions"
             )
+
+    def _compose_organs(self) -> None:
+        """AD-1034: attach the organs this agent is born with. Default: none.
+
+        Organs are *born with the parent* (Design Principle #12): this hook runs once at
+        construction, right after the spine exists. The base ``CognitiveAgent`` composes
+        **zero** organs — so today this is a no-op and the running system is
+        byte-identical. Concrete organs (e.g. the ``AttentionFaculty``, AD-1029) attach
+        by overriding this hook and calling ``self._spine.attach_organ(...)``; the spine
+        never touches the mesh.
+        """
+        return None
+
+    async def stop(self) -> None:
+        """AD-1034: detach the agent's organs at teardown, then stop.
+
+        Organs *die with the parent* (Design Principle #12): ``detach_all`` releases
+        every composed organ before the base teardown. With the default zero-organ spine
+        this is a no-op, so behavior is byte-identical to ``BaseAgent.stop``.
+        """
+        _spine = getattr(self, "_spine", None)
+        if _spine is not None:
+            _spine.detach_all()
+        await super().stop()
 
     def set_strategy_advisor(self, advisor) -> None:
         """Attach a StrategyAdvisor for cross-agent knowledge transfer (AD-384)."""
@@ -4652,6 +4686,17 @@ class CognitiveAgent(BaseAgent):
             _sibling_text = _wm.render_conclusions(exclude_thread=intent.id)
             if _sibling_text:
                 observation["_sibling_conclusions"] = _sibling_text
+
+        # AD-1034: Drive the organ cognitive cycle across the agent's composed organs,
+        # BEFORE the expensive LLM `decide` call (composable-cognition.md §9 — organs run
+        # every cycle, deterministic and cheap). GUARDED + behavior-preserving: with the
+        # default zero-organ spine `has_organs` is False, so `drive_cycle` is NEVER
+        # invoked and this is byte-identical to pre-AD-1034. The cycle is SYNCHRONOUS (no
+        # `await` on a bus/network call); organs reach the mesh only via the agent's
+        # `deliver_exogenous` inlet, never the intent bus (sovereignty / AD-397).
+        _spine = getattr(self, "_spine", None)
+        if _spine is not None and _spine.has_organs:
+            _spine.drive_cycle(observation)
 
         decision = await self.decide(observation)
         decision["intent"] = intent.intent  # AD-398: propagate intent name to act()
