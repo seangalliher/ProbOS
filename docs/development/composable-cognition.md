@@ -96,6 +96,15 @@ governed spine puts a network hop + consensus inside a single mind).
 | Boundary | private to the agent | the ship-wide fabric |
 | Biology | **central** nervous system | **social/peripheral** signaling between organisms |
 
+A familiar framing: the **mesh is a microservices architecture** — autonomous,
+networked, governed services (ProbOS's intent bus + trust/consensus is, in effect, a
+*cognitive service mesh*). The **spine is a modular monolith** within each service —
+in-process, synchronous components, not independently deployable, not network-isolated.
+Same "bounded components, composition over monolith" philosophy; the substrate differs
+by scale. Calling an *organ* a microservice would wrongly imply a network hop +
+independent deployment (the over-engineering trap): **organs are in-process modules;
+agents are the services.**
+
 ### 2.5 The single governed boundary (sovereignty preserved)
 
 An agent's nervous system connects to the ship's nervous system through **one
@@ -259,7 +268,52 @@ Build order (dependency, not AD-number order):
   zero-organ); adaptivity comes later and gated.
 - **Deterministic-by-default organs** — no consensus/trust/LLM for internal calls.
 
-## 9. Decisions (2026-06-18)
+## 9. Performance & scaling
+
+**Guiding principle (2026-06-18):** *optimize shared resources where possible; preserve
+autonomy where it provides an advantage.* The organs and agents are all one connected
+system on the ship — share the platform, keep the decisions sovereign. Two cost
+regimes, handled differently:
+
+### Hot-path organs (per-turn) — perf-neutral-to-positive
+Attention, working memory, valuation and perception-gating run *every cognitive cycle,
+before the LLM call*, but are cheap **by construction**: deterministic, bounded, and
+**no LLM or network/mesh call on the synchronous cycle**. Composing K organs is K cheap
+calls + bid scoring (arithmetic over a bounded candidate set) — sub-millisecond against
+a multi-second LLM call. The global **token budget (AD-1028) is a net win** (smaller
+prompts ⇒ cheaper, faster calls). Two rules preserve this: reuse the embeddings recall
+already computes (don't embed every bid fresh), and enforce *no `await` on a bus/network
+call in the cycle path* (the discipline-erosion guard, asserted in AD-1034).
+
+### Background organs (idle) — the real scaling concern
+Dreaming / reflection / interpretation run during idle and may use the LLM. Naive
+per-agent execution multiplies the *expensive* part (a 50-agent crew → up to 50×
+dreaming LLM cost) with thundering-herd + store-contention risk. **Resolution —
+*personal faculty, shared bounded executor*** (the microservice-with-shared-platform
+pattern):
+- **Faculty is personal** — each agent decides what/when/how-much to dream over its own
+  shard (per-agent cadence; some dream more than others).
+- **Execution is shared & governed** — evolve the existing idle/dreaming scheduler into
+  a **background-cognition scheduler**: a shared ship faculty that dispatches all organs'
+  background work through a **bounded worker pool with a global concurrency cap** and
+  jitter — *not* N×K per-organ timers. Same serialization as today's single pass, with
+  per-agent independence on top.
+- **Entrance gate** — an organ runs only with enough *new salient* material since last
+  time (cf. AD-670); idle agents don't pay.
+- **Cheaper tiers + offline** — bulk consolidation on fast/local tiers, deep tier only
+  for genuine synthesis; idle-time work, so it never touches per-turn latency.
+- **Promote shared-worthy outputs** — genuinely cross-agent results (extracted
+  procedures, anti-patterns) go to the shared knowledge base, so N dreamers don't
+  re-derive the same procedure 50×.
+
+### Footprint & measurement
+Keep organ state **lean** (spill to the shared store; no big per-organ buffers); drive
+background work from the shared scheduler, not per-organ asyncio loops. The
+behavior-preserving / default-OFF migration lets us **benchmark before/after each organ
+lands** — per-turn overhead (target sub-ms) and aggregate background cost (LLM
+calls/hour); a regression backs out the flag.
+
+## 10. Decisions (2026-06-18)
 
 1. **Design-Principle elevation — DONE.** "Composable cognition (agents are
    organisms)" is now **Design Principle #12** in `.github/copilot-instructions.md`,
