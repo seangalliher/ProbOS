@@ -118,6 +118,19 @@ class EventType(str, Enum):
     # tool or cognitive skill on a specific agent.
     CAPABILITY_ACCESS_RESOLVED = "capability_access_resolved"
 
+    # Exogenous attention triggers (AD-1032) — raise the per-agent
+    # AttentionFaculty's FACULTY-LOCAL arousal zone (GREEN→AMBER→RED), the
+    # cognitive-layer mirror of HXI Design Principle #9 (LCARS Red-Alert
+    # reconfiguration). DEFINITIONS ONLY: the live emission-site wiring (router
+    # @mentions, bridge alerts, consensus/safety events, peer gossip) is a
+    # deferred follow-up. The governed inlet is ``CognitiveAgent.on_exogenous_event``.
+    EXOGENOUS_MENTION = "exogenous_mention"
+    EXOGENOUS_ALERT = "exogenous_alert"
+    EXOGENOUS_SCENE_CHANGE = "exogenous_scene_change"
+    EXOGENOUS_CONSENSUS = "exogenous_consensus"
+    EXOGENOUS_SAFETY = "exogenous_safety"
+    EXOGENOUS_GOSSIP = "exogenous_gossip"
+
     # Scheduled tasks
     SCHEDULED_TASK_CREATED = "scheduled_task_created"
     SCHEDULED_TASK_CANCELLED = "scheduled_task_cancelled"

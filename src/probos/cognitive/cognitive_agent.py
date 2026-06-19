@@ -734,6 +734,35 @@ class CognitiveAgent(BaseAgent):
         except Exception:  # log-and-degrade: audit must never break the cycle
             logger.debug("AD-1029: attention audit sink failed", exc_info=True)
 
+    def on_exogenous_event(
+        self, event_type: str, *, severity: str | None = None, **payload: Any
+    ) -> None:
+        """AD-1032: the single governed boundary for an exogenous arousal event.
+
+        The agent forwards a mesh-sourced exogenous event (an @mention, a bridge alert, a
+        materially-changed scene, a safety/consensus event, urgent peer gossip) to its
+        :class:`AttentionFaculty` through the spine's ``deliver_exogenous`` inlet —
+        organs never reach the intent bus themselves (sovereignty / AD-397). The faculty
+        maps the event to its FACULTY-LOCAL arousal zone (GREEN→AMBER→RED) and narrows the
+        next turn's bid competition.
+
+        Default-OFF (``attention.arousal_enabled`` False — and double-gated by
+        ``attention.enabled``, since the faculty is only composed when attention is on) or
+        no composed faculty ⇒ a safe **no-op**. This is the documented hook a future AD
+        wires real emission sites to; AD-1032 wires NO live source (the router @mention,
+        bridge alert, and consensus/safety emission sites live in separate subsystems and
+        are a deferred follow-up).
+        """
+        _att = self._attention_config()
+        if _att is None or not getattr(_att, "arousal_enabled", False):
+            return  # default-OFF — no-op (byte-identical)
+        _spine = getattr(self, "_spine", None)
+        if _spine is None or self._active_attention_faculty() is None:
+            return  # no faculty composed — nothing to arouse
+        _spine.deliver_exogenous(
+            {"event_type": event_type, "severity": severity, **payload}
+        )
+
     async def stop(self) -> None:
         """AD-1034: detach the agent's organs at teardown, then stop.
 

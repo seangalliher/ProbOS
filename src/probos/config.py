@@ -933,6 +933,22 @@ class AttentionConfig(BaseModel):
     # reference always surfaces it, independent of this gate). Captain-approved
     # default 0.3 (2026-06-19).
     camera_novelty_minimum: float = Field(default=0.3, ge=0.0, le=1.0)
+    # AD-1032: faculty-local arousal model (exogenous interrupts → cognitive-zone
+    # reconfiguration; the cognitive-layer mirror of HXI Design Principle #9).
+    # Default-OFF ⇒ ``AttentionFaculty.arbitrate`` is byte-identical to AD-1029.
+    # DOUBLE-gated: the faculty is only composed when ``enabled`` is True, so
+    # arousal also requires the AD-1028 budget gate on. The arousal zone is
+    # FACULTY-LOCAL and NEVER touches the AD-588 circuit-breaker zone.
+    arousal_enabled: bool = False
+    # Under RED arousal (attentional narrowing / Yerkes–Dodson) the effective
+    # token budget is multiplied by this factor. Captain-approved default 0.5.
+    arousal_red_budget_multiplier: float = Field(default=0.5, gt=0.0, le=1.0)
+    # A quiet period (no new exogenous event) longer than this fully resets the
+    # arousal zone to GREEN (the gradual per-turn step-down handles shorter gaps).
+    arousal_full_decay_seconds: float = Field(default=300.0, gt=0.0)
+    # A low-severity event (scene_change/gossip) repeating within this window
+    # escalates GREEN→AMBER; a single low-severity event only queues (no zone change).
+    arousal_repeat_window_seconds: float = Field(default=60.0, gt=0.0)
 
 
 class MemoryConfig(BaseModel):

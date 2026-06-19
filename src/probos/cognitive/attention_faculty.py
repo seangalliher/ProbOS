@@ -41,15 +41,74 @@ behavior-preserving): real salience math (AD-1030), camera/visual-scene gating
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
+from probos.cognitive.circuit_breaker import CognitiveZone
 from probos.cognitive.organ import BaseCognitiveOrgan, OrganAuditEmit
 from probos.cognitive.spine import EXOGENOUS_SIGNAL_KIND
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# AD-1032: arousal model constants (Captain-approved policy, 2026-06-19).
+#
+# An exogenous EVENT raises a FACULTY-LOCAL cognitive zone (AD-588 ``CognitiveZone``
+# is REUSED — AMBER is the policy's "YELLOW"); the zone NARROWS the bid competition
+# (Yerkes–Dodson attentional narrowing) and DECAYS back to GREEN. This is the
+# cognitive-layer mirror of HXI Design Principle #9 (LCARS Red-Alert). The zone is
+# the faculty's OWN — it NEVER touches the agent's circuit-breaker zone.
+# ---------------------------------------------------------------------------
+
+#: Severity → zone, keyed on the NORMALIZED event_type (a leading ``exogenous_``
+#: prefix is stripped, so both the EventType taxonomy values, e.g.
+#: ``"exogenous_alert"``, and the short tags, e.g. ``"alert"``, map here).
+#: alert/consensus/safety → RED; mention → AMBER; scene_change/gossip → GREEN
+#: (GREEN only queues — a single low-severity event does not reconfigure; the same
+#: low-severity type REPEATING within the window escalates GREEN→AMBER).
+_SEVERITY_BY_EVENT: dict[str, CognitiveZone] = {
+    "alert": CognitiveZone.RED,
+    "consensus": CognitiveZone.RED,
+    "safety": CognitiveZone.RED,
+    "mention": CognitiveZone.AMBER,
+    "scene_change": CognitiveZone.GREEN,
+    "gossip": CognitiveZone.GREEN,
+}
+
+#: Optional explicit ``severity`` field on an event → zone (can only RAISE the
+#: event_type baseline, never lower it; ``max`` by rank in :meth:`_zone_for_event`).
+_ZONE_BY_SEVERITY: dict[str, CognitiveZone] = {
+    "red": CognitiveZone.RED,
+    "critical": CognitiveZone.RED,
+    "high": CognitiveZone.RED,
+    "amber": CognitiveZone.AMBER,
+    "yellow": CognitiveZone.AMBER,
+    "medium": CognitiveZone.AMBER,
+    "green": CognitiveZone.GREEN,
+    "low": CognitiveZone.GREEN,
+}
+
+#: Arousal-only ordering of the zones (CRITICAL is never set by arousal — the
+#: severity table maxes at RED — but is ranked for completeness).
+_ZONE_RANK: dict[CognitiveZone, int] = {
+    CognitiveZone.GREEN: 0,
+    CognitiveZone.AMBER: 1,
+    CognitiveZone.RED: 2,
+    CognitiveZone.CRITICAL: 3,
+}
+
+#: Ambient bid sources suppressed under arousal. RED suppresses ALL of these
+#: (and applies the budget multiplier); AMBER suppresses only the ambient camera
+#: bid (``camera_scene_ambient``). Pinned bids are NEVER dropped. ``"gossip"`` is
+#: forward-looking — no bid emits that source today (the follow-up wiring will).
+_AMBIENT_SOURCES: frozenset[str] = frozenset(
+    {"camera_scene_ambient", "camera_scene", "telemetry", "gossip"}
+)
+
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +190,36 @@ class AttentionFaculty(BaseCognitiveOrgan):
         # Most recent bid-competition audit payload (introspection only). The audit is
         # ALSO emitted through the injected ``OrganAuditEmit`` sink in :meth:`act`.
         self._last_audit: dict[str, Any] | None = None
+        # AD-1032: the owning agent, bound at ``on_attach``. The faculty reads its
+        # ``arousal_enabled`` (and the other arousal knobs) from the parent's live
+        # AttentionConfig — when the parent/config is absent, arousal is fully bypassed.
+        self._parent: Any = None
+        # AD-1032: FACULTY-LOCAL arousal zone (NEVER the agent's circuit-breaker zone).
+        # Raised UPWARD by exogenous events, decayed back toward GREEN each quiet turn.
+        self._arousal_zone: CognitiveZone = CognitiveZone.GREEN
+        # Monotonic timestamp of the most recent exogenous event (for full decay).
+        self._last_event_at: float = 0.0
+        # Whether an exogenous event arrived since the last ``arbitrate`` — a turn that
+        # processed an event is NOT "quiet" and does not decay (it narrows at the raised
+        # zone); a quiet turn steps the zone down one level.
+        self._event_since_last_arbitrate: bool = False
+        # Recent low-severity (scene_change/gossip) events, (monotonic_ts, event_type),
+        # for the "same type repeats within the window ⇒ AMBER" rule.
+        self._recent_low_severity: list[tuple[float, str]] = []
+
+    # -- lifecycle (bind the parent so arousal can read its config) -----
+
+    def on_attach(self, parent: Any) -> None:
+        """AD-1032: bind the owning agent so the faculty can read its arousal config.
+
+        The arousal model reads ``arousal_enabled`` (and the budget multiplier / decay /
+        repeat-window knobs) from the parent's live ``AttentionConfig`` via the agent's
+        own ``_attention_config`` resolver. AD-1029 never bound the parent (it had no
+        need); arousal does, so the gate is the parent's LIVE config (mirroring how the
+        budget is resolved fresh each turn). A parent without that resolver ⇒ arousal
+        is bypassed (the AD-1029 fixtures stay byte-identical).
+        """
+        self._parent = parent
 
     # -- introspection --------------------------------------------------
 
@@ -138,6 +227,16 @@ class AttentionFaculty(BaseCognitiveOrgan):
     def pending_exogenous_count(self) -> int:
         """Number of exogenous bids accumulated since the last ``arbitrate`` drain."""
         return len(self._pending_exogenous)
+
+    @property
+    def arousal_zone(self) -> CognitiveZone:
+        """AD-1032: the FACULTY-LOCAL arousal zone (NEVER the circuit-breaker zone).
+
+        GREEN at rest; raised UPWARD by exogenous events (severity → zone) and decayed
+        back toward GREEN each quiet ``arbitrate``. Introspection only — distinct from the
+        AD-588 ``CognitiveZone`` the circuit breaker writes on the agent's working memory.
+        """
+        return self._arousal_zone
 
     @property
     def last_audit(self) -> dict[str, Any] | None:
@@ -151,11 +250,24 @@ class AttentionFaculty(BaseCognitiveOrgan):
 
         Spine convention (AD-1034): the agent-owned inlet ``deliver_exogenous`` forwards
         a mesh-sourced signal on the in-process channel under ``EXOGENOUS_SIGNAL_KIND``.
-        We coerce the payload into an :class:`AttentionBid` and hold it *pending* until
-        the next :meth:`arbitrate` drains it — so a signal delivered between turns is
-        visible to the next turn's competition. Synchronous; never touches the bus.
+
+        AD-1032: a payload that is an arousal **event** (a Mapping carrying
+        ``"event_type"``) is handled by the arousal model — and ONLY when
+        ``arousal_enabled`` (the parent's live config). It RAISES the faculty-local zone
+        UPWARD (severity → zone) and enqueues a PINNED threat-relevant bid so the event
+        content survives RED narrowing. When arousal is OFF (default) an event payload
+        contributes **nothing** (no zone change, no bid) ⇒ ``arbitrate`` stays
+        byte-identical to AD-1029. Any NON-event payload takes the unchanged AD-1029
+        coerce-to-bid path. Synchronous; never touches the bus.
         """
         if kind != EXOGENOUS_SIGNAL_KIND:
+            return
+        if self._is_arousal_event(payload):
+            # An arousal EVENT is handled ONLY by the arousal model and ONLY when
+            # enabled; OFF ⇒ it adds nothing (byte-identical AD-1029 even with an
+            # event delivered).
+            if self._arousal_enabled():
+                self._ingest_arousal_event(payload)
             return
         bid = self._coerce_exogenous_bid(payload)
         if bid is not None:
@@ -196,10 +308,21 @@ class AttentionFaculty(BaseCognitiveOrgan):
                 assemble=False, survivors=[], bids_in=0, survivor_count=0, dropped=0,
                 token_budget=0, used_tokens=0, pinned_in=0, exogenous_drained=0, sources=[],
             )
-        survivors = ContextAssembler.assemble(
-            observation.merged_bids, token_budget=observation.token_budget
-        )
-        bids_in = len(observation.merged_bids)
+        bids = observation.merged_bids
+        budget = observation.token_budget
+        # AD-1032: arousal — DECAY the faculty-local zone toward GREEN, then NARROW the
+        # bid competition by the (post-decay) zone. Gated by ``arousal_enabled`` (read
+        # from the parent's live config). GREEN / OFF ⇒ NO change ⇒ the assemble below is
+        # byte-identical to AD-1029. RED suppresses ambient sources + shrinks the budget;
+        # AMBER suppresses only the ambient camera bid; pinned bids are NEVER dropped.
+        _cfg = self._arousal_config()
+        if _cfg is not None and getattr(_cfg, "arousal_enabled", False):
+            self._decay_if_quiet(float(getattr(_cfg, "arousal_full_decay_seconds", 300.0)))
+            bids, budget = self._narrow_for_arousal(
+                bids, budget, float(getattr(_cfg, "arousal_red_budget_multiplier", 0.5))
+            )
+        survivors = ContextAssembler.assemble(bids, token_budget=budget)
+        bids_in = len(bids)
         used_tokens = sum(estimate_tokens(text) for text in survivors)
         return _Decision(
             assemble=True,
@@ -207,11 +330,11 @@ class AttentionFaculty(BaseCognitiveOrgan):
             bids_in=bids_in,
             survivor_count=len(survivors),
             dropped=bids_in - len(survivors),
-            token_budget=observation.token_budget,
+            token_budget=budget,
             used_tokens=used_tokens,
-            pinned_in=sum(1 for bid in observation.merged_bids if bid.pin),
+            pinned_in=sum(1 for bid in bids if bid.pin),
             exogenous_drained=observation.exogenous_drained,
-            sources=[bid.source for bid in observation.merged_bids],
+            sources=[bid.source for bid in bids],
         )
 
     def act(self, decision: Any) -> None:
@@ -235,6 +358,10 @@ class AttentionFaculty(BaseCognitiveOrgan):
             "pinned": decision.pinned_in,
             "exogenous": decision.exogenous_drained,
             "sources": list(decision.sources),
+            # AD-1032: the (post-decay) faculty-local arousal zone that drove this
+            # turn's narrowing. Always GREEN when arousal is OFF (non-breaking — the
+            # AD-1029 audit assertions check specific keys, never the whole dict).
+            "arousal_zone": self._arousal_zone.value,
         }
         self._last_audit = payload
         # Inherited helper: wraps {organ_id, phase} + payload and hands it to the sync
@@ -275,6 +402,158 @@ class AttentionFaculty(BaseCognitiveOrgan):
             bid.zone_floor = slot
             bid.salience = float(slot)
         return drained
+
+    # -- AD-1032: arousal model (faculty-local; gated by the parent's config) --
+
+    def _arousal_config(self) -> Any | None:
+        """The parent agent's live ``AttentionConfig`` (or ``None`` ⇒ arousal bypassed).
+
+        Reuses the agent's own ``_attention_config`` resolver (DRY) — the same live config
+        the token budget is resolved from each turn — so the gate reflects config changes
+        without a snapshot. A parent without that resolver (the AD-1029 fixtures) or a
+        read failure degrades to ``None`` ⇒ arousal is fully bypassed (byte-identical).
+        """
+        parent = self._parent
+        if parent is None:
+            return None
+        getter = getattr(parent, "_attention_config", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:  # log-and-degrade: a config-read failure must not arouse
+            logger.debug(
+                "AttentionFaculty(%s): parent _attention_config() raised; arousal bypassed.",
+                self.organ_id,
+                exc_info=True,
+            )
+            return None
+
+    def _arousal_enabled(self) -> bool:
+        """True only when the parent's live config sets ``arousal_enabled`` (OFF ⇒ AD-1029).
+
+        The single gate every arousal code path is guarded behind.
+        """
+        cfg = self._arousal_config()
+        return bool(cfg is not None and getattr(cfg, "arousal_enabled", False))
+
+    @staticmethod
+    def _is_arousal_event(payload: Any) -> bool:
+        """True when ``payload`` is an arousal EVENT — a Mapping carrying ``event_type``.
+
+        The only producer is ``CognitiveAgent.on_exogenous_event`` (the governed boundary).
+        """
+        return isinstance(payload, Mapping) and "event_type" in payload
+
+    def _ingest_arousal_event(self, payload: Mapping[str, Any]) -> None:
+        """Raise the faculty-local zone from an exogenous event + queue its (pinned) bid.
+
+        Maps the event to a zone (severity table; an explicit ``severity`` can only RAISE
+        the baseline, never lower it). A low-severity (GREEN) event only QUEUES — it does
+        NOT reconfigure — UNLESS the same low-severity type repeats within
+        ``arousal_repeat_window_seconds`` (⇒ AMBER). The zone moves UPWARD ONLY (decay is
+        the only downward path). Records the event time (for full decay) and marks the
+        turn non-quiet, then enqueues a PINNED threat-relevant bid so the event content
+        survives RED narrowing. The caller (``on_signal``) has confirmed ``arousal_enabled``.
+        """
+        cfg = self._arousal_config()
+        window = float(getattr(cfg, "arousal_repeat_window_seconds", 60.0)) if cfg else 60.0
+        event_type = self._normalize_event_type(payload.get("event_type"))
+        now = time.monotonic()
+        target = self._zone_for_event(event_type, payload.get("severity"))
+        if target == CognitiveZone.GREEN and self._record_low_severity(event_type, now, window):
+            target = CognitiveZone.AMBER
+        if _ZONE_RANK[target] > _ZONE_RANK[self._arousal_zone]:
+            self._arousal_zone = target
+        self._last_event_at = now
+        self._event_since_last_arbitrate = True
+        bid = self._build_event_bid(payload)
+        if bid is not None:
+            self._pending_exogenous.append(bid)
+
+    @staticmethod
+    def _normalize_event_type(event_type: Any) -> str:
+        """Normalize to a short tag: lowercase + strip a leading ``exogenous_`` prefix
+        (so ``"exogenous_alert"`` and ``"alert"`` both map to RED in the severity table)."""
+        text = str(event_type or "").strip().lower()
+        prefix = "exogenous_"
+        return text[len(prefix):] if text.startswith(prefix) else text
+
+    def _zone_for_event(self, event_type: str, severity: Any) -> CognitiveZone:
+        """Resolve an event's target zone: the event_type baseline, RAISED (never lowered)
+        by an explicit ``severity``. Unknown event_type ⇒ GREEN (queue-only)."""
+        zone = _SEVERITY_BY_EVENT.get(event_type, CognitiveZone.GREEN)
+        if severity is not None:
+            sev = _ZONE_BY_SEVERITY.get(str(severity).strip().lower())
+            if sev is not None and _ZONE_RANK[sev] > _ZONE_RANK[zone]:
+                zone = sev
+        return zone
+
+    def _record_low_severity(self, event_type: str, now: float, window: float) -> bool:
+        """Track recent low-severity events; return True when ``event_type`` already
+        occurred within ``window`` (the repeat that escalates GREEN→AMBER). Prunes stale
+        entries first so the window is a true sliding window."""
+        self._recent_low_severity = [
+            (ts, et) for (ts, et) in self._recent_low_severity if now - ts <= window
+        ]
+        repeated = any(et == event_type for (_ts, et) in self._recent_low_severity)
+        self._recent_low_severity.append((now, event_type))
+        return repeated
+
+    def _build_event_bid(self, payload: Mapping[str, Any]) -> AttentionBid | None:
+        """Build a PINNED, non-ambient bid carrying the event content so it survives RED
+        narrowing. Uses an explicit ``text`` when present; else a concise event line."""
+        text = payload.get("text")
+        if not (isinstance(text, str) and text):
+            event_type = str(payload.get("event_type", "exogenous")).strip() or "exogenous"
+            severity = payload.get("severity")
+            text = f"[exogenous:{event_type}]"
+            if severity:
+                text = f"{text} severity={severity}"
+        source = str(payload.get("source", "exogenous_event"))
+        return self._text_bid(source, text, modality="exogenous", pin=True)
+
+    def _decay_if_quiet(self, full_decay_seconds: float) -> None:
+        """Decay the faculty-local zone toward GREEN. A turn that processed an event is
+        NOT quiet (narrow at the raised zone); a quiet turn steps DOWN one level, and a
+        quiet period longer than ``full_decay_seconds`` resets straight to GREEN."""
+        if self._event_since_last_arbitrate:
+            self._event_since_last_arbitrate = False
+            return
+        if (
+            self._last_event_at > 0.0
+            and (time.monotonic() - self._last_event_at) > full_decay_seconds
+        ):
+            self._arousal_zone = CognitiveZone.GREEN
+            return
+        self._arousal_zone = self._step_down(self._arousal_zone)
+
+    def _narrow_for_arousal(
+        self, bids: list[AttentionBid], token_budget: int, red_multiplier: float
+    ) -> tuple[list[AttentionBid], int]:
+        """Narrow the competition by the current zone — pinned bids are NEVER dropped.
+
+        RED ⇒ drop ALL ``_AMBIENT_SOURCES`` + multiply the budget by ``red_multiplier``;
+        AMBER ⇒ drop ONLY the ambient camera bid (``camera_scene_ambient``); GREEN ⇒ no
+        change (byte-identical broad context).
+        """
+        zone = self._arousal_zone
+        if zone == CognitiveZone.RED:
+            kept = [b for b in bids if b.pin or b.source not in _AMBIENT_SOURCES]
+            return kept, max(1, int(token_budget * red_multiplier))
+        if zone == CognitiveZone.AMBER:
+            kept = [b for b in bids if b.pin or b.source != "camera_scene_ambient"]
+            return kept, token_budget
+        return bids, token_budget
+
+    @staticmethod
+    def _step_down(zone: CognitiveZone) -> CognitiveZone:
+        """One level of arousal decay: RED→AMBER, AMBER→GREEN, GREEN stays GREEN."""
+        if zone == CognitiveZone.RED:
+            return CognitiveZone.AMBER
+        if zone == CognitiveZone.AMBER:
+            return CognitiveZone.GREEN
+        return CognitiveZone.GREEN
 
     def _coerce_exogenous_bid(self, payload: Any) -> AttentionBid | None:
         """Coerce a mesh-sourced exogenous signal payload into an :class:`AttentionBid`.
