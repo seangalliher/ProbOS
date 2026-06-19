@@ -563,6 +563,10 @@ class Episode:
     # AD-873: Ebbinghaus memory decay — strength decays over time, stability slows decay.
     strength: float = 1.0  # current retention strength S(t) in [0,1]; 1.0 = freshly encoded
     stability: float = EBBINGHAUS_DEFAULT_STABILITY_SECONDS  # decay time-constant (s); grows on reinforced recall/replay
+    # AD-979f: affective-salience retrieval slot [0,1]; 0.0 = neutral. Populated by a
+    # deferred capture AD; consumed by the AD-873 reranker's affect term (off by
+    # default → byte-identical). NOT measured affect yet — the storage slot.
+    affect_salience: float = 0.0
 
 
 # ------------------------------------------------------------------

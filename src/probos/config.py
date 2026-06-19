@@ -1064,6 +1064,7 @@ class MemoryConfig(BaseModel):
             "strength": 1.0,
             "recency": 0.5,
             "importance": 0.5,
+            "affect": 0.0,  # AD-979f: affect axis; 0.0 -> term skipped (byte-identical)
         }
     )
     recall_temporal_match_weight: float = 0.25       # BF-147→BF-155: bonus for temporal cue match in score_recall()
@@ -1084,6 +1085,11 @@ class MemoryConfig(BaseModel):
     # miss the crew flagged becomes observable). Default OFF -> zero overhead and
     # zero new log noise; the recalled episodes are byte-identical either way.
     recall_fok_logging_enabled: bool = False
+    # AD-979f: classify each recall's RecallConfidence into a Tulving
+    # remember/know/none type (recall_type). Default OFF -> recall_type stays ""
+    # and the recalled episodes + confidence are byte-identical. Pairs with the
+    # recall_rerank_weights["affect"] axis (also 0.0/off) as the AD-979f bundle.
+    remember_know_typing_enabled: bool = False
     # AD-986b: transcript-grounded recall. Let a crew agent consult the canonical
     # chat transcript (the recording) for rooms it participated in, to ground a
     # recollection in what was actually said rather than guess. Sovereign-scoped

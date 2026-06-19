@@ -52,12 +52,17 @@ class RecallConfidence:
         sub-threshold ``best_similarity`` is a *slow-gap* (a possible
         vocabulary-mismatch miss — the AD-979c hybrid-retrieval case).
       * ``query`` — the (truncated) query text, for logging/telemetry.
+      * ``recall_type`` — AD-979f Tulving remember/know type for this recall
+        (``"remember"`` | ``"know"`` | ``"none"``). Default ``""`` means typing
+        is OFF (byte-identical); set only when ``remember_know_typing_enabled``
+        and classified via :func:`classify_remember_know`.
     """
 
     band: str
     best_similarity: float
     candidate_count: int
     query: str
+    recall_type: str = ""
 
 
 def classify_recall_confidence(
@@ -86,6 +91,41 @@ def classify_recall_confidence(
     if best_similarity >= weak_floor:
         return "weak"
     return "none"
+
+
+def classify_remember_know(band: str, top_episode: Episode | None) -> str:
+    """AD-979f: Tulving remember/know type for a recall (pure).
+
+    'remember' = strong band + episodic grounding (a populated anchor frame) + not a
+    reflection/semantic synthesis; 'know' = familiarity without episodic context;
+    'none' = no recall. Empty inputs degrade to 'none'.
+    """
+    if band == "none" or top_episode is None:
+        return "none"
+    anchors = top_episode.anchors
+    grounded = bool(
+        anchors
+        and (
+            anchors.channel
+            or anchors.participants
+            or anchors.trigger_agent
+            or anchors.source_timestamp
+        )
+    )
+    if band == "strong" and grounded and top_episode.source != "reflection":
+        return "remember"
+    return "know"
+
+
+def remember_know_phrase(recall_type: str) -> str:
+    """AD-979f: short human phrase for a recall_type ('' -> '')."""
+    if recall_type == "remember":
+        return "I recall the specifics"
+    if recall_type == "know":
+        return "this feels familiar but I can't place the specifics"
+    if recall_type == "none":
+        return "I have no memory of this"
+    return ""
 
 
 _FTS_TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -1035,6 +1075,7 @@ class EpisodicMemory:
         hybrid_recall_enabled: bool = False,
         hybrid_rrf_k: int = 60,
         recall_fok_logging_enabled: bool = False,
+        remember_know_typing_enabled: bool = False,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
@@ -1054,6 +1095,10 @@ class EpisodicMemory:
         # Feeling-of-Knowing band per call (a calibration signal). Off by
         # default -> no extra log and byte-identical recalled episodes.
         self._recall_fok_logging = bool(recall_fok_logging_enabled)
+        # AD-979f: Remember/Know typing — classify each recall's RecallConfidence
+        # as a Tulving remember/know/none type. Off by default -> recall_type
+        # stays "" and the recalled episodes + confidence are byte-identical.
+        self._remember_know_typing = bool(remember_know_typing_enabled)
         self._verify_on_recall = verify_content_hash
         self._eviction_audit = eviction_audit
         self._agent_recall_threshold = agent_recall_threshold  # BF-134
@@ -2129,6 +2174,11 @@ class EpisodicMemory:
         w_c = float(weights.get("confidence", 0.0))
         if w_c:
             score *= _clamp01(episode.confidence) ** w_c
+        # AD-979f: affective-salience term. Default weight 0.0 -> skipped
+        # (x**0 == 1 idiom; identical to absence), so byte-identical OFF.
+        w_a = float(weights.get("affect", 0.0))
+        if w_a:
+            score *= _clamp01(episode.affect_salience) ** w_a
         return score
 
     async def recall(self, query: str, k: int = 5) -> list[Episode]:
@@ -2258,6 +2308,14 @@ class EpisodicMemory:
         # returned, not how confident the cosine recall was.
         if self._hybrid_recall_enabled and self._fts_db is not None:
             dense_episodes = await self._fuse_dense_sparse(query, dense_episodes, k)
+
+        # AD-979f: classify the recall's remember/know type (off by default ->
+        # recall_type stays "" -> byte-identical). Uses the final top episode.
+        if self._remember_know_typing:
+            _top = dense_episodes[0] if dense_episodes else None
+            confidence = dataclasses.replace(
+                confidence, recall_type=classify_remember_know(confidence.band, _top)
+            )
 
         return dense_episodes, confidence
 
@@ -2698,6 +2756,14 @@ class EpisodicMemory:
                 agent_id, query, episodes, k
             )
 
+        # AD-979f: classify the sovereign recall's remember/know type (off by
+        # default -> recall_type stays "" -> byte-identical). Uses the final top.
+        if self._remember_know_typing:
+            _top = episodes[0] if episodes else None
+            confidence = dataclasses.replace(
+                confidence, recall_type=classify_remember_know(confidence.band, _top)
+            )
+
         return episodes, confidence
 
     async def _fuse_dense_sparse_for_agent(
@@ -3017,6 +3083,8 @@ class EpisodicMemory:
             # AD-873: Ebbinghaus memory decay (strength derived from age+stability)
             "strength": float(ep.strength),
             "stability": float(ep.stability),
+            # AD-979f: affective-salience retrieval slot (0.0 = neutral)
+            "affect_salience": float(ep.affect_salience),
         }
         # AD-570: Promote key anchor fields for ChromaDB where-clause filtering
         if ep.anchors:
@@ -3151,6 +3219,11 @@ class EpisodicMemory:
             stability = float(metadata.get("stability", EBBINGHAUS_DEFAULT_STABILITY_SECONDS))
         except (TypeError, ValueError):
             stability = EBBINGHAUS_DEFAULT_STABILITY_SECONDS
+        # AD-979f: affective-salience slot (pre-979f episodes lack the key -> 0.0).
+        try:
+            affect_salience = float(metadata.get("affect_salience", 0.0))
+        except (TypeError, ValueError):
+            affect_salience = 0.0
         return Episode(
             id=doc_id,
             timestamp=round(float(metadata.get("timestamp", 0.0)), 6),
@@ -3176,6 +3249,8 @@ class EpisodicMemory:
             # AD-873: Ebbinghaus memory decay
             strength=strength,
             stability=stability,
+            # AD-979f: affective-salience retrieval slot
+            affect_salience=affect_salience,
         )
 
     # ---- AD-567b: Salience-weighted recall pipeline --------------------
