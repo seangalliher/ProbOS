@@ -1090,6 +1090,14 @@ class MemoryConfig(BaseModel):
     # and the recalled episodes + confidence are byte-identical. Pairs with the
     # recall_rerank_weights["affect"] axis (also 0.0/off) as the AD-979f bundle.
     remember_know_typing_enabled: bool = False
+    # AD-979d: distributed cross-agent associative recall. When enabled AND the
+    # agent's own sovereign recall returns a WEAK Feeling-of-Knowing band (a
+    # slow-gap / vocabulary-mismatch miss, never strong recall or genuine absence),
+    # escalate to the single most-associated peer (Hebbian REL_SOCIAL) and surface
+    # that peer's CONFIDENT recall with SECONDHAND provenance. Bounded to one peer,
+    # in-process (single shared collection), refused under OWN_SHARD_ONLY. Default
+    # OFF -> escalate_recall() returns [] -> byte-identical.
+    cross_agent_recall_enabled: bool = False
     # AD-986b: transcript-grounded recall. Let a crew agent consult the canonical
     # chat transcript (the recording) for rooms it participated in, to ground a
     # recollection in what was actually said rather than guess. Sovereign-scoped

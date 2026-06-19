@@ -2193,6 +2193,28 @@ class ProbOSRuntime:
             except Exception as e:
                 logger.warning("SocialMemoryService failed to start: %s", e)
 
+        # AD-979d: Cross-agent associative recall service (construction-only,
+        # default-OFF). Late-bound after episodic_memory + hebbian_router exist;
+        # no hot-path call in slice 1. escalate_recall() returns [] while
+        # cross_agent_recall_enabled is False -> byte-identical.
+        self._cross_agent_recall_service = None
+        if getattr(self, "episodic_memory", None) and self.hebbian_router:
+            try:
+                from probos.cognitive.cross_agent_recall import CrossAgentRecallService
+                self._cross_agent_recall_service = CrossAgentRecallService(
+                    episodic_memory=self.episodic_memory,
+                    hebbian_router=self.hebbian_router,
+                    trust_network=self.trust_network,
+                    enabled=self.config.memory.cross_agent_recall_enabled,
+                    access_policy=self.config.memory.access_policy,
+                )
+                logger.info(
+                    "AD-979d: CrossAgentRecallService initialized (enabled=%s)",
+                    self.config.memory.cross_agent_recall_enabled,
+                )
+            except Exception as e:
+                logger.warning("AD-979d: CrossAgentRecallService failed to start: %s", e)
+
         # AD-567c: Late-bind WardRoom into SIF for anchor integrity cross-reference
         if self.sif and self.ward_room:
             self.sif.set_ward_room(self.ward_room)
