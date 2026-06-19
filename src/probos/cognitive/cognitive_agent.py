@@ -65,6 +65,25 @@ _UNBOUNDED_ATTENTION_TOKEN_BUDGET: int = 1_000_000_000
 # (defensive — MemoryConfig.attention.token_budget always provides a default).
 _DEFAULT_ATTENTION_TOKEN_BUDGET: int = 120_000
 
+# AD-1031: zone_floor / salience scheme for the camera-scene bid (DM path).
+# The natural DM bids use ``zone_floor == emission index`` (0..~12) and a
+# default salience (fixed insertion priority, or the AD-1030 scored value in
+# [0, 1]). The ContextAssembler ORDERS survivors ascending by
+# ``(zone_floor, insertion_order)`` and SELECTS unpinned bids by DESCENDING
+# salience under a scarce budget. So:
+#   • PROMINENT camera scene → a strongly-negative zone_floor sorts it BEFORE
+#     every natural bid (it LEADS the prompt, approximating the old AD-733a
+#     prepend's primacy) + a very high salience so it always survives a scarce
+#     budget (the scene was unconditionally present before).
+#   • RECESSIVE camera scene → a large positive zone_floor sorts it AFTER all
+#     natural bids (it TRAILS the substantive context) + a negative salience so
+#     it is the FIRST unpinned bid dropped when the budget is tight
+#     (present-but-quiet). The other bids' zone_floor/salience are unchanged.
+_CAMERA_PROMINENT_ZONE_FLOOR: int = -1_000_000
+_CAMERA_PROMINENT_SALIENCE: float = 1_000_000.0
+_CAMERA_RECESSIVE_ZONE_FLOOR: int = 1_000_000
+_CAMERA_RECESSIVE_SALIENCE: float = -1.0
+
 
 class SensoriumLayer(StrEnum):
     """AD-666: Three-layer classification for agent context injections."""
@@ -7274,7 +7293,11 @@ class CognitiveAgent(BaseAgent):
             _bids: list[AttentionBid] = []
 
             def _emit(
-                source: str, segments: list[str], *, salience: float | None = None
+                source: str,
+                segments: list[str],
+                *,
+                salience: float | None = None,
+                zone_floor: int | None = None,
             ) -> None:
                 idx = len(_bids)
                 text = "\n".join(segments)
@@ -7286,7 +7309,10 @@ class CognitiveAgent(BaseAgent):
                     # float(idx) ⇒ byte-identical to the AD-1028/1029 path.
                     salience=float(idx) if salience is None else salience,
                     token_cost=estimate_tokens(text),
-                    zone_floor=idx,
+                    # AD-1031: an explicit zone_floor (the camera-scene bid)
+                    # overrides the emission-order default; None ⇒ idx ⇒
+                    # byte-identical to the AD-1028/1029/1030 path.
+                    zone_floor=idx if zone_floor is None else zone_floor,
                 ))
 
             # AD-683: Cold-start ship state snapshot (boot-camp DM path only).
@@ -7499,6 +7525,67 @@ class CognitiveAgent(BaseAgent):
                 _emit("active_game", [active_game_ctx, ""])
 
             _emit("captain_message", [f"Captain says: {params.get('text', '')}"])
+
+            # AD-1031: camera/visual scene as a salience-gated bid. When the
+            # camera-scene-bid is ON (default-OFF), the router did NOT prepend
+            # the AD-733a scene onto ``text`` — it handed the rendered block via
+            # ``params['_visual_scene']`` for the agent to bid here. The scene
+            # wins PROMINENT prompt space (a leading zone_floor + high salience,
+            # approximating the old prepend's primacy + always-present
+            # guarantee) only when it is SALIENT: the Captain REFERENCED vision,
+            # the frame MATERIALLY CHANGED (novelty ≥ camera_novelty_minimum),
+            # or it's a VISUAL TASK (image attachment). Otherwise it stays
+            # RECESSIVE — a one-line "live camera" summary at a trailing
+            # zone_floor + low salience (present-but-quiet, first to drop under a
+            # scarce budget) so agents stop over-narrating an unchanged scene
+            # (#973 / BF-632 dominance). Default-OFF or a missing
+            # ``_visual_scene`` ⇒ emits NOTHING ⇒ the router prepend ran as today
+            # ⇒ byte-identical.
+            _att_cfg = self._attention_config()
+            _visual_scene = params.get("_visual_scene")
+            if (
+                _att_cfg is not None
+                and getattr(_att_cfg, "camera_scene_bid_enabled", False)
+                and _visual_scene
+            ):
+                from probos.cognitive.salience import visual_reference_score
+
+                # BF-632: reference-detect off the RAW Captain message, NEVER the
+                # merged ``text`` (which historically LED with the scene block).
+                _referenced = visual_reference_score(
+                    params.get("captain_message", "")
+                ) > 0.0
+                _novelty_min = float(
+                    getattr(_att_cfg, "camera_novelty_minimum", 0.3) or 0.0
+                )
+                _changed = (
+                    float(params.get("_visual_novelty", 0.0) or 0.0) >= _novelty_min
+                )
+                _visual_task = bool(params.get("has_image_attachment"))
+                _prominent = _referenced or _changed or _visual_task
+                _summary = params.get("_visual_summary") or ""
+                if _prominent or not _summary:
+                    # PROMINENT — or the empty-WM BF-294 sentinel (no
+                    # ``_visual_summary``), which MUST always show so the agent
+                    # never confabulates a scene. Full block LEADS the prompt.
+                    _emit(
+                        "camera_scene",
+                        [str(_visual_scene), ""],
+                        salience=_CAMERA_PROMINENT_SALIENCE,
+                        zone_floor=_CAMERA_PROMINENT_ZONE_FLOOR,
+                    )
+                else:
+                    # RECESSIVE — a short, clearly-framed "live camera" one-liner
+                    # (provenance-distinct from memory) that TRAILS the
+                    # substantive context and drops first under scarcity.
+                    _one_line = " ".join(str(_summary).split())
+                    _emit(
+                        "camera_scene_ambient",
+                        [f"[Live camera] {_one_line}", ""],
+                        salience=_CAMERA_RECESSIVE_SALIENCE,
+                        zone_floor=_CAMERA_RECESSIVE_ZONE_FLOOR,
+                    )
+
             # AD-1029: when the deterministic AttentionFaculty is composed (attention
             # enabled), it DRIVES the assembler — merging any pending exogenous bids and
             # auditing the competition. Default-OFF the faculty is None and the exact

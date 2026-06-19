@@ -22,6 +22,7 @@ follow-up. There is no ``await`` anywhere in this module by design.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "recency_decay",
     "importance_norm",
     "compute_salience",
+    "visual_reference_score",
 ]
 
 
@@ -133,3 +135,67 @@ def compute_salience(
     if w_sum <= 0.0:
         return 0.0
     return (weights.w_rel * rel + weights.w_rec * rec + weights.w_imp * imp) / w_sum
+
+
+# ---------------------------------------------------------------------------
+# AD-1031: visual-reference detection for the camera-scene salience gate.
+# ---------------------------------------------------------------------------
+
+# Single-word vision references. Matched on WORD BOUNDARIES (via tokenization)
+# so ``"seem"`` does not match ``"see"`` and ``"overlook"`` does not match
+# ``"look"``. Inflected forms are listed explicitly (the gate is a transparent
+# keyword check, not a stemmer).
+_VISUAL_REFERENCE_WORDS: frozenset[str] = frozenset({
+    "see", "seeing", "saw", "seen",
+    "look", "looking", "looks",
+    "watch", "watching",
+    "screen", "camera", "visual", "visually",
+    "wearing", "wear",
+    "picture", "image", "photo", "video",
+})
+
+# Multi-word vision references. Matched as substrings of the lowercased text.
+_VISUAL_REFERENCE_PHRASES: tuple[str, ...] = (
+    "what do you see",
+    "what can you see",
+    "do you see",
+    "can you see",
+    "look at",
+    "show me",
+    "behind me",
+    "on screen",
+    "on the screen",
+    "this image",
+    "this picture",
+    "on camera",
+)
+
+_VISUAL_TOKEN_RE = re.compile(r"[a-z]+")
+
+
+def visual_reference_score(text: str) -> float:
+    """AD-1031: ``1.0`` if ``text`` references vision, else ``0.0``.
+
+    A PURE keyword/phrase detector (no I/O, no model, no clock) used by the
+    camera-scene salience gate to decide whether the Captain's turn REFERENCES
+    seeing / the camera / the screen / an image — the strongest salience signal
+    (an explicit visual reference ALWAYS surfaces the full live scene). Empty or
+    non-string input scores ``0.0``.
+
+    Detection is two-layer: multi-word phrases (e.g. ``"what do you see"``,
+    ``"show me"``, ``"on screen"``) match as substrings of the lowercased text;
+    single-word keywords (``"see"``, ``"camera"``, ``"wearing"`` …) match on word
+    boundaries via tokenization, so substrings like ``"seem"`` / ``"overlook"``
+    do NOT false-positive. The result is a ``float`` (not ``bool``) so the gate
+    can later weight it alongside other salience terms without a type change.
+    """
+    if not text or not isinstance(text, str):
+        return 0.0
+    lowered = text.lower()
+    for phrase in _VISUAL_REFERENCE_PHRASES:
+        if phrase in lowered:
+            return 1.0
+    tokens = set(_VISUAL_TOKEN_RE.findall(lowered))
+    if tokens & _VISUAL_REFERENCE_WORDS:
+        return 1.0
+    return 0.0

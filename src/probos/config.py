@@ -918,6 +918,21 @@ class AttentionConfig(BaseModel):
     w_imp: float = Field(default=0.5, ge=0.0)   # importance (AD-598)
     # Recency decay time-constant (seconds): exp(-age / half_life). Default 1 day.
     recency_half_life_seconds: float = Field(default=86400.0, gt=0.0)
+    # AD-1031: camera/visual scene as a salience-gated bid. Default-OFF ⇒ the
+    # AD-733a router prepend runs exactly as today (byte-identical) and the
+    # agent emits no camera bid. When ON the rendered scene is handed to the
+    # agent (via params, NOT prepended onto the Captain turn), which bids it
+    # PROMINENT only when SALIENT — the Captain referenced vision, the frame
+    # MATERIALLY CHANGED (novelty ≥ camera_novelty_minimum), or it is a VISUAL
+    # TASK (image attachment) — and RECESSIVE (a one-line "live camera" summary,
+    # present-but-quiet) otherwise. Stops agents over-narrating an unchanged
+    # scene (#973) and removes the visual block's prompt dominance (BF-632).
+    camera_scene_bid_enabled: bool = False
+    # Minimum novelty_score (0.0–1.0) for a frame to count as "materially
+    # changed" and surface the full scene on CHANGE alone (an explicit visual
+    # reference always surfaces it, independent of this gate). Captain-approved
+    # default 0.3 (2026-06-19).
+    camera_novelty_minimum: float = Field(default=0.3, ge=0.0, le=1.0)
 
 
 class MemoryConfig(BaseModel):

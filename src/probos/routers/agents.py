@@ -2635,6 +2635,28 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if _project_preamble is not None:
         message_text = f"{_project_preamble}\n\n{message_text}"
 
+    # AD-1031: camera/visual scene as a salience-gated bid. When
+    # ``camera_scene_bid_enabled`` is ON, the scene is NOT prepended onto
+    # ``message_text`` below; instead it is handed to the agent via params so
+    # the agent bids it salience-gated (PROMINENT only when the Captain
+    # referenced vision / the frame materially changed / it's a visual task).
+    # Default-OFF ⇒ these capture vars stay None/0.0 and the AD-733a prepend
+    # runs exactly as today (byte-identical). Read defensively (getattr chain).
+    _visual_scene_for_bid: str | None = None
+    _visual_novelty_for_bid: float = 0.0
+    _visual_summary_for_bid: str = ""
+    _camera_scene_bid_on = bool(
+        getattr(
+            getattr(
+                getattr(getattr(runtime, "config", None), "memory", None),
+                "attention",
+                None,
+            ),
+            "camera_scene_bid_enabled",
+            False,
+        )
+    )
+
     # AD-733a (Wave 171): prepend the agent's current visual context.
     # Confabulation guard (BF-294 lesson): render_for_prompt returns a
     # non-empty "no data" sentinel when the buffer is empty, so the agent
@@ -2683,7 +2705,22 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
             from probos.perception.consumer import get_or_create_working_memory
             _wm = get_or_create_working_memory(agent_id)
             _scene_block = _wm.render_for_prompt()
-            if _scene_block:
+            if _camera_scene_bid_on:
+                # AD-1031 ON: hand the rendered scene + change signals to the
+                # agent for a salience-gated bid (do NOT prepend onto the
+                # Captain turn). force-describe + note_dm_activity above STILL
+                # ran (those are side effects, not prompt content).
+                if _scene_block:
+                    _lat = _wm.latest()
+                    _visual_scene_for_bid = _scene_block
+                    _visual_novelty_for_bid = (
+                        _lat.novelty_score if _lat is not None else 0.0
+                    )
+                    _visual_summary_for_bid = (
+                        _lat.description if _lat is not None else ""
+                    )
+            elif _scene_block:
+                # AD-1031 OFF (default): byte-identical AD-733a prepend.
                 message_text = f"{_scene_block}\n\n{message_text}"
     except Exception:
         logger.debug(
@@ -2709,6 +2746,15 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if vision_messages is not None:
         _params["vision_messages"] = vision_messages
         _params["has_image_attachment"] = True
+    # AD-1031: when the camera-scene-bid is ON, pass the rendered scene + change
+    # signals through params for the agent's salience-gated bid (the router did
+    # NOT prepend them onto ``text``). OFF (default) ⇒ _visual_scene_for_bid is
+    # None ⇒ nothing added ⇒ byte-identical. ``captain_message`` stays RAW so
+    # the per-message recall query is unaffected (BF-632).
+    if _visual_scene_for_bid is not None:
+        _params["_visual_scene"] = _visual_scene_for_bid
+        _params["_visual_novelty"] = _visual_novelty_for_bid
+        _params["_visual_summary"] = _visual_summary_for_bid
     intent = IntentMessage(
         intent="direct_message",
         params=_params,
