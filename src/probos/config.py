@@ -1004,6 +1004,11 @@ class MemoryConfig(BaseModel):
     # schema version matches. Default False (opt-in) for one release of bake
     # time; a grandchild AD flips it True.
     schema_version_tracking: bool = False
+    # AD-988 (#932): surface *why* an episodic fragment was retrieved — the
+    # dominant recall signal — on OracleResult.match_reason and in
+    # query_formatted. Default False (opt-in): when off the Oracle is
+    # byte-identical to pre-AD-988 (no match_reason set, no "why:" rendered).
+    oracle_match_reason_enabled: bool = False
     # AD-825: max seconds to wait for write-holding background tasks
     # (dream monitor loop, episodic backup) to finish their current
     # operation before the AD-824 cancel sweep force-cancels them. Drain

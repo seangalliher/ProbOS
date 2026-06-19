@@ -446,6 +446,52 @@ class RecallScore:
     composite_score: float = 0.0       # weighted combination of all signals
 
 
+def dominant_match_reason(rs: RecallScore) -> str:
+    """AD-988: Name the dominant retrieval signal behind a ``RecallScore``.
+
+    Pure, deterministic, no I/O. Returns a short human-readable phrase
+    answering *why* a fragment was recalled — the Counselor's 2026-06-13
+    "I can tell it's reaching but not why" gap. The Oracle collapses the
+    full breakdown to one scalar (``composite_score``); this projects the
+    dominant axis back out for transparency.
+
+    Heuristic (in priority order):
+      1. ``keyword_hits > 0`` ⇒ ``"keyword match (<n> hit[s])"``. Lexical /
+         FTS5 is the strongest *explicit* signal, so it wins outright even
+         when a graded signal is numerically larger.
+      2. Otherwise pick the MAX among the normalized [0,1] match signals and
+         name it with its value, e.g. ``"semantic similarity (0.83)"``:
+         ``semantic_similarity`` → ``"semantic similarity"``,
+         ``hebbian_weight`` → ``"Hebbian co-activation"``,
+         ``anchor_confidence`` → ``"anchored context"``,
+         ``recency_weight`` → ``"recency"``,
+         ``tcm_similarity`` → ``"temporal context"``.
+         ``trust_weight`` is EXCLUDED — it is a weighting, not a match reason.
+         Ties resolve to the first signal in the order above (stable).
+      3. Every graded match signal ``<= 0.0`` ⇒ ``"weak/ambiguous match"``
+         (the degenerate "it's reaching" case).
+    """
+    if rs.keyword_hits > 0:
+        plural = "s" if rs.keyword_hits != 1 else ""
+        return f"keyword match ({rs.keyword_hits} hit{plural})"
+    candidates: tuple[tuple[str, float], ...] = (
+        ("semantic similarity", rs.semantic_similarity),
+        ("Hebbian co-activation", rs.hebbian_weight),
+        ("anchored context", rs.anchor_confidence),
+        ("recency", rs.recency_weight),
+        ("temporal context", rs.tcm_similarity),
+    )
+    best_label = ""
+    best_value = 0.0
+    for label, value in candidates:
+        if value > best_value:
+            best_value = value
+            best_label = label
+    if not best_label:
+        return "weak/ambiguous match"
+    return f"{best_label} ({best_value:.2f})"
+
+
 @dataclass(frozen=True)
 class MemoryRef:
     """AD-462f: Lightweight projection of an OracleResult — retrieval-as-pointers.

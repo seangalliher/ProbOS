@@ -17,7 +17,10 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
-from probos.types import MemoryRef  # AD-462f (types.py has no reverse dep on oracle_service)
+from probos.types import (  # AD-462f (types.py has no reverse dep on oracle_service)
+    MemoryRef,
+    dominant_match_reason,  # AD-988
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,10 @@ class OracleResult:
     score: float  # Normalized relevance score (0.0-1.0)
     metadata: dict[str, Any]  # Tier-specific metadata
     provenance: str  # Human-readable provenance tag
+    # AD-988: per-fragment retrieval-reason (the dominant recall signal).
+    # Default-OFF: only populated for the episodic tier when the Oracle's
+    # match_reason gate is enabled; "" everywhere else (byte-identical).
+    match_reason: str = ""
 
 
 # AD-688: Tier 6 (graph) tunables — inline caps, NOT config (escalate to
@@ -176,6 +183,7 @@ class OracleService:
         semantic_layer: Any = None,  # AD-686 (Tier 5)
         knowledge_graph: Any = None,  # AD-688 (Tier 6)
         health_provider: Any = None,  # AD-695 (Tier 7)
+        match_reason_enabled: bool = False,  # AD-988 (default-OFF)
     ) -> None:
         self._episodic_memory = episodic_memory
         self._records_store = records_store
@@ -187,6 +195,10 @@ class OracleService:
         self._semantic_layer = semantic_layer  # AD-686 (Tier 5)
         self._knowledge_graph = knowledge_graph  # AD-688 (Tier 6)
         self._health_provider = health_provider  # AD-695 (Tier 7)
+        # AD-988: gate for per-fragment retrieval-reason transparency.
+        # When False (default) the episodic projection sets no match_reason
+        # and query_formatted renders byte-identically to pre-AD-988.
+        self._match_reason_enabled = match_reason_enabled
         self._callsign_registry: Any = None  # BF-264 (callsign→agent_type expansion)
         # AD-462f: Instance-scoped LRU for resolve_ref(). Bounded by
         # _MEMORY_REF_CACHE_SIZE; OrderedDict eviction (oldest first).
@@ -464,6 +476,11 @@ class OracleService:
             line = f"{r.provenance} (score: {r.score:.2f}"
             if meta_str:
                 line += f", {meta_str}"
+            # AD-988: surface the retrieval reason only when the gate is ON
+            # and the result carries one (episodic tier). OFF (default) or an
+            # empty reason ⇒ byte-identical to pre-AD-988 rendering.
+            if self._match_reason_enabled and r.match_reason:
+                line += f", why: {r.match_reason}"
             line += f") {content_preview}"
 
             if char_count + len(line) + 1 > max_chars:
@@ -641,6 +658,14 @@ class OracleService:
                 )
                 for rs in scored:
                     ep = rs.episode
+                    # AD-988: project the dominant recall signal only when the
+                    # gate is ON; OFF (default) keeps match_reason="" so the
+                    # OracleResult is byte-identical to pre-AD-988.
+                    reason = (
+                        dominant_match_reason(rs)
+                        if self._match_reason_enabled
+                        else ""
+                    )
                     results.append(OracleResult(
                         source_tier="episodic",
                         content=ep.user_input or "",
@@ -653,6 +678,7 @@ class OracleService:
                             "agent_scope": scoped_agent_id,
                         },
                         provenance="[episodic memory]",
+                        match_reason=reason,
                     ))
             results.sort(key=lambda result: result.score, reverse=True)
         elif hasattr(em, "recall"):

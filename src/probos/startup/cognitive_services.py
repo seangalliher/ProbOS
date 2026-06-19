@@ -660,6 +660,10 @@ async def init_cognitive_services(
             trust_network=trust_network,
             hebbian_router=hebbian_router,
             expertise_directory=expertise_directory,
+            # AD-988: default-OFF retrieval-reason transparency gate.
+            match_reason_enabled=getattr(
+                config.memory, "oracle_match_reason_enabled", False,
+            ),
         )
         logger.info("AD-462e: OracleService initialized")
     except Exception as e:
