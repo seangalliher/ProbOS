@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from probos.events import EventType
 from probos.cognitive.concurrency_manager import ConcurrencyManager
+from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.substrate.agent import BaseAgent
 from probos.types import AnchorFrame, IntentMessage, IntentResult, LLMRequest, Priority, Skill
@@ -49,6 +50,17 @@ _CHAIN_ELIGIBLE_INTENTS: frozenset[str] = frozenset({
     "ward_room_notification",
     "proactive_think",
 })
+
+# AD-1028: ContextAssembler token budget. When attention.enabled is False
+# (default), _build_user_message routes its blocks through the bid assembler
+# with this effectively-unbounded budget so nothing is dropped and the prompt
+# is byte-identical to the prior push-style prepend chain. When enabled, the
+# configured MemoryConfig.attention.token_budget is used instead — the first
+# global guard against context-window overflow.
+_UNBOUNDED_ATTENTION_TOKEN_BUDGET: int = 1_000_000_000
+# Fallback budget when attention is enabled but the config field is absent
+# (defensive — MemoryConfig.attention.token_budget always provides a default).
+_DEFAULT_ATTENTION_TOKEN_BUDGET: int = 120_000
 
 
 class SensoriumLayer(StrEnum):
@@ -7050,6 +7062,23 @@ class CognitiveAgent(BaseAgent):
         lines.append("=== END SHIP MEMORY ===")
         return lines
 
+    def _resolve_attention_budget(self) -> int:
+        """AD-1028: resolve the ContextAssembler global token budget.
+
+        Default-OFF (``MemoryConfig.attention.enabled`` False, or no runtime/
+        config wired) returns an effectively-unbounded budget so the bid
+        assembler drops nothing and the assembled prompt is byte-identical to
+        the prior push-style prepend chain. When enabled, returns the configured
+        ``token_budget`` — the first global guard against context-window
+        overflow.
+        """
+        _rt = getattr(self, "_runtime", None)
+        _mem_cfg = getattr(getattr(_rt, "config", None), "memory", None) if _rt else None
+        _att_cfg = getattr(_mem_cfg, "attention", None)
+        if _att_cfg is not None and getattr(_att_cfg, "enabled", False):
+            return int(getattr(_att_cfg, "token_budget", _DEFAULT_ATTENTION_TOKEN_BUDGET))
+        return _UNBOUNDED_ATTENTION_TOKEN_BUDGET
+
     async def _build_user_message(self, observation: dict) -> str:
         """Build the user message from the observation dict.
         Override in subclasses for custom formatting.
@@ -7068,7 +7097,23 @@ class CognitiveAgent(BaseAgent):
 
         # AD-397: direct_message — conversational context for 1:1 sessions
         if intent_name == "direct_message":
-            parts: list[str] = []
+            # AD-1028: each block below becomes an AttentionBid with a LAZY
+            # renderer returning EXACTLY the segment(s) it previously appended
+            # to ``parts`` (including its trailing "" separator). The
+            # ContextAssembler joins survivors with "\n" — byte-identical to the
+            # prior ``"\n".join(parts)`` when nothing drops (default-OFF budget).
+            _bids: list[AttentionBid] = []
+
+            def _emit(source: str, segments: list[str]) -> None:
+                idx = len(_bids)
+                text = "\n".join(segments)
+                _bids.append(AttentionBid(
+                    source=source,
+                    render=(lambda _t=text: _t),
+                    salience=float(idx),
+                    token_cost=estimate_tokens(text),
+                    zone_floor=idx,
+                ))
 
             # AD-683: Cold-start ship state snapshot (boot-camp DM path only).
             if observation.get("_boot_camp_active") and self._runtime is not None:
@@ -7085,18 +7130,22 @@ class CognitiveAgent(BaseAgent):
                         )
                         _snapshot_text = ""
                     if _snapshot_text:
-                        parts.append("--- Ship State Snapshot ---")
-                        parts.append(_snapshot_text)
-                        parts.append("---")
-                        parts.append("")
+                        _emit("boot_snapshot", [
+                            "--- Ship State Snapshot ---",
+                            _snapshot_text,
+                            "---",
+                            "",
+                        ])
 
             # AD-502: Temporal awareness header
             temporal_ctx = self._build_temporal_context()
             if temporal_ctx:
-                parts.append("--- Temporal Awareness ---")
-                parts.append(temporal_ctx)
-                parts.append("---")
-                parts.append("")
+                _emit("temporal", [
+                    "--- Temporal Awareness ---",
+                    temporal_ctx,
+                    "---",
+                    "",
+                ])
 
             # AD-588: Cognitive zone awareness in DM path
             _zone = None
@@ -7104,8 +7153,10 @@ class CognitiveAgent(BaseAgent):
             if _wm_zone and hasattr(_wm_zone, 'get_cognitive_zone'):
                 _zone = _wm_zone.get_cognitive_zone()
             if _zone and _zone != "green":
-                parts.append(f"<cognitive_zone>{_zone.upper()}</cognitive_zone>")
-                parts.append("")
+                _emit("cognitive_zone", [
+                    f"<cognitive_zone>{_zone.upper()}</cognitive_zone>",
+                    "",
+                ])
 
             # AD-588: Introspective telemetry for self-referential queries
             captain_text = params.get("text", "")
@@ -7116,8 +7167,7 @@ class CognitiveAgent(BaseAgent):
                     _snapshot = await _telemetry_svc.get_full_snapshot(_agent_id)
                     _telemetry_text = _telemetry_svc.render_telemetry_context(_snapshot)
                     if _telemetry_text:
-                        parts.append(_telemetry_text)
-                        parts.append("")
+                        _emit("telemetry", [_telemetry_text, ""])
                     # AD-589: Cache for post-decision faithfulness cross-check
                     _wm = getattr(self, '_working_memory', None)
                     if _wm and hasattr(_wm, 'set_telemetry_snapshot'):
@@ -7129,8 +7179,7 @@ class CognitiveAgent(BaseAgent):
             _wm = getattr(self, '_working_memory', None)
             wm_context = _wm.render_context() if _wm else ""
             if wm_context:
-                parts.append(wm_context)
-                parts.append("")
+                _emit("working_memory", [wm_context, ""])
 
             # AD-723a-1 (Wave 148): dispatch self-wrapped DM_ONESHOT sensorium
             # entries. Replaces the prior hand-rolled AD-722 + AD-722a manual
@@ -7145,11 +7194,14 @@ class CognitiveAgent(BaseAgent):
                 _dm_sensorium = await self._dispatch_sensorium_async(
                     SensoriumPath.DM_ONESHOT, observation,
                 )
+                _dm_segs: list[str] = []
                 for _key in self._DM_SELF_WRAPPED_KEYS:
                     _block = _dm_sensorium.get(_key)
                     if _block:
-                        parts.append(_block)
-                        parts.append("")
+                        _dm_segs.append(_block)
+                        _dm_segs.append("")
+                if _dm_segs:
+                    _emit("dm_sensorium", _dm_segs)
             except Exception:
                 logger.debug(
                     "AD-723a-1: DM sensorium dispatch failed; "
@@ -7161,8 +7213,10 @@ class CognitiveAgent(BaseAgent):
             memories = observation.get("recent_memories", [])
             if memories:
                 _framing = observation.get("_source_framing")
-                parts.extend(self._format_memory_section(memories, source_framing=_framing))
-                parts.append("")
+                _emit("episodic", [
+                    *self._format_memory_section(memories, source_framing=_framing),
+                    "",
+                ])
 
             # AD-986b: canonical transcript (the recording) — the verbatim record
             # of a room this agent took part in, rendered DISTINCT from the
@@ -7173,8 +7227,10 @@ class CognitiveAgent(BaseAgent):
                 from probos.cognitive.transcript_grounding import (
                     render_transcript_grounding,
                 )
-                parts.extend(render_transcript_grounding(_tg_excerpt))
-                parts.append("")
+                _emit("transcript_grounding", [
+                    *render_transcript_grounding(_tg_excerpt),
+                    "",
+                ])
 
             # AD-986d: recording-purged indication. If the agent may hold a
             # subjective memory of a room whose canonical recording has been
@@ -7185,8 +7241,10 @@ class CognitiveAgent(BaseAgent):
                 from probos.cognitive.transcript_grounding import (
                     render_purge_indication,
                 )
-                parts.extend(render_purge_indication(_tg_purged))
-                parts.append("")
+                _emit("transcript_purged", [
+                    *render_purge_indication(_tg_purged),
+                    "",
+                ])
 
             # AD-568a: Oracle Service cross-tier context (ORACLE tier + DEEP strategy only)
             if observation.get("_oracle_context"):
@@ -7195,16 +7253,16 @@ class CognitiveAgent(BaseAgent):
                     self.callsign or self.agent_type,
                     len(observation["_oracle_context"]),
                 )
-                parts.append(
+                _emit("oracle", [
                     "=== CROSS-TIER KNOWLEDGE (Ship's Records + Operational State) ===\n"
                     "These are NOT your personal experiences. They are from the ship's shared "
                     "knowledge stores. Treat as reference material, not memory.\n"
                     "IMPORTANT: When answering questions, prioritize information from this section "
-                    "over your general training knowledge. Cite specific relationships shown here."
-                )
-                parts.append(observation["_oracle_context"])
-                parts.append("=== END CROSS-TIER KNOWLEDGE ===")
-                parts.append("")
+                    "over your general training knowledge. Cite specific relationships shown here.",
+                    observation["_oracle_context"],
+                    "=== END CROSS-TIER KNOWLEDGE ===",
+                    "",
+                ])
             else:
                 logger.debug(
                     "No oracle_context in DM observation for %s (keys: %s)",
@@ -7224,29 +7282,31 @@ class CognitiveAgent(BaseAgent):
                     _sources_present.append("ship's records")
                 if not _sources_present:
                     _sources_present.append("training knowledge only")
-                parts.append(
+                _emit("source_attribution", [
                     f"<source_awareness>Your response draws on: {', '.join(_sources_present)}. "
-                    f"Primary basis: {_attr.primary_source.value}.</source_awareness>"
-                )
-                parts.append("")
+                    f"Primary basis: {_attr.primary_source.value}.</source_awareness>",
+                    "",
+                ])
 
             session_history = params.get("session_history", [])
             if session_history:
-                parts.append("Previous conversation:")
+                _sh_segments = ["Previous conversation:"]
                 for entry in session_history:
                     role = entry.get("role", "unknown")
                     text = entry.get("text", "")
-                    parts.append(f"  {role}: {text}")
-                parts.append("")
+                    _sh_segments.append(f"  {role}: {text}")
+                _sh_segments.append("")
+                _emit("session_history", _sh_segments)
 
             # AD-572: Active game state awareness in DM path
             active_game_ctx = self._build_active_game_context()
             if active_game_ctx:
-                parts.append(active_game_ctx)
-                parts.append("")
+                _emit("active_game", [active_game_ctx, ""])
 
-            parts.append(f"Captain says: {params.get('text', '')}")
-            return "\n".join(parts)
+            _emit("captain_message", [f"Captain says: {params.get('text', '')}"])
+            return "\n".join(
+                ContextAssembler.assemble(_bids, token_budget=self._resolve_attention_budget())
+            )
 
         # AD-407b: ward_room_notification — thread context for Ward Room
         if intent_name == "ward_room_notification":
@@ -7255,17 +7315,39 @@ class CognitiveAgent(BaseAgent):
             title = params.get("title", "")
             context = observation.get("context", "")
 
-            wr_parts: list[str] = []
-            wr_parts.append(f"[Ward Room — #{channel_name}]")
-            wr_parts.append(f"Thread: {title}")
+            # AD-1028: WR blocks become AttentionBids with LAZY renderers that
+            # return EXACTLY the segment(s) each block appended to ``wr_parts``
+            # (the WR path's leading-"" separator convention is reproduced
+            # inside each bid). The ContextAssembler joins survivors with "\n"
+            # — byte-identical to the prior ``"\n".join(wr_parts)`` when nothing
+            # drops (default-OFF budget).
+            _bids: list[AttentionBid] = []
+
+            def _emit(source: str, segments: list[str]) -> None:
+                idx = len(_bids)
+                text = "\n".join(segments)
+                _bids.append(AttentionBid(
+                    source=source,
+                    render=(lambda _t=text: _t),
+                    salience=float(idx),
+                    token_cost=estimate_tokens(text),
+                    zone_floor=idx,
+                ))
+
+            _emit("wr_header", [
+                f"[Ward Room — #{channel_name}]",
+                f"Thread: {title}",
+            ])
 
             # AD-502: Temporal awareness header
             temporal_ctx = self._build_temporal_context()
             if temporal_ctx:
-                wr_parts.append("")
-                wr_parts.append("--- Temporal Awareness ---")
-                wr_parts.append(temporal_ctx)
-                wr_parts.append("---")
+                _emit("temporal", [
+                    "",
+                    "--- Temporal Awareness ---",
+                    temporal_ctx,
+                    "---",
+                ])
 
             # AD-588: Cognitive zone awareness in Ward Room path
             _zone = None
@@ -7273,8 +7355,10 @@ class CognitiveAgent(BaseAgent):
             if _wm_zone and hasattr(_wm_zone, 'get_cognitive_zone'):
                 _zone = _wm_zone.get_cognitive_zone()
             if _zone and _zone != "green":
-                wr_parts.append("")
-                wr_parts.append(f"<cognitive_zone>{_zone.upper()}</cognitive_zone>")
+                _emit("cognitive_zone", [
+                    "",
+                    f"<cognitive_zone>{_zone.upper()}</cognitive_zone>",
+                ])
 
             # AD-623: DM self-monitoring — agents responding to DM threads
             # see their own repetition in real time
@@ -7283,8 +7367,7 @@ class CognitiveAgent(BaseAgent):
                     params.get("thread_id", ""),
                 )
                 if _dm_self_mon:
-                    wr_parts.append("")
-                    wr_parts.append(_dm_self_mon)
+                    _emit("dm_self_monitoring", ["", _dm_self_mon])
 
             # AD-588: Introspective telemetry for self-referential ward room posts
             _wr_text = f"{params.get('title', '')} {params.get('text', '')}".strip()
@@ -7295,8 +7378,7 @@ class CognitiveAgent(BaseAgent):
                     _snapshot = await _telemetry_svc.get_full_snapshot(_agent_id)
                     _telemetry_text = _telemetry_svc.render_telemetry_context(_snapshot)
                     if _telemetry_text:
-                        wr_parts.append("")
-                        wr_parts.append(_telemetry_text)
+                        _emit("telemetry", ["", _telemetry_text])
                     # AD-589: Cache for post-decision faithfulness cross-check
                     _wm = getattr(self, '_working_memory', None)
                     if _wm and hasattr(_wm, 'set_telemetry_snapshot'):
@@ -7308,8 +7390,7 @@ class CognitiveAgent(BaseAgent):
             _wm = getattr(self, '_working_memory', None)
             wm_context = _wm.render_context() if _wm else ""
             if wm_context:
-                wr_parts.append("")
-                wr_parts.append(wm_context)
+                _emit("working_memory", ["", wm_context])
 
             # AD-723a-2 (Wave 161): WR sibling of the AD-723a-1 DM
             # dispatcher path. Selector ``_WR_SELF_WRAPPED_KEYS`` is
@@ -7320,11 +7401,14 @@ class CognitiveAgent(BaseAgent):
                 _wr_sensorium = await self._dispatch_sensorium_async(
                     SensoriumPath.WR_ONESHOT, observation,
                 )
+                _wr_segs: list[str] = []
                 for _key in self._WR_SELF_WRAPPED_KEYS:
                     _block = _wr_sensorium.get(_key)
                     if _block:
-                        wr_parts.append("")
-                        wr_parts.append(_block)
+                        _wr_segs.append("")
+                        _wr_segs.append(_block)
+                if _wr_segs:
+                    _emit("wr_sensorium", _wr_segs)
             except Exception:
                 logger.warning(
                     "AD-723a-2: WR sensorium dispatch raised for agent=%s; "
@@ -7335,18 +7419,20 @@ class CognitiveAgent(BaseAgent):
             # BF-102: Cold-start system note in ward room context
             rt = getattr(self, '_runtime', None)
             if rt and getattr(rt, 'is_cold_start', False):
-                wr_parts.append("")
-                wr_parts.append(
+                _emit("cold_start_note", [
+                    "",
                     "SYSTEM NOTE: This is a fresh start. You have no prior "
-                    "episodic memories. Do not reference or invent past experiences."
-                )
+                    "episodic memories. Do not reference or invent past experiences.",
+                ])
 
             # AD-430c / AD-540: Episodic memory with provenance boundary
             memories = observation.get("recent_memories", [])
             if memories:
-                wr_parts.append("")
                 _framing = observation.get("_source_framing")
-                wr_parts.extend(self._format_memory_section(memories, source_framing=_framing))
+                _emit("episodic", [
+                    "",
+                    *self._format_memory_section(memories, source_framing=_framing),
+                ])
 
             # AD-568a: Oracle Service cross-tier context
             if observation.get("_oracle_context"):
@@ -7354,14 +7440,14 @@ class CognitiveAgent(BaseAgent):
                     "Rendering oracle_context in WR prompt for %s (%d chars)",
                     getattr(self, 'agent_type', '?'), len(observation["_oracle_context"]),
                 )
-                wr_parts.append("")
-                wr_parts.append(
+                _emit("oracle", [
+                    "",
                     "=== CROSS-TIER KNOWLEDGE (Ship's Records + Operational State) ===\n"
                     "These are NOT your personal experiences. They are from the ship's shared "
-                    "knowledge stores. Treat as reference material, not memory."
-                )
-                wr_parts.append(observation["_oracle_context"])
-                wr_parts.append("=== END CROSS-TIER KNOWLEDGE ===")
+                    "knowledge stores. Treat as reference material, not memory.",
+                    observation["_oracle_context"],
+                    "=== END CROSS-TIER KNOWLEDGE ===",
+                ])
 
             # AD-568d: Ambient source attribution tag (cognitive proprioception)
             _attr = observation.get("_source_attribution")
@@ -7375,50 +7461,56 @@ class CognitiveAgent(BaseAgent):
                     _sources_present.append("ship's records")
                 if not _sources_present:
                     _sources_present.append("training knowledge only")
-                wr_parts.append("")
-                wr_parts.append(
+                _emit("source_attribution", [
+                    "",
                     f"<source_awareness>Your response draws on: {', '.join(_sources_present)}. "
-                    f"Primary basis: {_attr.primary_source.value}.</source_awareness>"
-                )
+                    f"Primary basis: {_attr.primary_source.value}.</source_awareness>",
+                ])
 
             # AD-626/AD-631: Generic task-framed skill injection (with proficiency context)
             _aug_skill = observation.get("_augmentation_skill_instructions")
             if _aug_skill and context:
                 _meta = self._extract_thread_metadata(context)
                 _prof_ctx = self._get_comm_proficiency_guidance() or ""
-                wr_parts.extend(self._frame_task_with_skill(
+                _skill_segments = self._frame_task_with_skill(
                     _aug_skill, "Process Ward Room Thread", _meta,
                     proficiency_context=_prof_ctx,
-                ))
+                )
+                if _skill_segments:
+                    _emit("skill_injection", list(_skill_segments))
 
             if context:
-                wr_parts.append(f"\nConversation so far:\n{context}")
+                _emit("thread_context", [f"\nConversation so far:\n{context}"])
 
             # AD-575: Self-recognition in Ward Room threads
             self_cue = self._detect_self_in_content(context)
             if self_cue:
-                wr_parts.append(self_cue)
+                _emit("self_recognition", [self_cue])
 
             # AD-407d: Distinguish Captain vs crew member posts
             author_id = params.get("author_id", "")
             was_mentioned = params.get("was_mentioned", False)
 
             if author_id == "captain":
-                wr_parts.append(f"\nThe Captain posted the above.")
+                _emit("author_attribution", [f"\nThe Captain posted the above."])
             else:
-                wr_parts.append(f"\n{author_callsign} posted the above.")
+                _emit("author_attribution", [f"\n{author_callsign} posted the above."])
 
             # BF-157: @mentioned agents must respond — they were directly addressed.
             if was_mentioned:
-                wr_parts.append(
+                _emit("response_guidance", [
                     "You were directly @mentioned in this post. A response is expected. "
                     "Address the question or request from your area of expertise. "
-                    "Be concise and helpful."
-                )
+                    "Be concise and helpful.",
+                ])
             else:
-                wr_parts.append("Respond naturally as yourself. Share your perspective if you have something meaningful to contribute.")
-                wr_parts.append("If this topic is outside your expertise or you have nothing to add, respond with exactly: [NO_RESPONSE]")
-            return "\n".join(wr_parts)
+                _emit("response_guidance", [
+                    "Respond naturally as yourself. Share your perspective if you have something meaningful to contribute.",
+                    "If this topic is outside your expertise or you have nothing to add, respond with exactly: [NO_RESPONSE]",
+                ])
+            return "\n".join(
+                ContextAssembler.assemble(_bids, token_budget=self._resolve_attention_budget())
+            )
 
         # Phase 28b: proactive_think — idle review cycle
         if intent_name == "proactive_think":

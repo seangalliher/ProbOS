@@ -1,0 +1,28 @@
+--- Temporal Awareness ---
+Current time: 2026-06-18 12:00:00 UTC (Thursday)
+---
+
+=== SHIP MEMORY (your experiences aboard this vessel) ===
+These are YOUR experiences. Do NOT confuse with training knowledge.
+IMPORTANT: Do NOT fabricate specific numbers, durations, measurements, or statistics from these fragments. If an exact value is not in your memories, say you do not have that data. When orientation or system data conflicts with your memories, orientation data is authoritative — cite it, do not estimate. When memories contain conflicting values for the same measurement, prefer the most recent observation.
+Markers: [direct] = you experienced it, [secondhand] = you heard about it.
+[verified] = corroborated by ship's log, [unverified] = not yet corroborated.
+
+  [direct | verified] [2 hours ago]
+    We discussed the warp core alignment.
+  [secondhand | unverified] [engineering]
+    Heard about a coolant variance.
+
+=== END SHIP MEMORY ===
+
+=== CROSS-TIER KNOWLEDGE (Ship's Records + Operational State) ===
+These are NOT your personal experiences. They are from the ship's shared knowledge stores. Treat as reference material, not memory.
+IMPORTANT: When answering questions, prioritize information from this section over your general training knowledge. Cite specific relationships shown here.
+Ship's records: warp core operating at 92% efficiency.
+=== END CROSS-TIER KNOWLEDGE ===
+
+Previous conversation:
+  captain: Status report?
+  assistant: All systems nominal.
+
+Captain says: What did we discuss about the warp core?

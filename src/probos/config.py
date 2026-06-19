@@ -893,11 +893,29 @@ class LLMRateConfig(BaseModel):
     interactive_reserved_slots: int = 2
 
 
+class AttentionConfig(BaseModel):
+    """AD-1028: ContextAssembler / global token-budget configuration.
+
+    Default-OFF: when ``enabled`` is False the bid-based ``ContextAssembler``
+    runs with an effectively-unbounded budget so nothing is dropped and the
+    assembled prompt is byte-identical to the prior push-style prepend chain.
+    When ``enabled`` is True the assembler enforces ``token_budget`` — the first
+    global guard against context-window overflow.
+    """
+
+    enabled: bool = False
+    # Sized to a large model window; nothing drops at this budget for normal
+    # prompts. Operators lower it to enforce a tighter context window.
+    token_budget: int = Field(default=120_000, ge=1000)
+
+
 class MemoryConfig(BaseModel):
     """Episodic memory configuration."""
 
     collection_name: str = "probos_episodes"
     max_episodes: int = 100000
+    # AD-1028: ContextAssembler seam + global token budget (default-OFF).
+    attention: AttentionConfig = Field(default_factory=AttentionConfig)
     # AD-607e: Cross-shard recall access policy. PERMISSIVE preserves the
     # AD-462c cross-shard recall behavior verbatim. Opt-in tightening via
     # OWN_SHARD_ONLY or OWN_SHARD_PLUS_PUBLIC.

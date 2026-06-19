@@ -1,0 +1,30 @@
+[Ward Room — #bridge]
+Thread: Coolant variance in section 3
+
+--- Temporal Awareness ---
+Current time: 2026-06-18 12:00:00 UTC (Thursday)
+---
+
+=== SHIP MEMORY (your experiences aboard this vessel) ===
+These are YOUR experiences. Do NOT confuse with training knowledge.
+IMPORTANT: Do NOT fabricate specific numbers, durations, measurements, or statistics from these fragments. If an exact value is not in your memories, say you do not have that data. When orientation or system data conflicts with your memories, orientation data is authoritative — cite it, do not estimate. When memories contain conflicting values for the same measurement, prefer the most recent observation.
+Markers: [direct] = you experienced it, [secondhand] = you heard about it.
+[verified] = corroborated by ship's log, [unverified] = not yet corroborated.
+
+  [direct | verified] [1 day ago]
+    Prior variance in section 2 last week.
+
+=== END SHIP MEMORY ===
+
+=== CROSS-TIER KNOWLEDGE (Ship's Records + Operational State) ===
+These are NOT your personal experiences. They are from the ship's shared knowledge stores. Treat as reference material, not memory.
+Ship's records: section 3 maintenance is overdue.
+=== END CROSS-TIER KNOWLEDGE ===
+
+Conversation so far:
+Bones: We have a coolant variance.
+Scotty: Investigating now.
+
+Bones posted the above.
+Respond naturally as yourself. Share your perspective if you have something meaningful to contribute.
+If this topic is outside your expertise or you have nothing to add, respond with exactly: [NO_RESPONSE]

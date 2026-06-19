@@ -14,11 +14,114 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from probos.types import AttentionEntry, FocusSnapshot
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# AD-1028: ContextAssembler seam — AttentionBid + global token budget.
+#
+# Every candidate piece of prompt context becomes an ``AttentionBid``. A pure,
+# deterministic ``ContextAssembler`` selects the bids that fit a global token
+# budget (by salience, pinned always kept), orders the survivors for
+# primacy/recency, and renders ONLY the survivors (lazily — a dropped bid's
+# renderer is never called). v1 salience is the fixed insertion priority, so
+# with a large-enough budget the output is byte-identical to the prior
+# push-style prepend chain.
+# ---------------------------------------------------------------------------
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate the token cost of ``text`` for budget arbitration.
+
+    A transparent ~4-chars-per-token heuristic (no tokenizer dependency on the
+    hot path). Returns at least 1 for any non-empty text so a bid is never
+    free. Empty text costs 0.
+    """
+    if not text:
+        return 0
+    return max(1, (len(text) + 3) // 4)
+
+
+@dataclass
+class AttentionBid:
+    """A single candidate piece of context competing for the prompt window.
+
+    Fields:
+        source: provenance tag (e.g. ``"episodic"``, ``"oracle"``,
+            ``"captain_message"``) — for audit/introspection.
+        render: a LAZY zero-argument renderer returning the bid's text. It is
+            called ONLY if the bid is selected; a dropped bid's renderer is
+            never invoked.
+        modality: content modality (default ``"text"``).
+        salience: selection priority — higher wins under a scarce budget. v1 =
+            the fixed insertion priority (no salience scoring yet; AD-1030).
+        token_cost: estimated size for budget arbitration. Use
+            :func:`estimate_tokens` for a default estimate.
+        zone_floor: primacy/recency ordering key — survivors are emitted in
+            ascending ``(zone_floor, insertion_order)`` order.
+        pin: when True the bid is always kept, even under a tiny budget.
+    """
+
+    source: str
+    render: Callable[[], str]
+    modality: str = "text"
+    salience: float = 0.0
+    token_cost: int = 0
+    zone_floor: int = 0
+    pin: bool = False
+
+
+class ContextAssembler:
+    """Pure, deterministic selector/orderer for :class:`AttentionBid` lists.
+
+    No I/O. Given a list of bids and a global token budget, it selects the
+    bids that fit (pinned always kept; otherwise highest salience first),
+    orders the survivors for primacy/recency, and renders only the survivors.
+    """
+
+    @staticmethod
+    def assemble(bids: list[AttentionBid], *, token_budget: int) -> list[str]:
+        """Select, order, and render the winning bids under ``token_budget``.
+
+        Selection: pinned bids are always kept (they may, together, exceed the
+        budget — the pin guarantee wins). Unpinned bids are admitted by
+        descending salience (ties broken by insertion order) while the running
+        total stays within budget — so scarcity drops the LOWEST-salience
+        unpinned bids, never blind truncation, and the unpinned total never
+        pushes the budget over.
+
+        Ordering: survivors are emitted in ascending ``(zone_floor,
+        insertion_order)`` order (primacy/recency).
+
+        Rendering: ``render()`` is called ONLY on survivors — a dropped bid's
+        renderer is never invoked.
+        """
+        if not bids:
+            return []
+
+        indexed = list(enumerate(bids))
+        pinned = [(i, b) for i, b in indexed if b.pin]
+        unpinned = [(i, b) for i, b in indexed if not b.pin]
+
+        used = sum(b.token_cost for _, b in pinned)
+        selected: list[tuple[int, AttentionBid]] = list(pinned)
+
+        # Highest salience first; ties keep insertion order for determinism.
+        unpinned_by_priority = sorted(unpinned, key=lambda ib: (-ib[1].salience, ib[0]))
+        for i, bid in unpinned_by_priority:
+            if used + bid.token_cost <= token_budget:
+                used += bid.token_cost
+                selected.append((i, bid))
+
+        # Order survivors for primacy/recency, then render lazily.
+        selected.sort(key=lambda ib: (ib[1].zone_floor, ib[0]))
+        return [bid.render() for _, bid in selected]
 
 
 class AttentionManager:
@@ -93,6 +196,30 @@ class AttentionManager:
             score *= self._background_demotion_factor
 
         return score
+
+    # ---- bid scoring (AD-1028 seam) ------------------------------
+
+    def score_bid(self, bid: AttentionBid) -> float:
+        """Score a context :class:`AttentionBid` (generalizes task scoring).
+
+        v1 returns the bid's fixed salience unchanged — the same insertion
+        priority the ``ContextAssembler`` already uses — so this is a
+        behavior-preserving seam. AD-1030 replaces the body with the real
+        ``relevance × recency × importance`` salience formula (the direct
+        generalization of :meth:`_compute_single`); the task-scoring path above
+        is untouched.
+        """
+        return bid.salience
+
+    def score_bids(self, bids: list[AttentionBid]) -> list[AttentionBid]:
+        """Assign salience to every bid via :meth:`score_bid` (in place).
+
+        Returns the same list for convenience. v1 is an identity over the
+        fixed insertion priorities (no behavior change).
+        """
+        for bid in bids:
+            bid.salience = self.score_bid(bid)
+        return bids
 
     # ---- batching ------------------------------------------------
 
