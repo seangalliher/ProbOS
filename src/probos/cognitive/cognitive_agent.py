@@ -8707,6 +8707,21 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.warning("BF-138: Failed to fetch episodic memory context — agent will respond without memory", exc_info=True)
 
+        # AD-979d slice 2: cross-agent associative recall. Gated ENTIRELY behind
+        # the default-OFF flag -> when off this block does NOTHING (no extra
+        # query, observation untouched) => byte-identical to pre-slice-2.
+        # mem_cfg is assigned inside the BF-138 try above; an early exception in
+        # that try could leave it unbound, so re-fetch defensively here (the
+        # AD-986b block below does the same) -- the OFF guard must never NameError.
+        mem_cfg = getattr(getattr(self._runtime, "config", None), "memory", None)
+        if mem_cfg is not None and getattr(mem_cfg, "cross_agent_recall_enabled", False):
+            try:
+                _peer_mems = await self._maybe_cross_agent_recall(query=query, mem_id=_mem_id, k=3)
+                if _peer_mems:
+                    observation.setdefault("recent_memories", []).extend(_peer_mems)
+            except Exception:
+                logger.warning("AD-979d: cross-agent recall wiring failed; continuing", exc_info=True)
+
         # AD-986b: transcript-grounded recall. The sovereign shard above is a
         # subjective, lossy recollection; the ChatThreadStore transcript is the
         # objective record (the recording). Surface the relevant excerpt of the
@@ -8762,6 +8777,125 @@ class CognitiveAgent(BaseAgent):
             )
 
         return observation
+
+    async def _maybe_cross_agent_recall(
+        self, *, query: str, mem_id: str, k: int = 3
+    ) -> list[dict]:
+        """AD-979d slice 2: on a WEAK own Feeling-of-Knowing band, escalate the
+        query to the single most-associated crew peer (Hebbian ``REL_SOCIAL``
+        top-1) and return that peer's CONFIDENT recall as ``SECONDHAND`` memory
+        dicts. Reads ONLY ``self.id`` and ``self._runtime``.
+
+        Tier-2 throughout: every gate or failure returns ``[]`` so a disabled,
+        ungated, or failed escalation is byte-identical to no cross-agent recall.
+        The call site is itself flag-gated, so this helper is never even reached
+        while ``cross_agent_recall_enabled`` is False.
+
+        ID-space resolution (AD-979d): ``REL_SOCIAL`` Hebbian edges key on the
+        LIVE ``agent.id``; episodic shards key on ``sovereign_id or id`` -- the
+        two diverge for onboarded crew. Peers are therefore ranked by live-id
+        social weight (``self.id`` space); the chosen peer is passed to the
+        service as a SINGLETON shard id, so the service's internal preferred-
+        target ranking over a 1-element list is an identity. ``mem_id`` (shard
+        space) drives the service's self-exclusion and own-shard governance.
+        """
+        rt = self._runtime
+        if rt is None:
+            return []
+        mem_cfg = getattr(getattr(rt, "config", None), "memory", None)
+        if mem_cfg is None or not getattr(mem_cfg, "cross_agent_recall_enabled", False):
+            return []
+        service = getattr(rt, "_cross_agent_recall_service", None)
+        if service is None:
+            return []
+        em = getattr(rt, "episodic_memory", None)
+        registry = getattr(rt, "registry", None)
+        hebbian = getattr(rt, "hebbian_router", None)
+        if em is None or registry is None or hebbian is None:
+            return []
+        try:
+            from probos.crew_utils import is_crew_agent
+            from probos.mesh.routing import REL_SOCIAL
+            from probos.types import MemorySource
+
+            ontology = getattr(rt, "ontology", None)
+            peers = [
+                a
+                for a in registry.all()
+                if getattr(a, "id", None) != self.id and is_crew_agent(a, ontology)
+            ][:32]
+            if not peers:
+                return []
+
+            # Own Feeling-of-Knowing band -- escalate ONLY on a weak (slow-gap)
+            # band: a strong own recall needs no help; a "none" absence must not
+            # be papered over with a peer's guess.
+            _own_eps, own_conf = await em.recall_for_agent_with_confidence(
+                mem_id, query, k
+            )
+            if own_conf.band != "weak":
+                return []
+
+            # Rank crew peers by LIVE-id REL_SOCIAL weight; only ask a peer this
+            # agent is genuinely associated with (weight > 0).
+            peers.sort(
+                key=lambda a: hebbian.get_weight(self.id, a.id, REL_SOCIAL),
+                reverse=True,
+            )
+            top = peers[0]
+            if hebbian.get_weight(self.id, top.id, REL_SOCIAL) <= 0.0:
+                return []
+
+            # Cross the id-space boundary HERE: ranked in live space, query the
+            # service in shard space with a singleton candidate set.
+            top_shard_id = getattr(top, "sovereign_id", "") or top.id
+            callsign_registry = getattr(rt, "callsign_registry", None)
+            callsign = top.agent_type
+            if callsign_registry is not None:
+                callsign = (
+                    callsign_registry.get_callsign(top.agent_type) or top.agent_type
+                )
+
+            peer_recalls = await service.escalate_recall(
+                mem_id,
+                query,
+                own_conf.band,
+                peer_candidates=[top_shard_id],
+                callsigns={top_shard_id: callsign},
+                k=k,
+            )
+            if not peer_recalls:
+                return []
+
+            mems: list[dict] = []
+            for pr in peer_recalls:
+                ep = pr.episode
+                # MemorySource.SECONDHAND.value (the STRING) -- byte-consistent
+                # with how every other recent_memories entry carries source
+                # (Episode.source is a str field; the bare enum renders as its
+                # repr under Python 3.12's enum __format__, breaking the marker).
+                mem = {
+                    "input": f"{pr.peer_callsign} recalls: {(ep.user_input or '')[:200]}",
+                    "reflection": (ep.reflection or "")[:200],
+                    "source": MemorySource.SECONDHAND.value,
+                    "verified": False,
+                }
+                anchors = getattr(ep, "anchors", None)
+                if isinstance(anchors, AnchorFrame):
+                    if anchors.channel:
+                        mem["anchor_channel"] = anchors.channel
+                    if anchors.department:
+                        mem["anchor_department"] = anchors.department
+                    if anchors.trigger_type:
+                        mem["anchor_trigger"] = anchors.trigger_type
+                mems.append(mem)
+            return mems
+        except Exception:
+            logger.warning(
+                "AD-979d: cross-agent recall escalation failed; continuing without",
+                exc_info=True,
+            )
+            return []
 
     def _build_episode_dag_summary(self, observation: dict) -> dict:
         """AD-568e: Build dag_summary with faithfulness + source attribution metadata."""
