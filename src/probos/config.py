@@ -1067,6 +1067,12 @@ class MemoryConfig(BaseModel):
             "affect": 0.0,  # AD-979f: affect axis; 0.0 -> term skipped (byte-identical)
         }
     )
+    # AD-1037 (#986): capture affective-salience [0,1] onto Episode.affect_salience
+    # at encoding via a deterministic store-time lexicon scorer (no LLM/network).
+    # Default False -> store() never scores -> affect_salience stays 0.0 -> the
+    # AD-979f rerank term (weight 0.0) is already skipped -> byte-identical. To use
+    # it, ALSO set recall_rerank_weights["affect"] > 0 (both default-OFF).
+    affect_capture_enabled: bool = False
     recall_temporal_match_weight: float = 0.25       # BF-147→BF-155: bonus for temporal cue match in score_recall()
     recall_temporal_mismatch_penalty: float = 0.15   # BF-155: penalty when query watch differs from episode watch
     # AD-979a: lower bound of the "weak" Feeling-of-Knowing band. A best recall

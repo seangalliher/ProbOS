@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from probos.cognitive.importance_scorer import compute_importance
+from probos.cognitive.affect_scorer import score_affect
 from probos.cognitive.similarity import jaccard_similarity
 from probos.cognitive.temporal_context import serialize_tcm_vector, deserialize_tcm_vector
 from probos.types import AnchorFrame, Episode, MemorySource, RecallScore, resolve_provenance
@@ -1104,6 +1105,7 @@ class EpisodicMemory:
         recall_fok_logging_enabled: bool = False,
         remember_know_typing_enabled: bool = False,
         reconsolidation_enabled: bool = False,
+        affect_capture_enabled: bool = False,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
@@ -1133,6 +1135,7 @@ class EpisodicMemory:
         # record_recall_access_path() returns False and no metadata is written
         # (byte-identical).
         self._reconsolidation_enabled = bool(reconsolidation_enabled)
+        self._affect_capture_enabled = bool(affect_capture_enabled)  # AD-1037: store-time affect capture
         self._verify_on_recall = verify_content_hash
         self._eviction_audit = eviction_audit
         self._agent_recall_threshold = agent_recall_threshold  # BF-134
@@ -1586,6 +1589,15 @@ class EpisodicMemory:
                 # source_type/confidence/verification_count/contradicted_by) is
                 # preserved. A field-by-field copy silently drops new fields.
                 episode = dataclasses.replace(episode, importance=_importance)
+
+        # AD-1037: affect-salience capture at encoding (default-OFF -> byte-identical).
+        # Deterministic, no LLM/network (store() is hot). Respects a caller-set value.
+        # getattr default mirrors store()'s optional-subsystem idiom so __new__-based
+        # tests (which bypass __init__) stay byte-identical without the flag.
+        if getattr(self, "_affect_capture_enabled", False) and episode.affect_salience == 0.0:
+            _affect = score_affect(episode)
+            if _affect > 0.0:
+                episode = dataclasses.replace(episode, affect_salience=_affect)
 
         anomaly_window_manager = getattr(self, "_anomaly_window_manager", None)
         if anomaly_window_manager is not None:
