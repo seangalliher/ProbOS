@@ -1098,6 +1098,14 @@ class MemoryConfig(BaseModel):
     # in-process (single shared collection), refused under OWN_SHARD_ONLY. Default
     # OFF -> escalate_recall() returns [] -> byte-identical.
     cross_agent_recall_enabled: bool = False
+    # AD-979e: self-healing reconsolidation. Slice 1 = capture/persist ONLY — when
+    # an old episode is reached via a query its original encoding did not surface,
+    # record that successful access path as ADDITIVE episode metadata
+    # (reconsol_access_paths_json), never content (AD-541b write-once intact),
+    # never from a SECONDHAND/peer fragment (DIRECT-only). No recall READ of the
+    # paths this slice (they stay inert). Default OFF + no live caller ->
+    # byte-identical.
+    reconsolidation_enabled: bool = False
     # AD-986b: transcript-grounded recall. Let a crew agent consult the canonical
     # chat transcript (the recording) for rooms it participated in, to ground a
     # recollection in what was actually said rather than guess. Sovereign-scoped

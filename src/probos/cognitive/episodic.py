@@ -23,7 +23,7 @@ from typing import Any
 from probos.cognitive.importance_scorer import compute_importance
 from probos.cognitive.similarity import jaccard_similarity
 from probos.cognitive.temporal_context import serialize_tcm_vector, deserialize_tcm_vector
-from probos.types import AnchorFrame, Episode, RecallScore, resolve_provenance
+from probos.types import AnchorFrame, Episode, MemorySource, RecallScore, resolve_provenance
 from probos.types import EBBINGHAUS_DEFAULT_STABILITY_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -152,6 +152,33 @@ def fts_or_query(query: str, *, min_token_len: int = 2) -> str:
     if not uniq:
         return ""
     return " OR ".join(f'"{t}"' for t in uniq)
+
+
+# AD-979e: per-episode FIFO cap on additive recall access paths. Bounds the
+# reconsol_access_paths_json envelope so a hot (or adversarially re-queried)
+# episode cannot grow its metadata without limit — poison-resistance via a hard
+# ceiling, not a guard call.
+_RECONSOL_MAX_PATHS = 8
+
+_RECONSOL_TOKEN_RE = re.compile(r"[a-z0-9]{2,}")
+
+
+def _normalize_access_terms(query: str) -> list[str]:
+    """AD-979e: normalize a recall query into deduped access-path terms.
+
+    Lowercases, extracts ``[a-z0-9]{2,}`` tokens, and dedups order-stably. The
+    result is the canonical "which query reached this episode" key used both for
+    de-dup (an identical normalized query is a no-op) and as the stored access
+    path's ``q``. Returns ``[]`` when no usable token remains (the caller then
+    refuses the capture). Pure (no I/O).
+    """
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for t in _RECONSOL_TOKEN_RE.findall(query.lower()):
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    return uniq
 
 
 def reciprocal_rank_fusion(
@@ -1076,6 +1103,7 @@ class EpisodicMemory:
         hybrid_rrf_k: int = 60,
         recall_fok_logging_enabled: bool = False,
         remember_know_typing_enabled: bool = False,
+        reconsolidation_enabled: bool = False,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
@@ -1099,6 +1127,12 @@ class EpisodicMemory:
         # as a Tulving remember/know/none type. Off by default -> recall_type
         # stays "" and the recalled episodes + confidence are byte-identical.
         self._remember_know_typing = bool(remember_know_typing_enabled)
+        # AD-979e: self-healing reconsolidation — capture/persist recall access
+        # paths as ADDITIVE episode metadata (slice 1 = capture-only; no recall
+        # READ of the paths, no canonical-content mutation). Off by default ->
+        # record_recall_access_path() returns False and no metadata is written
+        # (byte-identical).
+        self._reconsolidation_enabled = bool(reconsolidation_enabled)
         self._verify_on_recall = verify_content_hash
         self._eviction_audit = eviction_audit
         self._agent_recall_threshold = agent_recall_threshold  # BF-134
@@ -1775,6 +1809,102 @@ class EpisodicMemory:
                 exc_info=True,
             )
             return False
+
+    async def record_recall_access_path(
+        self,
+        episode_id: str,
+        *,
+        query: str,
+        bridge: str,
+        source: str = MemorySource.DIRECT.value,
+    ) -> bool:
+        """AD-979e: capture an additive, capped, provenance-tagged recall access path.
+
+        Slice 1 is CAPTURE-ONLY. When an old episode is successfully reached via
+        a query its original encoding did not surface, record *which query
+        reached it* (and via which bridge) as ADDITIVE episode metadata under
+        ``reconsol_access_paths_json``. This NEVER touches the canonical content:
+        it routes through :meth:`update_episode_metadata` (metadata-only, no
+        ``documents=`` -> no re-embed), so the AD-541b write-once invariant on the
+        document/embedding/user_input/reflection is preserved. There is NO recall
+        READ of these paths this slice — they are inert until a later slice.
+
+        Poison-resistance is structural, not a guard call: (1) default-OFF, (2) a
+        per-episode FIFO cap (``_RECONSOL_MAX_PATHS``), (3) de-dup of an identical
+        normalized query, and (5) a DIRECT-only whitelist (never reconsolidate
+        from a SECONDHAND/peer/reflection fragment). Honest-degrade: a metadata
+        read failure, unknown id, or malformed envelope returns ``False`` without
+        raising.
+
+        Returns ``True`` only when a new access path was appended and persisted.
+        """
+        # (1) default-OFF -> byte-identical when disabled (no read, no write).
+        if not self._reconsolidation_enabled:
+            return False
+        # (5) DIRECT-only: never re-encode an access path from hearsay (a
+        # SECONDHAND/peer/reflection fragment). Refuse and log.
+        if source != MemorySource.DIRECT.value:
+            logger.info(
+                "AD-979e: refusing reconsolidation access-path for episode %s "
+                "from non-DIRECT source %r; capture is DIRECT-only",
+                episode_id[:12], source,
+            )
+            return False
+        terms = _normalize_access_terms(query)
+        if not terms:
+            return False
+        if not self._collection:
+            return False
+        # Read existing metadata — honest-degrade on read failure / unknown id.
+        try:
+            result = self._collection.get(ids=[episode_id], include=["metadatas"])
+        except Exception:
+            logger.debug(
+                "AD-979e: metadata read failed for episode %s; skipping "
+                "access-path capture",
+                episode_id, exc_info=True,
+            )
+            return False
+        if not result or not result.get("ids"):
+            logger.debug(
+                "AD-979e: episode %s absent from store; skipping access-path capture",
+                episode_id,
+            )
+            return False
+        existing_meta = result["metadatas"][0] if result.get("metadatas") else {}
+        raw = (existing_meta or {}).get("reconsol_access_paths_json", "")
+        try:
+            paths = json.loads(raw) if raw else []
+            if not isinstance(paths, list):
+                paths = []
+        except (json.JSONDecodeError, TypeError):
+            paths = []
+        sorted_terms = sorted(terms)
+        # (3) de-dup: an identical normalized query is a no-op (repeat-poison
+        # resistance — the same access path cannot be appended twice).
+        for entry in paths:
+            if isinstance(entry, dict) and entry.get("q") == sorted_terms:
+                return False
+        paths.append({
+            "q": sorted_terms,
+            "bridge": bridge,
+            "ts": time.time(),
+            "src": source,
+        })
+        # (2) per-episode FIFO cap -> bounded growth, oldest evicted first.
+        if len(paths) > _RECONSOL_MAX_PATHS:
+            paths = paths[-_RECONSOL_MAX_PATHS:]
+        # Metadata-only persistence (no documents= -> no re-embed; AD-541b intact).
+        ok = await self.update_episode_metadata(
+            episode_id, {"reconsol_access_paths_json": json.dumps(paths)}
+        )
+        if ok:
+            logger.info(
+                "AD-979e: recorded recall access-path for episode %s "
+                "(bridge=%s, %d path(s) stored)",
+                episode_id[:12], bridge, len(paths),
+            )
+        return ok
 
     async def sweep_episode_decay(
         self,

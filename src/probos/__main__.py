@@ -563,6 +563,7 @@ async def _boot_runtime(
         hybrid_rrf_k=config.memory.hybrid_rrf_k,  # AD-979c
         recall_fok_logging_enabled=config.memory.recall_fok_logging_enabled,  # AD-981a
         remember_know_typing_enabled=config.memory.remember_know_typing_enabled,  # AD-979f
+        reconsolidation_enabled=config.memory.reconsolidation_enabled,  # AD-979e
     )
 
     runtime = ProbOSRuntime(
