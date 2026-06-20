@@ -40,11 +40,15 @@ HEIDI_QUERY = "do you remember anything about Heidi"
 
 class _Holder:
     """Minimal requesting-agent stand-in (NOT a MagicMock). The AD-981b helpers
-    read ONLY ``self._runtime`` (the band probe) and ``self._recall_confidence_note``
+    read ONLY ``self._runtime`` (the band probe, which since AD-1038 delegates to
+    the shared ``_recall_confidence_probe``) and ``self._recall_confidence_note``
     (the segment helper, a staticmethod). Nothing else is touched.
     """
 
     _recall_confidence_note = staticmethod(CognitiveAgent._recall_confidence_note)
+    # AD-1038: the band probe is now a thin delegator over the shared probe, so
+    # the stub must expose ``_recall_confidence_probe`` for the delegator to call.
+    _recall_confidence_probe = CognitiveAgent._recall_confidence_probe
 
     def __init__(self, agent_id: str = "yeoman", runtime=None) -> None:
         self.id = agent_id
@@ -241,7 +245,9 @@ def test_build_user_message_renders_cue_at_both_episodic_sites() -> None:
 def test_recall_relevant_memories_gates_probe_before_calling_it() -> None:
     src = inspect.getsource(CognitiveAgent._recall_relevant_memories)
     gate = src.find("recall_confidence_gating_enabled")
-    probe = src.find("_recall_confidence_band")
+    # AD-1038: the call-site now invokes the shared ``_recall_confidence_probe``
+    # (the band delegator is no longer called directly from here).
+    probe = src.find("_recall_confidence_probe")
     assert gate != -1, "the gating flag must be checked in _recall_relevant_memories"
     assert probe != -1, "the band probe must be called in _recall_relevant_memories"
     # the flag gate must precede the probe call (byte-identical-OFF guarantee)
