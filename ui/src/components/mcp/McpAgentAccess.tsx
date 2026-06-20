@@ -54,7 +54,7 @@ export interface McpToolsResult {
   disabled?: boolean;
 }
 
-/** A tool's resolved access for one agent (source ∈ tool|server|default). */
+/** A tool's resolved access for one agent (source ∈ tool|server|department|default). */
 export interface McpToolAccess {
   name: string;
   enabled: boolean;
@@ -190,6 +190,7 @@ function btnStyle(active = true): React.CSSProperties {
 function sourceColor(source: string): string {
   if (source === 'tool') return _AMBER;
   if (source === 'server') return '#50a0d0';
+  if (source === 'department') return '#40b890';
   return _DIM; // default
 }
 

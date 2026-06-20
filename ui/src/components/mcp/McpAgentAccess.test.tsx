@@ -143,6 +143,22 @@ describe('AD-1019a McpAgentAccess', () => {
     expect(screen.getByTestId('mcp-access-tool-source-github-mcp-agent-1-wide').textContent).toContain('server');
   });
 
+  it('colors the source badge green for a department-sourced tool (AD-1019d)', async () => {
+    const deps = makeDeps({
+      fetchAgentAccess: vi.fn(async () => makeAccess({
+        tools: [{ name: 'shared', enabled: true, source: 'department' }],
+      })),
+    });
+    renderPanel(deps);
+    await waitFor(() => screen.getByTestId('mcp-access-expand-github-mcp-agent-1'));
+    fireEvent.click(screen.getByTestId('mcp-access-expand-github-mcp-agent-1'));
+    await waitFor(() => screen.getByTestId('mcp-access-tool-source-github-mcp-agent-1-shared'));
+    const badge = screen.getByTestId('mcp-access-tool-source-github-mcp-agent-1-shared') as HTMLElement;
+    expect(badge.textContent).toContain('department');
+    // AD-1019d: department source resolves the green badge color, not the grey default.
+    expect(badge.style.color).toBe('rgb(64, 184, 144)');
+  });
+
   it('honest-degrades to an error note when the roster fetch fails', async () => {
     const deps = makeDeps({ fetchRoster: vi.fn(async () => { throw new Error('boom'); }) });
     renderPanel(deps);

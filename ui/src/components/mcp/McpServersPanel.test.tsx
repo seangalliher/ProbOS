@@ -63,6 +63,7 @@ afterEach(() => {
   useStore.setState({ mcpServersOpen: false });
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('AD-1018 McpServersPanel', () => {
@@ -283,6 +284,33 @@ describe('AD-1018 McpServersPanel', () => {
     expect(screen.queryByTestId('mcp-agent-access-srv-1')).toBeNull();
     fireEvent.click(screen.getByTestId('mcp-access-section-srv-1'));
     await waitFor(() => expect(screen.getByTestId('mcp-agent-access-srv-1')).toBeTruthy());
+  });
+
+  it('switches views via the tab strip and toggles the tool-risk section (AD-1019d)', async () => {
+    // The tab-mounted children + the per-row risk section use their own inline
+    // api (global fetch, no deps); stub it to a 404 so they honest-degrade.
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }) as unknown as Response));
+    const deps = makeDeps();
+    render(<McpServersPanel deps={deps} />);
+    await waitFor(() => screen.getByTestId('mcp-row-srv-1'));
+    // Default view is 'servers'.
+    expect(screen.getByTestId('mcp-view-servers')).toBeTruthy();
+
+    // Switch to the department lockers view: the server list unmounts.
+    fireEvent.click(screen.getByTestId('mcp-view-lockers'));
+    await waitFor(() => screen.getByTestId('mcp-lockers-disabled'));
+    expect(screen.queryByTestId('mcp-row-srv-1')).toBeNull();
+
+    // Switch to the agent toolbox view.
+    fireEvent.click(screen.getByTestId('mcp-view-toolbox'));
+    await waitFor(() => screen.getByTestId('mcp-toolbox-disabled'));
+
+    // Back to servers; the row returns and the per-row tool-risk section toggles.
+    fireEvent.click(screen.getByTestId('mcp-view-servers'));
+    await waitFor(() => screen.getByTestId('mcp-row-srv-1'));
+    expect(screen.queryByTestId('mcp-tool-risk-srv-1')).toBeNull();
+    fireEvent.click(screen.getByTestId('mcp-risk-section-srv-1'));
+    await waitFor(() => screen.getByTestId('mcp-tool-risk-srv-1'));
   });
 
   it('uses NO emoji (HXI #3)', async () => {

@@ -21,6 +21,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import { McpAgentAccess } from './McpAgentAccess';
+import { McpToolRisk } from './McpToolRisk';
+import { McpDepartmentLockers } from './McpDepartmentLockers';
+import { McpAgentToolbox } from './McpAgentToolbox';
 
 const _AMBER = '#f0b060';
 const _DIM = '#666680';
@@ -283,6 +286,7 @@ export function McpServersPanel({ deps }: Props) {
   const [servers, setServers] = useState<McpServer[] | null>(null);
   const [disabled, setDisabled] = useState(false);
   const [error, setError] = useState(false);
+  const [view, setView] = useState<'servers' | 'lockers' | 'toolbox'>('servers');
   const [mode, setMode] = useState<FormMode>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
@@ -502,11 +506,19 @@ export function McpServersPanel({ deps }: Props) {
             MCP management is disabled. Enable <code style={{ color: '#7a8aa0' }}>mcp.management_enabled</code> to manage servers.
           </div>
         )}
-        {!error && !disabled && servers === null && (
+        {!error && !disabled && (
+          <div data-testid="mcp-view-strip" style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+            <button data-testid="mcp-view-servers" onClick={() => setView('servers')} style={btnStyle(view === 'servers')}>Servers</button>
+            <button data-testid="mcp-view-lockers" onClick={() => setView('lockers')} style={btnStyle(view === 'lockers')}>Department lockers</button>
+            <button data-testid="mcp-view-toolbox" onClick={() => setView('toolbox')} style={btnStyle(view === 'toolbox')}>Agent toolbox</button>
+          </div>
+        )}
+
+        {!error && !disabled && view === 'servers' && servers === null && (
           <div data-testid="mcp-loading" style={{ color: _DIM, padding: '16px 0' }}>Loading servers…</div>
         )}
 
-        {!error && !disabled && servers !== null && mode === 'list' && (
+        {!error && !disabled && view === 'servers' && servers !== null && mode === 'list' && (
           <>
             <button data-testid="mcp-add" onClick={openCreate} style={{ ...btnStyle(true), display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
               <IconPlus />Add server
@@ -535,7 +547,7 @@ export function McpServersPanel({ deps }: Props) {
           </>
         )}
 
-        {!error && !disabled && servers !== null && (mode === 'create' || mode === 'edit') && (
+        {!error && !disabled && view === 'servers' && servers !== null && (mode === 'create' || mode === 'edit') && (
           <ServerForm
             mode={mode}
             name={fName} setName={setFName}
@@ -552,6 +564,9 @@ export function McpServersPanel({ deps }: Props) {
             onCancel={() => { setMode('list'); setEditingId(null); }}
           />
         )}
+
+        {!error && !disabled && view === 'lockers' && <McpDepartmentLockers />}
+        {!error && !disabled && view === 'toolbox' && <McpAgentToolbox />}
       </div>
 
       {credFor && (
@@ -594,6 +609,7 @@ interface RowProps {
 function ServerRow(p: RowProps) {
   const s = p.server;
   const [showAccess, setShowAccess] = useState(false);
+  const [showRisk, setShowRisk] = useState(false);
   const summary = s.type === 'http'
     ? s.url
     : [s.command, ...(s.args || [])].filter(Boolean).join(' ');
@@ -642,7 +658,7 @@ function ServerRow(p: RowProps) {
         )}
       </div>
 
-      <div style={{ marginTop: 8 }}>
+      <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button
           data-testid={`mcp-access-section-${s.id}`}
           onClick={() => setShowAccess((v) => !v)}
@@ -650,8 +666,16 @@ function ServerRow(p: RowProps) {
         >
           {showAccess ? 'Hide agent access' : 'Agent access'}
         </button>
+        <button
+          data-testid={`mcp-risk-section-${s.id}`}
+          onClick={() => setShowRisk((v) => !v)}
+          style={btnStyle(showRisk)}
+        >
+          {showRisk ? 'Hide tool risk' : 'Tool risk'}
+        </button>
       </div>
       {showAccess && <McpAgentAccess serverId={s.id} serverName={s.name} />}
+      {showRisk && <McpToolRisk serverId={s.id} serverName={s.name} />}
     </div>
   );
 }
