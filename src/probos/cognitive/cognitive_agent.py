@@ -7113,6 +7113,51 @@ class CognitiveAgent(BaseAgent):
             # SUPPLEMENTARY or no framing (fallback) — standard guard
             return base + orientation_priority + temporal_preference
 
+    @staticmethod
+    def _recall_confidence_note(band: str) -> str:
+        """AD-981b: gap-regex-safe honest-absence cue for a weak/none own recall
+        Feeling-of-Knowing band (the "Heidi" misinformation case). Returns "" for
+        strong/empty bands so the prompt is byte-identical when there is nothing
+        to add.
+
+        Wording is checked against the decomposer ``is_capability_gap`` regex — it
+        must NOT read as a capability gap (so it avoids "can't"/"cannot"/"unable
+        to"/"lack*"/"don't have"/"no <X> capability|ability|support|way|mechanism|
+        tool"/"not available|supported|possible"). "do not have" (with a space),
+        "nothing recorded" and "no specific recollection" are safe.
+        """
+        if band == "weak":
+            return (
+                "RECALL CONFIDENCE: WEAK — the faint match above is below the "
+                "confident-recall bar, so treat it as likely no specific "
+                "recollection. If SHIP MEMORY does not contain the specifics "
+                "asked about, say plainly that you have nothing recorded on "
+                "that. Do not affirm a memory just because the question names "
+                "it, and do not invent a time, place, or detail to fill the gap."
+            )
+        if band == "none":
+            return (
+                "RECALL CONFIDENCE: NONE — stored memory returned nothing "
+                "matching this question. Report that you have nothing recorded "
+                "on it. Do not affirm a memory just because the question names "
+                "it, and do not invent a time, place, or detail."
+            )
+        return ""
+
+    def _recall_confidence_segment(self, observation: dict) -> list[str] | None:
+        """AD-981b: render-decision unit. Returns the honest-absence cue segment
+        (``[note, ""]``) for the band stashed in ``observation["_recall_fok_band"]``
+        by the flag-gated probe, or ``None`` when there is no band or the band
+        carries no cue (strong/empty) — so an OFF run never emits anything.
+        """
+        _band = observation.get("_recall_fok_band")
+        if not _band:
+            return None
+        _note = self._recall_confidence_note(_band)
+        if not _note:
+            return None
+        return [_note, ""]
+
     def _format_memory_section(self, memories: list[dict], source_framing: Any = None) -> list[str]:
         """Format recalled episodes with anchor context headers (AD-567b/568c)."""
         # AD-568c: Use source-authority-calibrated framing if available
@@ -7468,6 +7513,13 @@ class CognitiveAgent(BaseAgent):
                     "",
                 ], salience=_epi_salience)
 
+            # AD-981b: own recall-confidence cue — rendered only when the gating
+            # flag set a weak/none band on this observation; OFF => segment None
+            # => no emit => byte-identical.
+            _fok_seg = self._recall_confidence_segment(observation)
+            if _fok_seg:
+                _emit("recall_confidence", _fok_seg)
+
             # AD-986b: canonical transcript (the recording) — the verbatim record
             # of a room this agent took part in, rendered DISTINCT from the
             # subjective recalled memory above so the agent grounds its
@@ -7777,6 +7829,13 @@ class CognitiveAgent(BaseAgent):
                     "",
                     *self._format_memory_section(memories, source_framing=_framing),
                 ], salience=_epi_salience)
+
+            # AD-981b: own recall-confidence cue — rendered only when the gating
+            # flag set a weak/none band on this observation; OFF => segment None
+            # => no emit => byte-identical.
+            _fok_seg = self._recall_confidence_segment(observation)
+            if _fok_seg:
+                _emit("recall_confidence", _fok_seg)
 
             # AD-568a: Oracle Service cross-tier context
             if observation.get("_oracle_context"):
@@ -8722,6 +8781,22 @@ class CognitiveAgent(BaseAgent):
             except Exception:
                 logger.warning("AD-979d: cross-agent recall wiring failed; continuing", exc_info=True)
 
+        # AD-981b: surface THIS agent's own AD-981a Feeling-of-Knowing band for
+        # the live query so a weak/none band drives an honest-absence cue in the
+        # agent's own response (the "Heidi" case). Flag-gated + Tier-2 -> OFF or
+        # any failure leaves the observation untouched (no _recall_fok_band key)
+        # => byte-identical. mem_cfg re-fetched defensively (the BF-138 try may
+        # have left it unbound), mirroring the slice-2 + AD-986b blocks. k=5
+        # literal so it does not depend on _tier_params scoped to the BF-138 try.
+        mem_cfg = getattr(getattr(self._runtime, "config", None), "memory", None)
+        if mem_cfg is not None and getattr(mem_cfg, "recall_confidence_gating_enabled", False):
+            try:
+                _band = await self._recall_confidence_band(query=query, mem_id=_mem_id, k=5)
+                if _band:
+                    observation["_recall_fok_band"] = _band
+            except Exception:
+                logger.warning("AD-981b: recall-confidence band probe failed; continuing", exc_info=True)
+
         # AD-986b: transcript-grounded recall. The sovereign shard above is a
         # subjective, lossy recollection; the ChatThreadStore transcript is the
         # objective record (the recording). Surface the relevant excerpt of the
@@ -8777,6 +8852,31 @@ class CognitiveAgent(BaseAgent):
             )
 
         return observation
+
+    async def _recall_confidence_band(
+        self, *, query: str, mem_id: str, k: int = 5
+    ) -> str:
+        """AD-981b: probe THIS agent's own AD-981a Feeling-of-Knowing band for
+        ``query`` by reusing ``recall_for_agent_with_confidence`` (no recompute,
+        no ranking change — the band is already produced unconditionally there).
+        Reads ONLY ``self._runtime``. Tier-2: any missing subsystem or failure
+        returns "" so the gating cue simply never fires.
+        """
+        rt = self._runtime
+        if rt is None:
+            return ""
+        em = getattr(rt, "episodic_memory", None)
+        if em is None or not hasattr(em, "recall_for_agent_with_confidence"):
+            return ""
+        try:
+            _eps, conf = await em.recall_for_agent_with_confidence(mem_id, query, k)
+            return getattr(conf, "band", "") or ""
+        except Exception:
+            logger.warning(
+                "AD-981b: own recall-confidence band probe failed; continuing",
+                exc_info=True,
+            )
+            return ""
 
     async def _maybe_cross_agent_recall(
         self, *, query: str, mem_id: str, k: int = 3

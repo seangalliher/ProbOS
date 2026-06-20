@@ -1098,6 +1098,14 @@ class MemoryConfig(BaseModel):
     # in-process (single shared collection), refused under OWN_SHARD_ONLY. Default
     # OFF -> escalate_recall() returns [] -> byte-identical.
     cross_agent_recall_enabled: bool = False
+    # AD-981b: surface the AD-981a Feeling-of-Knowing band for THIS query into
+    # the agent's own response. When ON and the band for the live query is
+    # weak/none, inject an honest-absence cue so a name-cued recall with nothing
+    # recorded (the "Heidi"/misinformation case) is answered with "nothing
+    # recorded" instead of an affirmation + invented provenance. Reuses the
+    # AD-981a band (no recompute), at the cost of one extra sovereign probe per
+    # recall when ON. Default OFF -> no probe, no cue -> byte-identical.
+    recall_confidence_gating_enabled: bool = False
     # AD-979e: self-healing reconsolidation. Slice 1 = capture/persist ONLY — when
     # an old episode is reached via a query its original encoding did not surface,
     # record that successful access path as ADDITIVE episode metadata
