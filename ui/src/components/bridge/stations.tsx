@@ -163,6 +163,10 @@ export function buildBridgeStations(ctx: {
         // mutable MCP server registrations (CRUD + auth). Engineering concern.
         { id: 'mcp-servers-toggle', label: 'MCP Servers',
           onInvoke: () => useStore.setState({ mcpServersOpen: true }) },
+        // AD-1024: MCP Apps — launch a registered MCP app into a sandboxed frame
+        // (the read-only gallery over the AD-597 engine). Engineering concern.
+        { id: 'mcp-apps-toggle', label: 'MCP Apps',
+          onInvoke: () => useStore.setState({ mcpAppsOpen: true }) },
         // AD-1021: Code/Text Workstation — opens an empty scratch buffer (build
         // proposals open it via the IntentSurface card). Engineering concern.
         { id: 'workstation-toggle', label: 'Workstation',

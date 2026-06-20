@@ -222,6 +222,7 @@ def create_app(runtime: Any) -> FastAPI:
         packs as packs_router,  # AD-1003c: installed Capability-Pack inventory
         mcp_servers as mcp_servers_router,  # AD-1015: MCP server CRUD management API
         workstations as workstations_router,  # AD-1022: workstation-type catalog
+        mcp_apps as mcp_apps_router,  # AD-1024: MCP-app gallery read API
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -256,6 +257,7 @@ def create_app(runtime: Any) -> FastAPI:
         packs_router,
         mcp_servers_router,
         workstations_router,
+        mcp_apps_router,
     ):
         app.include_router(r.router)
 

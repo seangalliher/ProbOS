@@ -190,6 +190,18 @@ def _wire_workstation_types(*, runtime: Any, config: "SystemConfig") -> bool:
     registry = WorkstationTypeRegistry()
     runtime.workstation_type_registry = registry  # public attribute (Wave 5 convention #1)
 
+    # AD-1024: register the native ``mcp-app`` workstation type when the AD-597
+    # MCP App Host is enabled. Done BEFORE the workstations early-return so the
+    # type exists even when ``workstations.enabled`` is False (the catalog
+    # endpoint still hides it until workstations are enabled); the gallery's
+    # per-app render targets come from ``/api/mcp-apps``, not this catalog.
+    mcp_cfg = getattr(config, "mcp_app_host", None)
+    if mcp_cfg and getattr(mcp_cfg, "enabled", False):
+        registry.register(WorkstationType(
+            id="mcp-app", label="MCP Apps", tier="oss",
+            render=WorkstationRender(kind="native", component_key="mcp-app"),
+        ))
+
     cfg = getattr(config, "workstations", None)
     if not cfg or not cfg.enabled:
         logger.info(

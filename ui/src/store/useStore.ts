@@ -370,6 +370,7 @@ export interface HXIState {
   wardRoomOpen: boolean;
   shipsLockerOpen: boolean;  // AD-1001b: global capabilities catalog overlay
   mcpServersOpen: boolean;  // AD-1018: MCP servers management overlay
+  mcpAppsOpen: boolean;  // AD-1024: MCP-app gallery overlay
   workstationOpen: boolean;  // AD-1021: code/text workstation overlay
   workstationDoc: WorkstationDoc | null;  // AD-1021: active workstation document
   workspaceOpen: boolean;  // AD-1023
@@ -895,6 +896,7 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomOpen: false,
   shipsLockerOpen: false,  // AD-1001b
   mcpServersOpen: false,  // AD-1018
+  mcpAppsOpen: false,  // AD-1024
   workstationOpen: false,  // AD-1021
   workstationDoc: null,  // AD-1021
   workspaceOpen: false,  // AD-1023
