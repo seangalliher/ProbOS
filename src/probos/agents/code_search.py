@@ -245,13 +245,21 @@ class CodeSearchAgent(BaseAgent):
         }
 
 
+def _install_root() -> Path:
+    """AD-1025b: the ProbOS install/repo root. ``src/probos/agents/code_search.py``
+    -> ``parents[3]`` (code_search->agents->probos->src->root). Mirrors
+    ``__main__.py``'s ``project_root`` and ``piper_backend._probos_root`` (the
+    bundled ``tools/`` anchor). NEVER the CWD."""
+    return Path(__file__).resolve().parents[3]
+
+
 def _resolve_rg_binary() -> str | None:
     """Find ripgrep: PATH first, then a gitignored ``tools/rg[.exe]`` (the AD-738
     BYO-binary disposition). Returns the executable path, or ``None``."""
     found = shutil.which("rg")
     if found:
         return found
-    candidate = Path("tools/rg")
+    candidate = _install_root() / "tools" / "rg"
     if sys.platform == "win32":
         candidate = candidate.with_suffix(".exe")
     try:

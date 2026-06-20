@@ -17,7 +17,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_SESSION_DIR = Path("data/sessions")
+
+def _install_root() -> Path:
+    """AD-1025b: ProbOS install root (session_manager.py -> parents[3]); NEVER the CWD."""
+    return Path(__file__).resolve().parents[3]
+
+
+def _default_session_dir() -> Path:
+    """AD-1025b: use-time default sessions dir, anchored to the install root,
+    resolved on each call (never at import)."""
+    return _install_root() / "data" / "sessions"
 
 
 @dataclass
@@ -89,9 +98,11 @@ class SessionManager:
 
     def __init__(
         self,
-        sessions_dir: str | Path = _SESSION_DIR,
+        sessions_dir: str | Path | None = None,
         user_id: str = "captain",
     ) -> None:
+        if sessions_dir is None:
+            sessions_dir = _default_session_dir()
         self._dir = Path(sessions_dir)
         self._archive_dir = self._dir / "archive"
         self._user_id = user_id

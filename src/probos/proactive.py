@@ -259,6 +259,14 @@ class ProactiveScanAgent(CognitiveAgent):
         )
 
 
+def _install_root() -> Path:
+    """AD-1025b: the ProbOS install/repo root. ``src/probos/proactive.py`` ->
+    ``parents[2]`` (probos->src->root). Mirrors ``__main__.py``'s ``project_root``
+    and ``piper_backend._probos_root`` (the bundled ``tools/`` anchor). NEVER the
+    CWD."""
+    return Path(__file__).resolve().parents[2]
+
+
 class DailyBriefingScheduler:
     """Daily briefing trigger with once-per-day persistence and dismiss support."""
 
@@ -272,7 +280,7 @@ class DailyBriefingScheduler:
     ) -> None:
         self._duty_schedule = duty_schedule
         self._runtime = runtime
-        self._state_path = state_path or Path("data/briefing_state.json")
+        self._state_path = state_path or (_install_root() / "data" / "briefing_state.json")
         self._now_fn = now_fn or datetime.now
 
     async def trigger_briefing_if_time(self) -> bool:

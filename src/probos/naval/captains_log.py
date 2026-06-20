@@ -27,6 +27,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _install_root() -> Path:
+    """AD-1025b: the ProbOS install/repo root. ``src/probos/naval/captains_log.py``
+    -> ``parents[3]`` (captains_log->naval->probos->src->root). Mirrors
+    ``__main__.py``'s ``project_root`` and ``piper_backend._probos_root`` (the
+    bundled ``tools/`` anchor). NEVER the CWD."""
+    return Path(__file__).resolve().parents[3]
+
+
+def _anchor_under_root(configured) -> Path:
+    """AD-1025b: absolute configured path used as-is; a relative one is anchored
+    under the install root (NOT the CWD). Mirrors ``piper_backend._anchor_path``."""
+    p = Path(configured)
+    return p.resolve() if p.is_absolute() else (_install_root() / p).resolve()
+
+
 class CaptainsLogService:
     """Synthesizes daily narrative from episodic memory + Ward Room + work items."""
 
@@ -78,7 +93,7 @@ class CaptainsLogService:
         Emits ``CAPTAINS_LOG_GENERATED`` after a successful write.
         """
         content = await self.generate_for_date(date)
-        out_dir = Path(self._config.output_dir)
+        out_dir = _anchor_under_root(self._config.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{date.isoformat()}.md"
         out_path.write_text(content, encoding="utf-8")

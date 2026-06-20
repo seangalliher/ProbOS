@@ -34,13 +34,24 @@ class ForgetRequest(BaseModel):
         return self
 
 
+def _install_root() -> Path:
+    """AD-1025b: the ProbOS install/repo root. ``src/probos/routers/security.py``
+    -> ``parents[3]`` (security->routers->probos->src->root). Mirrors
+    ``__main__.py``'s ``project_root`` and ``piper_backend._probos_root`` (the
+    bundled ``tools/`` anchor). NEVER the CWD."""
+    return Path(__file__).resolve().parents[3]
+
+
 def _get_audit_log(runtime: Any) -> AuditLog:
     existing = getattr(runtime, "_assistant_audit_log", None)
     if isinstance(existing, AuditLog):
         return existing
 
     retention = int(getattr(runtime.config.security_infra, "audit_retention_days", 90))
-    data_dir = Path(getattr(runtime, "_data_dir", Path("data")))
+    data_dir = getattr(runtime, "data_dir", None)
+    if data_dir is None:
+        data_dir = _install_root() / "data"
+    data_dir = Path(data_dir)
     log = AuditLog(db_path=str(data_dir / "assistant_audit.db"), retention_days=retention)
     runtime._assistant_audit_log = log
     return log
