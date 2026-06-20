@@ -26,6 +26,7 @@ import type {
   SpatialViewMode, SpatialSelection, SpatialGraphData, SpatialLayoutData,  // AD-520
   BillDefinitionView, BillInstanceView,  // AD-618d
   WorkstationDoc,  // AD-1021
+  Workspace,  // AD-1023
 } from './types';
 
 // AD-562: Knowledge Browser types
@@ -371,6 +372,8 @@ export interface HXIState {
   mcpServersOpen: boolean;  // AD-1018: MCP servers management overlay
   workstationOpen: boolean;  // AD-1021: code/text workstation overlay
   workstationDoc: WorkstationDoc | null;  // AD-1021: active workstation document
+  workspaceOpen: boolean;  // AD-1023
+  activeWorkspace: Workspace | null;  // AD-1023
   wardRoomActiveChannel: string | null;
   wardRoomThreads: WardRoomThread[];
   wardRoomActiveThread: string | null;
@@ -554,6 +557,8 @@ export interface HXIState {
   // AD-1021: code/text workstation overlay open (with a document) / close.
   openWorkstation: (doc: WorkstationDoc) => void;
   closeWorkstation: () => void;
+  openWorkspace: (ws: Workspace) => void;  // AD-1023
+  closeWorkspace: () => void;  // AD-1023
   // AD-569g
   openBehavioralMetrics: () => Promise<void>;
   closeBehavioralMetrics: () => void;
@@ -892,6 +897,8 @@ export const useStore = create<HXIState>((set, get) => ({
   mcpServersOpen: false,  // AD-1018
   workstationOpen: false,  // AD-1021
   workstationDoc: null,  // AD-1021
+  workspaceOpen: false,  // AD-1023
+  activeWorkspace: null,  // AD-1023
   wardRoomActiveChannel: null,
   wardRoomThreads: [],
   wardRoomActiveThread: null,
@@ -1134,6 +1141,8 @@ export const useStore = create<HXIState>((set, get) => ({
   // AD-1021: code/text workstation overlay — open with a document, close clears it.
   openWorkstation: (doc) => set({ workstationOpen: true, workstationDoc: doc }),
   closeWorkstation: () => set({ workstationOpen: false, workstationDoc: null }),
+  openWorkspace: (ws) => set({ workspaceOpen: true, activeWorkspace: ws }),  // AD-1023
+  closeWorkspace: () => set({ workspaceOpen: false, activeWorkspace: null }),  // AD-1023
   selectNotebookAuthor: async (callsign: string) => {
     set({
       notebooksSelectedAuthor: callsign,

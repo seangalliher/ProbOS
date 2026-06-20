@@ -75,8 +75,11 @@ const _badgeStyle = (mode: 'create' | 'modify'): React.CSSProperties => ({
   background: 'transparent',
 });
 
-export function CodeWorkstation({ typeId: _typeId }: NativeWorkstationProps): React.ReactElement {
-  const doc = useStore((s) => s.workstationDoc);
+export function CodeWorkstation({ typeId: _typeId, doc: propDoc }: NativeWorkstationProps): React.ReactElement {
+  // AD-1023: a container host may pass a per-workstation doc; standalone callers
+  // pass none -> fall back to the global store doc (byte-identical to AD-1021).
+  const storeDoc = useStore((s) => s.workstationDoc);
+  const doc = propDoc !== undefined ? propDoc : storeDoc;
 
   // Local editor state — re-seeded whenever the active document changes.
   const [scratch, setScratch] = useState<string>('');

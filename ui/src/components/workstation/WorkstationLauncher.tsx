@@ -13,6 +13,7 @@
  */
 import { useEffect, useState, type ComponentType } from 'react';
 import { McpAppFrame } from '../McpAppFrame';
+import type { WorkstationDoc } from '../../store/types';
 
 export interface WorkstationTypeView {
   id: string;
@@ -28,6 +29,7 @@ interface WorkstationTypesResponse {
 
 export interface NativeWorkstationProps {
   typeId: string;
+  doc?: WorkstationDoc | null;  // AD-1023: per-workstation doc (container host); store fallback when undefined
 }
 
 export interface WorkstationLauncherDeps {
@@ -39,7 +41,7 @@ export interface WorkstationLauncherDeps {
   nativeComponents: Record<string, ComponentType<NativeWorkstationProps>>;
 }
 
-const DEFAULT_FETCH_TYPES = async (): Promise<WorkstationTypeView[]> => {
+export const DEFAULT_FETCH_TYPES = async (): Promise<WorkstationTypeView[]> => {
   const r = await fetch('/api/workstations/types');
   if (!r.ok) return [];
   const json = (await r.json()) as WorkstationTypesResponse;
@@ -66,19 +68,21 @@ function WorkstationGlyph({ kind }: { kind: string }) {
   );
 }
 
-function OpenedWorkstation({
+export function WorkstationRender({
   type,
   deps,
+  doc,
 }: {
   type: WorkstationTypeView;
   deps: WorkstationLauncherDeps;
+  doc?: WorkstationDoc | null;
 }) {
   if (type.render_kind === 'native') {
     const Native = deps.nativeComponents[type.id];
     if (Native) {
       return (
         <div data-testid="workstation-native">
-          <Native typeId={type.id} />
+          <Native typeId={type.id} doc={doc} />
         </div>
       );
     }
@@ -195,7 +199,7 @@ export function WorkstationLauncher({
       </div>
       {opened && (
         <div data-testid="workstation-open" style={{ flex: 1, minHeight: 0 }}>
-          <OpenedWorkstation type={opened} deps={merged} />
+          <WorkstationRender type={opened} deps={merged} />
         </div>
       )}
     </div>

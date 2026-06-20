@@ -95,6 +95,29 @@ export interface WorkstationDoc {
   changes?: Array<{ path: string; content: string; mode: 'create' | 'modify'; after_line: string | null }>;
 }
 
+// AD-1023: HXI Workspace — the Experience-layer container hosting multiple
+// Workstations (AD-1022 types) over one backing work context. DISTINCT from the
+// AD-997 "execution work folder" (the substrate folder it BINDS to via AD-998).
+// UI-only view model; per-agent scope (DD-2): backingStoreRef is an agent id.
+export interface WorkspaceWorkstation {
+  typeId: string;
+  label?: string;
+  doc?: WorkstationDoc | null;
+}
+export interface Workspace {
+  id: string;
+  label: string;
+  backingStoreRef?: string | null;
+  participants: string[];
+  workstations: WorkspaceWorkstation[];
+}
+export interface WorkspaceFolderFile { name: string; is_dir: boolean; size_bytes: number; modified: string; }
+export interface WorkspaceFolder {
+  agent_id: string; enabled: boolean; persistent: boolean; root: string;
+  path: string | null; owner: string | null; exists: boolean;
+  files: WorkspaceFolderFile[]; total_bytes: number;
+}
+
 export interface BuildFailureReport {
   build_id: string;
   ad_number: number;
