@@ -25,6 +25,7 @@ import type {
   BehavioralSnapshot,  // AD-569g
   SpatialViewMode, SpatialSelection, SpatialGraphData, SpatialLayoutData,  // AD-520
   BillDefinitionView, BillInstanceView,  // AD-618d
+  WorkstationDoc,  // AD-1021
 } from './types';
 
 // AD-562: Knowledge Browser types
@@ -368,6 +369,8 @@ export interface HXIState {
   wardRoomOpen: boolean;
   shipsLockerOpen: boolean;  // AD-1001b: global capabilities catalog overlay
   mcpServersOpen: boolean;  // AD-1018: MCP servers management overlay
+  workstationOpen: boolean;  // AD-1021: code/text workstation overlay
+  workstationDoc: WorkstationDoc | null;  // AD-1021: active workstation document
   wardRoomActiveChannel: string | null;
   wardRoomThreads: WardRoomThread[];
   wardRoomActiveThread: string | null;
@@ -548,6 +551,9 @@ export interface HXIState {
   // AD-919/AD-931: Chats panel open/close (synchronous; the panel fetches on mount).
   openChats: () => void;
   closeChats: () => void;
+  // AD-1021: code/text workstation overlay open (with a document) / close.
+  openWorkstation: (doc: WorkstationDoc) => void;
+  closeWorkstation: () => void;
   // AD-569g
   openBehavioralMetrics: () => Promise<void>;
   closeBehavioralMetrics: () => void;
@@ -884,6 +890,8 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomOpen: false,
   shipsLockerOpen: false,  // AD-1001b
   mcpServersOpen: false,  // AD-1018
+  workstationOpen: false,  // AD-1021
+  workstationDoc: null,  // AD-1021
   wardRoomActiveChannel: null,
   wardRoomThreads: [],
   wardRoomActiveThread: null,
@@ -1123,6 +1131,9 @@ export const useStore = create<HXIState>((set, get) => ({
   // AD-919/AD-931: Chats panel open/close (synchronous; the panel fetches on mount).
   openChats: () => set({ chatsOpen: true }),
   closeChats: () => set({ chatsOpen: false }),
+  // AD-1021: code/text workstation overlay — open with a document, close clears it.
+  openWorkstation: (doc) => set({ workstationOpen: true, workstationDoc: doc }),
+  closeWorkstation: () => set({ workstationOpen: false, workstationDoc: null }),
   selectNotebookAuthor: async (callsign: string) => {
     set({
       notebooksSelectedAuthor: callsign,

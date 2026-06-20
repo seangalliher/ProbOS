@@ -13,12 +13,12 @@ afterEach(() => {
 const STATIONS = () => buildBridgeStations({ dmChannelCount: 4, kanbanCount: 7, totalUnread: 3 });
 
 describe('AD-946 buildPaletteCommands — flatten the station registry', () => {
-  it('returns the 13 Captain-facing launches with the expected labels', () => {
+  it('returns the 14 Captain-facing launches with the expected labels', () => {
     const cmds = buildPaletteCommands(STATIONS());
-    expect(cmds.length).toBe(13);
+    expect(cmds.length).toBe(14);
     expect(cmds.map((c) => c.label)).toEqual([
       'Ward Room', 'Chats', 'Crew', 'Personnel', 'Metrics',
-      'Notebooks', 'Records', 'Explorer', 'Work Board', 'System', "Ship's Locker", 'MCP Servers', 'Settings',
+      'Notebooks', 'Records', 'Explorer', 'Work Board', 'System', "Ship's Locker", 'MCP Servers', 'Workstation', 'Settings',
     ]);
   });
 
@@ -41,10 +41,11 @@ describe('AD-946 buildPaletteCommands — flatten the station registry', () => {
     // AD-1001b: Engineering is now action-bearing (System mirror + Ship's
     // Locker), so it surfaces ACTIONS, not an engineering:expand fallback
     // (same treatment as Communications). System is preserved via the mirror
-    // action; the Ship's Locker is the new launch. AD-1018 adds MCP Servers.
+    // action; the Ship's Locker is the new launch. AD-1018 adds MCP Servers;
+    // AD-1021 adds Workstation.
     expect(cmds.some((c) => c.id === 'engineering:expand')).toBe(false);
     const eng = cmds.filter((c) => c.station === 'Engineering');
-    expect(eng.map((c) => c.label)).toEqual(['System', "Ship's Locker", 'MCP Servers']);
+    expect(eng.map((c) => c.label)).toEqual(['System', "Ship's Locker", 'MCP Servers', 'Workstation']);
     expect(eng.find((c) => c.label === 'System')).toBeTruthy();
   });
 
@@ -68,7 +69,7 @@ describe('AD-946 matchPaletteCommands — case-insensitive token-AND substring',
   const cmds = buildPaletteCommands(STATIONS());
 
   it('single-term matches resolve the right launch', () => {
-    expect(matchPaletteCommands('work', cmds).map((c) => c.label)).toEqual(['Work Board']);
+    expect(matchPaletteCommands('work', cmds).map((c) => c.label)).toEqual(['Work Board', 'Workstation']);
     expect(matchPaletteCommands('ward', cmds).map((c) => c.label)).toEqual(['Ward Room']);
     expect(matchPaletteCommands('settings', cmds).map((c) => c.label)).toEqual(['Settings']);
     expect(matchPaletteCommands('chats', cmds).map((c) => c.label)).toEqual(['Chats']);

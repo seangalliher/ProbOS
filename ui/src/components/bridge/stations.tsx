@@ -163,6 +163,10 @@ export function buildBridgeStations(ctx: {
         // mutable MCP server registrations (CRUD + auth). Engineering concern.
         { id: 'mcp-servers-toggle', label: 'MCP Servers',
           onInvoke: () => useStore.setState({ mcpServersOpen: true }) },
+        // AD-1021: Code/Text Workstation — opens an empty scratch buffer (build
+        // proposals open it via the IntentSurface card). Engineering concern.
+        { id: 'workstation-toggle', label: 'Workstation',
+          onInvoke: () => useStore.getState().openWorkstation({ kind: 'scratch', title: 'Scratch', language: 'markdown', content: '' }) },
       ],
       // AD-945: the four bottom-right environment toggles (sound / voice / wake-word /
       // legend), relocated from DecisionSurface into the Ship's-Computer command layer.

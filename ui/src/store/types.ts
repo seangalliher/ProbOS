@@ -79,6 +79,22 @@ export interface BuildProposal {
   builder_source?: 'native' | 'visiting';
 }
 
+// AD-1021: the active document shown in the Code/Text Workstation (HXI #11).
+// A UI-only view model over existing store state — `build` reads a
+// BuildProposal's file_changes, `scratch` is an editable buffer, `artifact`
+// lazily fetches AD-797 artifact content. No backend shape of its own.
+export interface WorkstationDoc {
+  kind: 'build' | 'scratch' | 'artifact';
+  title: string;
+  language: string;
+  content: string;
+  mode?: 'create' | 'modify';
+  afterLine?: string | null;
+  path?: string;
+  artifactId?: string;
+  changes?: Array<{ path: string; content: string; mode: 'create' | 'modify'; after_line: string | null }>;
+}
+
 export interface BuildFailureReport {
   build_id: string;
   ad_number: number;

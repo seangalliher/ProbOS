@@ -44,6 +44,17 @@ const glass = (opacity = 0.75) => ({
 /* ── per-message feedback state ── */
 type FeedbackStatus = { disabled: boolean; confirmText: React.ReactNode };
 
+/* ── AD-1021: infer a workstation language from a file path extension ── */
+const _WORKSTATION_LANG_BY_EXT: Record<string, string> = {
+  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+  py: 'python', md: 'markdown', json: 'json', yaml: 'yaml', yml: 'yaml',
+  css: 'css', html: 'html', sh: 'shell', toml: 'toml', txt: 'plaintext',
+};
+function _inferWorkstationLang(path: string | undefined): string {
+  const ext = (path ?? '').split('.').pop()?.toLowerCase() ?? '';
+  return _WORKSTATION_LANG_BY_EXT[ext] ?? 'plaintext';
+}
+
 export function IntentSurface() {
   const [input, setInput] = useState('');
   const [active, setActive] = useState(false);
@@ -102,6 +113,7 @@ export function IntentSurface() {
   const transporterProgress = useStore((s) => s.transporterProgress);
   const buildQueue = useStore((s) => s.buildQueue);
   const bridgeOpen = useStore((s) => s.bridgeOpen);
+  const openWorkstation = useStore((s) => s.openWorkstation);  // AD-1021
   const agentTasks = useStore((s) => s.agentTasks);
   const notifications = useStore((s) => s.notifications);
   const needsAttentionCount = agentTasks?.filter(t => t.requires_action).length ?? 0;
@@ -1349,6 +1361,33 @@ export function IntentSurface() {
                             onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(128, 128, 160, 0.1)'; }}
                           >
                             Reject
+                          </button>
+                          <button
+                            data-testid="open-in-workstation"
+                            onClick={() => {
+                              const fc = msg.buildProposal!.file_changes;
+                              openWorkstation({
+                                kind: 'build',
+                                title: msg.buildProposal!.title,
+                                path: fc[0]?.path,
+                                language: _inferWorkstationLang(fc[0]?.path),
+                                content: fc[0]?.content ?? '',
+                                mode: fc[0]?.mode,
+                                afterLine: fc[0]?.after_line,
+                                changes: fc,
+                              });
+                            }}
+                            style={{
+                              background: 'rgba(176, 160, 80, 0.1)',
+                              border: '1px solid rgba(176, 160, 80, 0.35)',
+                              borderRadius: 8, padding: '6px 16px',
+                              color: '#b0a050', cursor: 'pointer', fontSize: 13,
+                              fontFamily: "'Inter', sans-serif",
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(176, 160, 80, 0.2)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(176, 160, 80, 0.1)'; }}
+                          >
+                            Open in Workstation
                           </button>
                         </div>
                       </div>
