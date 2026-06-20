@@ -37,6 +37,15 @@ export default defineConfig({
           ) {
             return 'avatar-vendor';
           }
+          // AD-1021: Monaco editor — heavy, lazy-loaded by the Workstation panel
+          // only (CodeWorkstation dynamic-imports MonacoSurface). Keep it out of
+          // the main bundle.
+          if (
+            id.includes('node_modules/monaco-editor') ||
+            id.includes('node_modules/@monaco-editor')
+          ) {
+            return 'monaco-vendor';
+          }
           // App-side code that depends on three.js: canvas/* and avatar
           // components. Grouping these prevents Rollup from re-fanning
           // three-dependent modules back into the main chunk.

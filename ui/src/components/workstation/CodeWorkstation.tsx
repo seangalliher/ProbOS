@@ -15,10 +15,12 @@
  *  HXI #3: inline stroke-SVG glyphs (strokeWidth 1.5), amber active / dim
  *  inactive, NO emoji, a data-testid on every interactive element.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import type { NativeWorkstationProps } from './WorkstationLauncher';
 import { useStore } from '../../store/useStore';
 import { fetchArtifactContent } from '../artifacts/artifactApi';
+
+const MonacoSurface = lazy(() => import('./MonacoSurface'));
 
 const _AMBER = '#f0b060';
 const _DIM = '#666680';
@@ -252,38 +254,18 @@ export function CodeWorkstation({ typeId: _typeId }: NativeWorkstationProps): Re
         )}
 
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          {showEditor ? (
-            <textarea
-              data-testid="workstation-editor"
-              value={scratch}
-              onChange={(e) => setScratch(e.target.value)}
-              spellCheck={false}
-              style={{
-                flex: 1, width: '100%', resize: 'none', border: 'none', outline: 'none',
-                background: 'rgba(10,10,18,0.6)', color: _TEXT, padding: 12,
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 12, lineHeight: 1.5,
-              }}
-            />
-          ) : doc.kind === 'artifact' && artifactText === null && artifactError === null ? (
+          {doc?.kind === 'artifact' && artifactText === null && artifactError === null ? (
             <div data-testid="workstation-loading" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
               Loading artifact…
             </div>
-          ) : doc.kind === 'artifact' && artifactError !== null ? (
+          ) : doc?.kind === 'artifact' && artifactError !== null ? (
             <div data-testid="workstation-artifact-error" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
               Artifact unavailable: {artifactError}
             </div>
           ) : (
-            <pre
-              data-testid="workstation-view"
-              style={{
-                flex: 1, margin: 0, overflow: 'auto', padding: 12,
-                background: 'rgba(10,10,18,0.6)', color: _TEXT,
-                fontFamily: "'JetBrains Mono', monospace", fontSize: 12, lineHeight: 1.5,
-                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-              }}
-            >
-              {shownContent}
-            </pre>
+            <Suspense fallback={<div data-testid="workstation-editor-loading" style={{ padding: 16, color: _DIM, fontSize: 12 }}>Loading editor…</div>}>
+              <MonacoSurface value={shownContent} language={language} readOnly={!showEditor} onChange={showEditor ? setScratch : undefined} />
+            </Suspense>
           )}
         </div>
       </div>
