@@ -36,6 +36,7 @@ from probos.integrations.mcp_bridge.access import (
 )
 from probos.integrations.mcp_bridge.client import MCPClient
 from probos.integrations.mcp_bridge.mcp_oauth import McpOAuthError, McpOAuthProvider
+from probos.integrations.mcp_bridge.risk import McpToolRisk, resolve_tool_risk
 from probos.integrations.mcp_bridge.session import MCPSession
 from probos.integrations.mcp_bridge.store import (
     McpServerRecord,
@@ -54,6 +55,10 @@ router = APIRouter(prefix="/api/mcp/servers", tags=["mcp-servers"])
 # AD-1017: the Captain identity that may read captain-only vault credentials
 # (``CredentialScope()`` empty allowed-set = captain-only).
 _CAPTAIN_ID = "captain"
+
+# AD-1019e: legal per-tool risk override strings — derived from the enum so a
+# future 4th tier is covered automatically (single source of truth).
+_RISK_VALUES: frozenset[str] = frozenset(r.value for r in McpToolRisk)
 
 # AD-1017: OAuth CSRF state TTL (seconds). MCPConfig carries no OAuth-state field
 # (config.py is out of scope this AD); the in-memory store's own default is also
@@ -150,6 +155,10 @@ class McpServerUpdateBody(BaseModel):
     enabled: bool | None = None
     auth_kind: str | None = None
     credential_ref: str | None = None
+    # AD-1019e (DD-2): server-level default risk tier (open|confirm|consensus).
+    # The existing model_dump→replace→validate_record merge applies it
+    # generically; validate_record's _VALID_RISK_TIERS guard rejects bad values.
+    default_risk: str | None = None
 
 
 class CredentialBody(BaseModel):
@@ -192,6 +201,12 @@ class McpAgentAccessBody(BaseModel):
 
     enabled: bool
     tool: str | None = None
+
+
+class RiskBody(BaseModel):
+    """Body for ``PUT /api/mcp/servers/{id}/tools/{tool}/risk`` (AD-1019e)."""
+
+    risk: str
 
 
 def _require_enabled(runtime: Any) -> None:
@@ -773,6 +788,16 @@ def _perm_store_or_503(runtime: Any) -> Any:
     return perms
 
 
+def _risk_store_or_503(runtime: Any) -> Any:
+    """Honest-degrade 503 when the McpToolRiskStore was not constructed (AD-1019e)."""
+    risk_store = getattr(runtime, "mcp_tool_risk_store", None)
+    if risk_store is None:
+        raise HTTPException(
+            status_code=503, detail="mcp_tool_risk_store_unavailable"
+        )
+    return risk_store
+
+
 async def _enumerate_tools(
     runtime: Any, record: McpServerRecord
 ) -> tuple[list[dict[str, Any]], str | None]:
@@ -812,13 +837,29 @@ async def _enumerate_tools(
 async def list_server_tools(
     server_id: str, runtime: Any = Depends(get_runtime)
 ) -> dict[str, Any]:
-    """Enumerate the tools an MCP server exposes (honest-degrade, never 500)."""
+    """Enumerate the tools an MCP server exposes (honest-degrade, never 500).
+
+    AD-1019e: each tool also carries its effective ``risk`` tier + ``risk_source``
+    (``override``|``default``) when the risk store is present. The risk store
+    keys on the server RECORD id (the same key the AD-1019c dispatch reads —
+    DD-1), and ``server_id`` here IS that record id, so the read is consistent.
+    Honest-degrade: with no risk store the risk fields are OMITTED (the existing
+    response shape is byte-identical).
+    """
     _require_enabled(runtime)
     store = _require_store(runtime)
     record = await store.get(server_id)
     if record is None:
         raise HTTPException(status_code=404, detail="not_found")
     tools, error = await _enumerate_tools(runtime, record)
+    risk_store = getattr(runtime, "mcp_tool_risk_store", None)
+    if risk_store is not None:
+        server_default = McpToolRisk(record.default_risk)
+        for tool in tools:
+            name = tool.get("name", "")
+            override = risk_store.get_risk_sync(server_id, name)
+            tool["risk"] = resolve_tool_risk(server_default, override).value
+            tool["risk_source"] = "override" if override is not None else "default"
     result: dict[str, Any] = {"tools": tools, "count": len(tools)}
     if error:
         result["error"] = error
@@ -941,3 +982,48 @@ async def clear_agent_access(
         if await perms.revoke_grant(grant.id):
             revoked += 1
     return {"revoked": revoked}
+
+
+# --------------------------------------------------------------------------- #
+# AD-1019e: per-tool risk-tier authoring (the "keys" governance model). Writes
+# the SAME ``(server_id, tool_name)`` key the AD-1019c dispatch reads (DD-1:
+# server_id is the record id, NOT the name). Gated + honest-degrade like the
+# per-agent grant endpoints above.
+# --------------------------------------------------------------------------- #
+
+
+@router.put("/{server_id}/tools/{tool}/risk")
+async def set_tool_risk(
+    server_id: str,
+    tool: str,
+    body: RiskBody,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Set the per-tool risk override for a tool on a server (AD-1019e).
+
+    Keyed on the server RECORD id (``server_id`` path param) so the override the
+    AD-1019c dispatch resolves at invoke time is the one written here (DD-1).
+    """
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    if body.risk not in _RISK_VALUES:
+        raise HTTPException(status_code=400, detail="invalid_risk")
+    risk_store = _risk_store_or_503(runtime)
+    await risk_store.set_risk(server_id, tool, McpToolRisk(body.risk))
+    return {"server_id": server_id, "tool": tool, "risk": body.risk}
+
+
+@router.delete("/{server_id}/tools/{tool}/risk")
+async def clear_tool_risk(
+    server_id: str,
+    tool: str,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Clear the per-tool risk override, reverting to the server default (AD-1019e)."""
+    _require_enabled(runtime)
+    risk_store = _risk_store_or_503(runtime)
+    cleared = await risk_store.clear_risk(server_id, tool)
+    return {"cleared": cleared}
