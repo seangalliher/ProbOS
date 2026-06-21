@@ -1,10 +1,12 @@
-"""AD-1040: ARD (Agentic Resource Discovery) envelope package.
+"""AD-1040/AD-1041/AD-1043: ARD (Agentic Resource Discovery) envelope package.
 
-DD-8 layer discipline: this package imports NOTHING from the rest of
-``probos``. The sibling modules (``catalog``, ``urn``, ``media_types``) are
-pure stdlib; this ``__init__`` only re-exports from those siblings. That
-non-import is the byte-identical proof that AD-1040 ships types + taxonomy
-only — nothing in the runtime imports this package yet.
+The sibling **type** modules (``catalog``, ``urn``, ``media_types``) remain
+pure stdlib (AD-1040 purity invariant — zero ``probos`` imports). AD-1041/1043
+add two BEHAVIOR modules — ``catalog_projector`` (projects the live capability
+surface) and ``representative_queries`` (mines example NL queries) — which MAY
+import ``probos``, but do so LAZILY (in-function), so importing this package
+never triggers a router/runtime import at module-load time (no import cycle).
+This ``__init__`` re-exports the public surface of all five modules.
 """
 
 from .catalog import (
@@ -15,6 +17,7 @@ from .catalog import (
     ProvenanceLink,
     TrustManifest,
 )
+from .catalog_projector import project_catalog
 from .media_types import (
     MT_A2A_AGENT,
     MT_AI_CATALOG,
@@ -24,6 +27,7 @@ from .media_types import (
     MT_PROBOS_TOOL,
     PROBOS_AXIS_TO_MEDIA_TYPE,
 )
+from .representative_queries import mine_representative_queries
 from .urn import build_urn, parse_urn, publisher_domain
 
 __all__ = [
@@ -46,4 +50,7 @@ __all__ = [
     "build_urn",
     "parse_urn",
     "publisher_domain",
+    # AD-1041/1043 projection + mining
+    "project_catalog",
+    "mine_representative_queries",
 ]

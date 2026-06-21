@@ -224,6 +224,7 @@ def create_app(runtime: Any) -> FastAPI:
         mcp_departments as mcp_departments_router,  # AD-1019e: MCP department-locker authoring API
         workstations as workstations_router,  # AD-1022: workstation-type catalog
         mcp_apps as mcp_apps_router,  # AD-1024: MCP-app gallery read API
+        ard as ard_router,  # AD-1042: ARD ai-catalog well-known endpoint (epic #989)
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -260,6 +261,7 @@ def create_app(runtime: Any) -> FastAPI:
         mcp_departments_router,
         workstations_router,
         mcp_apps_router,
+        ard_router,  # AD-1042: ARD ai-catalog well-known endpoint (epic #989)
     ):
         app.include_router(r.router)
 
