@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,12 +37,17 @@ from probos.federation.ard import (
     MT_A2A_AGENT,
     MT_AI_CATALOG,
     MT_AI_REGISTRY,
+    ArdClient,
     CatalogEntry,
+    ard_resource_tool_id,
+    ard_tool_tool_id,
     facet_entries,
     get_cached_catalog,
     search_entries,
 )
+from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
+from probos.tools.protocol import ToolPermission
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +101,22 @@ class ArdExploreRequest(BaseModel):
     query: ArdQuery = Field(default_factory=ArdQuery)
     page_size: int = Field(default=20, alias="pageSize")
     page_token: str = Field(default="", alias="pageToken")
+
+
+class ArdAccessBody(BaseModel):
+    """AD-1048: ``POST /ard/agents/{agent_id}/access`` body (camelCase boundary).
+
+    ``enabled`` toggles opt-in: ``True`` issues a READ grant, ``False`` issues a
+    NONE restriction (explicit deny). ``tool`` is optional — omit it to scope the
+    grant to the whole resource (all tools).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    catalog: str
+    resource: str
+    tool: str | None = None
+    enabled: bool = True
 
 
 # --------------------------------------------------------------------------- #
@@ -269,3 +290,144 @@ async def ard_agents(
         "nextPageToken": next_token,
     }
     return JSONResponse(content=body, media_type=MT_AI_REGISTRY)
+
+
+# --------------------------------------------------------------------------- #
+# AD-1046/1048 OPERATOR endpoints (crew-scope gated — they trigger outbound
+# fetches / mutate grants — unlike the PUBLIC discovery-service queries above)
+# --------------------------------------------------------------------------- #
+
+
+def _ard_discovery_endpoints(runtime: Any) -> list[str]:
+    """Read the operator-configured ARD discovery endpoint allowlist (honest-degrade)."""
+    cfg = getattr(getattr(getattr(runtime, "config", None), "federation", None), "ard", None)
+    endpoints = getattr(cfg, "discovery_endpoints", None)
+    return list(endpoints) if isinstance(endpoints, list) else []
+
+
+def _require_tool_permission_store(runtime: Any) -> Any:
+    """Return ``runtime.tool_permission_store`` or raise 503 if unavailable."""
+    perms = getattr(runtime, "tool_permission_store", None)
+    if perms is None:
+        raise HTTPException(status_code=503, detail="tool_permission_store_unavailable")
+    return perms
+
+
+@router.get("/ard/discovered", dependencies=[Depends(require_crew_scope)])
+async def ard_discovered(runtime: Any = Depends(get_runtime)) -> JSONResponse:
+    """AD-1046: fetch + parse the operator-configured ARD discovery endpoints.
+
+    OPERATOR-facing (``require_crew_scope``) because it triggers OUTBOUND fetches.
+    404 ``feature_disabled`` when ARD is off. Fetches ONLY
+    ``config.federation.ard.discovery_endpoints`` (the operator allowlist) via the
+    DD-1 SSRF-guarded ``ArdClient`` (``follow_redirects=False``, bounded timeout +
+    size cap); it never dereferences an entry's ``url``. Honest-degrade: any
+    top-level failure returns an empty ``discovered`` list (never a 500);
+    per-endpoint failures are isolated into each row's ``error``.
+    """
+    _require_ard_enabled(runtime)
+
+    try:
+        endpoints = _ard_discovery_endpoints(runtime)
+        results = await ArdClient().discover(endpoints)
+        discovered = [
+            {
+                "source": d.source_endpoint,
+                "error": d.error,
+                "catalog": d.catalog.to_dict() if d.catalog else None,
+            }
+            for d in results
+        ]
+    except Exception:
+        logger.warning("AD-1046: ard discovered failed; serving empty list", exc_info=True)
+        discovered = []
+
+    body = {
+        "specVersion": "1.0",
+        "conformance": "registry",
+        "discovered": discovered,
+    }
+    return JSONResponse(content=body, media_type=MT_AI_REGISTRY)
+
+
+@router.post("/ard/agents/{agent_id}/access", dependencies=[Depends(require_crew_scope)])
+async def ard_set_agent_access(
+    agent_id: str,
+    body: ArdAccessBody = Body(...),
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1048: enable/disable an ARD resource (or one tool) for an agent.
+
+    OPERATOR-facing (``require_crew_scope``) — it mutates grants. 404 when ARD is
+    off; 503 when the tool-permission store is unavailable. DD-3 opt-in:
+    ``enabled`` issues a READ grant; ``enabled=False`` issues a NONE restriction
+    (explicit deny). Reuses the audited ``ToolPermissionStore`` with the
+    ``ard:{catalog}:{resource}[:{tool}]`` composite id.
+    """
+    _require_ard_enabled(runtime)
+    perms = _require_tool_permission_store(runtime)
+
+    tool_id = (
+        ard_tool_tool_id(body.catalog, body.resource, body.tool)
+        if body.tool
+        else ard_resource_tool_id(body.catalog, body.resource)
+    )
+    grant = await perms.issue_grant(
+        agent_id,
+        tool_id,
+        ToolPermission.READ if body.enabled else ToolPermission.NONE,
+        is_restriction=not body.enabled,
+        reason="ard enablement",
+    )
+    return {
+        "grant_id": grant.id,
+        "agent_id": agent_id,
+        "tool_id": tool_id,
+        "enabled": body.enabled,
+        "is_restriction": not body.enabled,
+    }
+
+
+@router.get("/ard/agents/{agent_id}/access", dependencies=[Depends(require_crew_scope)])
+async def ard_list_agent_access(
+    agent_id: str, runtime: Any = Depends(get_runtime)
+) -> dict[str, Any]:
+    """AD-1048: list an agent's active ARD grants (``ard:`` composite ids only).
+
+    OPERATOR-facing (``require_crew_scope``). 404 when ARD off; 503 when the store
+    is unavailable. Zero-I/O cache read; never lists non-ARD grants.
+    """
+    _require_ard_enabled(runtime)
+    perms = _require_tool_permission_store(runtime)
+
+    grants = [
+        {"tool_id": g.tool_id, "is_restriction": g.is_restriction}
+        for g in perms.get_active_grants_sync(agent_id)
+        if g.tool_id.startswith("ard:")
+    ]
+    return {"agent_id": agent_id, "grants": grants}
+
+
+@router.delete("/ard/agents/{agent_id}/access", dependencies=[Depends(require_crew_scope)])
+async def ard_clear_agent_access(
+    agent_id: str, runtime: Any = Depends(get_runtime)
+) -> dict[str, Any]:
+    """AD-1048: revoke ALL active ARD grants for an agent (operator clear).
+
+    OPERATOR-facing (``require_crew_scope``). 404 when ARD off; 503 when the store
+    is unavailable. Soft-revokes only ``ard:`` grants; non-ARD grants are
+    untouched. Returns the count revoked.
+    """
+    _require_ard_enabled(runtime)
+    perms = _require_tool_permission_store(runtime)
+
+    ard_grants = [
+        g
+        for g in perms.get_active_grants_sync(agent_id)
+        if g.tool_id.startswith("ard:")
+    ]
+    revoked = 0
+    for g in ard_grants:
+        if await perms.revoke_grant(g.id):
+            revoked += 1
+    return {"agent_id": agent_id, "revoked": revoked}
