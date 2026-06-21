@@ -15,6 +15,12 @@ from .access import (
     ard_tool_tool_id,
     resolve_ard_access,
 )
+from .adoption import (
+    AdoptionCandidate,
+    ConnectResult,
+    connect_candidate,
+    surface_discovery_candidates,
+)
 from .catalog import (
     AiCatalog,
     Attestation,
@@ -34,6 +40,12 @@ from .media_types import (
     MT_MCP_SERVER,
     MT_PROBOS_TOOL,
     PROBOS_AXIS_TO_MEDIA_TYPE,
+)
+from .publication import PublishResult, publish_catalog
+from .referral import (
+    discover_federated,
+    merge_catalog_entries,
+    referral_endpoints,
 )
 from .registry_query import facet_entries, search_entries
 from .representative_queries import mine_representative_queries
@@ -82,4 +94,16 @@ __all__ = [
     "ard_access_for_agent",
     "ard_resource_tool_id",
     "ard_tool_tool_id",
+    # AD-1049 governed discovery-before-design + gated adopt/connect
+    "surface_discovery_candidates",
+    "connect_candidate",
+    "AdoptionCandidate",
+    "ConnectResult",
+    # AD-1050 federated ARD discovery modes
+    "referral_endpoints",
+    "discover_federated",
+    "merge_catalog_entries",
+    # AD-1051 catalog publication
+    "publish_catalog",
+    "PublishResult",
 ]

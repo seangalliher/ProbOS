@@ -3697,6 +3697,16 @@ class ProbOSRuntime:
                 if auto_selfmod:
                     intent_meta = await self._extract_unhandled_intent(text)
                     if intent_meta:
+                        # AD-1049: discovery-before-design (default-OFF; governance —
+                        # SURFACE an existing resource, NEVER auto-adopt). Byte-identical
+                        # when off: the guard short-circuits before any work runs.
+                        _ard_cfg = getattr(getattr(self.config, "federation", None), "ard", None)
+                        if _ard_cfg is not None and getattr(_ard_cfg, "discovery_before_design", False):
+                            try:
+                                from probos.federation.ard.adoption import surface_discovery_candidates
+                                await surface_discovery_candidates(self, intent_meta)
+                            except Exception:
+                                logger.warning("AD-1049: discovery-before-design surface failed for %s; proceeding to design", intent_meta.get("name", "?"), exc_info=True)
                         # Build execution context from prior execution (AD-235)
                         exec_context = ""
                         if self._last_execution and (self.self_mod_manager.was_last_execution_successful() if self.self_mod_manager else False):

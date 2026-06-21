@@ -27,6 +27,7 @@ config field exists) is a later slice — the decorator path is static here.
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -41,8 +42,13 @@ from probos.federation.ard import (
     CatalogEntry,
     ard_resource_tool_id,
     ard_tool_tool_id,
+    connect_candidate,
+    discover_federated,
+    entry_from_dict,
     facet_entries,
     get_cached_catalog,
+    merge_catalog_entries,
+    publish_catalog,
     search_entries,
 )
 from probos.routers.auth import require_crew_scope
@@ -117,6 +123,24 @@ class ArdAccessBody(BaseModel):
     resource: str
     tool: str | None = None
     enabled: bool = True
+
+
+class ArdAdoptBody(BaseModel):
+    """AD-1049: ``POST /ard/adopt`` body — explicit, gated adopt of one entry.
+
+    Carries the agent context (``agent_id`` + the ``catalog``/``resource`` it is
+    being enabled for), the serving ``endpoint_host`` (for the publisher-domain
+    trust check), and the discovered ``entry`` as a raw catalog dict (parsed +
+    value-or-reference validated server-side via ``entry_from_dict``).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    agent_id: str
+    catalog: str
+    resource: str
+    endpoint_host: str = Field(default="", alias="endpointHost")
+    entry: dict[str, Any] = Field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
@@ -431,3 +455,82 @@ async def ard_clear_agent_access(
         if await perms.revoke_grant(g.id):
             revoked += 1
     return {"agent_id": agent_id, "revoked": revoked}
+
+
+# --------------------------------------------------------------------------- #
+# AD-1049/1050/1051 OPERATOR endpoints (crew-scope gated — they trigger outbound
+# fetches / POSTs / mutate trust + the MCP bridge).
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/ard/federated", dependencies=[Depends(require_crew_scope)])
+async def ard_federated(runtime: Any = Depends(get_runtime)) -> JSONResponse:
+    """AD-1050: fan out ARD discovery to federated referral peers (mode-gated).
+
+    OPERATOR-facing (``require_crew_scope``) — it triggers OUTBOUND fetches. 404
+    ``feature_disabled`` when ARD is off. ``federation.ard.federation_mode`` gates the
+    fan-out: ``none`` → empty (NO peer fetch); ``referrals``/``auto`` → fetch the
+    bounded ``a2a.outbound_peers`` via the SSRF-guarded client, then MERGE all peer
+    catalogs (dedupe by URN). Honest-degrade: any failure returns empty results.
+    """
+    _require_ard_enabled(runtime)
+
+    try:
+        discovered = await discover_federated(runtime)
+        entries = merge_catalog_entries(discovered)
+        results = [entry.to_dict() for entry in entries]
+    except Exception:
+        logger.warning("AD-1050: ard federated failed; serving empty results", exc_info=True)
+        results = []
+
+    body = {
+        "specVersion": "1.0",
+        "conformance": "registry",
+        "results": results,
+        "total": len(results),
+    }
+    return JSONResponse(content=body, media_type=MT_AI_REGISTRY)
+
+
+@router.post("/ard/adopt", dependencies=[Depends(require_crew_scope)])
+async def ard_adopt(
+    body: ArdAdoptBody = Body(...), runtime: Any = Depends(get_runtime)
+) -> dict[str, Any]:
+    """AD-1049: explicit, gated adopt-and-connect of one discovered ARD entry.
+
+    OPERATOR-facing (``require_crew_scope``) — it mutates trust + the MCP bridge. 404
+    when ARD is off; 503 when the tool-permission store is unavailable; 422
+    ``invalid_entry`` when ``entry`` fails value-or-reference parsing. Delegates the
+    strict permission → trust → connect ordering to ``connect_candidate`` and returns
+    its ``ConnectResult`` as a dict.
+    """
+    _require_ard_enabled(runtime)
+    _require_tool_permission_store(runtime)
+
+    entry = entry_from_dict(body.entry)
+    if entry is None:
+        raise HTTPException(status_code=422, detail="invalid_entry")
+
+    result = await connect_candidate(
+        runtime,
+        agent_id=body.agent_id,
+        catalog=body.catalog,
+        resource=body.resource,
+        entry=entry,
+        endpoint_host=body.endpoint_host,
+    )
+    return asdict(result)
+
+
+@router.post("/ard/publish", dependencies=[Depends(require_crew_scope)])
+async def ard_publish(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-1051: publish the ship's secret-free catalog to the configured registry.
+
+    OPERATOR-facing (``require_crew_scope``) — it triggers an OUTBOUND POST. 404 when
+    ARD is off. An empty ``federation.ard.registry_url`` is a no-op (``no_registry_url``)
+    with NO HTTP call. Delegates to ``publish_catalog`` (DD-7 secret-free body,
+    SSRF-guarded) and returns its ``PublishResult`` as a dict.
+    """
+    _require_ard_enabled(runtime)
+    result = await publish_catalog(runtime)
+    return asdict(result)

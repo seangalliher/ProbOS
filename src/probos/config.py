@@ -2884,6 +2884,18 @@ class FederationArdConfig(BaseModel):
     discovery_endpoints: list[str] = Field(default_factory=list)
     registry_url: str = ""
     publisher_namespace_domain: str = ""
+    # AD-1049: discovery-before-design — when True the self-mod path SURFACES
+    # existing ARD resources before designing a new agent (governance). Default
+    # False keeps the runtime hook byte-identical (the call-site guard short-
+    # circuits before any work runs).
+    discovery_before_design: bool = False
+    # AD-1050: federated ARD discovery mode. "none" (default) → no peer fetch
+    # (byte-identical when off); "referrals" → fan out to a2a.outbound_peers;
+    # "auto" honest-degrades to "referrals" in v1.
+    federation_mode: Literal["none", "referrals", "auto"] = "none"
+    # AD-1050: hard cap on referral peers fanned out per federated discovery.
+    # 0 disables referral fan-out entirely.
+    max_referral_peers: int = Field(default=5, ge=0, le=50)
 
 
 class FederationPeerTrustConfig(BaseModel):
