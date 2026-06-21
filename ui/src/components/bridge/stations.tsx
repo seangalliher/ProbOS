@@ -171,6 +171,11 @@ export function buildBridgeStations(ctx: {
         // proposals open it via the IntentSurface card). Engineering concern.
         { id: 'workstation-toggle', label: 'Workstation',
           onInvoke: () => useStore.getState().openWorkstation({ kind: 'scratch', title: 'Scratch', language: 'markdown', content: '' }) },
+        // AD-1052: Browser/Web-App Workstation — opens the embedded-iframe
+        // browser surface (the unifying mode model; watch/bridge land in
+        // AD-1052a/b). Engineering concern.
+        { id: 'browser-workstation-toggle', label: 'Browser',
+          onInvoke: () => useStore.setState({ browserWorkstationOpen: true }) },
       ],
       // AD-945: the four bottom-right environment toggles (sound / voice / wake-word /
       // legend), relocated from DecisionSurface into the Ship's-Computer command layer.

@@ -8,14 +8,21 @@
  *  McpAppGallery; ignores typeId/doc) so the registered native `mcp-app` type
  *  renders the gallery when hosted by the AD-1023 WorkspacePanel. Built via
  *  `createElement` (not JSX) since this is a `.ts` module.
+ *
+ *  AD-1052: `browser` is the embedded-iframe Browser/Web-App workstation (the
+ *  third and last native type). Self-contained (ignores doc).
  */
 import { createElement, type ComponentType } from 'react';
 import { CodeWorkstation } from './CodeWorkstation';
+import { BrowserWorkstation } from './BrowserWorkstation';
 import { McpAppGallery } from '../mcp/McpAppGallery';
 import type { NativeWorkstationProps } from './WorkstationLauncher';
 
 export const nativeWorkstations: Record<string, ComponentType<NativeWorkstationProps>> = {
   monaco: CodeWorkstation,
+  // AD-1052: the embedded-iframe browser workstation (default-OFF until the
+  // backend `browser` type is enabled via WorkstationsConfig.enabled).
+  browser: BrowserWorkstation,
   // AD-1024: render the gallery (its own deps default to the real endpoint).
   'mcp-app': (_props: NativeWorkstationProps) => createElement(McpAppGallery),
 };

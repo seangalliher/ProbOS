@@ -30,6 +30,7 @@ import { ShipsLockerPanel } from './components/bridge/ShipsLockerPanel';
 import { McpServersPanel } from './components/mcp/McpServersPanel';
 import { McpAppsPanel } from './components/mcp/McpAppsPanel';
 import { WorkstationPanel } from './components/workstation/WorkstationPanel';
+import { BrowserWorkstationPanel } from './components/workstation/BrowserWorkstationPanel';
 import { WorkspacePanel } from './components/workspace/WorkspacePanel';
 import { useSettingsStore } from './store/useSettingsStore';
 import CameraLiveIndicator from './components/perception/CameraLiveIndicator';
@@ -119,6 +120,7 @@ export default function App() {
       <WorkstationPanel />
       <WorkspacePanel />
       <McpAppsPanel />
+      <BrowserWorkstationPanel />
       <CameraLiveIndicator />
       <CameraPreviewPanel />
       {/* AD-944: the commercial-overlay status badge outlived the retired toolbar.

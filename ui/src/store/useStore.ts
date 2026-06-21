@@ -372,6 +372,7 @@ export interface HXIState {
   mcpServersOpen: boolean;  // AD-1018: MCP servers management overlay
   mcpAppsOpen: boolean;  // AD-1024: MCP-app gallery overlay
   workstationOpen: boolean;  // AD-1021: code/text workstation overlay
+  browserWorkstationOpen: boolean;  // AD-1052: browser/web-app workstation overlay
   workstationDoc: WorkstationDoc | null;  // AD-1021: active workstation document
   workspaceOpen: boolean;  // AD-1023
   activeWorkspace: Workspace | null;  // AD-1023
@@ -898,6 +899,7 @@ export const useStore = create<HXIState>((set, get) => ({
   mcpServersOpen: false,  // AD-1018
   mcpAppsOpen: false,  // AD-1024
   workstationOpen: false,  // AD-1021
+  browserWorkstationOpen: false,  // AD-1052
   workstationDoc: null,  // AD-1021
   workspaceOpen: false,  // AD-1023
   activeWorkspace: null,  // AD-1023
