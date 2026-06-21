@@ -674,14 +674,24 @@ class CognitiveAgent(BaseAgent):
             )
 
     def _compose_organs(self) -> None:
-        """AD-1034 / AD-1029: attach the organs this agent is born with. Default: none.
+        """AD-1034: the organ-composition dispatcher — attach the organs this agent is born with.
 
         Organs are *born with the parent* (Design Principle #12): this hook runs once at
-        construction, right after the spine exists. The base ``CognitiveAgent`` composes
-        **zero** organs by default — so the running system is byte-identical to
-        pre-AD-1034 until an organ is composed.
+        construction, right after the spine exists, and again idempotently if re-invoked. The
+        base ``CognitiveAgent`` composes **zero** organs by default — so the running system is
+        byte-identical to pre-AD-1034 until an organ is composed. Each organ has its own config
+        gate + idempotency guard, so the dispatcher simply calls them in order; a disabled organ
+        early-returns from its own composer. AD-1035: the dreaming composer is called AFTER the
+        attention composer and is reached even when attention is OFF (the dispatcher never
+        short-circuits — each composer is independently gated).
+        """
+        self._compose_attention_organ()
+        self._compose_dreaming_organ()
 
-        AD-1029: when ``memory.attention.enabled`` is True (read via the same resolution
+    def _compose_attention_organ(self) -> None:
+        """AD-1029: compose the deterministic :class:`AttentionFaculty` when attention is ON.
+
+        When ``memory.attention.enabled`` is True (read via the same resolution
         :meth:`_resolve_attention_budget` uses), compose the deterministic
         :class:`AttentionFaculty`. Default-OFF ⇒ NO organ attached ⇒ ``_spine.has_organs``
         stays False ⇒ the ``drive_cycle`` hook is a no-op AND ``_build_user_message`` keeps
@@ -704,6 +714,26 @@ class CognitiveAgent(BaseAgent):
         # through the agent-owned ``deliver_exogenous`` inlet must reach the faculty's
         # pending state; the spine inlet is the seam (the real intent bus is AD-1032).
         self._spine.subscribe(EXOGENOUS_SIGNAL_KIND, faculty)
+
+    def _compose_dreaming_organ(self) -> None:
+        """AD-1035: compose the per-agent background :class:`DreamingOrgan` when dreaming is ON.
+
+        When ``dreaming.organ_enabled`` is True, attach a background ``DreamingOrgan``.
+        Default-OFF ⇒ NO organ attached ⇒ the shared runtime ``DreamingEngine`` +
+        ``DreamScheduler`` remain the single source of truth ⇒ byte-identical. The organ is a
+        BACKGROUND faculty (inherited no-op ``perceive``/``decide``/``act``), so even when
+        composed it is never driven on the spine's per-turn ``drive_cycle``; and AD-1035 wires
+        no live engine, so the organ is inert in production even when ON. Idempotent: a second
+        call once the organ is composed is a no-op.
+        """
+        if self._spine.get_organ("dreaming") is not None:
+            return  # idempotent — the dreaming organ is already composed
+        _rt = getattr(self, "_runtime", None)
+        _dream_cfg = getattr(getattr(_rt, "config", None), "dreaming", None) if _rt else None
+        if _dream_cfg is None or not getattr(_dream_cfg, "organ_enabled", False):
+            return  # default-OFF — no organ composed (shared DreamingEngine remains SoT)
+        from probos.cognitive.dreaming_organ import DreamingOrgan
+        self._spine.attach_organ(DreamingOrgan())
 
     def _active_attention_faculty(self) -> AttentionFaculty | None:
         """AD-1029: the composed :class:`AttentionFaculty`, or ``None`` when attention is OFF.
@@ -1987,6 +2017,15 @@ class CognitiveAgent(BaseAgent):
         _wm = getattr(self, '_working_memory', None)
         if _wm:
             _wm.set_correlation_id(correlation_id)
+
+        # AD-1036: exogenous arousal — a between-turns @mention raises this agent's
+        # AttentionFaculty faculty-local zone for the next turn (severity table:
+        # mention→AMBER, AD-1032). Layer-safe: the agent self-arouses from its OWN
+        # universal intake — no lower layer (router/bridge/consensus) reaches in.
+        # Double-gated default-OFF: on_exogenous_event no-ops unless attention.enabled
+        # ∧ arousal_enabled, so this is byte-identical when arousal is off (the default).
+        if observation.get("params", {}).get("was_mentioned", False):
+            self.on_exogenous_event("mention")
 
         return observation
 

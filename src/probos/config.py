@@ -1241,6 +1241,13 @@ class MemoryConfig(BaseModel):
 class DreamingConfig(BaseModel):
     """Dreaming / offline consolidation configuration."""
 
+    # AD-1035: when True, compose a per-agent background DreamingOrgan (personal
+    # dreaming faculty, epic #983) onto each CognitiveAgent's spine. Default OFF ⇒ no
+    # organ is attached and the shared runtime DreamingEngine + DreamScheduler remain
+    # the single source of truth (byte-identical). AD-1035 wires no live engine, so the
+    # organ is inert in production even when this is True.
+    organ_enabled: bool = False
+
     idle_threshold_seconds: float = 120.0  # Tier 2: full dream after idle (AD-288)
     dream_interval_seconds: float = 600.0
     replay_episode_count: int = 50
