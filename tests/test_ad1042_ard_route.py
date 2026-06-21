@@ -12,17 +12,27 @@ Run: d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1042_ard_route.py -q -n 0 -
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from probos.cognitive.workflow_cache import WorkflowCache
 from probos.config import FederationArdConfig, FederationConfig, SystemConfig
-from probos.federation.ard import MT_AI_CATALOG
+from probos.federation.ard import MT_AI_CATALOG, reset_catalog_cache
 from probos.integrations.mcp_bridge.store import McpServerRecord, McpServerStore
 
 _WELL_KNOWN = "/.well-known/ai-catalog.json"
+
+
+@pytest.fixture(autouse=True)
+def _reset_ard_cache() -> Iterator[None]:
+    """Isolate the shared AD-1044 projection cache between tests (id(runtime) reuse)."""
+    reset_catalog_cache()
+    yield
+    reset_catalog_cache()
 
 # Worst-case secret-bearing records: EVERY credential field is populated with a
 # distinctive token so the DD-7 test proves the projector never reads them.

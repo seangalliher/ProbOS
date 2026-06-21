@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any
 
 from .catalog import AiCatalog, CatalogEntry, HostInfo
@@ -40,12 +41,21 @@ from .media_types import (
     MT_PROBOS_TOOL,
     PROBOS_AXIS_TO_MEDIA_TYPE,
 )
+from .representative_queries import mine_representative_queries
 from .urn import build_urn
 
 logger = logging.getLogger(__name__)
 
 # How many representative queries to attach to any one entry (DD-3 bound).
 _REPR_CAP = 5
+
+# DD-4 (AD-1044): short-TTL single-slot projection cache. The public AD-1042
+# route + the AD-1044/1045 query endpoints are unauthenticated, so a repeated
+# query must not re-walk the whole inventory each time — a resource-consumption
+# guard. The slot is keyed on ``id(runtime)`` with a ``time.monotonic`` expiry;
+# it holds at most one runtime's catalog at a time (single-op deployment).
+_CATALOG_CACHE_TTL = 10.0
+_CATALOG_CACHE: dict[int, tuple[float, AiCatalog]] = {}
 
 
 def _sanitize_domain(name: str) -> str:
@@ -305,4 +315,38 @@ async def project_catalog(
     return AiCatalog(host=host, entries=entries)
 
 
-__all__ = ["project_catalog"]
+async def get_cached_catalog(runtime: Any, *, ttl: float = _CATALOG_CACHE_TTL) -> AiCatalog:
+    """Return the ship's catalog projection, served from a short-TTL slot when fresh.
+
+    On a cache hit (within ``ttl``) the stored :class:`AiCatalog` is returned
+    unchanged — repeated discovery queries do not re-walk the inventory. On a
+    miss the catalog is re-projected with ``episodic_k=0`` (workflow-cache-only,
+    ZERO I/O — the same unauthenticated-resource-consumption guard AD-1042 uses)
+    and stored. ``ttl <= 0`` re-projects and does NOT store (a test lever for
+    forcing a fresh projection). Content is identical to calling
+    ``mine_representative_queries(episodic_k=0)`` + ``project_catalog`` directly,
+    so AD-1042 stays behavior-preserving when routed through here.
+    """
+    key = id(runtime)
+    now = time.monotonic()
+    if ttl > 0:
+        cached = _CATALOG_CACHE.get(key)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+
+    repr_queries = await mine_representative_queries(runtime, episodic_k=0)
+    catalog = await project_catalog(runtime, repr_queries=repr_queries)
+
+    if ttl > 0:
+        # Single-slot: drop any prior runtime's entry before storing this one.
+        _CATALOG_CACHE.clear()
+        _CATALOG_CACHE[key] = (now + ttl, catalog)
+    return catalog
+
+
+def reset_catalog_cache() -> None:
+    """Clear the short-TTL projection slot (test isolation + explicit refresh)."""
+    _CATALOG_CACHE.clear()
+
+
+__all__ = ["project_catalog", "get_cached_catalog", "reset_catalog_cache"]

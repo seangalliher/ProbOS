@@ -17,7 +17,7 @@ from .catalog import (
     ProvenanceLink,
     TrustManifest,
 )
-from .catalog_projector import project_catalog
+from .catalog_projector import get_cached_catalog, project_catalog, reset_catalog_cache
 from .media_types import (
     MT_A2A_AGENT,
     MT_AI_CATALOG,
@@ -27,6 +27,7 @@ from .media_types import (
     MT_PROBOS_TOOL,
     PROBOS_AXIS_TO_MEDIA_TYPE,
 )
+from .registry_query import facet_entries, search_entries
 from .representative_queries import mine_representative_queries
 from .urn import build_urn, parse_urn, publisher_domain
 
@@ -53,4 +54,9 @@ __all__ = [
     # AD-1041/1043 projection + mining
     "project_catalog",
     "mine_representative_queries",
+    # AD-1044/1045 query engine + projection cache
+    "get_cached_catalog",
+    "reset_catalog_cache",
+    "search_entries",
+    "facet_entries",
 ]

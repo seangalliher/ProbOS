@@ -10,6 +10,7 @@ Run: d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1041_catalog_projector.py -
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -21,8 +22,17 @@ from probos.federation.ard import (
     MT_MCP_SERVER,
     MT_PROBOS_TOOL,
     project_catalog,
+    reset_catalog_cache,
 )
 from probos.integrations.mcp_bridge.store import McpServerRecord, McpServerStore
+
+
+@pytest.fixture(autouse=True)
+def _reset_ard_cache() -> Iterator[None]:
+    """Isolate the shared AD-1044 projection cache between tests (id(runtime) reuse)."""
+    reset_catalog_cache()
+    yield
+    reset_catalog_cache()
 
 
 # --------------------------------------------------------------------------- #
@@ -142,7 +152,9 @@ def _full_runtime(store: McpServerStore) -> _Runtime:
 
 
 def _entry(entries: list[dict[str, Any]], substr: str) -> dict[str, Any]:
-    return next(e for e in entries if substr in e["identifier"])
+    match = next((e for e in entries if substr in e["identifier"]), None)
+    assert match is not None, f"no catalog entry with identifier containing {substr!r}"
+    return match
 
 
 # --------------------------------------------------------------------------- #
