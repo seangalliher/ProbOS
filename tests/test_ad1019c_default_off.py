@@ -15,7 +15,9 @@ from probos.runtime import ProbOSRuntime
 
 @pytest.mark.asyncio
 async def test_default_off_no_workbench_no_search_tool_no_pool(tmp_path):
-    rt = ProbOSRuntime(data_dir=tmp_path / "data")
+    # Explicit default SystemConfig() so this default-OFF assertion tests the CODE
+    # default, isolated from any operator config/system.yaml customization.
+    rt = ProbOSRuntime(data_dir=tmp_path / "data", config=SystemConfig())
     await rt.start()
     try:
         # The flag is default-OFF.

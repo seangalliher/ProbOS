@@ -317,9 +317,14 @@ class TestRegistryCompleteness:
         src_files = glob.glob("src/probos/**/*.py", recursive=True)
 
         missing = set()
-        # Patterns: _emit_event("...", _emit("...", _event_emitter("..."
+        # Real event-bus emissions use `_emit_event(...)`, `_event_emitter(...)`,
+        # or a METHOD call `self._emit("...")` (e.g. cluster_monitor's federation
+        # events). The bare local `_emit("...")` closures in
+        # cognitive_agent._build_user_message are PROMPT-SEGMENT source labels,
+        # NOT EventTypes — require the `.`-prefixed method form so those closures
+        # are not flagged as false positives (real coverage is unchanged).
         emit_pattern = re.compile(
-            r'(?:_emit_event|_emit|_event_emitter)\(\s*["\']([a-z_]+)["\']'
+            r'(?:_emit_event|\._emit|_event_emitter)\(\s*["\']([a-z_]+)["\']'
         )
 
         for fpath in src_files:

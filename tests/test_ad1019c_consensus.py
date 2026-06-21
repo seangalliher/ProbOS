@@ -16,6 +16,7 @@ import pytest
 
 from probos.agents.mcp_consensus_proposer import McpConsensusProposer
 from probos.cognitive.episodic import EpisodicMemory
+from probos.config import SystemConfig
 from probos.integrations.mcp_bridge import MCPBridge
 from probos.runtime import ProbOSRuntime
 from probos.types import ConsensusOutcome, QuorumPolicy
@@ -66,7 +67,10 @@ async def _echo_bridge() -> _CountingBridge:
 
 @pytest.fixture
 async def runtime(tmp_path):
-    rt = ProbOSRuntime(data_dir=tmp_path / "data")
+    # Explicit default SystemConfig() isolates these consensus tests from operator
+    # config/system.yaml: with agent_tools_enabled at its default (False) the runtime
+    # does NOT auto-create the mcp_consensus pool, so each test controls the pool.
+    rt = ProbOSRuntime(data_dir=tmp_path / "data", config=SystemConfig())
     rt.spawner.register_template("mcp_consensus_proposer", McpConsensusProposer)
     await rt.start()
     yield rt

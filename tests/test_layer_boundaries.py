@@ -56,6 +56,10 @@ ALLOWED_EXCEPTIONS = {
     ("cognitive/emergent_detector.py", "probos.consensus.trust"),
     ("cognitive/feedback.py", "probos.consensus.trust"),
     ("cognitive/working_memory.py", "probos.consensus.trust"),
+    # AD-979d: cross-agent recall reads the trust network (TYPE_CHECKING-only;
+    # DI via constructor) to weight cross-agent verifier evidence — same
+    # Ship's-Computer-service precedent as the AD-399 entries above.
+    ("cognitive/cross_agent_recall.py", "probos.consensus.trust"),
     # AD-399: substrate → mesh — TYPE_CHECKING + DI
     ("substrate/heartbeat.py", "probos.mesh.gossip"),
     ("substrate/scaler.py", "probos.mesh.intent"),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -95,7 +96,10 @@ class TestScoutDataDirectory:
         """_load_seen and _save_seen use provided path."""
         seen_file = tmp_path / "scout_seen.json"
         assert _load_seen(seen_file) == {}
-        _save_seen({"owner/repo": "2026-03-22T00:00:00+00:00"}, seen_file)
+        # AD-396: _save_seen prunes entries older than 90 days; use a current
+        # timestamp so the entry survives the prune (a hardcoded ISO date here
+        # aged past the 90-day cutoff and was silently pruned to {}).
+        _save_seen({"owner/repo": datetime.now(timezone.utc).isoformat()}, seen_file)
         loaded = _load_seen(seen_file)
         assert "owner/repo" in loaded
 

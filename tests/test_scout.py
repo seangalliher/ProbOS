@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -177,7 +178,10 @@ class TestSeenTracking:
         from probos.cognitive.scout import _load_seen, _save_seen
 
         assert _load_seen(seen_file) == {}
-        seen = {"owner/repo1": "2026-03-22T00:00:00+00:00"}
+        # AD-394: _save_seen prunes entries older than 90 days; use a current
+        # timestamp so the entry survives the prune (a hardcoded ISO date here
+        # aged past the 90-day cutoff and was silently pruned to {}).
+        seen = {"owner/repo1": datetime.now(timezone.utc).isoformat()}
         _save_seen(seen, seen_file)
         loaded = _load_seen(seen_file)
         assert "owner/repo1" in loaded

@@ -18,6 +18,7 @@ AD-1029 suites run alongside this file in the gate.
 from __future__ import annotations
 
 import math
+import re
 import time
 
 from probos.cognitive.agent_working_memory import AgentWorkingMemory
@@ -348,7 +349,14 @@ def test_salience_score_wm_bid_does_not_reorder_render_context() -> None:
     wm.record_action("warp core alignment nominal", source="dm")
     wm.record_observation("replicator menu changed", source="dm")
     agent._working_memory = wm
-    before = wm.render_context()
+    # AD-1030: render_context embeds an incidental relative "(Ns ago)" token
+    # (AgentWorkingMemory._format_age over time.time()). The real embed_text +
+    # per-entry scoring between the two renders advances the wall clock,
+    # drifting that token (e.g. "0s" -> "5s") even though the bid ORDER is
+    # unchanged (the property under test). Neutralize the age token so the
+    # assertion isolates reordering, not timing.
+    _age_token = re.compile(r"\(\d+(?:\.\d+)?[smh] ago")
+    before = _age_token.sub("(<age> ago", wm.render_context())
     agent._salience_score_wm_bid(embed_text(_GOAL))
-    after = wm.render_context()
+    after = _age_token.sub("(<age> ago", wm.render_context())
     assert before == after

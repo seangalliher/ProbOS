@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
+from probos.config import SystemConfig
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -357,6 +358,12 @@ def _make_cognitive_agent(**kwargs):
     agent._birth_timestamp = None
     agent._system_start_time = None
     agent._strategy_advisor = None
+    # AD-722: this helper bypasses __init__ (CognitiveAgent.__new__), so it must
+    # mirror the attrs __init__ sets that _build_user_message now reads. The
+    # avatar self-observation injection reads self._last_self_avatar_snap
+    # (initialized to None in __init__); without it the read raises
+    # AttributeError and the whole message assembly degrades to "".
+    agent._last_self_avatar_snap = None
     return agent
 
 
@@ -373,6 +380,11 @@ class TestTelemetryInjection:
         svc.render_telemetry_context.return_value = "--- Your Telemetry ---\nMemory: 47 episodes"
 
         rt = MagicMock()
+        # BF-287: a real config so _resolve_attention_budget() returns the
+        # unbounded budget. With a bare MagicMock, rt.config.memory.attention
+        # is truthy and token_budget is a MagicMock -> int(MagicMock)=1 -> the
+        # ContextAssembler evicts every bid and _build_user_message renders "".
+        rt.config = SystemConfig()
         rt._introspective_telemetry = svc
         agent = _make_cognitive_agent(runtime=rt)
 
@@ -410,6 +422,9 @@ class TestTelemetryInjection:
         svc.render_telemetry_context.return_value = "--- Your Telemetry ---\nTrust: 0.8"
 
         rt = MagicMock()
+        # BF-287: real config so _resolve_attention_budget() is unbounded (see
+        # the DM test above) instead of int(MagicMock)=1 evicting every bid.
+        rt.config = SystemConfig()
         rt._introspective_telemetry = svc
         rt.is_cold_start = False
         agent = _make_cognitive_agent(runtime=rt)

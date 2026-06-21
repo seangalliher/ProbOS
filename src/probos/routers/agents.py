@@ -1357,9 +1357,10 @@ async def get_agent_instructions(
             resolved_tier = agent._resolve_tier()
     except Exception:
         logger.debug("AD-1002: tier resolve failed for %s", agent_id, exc_info=True)
+    from probos.cognitive.llm_client import _LLM_TIERS  # AD-732: single source of truth
     available_tiers: list[str] = []
     cog = getattr(getattr(runtime, "config", None), "cognitive", None)
-    for tier_name in ("fast", "standard", "deep", "vision"):
+    for tier_name in _LLM_TIERS:
         if cog is not None and getattr(cog, f"llm_model_{tier_name}", ""):
             available_tiers.append(tier_name)
     model = {

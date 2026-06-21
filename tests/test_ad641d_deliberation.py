@@ -16,6 +16,7 @@ from probos.cognitive.deliberation import (
 from probos.cognitive.deliberation.protocol import DeliberationArgument
 from probos.config import DeliberationConfig
 from probos.config import DiscoveryLearningConfig
+from probos.config import MCPConfig, WorkstationsConfig
 from probos.events import EventType
 from probos.ward_room.service import WardRoomService
 
@@ -300,6 +301,8 @@ async def test_runtime_deliberation_protocol_is_none_when_disabled() -> None:
     config.proactive_cognitive.enabled = False
     config.deliberation = DeliberationConfig(enabled=False)
     config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
+    config.mcp = MCPConfig(enabled=False)  # skip MCP wiring (unrelated to deliberation; AD-1015 store opens sqlite)
+    config.workstations = WorkstationsConfig(enabled=False)  # AD-1022 wirer opt-out
     runtime.config = config
 
     await finalize_startup(runtime=runtime, config=config)
