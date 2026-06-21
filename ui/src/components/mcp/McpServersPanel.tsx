@@ -84,9 +84,54 @@ export interface OAuthStartInput {
   redirect_uri: string;
 }
 
+/** AD-1017a device-code (RFC 8628) start payload. No ``redirect_uri`` — the
+ *  device-code grant is browserless — and the RFC 8628 endpoint is
+ *  ``device_authorization_url`` (not ``authorize_url``). ``client_secret`` is
+ *  write-only: sent once to ``/device/start`` then cleared from state (DD-3). */
+export interface DeviceStartInput {
+  client_id: string;
+  client_secret: string;
+  device_authorization_url: string;
+  token_url: string;
+  scopes: string[];
+}
+
 export interface TestResult { ok: boolean; tool_count?: number; error?: string; }
 export interface OAuthStartResult { auth_url: string; state: string; }
+
+/** AD-1017a ``/auth/device/start`` result. The ``device_code`` poll secret is
+ *  NEVER in this shape — it stays server-side; the browser holds only the
+ *  opaque ``flow_id`` plus the user-facing display fields (DD). */
+export interface DeviceStartResult {
+  flow_id: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+  expires_in: number;
+  interval: number;
+}
+
+/** AD-1017a ``/auth/device/poll`` result — ``pending`` (keep polling on the
+ *  server-provided ``interval``) or ``authenticated`` (grant complete). A
+ *  terminal failure (404 unknown_flow / access_denied / expired) is surfaced as
+ *  a thrown error by the fetcher, not a status here. */
+export interface DevicePollResult {
+  status: 'pending' | 'authenticated';
+  interval?: number;
+}
+
 export interface McpServersResult { servers: McpServer[]; disabled: boolean; }
+
+/** A cancellable poll scheduler (DD-2/DD-5). ``schedule(fn, seconds)`` arranges
+ *  to call ``fn`` once after ``seconds`` and returns a cancel handle; calling
+ *  the handle must prevent ``fn`` from firing. Injectable so tests drive the
+ *  poll loop with no real timers and no leaked handles. */
+export type SchedulePoll = (fn: () => void, seconds: number) => () => void;
+
+const _defaultSchedulePoll: SchedulePoll = (fn, seconds) => {
+  const t = setTimeout(fn, Math.max(0, seconds) * 1000);
+  return () => clearTimeout(t);
+};
 
 export interface McpDeps {
   fetchServers: () => Promise<McpServersResult>;
@@ -99,6 +144,9 @@ export interface McpDeps {
   deleteCredential: (id: string) => Promise<McpServer>;
   startOAuth: (id: string, body: OAuthStartInput) => Promise<OAuthStartResult>;
   refreshOAuth: (id: string) => Promise<boolean>;
+  startDeviceAuth: (id: string, body: DeviceStartInput) => Promise<DeviceStartResult>;
+  pollDeviceAuth: (id: string, flowId: string) => Promise<DevicePollResult>;
+  schedulePoll: SchedulePoll;
 }
 
 // --------------------------------------------------------------------------- //
@@ -193,6 +241,30 @@ async function refreshOAuthApi(id: string): Promise<boolean> {
   return resp.ok;
 }
 
+// AD-1017a device-code (RFC 8628) — same-origin; no token ever in JS. The
+// device_code poll secret stays server-side (we get only the opaque flow_id).
+async function startDeviceAuthApi(id: string, body: DeviceStartInput): Promise<DeviceStartResult> {
+  const resp = await fetch(`/api/mcp/servers/${encodeURIComponent(id)}/auth/device/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) throw new Error(await _errText(resp));
+  return resp.json();
+}
+
+async function pollDeviceAuthApi(id: string, flowId: string): Promise<DevicePollResult> {
+  const resp = await fetch(`/api/mcp/servers/${encodeURIComponent(id)}/auth/device/poll`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flow_id: flowId }),
+  });
+  // Terminal failures (404 unknown_flow / access_denied / expired) throw; a
+  // 200 carries {status: pending|authenticated}.
+  if (!resp.ok) throw new Error(await _errText(resp));
+  return resp.json();
+}
+
 // --------------------------------------------------------------------------- //
 // Inline SVG stroke icons (HXI #3: no emoji, stroke-only glyphs).
 // --------------------------------------------------------------------------- //
@@ -282,6 +354,9 @@ export function McpServersPanel({ deps }: Props) {
   const _deleteCredential = deps?.deleteCredential ?? deleteCredentialApi;
   const _startOAuth = deps?.startOAuth ?? startOAuthApi;
   const _refreshOAuth = deps?.refreshOAuth ?? refreshOAuthApi;
+  const _startDeviceAuth = deps?.startDeviceAuth ?? startDeviceAuthApi;
+  const _pollDeviceAuth = deps?.pollDeviceAuth ?? pollDeviceAuthApi;
+  const _schedulePoll = deps?.schedulePoll ?? _defaultSchedulePoll;
 
   const [servers, setServers] = useState<McpServer[] | null>(null);
   const [disabled, setDisabled] = useState(false);
@@ -577,6 +652,9 @@ export function McpServersPanel({ deps }: Props) {
           deleteCredential={_deleteCredential}
           startOAuth={_startOAuth}
           refreshOAuth={_refreshOAuth}
+          startDeviceAuth={_startDeviceAuth}
+          pollDeviceAuth={_pollDeviceAuth}
+          schedulePoll={_schedulePoll}
           onChanged={reload}
         />
       )}
@@ -819,12 +897,15 @@ interface CredModalProps {
   deleteCredential: (id: string) => Promise<McpServer>;
   startOAuth: (id: string, body: OAuthStartInput) => Promise<OAuthStartResult>;
   refreshOAuth: (id: string) => Promise<boolean>;
+  startDeviceAuth: (id: string, body: DeviceStartInput) => Promise<DeviceStartResult>;
+  pollDeviceAuth: (id: string, flowId: string) => Promise<DevicePollResult>;
+  schedulePoll: SchedulePoll;
   onChanged: () => Promise<void> | void;
 }
 
 function CredentialModal(p: CredModalProps) {
   const s = p.server;
-  const [kind, setKind] = useState<'static' | 'oauth'>(s.auth_kind === 'oauth' ? 'oauth' : 'static');
+  const [kind, setKind] = useState<'static' | 'oauth' | 'device'>(s.auth_kind === 'oauth' ? 'oauth' : 'static');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -845,6 +926,13 @@ function CredentialModal(p: CredModalProps) {
   const [scopes, setScopes] = useState<string>(Array.isArray(oauthCfg.scopes) ? oauthCfg.scopes.join(' ') : '');
   const [redirectUri, setRedirectUri] = useState(String(oauthCfg.redirect_uri || ''));
   const [clientSecret, setClientSecret] = useState('');
+
+  // Device-code (AD-1017a). RFC 8628 endpoint seeded from oauth_json; the
+  // device_code poll secret NEVER reaches the browser — the modal holds only
+  // the opaque flow_id + display fields (DD).
+  const [deviceAuthUrl, setDeviceAuthUrl] = useState(String(oauthCfg.device_authorization_url || ''));
+  const [deviceFlow, setDeviceFlow] = useState<DeviceStartResult | null>(null);
+  const [devicePolling, setDevicePolling] = useState(false);
 
   const saveStatic = useCallback(async () => {
     setModalError(null);
@@ -884,6 +972,70 @@ function CredentialModal(p: CredModalProps) {
       setBusy(false);
     }
   }, [p, s.id, clientId, clientSecret, authorizeUrl, tokenUrl, scopes, redirectUri]);
+
+  const connectDevice = useCallback(async () => {
+    setModalError(null);
+    setBusy(true);
+    try {
+      const res = await p.startDeviceAuth(s.id, {
+        client_id: clientId,
+        client_secret: clientSecret,
+        device_authorization_url: deviceAuthUrl,
+        token_url: tokenUrl,
+        scopes: scopes.split(/\s+/).map((x) => x.trim()).filter(Boolean),
+      });
+      setClientSecret(''); // DD-3: write-only — never retained after the start call
+      setDeviceFlow(res);
+      setDevicePolling(true);
+    } catch (e) {
+      setModalError(e instanceof Error ? e.message : 'Device start failed.');
+    } finally {
+      setBusy(false);
+    }
+  }, [p, s.id, clientId, clientSecret, deviceAuthUrl, tokenUrl, scopes]);
+
+  // DD-2/DD-5: poll the in-flight device grant on the server-provided interval
+  // via the INJECTABLE schedulePoll. Exactly one timer is live at a time; the
+  // cleanup cancels the latest timer and a `stopped` guard blocks any state
+  // update after the modal unmounts. No leaked timers, no setState-after-unmount.
+  useEffect(() => {
+    if (kind !== 'device' || !deviceFlow || !devicePolling) return;
+    let stopped = false;
+    let cancel: (() => void) | null = null;
+    const deadline = Date.now() + (deviceFlow.expires_in || 600) * 1000;
+
+    const tick = async () => {
+      if (stopped) return;
+      if (Date.now() >= deadline) {
+        setDevicePolling(false);
+        setModalError('Device code expired — Retry.');
+        return;
+      }
+      try {
+        const r = await p.pollDeviceAuth(s.id, deviceFlow.flow_id);
+        if (stopped) return;
+        if (r.status === 'authenticated') {
+          setDevicePolling(false);
+          await p.onChanged();
+          p.onClose();
+          return;
+        }
+        const secs = r.interval && r.interval > 0 ? r.interval : deviceFlow.interval || 5;
+        cancel = p.schedulePoll(() => { void tick(); }, secs);
+      } catch (e) {
+        if (stopped) return;
+        setDevicePolling(false);
+        setModalError(e instanceof Error ? e.message : 'Device authorization failed.');
+      }
+    };
+
+    cancel = p.schedulePoll(() => { void tick(); }, deviceFlow.interval || 5);
+    return () => {
+      stopped = true;
+      if (cancel) cancel();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, deviceFlow, devicePolling, s.id]);
 
   const refresh = useCallback(async () => {
     setModalError(null);
@@ -939,9 +1091,13 @@ function CredentialModal(p: CredModalProps) {
             <input type="radio" name="cred-kind" checked={kind === 'oauth'} onChange={() => setKind('oauth')} style={{ marginRight: 6 }} />
             OAuth
           </label>
+          <label data-testid="mcp-cred-kind-device" style={{ fontSize: 11, color: kind === 'device' ? _AMBER : _DIM, cursor: 'pointer' }}>
+            <input type="radio" name="cred-kind" checked={kind === 'device'} onChange={() => setKind('device')} style={{ marginRight: 6 }} />
+            Device code
+          </label>
         </div>
 
-        {kind === 'static' ? (
+        {kind === 'static' && (
           <div data-testid="mcp-cred-static">
             <div style={{ marginBottom: 10 }}>
               <label style={labelStyle}>Token (write-only — never shown again)</label>
@@ -968,7 +1124,9 @@ function CredentialModal(p: CredModalProps) {
               {busy ? 'Saving…' : 'Save token'}
             </button>
           </div>
-        ) : (
+        )}
+
+        {kind === 'oauth' && (
           <div data-testid="mcp-cred-oauth">
             <div style={{ marginBottom: 8 }}>
               <label style={labelStyle}>Client ID</label>
@@ -1000,6 +1158,52 @@ function CredentialModal(p: CredModalProps) {
               </button>
               <button data-testid="mcp-oauth-refresh" onClick={refresh} disabled={busy} style={btnStyle(false)}>Refresh token</button>
             </div>
+          </div>
+        )}
+
+        {kind === 'device' && (
+          <div data-testid="mcp-cred-device">
+            <div style={{ marginBottom: 8 }}>
+              <label style={labelStyle}>Client ID</label>
+              <input data-testid="mcp-device-client-id" value={clientId} onChange={(e) => setClientId(e.target.value)} style={fieldStyle} />
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <label style={labelStyle}>Client secret (write-only — optional)</label>
+              <input data-testid="mcp-device-client-secret" type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} style={fieldStyle} placeholder="paste client secret" autoComplete="off" />
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <label style={labelStyle}>Device authorization URL</label>
+              <input data-testid="mcp-device-auth-url" value={deviceAuthUrl} onChange={(e) => setDeviceAuthUrl(e.target.value)} style={fieldStyle} placeholder="https://…/devicecode" />
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <label style={labelStyle}>Token URL</label>
+              <input data-testid="mcp-device-token-url" value={tokenUrl} onChange={(e) => setTokenUrl(e.target.value)} style={fieldStyle} />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={labelStyle}>Scopes (space-separated)</label>
+              <input data-testid="mcp-device-scopes" value={scopes} onChange={(e) => setScopes(e.target.value)} style={fieldStyle} />
+            </div>
+
+            {deviceFlow && (
+              <div data-testid="mcp-device-flow" style={{ marginBottom: 12, padding: 10, border: `1px solid ${_AMBER}33`, borderRadius: 6 }}>
+                <div style={{ fontSize: 10, color: _DIM, marginBottom: 4 }}>Enter this code at the verification page:</div>
+                <div data-testid="mcp-device-user-code" style={{ fontSize: 18, letterSpacing: 2, color: _AMBER, fontFamily: "'JetBrains Mono', monospace", marginBottom: 8 }}>
+                  {deviceFlow.user_code}
+                </div>
+                <a data-testid="mcp-device-open" href={deviceFlow.verification_uri_complete || deviceFlow.verification_uri} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: _AMBER }}>
+                  Open verification page
+                </a>
+                {devicePolling && (
+                  <div data-testid="mcp-device-waiting" style={{ fontSize: 10, color: _DIM, marginTop: 8 }}>
+                    Waiting for authorization…
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button data-testid="mcp-device-connect" onClick={connectDevice} disabled={busy || devicePolling} style={btnStyle(true)}>
+              {devicePolling ? 'Waiting…' : deviceFlow ? 'Retry' : busy ? 'Starting…' : 'Connect'}
+            </button>
           </div>
         )}
 

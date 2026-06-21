@@ -8,8 +8,8 @@
  * no secret rendered in a list/detail, and the HXI no-emoji guard.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { McpServersPanel, type McpServer, type McpDeps } from './McpServersPanel';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
+import { McpServersPanel, type McpServer, type McpDeps, type DevicePollResult, type SchedulePoll } from './McpServersPanel';
 import { useStore } from '../../store/useStore';
 
 const EMOJI = /\p{Extended_Pictographic}/u;
@@ -51,8 +51,29 @@ function makeDeps(over: Partial<McpDeps> = {}): McpDeps {
     deleteCredential: vi.fn(async (id) => makeServer({ id, auth_kind: 'none', credential_ref: '' })),
     startOAuth: vi.fn(async () => ({ auth_url: 'https://auth.example/authorize?x=1', state: 'st-1' })),
     refreshOAuth: vi.fn(async () => true),
+    startDeviceAuth: vi.fn(async () => ({
+      flow_id: 'flow-1',
+      user_code: 'WDJB-MJHT',
+      verification_uri: 'https://device.example/activate',
+      verification_uri_complete: 'https://device.example/activate?user_code=WDJB-MJHT',
+      expires_in: 600,
+      interval: 5,
+    })),
+    pollDeviceAuth: vi.fn(async (): Promise<DevicePollResult> => ({ status: 'pending', interval: 5 })),
+    schedulePoll: vi.fn(() => vi.fn()),
     ...over,
   };
+}
+
+/** A capture scheduler (DD-2/DD-5 test double): records each scheduled poll fn
+ *  and hands back a `cancel` spy. No real timers — the test drives the loop via
+ *  `runLast`, so a pending->authenticated sequence is fully deterministic. */
+function makeSchedule() {
+  const fns: Array<() => void> = [];
+  const cancel = vi.fn();
+  const schedule: SchedulePoll = vi.fn((fn: () => void) => { fns.push(fn); return cancel; });
+  const runLast = () => { const fn = fns[fns.length - 1]; if (fn) fn(); };
+  return { schedule, cancel, runLast };
 }
 
 beforeEach(() => {
@@ -319,5 +340,106 @@ describe('AD-1018 McpServersPanel', () => {
     await waitFor(() => screen.getByTestId('mcp-servers-panel'));
     expect(EMOJI.test(container.textContent ?? '')).toBe(false);
     expect(EMOJI.test(container.innerHTML)).toBe(false);
+  });
+
+  // ----------------------------------------------------------------------- //
+  // AD-1018a: device-code (RFC 8628) modal — the third credential `kind`.
+  // Drives the injectable schedulePoll (capture scheduler) so there are no
+  // real timers and no real network; the device_code never reaches the browser.
+  // ----------------------------------------------------------------------- //
+  async function openDeviceSection() {
+    await waitFor(() => screen.getByTestId('mcp-auth-srv-1'));
+    fireEvent.click(screen.getByTestId('mcp-auth-srv-1'));
+    await waitFor(() => screen.getByTestId('mcp-cred-modal'));
+    fireEvent.click(screen.getByTestId('mcp-cred-kind-device'));
+    await waitFor(() => screen.getByTestId('mcp-cred-device'));
+  }
+
+  it('switches to the device-code section (AD-1018a)', async () => {
+    const deps = makeDeps();
+    render(<McpServersPanel deps={deps} />);
+    await openDeviceSection();
+    expect(screen.getByTestId('mcp-cred-device')).toBeTruthy();
+    // The 3-way is exclusive: the OAuth section (and its Connect) is unmounted.
+    expect(screen.queryByTestId('mcp-oauth-connect')).toBeNull();
+  });
+
+  it('starts a device flow and renders the user code + verification link (AD-1018a)', async () => {
+    const deps = makeDeps();
+    render(<McpServersPanel deps={deps} />);
+    await openDeviceSection();
+    fireEvent.change(screen.getByTestId('mcp-device-auth-url'), { target: { value: 'https://id.example/devicecode' } });
+    fireEvent.click(screen.getByTestId('mcp-device-connect'));
+    await waitFor(() => expect(deps.startDeviceAuth).toHaveBeenCalledWith('srv-1', expect.objectContaining({
+      device_authorization_url: 'https://id.example/devicecode',
+    })));
+    await waitFor(() => screen.getByTestId('mcp-device-user-code'));
+    expect(screen.getByTestId('mcp-device-user-code').textContent).toBe('WDJB-MJHT');
+    expect(screen.getByTestId('mcp-device-open').getAttribute('href')).toBe('https://device.example/activate?user_code=WDJB-MJHT');
+    expect(screen.getByTestId('mcp-device-waiting')).toBeTruthy();
+  });
+
+  it('polls until authenticated then closes and marks the server authed (AD-1018a)', async () => {
+    const sch = makeSchedule();
+    const poll = vi.fn()
+      .mockResolvedValueOnce({ status: 'pending', interval: 1 })
+      .mockResolvedValueOnce({ status: 'authenticated' });
+    const deps = makeDeps({ schedulePoll: sch.schedule, pollDeviceAuth: poll });
+    render(<McpServersPanel deps={deps} />);
+    await openDeviceSection();
+    fireEvent.click(screen.getByTestId('mcp-device-connect'));
+    await waitFor(() => screen.getByTestId('mcp-device-user-code'));
+    // First poll -> pending -> reschedules the next poll on the capture scheduler.
+    await act(async () => { sch.runLast(); });
+    await waitFor(() => expect(sch.schedule).toHaveBeenCalledTimes(2));
+    // Second poll -> authenticated -> onChanged (reload) + close.
+    await act(async () => { sch.runLast(); });
+    await waitFor(() => expect(screen.queryByTestId('mcp-cred-modal')).toBeNull());
+    expect(poll.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // onChanged === reload === fetchServers (mount + reload).
+    expect((deps.fetchServers as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('surfaces a terminal poll error and re-enables Connect as Retry (AD-1018a)', async () => {
+    const sch = makeSchedule();
+    const poll = vi.fn().mockRejectedValueOnce(new Error('access_denied'));
+    const deps = makeDeps({ schedulePoll: sch.schedule, pollDeviceAuth: poll });
+    render(<McpServersPanel deps={deps} />);
+    await openDeviceSection();
+    fireEvent.click(screen.getByTestId('mcp-device-connect'));
+    await waitFor(() => screen.getByTestId('mcp-device-user-code'));
+    await act(async () => { sch.runLast(); });
+    await waitFor(() => expect(screen.getByTestId('mcp-cred-error').textContent).toContain('access_denied'));
+    // Terminal error stops polling; Connect is enabled again (acts as Retry).
+    expect((screen.getByTestId('mcp-device-connect') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('cancels the poll timer when the modal closes (AD-1018a)', async () => {
+    const sch = makeSchedule();
+    // A never-resolving poll keeps the flow pending so a timer stays live.
+    const poll = vi.fn(() => new Promise<DevicePollResult>(() => {}));
+    const deps = makeDeps({ schedulePoll: sch.schedule, pollDeviceAuth: poll });
+    render(<McpServersPanel deps={deps} />);
+    await openDeviceSection();
+    fireEvent.click(screen.getByTestId('mcp-device-connect'));
+    await waitFor(() => screen.getByTestId('mcp-device-user-code'));
+    await waitFor(() => expect(sch.schedule).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId('mcp-cred-close'));
+    await waitFor(() => expect(screen.queryByTestId('mcp-cred-modal')).toBeNull());
+    expect(sch.cancel).toHaveBeenCalled();
+  });
+
+  it('never retains the client_secret after device start — write-only (AD-1018a)', async () => {
+    const SECRET = 'device-client-secret-zzz';
+    const deps = makeDeps();
+    render(<McpServersPanel deps={deps} />);
+    await openDeviceSection();
+    fireEvent.change(screen.getByTestId('mcp-device-client-secret'), { target: { value: SECRET } });
+    fireEvent.click(screen.getByTestId('mcp-device-connect'));
+    await waitFor(() => expect(deps.startDeviceAuth).toHaveBeenCalledWith('srv-1', expect.objectContaining({ client_secret: SECRET })));
+    // The write-only secret is cleared from state after the single start call.
+    await waitFor(() => expect((screen.getByTestId('mcp-device-client-secret') as HTMLInputElement).value).toBe(''));
+    expect(screen.queryByDisplayValue(SECRET)).toBeNull();
+    expect(document.body.textContent).not.toContain(SECRET);
   });
 });
