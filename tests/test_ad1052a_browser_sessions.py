@@ -167,7 +167,8 @@ def test_endpoint_disabled_honest_degrade() -> None:
     client = TestClient(_make_app(rt))
     resp = client.get("/api/browser/sessions")
     assert resp.status_code == 200
-    assert resp.json() == {"enabled": False, "sessions": []}
+    # AD-1052c added the additive `input_forwarding_enabled` field (default-OFF).
+    assert resp.json() == {"enabled": False, "sessions": [], "input_forwarding_enabled": False}
 
 
 def test_endpoint_lists_seeded_sessions() -> None:

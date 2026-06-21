@@ -1637,6 +1637,29 @@ class BrowserToolConfig(BaseModel):
         ),
     )
 
+    # AD-1052c: INPUT-FORWARDING — the human DRIVES the shared browser (clicks +
+    # types on the AD-706a watch canvas, forwarded to the live page). SEPARATE,
+    # higher-risk gate from `enabled`/`streaming_enabled`. Default-OFF.
+    input_forwarding_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1052c: enable forwarding human pointer/keyboard input from the "
+            "HXI watch canvas to the live browser page. Higher-risk (the human "
+            "drives the shared/real browser); default OFF."
+        ),
+    )
+    # AD-1052c: viewport-mapping FALLBACK ONLY. Consulted by forward_input when
+    # page.viewport_size is None (e.g. a connect_over_cdp bridge page). NOT wired
+    # into new_context() — launched/watch/bridge behavior stays byte-identical.
+    viewport_width: int = Field(
+        default=1280, ge=1, le=16384,
+        description="AD-1052c: viewport width (CSS px) fallback for normalized-coord mapping when page.viewport_size is None.",
+    )
+    viewport_height: int = Field(
+        default=720, ge=1, le=16384,
+        description="AD-1052c: viewport height (CSS px) fallback for normalized-coord mapping when page.viewport_size is None.",
+    )
+
     # AD-706f: credential vault (encrypted-at-rest). Default-OFF gate.
     credential_vault: CredentialVaultConfig = Field(
         default_factory=CredentialVaultConfig,

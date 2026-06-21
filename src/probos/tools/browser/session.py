@@ -43,6 +43,35 @@ class _DomainRateState:
     consecutive_429s: int = 0  # reserved; not incremented in v1 (see docstring)
 
 
+# AD-1052c: human-forwarded single keys (NO destructive modifier combos in v1 —
+# Control+W etc. are the AD-706e tier-3 surface, deferred to a later slice).
+_FORWARD_KEY_ALLOWLIST: frozenset[str] = frozenset({
+    "Enter", "Tab", "Backspace", "Delete", "Escape",
+    "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+    "Home", "End", "PageUp", "PageDown",
+})
+_FORWARD_TEXT_MAX: int = 4096  # mirror _EVAL_JS_MAX_SCRIPT_LEN — bound the burst
+
+
+def _clamp01(v: float) -> float:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    if f < 0.0:
+        return 0.0
+    if f > 1.0:
+        return 1.0
+    return f
+
+
+def _as_float(v: Any) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class BrowserSession:
     """Wraps a Playwright BrowserContext with per-domain rate limiting and TTL."""
 
@@ -295,6 +324,85 @@ class BrowserSession:
     def is_connected(self) -> bool:
         """AD-1052b: True for a bridge (connect_over_cdp) session."""
         return self._connected
+
+    # ------------------------------------------------------------------
+    # AD-1052c: human input forwarding (the Captain DRIVES the live page)
+    # ------------------------------------------------------------------
+
+    def _resolve_viewport(self) -> tuple[int, int]:
+        """AD-1052c: real viewport (CSS px) for normalized-coord mapping.
+
+        page.viewport_size is a Playwright Page PROPERTY (dict|None), not a
+        coroutine. None for many connect_over_cdp pages -> config fallback.
+        """
+        page = self._page
+        vp = getattr(page, "viewport_size", None) if page is not None else None
+        if isinstance(vp, dict):
+            w = int(vp.get("width") or 0)
+            h = int(vp.get("height") or 0)
+            if w > 0 and h > 0:
+                return w, h
+        return (
+            int(getattr(self._config, "viewport_width", 1280)),
+            int(getattr(self._config, "viewport_height", 720)),
+        )
+
+    async def forward_input(self, event: dict[str, Any]) -> dict[str, Any]:
+        """AD-1052c: dispatch ONE human-forwarded input event to the live page.
+
+        Reuses the SAME Playwright primitives the agent path uses
+        (``getattr(page, "mouse"/"keyboard", None)``) — NOT the LLM-vision
+        ``compute_use_click`` flow. Honest-degrades (``{"forwarded": False,
+        "reason": ...}``) on no page / no handle / bad input; never raises.
+        v1 kinds: click, type, key (allowlist), scroll.
+        """
+        page = self.page
+        if page is None:
+            return {"forwarded": False, "reason": "no_page"}
+        kind = event.get("kind")
+
+        if kind == "click":
+            mouse = getattr(page, "mouse", None)
+            if mouse is None:
+                return {"forwarded": False, "reason": "no_mouse"}
+            vw, vh = self._resolve_viewport()
+            vx = round(_clamp01(event.get("nx", 0.0)) * vw)
+            vy = round(_clamp01(event.get("ny", 0.0)) * vh)
+            button = event.get("button")
+            button = button if button in ("left", "right", "middle") else "left"
+            await mouse.click(vx, vy, button=button)
+            return {"forwarded": True, "kind": "click", "x": vx, "y": vy, "button": button}
+
+        if kind == "scroll":
+            mouse = getattr(page, "mouse", None)
+            if mouse is None:
+                return {"forwarded": False, "reason": "no_mouse"}
+            vw, vh = self._resolve_viewport()
+            vx = round(_clamp01(event.get("nx", 0.0)) * vw)
+            vy = round(_clamp01(event.get("ny", 0.0)) * vh)
+            await mouse.move(vx, vy)
+            await mouse.wheel(_as_float(event.get("dx", 0.0)), _as_float(event.get("dy", 0.0)))
+            return {"forwarded": True, "kind": "scroll", "x": vx, "y": vy}
+
+        if kind == "type":
+            keyboard = getattr(page, "keyboard", None)
+            if keyboard is None:
+                return {"forwarded": False, "reason": "no_keyboard"}
+            text = str(event.get("text") or "")[:_FORWARD_TEXT_MAX]
+            await keyboard.type(text)
+            return {"forwarded": True, "kind": "type", "len": len(text)}
+
+        if kind == "key":
+            keyboard = getattr(page, "keyboard", None)
+            if keyboard is None:
+                return {"forwarded": False, "reason": "no_keyboard"}
+            key = event.get("key")
+            if key not in _FORWARD_KEY_ALLOWLIST:
+                return {"forwarded": False, "reason": "key_not_allowed"}
+            await keyboard.press(key)
+            return {"forwarded": True, "kind": "key", "key": key}
+
+        return {"forwarded": False, "reason": "unknown_kind"}
 
     # ------------------------------------------------------------------
     # AD-706c-2: compute_use trust budget

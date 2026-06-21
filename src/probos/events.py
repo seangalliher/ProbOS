@@ -248,6 +248,8 @@ class EventType(str, Enum):
     BROWSER_BRIDGE_CONNECTED = "browser_bridge_connected"        # AD-1052b: connected to an external CDP browser
     BROWSER_BRIDGE_REFUSED = "browser_bridge_refused"            # AD-1052b: bridge connect refused (disabled/consent/allowlist/unreachable)
     BROWSER_BRIDGE_DISCONNECTED = "browser_bridge_disconnected"  # AD-1052b: bridge session torn down (disconnect, not close)
+    BROWSER_INPUT_FORWARDED = "browser_input_forwarded"        # AD-1052c: Captain took the wheel (per drive-episode)
+    BROWSER_INPUT_REFUSED = "browser_input_refused"            # AD-1052c: input forward refused (disabled/no-session/no-page/key)
     # AD-733-1: AttachmentStore retention telemetry.
     ATTACHMENT_REAPED = "attachment_reaped"                          # AD-733-1: per-sweep summary
     ATTACHMENT_STORE_DISK_FULL = "attachment_store_disk_full"        # AD-733-1: ENOSPC on write

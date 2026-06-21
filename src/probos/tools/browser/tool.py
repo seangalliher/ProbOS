@@ -84,6 +84,10 @@ class BrowserTool:
         # streaming router doesn't reach across module boundaries - Demeter.
         self._active_viewers: int = 0
         self._viewer_lock = asyncio.Lock()
+        # AD-1052c: session_ids that have had >=1 forwarded input (the "drive
+        # episode" latch). session_ids are uuid4 (never reused) so this set
+        # never needs cleanup. Emits BROWSER_INPUT_FORWARDED once per session.
+        self._driven_sessions: set[str] = set()
 
     # ------------------------------------------------------------------
     # Tool Protocol surface
@@ -537,6 +541,38 @@ class BrowserTool:
             "streaming_url": session.get_streaming_url(),
         }
 
+    async def forward_input(
+        self, session_id: str, event: dict[str, Any], *, agent_id: str,
+    ) -> dict[str, Any]:
+        """AD-1052c: gate -> dispatch -> audit a human-forwarded input event.
+
+        Honest-degrade {"forwarded": False, "reason": ...} when forwarding is
+        disabled, the session is gone, or the session's page rejects the event.
+        Emits BROWSER_INPUT_REFUSED on every refusal; BROWSER_INPUT_FORWARDED
+        once per drive-episode per session (NOT per keystroke).
+        """
+        if not getattr(self._config, "input_forwarding_enabled", False):
+            self._safe_emit(EventType.BROWSER_INPUT_REFUSED, {"reason": "disabled", "session_id": session_id})
+            return {"forwarded": False, "reason": "Input forwarding is disabled."}
+        session = self._sessions.get(session_id)
+        if session is None:
+            self._safe_emit(EventType.BROWSER_INPUT_REFUSED, {"reason": "session_not_found", "session_id": session_id})
+            return {"forwarded": False, "reason": "Session not found."}
+        result = await session.forward_input(event)
+        if not result.get("forwarded"):
+            self._safe_emit(
+                EventType.BROWSER_INPUT_REFUSED,
+                {"reason": result.get("reason", "rejected"), "session_id": session_id},
+            )
+            return result
+        if session_id not in self._driven_sessions:
+            self._driven_sessions.add(session_id)
+            self._safe_emit(
+                EventType.BROWSER_INPUT_FORWARDED,
+                {"session_id": session_id, "agent_id": agent_id},
+            )
+        return result
+
     def get_session(self, session_id: str) -> BrowserSession | None:
         """Look up an active session (test/diagnostic helper)."""
         return self._sessions.get(session_id)
@@ -562,6 +598,11 @@ class BrowserTool:
     @property
     def session_count(self) -> int:
         return len(self._sessions)
+
+    @property
+    def input_forwarding_enabled(self) -> bool:
+        """AD-1052c: whether human input may be forwarded to a live page."""
+        return bool(getattr(self._config, "input_forwarding_enabled", False))
 
     # ------------------------------------------------------------------
     # AD-706a viewer accounting (public API for streaming router)

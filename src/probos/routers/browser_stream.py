@@ -142,8 +142,12 @@ async def list_browser_sessions(runtime: Any = Depends(get_runtime)) -> dict[str
     """
     browser_tool = getattr(runtime, "browser_tool", None)
     if browser_tool is None:
-        return {"enabled": False, "sessions": []}
-    return {"enabled": True, "sessions": browser_tool.list_sessions()}
+        return {"enabled": False, "sessions": [], "input_forwarding_enabled": False}
+    return {
+        "enabled": True,
+        "sessions": browser_tool.list_sessions(),
+        "input_forwarding_enabled": browser_tool.input_forwarding_enabled,
+    }
 
 
 class BridgeConnectRequest(BaseModel):
@@ -169,3 +173,26 @@ async def connect_browser_bridge(
     return await browser_tool.connect_bridge_session(
         body.endpoint, agent_id="captain", confirm=body.confirm,
     )
+
+
+class InputForwardRequest(BaseModel):
+    """AD-1052c: body for POST /api/browser/sessions/{session_id}/input."""
+    kind: str
+    nx: float = 0.0
+    ny: float = 0.0
+    button: str = "left"
+    key: str | None = None
+    text: str | None = None
+    dx: float = 0.0
+    dy: float = 0.0
+
+
+@router.post("/sessions/{session_id}/input", dependencies=[Depends(require_crew_scope)])
+async def forward_browser_input(
+    session_id: str, body: InputForwardRequest, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1052c: gated human-input forward (thin adapter; all policy in BrowserTool)."""
+    browser_tool = getattr(runtime, "browser_tool", None)
+    if browser_tool is None:
+        return {"forwarded": False, "reason": "Browser tool is disabled."}
+    return await browser_tool.forward_input(session_id, body.model_dump(), agent_id="captain")

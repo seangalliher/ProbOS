@@ -92,6 +92,7 @@ describe('AD-1052 BrowserWorkstation', () => {
 type _Sessions = {
   enabled: boolean;
   sessions: { session_id: string; agent_id: string; streaming_url: string | null; last_url: string }[];
+  input_forwarding_enabled?: boolean;
 };
 
 describe('AD-1052a BrowserWorkstation watch mode', () => {
@@ -249,5 +250,66 @@ describe('AD-1052b BrowserWorkstation bridge mode', () => {
     expect(screen.getByTestId('browser-bridge-endpoint')).toBeTruthy();
     expect(screen.getByTestId('browser-bridge-connect')).toBeTruthy();
     expect(screen.getByTestId('browser-bridge-consent-note')).toBeTruthy();
+  });
+});
+
+const _RECT_1280x720 = (): DOMRect =>
+  ({ left: 0, top: 0, width: 1280, height: 720, right: 1280, bottom: 720, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+
+describe('AD-1052c BrowserWorkstation drive toggle', () => {
+  it('hides the Drive toggle when input_forwarding_enabled is false (DD-4/DD-5)', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({
+      enabled: true,
+      input_forwarding_enabled: false,
+      sessions: [{ session_id: 's1', agent_id: 'a1', streaming_url: '/api/browser/sessions/s1/stream', last_url: 'https://x.test' }],
+    }));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />);
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    await screen.findByTestId('browser-watch-session-s1');
+    expect(screen.queryByTestId('browser-watch-drive')).toBeNull();
+  });
+
+  it('shows the Drive toggle when the flag is on and flips aria-pressed', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({
+      enabled: true,
+      input_forwarding_enabled: true,
+      sessions: [{ session_id: 's1', agent_id: 'a1', streaming_url: '/api/browser/sessions/s1/stream', last_url: 'https://x.test' }],
+    }));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />);
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    const drive = await screen.findByTestId('browser-watch-drive');
+    expect(drive.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(drive);
+    expect(screen.getByTestId('browser-watch-drive').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('with Drive on, clicking the stream <img> forwards a click via the injected forwardInput', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({
+      enabled: true,
+      input_forwarding_enabled: true,
+      sessions: [{ session_id: 's1', agent_id: 'a1', streaming_url: '/api/browser/sessions/s1/stream', last_url: 'https://x.test' }],
+    }));
+    const forwardInput = vi.fn(async () => ({ forwarded: true }));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} forwardInput={forwardInput} />);
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    fireEvent.click(await screen.findByTestId('browser-watch-session-s1'));
+    fireEvent.click(await screen.findByTestId('browser-watch-drive'));
+    const img = (await screen.findByTestId('browser-stream-panel-img')) as HTMLImageElement;
+    img.getBoundingClientRect = _RECT_1280x720;
+    fireEvent.click(img, { clientX: 640, clientY: 360 });
+    expect(forwardInput).toHaveBeenCalledWith('s1', { kind: 'click', nx: 0.5, ny: 0.5, button: 'left' });
+  });
+
+  it('the Drive toggle uses no emoji (HXI #3) and exposes its data-testid', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({
+      enabled: true,
+      input_forwarding_enabled: true,
+      sessions: [],
+    }));
+    const { container } = render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />);
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    await screen.findByTestId('browser-watch-empty');
+    expect(screen.getByTestId('browser-watch-drive')).toBeTruthy();
+    expect(EMOJI.test(container.textContent ?? '')).toBe(false);
   });
 });

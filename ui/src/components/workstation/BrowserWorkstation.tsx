@@ -19,22 +19,27 @@
 import { useState, useEffect } from 'react';
 import type { NativeWorkstationProps } from './WorkstationLauncher';
 import { BrowserStreamPanel } from '../browser/BrowserStreamPanel';
+import type { ForwardInputEvent } from '../browser/BrowserStreamPanel';
 
 type BrowserMode = 'embedded' | 'watch' | 'bridge';
 
 /** AD-1052a: one active browser session as projected by GET /api/browser/sessions. */
 type SessionRow = { session_id: string; agent_id: string; streaming_url: string | null; last_url: string };
-type SessionsResponse = { enabled: boolean; sessions: SessionRow[] };
+type SessionsResponse = { enabled: boolean; sessions: SessionRow[]; input_forwarding_enabled?: boolean };
 /** AD-1052b: POST /api/browser/bridge/connect response. */
 type BridgeConnectResponse = {
   connected: boolean; reason?: string | null;
   session_id?: string | null; streaming_url?: string | null;
 };
+/** AD-1052c: POST /api/browser/sessions/{id}/input response. */
+type ForwardInputResponse = { forwarded: boolean; reason?: string | null };
 type Props = NativeWorkstationProps & {
   /** Injectable for deterministic tests; defaults to the same-origin fetch (no token — DD-1). */
   fetchSessions?: () => Promise<SessionsResponse>;
   /** AD-1052b: injectable for tests; defaults to the same-origin POST (no token — DD-1). */
   connectBridge?: (endpoint: string) => Promise<BridgeConnectResponse>;
+  /** AD-1052c: injectable for tests; defaults to the same-origin POST (no token — DD-1). */
+  forwardInput?: (sessionId: string, evt: ForwardInputEvent) => Promise<ForwardInputResponse>;
 };
 
 /** AD-1052a / DD-1: same-origin fetch with NO token. The HXI calls require_crew_scope
@@ -55,6 +60,26 @@ const _defaultConnectBridge = async (endpoint: string): Promise<BridgeConnectRes
     body: JSON.stringify({ endpoint, confirm: true }),
   });
   if (!res.ok) throw new Error(`bridge ${res.status}`);
+  return res.json();
+};
+
+/** AD-1052c / DD-1: same-origin POST with NO token. Forwards ONE captured human
+ *  input event to the live page; honest-degrades to {forwarded:false} on a
+ *  non-2xx so the UI never throws on a refusal. */
+const _defaultForwardInput = async (
+  sessionId: string, evt: ForwardInputEvent,
+): Promise<ForwardInputResponse> => {
+  const body: Record<string, unknown> = { kind: evt.kind };
+  if (evt.kind === 'click') { body.nx = evt.nx; body.ny = evt.ny; body.button = evt.button; }
+  else if (evt.kind === 'scroll') { body.nx = evt.nx; body.ny = evt.ny; body.dx = evt.dx; body.dy = evt.dy; }
+  else if (evt.kind === 'type') { body.text = evt.text; }
+  else if (evt.kind === 'key') { body.key = evt.key; }
+  const res = await fetch(`/api/browser/sessions/${encodeURIComponent(sessionId)}/input`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return { forwarded: false, reason: `input ${res.status}` };
   return res.json();
 };
 
@@ -112,6 +137,15 @@ function IconLink({ color = _DIM }: { color?: string }): React.ReactElement {
   );
 }
 
+/** AD-1052c: a stroke-based cursor/pointer glyph for the Drive toggle (HXI #3). */
+function IconDrive({ color = _DIM }: { color?: string }): React.ReactElement {
+  return (
+    <svg {..._svgBase(color)} aria-hidden="true">
+      <path d="M5 3 L19 12 L12 13 L16 20 L13 21 L9 14 L5 17 Z" />
+    </svg>
+  );
+}
+
 /** Accept http(s) only; prepend `https://` when scheme-less; reject dangerous
  *  schemes (javascript:/data:/file:/blob:/about:/vbscript:) -> null. Exported so
  *  the validation contract is unit-testable independent of the React tree. */
@@ -137,9 +171,10 @@ const _MODES: { id: BrowserMode; label: string; title?: string; disabled: boolea
   { id: 'bridge', label: 'Bridge', disabled: false },
 ];
 
-export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBridge }: Props): React.ReactElement {
+export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBridge, forwardInput }: Props): React.ReactElement {
   const _fetchSessions = fetchSessions ?? _defaultFetchSessions;
   const _connectBridge = connectBridge ?? _defaultConnectBridge;
+  const _forwardInput = forwardInput ?? _defaultForwardInput;
   const [mode, setMode] = useState<BrowserMode>('embedded');
   const [urlInput, setUrlInput] = useState<string>('');
   const [committedUrl, setCommittedUrl] = useState<string | null>(null);
@@ -151,6 +186,11 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
   const [enabled, setEnabled] = useState<boolean>(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState<number>(0);
+  // AD-1052c: input-forwarding governance. `inputForwardingEnabled` mirrors the
+  // backend flag (DD-4) — the Drive toggle only renders when it is true.
+  // `driveEnabled` is the Captain's explicit per-session take-the-wheel gesture.
+  const [inputForwardingEnabled, setInputForwardingEnabled] = useState<boolean>(false);
+  const [driveEnabled, setDriveEnabled] = useState<boolean>(false);
 
   // AD-1052b: bridge-mode state. The endpoint defaults to the canonical local
   // CDP port; `bridgeState` drives the honest-degrade chain.
@@ -169,6 +209,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
         if (cancelled) return;
         setSessions(data.sessions);
         setEnabled(data.enabled);
+        setInputForwardingEnabled(data.input_forwarding_enabled ?? false);
         setSessionsState('ready');
       })
       .catch(() => {
@@ -216,6 +257,31 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
         setBridgeReason(`Could not connect to ${endpoint}`);
         setBridgeState('refused');
       });
+  };
+
+  // AD-1052c: the Drive toggle (DD-4). Renders ONLY when the backend
+  // input_forwarding_enabled flag is on — never appears (silently) when off.
+  // Toggling flips `driveEnabled`, which the panel mounts pass to the stream
+  // <img> to switch it from read-only to input-capturing.
+  const renderDriveToggle = (): React.ReactElement | null => {
+    if (!inputForwardingEnabled) return null;
+    return (
+      <button
+        data-testid="browser-watch-drive"
+        onClick={() => setDriveEnabled((d) => !d)}
+        aria-pressed={driveEnabled}
+        aria-label="Drive the browser"
+        title="Drive: forward your clicks and typing to the live page"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
+          border: '1px solid #33334a', borderRadius: 4,
+          background: driveEnabled ? 'rgba(240,176,96,0.12)' : 'transparent',
+          color: driveEnabled ? _AMBER : _DIM, cursor: 'pointer', fontSize: 11,
+        }}
+      >
+        <IconDrive color={driveEnabled ? _AMBER : _DIM} />Drive
+      </button>
+    );
   };
 
   // AD-1052a: the watch surface — a privacy note + Refresh, then the honest-degrade
@@ -279,7 +345,12 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
           {sel !== null && (
             <div data-testid="browser-watch-stream" style={{ flex: 1, minHeight: 0 }}>
               {/* DD-1: NO token passed to the stream panel. */}
-              <BrowserStreamPanel sessionId={sel.session_id} streamingUrl={sel.streaming_url} />
+              <BrowserStreamPanel
+                sessionId={sel.session_id}
+                streamingUrl={sel.streaming_url}
+                driveEnabled={inputForwardingEnabled && driveEnabled}
+                onForwardInput={(evt) => { void _forwardInput(sel.session_id, evt); }}
+              />
             </div>
           )}
         </div>
@@ -301,6 +372,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
           >
             <IconRefresh />Refresh
           </button>
+          {renderDriveToggle()}
         </div>
         {body}
       </div>
@@ -335,6 +407,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
           >
             <IconLink color={connecting ? _DIM : _AMBER} />Connect
           </button>
+          {renderDriveToggle()}
         </div>
         <div data-testid="browser-bridge-consent-note" style={{ padding: '6px 12px', color: _DIM, fontSize: 11, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
           Connecting lets an agent drive this external browser with your logged-in sessions.
@@ -342,7 +415,12 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
         {bridgeState === 'connected' && bridgeSession !== null ? (
           <div data-testid="browser-bridge-stream" style={{ flex: 1, minHeight: 0 }}>
             {/* DD-1: NO token passed to the stream panel. */}
-            <BrowserStreamPanel sessionId={bridgeSession.session_id} streamingUrl={bridgeSession.streaming_url} />
+            <BrowserStreamPanel
+              sessionId={bridgeSession.session_id}
+              streamingUrl={bridgeSession.streaming_url}
+              driveEnabled={inputForwardingEnabled && driveEnabled}
+              onForwardInput={(evt) => { void _forwardInput(bridgeSession.session_id, evt); }}
+            />
           </div>
         ) : bridgeState === 'refused' ? (
           <div data-testid="browser-bridge-reason" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
