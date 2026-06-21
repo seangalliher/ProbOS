@@ -2876,6 +2876,16 @@ class FederationA2AConfig(BaseModel):
     outbound_peers: list[A2APeerConfig] = Field(default_factory=list)
 
 
+class FederationArdConfig(BaseModel):
+    """AD-1040: ARD (Agentic Resource Discovery) integration. Default-OFF."""
+
+    enabled: bool = False
+    well_known_path: str = "/.well-known/ai-catalog.json"
+    discovery_endpoints: list[str] = Field(default_factory=list)
+    registry_url: str = ""
+    publisher_namespace_domain: str = ""
+
+
 class FederationPeerTrustConfig(BaseModel):
     """AD-480g: Probationary trust prior for federated peers."""
 
@@ -2949,6 +2959,8 @@ class FederationConfig(BaseModel):
         default_factory=FederationMCPServerConfig
     )
     a2a: FederationA2AConfig = Field(default_factory=FederationA2AConfig)
+    # AD-1040: ARD envelope integration surface (default-OFF, types-only ship).
+    ard: FederationArdConfig = Field(default_factory=FederationArdConfig)
     peer_trust: FederationPeerTrustConfig = Field(
         default_factory=FederationPeerTrustConfig
     )
