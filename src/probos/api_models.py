@@ -24,6 +24,13 @@ class ChatRequest(BaseModel):
     attachment_ids: list[str] = Field(default_factory=list)
 
 
+class WorkspaceFileWriteRequest(BaseModel):
+    """AD-1021b: governed write-through to an agent's workspace folder."""
+
+    path: str
+    content: str
+
+
 class PerAgentReply(BaseModel):
     """AD-719: one entry of a multi-agent fan-out reply."""
     agent_id: str

@@ -19,6 +19,8 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import type { NativeWorkstationProps } from './WorkstationLauncher';
 import { useStore } from '../../store/useStore';
 import { fetchArtifactContent } from '../artifacts/artifactApi';
+import { loadWorkspaceFile, saveWorkspaceFile } from './workspaceFileApi';
+import type { WorkspaceFileLoad, WorkspaceSaveResult } from './workspaceFileApi';
 
 const MonacoSurface = lazy(() => import('./MonacoSurface'));
 
@@ -44,6 +46,24 @@ function IconDownload({ color = _DIM }: { color?: string }): React.ReactElement 
   return (
     <svg {..._svgBase(color)} aria-hidden="true">
       <path d="M12 4 V14 M8 11 L12 15 L16 11 M5 19 H19" />
+    </svg>
+  );
+}
+
+function IconLoad({ color = _DIM }: { color?: string }): React.ReactElement {
+  return (
+    <svg {..._svgBase(color)} aria-hidden="true">
+      <path d="M4 14 V18 a1 1 0 0 0 1 1 H19 a1 1 0 0 0 1 -1 V14" />
+      <path d="M12 4 V14 M8 10 L12 14 L16 10" />
+    </svg>
+  );
+}
+
+function IconSave({ color = _DIM }: { color?: string }): React.ReactElement {
+  return (
+    <svg {..._svgBase(color)} aria-hidden="true">
+      <path d="M5 5 a1 1 0 0 1 1 -1 H16 L19 7 V19 a1 1 0 0 1 -1 1 H6 a1 1 0 0 1 -1 -1 Z" />
+      <path d="M8 4 V8 H15 M8 20 V14 H16 V20" />
     </svg>
   );
 }
@@ -75,7 +95,27 @@ const _badgeStyle = (mode: 'create' | 'modify'): React.CSSProperties => ({
   background: 'transparent',
 });
 
-export function CodeWorkstation({ typeId: _typeId, doc: propDoc }: NativeWorkstationProps): React.ReactElement {
+/** AD-1021b: optional write-through props. When ``agentId`` is present the
+ *  toolbar gains a path input + Load/Save against that agent's AD-997 workspace
+ *  folder (the Save routes through the governed, consensus-gated endpoint). All
+ *  three are OPTIONAL so ``CodeWorkstation`` stays assignable to
+ *  ``ComponentType<NativeWorkstationProps>`` (nativeWorkstations.ts) and the
+ *  scratch/prop-doc experience is BYTE-IDENTICAL to AD-1021 when ``agentId`` is
+ *  absent. ``loadFile``/``saveFile`` are injectable for tests; they default to
+ *  the same-origin, no-token ``workspaceFileApi`` helpers (DD-1). */
+type CodeWorkstationProps = NativeWorkstationProps & {
+  agentId?: string;
+  loadFile?: (agentId: string, path: string) => Promise<WorkspaceFileLoad>;
+  saveFile?: (agentId: string, path: string, content: string) => Promise<WorkspaceSaveResult>;
+};
+
+export function CodeWorkstation({
+  typeId: _typeId,
+  doc: propDoc,
+  agentId,
+  loadFile = loadWorkspaceFile,
+  saveFile = saveWorkspaceFile,
+}: CodeWorkstationProps): React.ReactElement {
   // AD-1023: a container host may pass a per-workstation doc; standalone callers
   // pass none -> fall back to the global store doc (byte-identical to AD-1021).
   const storeDoc = useStore((s) => s.workstationDoc);
@@ -86,6 +126,10 @@ export function CodeWorkstation({ typeId: _typeId, doc: propDoc }: NativeWorksta
   const [selectedIdx, setSelectedIdx] = useState<number>(0);
   const [artifactText, setArtifactText] = useState<string | null>(null);
   const [artifactError, setArtifactError] = useState<string | null>(null);
+  // AD-1021b write-through state (only ever surfaced when agentId is present).
+  const [filePath, setFilePath] = useState<string>('');
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState<boolean>(false);
 
   useEffect(() => {
     setScratch(doc && doc.kind === 'scratch' ? (doc.content ?? '') : '');
@@ -163,6 +207,52 @@ export function CodeWorkstation({ typeId: _typeId, doc: propDoc }: NativeWorksta
     URL.revokeObjectURL(url);
   };
 
+  // AD-1021b: Load a confined workspace file into the scratch buffer. Honest-
+  // degrade: a not-found / too-large / failed read sets a banner, never throws.
+  const onLoad = async (): Promise<void> => {
+    const p = filePath.trim();
+    if (!agentId || !p) return;
+    setBusy(true);
+    setSaveStatus(null);
+    try {
+      const r = await loadFile(agentId, p);
+      if (r.found) {
+        setScratch(r.content ?? '');
+        setSaveStatus(`loaded ${p}`);
+      } else {
+        setSaveStatus(r.too_large ? 'file too large to load' : `not found: ${p}`);
+      }
+    } catch (e) {
+      setSaveStatus(`load failed: ${e instanceof Error ? e.message : 'error'}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // AD-1021b: governed Save through the consensus-gated endpoint. Consensus is
+  // synchronous + terminal: the in-flight await resolves to committed / refused
+  // / disabled — there is NO durable pending-approval queue.
+  const onSave = async (): Promise<void> => {
+    const p = filePath.trim();
+    if (!agentId || !p) return;
+    setBusy(true);
+    setSaveStatus('Saving — awaiting consensus…');
+    try {
+      const r = await saveFile(agentId, p, shownContent);
+      if (r.outcome === 'committed') {
+        setSaveStatus('committed');
+      } else if (r.outcome === 'disabled') {
+        setSaveStatus('workspace write disabled');
+      } else {
+        setSaveStatus(`refused: ${r.consensus_outcome ?? 'rejected'}`);
+      }
+    } catch (e) {
+      setSaveStatus(`refused: ${e instanceof Error ? e.message : 'error'}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const title = doc?.title || 'Scratch';
   const showEditor = !doc || doc.kind === 'scratch';
 
@@ -196,6 +286,53 @@ export function CodeWorkstation({ typeId: _typeId, doc: propDoc }: NativeWorksta
             {language.toUpperCase()}
           </span>
         )}
+        {/* AD-1021b: governed write-through affordance — present ONLY when a host
+            passes agentId (otherwise this toolbar is byte-identical to AD-1021). */}
+        {agentId && (
+          <>
+            <input
+              data-testid="workstation-path-input"
+              value={filePath}
+              onChange={(e) => setFilePath(e.target.value)}
+              placeholder="path/in/workspace.py"
+              aria-label="Workspace file path"
+              spellCheck={false}
+              style={{
+                fontSize: 11, fontFamily: 'inherit', color: _TEXT, background: 'rgba(255,255,255,0.04)',
+                border: '1px solid #33334a', borderRadius: 4, padding: '4px 8px', minWidth: 160,
+              }}
+            />
+            <button
+              data-testid="workstation-load"
+              onClick={() => { void onLoad(); }}
+              disabled={busy || !filePath.trim()}
+              aria-label="Load file from workspace"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
+                border: '1px solid #33334a', borderRadius: 4, background: 'transparent',
+                color: _DIM, cursor: busy || !filePath.trim() ? 'default' : 'pointer', fontSize: 11,
+                opacity: busy || !filePath.trim() ? 0.5 : 1,
+              }}
+            >
+              <IconLoad />Load
+            </button>
+            <button
+              data-testid="workstation-save"
+              onClick={() => { void onSave(); }}
+              disabled={busy || !filePath.trim()}
+              aria-label="Save file to workspace"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
+                border: `1px solid ${busy || !filePath.trim() ? '#33334a' : '#6a5a2a'}`, borderRadius: 4,
+                background: 'transparent', color: busy || !filePath.trim() ? _DIM : _AMBER,
+                cursor: busy || !filePath.trim() ? 'default' : 'pointer', fontSize: 11,
+                opacity: busy || !filePath.trim() ? 0.5 : 1,
+              }}
+            >
+              <IconSave />Save
+            </button>
+          </>
+        )}
         <div style={{ flex: 1 }} />
         <button
           data-testid="workstation-copy"
@@ -222,6 +359,24 @@ export function CodeWorkstation({ typeId: _typeId, doc: propDoc }: NativeWorksta
           <IconDownload />Download
         </button>
       </div>
+
+      {/* AD-1021b: honest-degrade write-through banner (committed / refused /
+          disabled / in-flight). Only rendered when a host enabled the affordance. */}
+      {agentId && saveStatus && (
+        <div
+          data-testid="workstation-save-status"
+          role="status"
+          style={{
+            padding: '6px 12px', fontSize: 11, letterSpacing: 0.3,
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+            color: saveStatus === 'committed' ? '#6fcf97'
+              : saveStatus.startsWith('refused') ? '#d98a8a'
+              : _DIM,
+          }}
+        >
+          {saveStatus}
+        </div>
+      )}
 
       {/* Body: optional left rail (multi-file build) + editor / viewer */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>

@@ -3052,6 +3052,12 @@ class ExecutionConfig(BaseModel):
     # (the original AD-993/994 behavior).
     persistent_workspaces: bool = True
     workspace_root: str = "data/execution/workspaces"
+    # AD-1021b: governed write-through to the per-agent workspace folder (the
+    # Monaco workstation Save path). Default OFF — a separate master switch from
+    # ``enabled`` so editing a workspace text file (consensus-gated) does not
+    # require opting into arbitrary code execution. When False the write endpoint
+    # 503s; the read endpoint + all AD-997/998 behavior are unaffected.
+    workspace_write_enabled: bool = False
     timeout_seconds: float = 30.0
     max_output_bytes: int = 65536           # 64 KB per stream
     max_memory_mb: int = 512                # RLIMIT_AS on POSIX; advisory on Windows

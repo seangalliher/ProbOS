@@ -8,7 +8,7 @@ import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from probos.api_models import (
@@ -27,6 +27,7 @@ from probos.api_models import (
     SetVisionCapability,
     SetVoiceProfileRequest,
     VisionCapabilityProposalResponse,
+    WorkspaceFileWriteRequest,
 )
 from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
@@ -1294,6 +1295,143 @@ async def get_agent_workspace(
     except Exception:
         logger.debug("AD-998: workspace resolve failed for %s", agent_id, exc_info=True)
     return base
+
+
+@router.get("/{agent_id}/workspace/file")
+async def read_agent_workspace_file(
+    agent_id: str,
+    path: str = Query(..., description="Workspace-relative file path to read"),
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1021b: read one confined file from the agent's workspace folder.
+
+    The read half of the Monaco workstation write-through. Same AD-998 gate
+    (``enabled`` ∧ ``persistent_workspaces`` ∧ ``workspace_root``) as
+    ``GET /workspace``; honest-degrades to ``found=false`` when execution is off,
+    the folder is ephemeral, the file is absent, or it is larger than the write
+    cap (too large to surface). A path that escapes the agent's folder is a hard
+    400 — confinement runs HERE *and* inside ``resolve_file`` (DD-3
+    defense-in-depth). Read-only; decodes UTF-8 with ``errors="replace"``.
+    """
+    from probos.execution.workspace import WorkspaceManager, _MAX_WRITE_BYTES
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    cfg = getattr(getattr(runtime, "config", None), "execution", None)
+    enabled = bool(getattr(cfg, "enabled", False))
+    persistent = bool(getattr(cfg, "persistent_workspaces", False))
+    root = getattr(cfg, "workspace_root", "") if cfg is not None else ""
+
+    base: dict[str, Any] = {
+        "agent_id": agent_id,
+        "path": path,
+        "found": False,
+        "content": None,
+        "size_bytes": 0,
+        "too_large": False,
+    }
+    if cfg is None or not enabled or not persistent or not root:
+        return base
+
+    mgr = WorkspaceManager(root)
+    owner = mgr.key_for_agent(agent)
+    target = mgr.resolve_file(owner, path)
+    if target is None:
+        raise HTTPException(status_code=400, detail="Path escapes the agent workspace folder")
+
+    if not target.is_file():
+        return base
+    try:
+        size = target.stat().st_size
+    except OSError:
+        return base
+    if size > _MAX_WRITE_BYTES:
+        base.update({"found": True, "too_large": True, "size_bytes": size})
+        return base
+    try:
+        content = target.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        logger.debug("AD-1021b: workspace read failed for %s", target, exc_info=True)
+        return base
+    base.update({"found": True, "content": content, "size_bytes": size})
+    return base
+
+
+@router.post("/{agent_id}/workspace/file")
+async def write_agent_workspace_file(
+    agent_id: str,
+    req: WorkspaceFileWriteRequest,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1021b: governed write-through for the Monaco workstation Save path.
+
+    Default-OFF (``execution.workspace_write_enabled``). The write is NEVER
+    performed in the router — it routes through
+    ``runtime.submit_write_with_consensus`` (the CONSENSUS-tier governed write:
+    ``FileWriterAgent`` proposes, quorum + red-team verification gate the commit).
+    Path confinement runs at BOTH the API boundary (here) and inside
+    ``resolve_file`` (DD-3), and MUST precede governance so a traversal never
+    reaches the write primitive. Consensus is synchronous + terminal (no
+    PENDING): the response is ``committed`` or ``refused`` (carrying the consensus
+    outcome + approval ratio). Never raises 500 — a governance exception
+    honest-degrades to ``refused``.
+    """
+    from probos.execution.workspace import WorkspaceManager, _MAX_WRITE_BYTES
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    cfg = getattr(getattr(runtime, "config", None), "execution", None)
+    write_enabled = bool(getattr(cfg, "workspace_write_enabled", False))
+    persistent = bool(getattr(cfg, "persistent_workspaces", False))
+    root = getattr(cfg, "workspace_root", "") if cfg is not None else ""
+
+    # Default-OFF master switch + a stable per-agent folder to write into.
+    if cfg is None or not write_enabled or not persistent or not root:
+        raise HTTPException(status_code=503, detail="Workspace write is disabled")
+
+    # Size cap BEFORE governance (413 — never broadcast a megabyte write intent).
+    if len(req.content.encode("utf-8")) > _MAX_WRITE_BYTES:
+        raise HTTPException(status_code=413, detail="Content exceeds the workspace write cap")
+
+    # Path confinement at the API boundary — MUST precede the governed write so a
+    # traversal is rejected without ever calling submit_write_with_consensus.
+    mgr = WorkspaceManager(root)
+    owner = mgr.key_for_agent(agent)
+    target = mgr.resolve_file(owner, req.path, create_parents=True)
+    if target is None:
+        raise HTTPException(status_code=400, detail="Path escapes the agent workspace folder")
+
+    try:
+        result = await runtime.submit_write_with_consensus(
+            path=str(target), content=req.content
+        )
+    except Exception:
+        logger.warning(
+            "AD-1021b: governed write raised for agent=%s path=%s; reporting refused",
+            agent_id, req.path, exc_info=True,
+        )
+        return {
+            "agent_id": agent_id,
+            "path": req.path,
+            "outcome": "refused",
+            "consensus_outcome": "error",
+        }
+
+    if isinstance(result, dict) and result.get("committed"):
+        return {"agent_id": agent_id, "path": req.path, "outcome": "committed"}
+
+    consensus = result.get("consensus") if isinstance(result, dict) else None
+    return {
+        "agent_id": agent_id,
+        "path": req.path,
+        "outcome": "refused",
+        "consensus_outcome": getattr(getattr(consensus, "outcome", None), "value", "unknown"),
+        "approval_ratio": getattr(consensus, "approval_ratio", 0.0),
+    }
 
 
 @router.get("/{agent_id}/instructions")

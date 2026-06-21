@@ -40,6 +40,11 @@ _OPAQUE_DIRS = {".venv", "__pycache__", ".git", "node_modules"}
 
 _SANITIZE_RE = re.compile(r"[^a-z0-9_-]+")
 
+# AD-1021b: hard cap on a single governed workspace write (and the size a read
+# will surface). 1 MiB — generous for source/text, bounded so the API never
+# loads an arbitrary blob into memory or broadcasts a megabyte write intent.
+_MAX_WRITE_BYTES = 1_048_576
+
 
 def _platform_data_dir() -> Path:
     """Platform data dir — an inlined mirror of ``runtime._platform_data_dir``
@@ -146,6 +151,42 @@ class WorkspaceManager:
         if create:
             path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def resolve_file(
+        self, owner_key: str, rel_path: str, *, create_parents: bool = False
+    ) -> Path | None:
+        """Confine ``rel_path`` to ``owner_key``'s folder; ``None`` if it escapes.
+
+        AD-1021b: the path-safety primitive for the governed Monaco write-through.
+        Resolves ``<owner-folder>/<rel_path>`` and returns the absolute target
+        ONLY when it stays strictly inside the *resolved* owner folder — the
+        symlink-escape-safe ``resolve() + is_relative_to`` confinement used by the
+        attachment + records stores. Returns ``None`` (never raises, never a path
+        outside the folder) for an empty / absolute / NUL-bearing /
+        traversal-escaping ``rel_path``, or for the folder itself (not a file).
+        When ``create_parents`` is set the parent directories of the confined
+        target are created best-effort so a first write under a new sub-path can
+        succeed (a failed mkdir is logged and left for the write to surface — it
+        does not turn a safe path unsafe).
+        """
+        if not rel_path or "\x00" in rel_path:
+            return None
+        base = self.resolve(owner_key).resolve()
+        try:
+            resolved = (base / rel_path).resolve()
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if resolved == base or not resolved.is_relative_to(base):
+            return None
+        if create_parents:
+            try:
+                resolved.parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                logger.debug(
+                    "AD-1021b: parent mkdir failed for %s (write will surface it)",
+                    resolved, exc_info=True,
+                )
+        return resolved
 
     def venv_dir(self, owner_key: str) -> Path:
         """The reusable per-owner virtualenv path (``<workspace>/.venv``)."""
