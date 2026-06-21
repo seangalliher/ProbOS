@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
+import time
 from dataclasses import replace
 from typing import Any
 
@@ -83,6 +85,28 @@ def _get_state_store(runtime: Any) -> CsrfStateStore:
         store = CsrfStateStore(ttl_seconds=_OAUTH_STATE_TTL_SECONDS)
         _STATE_STORES[key] = store
     return store
+
+
+# AD-1017a: in-flight RFC 8628 device-code grants, keyed by id(runtime) then by
+# the opaque ``flow_id`` we hand the client. Each entry holds the SERVER-SIDE
+# ``device_code`` poll secret (never returned to the client) plus the bound
+# ``server_id``, the grant ``expires_at`` (epoch), and the poll ``interval``.
+# Mirrors ``_STATE_STORES``; tests reset via ``_clear_device_flows()``.
+_DEVICE_FLOWS: dict[int, dict[str, dict[str, Any]]] = {}
+
+
+def _clear_device_flows() -> None:
+    """Test-only: drop all per-runtime device-code flow state."""
+    _DEVICE_FLOWS.clear()
+
+
+def _get_device_flows(runtime: Any) -> dict[str, dict[str, Any]]:
+    """Return this runtime's flow map, evicting any expired grants first."""
+    flows = _DEVICE_FLOWS.setdefault(id(runtime), {})
+    now = time.time()
+    for fid in [k for k, v in flows.items() if now > v.get("expires_at", 0)]:
+        flows.pop(fid, None)
+    return flows
 
 
 def _vault_or_503(runtime: Any) -> Any:
@@ -189,6 +213,32 @@ class OAuthStartBody(BaseModel):
     token_url: str = ""
     scopes: list[str] = Field(default_factory=list)
     redirect_uri: str = ""
+
+
+class DeviceStartBody(BaseModel):
+    """Body for ``POST /api/mcp/servers/{id}/auth/device/start`` (AD-1017a).
+
+    The non-secret device-code OAuth client config is persisted to
+    ``record.oauth_json``; ``client_secret`` (if supplied) is stashed in the
+    vault under ``mcp:{id}:oauth_secret`` — never in ``oauth_json`` or any
+    response. ``device_authorization_url`` is the RFC 8628 endpoint.
+    """
+
+    client_id: str = ""
+    client_secret: str = ""
+    device_authorization_url: str = ""
+    token_url: str = ""
+    scopes: list[str] = Field(default_factory=list)
+
+
+class DevicePollBody(BaseModel):
+    """Body for ``POST /api/mcp/servers/{id}/auth/device/poll`` (AD-1017a).
+
+    ``flow_id`` is the opaque handle returned by ``/auth/device/start``; the
+    server resolves it to the held ``device_code`` poll secret.
+    """
+
+    flow_id: str
 
 
 class McpAgentAccessBody(BaseModel):
@@ -590,6 +640,31 @@ def _merge_oauth_config(
     }
 
 
+def _merge_device_oauth_config(
+    record: McpServerRecord, body: DeviceStartBody
+) -> dict[str, Any]:
+    """Merge the device-start body's non-secret config over the record's stored one.
+
+    Sets the device-code keys (``client_id``, ``device_authorization_url``,
+    ``token_url``, ``scopes``) and preserves any existing ``authorize_url`` /
+    ``redirect_uri`` so a prior auth-code config is not clobbered. The
+    ``client_secret`` is intentionally excluded — it lives only in the vault.
+    """
+    existing = _load_oauth_json(record)
+    merged: dict[str, Any] = {
+        "client_id": body.client_id or existing.get("client_id", ""),
+        "device_authorization_url": body.device_authorization_url
+        or existing.get("device_authorization_url", ""),
+        "token_url": body.token_url or existing.get("token_url", ""),
+        "scopes": list(body.scopes) or list(existing.get("scopes", []) or []),
+    }
+    if existing.get("authorize_url"):
+        merged["authorize_url"] = existing["authorize_url"]
+    if existing.get("redirect_uri"):
+        merged["redirect_uri"] = existing["redirect_uri"]
+    return merged
+
+
 async def _build_oauth_provider(
     record: McpServerRecord, runtime: Any
 ) -> McpOAuthProvider:
@@ -609,6 +684,7 @@ async def _build_oauth_provider(
         token_url=str(cfg.get("token_url", "")),
         scopes=list(cfg.get("scopes", []) or []),
         redirect_uri=str(cfg.get("redirect_uri", "")),
+        device_authorization_url=str(cfg.get("device_authorization_url", "")),
     )
 
 
@@ -769,6 +845,100 @@ async def oauth_refresh(
     if updated is not None:
         await _reregister(runtime, updated)
     return {"refreshed": True}
+
+
+@router.post("/{server_id}/auth/device/start")
+async def oauth_device_start(
+    server_id: str,
+    body: DeviceStartBody,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1017a: begin an RFC 8628 device-code grant on a headless host.
+
+    Persists the non-secret device config + vaults the ``client_secret``, asks
+    the provider for a device authorization, holds the ``device_code`` poll
+    secret SERVER-SIDE in ``_DEVICE_FLOWS`` keyed by an opaque ``flow_id``, and
+    returns only the user-facing fields. ``device_code`` is NEVER in the
+    response. ``auth_kind`` is not flipped here — only a successful poll does that.
+    """
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    vault = _vault_or_503(runtime)
+    if body.client_secret:
+        await vault.store(
+            ref=_oauth_secret_ref(server_id),
+            value=body.client_secret,
+            scope=CredentialScope(),
+        )
+    updated = await store.update(
+        server_id, oauth_json=json.dumps(_merge_device_oauth_config(record, body))
+    )
+    if updated is None:  # pragma: no cover - record was just fetched
+        raise HTTPException(status_code=404, detail="not_found")
+    provider = await _build_oauth_provider(updated, runtime)
+    try:
+        info = await provider.start_device_authorization()
+    except McpOAuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    flow_id = secrets.token_urlsafe(32)
+    _get_device_flows(runtime)[flow_id] = {
+        "device_code": info["device_code"],
+        "server_id": server_id,
+        "expires_at": time.time() + float(info.get("expires_in", 600)),
+        "interval": int(info.get("interval", 5)),
+    }
+    return {
+        "flow_id": flow_id,
+        "user_code": info["user_code"],
+        "verification_uri": info["verification_uri"],
+        "verification_uri_complete": info.get("verification_uri_complete", ""),
+        "expires_in": info.get("expires_in", 600),
+        "interval": info.get("interval", 5),
+    }
+
+
+@router.post("/{server_id}/auth/device/poll")
+async def oauth_device_poll(
+    server_id: str,
+    body: DevicePollBody,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1017a: poll an in-flight device-code grant by its opaque ``flow_id``.
+
+    ``{"status": "pending"}`` while the user has not yet approved; on success
+    persists the bundle exactly like the auth-code callback (vault by ref +
+    ``auth_kind="oauth"`` + re-register) so ``/auth/refresh`` and Bearer
+    resolution work, drops the flow, and returns ``{"status": "authenticated"}``.
+    A terminal error drops the flow and surfaces the provider status/detail.
+    """
+    _require_enabled(runtime)
+    store = _require_store(runtime)
+    record = await store.get(server_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    vault = _vault_or_503(runtime)
+    flows = _get_device_flows(runtime)
+    flow = flows.get(body.flow_id)
+    if flow is None or flow["server_id"] != server_id:
+        raise HTTPException(status_code=404, detail="unknown_flow")
+    provider = await _build_oauth_provider(record, runtime)
+    try:
+        bundle = await provider.poll_device_token(device_code=flow["device_code"])
+    except McpOAuthError as exc:
+        flows.pop(body.flow_id, None)
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    if bundle is None:
+        return {"status": "pending", "interval": flow["interval"]}
+    ref = _oauth_ref(server_id)
+    await vault.store(ref=ref, value=bundle.model_dump_json(), scope=CredentialScope())
+    updated = await store.update(server_id, auth_kind="oauth", credential_ref=ref)
+    if updated is not None:
+        await _reregister(runtime, updated)
+    flows.pop(body.flow_id, None)
+    return {"status": "authenticated"}
 
 
 # --------------------------------------------------------------------------- #

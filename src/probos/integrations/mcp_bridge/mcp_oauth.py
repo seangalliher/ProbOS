@@ -67,6 +67,7 @@ class McpOAuthProvider:
         token_url: str,
         scopes: list[str] | None = None,
         redirect_uri: str = "",
+        device_authorization_url: str = "",
         http_client_factory: Any = None,
     ) -> None:
         self._client_id = client_id
@@ -75,6 +76,7 @@ class McpOAuthProvider:
         self._token_url = token_url
         self._scopes = list(scopes or [])
         self._redirect_uri = redirect_uri
+        self._device_authorization_url = device_authorization_url
         self._http_factory = http_client_factory or (
             lambda: httpx.AsyncClient(timeout=30.0)
         )
@@ -116,6 +118,96 @@ class McpOAuthProvider:
             "grant_type": "refresh_token",
         }
         return await self._token_post(body, prior_refresh_token=refresh_token)
+
+    # -- 4. Device authorization (RFC 8628) ------------------------------
+
+    async def start_device_authorization(self) -> dict[str, Any]:
+        """AD-1017a: begin an RFC 8628 device-code grant.
+
+        POST ``client_id``/``scope`` (+ ``client_secret`` only when set) to the
+        device-authorization endpoint; return the provider payload (carrying the
+        ``device_code`` poll secret, ``user_code``, and ``verification_uri``).
+        The caller holds ``device_code`` server-side — it is never returned to a
+        browser. Raises :class:`McpOAuthError` on transport error, a non-200, or
+        a payload missing any of the three required fields. Never logs the body.
+        """
+        data: dict[str, str] = {
+            "client_id": self._client_id,
+            "scope": " ".join(self._scopes),
+        }
+        if self._client_secret:
+            data["client_secret"] = self._client_secret
+        async with self._http_factory() as client:
+            try:
+                r = await client.post(self._device_authorization_url, data=data)
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "AD-1017a: MCP device-authorization transport error: %s; "
+                    "surfacing device_authorization_failed (no body logged)",
+                    type(exc).__name__,
+                )
+                raise McpOAuthError("device_authorization_failed") from exc
+        if r.status_code != 200:
+            logger.warning(
+                "AD-1017a: MCP device-authorization failed status=%d "
+                "(response body not logged)",
+                r.status_code,
+            )
+            raise McpOAuthError("device_authorization_failed")
+        payload = r.json()
+        if not isinstance(payload, dict) or not (
+            payload.get("device_code")
+            and payload.get("user_code")
+            and payload.get("verification_uri")
+        ):
+            raise McpOAuthError("device_authorization_invalid")
+        return payload
+
+    async def poll_device_token(
+        self, *, device_code: str
+    ) -> OAuthTokenBundle | None:
+        """AD-1017a: poll the token endpoint for an RFC 8628 device-code grant.
+
+        Returns an :class:`OAuthTokenBundle` on success, or ``None`` while the
+        grant is still pending (``authorization_pending``/``slow_down`` — RFC
+        8628 returns HTTP 400 for these *non-terminal* signals, so this MUST NOT
+        reuse ``_token_post``, which raises on every non-200). Raises
+        :class:`McpOAuthError` (``status=400``) only on a terminal error
+        (``access_denied``/``expired_token``/``invalid_grant``/transport, or an
+        unparsable error body). Never logs the body.
+        """
+        data: dict[str, str] = {
+            "client_id": self._client_id,
+            "device_code": device_code,
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        }
+        if self._client_secret:
+            data["client_secret"] = self._client_secret
+        async with self._http_factory() as client:
+            try:
+                r = await client.post(self._token_url, data=data)
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "AD-1017a: MCP device-token poll transport error: %s; "
+                    "surfacing device_token_failed (no body logged)",
+                    type(exc).__name__,
+                )
+                raise McpOAuthError("device_token_failed") from exc
+        if r.status_code == 200:
+            return _bundle_from_payload(r.json(), prior_refresh_token=None)
+        try:
+            parsed = r.json()
+            err = parsed.get("error", "") if isinstance(parsed, dict) else ""
+        except (ValueError, TypeError):
+            err = ""  # unparsable error body -> treat as terminal
+        if err in {"authorization_pending", "slow_down"}:
+            return None
+        logger.warning(
+            "AD-1017a: MCP device-token poll terminal error status=%d "
+            "(response body not logged)",
+            r.status_code,
+        )
+        raise McpOAuthError(err or "device_token_failed", status=400)
 
     # -- token POST ------------------------------------------------------
 
