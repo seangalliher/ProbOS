@@ -129,3 +129,17 @@ async def stream_browser_session(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/sessions", dependencies=[Depends(require_crew_scope)])
+async def list_browser_sessions(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-1052a: list active browser sessions for the Captain-watch picker.
+
+    Honest-degrade: returns {"enabled": False, "sessions": []} when the
+    browser tool is disabled (runtime.browser_tool unset). Same require_crew_scope
+    posture as the stream it feeds; the HXI calls it same-origin with no token.
+    """
+    browser_tool = getattr(runtime, "browser_tool", None)
+    if browser_tool is None:
+        return {"enabled": False, "sessions": []}
+    return {"enabled": True, "sessions": browser_tool.list_sessions()}

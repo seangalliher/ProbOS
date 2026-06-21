@@ -469,6 +469,24 @@ class BrowserTool:
         """Look up an active session (test/diagnostic helper)."""
         return self._sessions.get(session_id)
 
+    def list_sessions(self) -> list[dict[str, Any]]:
+        """AD-1052a: snapshot of active sessions for the Captain-watch picker.
+
+        Each entry is built from the session's PUBLIC surface (session_id,
+        agent_id, get_streaming_url(), last_url). streaming_url is None when
+        BrowserToolConfig.streaming_enabled is False -> the HXI honest-degrades
+        to BrowserStreamPanel's "Streaming not enabled" state.
+        """
+        return [
+            {
+                "session_id": s.session_id,
+                "agent_id": s.agent_id,
+                "streaming_url": s.get_streaming_url(),
+                "last_url": s.last_url,
+            }
+            for s in self._sessions.values()
+        ]
+
     @property
     def session_count(self) -> int:
         return len(self._sessions)

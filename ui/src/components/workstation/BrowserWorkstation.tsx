@@ -16,10 +16,28 @@
  *  scheme allowlist (http/https only) blocks javascript:/data:/file:/about:
  *  injection before anything reaches the iframe `src`.
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { NativeWorkstationProps } from './WorkstationLauncher';
+import { BrowserStreamPanel } from '../browser/BrowserStreamPanel';
 
 type BrowserMode = 'embedded' | 'watch' | 'bridge';
+
+/** AD-1052a: one active browser session as projected by GET /api/browser/sessions. */
+type SessionRow = { session_id: string; agent_id: string; streaming_url: string | null; last_url: string };
+type SessionsResponse = { enabled: boolean; sessions: SessionRow[] };
+type Props = NativeWorkstationProps & {
+  /** Injectable for deterministic tests; defaults to the same-origin fetch (no token — DD-1). */
+  fetchSessions?: () => Promise<SessionsResponse>;
+};
+
+/** AD-1052a / DD-1: same-origin fetch with NO token. The HXI calls require_crew_scope
+ *  endpoints same-origin (pass-through while auth.crew_scope_token==""); a set token
+ *  honest-degrades to the "unavailable" state exactly like every other HXI surface. */
+const _defaultFetchSessions = async (): Promise<SessionsResponse> => {
+  const res = await fetch('/api/browser/sessions');
+  if (!res.ok) throw new Error(`sessions ${res.status}`);
+  return res.json();
+};
 
 const _AMBER = '#f0b060';
 const _DIM = '#666680';
@@ -39,6 +57,24 @@ function IconGlobe({ color = _DIM }: { color?: string }): React.ReactElement {
     <svg {..._svgBase(color)} aria-hidden="true">
       <circle cx="12" cy="12" r="9" />
       <path d="M3 12 H21 M12 3 a14 14 0 0 1 0 18 a14 14 0 0 1 0 -18" />
+    </svg>
+  );
+}
+
+function IconRefresh({ color = _DIM }: { color?: string }): React.ReactElement {
+  return (
+    <svg {..._svgBase(color)} aria-hidden="true">
+      <path d="M3 12 a9 9 0 1 0 3 -6.7 L3 8" />
+      <path d="M3 3 V8 H8" />
+    </svg>
+  );
+}
+
+function IconEye({ color = _DIM }: { color?: string }): React.ReactElement {
+  return (
+    <svg {..._svgBase(color)} aria-hidden="true">
+      <path d="M2 12 s3.5 -7 10 -7 s10 7 10 7 s-3.5 7 -10 7 s-10 -7 -10 -7 Z" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
@@ -64,15 +100,47 @@ export function _normalizeUrl(raw: string): string | null {
 
 const _MODES: { id: BrowserMode; label: string; title?: string; disabled: boolean }[] = [
   { id: 'embedded', label: 'Embedded', disabled: false },
-  { id: 'watch', label: 'Watch', title: 'Available in AD-1052a', disabled: true },
+  { id: 'watch', label: 'Watch', disabled: false },
   { id: 'bridge', label: 'Bridge', title: 'Available in AD-1052b', disabled: true },
 ];
 
-export function BrowserWorkstation({ typeId: _typeId }: NativeWorkstationProps): React.ReactElement {
+export function BrowserWorkstation({ typeId: _typeId, fetchSessions }: Props): React.ReactElement {
+  const _fetchSessions = fetchSessions ?? _defaultFetchSessions;
   const [mode, setMode] = useState<BrowserMode>('embedded');
   const [urlInput, setUrlInput] = useState<string>('');
   const [committedUrl, setCommittedUrl] = useState<string | null>(null);
   const [urlError, setUrlError] = useState<string | null>(null);
+
+  // AD-1052a: watch-mode session state. Fetched once on entering watch + on Refresh.
+  const [sessionsState, setSessionsState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [enabled, setEnabled] = useState<boolean>(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState<number>(0);
+
+  useEffect(() => {
+    if (mode !== 'watch') return;
+    let cancelled = false;
+    setSessionsState('loading');
+    setSelectedId(null);
+    _fetchSessions()
+      .then((data) => {
+        if (cancelled) return;
+        setSessions(data.sessions);
+        setEnabled(data.enabled);
+        setSessionsState('ready');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSessionsState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Re-fetch on watch-enter and on Refresh (reloadKey). _fetchSessions is stable
+    // (an injected prop in tests, a module const by default) — no auto-poll timer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, reloadKey]);
 
   const onGo = (): void => {
     const normalized = _normalizeUrl(urlInput);
@@ -83,6 +151,95 @@ export function BrowserWorkstation({ typeId: _typeId }: NativeWorkstationProps):
     }
     setUrlError(null);
     setCommittedUrl(normalized);
+  };
+
+  // AD-1052a: the watch surface — a privacy note + Refresh, then the honest-degrade
+  // chain (loading -> unavailable -> disabled -> empty -> session list + live MJPEG).
+  const renderWatch = (): React.ReactElement => {
+    const body = ((): React.ReactElement => {
+      if (sessionsState === 'loading' || sessionsState === 'idle') {
+        return (
+          <div data-testid="browser-watch-loading" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
+            Loading sessions…
+          </div>
+        );
+      }
+      if (sessionsState === 'error') {
+        return (
+          <div data-testid="browser-watch-unavailable" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
+            Browser streaming unavailable.
+          </div>
+        );
+      }
+      if (!enabled) {
+        return (
+          <div data-testid="browser-watch-disabled" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
+            Browser tool is disabled.
+          </div>
+        );
+      }
+      if (sessions.length === 0) {
+        return (
+          <div data-testid="browser-watch-empty" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
+            No active browser session.
+          </div>
+        );
+      }
+      const sel = selectedId !== null ? sessions.find((s) => s.session_id === selectedId) ?? null : null;
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, minHeight: 0, flex: 1 }}>
+          <div data-testid="browser-watch-list" role="list" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {sessions.map((s) => {
+              const active = s.session_id === selectedId;
+              return (
+                <button
+                  key={s.session_id}
+                  data-testid={`browser-watch-session-${s.session_id}`}
+                  role="listitem"
+                  onClick={() => setSelectedId(s.session_id)}
+                  aria-pressed={active}
+                  style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
+                    padding: '6px 10px', border: '1px solid #33334a', borderRadius: 4,
+                    background: active ? 'rgba(240,176,96,0.12)' : 'transparent',
+                    color: active ? _AMBER : _TEXT, cursor: 'pointer', fontSize: 12, textAlign: 'left',
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>{s.agent_id}</span>
+                  <span style={{ color: _DIM, fontSize: 11 }}>{s.last_url || '(no navigation yet)'}</span>
+                </button>
+              );
+            })}
+          </div>
+          {sel !== null && (
+            <div data-testid="browser-watch-stream" style={{ flex: 1, minHeight: 0 }}>
+              {/* DD-1: NO token passed to the stream panel. */}
+              <BrowserStreamPanel sessionId={sel.session_id} streamingUrl={sel.streaming_url} />
+            </div>
+          )}
+        </div>
+      );
+    })();
+
+    return (
+      <div data-testid="browser-watch" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          <IconEye />
+          <span data-testid="browser-watch-note" style={{ flex: 1, color: _DIM, fontSize: 11 }}>
+            Watching surfaces whatever the agent browses.
+          </span>
+          <button
+            data-testid="browser-watch-refresh"
+            onClick={() => setReloadKey((k) => k + 1)}
+            aria-label="Refresh sessions"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', border: '1px solid #33334a', borderRadius: 4, background: 'transparent', color: _DIM, cursor: 'pointer', fontSize: 11 }}
+          >
+            <IconRefresh />Refresh
+          </button>
+        </div>
+        {body}
+      </div>
+    );
   };
 
   return (
@@ -153,7 +310,9 @@ export function BrowserWorkstation({ typeId: _typeId }: NativeWorkstationProps):
 
       {/* Body */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {mode !== 'embedded' ? (
+        {mode === 'watch' ? (
+          renderWatch()
+        ) : mode === 'bridge' ? (
           <div data-testid="browser-mode-pending" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
             This mode is not yet available.
           </div>

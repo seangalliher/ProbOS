@@ -230,6 +230,11 @@ class BrowserSession:
         return self._page
 
     @property
+    def agent_id(self) -> str:
+        """AD-1052a: owning agent id (public accessor for the sessions-list endpoint)."""
+        return self._agent_id
+
+    @property
     def last_url(self) -> str:
         return self._last_url
 
