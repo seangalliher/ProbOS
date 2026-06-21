@@ -21,6 +21,7 @@ import { useStore } from '../../store/useStore';
 import { fetchArtifactContent } from '../artifacts/artifactApi';
 import { loadWorkspaceFile, saveWorkspaceFile } from './workspaceFileApi';
 import type { WorkspaceFileLoad, WorkspaceSaveResult } from './workspaceFileApi';
+import { CoEditPanel } from './CoEditPanel';
 
 const MonacoSurface = lazy(() => import('./MonacoSurface'));
 
@@ -121,6 +122,14 @@ export function CodeWorkstation({
   const storeDoc = useStore((s) => s.workstationDoc);
   const doc = propDoc !== undefined ? propDoc : storeDoc;
 
+  // AD-1021c: co-edit presence reuses the AD-930 ambient slices. `agents` is the
+  // store's by-id map (used to label present agents); `presence` is the ambient
+  // {id: state} map. Read unconditionally (hook order is stable) but only acted
+  // on when agentId enables the co-edit surface below.
+  const presence = useStore((s) => s.presence);
+  const agentsById = useStore((s) => s.agents);
+  const fetchPresence = useStore((s) => s.fetchPresence);
+
   // Local editor state — re-seeded whenever the active document changes.
   const [scratch, setScratch] = useState<string>('');
   const [selectedIdx, setSelectedIdx] = useState<number>(0);
@@ -154,6 +163,14 @@ export function CodeWorkstation({
     })();
     return () => { cancelled = true; };
   }, [doc]);
+
+  // AD-1021c: hydrate the ambient presence map for the co-edit strip while a
+  // co-edit-enabled (agentId) workstation is mounted. The store fn is honest-
+  // degrading (a failed /api/crew/presence is swallowed), so this is a no-op
+  // when no backend is present (byte-identical to AD-1021b otherwise).
+  useEffect(() => {
+    if (agentId) void fetchPresence();
+  }, [agentId, fetchPresence]);
 
   const changes = doc?.changes ?? [];
   const isMultiFile = doc?.kind === 'build' && changes.length > 1;
@@ -427,6 +444,21 @@ export function CodeWorkstation({
           )}
         </div>
       </div>
+
+      {/* AD-1021c: agent co-editing / presence strip — present ONLY when a host
+          passes agentId (otherwise byte-identical to AD-1021/1021b). Accept
+          reuses the same governed write seam (saveFile); Preview loads a
+          proposal into the scratch editor (human-in-control). */}
+      {agentId && (
+        <CoEditPanel
+          ownerId={agentId}
+          path={filePath}
+          presence={presence}
+          agentsById={agentsById}
+          onPreview={(content) => setScratch(content)}
+          saveFile={saveFile}
+        />
+      )}
     </div>
   );
 }

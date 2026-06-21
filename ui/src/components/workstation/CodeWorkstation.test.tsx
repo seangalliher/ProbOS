@@ -103,3 +103,19 @@ describe('CodeWorkstation write-through (AD-1021b)', () => {
     expect(EMOJI.test(container.textContent ?? '')).toBe(false);
   });
 });
+
+describe('CodeWorkstation co-edit presence (AD-1021c)', () => {
+  it('renders no co-edit presence strip when no agentId (byte-identical AD-1021)', () => {
+    render(<CodeWorkstation typeId="monaco" doc={null} />);
+    // CoEditPanel mounts ONLY when a host passes agentId — absent here.
+    expect(screen.queryByTestId('workstation-presence-strip')).toBeNull();
+    expect(screen.queryByTestId('coedit-panel')).toBeNull();
+  });
+
+  it('renders the co-edit presence strip when agentId is present', () => {
+    render(<CodeWorkstation typeId="monaco" doc={null} agentId="cr-1" loadFile={vi.fn()} saveFile={vi.fn()} />);
+    // The strip always shows at least the owner (present = owner ∪ authors).
+    expect(screen.getByTestId('workstation-presence-strip')).toBeInTheDocument();
+    expect(screen.getByTestId('coedit-panel')).toBeInTheDocument();
+  });
+});

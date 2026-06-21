@@ -28,6 +28,7 @@ from probos.api_models import (
     SetVoiceProfileRequest,
     VisionCapabilityProposalResponse,
     WorkspaceFileWriteRequest,
+    WorkspaceSuggestionCreate,
 )
 from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
@@ -1432,6 +1433,129 @@ async def write_agent_workspace_file(
         "consensus_outcome": getattr(getattr(consensus, "outcome", None), "value", "unknown"),
         "approval_ratio": getattr(consensus, "approval_ratio", 0.0),
     }
+
+
+@router.get("/{agent_id}/workspace/suggestions")
+async def list_workspace_suggestions(
+    agent_id: str,
+    path: str = Query(..., description="Workspace-relative file path to list suggestions for"),
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1021c: list pending agent suggestions for one workspace file.
+
+    The READ half of the Monaco co-edit surface. The WHOLE co-edit surface is
+    gated on the EXISTING ``execution.workspace_write_enabled`` master switch
+    (no new flag) — Accept routes through the AD-1021b governed write, so the
+    same switch governs proposing, viewing, and accepting. Mirrors the AD-1021b
+    read/write asymmetry: the read honest-degrades to ``[]`` when the switch is
+    off / the folder is ephemeral / unrooted; a path that escapes the agent's
+    folder is a hard 400 — confinement (``resolve_file``) runs BEFORE the store
+    is touched so a traversal never reaches it.
+    """
+    from probos.execution.workspace import WorkspaceManager
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    cfg = getattr(getattr(runtime, "config", None), "execution", None)
+    write_enabled = bool(getattr(cfg, "workspace_write_enabled", False))
+    persistent = bool(getattr(cfg, "persistent_workspaces", False))
+    root = getattr(cfg, "workspace_root", "") if cfg is not None else ""
+
+    base: dict[str, Any] = {"agent_id": agent_id, "path": path, "suggestions": []}
+    if cfg is None or not write_enabled or not persistent or not root:
+        return base
+
+    mgr = WorkspaceManager(root)
+    owner = mgr.key_for_agent(agent)
+    target = mgr.resolve_file(owner, path)
+    if target is None:
+        raise HTTPException(status_code=400, detail="Path escapes the agent workspace folder")
+
+    store = runtime.workspace_suggestions
+    base["suggestions"] = [s.to_public() for s in store.list(owner, path)]
+    return base
+
+
+@router.post("/{agent_id}/workspace/suggestions")
+async def create_workspace_suggestion(
+    agent_id: str,
+    req: WorkspaceSuggestionCreate,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1021c: record an agent's proposed full-content change for one file.
+
+    Default-OFF (``execution.workspace_write_enabled``) — ``503`` when the
+    switch is off / the folder is ephemeral / unrooted. ``413`` over the 1 MiB
+    ``_MAX_WRITE_BYTES`` cap (never queue a megabyte proposal). Path confinement
+    (``resolve_file``) runs at the API boundary and MUST precede the store so a
+    traversal returns ``400`` and never enters ``WorkspaceSuggestionStore.add``.
+    The suggestion is a proposal only — it is NEVER written here; the human
+    Accepts it through the AD-1021b governed write or Dismisses it.
+    """
+    from probos.execution.workspace import WorkspaceManager, _MAX_WRITE_BYTES
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    cfg = getattr(getattr(runtime, "config", None), "execution", None)
+    write_enabled = bool(getattr(cfg, "workspace_write_enabled", False))
+    persistent = bool(getattr(cfg, "persistent_workspaces", False))
+    root = getattr(cfg, "workspace_root", "") if cfg is not None else ""
+
+    if cfg is None or not write_enabled or not persistent or not root:
+        raise HTTPException(status_code=503, detail="Workspace co-edit is disabled")
+
+    if len(req.content.encode("utf-8")) > _MAX_WRITE_BYTES:
+        raise HTTPException(status_code=413, detail="Suggestion exceeds the workspace write cap")
+
+    # Confine BEFORE touching the store — a traversal must never be queued.
+    mgr = WorkspaceManager(root)
+    owner = mgr.key_for_agent(agent)
+    target = mgr.resolve_file(owner, req.path)
+    if target is None:
+        raise HTTPException(status_code=400, detail="Path escapes the agent workspace folder")
+
+    suggestion = runtime.workspace_suggestions.add(
+        owner, req.path, req.content, req.author_id, req.author_callsign, req.note
+    )
+    return {"agent_id": agent_id, "suggestion": suggestion.to_public()}
+
+
+@router.post("/{agent_id}/workspace/suggestions/{suggestion_id}/dismiss")
+async def dismiss_workspace_suggestion(
+    agent_id: str,
+    suggestion_id: str,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1021c: dismiss one pending suggestion (the human declines it).
+
+    Default-OFF (``execution.workspace_write_enabled``) — ``503`` when off /
+    ephemeral / unrooted, mirroring the write half of the surface. Carries no
+    path (the HXI dismisses by id); returns ``{dismissed: bool}`` — ``false``
+    when no suggestion with that id exists for the agent (honest-degrade, not a
+    404 — a stale dismiss is a no-op, not an error).
+    """
+    from probos.execution.workspace import WorkspaceManager
+
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    cfg = getattr(getattr(runtime, "config", None), "execution", None)
+    write_enabled = bool(getattr(cfg, "workspace_write_enabled", False))
+    persistent = bool(getattr(cfg, "persistent_workspaces", False))
+    root = getattr(cfg, "workspace_root", "") if cfg is not None else ""
+
+    if cfg is None or not write_enabled or not persistent or not root:
+        raise HTTPException(status_code=503, detail="Workspace co-edit is disabled")
+
+    mgr = WorkspaceManager(root)
+    owner = mgr.key_for_agent(agent)
+    dismissed = runtime.workspace_suggestions.dismiss(owner, suggestion_id)
+    return {"agent_id": agent_id, "suggestion_id": suggestion_id, "dismissed": dismissed}
 
 
 @router.get("/{agent_id}/instructions")

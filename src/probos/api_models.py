@@ -31,6 +31,20 @@ class WorkspaceFileWriteRequest(BaseModel):
     content: str
 
 
+class WorkspaceSuggestionCreate(BaseModel):
+    """AD-1021c: an agent's proposed full-content change for one workspace file.
+
+    The co-edit surface carries the FULL proposed body (no diff engine); the
+    human Accepts it through the AD-1021b governed write or Dismisses it.
+    """
+
+    path: str
+    content: str
+    author_id: str
+    author_callsign: str = ""
+    note: str = ""
+
+
 class PerAgentReply(BaseModel):
     """AD-719: one entry of a multi-agent fan-out reply."""
     agent_id: str

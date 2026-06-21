@@ -463,6 +463,15 @@ class ProbOSRuntime:
             db_path=self._data_dir / "chat_threads.db",
         )
 
+        # AD-1021c: in-memory pending agent suggestions for the Monaco co-edit
+        # surface (HXI #11). Attached EXPLICITLY (not getattr lazy-create) so the
+        # write/dismiss endpoints can rely on its presence at any startup phase
+        # and a real (not auto-faked) store backs the per-(owner, path) bound.
+        # Volatile by design: a restart clears pending proposals (agents
+        # re-propose); the human Accepts (governed AD-1021b write) or Dismisses.
+        from probos.execution.workspace_suggestions import WorkspaceSuggestionStore
+        self.workspace_suggestions = WorkspaceSuggestionStore()
+
         # AD-918: agent-initiated group-chat creation. Bare-callable handler
         # subscribed under a synthetic id (yeoman.py:242 pattern) — no pool,
         # no registry entry. ontology read lazily (set later at startup).
