@@ -114,6 +114,12 @@ class EventType(str, Enum):
     CAPABILITY_REQUEST_FILED = "capability_request_filed"
     CAPABILITY_REQUEST_DECIDED = "capability_request_decided"
     CAPABILITY_REQUEST_FULFILLED = "capability_request_fulfilled"
+    # Skill requests (AD-906/907) — crew skill-acquisition approval queue +
+    # holodeck-training completion wiring.
+    SKILL_REQUEST_FILED = "skill_request_filed"
+    SKILL_REQUEST_DECIDED = "skill_request_decided"
+    SKILL_REQUEST_TRAINING_STARTED = "skill_request_training_started"
+    SKILL_REQUEST_COMPLETED = "skill_request_completed"
     # Per-agent capability enablement (AD-983b) — Captain grant/revoke of a
     # tool or cognitive skill on a specific agent.
     CAPABILITY_ACCESS_RESOLVED = "capability_access_resolved"

@@ -2245,6 +2245,55 @@ def _wire_capability_request_notifier(*, runtime: Any, config: "SystemConfig") -
     return True
 
 
+def _wire_skill_request_training(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-907: Wire the skill-request holodeck-training completion subscriber.
+
+    Completion side of the AD-906 training loop: registers a listener for
+    TEAM_SIMULATION_COMPLETED that advances the linked in-training skill
+    request to ``completed``. Gated on ``config.skill_requests.enabled`` and
+    the presence of ``runtime.skill_request_store``. No dependency on the
+    team-simulation orchestrator being enabled -- the subscriber simply never
+    fires when team simulations are off. Tier-2 log-and-degrade: missing flag,
+    store, or ``add_event_listener`` -> no-op + INFO log.
+    """
+    cfg = getattr(config, "skill_requests", None)
+    if (
+        not cfg
+        or not cfg.enabled
+        or getattr(runtime, "skill_request_store", None) is None
+    ):
+        logger.info(
+            "AD-907: skill_requests disabled or store unavailable; "
+            "skill-request training subscriber skipped"
+        )
+        return False
+
+    from probos.skill_request_training import on_team_simulation_completed
+
+    async def _on_completed(event: Any) -> None:
+        await on_team_simulation_completed(runtime, event)
+
+    add_listener = getattr(runtime, "add_event_listener", None)
+    if add_listener is None:
+        logger.info(
+            "AD-907: add_event_listener unavailable; skill-request training "
+            "subscriber skipped"
+        )
+        return False
+    try:
+        add_listener(_on_completed, event_types=["team_simulation_completed"])
+    except Exception:
+        logger.warning(
+            "AD-907: add_event_listener failed; skill-request training "
+            "subscriber inactive",
+            exc_info=True,
+        )
+        return False
+
+    logger.info("AD-907: skill-request training subscriber wired")
+    return True
+
+
 def _wire_task_completion_notifier(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-846: Wire the Yeo task-completion Captain-DM notifier.
 
@@ -4075,6 +4124,16 @@ async def finalize_startup(
             if _wire_capability_request_notifier(runtime=runtime, config=config):
                 logger.info(
                     "AD-857: capability-request Captain-DM notifier wired "
+                    "during finalization"
+                )
+
+            # AD-907: skill-request holodeck-training completion subscriber --
+            # advances an in-training skill request to completed when its linked
+            # team simulation finishes. Independent of the orchestrator being
+            # enabled. Tier-2 log-and-degrade.
+            if _wire_skill_request_training(runtime=runtime, config=config):
+                logger.info(
+                    "AD-907: skill-request training subscriber wired "
                     "during finalization"
                 )
 

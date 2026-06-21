@@ -4065,6 +4065,21 @@ class HolodeckTeamSimulationConfig(BaseModel):
     data_subdir: str = "team_simulations"
 
 
+class SkillRequestConfig(BaseModel):
+    """AD-906: Crew skill-acquisition request queue.
+
+    Default-False per the AD-695 transitional-flag precedent: enabling this
+    constructs a ``SkillRequestStore`` during startup, wires the AD-907
+    TEAM_SIMULATION_COMPLETED subscriber, and exposes the
+    ``/api/skill-requests`` decision surface. v1 ships dormant — with
+    ``enabled=False`` no store is built, no listener is registered, the router
+    returns 503, and runtime behavior is byte-identical to pre-AD-906.
+    """
+
+    enabled: bool = False
+    data_subdir: str = "skill_requests"
+
+
 class NamingConfig(BaseModel):
     """Ship & crew naming conventions (AD-499)."""
 
@@ -5726,6 +5741,7 @@ class SystemConfig(BaseModel):
     holodeck_birth_chamber: HolodeckBirthChamberConfig = HolodeckBirthChamberConfig()
     holodeck_scenarios: HolodeckScenarioConfig = HolodeckScenarioConfig()
     team_simulations: HolodeckTeamSimulationConfig = HolodeckTeamSimulationConfig()
+    skill_requests: SkillRequestConfig = SkillRequestConfig()  # AD-906
     naming: NamingConfig = NamingConfig()  # AD-499
     runtime_overrides: RuntimeOverridesConfig = RuntimeOverridesConfig()  # AD-468
     utility_agents: UtilityAgentsConfig = UtilityAgentsConfig()

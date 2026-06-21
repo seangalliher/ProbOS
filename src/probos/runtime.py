@@ -178,6 +178,7 @@ if TYPE_CHECKING:
     from probos.cognitive.skill_grants import SkillGrantStore
     from probos.cognitive.intent_grants import IntentGrantStore
     from probos.skill_framework import AgentSkillService, SkillRegistry
+    from probos.skill_request import SkillRequestStore  # AD-906
     from probos.mesh.nats_bus import NATSBus
     from probos.mcp_apps.registry import MCPAppRegistry
     from probos.tools.permissions import ToolPermissionStore
@@ -265,6 +266,7 @@ class ProbOSRuntime:
     bridge_alerts: BridgeAlertService | None
     clearance_grant_store: ClearanceGrantStore | None
     capability_request_store: CapabilityRequestStore | None
+    skill_request_store: SkillRequestStore | None
     tool_registry: ToolRegistry | None
     dream_scheduler: DreamScheduler | None
     task_scheduler: TaskScheduler | None
@@ -759,6 +761,9 @@ class ProbOSRuntime:
 
         # --- Capability Requests (AD-853) ---
         self.capability_request_store: CapabilityRequestStore | None = None
+
+        # --- Skill Requests (AD-906) ---
+        self.skill_request_store: SkillRequestStore | None = None
 
         # --- Capability Gap Driver (AD-855) ---
         self.capability_gap_driver: "CapabilityGapDriver | None" = None
@@ -2252,6 +2257,7 @@ class ProbOSRuntime:
         self.bridge_alerts = comm.bridge_alerts
         self.clearance_grant_store = comm.clearance_grant_store
         self.capability_request_store = comm.capability_request_store
+        self.skill_request_store = comm.skill_request_store
         self.tool_registry = comm.tool_registry
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal

@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from probos.cognitive.intent_grants import IntentGrantStore
     from probos.hooks.bus import HookBus
     from probos.skill_framework import AgentSkillService, SkillRegistry
+    from probos.skill_request import SkillRequestStore  # AD-906
     from probos.substrate.scaler import PoolScaler
     from probos.tools.permissions import ToolPermissionStore
     from probos.tools.registry import ToolRegistry
@@ -167,6 +168,7 @@ class CommunicationResult:
     ontology: "VesselOntologyService | None"
     clearance_grant_store: "ClearanceGrantStore | None"
     capability_request_store: "CapabilityRequestStore | None"  # AD-853
+    skill_request_store: "SkillRequestStore | None"  # AD-906
     tool_registry: "ToolRegistry | None"
     tool_permission_store: "ToolPermissionStore | None"
     cognitive_skill_catalog: "CognitiveSkillCatalog | None"

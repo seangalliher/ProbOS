@@ -306,6 +306,20 @@ async def init_communication(
     await capability_request_store.start()
     logger.info("capability-request-store started")
 
+    # --- Skill Request Store (AD-906) ---
+    # Gated dark behind config.skill_requests.enabled (Pydantic default False):
+    # when off, no store is constructed and the router returns 503.
+    skill_request_store = None
+    if config.skill_requests and config.skill_requests.enabled:
+        from probos.skill_request import SkillRequestStore
+
+        skill_request_store = SkillRequestStore(
+            db_path=str(data_dir / "skill_requests.db"),
+            emit_event=emit_event_fn,
+        )
+        await skill_request_store.start()
+        logger.info("skill-request-store started (AD-906)")
+
     # --- Tool Registry (AD-423a) ---
     from probos.tools.registry import ToolRegistry
 
@@ -541,6 +555,7 @@ async def init_communication(
         ontology=ontology,
         clearance_grant_store=clearance_grant_store,
         capability_request_store=capability_request_store,
+        skill_request_store=skill_request_store,
         tool_registry=tool_registry,
         tool_permission_store=tool_permission_store,
         cognitive_skill_catalog=cognitive_catalog,

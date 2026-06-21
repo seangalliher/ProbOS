@@ -5,7 +5,7 @@ All Pydantic models extracted from api.py for use by routers.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -264,6 +264,33 @@ class CapabilityRequestDecideRequest(BaseModel):
     def _require_reason_on_deny(self) -> "CapabilityRequestDecideRequest":
         if not self.approve and not (self.reason or "").strip():
             raise ValueError("a reason is required when denying a capability request")
+        return self
+
+
+# ── Skill-request models (AD-906) ────────────────────────────────
+
+class SkillRequestFileRequest(BaseModel):
+    """Request body for filing a crew skill-acquisition request."""
+    agent_id: str
+    skill_id: str
+    skill_label: str = ""
+    source: Literal["self", "counselor", "chief"] = "self"
+    justification: str = ""
+
+
+class SkillRequestDecideRequest(BaseModel):
+    """Request body for approving/denying a pending skill request.
+
+    A deny (``approve=False``) requires a non-empty ``reason`` so the
+    requesting agent gets actionable feedback; an approve may omit it.
+    """
+    approve: bool
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def _require_reason_on_deny(self) -> "SkillRequestDecideRequest":
+        if not self.approve and not (self.reason or "").strip():
+            raise ValueError("a reason is required when denying a skill request")
         return self
 
 
