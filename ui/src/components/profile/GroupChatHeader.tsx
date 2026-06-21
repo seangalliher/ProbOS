@@ -66,6 +66,14 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
   // a brand-new chat instead of joining the existing one.
   const isDefaultOneOnOne = !!(thread.metadata as { is_default?: unknown } | undefined)?.is_default;
 
+  // AD-984b: enter title-edit mode (seed the draft from the current display
+  // name). Extracted so the click handler and the keyboard (Enter/Space)
+  // handler open the editor from one place.
+  const beginEdit = () => {
+    setTitleDraft(chatDisplayName(thread, agents));
+    setEditing(true);
+  };
+
   async function commitTitle() {
     const next = titleDraft.trim();
     setEditing(false);
@@ -154,7 +162,13 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
       ) : (
         <span
           data-testid="group-chat-title"
-          onClick={() => { setTitleDraft(chatDisplayName(thread, agents)); setEditing(true); }}
+          role="button"
+          tabIndex={0}
+          aria-label="Rename room"
+          onClick={beginEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); beginEdit(); }
+          }}
           title="Rename room"
           style={{
             flex: 1,

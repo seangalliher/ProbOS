@@ -495,6 +495,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // applies while meetingActive; outside a meeting the chat always shows.
   const meetingChatVisible = useStore((s) => s.meetingChatVisible);
   const showTranscript = !(meetingActive && !meetingChatVisible);
+  // AD-984b: condensed transcript. While a meeting is active AND the chat is
+  // shown, the transcript shrinks to a capped, scrollable strip so the avatar
+  // gallery stays the focus (no message dropped — only the container shrinks).
+  const meetingCondensed = meetingActive && meetingChatVisible;
 
   // AD-984c: interruptible auto-scroll. The scroll container ref + a
   // pinned-to-bottom ref let the auto-scroll effect move the view ONLY when the
@@ -1109,6 +1113,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       {showTranscript && (
       <div
         ref={scrollContainerRef}
+        data-testid="chat-transcript"
+        data-condensed={meetingCondensed ? 'true' : 'false'}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
+        aria-label="Conversation transcript"
         onScroll={() => {
           pinnedToBottomRef.current = isPinnedToBottom(scrollContainerRef.current);
         }}
@@ -1116,9 +1126,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         flex: 1,
         overflowY: 'auto',
         padding: '8px 12px',
+        // AD-984b: condensed strip while a meeting is active + chat shown.
+        ...(meetingCondensed ? { flex: '0 0 auto', maxHeight: 160, padding: '4px 12px' } : {}),
       }}>
         {messages.length === 0 && (
-          <div style={{ color: '#555568', fontSize: 12, textAlign: 'center', marginTop: 40 }}>
+          <div style={{ color: '#9a9ab2', /* AD-984b: WCAG AA 4.5:1 (was #555568, 2.59:1) */ fontSize: 12, textAlign: 'center', marginTop: 40 }}>
             Send a message to start a conversation.
           </div>
         )}

@@ -19,6 +19,7 @@ import { useCameraStore } from '../../store/useCameraStore';
 import { useScreenStore } from '../../store/useScreenStore';
 import { getCameraStream, startCameraStream, stopCameraStream } from '../../hooks/useCameraStream';
 import { getScreenStream } from '../../hooks/useScreenStream';
+import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 
 const CAPTAIN_PARTICIPANT_ID = 'captain';
 
@@ -74,12 +75,16 @@ function AvatarSlot({
   speaking = false,
   someoneSpeaking = false,
   scale = 1,
+  reducedMotion = false,
 }: {
   agentId: string;
   speaking?: boolean;
   someoneSpeaking?: boolean;
   /** AD-974: gallery size multiplier (drag-to-resize). 1 = the original size. */
   scale?: number;
+  /** AD-984b: when the OS requests reduced motion, the speaking RING still
+   *  renders (state is preserved) but the pulse animation is suppressed. */
+  reducedMotion?: boolean;
 }) {
   const agent = useStore((s) => s.agents.get(agentId)) as Agent | undefined;
   const [loadFailed, setLoadFailed] = useState(false);
@@ -129,10 +134,13 @@ function AvatarSlot({
     borderRadius: 8,
     opacity: dim ? 0.5 : 1,
     transition: 'opacity 0.25s ease',
+    // AD-984b: the speaking ring (state) ALWAYS applies when speaking; the
+    // pulse ANIMATION is gated on the OS reduced-motion preference (HXI #4 —
+    // motion encodes state, but respect the accessibility opt-out).
     ...(speaking
       ? {
           boxShadow: '0 0 0 2px #f0b060, 0 0 12px rgba(240,176,96,0.55)',
-          animation: 'meetingSpeakingPulse 1.6s ease-in-out infinite',
+          ...(reducedMotion ? {} : { animation: 'meetingSpeakingPulse 1.6s ease-in-out infinite' }),
         }
       : {}),
   };
@@ -336,6 +344,9 @@ export function MeetingView({
   // AD-923: someone is speaking iff the indicator seam is non-null. The
   // matching slot lights; the others dim (see AvatarSlot).
   const someoneSpeaking = speakingAgentId != null;
+  // AD-984b: OS reduced-motion preference. Gates the speaking pulse animation
+  // (the ring still renders) — honest-degrades to false without matchMedia.
+  const reducedMotion = usePrefersReducedMotion();
 
   return (
     <div
@@ -382,13 +393,17 @@ export function MeetingView({
       </div>
 
       {/* Avatar gallery */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
+      <div
+        role="group"
+        aria-label="Meeting participants"
+        style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}
+      >
         {/* AD-939: the Captain (meeting host) is always present and renders
             first — live camera/screen video when shared, else an amber person
             icon. The crew AvatarSlots follow (they now hydrate after AD-938). */}
         <CaptainSlot scale={galleryScale} />
         {crewIds.length === 0 ? (
-          <span style={{ color: '#666680', fontSize: 12 }}>No crew in this meeting yet.</span>
+          <span style={{ color: '#9a9ab2', fontSize: 12 }}>No crew in this meeting yet.</span>
         ) : (
           crewIds.map((id) => (
             <AvatarSlot
@@ -397,6 +412,7 @@ export function MeetingView({
               speaking={id === speakingAgentId}
               someoneSpeaking={someoneSpeaking}
               scale={galleryScale}
+              reducedMotion={reducedMotion}
             />
           ))
         )}
