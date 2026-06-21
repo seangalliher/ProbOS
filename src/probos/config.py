@@ -1617,6 +1617,26 @@ class BrowserToolConfig(BaseModel):
         description="AD-706b: per-session size cap (MB); oldest webm files deleted when exceeded.",
     )
 
+    # AD-1052b: BRIDGE mode — connect to an EXTERNAL user-launched browser over
+    # CDP. SEPARATE, higher-risk gate from `enabled` (driving the user's real
+    # logged-in browser). Default-OFF (Wave 10 convention #14). Bridge requires
+    # BOTH enabled=True (the tool is wired at all) AND bridge_enabled=True.
+    bridge_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1052b: enable BRIDGE mode (connect_over_cdp to an external "
+            "user-launched Chrome). Higher-risk than headless; default OFF."
+        ),
+    )
+    bridge_allowed_hosts: list[str] = Field(
+        default_factory=lambda: ["127.0.0.1", "localhost", "[::1]"],
+        description=(
+            "AD-1052b: SSRF allowlist — the CDP endpoint host must match one of "
+            "these (case-insensitive exact match). Refuses arbitrary remote CDP "
+            "endpoints (exfil/SSRF guard). Localhost-only by default."
+        ),
+    )
+
     # AD-706f: credential vault (encrypted-at-rest). Default-OFF gate.
     credential_vault: CredentialVaultConfig = Field(
         default_factory=CredentialVaultConfig,

@@ -465,6 +465,78 @@ class BrowserTool:
         )
         return session
 
+    def _validate_cdp_endpoint(self, endpoint: str) -> str:
+        """AD-1052b: return the host if allowed, else "" (refused).
+
+        Accepts http/https/ws/wss CDP endpoints; the HOST must be in
+        bridge_allowed_hosts (case-insensitive). Defense-in-depth against SSRF.
+        """
+        if not endpoint or not isinstance(endpoint, str):
+            return ""
+        try:
+            parsed = urlparse(endpoint)
+        except Exception:
+            return ""
+        if parsed.scheme.lower() not in ("http", "https", "ws", "wss"):
+            return ""
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return ""
+        # AD-1052b: urlparse strips the surrounding brackets from an IPv6 literal
+        # (``http://[::1]:9222`` -> hostname ``::1``), but the allowlist stores the
+        # bracketed form ``[::1]`` (the URL convention). Normalize BOTH sides so the
+        # IPv6 loopback the default allowlist advertises actually matches, while the
+        # exact-host SSRF guard (rejecting ``127.0.0.1.evil.com``) is preserved.
+        def _strip_brackets(h: str) -> str:
+            return h[1:-1] if len(h) >= 2 and h.startswith("[") and h.endswith("]") else h
+
+        norm_host = _strip_brackets(host)
+        allow = [_strip_brackets(h.lower()) for h in (self._config.bridge_allowed_hosts or [])]
+        return host if norm_host in allow else ""
+
+    async def connect_bridge_session(
+        self, endpoint: str, *, agent_id: str, confirm: bool,
+    ) -> dict[str, Any]:
+        """AD-1052b: consent-gated, allowlist-validated CDP bridge connect.
+
+        Honest-degrade (returns {"connected": False, "reason": ...}) when bridge
+        is disabled, consent is not given, the endpoint host is not allowed, or
+        the connect fails. On success stores the session and returns
+        {"connected": True, "session_id", "streaming_url"}.
+        """
+        if not getattr(self._config, "bridge_enabled", False):
+            self._safe_emit(EventType.BROWSER_BRIDGE_REFUSED, {"reason": "disabled"})
+            return {"connected": False, "reason": "Bridge mode is disabled."}
+        if confirm is not True:
+            self._safe_emit(EventType.BROWSER_BRIDGE_REFUSED, {"reason": "consent"})
+            return {"connected": False, "reason": "Connection consent is required."}
+        host = self._validate_cdp_endpoint(endpoint)
+        if not host:
+            self._safe_emit(EventType.BROWSER_BRIDGE_REFUSED, {"reason": "endpoint_not_allowed"})
+            return {"connected": False, "reason": "Endpoint not allowed."}
+
+        new_id = uuid.uuid4().hex
+        session = self._session_factory(
+            session_id=new_id, config=self._config, agent_id=agent_id, emit_event=self._emit_event,
+        )
+        try:
+            await session.connect(endpoint)
+        except Exception:
+            logger.warning("AD-1052b: bridge connect to %s failed", endpoint, exc_info=True)
+            self._safe_emit(EventType.BROWSER_BRIDGE_REFUSED, {"reason": "unreachable", "host": host})
+            return {"connected": False, "reason": f"Could not connect to {endpoint}"}
+
+        self._sessions[new_id] = session
+        self._safe_emit(
+            EventType.BROWSER_BRIDGE_CONNECTED,
+            {"session_id": new_id, "agent_id": agent_id, "host": host},
+        )
+        return {
+            "connected": True,
+            "session_id": new_id,
+            "streaming_url": session.get_streaming_url(),
+        }
+
     def get_session(self, session_id: str) -> BrowserSession | None:
         """Look up an active session (test/diagnostic helper)."""
         return self._sessions.get(session_id)

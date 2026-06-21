@@ -69,6 +69,10 @@ class BrowserSession:
         self._browser: Any = None
         self._context: Any = None
         self._page: Any = None
+        # AD-1052b: True when this session attached to an EXTERNAL browser via
+        # connect_over_cdp. A connected session must NOT close the user's page/
+        # context/browser on stop() — only disconnect.
+        self._connected: bool = False
         # Last URL we navigated to (used by tier classifier for click/type)
         self._last_url: str = ""
         # AD-706c-2: compute_use trust budget. ``_compute_use_consecutive_autonomous``
@@ -118,8 +122,54 @@ class BrowserSession:
         except Exception:
             logger.debug("AD-706: set_default_timeout failed", exc_info=True)
 
+    async def connect(self, endpoint: str) -> None:
+        """AD-1052b: attach to an EXTERNAL user-launched browser over CDP.
+
+        Mirrors ``start()`` but uses ``connect_over_cdp(endpoint)`` instead of
+        ``launch()``. Reuses the browser's EXISTING default context + page
+        (``contexts[0]`` / ``pages[0]``) so the agent drives the user's real
+        logged-in session — a fresh ``new_context()`` would have no cookies.
+        """
+        from playwright.async_api import async_playwright  # type: ignore[import-not-found]
+
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.connect_over_cdp(endpoint)
+        contexts = self._browser.contexts
+        self._context = contexts[0] if contexts else await self._browser.new_context()
+        pages = self._context.pages
+        self._page = pages[0] if pages else await self._context.new_page()
+        self._connected = True
+        try:
+            self._page.set_default_timeout(self._config.default_timeout_ms)
+        except Exception:
+            logger.debug("AD-1052b: set_default_timeout failed on connected page", exc_info=True)
+
     async def stop(self) -> None:
         """Close everything in reverse order. Idempotent."""
+        # AD-1052b: a bridge session attaches to the user's REAL browser. NEVER
+        # close the user's page/context (their tabs/session). browser.close() over
+        # connect_over_cdp DISCONNECTS from the browser server (Playwright docs) —
+        # it does NOT quit the user's Chrome.
+        if self._connected:
+            if self._browser is not None:
+                try:
+                    await self._browser.close()  # disconnect, not terminate
+                except Exception:
+                    logger.debug("AD-1052b: bridge disconnect failed", exc_info=True)
+            if self._playwright is not None:
+                try:
+                    await self._playwright.stop()
+                except Exception:
+                    logger.debug("AD-1052b: playwright.stop failed (bridge)", exc_info=True)
+            if self._emit_event is not None:
+                try:
+                    from probos.events import EventType
+                    self._emit_event(EventType.BROWSER_BRIDGE_DISCONNECTED, {"session_id": self.session_id})
+                except Exception:
+                    logger.debug("AD-1052b: disconnect event emit failed", exc_info=True)
+            self._page = self._context = self._browser = self._playwright = None
+            self._connected = False
+            return
         recording_failed = False
         for closer, attr in [
             (self._page, "_page"),
@@ -240,6 +290,11 @@ class BrowserSession:
 
     def set_last_url(self, url: str) -> None:
         self._last_url = url
+
+    @property
+    def is_connected(self) -> bool:
+        """AD-1052b: True for a bridge (connect_over_cdp) session."""
+        return self._connected
 
     # ------------------------------------------------------------------
     # AD-706c-2: compute_use trust budget

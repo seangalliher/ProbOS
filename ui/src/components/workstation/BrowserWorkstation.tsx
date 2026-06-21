@@ -25,9 +25,16 @@ type BrowserMode = 'embedded' | 'watch' | 'bridge';
 /** AD-1052a: one active browser session as projected by GET /api/browser/sessions. */
 type SessionRow = { session_id: string; agent_id: string; streaming_url: string | null; last_url: string };
 type SessionsResponse = { enabled: boolean; sessions: SessionRow[] };
+/** AD-1052b: POST /api/browser/bridge/connect response. */
+type BridgeConnectResponse = {
+  connected: boolean; reason?: string | null;
+  session_id?: string | null; streaming_url?: string | null;
+};
 type Props = NativeWorkstationProps & {
   /** Injectable for deterministic tests; defaults to the same-origin fetch (no token — DD-1). */
   fetchSessions?: () => Promise<SessionsResponse>;
+  /** AD-1052b: injectable for tests; defaults to the same-origin POST (no token — DD-1). */
+  connectBridge?: (endpoint: string) => Promise<BridgeConnectResponse>;
 };
 
 /** AD-1052a / DD-1: same-origin fetch with NO token. The HXI calls require_crew_scope
@@ -39,9 +46,25 @@ const _defaultFetchSessions = async (): Promise<SessionsResponse> => {
   return res.json();
 };
 
+/** AD-1052b / DD-1: same-origin POST with NO token. `confirm:true` is the Captain's
+ *  explicit consent, sent ONLY on the explicit Connect gesture (DD-2). */
+const _defaultConnectBridge = async (endpoint: string): Promise<BridgeConnectResponse> => {
+  const res = await fetch('/api/browser/bridge/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ endpoint, confirm: true }),
+  });
+  if (!res.ok) throw new Error(`bridge ${res.status}`);
+  return res.json();
+};
+
 const _AMBER = '#f0b060';
 const _DIM = '#666680';
 const _TEXT = '#c8c8d4';
+
+/** AD-1052b: the canonical local CDP endpoint a Captain-launched Chrome exposes
+ *  via ``--remote-debugging-port=9222``. */
+const _INITIAL_BRIDGE = 'http://127.0.0.1:9222';
 
 const _svgBase = (color: string): React.SVGProps<SVGSVGElement> => ({
   width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none',
@@ -79,6 +102,16 @@ function IconEye({ color = _DIM }: { color?: string }): React.ReactElement {
   );
 }
 
+function IconLink({ color = _DIM }: { color?: string }): React.ReactElement {
+  return (
+    <svg {..._svgBase(color)} aria-hidden="true">
+      <path d="M9 15 L15 9" />
+      <path d="M11 7 L13 5 a3.5 3.5 0 0 1 5 5 L16 12" />
+      <path d="M13 17 L11 19 a3.5 3.5 0 0 1 -5 -5 L8 12" />
+    </svg>
+  );
+}
+
 /** Accept http(s) only; prepend `https://` when scheme-less; reject dangerous
  *  schemes (javascript:/data:/file:/blob:/about:/vbscript:) -> null. Exported so
  *  the validation contract is unit-testable independent of the React tree. */
@@ -101,11 +134,12 @@ export function _normalizeUrl(raw: string): string | null {
 const _MODES: { id: BrowserMode; label: string; title?: string; disabled: boolean }[] = [
   { id: 'embedded', label: 'Embedded', disabled: false },
   { id: 'watch', label: 'Watch', disabled: false },
-  { id: 'bridge', label: 'Bridge', title: 'Available in AD-1052b', disabled: true },
+  { id: 'bridge', label: 'Bridge', disabled: false },
 ];
 
-export function BrowserWorkstation({ typeId: _typeId, fetchSessions }: Props): React.ReactElement {
+export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBridge }: Props): React.ReactElement {
   const _fetchSessions = fetchSessions ?? _defaultFetchSessions;
+  const _connectBridge = connectBridge ?? _defaultConnectBridge;
   const [mode, setMode] = useState<BrowserMode>('embedded');
   const [urlInput, setUrlInput] = useState<string>('');
   const [committedUrl, setCommittedUrl] = useState<string | null>(null);
@@ -117,6 +151,13 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions }: Props): R
   const [enabled, setEnabled] = useState<boolean>(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState<number>(0);
+
+  // AD-1052b: bridge-mode state. The endpoint defaults to the canonical local
+  // CDP port; `bridgeState` drives the honest-degrade chain.
+  const [bridgeEndpoint, setBridgeEndpoint] = useState<string>(_INITIAL_BRIDGE);
+  const [bridgeState, setBridgeState] = useState<'idle' | 'connecting' | 'connected' | 'refused'>('idle');
+  const [bridgeReason, setBridgeReason] = useState<string | null>(null);
+  const [bridgeSession, setBridgeSession] = useState<{ session_id: string; streaming_url: string | null } | null>(null);
 
   useEffect(() => {
     if (mode !== 'watch') return;
@@ -151,6 +192,30 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions }: Props): R
     }
     setUrlError(null);
     setCommittedUrl(normalized);
+  };
+
+  // AD-1052b: the Captain's explicit Connect gesture. `_connectBridge` sends
+  // confirm:true (DD-2 one-time consent). On connected:true store the session +
+  // reuse the AD-706a stream panel; else surface the honest-degrade reason.
+  const onConnect = (): void => {
+    const endpoint = bridgeEndpoint;
+    setBridgeState('connecting');
+    setBridgeReason(null);
+    setBridgeSession(null);
+    _connectBridge(endpoint)
+      .then((res) => {
+        if (res.connected) {
+          setBridgeSession({ session_id: res.session_id ?? '', streaming_url: res.streaming_url ?? null });
+          setBridgeState('connected');
+        } else {
+          setBridgeReason(res.reason ?? 'Connection refused.');
+          setBridgeState('refused');
+        }
+      })
+      .catch(() => {
+        setBridgeReason(`Could not connect to ${endpoint}`);
+        setBridgeState('refused');
+      });
   };
 
   // AD-1052a: the watch surface — a privacy note + Refresh, then the honest-degrade
@@ -242,6 +307,61 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions }: Props): R
     );
   };
 
+  // AD-1052b: the bridge surface — an endpoint input + an explicit consent note +
+  // a Connect button. On connected, reuse the AD-706a stream panel (DD-6); on
+  // refused, surface the backend honest-degrade reason (DD-4).
+  const renderBridge = (): React.ReactElement => {
+    const connecting = bridgeState === 'connecting';
+    return (
+      <div data-testid="browser-bridge" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          <IconLink color={bridgeState === 'connected' ? _AMBER : _DIM} />
+          <input
+            data-testid="browser-bridge-endpoint"
+            type="text"
+            value={bridgeEndpoint}
+            onChange={(e) => setBridgeEndpoint(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !connecting) onConnect(); }}
+            placeholder="http://127.0.0.1:9222"
+            aria-label="CDP endpoint"
+            style={{ flex: 1, minWidth: 140, padding: '4px 8px', border: '1px solid #33334a', borderRadius: 4, background: 'transparent', color: _TEXT, fontSize: 12 }}
+          />
+          <button
+            data-testid="browser-bridge-connect"
+            onClick={onConnect}
+            disabled={connecting}
+            aria-label="Connect to external browser"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', border: '1px solid #33334a', borderRadius: 4, background: 'transparent', color: connecting ? _DIM : _AMBER, cursor: connecting ? 'not-allowed' : 'pointer', fontSize: 11 }}
+          >
+            <IconLink color={connecting ? _DIM : _AMBER} />Connect
+          </button>
+        </div>
+        <div data-testid="browser-bridge-consent-note" style={{ padding: '6px 12px', color: _DIM, fontSize: 11, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          Connecting lets an agent drive this external browser with your logged-in sessions.
+        </div>
+        {bridgeState === 'connected' && bridgeSession !== null ? (
+          <div data-testid="browser-bridge-stream" style={{ flex: 1, minHeight: 0 }}>
+            {/* DD-1: NO token passed to the stream panel. */}
+            <BrowserStreamPanel sessionId={bridgeSession.session_id} streamingUrl={bridgeSession.streaming_url} />
+          </div>
+        ) : bridgeState === 'refused' ? (
+          <div data-testid="browser-bridge-reason" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
+            {bridgeReason ?? 'Connection refused.'}
+          </div>
+        ) : (
+          <div data-testid="browser-bridge-idle" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24, color: _DIM, fontSize: 12, textAlign: 'center' }}>
+            <IconLink />
+            <div style={{ maxWidth: 420 }}>
+              {connecting
+                ? 'Connecting…'
+                : 'Launch Chrome with --remote-debugging-port=9222, then Connect to drive it from here.'}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div
       data-testid="browser-workstation"
@@ -313,9 +433,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions }: Props): R
         {mode === 'watch' ? (
           renderWatch()
         ) : mode === 'bridge' ? (
-          <div data-testid="browser-mode-pending" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
-            This mode is not yet available.
-          </div>
+          renderBridge()
         ) : committedUrl !== null ? (
           <iframe
             data-testid="browser-frame"

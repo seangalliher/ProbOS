@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe('AD-1052 BrowserWorkstation', () => {
-  it('defaults to Embedded active; Watch enabled and Bridge disabled (the mode model)', () => {
+  it('defaults to Embedded active; Watch and Bridge enabled (the mode model)', () => {
     render(<BrowserWorkstation typeId="browser" />);
     const embedded = screen.getByTestId('browser-mode-embedded') as HTMLButtonElement;
     const watch = screen.getByTestId('browser-mode-watch') as HTMLButtonElement;
@@ -25,7 +25,7 @@ describe('AD-1052 BrowserWorkstation', () => {
     expect(embedded.disabled).toBe(false);
     expect(embedded.getAttribute('aria-pressed')).toBe('true');
     expect(watch.disabled).toBe(false); // AD-1052a flipped Watch on
-    expect(bridge.disabled).toBe(true);
+    expect(bridge.disabled).toBe(false); // AD-1052b flipped Bridge on
   });
 
   it('shows the empty / honest-degrade state before any URL (no iframe)', () => {
@@ -71,11 +71,12 @@ describe('AD-1052 BrowserWorkstation', () => {
     expect(_normalizeUrl('ok.test')).toBe('https://ok.test');
   });
 
-  it('keeps Embedded active when a disabled mode segment is clicked', () => {
+  it('clicking Bridge switches to bridge mode and shows the endpoint input', () => {
     render(<BrowserWorkstation typeId="browser" />);
-    // Bridge stays disabled (AD-1052b); a disabled button does not dispatch click.
     fireEvent.click(screen.getByTestId('browser-mode-bridge'));
-    expect((screen.getByTestId('browser-mode-embedded') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
+    expect((screen.getByTestId('browser-mode-bridge') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('browser-bridge-endpoint')).toBeTruthy();
+    // The AD-1052 'browser-mode-pending' placeholder div is gone.
     expect(screen.queryByTestId('browser-mode-pending')).toBeNull();
   });
 
@@ -175,5 +176,78 @@ describe('AD-1052a BrowserWorkstation watch mode', () => {
     expect(EMOJI.test(container.textContent ?? '')).toBe(false);
     expect(screen.getByTestId('browser-watch-refresh')).toBeTruthy();
     expect(screen.getByTestId('browser-watch-note')).toBeTruthy();
+  });
+});
+
+type _Bridge = {
+  connected: boolean;
+  reason?: string | null;
+  session_id?: string | null;
+  streaming_url?: string | null;
+};
+
+describe('AD-1052b BrowserWorkstation bridge mode', () => {
+  it('clicking Bridge shows the endpoint input (default), the consent note, and Connect', () => {
+    render(<BrowserWorkstation typeId="browser" />);
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    const ep = screen.getByTestId('browser-bridge-endpoint') as HTMLInputElement;
+    expect(ep.value).toBe('http://127.0.0.1:9222');
+    expect(screen.getByTestId('browser-bridge-consent-note').textContent).toContain('logged-in sessions');
+    expect(screen.getByTestId('browser-bridge-connect')).toBeTruthy();
+  });
+
+  it('Connect calls connectBridge(endpoint) and mounts the stream <img> with NO token (DD-1)', async () => {
+    const connectBridge = vi.fn(async (): Promise<_Bridge> => ({
+      connected: true, session_id: 's9', streaming_url: '/api/browser/sessions/s9/stream',
+    }));
+    render(<BrowserWorkstation typeId="browser" connectBridge={connectBridge} />);
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    fireEvent.click(screen.getByTestId('browser-bridge-connect'));
+    const img = await screen.findByTestId('browser-stream-panel-img');
+    expect(connectBridge).toHaveBeenCalledWith('http://127.0.0.1:9222');
+    const src = img.getAttribute('src') ?? '';
+    expect(src).toBe('/api/browser/sessions/s9/stream');
+    expect(src.includes('token=')).toBe(false); // DD-1: no token reaches browser JS
+  });
+
+  it('connected with streaming_url:null honest-degrades to "Streaming not enabled"', async () => {
+    const connectBridge = vi.fn(async (): Promise<_Bridge> => ({
+      connected: true, session_id: 's9', streaming_url: null,
+    }));
+    render(<BrowserWorkstation typeId="browser" connectBridge={connectBridge} />);
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    fireEvent.click(screen.getByTestId('browser-bridge-connect'));
+    await screen.findByTestId('browser-stream-panel-unavailable');
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+  });
+
+  it('refused (connected:false) -> browser-bridge-reason shows the backend reason', async () => {
+    const connectBridge = vi.fn(async (): Promise<_Bridge> => ({
+      connected: false, reason: 'Bridge mode is disabled.',
+    }));
+    render(<BrowserWorkstation typeId="browser" connectBridge={connectBridge} />);
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    fireEvent.click(screen.getByTestId('browser-bridge-connect'));
+    const reason = await screen.findByTestId('browser-bridge-reason');
+    expect(reason.textContent).toContain('Bridge mode is disabled.');
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+  });
+
+  it('connectBridge rejects -> browser-bridge-reason shows "Could not connect…"', async () => {
+    const connectBridge = vi.fn(() => Promise.reject(new Error('boom')));
+    render(<BrowserWorkstation typeId="browser" connectBridge={connectBridge} />);
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    fireEvent.click(screen.getByTestId('browser-bridge-connect'));
+    const reason = await screen.findByTestId('browser-bridge-reason');
+    expect(reason.textContent).toContain('Could not connect');
+  });
+
+  it('the bridge surface uses no emoji (HXI #3), exposes its testids + the consent note (DD-2)', () => {
+    const { container } = render(<BrowserWorkstation typeId="browser" />);
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    expect(EMOJI.test(container.textContent ?? '')).toBe(false);
+    expect(screen.getByTestId('browser-bridge-endpoint')).toBeTruthy();
+    expect(screen.getByTestId('browser-bridge-connect')).toBeTruthy();
+    expect(screen.getByTestId('browser-bridge-consent-note')).toBeTruthy();
   });
 });

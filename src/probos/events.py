@@ -245,6 +245,9 @@ class EventType(str, Enum):
     BROWSER_RECORDING_STOPPED = "browser_recording_stopped"          # AD-706b: webm file finalized
     BROWSER_RECORDING_EXPIRED = "browser_recording_expired"          # AD-706b: reaper deleted past retention
     BROWSER_RECORDING_FAILED = "browser_recording_failed"            # AD-706b: Playwright recording errored at close
+    BROWSER_BRIDGE_CONNECTED = "browser_bridge_connected"        # AD-1052b: connected to an external CDP browser
+    BROWSER_BRIDGE_REFUSED = "browser_bridge_refused"            # AD-1052b: bridge connect refused (disabled/consent/allowlist/unreachable)
+    BROWSER_BRIDGE_DISCONNECTED = "browser_bridge_disconnected"  # AD-1052b: bridge session torn down (disconnect, not close)
     # AD-733-1: AttachmentStore retention telemetry.
     ATTACHMENT_REAPED = "attachment_reaped"                          # AD-733-1: per-sweep summary
     ATTACHMENT_STORE_DISK_FULL = "attachment_store_disk_full"        # AD-733-1: ENOSPC on write

@@ -16,6 +16,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from probos.events import EventType
 from probos.routers.auth import require_crew_scope
@@ -143,3 +144,28 @@ async def list_browser_sessions(runtime: Any = Depends(get_runtime)) -> dict[str
     if browser_tool is None:
         return {"enabled": False, "sessions": []}
     return {"enabled": True, "sessions": browser_tool.list_sessions()}
+
+
+class BridgeConnectRequest(BaseModel):
+    """AD-1052b: body for POST /api/browser/bridge/connect."""
+    endpoint: str
+    confirm: bool = False
+
+
+@router.post("/bridge/connect", dependencies=[Depends(require_crew_scope)])
+async def connect_browser_bridge(
+    body: BridgeConnectRequest, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1052b: consent-gated, allowlist-validated CDP bridge connect.
+
+    Honest-degrade: returns {"connected": False, "reason": "Browser tool is
+    disabled."} when the tool is off (runtime.browser_tool unset). All policy
+    (bridge_enabled / confirm / allowlist) lives in BrowserTool — this is a thin
+    adapter. Same require_crew_scope posture as the stream / sessions list.
+    """
+    browser_tool = getattr(runtime, "browser_tool", None)
+    if browser_tool is None:
+        return {"connected": False, "reason": "Browser tool is disabled."}
+    return await browser_tool.connect_bridge_session(
+        body.endpoint, agent_id="captain", confirm=body.confirm,
+    )
