@@ -867,8 +867,18 @@ class TestDreamingIntegration:
                 f.write_text(f"content {i}")
                 await rt.process_natural_language(f"read the file at {f}")
 
-            # Confirm episodes exist (AD-430c act-store hook may add extras)
+            # Confirm episodes exist (AD-430c act-store hook may add extras).
+            # Under `-n` parallel worker pressure the act-store hook can lag the
+            # awaited process_natural_language, so poll briefly until the memory
+            # settles before dreaming — otherwise force_dream replays a partial
+            # memory and the count assertion races (the test passes 5/5 in
+            # isolation; only concurrent heavy-boot pressure exposes the lag).
             episodes = await mem.recent(k=20)
+            for _ in range(60):
+                if len(episodes) >= 3:
+                    break
+                await asyncio.sleep(0.05)
+                episodes = await mem.recent(k=20)
             assert len(episodes) >= 3
 
             # Record weights before dream
