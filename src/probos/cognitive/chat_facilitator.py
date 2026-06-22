@@ -131,22 +131,44 @@ class ChatFacilitator:
         self._w_exploration = max(0.0, float(weight_exploration))
 
     @classmethod
-    def from_config(cls, config: object | None) -> "ChatFacilitator":
+    def from_config(cls, config: object | None, *, broadcast: bool = False) -> "ChatFacilitator":
         """Build from a SystemConfig-like object. None / missing group_chat
-        -> all defaults (zero-config boot; AD-914's minimal runtime)."""
+        -> all defaults (zero-config boot; AD-914's minimal runtime).
+
+        AD-963b: ``broadcast`` requests the department-dominant weight tilt for a
+        BROADCAST turn (so the domain expert frames the topic first). The tilt
+        only applies when the master flag ``group_chat.turn_mode_policy_enabled``
+        is ALSO on, so with the flag OFF (default) ``broadcast=True`` resolves to
+        the standard fixed weights — byte-identical to the pre-AD-963b facilitator.
+        DIRECTED / DISCUSSION turns pass ``broadcast=False`` and always get the
+        standard weights.
+        """
         gc = getattr(config, "group_chat", None)
         if gc is None:
             return cls()
+        # AD-963b: department-dominant tilt only when broadcast AND the policy
+        # master flag is on; otherwise the standard fixed weights (byte-identical).
+        _tilt = bool(broadcast) and bool(getattr(gc, "turn_mode_policy_enabled", False))
+        if _tilt:
+            w_mention = getattr(gc, "broadcast_weight_mention", 0.20)
+            w_recency = getattr(gc, "broadcast_weight_recency", 0.15)
+            w_department = getattr(gc, "broadcast_weight_department", 0.50)
+            w_trust = getattr(gc, "broadcast_weight_trust", 0.10)
+        else:
+            w_mention = getattr(gc, "weight_mention", 0.40)
+            w_recency = getattr(gc, "weight_recency", 0.25)
+            w_department = getattr(gc, "weight_department", 0.25)
+            w_trust = getattr(gc, "weight_trust", 0.10)
         return cls(
             max_speakers_per_turn=getattr(gc, "max_speakers_per_turn", 0),
             convergence_enabled=getattr(gc, "convergence_enabled", True),
             convergence_similarity_threshold=getattr(gc, "convergence_similarity_threshold", 0.6),
             convergence_min_messages=getattr(gc, "convergence_min_messages", 4),
             convergence_min_agents=getattr(gc, "convergence_min_agents", 2),
-            weight_mention=getattr(gc, "weight_mention", 0.40),
-            weight_recency=getattr(gc, "weight_recency", 0.25),
-            weight_department=getattr(gc, "weight_department", 0.25),
-            weight_trust=getattr(gc, "weight_trust", 0.10),
+            weight_mention=w_mention,
+            weight_recency=w_recency,
+            weight_department=w_department,
+            weight_trust=w_trust,
             weight_exploration=getattr(gc, "weight_exploration", 0.0),
         )
 

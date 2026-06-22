@@ -4256,6 +4256,23 @@ class GroupChatConfig(BaseModel):
     # (the default classification) is byte-identical to AD-935/961. Transitional
     # flag (#14) — ships OFF; system.yaml flips it on.
     broadcast_terminator_enabled: bool = False
+    # AD-963b (Natural Conversation epic #882): broadcast department-dominant
+    # weight tilt — the deferred-for-live-look third of #897 (AD-963a shipped the
+    # terminator + ``classify_broadcast`` cue detector; AD-951 the directed
+    # dispatch). ``turn_mode_policy_enabled`` is the MASTER flag for the 3-mode
+    # turn-order policy (directed / broadcast / discussion). OFF (default) =>
+    # byte-identical AD-963a: the broadcast terminator keys off the shipped
+    # ``classify_broadcast`` and the facilitator uses the standard fixed weights.
+    # ON => a BROADCAST turn re-weights the facilitator so the DOMAIN EXPERT
+    # frames first (department-dominant), while DIRECTED and DISCUSSION turns keep
+    # the standard weights. The broadcast weights need not sum to 1 (the
+    # facilitator ranks by magnitude, it does not normalize). Transitional flag
+    # (#14) — ships OFF; system.yaml flips it on.
+    turn_mode_policy_enabled: bool = False
+    broadcast_weight_mention: float = 0.20
+    broadcast_weight_recency: float = 0.15
+    broadcast_weight_department: float = 0.50
+    broadcast_weight_trust: float = 0.10
 
 
 class WardRoomConfig(BaseModel):

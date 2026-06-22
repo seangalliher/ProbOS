@@ -20,7 +20,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, Literal
 
 from probos.cognitive.chat_facilitator import (
     ChatFacilitator,
@@ -77,6 +77,24 @@ def classify_broadcast(text: str) -> bool:
     if not text or not isinstance(text, str):
         return False
     return bool(_BROADCAST_CUE_RE.search(text))
+
+
+def classify_turn_mode(
+    text: str, *, directed_callsign: str | None = None
+) -> Literal["directed", "broadcast", "discussion"]:
+    """AD-963b: classify a Captain turn into one of three turn-order MODES so the
+    fan-out can apply a mode-appropriate weighting + terminator. This is the named
+    v1 HEURISTIC (and the swap seam for a v2 LLM classifier): DIRECTED wins (a
+    leading callsign to a present participant — AD-951's next-speaker selection
+    owns the dispatch); else BROADCAST (a plural ask to the whole room, via the
+    shipped AD-963a ``classify_broadcast`` cue detector); else the default
+    DISCUSSION. Pure + total: any non-directed, non-broadcast text is DISCUSSION
+    (today's behavior), so the policy stays conservative."""
+    if directed_callsign:
+        return "directed"
+    if classify_broadcast(text):
+        return "broadcast"
+    return "discussion"
 
 
 def crew_agent_participants(runtime: Any, participants: list[str]) -> list[str]:
@@ -390,6 +408,7 @@ async def _fan_one_round(
     before: float | None = None,
     addressed_callsigns: set[str] | None = None,
     room_roster: list[str] | None = None,
+    broadcast: bool = False,
 ) -> list[dict[str, str]]:
     """One reactivity round (AD-935): facilitate over ``candidate_ids`` (minus
     ``exclude_ids``) using ``trigger_body`` for mention/relevance, dispatch the
@@ -422,7 +441,7 @@ async def _fan_one_round(
     signals: list[SpeakerSignals] = []
     _room_scores: list[Any] = []
     try:
-        facilitator = ChatFacilitator.from_config(getattr(runtime, "config", None))
+        facilitator = ChatFacilitator.from_config(getattr(runtime, "config", None), broadcast=broadcast)
         signals = _assemble_speaker_signals(
             runtime, trigger_body, candidate_pool, prior, addressed_callsigns
         )
@@ -839,6 +858,23 @@ async def group_chat_fanout(
     # AD-970: an agent-initiated kickoff passes opener_id so the opener is
     # excluded from round 0 (it just spoke); a Captain turn excludes nobody.
     all_replies: list[dict[str, str]] = []
+    # AD-963b: hoist the turn-mode policy ABOVE round 0 so the department-dominant
+    # weight tilt reaches round 0 — the round that decides who FRAMES the topic
+    # first. ``cfg`` is reused by the AD-935 cascade below (the duplicate read was
+    # removed). With the master flag OFF (default) ``turn_mode`` stays None and
+    # ``broadcast_weights`` stays False => byte-identical AD-963a (standard
+    # weights; the terminator keys off the shipped ``classify_broadcast``).
+    # Honest-degrade: ``classify_turn_mode`` is pure + total, so a classification
+    # can never abort the fan-out.
+    cfg = getattr(getattr(runtime, "config", None), "group_chat", None)
+    policy_on = bool(getattr(cfg, "turn_mode_policy_enabled", False))
+    turn_mode: str | None = None
+    if policy_on:
+        _leading = extract_directed_callsign(captain_body or "")
+        _participant_cs = {c.lower() for c in _roster_callsigns.values() if c}
+        _directed = _leading if (_leading and _leading in _participant_cs) else None
+        turn_mode = classify_turn_mode(captain_body, directed_callsign=_directed)
+    broadcast_weights = policy_on and turn_mode == "broadcast"
     round0 = await _fan_one_round(
         runtime, store, thread_id,
         trigger_body=captain_body, trigger_speaker="Captain", candidate_ids=agent_ids,
@@ -846,6 +882,7 @@ async def group_chat_fanout(
         vision_messages=vision_messages, sanity_gate=sanity_gate, t_start=t_start,
         before=captain_msg.created_at,
         room_roster=room_roster,
+        broadcast=broadcast_weights,
     )
     all_replies.extend(round0)
 
@@ -856,7 +893,8 @@ async def group_chat_fanout(
     # cap is the hard backstop; the convergence gate is the semantic terminator
     # (it returns an empty speaking_order once the exchange converges). Default
     # OFF -> the loop is skipped -> round 0 is byte-identical to AD-914.
-    cfg = getattr(getattr(runtime, "config", None), "group_chat", None)
+    # AD-963b: ``cfg`` is now resolved above round 0 (the turn-mode hoist) and
+    # reused here; the duplicate read was removed.
     if getattr(cfg, "agent_reactivity_enabled", False):
         max_rounds = int(getattr(cfg, "max_agent_rounds", 2))
         next_speaker_sel = getattr(cfg, "agent_next_speaker_selection_enabled", False)
@@ -879,9 +917,13 @@ async def group_chat_fanout(
         # discussion cap + convergence terminator. Gated (ships OFF; yaml flips
         # on); a non-broadcast turn (the default classification) is byte-identical
         # to AD-935/961.
+        # AD-963b: when the turn-mode policy is on, the terminator keys off the
+        # hoisted ``turn_mode`` (so directed/discussion turns never round-robin even
+        # with a broadcast cue present); when off, it keys off the shipped AD-963a
+        # ``classify_broadcast`` (byte-identical).
         broadcast_mode = (
             getattr(cfg, "broadcast_terminator_enabled", False)
-            and classify_broadcast(captain_body)
+            and ((turn_mode == "broadcast") if policy_on else classify_broadcast(captain_body))
         )
         # AD-963a: cumulative set of EVERY agent who has spoken. Broadcast mode
         # excludes them ALL each round so each speaks exactly once; discussion
@@ -950,6 +992,7 @@ async def group_chat_fanout(
                     vision_messages=None, sanity_gate=sanity_gate, t_start=t_start,
                     addressed_callsigns=addressed or None,
                     room_roster=room_roster,
+                    broadcast=broadcast_weights,
                 )
             except Exception:
                 logger.warning(
