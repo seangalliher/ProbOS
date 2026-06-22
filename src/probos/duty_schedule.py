@@ -142,6 +142,8 @@ class DutyStatus:
     agent_type: str
     last_executed: float = 0.0     # time.time() of last execution
     execution_count: int = 0
+    success_count: int = 0         # AD-903: outcome counters (capture wiring → AD-903a)
+    failure_count: int = 0
 
 
 class DutyScheduleTracker:
@@ -235,6 +237,43 @@ class DutyScheduleTracker:
                 last_executed=time.time(),
                 execution_count=1,
             )
+
+    def record_outcome(self, agent_type: str, duty_id: str, success: bool) -> None:
+        """AD-903: record a success/failure outcome for a duty.
+
+        Increments only the outcome counters; ``execution_count`` /
+        ``last_executed`` remain owned by :meth:`record_execution` so the two
+        concerns stay separable (AD-903a's capture wiring decides whether a
+        cycle records execution, outcome, or both). Creates the status row if
+        absent.
+        """
+        key = self._status_key(agent_type, duty_id)
+        status = self._status.get(key)
+        if status is None:
+            status = DutyStatus(duty_id=duty_id, agent_type=agent_type)
+            self._status[key] = status
+        if success:
+            status.success_count += 1
+        else:
+            status.failure_count += 1
+
+    def success_rate(self, agent_type: str) -> float | None:
+        """AD-903: aggregate duty success rate for an agent type.
+
+        Returns ``success / (success + failure)`` summed across the agent
+        type's duties, or ``None`` when no outcomes have been recorded yet (so
+        callers can distinguish "no data" from "0% success").
+        """
+        success = 0
+        failure = 0
+        for status in self._status.values():
+            if status.agent_type == agent_type:
+                success += status.success_count
+                failure += status.failure_count
+        total = success + failure
+        if total == 0:
+            return None
+        return success / total
 
     async def emit_due_duties_as_work_items(
         self,

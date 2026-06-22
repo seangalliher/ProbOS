@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from probos.clearance_grants import ClearanceGrantStore
     from probos.cognitive.agent_patcher import AgentPatcher
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
+    from probos.cognitive.clinical_notes_store import ClinicalNotesStore
     from probos.cognitive.codebase_index import CodebaseIndex
     from probos.cognitive.correction_detector import CorrectionDetector
     from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
@@ -167,6 +168,7 @@ class CommunicationResult:
     acm: "AgentCapitalService"
     ontology: "VesselOntologyService | None"
     clearance_grant_store: "ClearanceGrantStore | None"
+    clinical_notes_store: "ClinicalNotesStore | None"  # AD-904
     capability_request_store: "CapabilityRequestStore | None"  # AD-853
     skill_request_store: "SkillRequestStore | None"  # AD-906
     tool_registry: "ToolRegistry | None"

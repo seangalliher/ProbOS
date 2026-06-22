@@ -594,6 +594,19 @@ class CognitiveCircuitBreaker:
         """Return current cognitive zone for an agent."""
         return self._get_state(agent_id).zone.value
 
+    def get_zone_history(self, agent_id: str, n: int = 20) -> list[tuple[str, float]]:
+        """Return up to the last ``n`` ``(zone, timestamp)`` samples (AD-903).
+
+        Unlike ``get_status`` (which caps the embedded view at the last 5), this
+        exposes the full bounded ring (``AgentBreakerState.zone_history``, cap
+        20) for the Counselor clinical trend surface. ``n <= 0`` returns []
+        (an explicit guard — ``zone_history[-0:]`` would otherwise return the
+        whole ring).
+        """
+        if n <= 0:
+            return []
+        return list(self._get_state(agent_id).zone_history[-n:])
+
     def get_last_zone_transition(self, agent_id: str) -> tuple[str, str] | None:
         """Return (old_zone, new_zone) from the most recent check, or None if no change."""
         return self._get_state(agent_id).last_zone_transition

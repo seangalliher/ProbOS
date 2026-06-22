@@ -683,6 +683,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.clearance_grant_store.stop()
         runtime.clearance_grant_store = None
 
+    # AD-904: Clinical notes store
+    if hasattr(runtime, 'clinical_notes_store') and runtime.clinical_notes_store:
+        await runtime.clinical_notes_store.stop()
+        runtime.clinical_notes_store = None
+
     # AD-423b: Tool permission store
     if hasattr(runtime, 'tool_permission_store') and runtime.tool_permission_store:
         await runtime.tool_permission_store.stop()

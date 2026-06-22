@@ -296,6 +296,15 @@ async def init_communication(
     await clearance_grant_store.start()
     logger.info("clearance-grant-store started")
 
+    # --- Clinical Notes Store (AD-904) ---
+    from probos.cognitive.clinical_notes_store import ClinicalNotesStore
+
+    clinical_notes_store = ClinicalNotesStore(
+        db_path=str(data_dir / "clinical_notes.db"),
+    )
+    await clinical_notes_store.start()
+    logger.info("clinical-notes-store started")
+
     # --- Capability Request Store (AD-853) ---
     from probos.capability_request import CapabilityRequestStore
 
@@ -554,6 +563,7 @@ async def init_communication(
         acm=acm,
         ontology=ontology,
         clearance_grant_store=clearance_grant_store,
+        clinical_notes_store=clinical_notes_store,
         capability_request_store=capability_request_store,
         skill_request_store=skill_request_store,
         tool_registry=tool_registry,

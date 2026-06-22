@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import uuid as _uuid
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,6 +69,7 @@ from probos.cognitive.builder_specialists import (
 from probos.cognitive.architect import ArchitectAgent
 from probos.cognitive.scout import ScoutAgent
 from probos.cognitive.counselor import CounselorAgent
+from probos.cognitive.self_similarity_history import SelfSimilarityHistory
 from probos.cognitive.yeoman import YeomanAgent
 from probos.boot_camp import BootCampCoordinator
 from probos.cognitive.security_officer import SecurityAgent
@@ -150,6 +152,7 @@ if TYPE_CHECKING:
     from probos.cognitive.agent_patcher import AgentPatcher
     from probos.cognitive.capability_gap_driver import CapabilityGapDriver
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
+    from probos.cognitive.clinical_notes_store import ClinicalNotesStore  # AD-904
     from probos.avatars.divergence_detector import DivergenceResult  # AD-722a
     from probos.avatars.divergence_detector import DivergenceHistoryEntry  # AD-722a-5
     from probos.cognitive.codebase_index import CodebaseIndex
@@ -265,6 +268,7 @@ class ProbOSRuntime:
     assignment_service: AssignmentService | None
     bridge_alerts: BridgeAlertService | None
     clearance_grant_store: ClearanceGrantStore | None
+    clinical_notes_store: ClinicalNotesStore | None
     capability_request_store: CapabilityRequestStore | None
     skill_request_store: SkillRequestStore | None
     tool_registry: ToolRegistry | None
@@ -758,6 +762,20 @@ class ProbOSRuntime:
 
         # --- Clearance Grants (AD-622) ---
         self.clearance_grant_store: ClearanceGrantStore | None = None
+
+        # --- Clinical Notes (AD-904) ---
+        self.clinical_notes_store: ClinicalNotesStore | None = None
+
+        # --- Clinical Access (AD-903) ---
+        # Self-similarity history ring (always-on, pure in-memory) feeds the
+        # Counselor clinical trend surface. Recorded from proactive
+        # self-monitoring; read by the gated /clinical trend endpoint.
+        self.self_similarity_history = SelfSimilarityHistory()
+        # Bounded audit ring for clinical-access decisions (every allow AND
+        # deny). Mirrors the ClinicalTelemetryService._record_audit in-memory
+        # ring shape; fail-safe — a CONFIDENTIAL gate must never take a DB
+        # dependency to record an access.
+        self.clinical_access_audit: deque[dict[str, Any]] = deque(maxlen=1000)
 
         # --- Capability Requests (AD-853) ---
         self.capability_request_store: CapabilityRequestStore | None = None
@@ -2256,6 +2274,7 @@ class ProbOSRuntime:
         self.assignment_service = comm.assignment_service
         self.bridge_alerts = comm.bridge_alerts
         self.clearance_grant_store = comm.clearance_grant_store
+        self.clinical_notes_store = comm.clinical_notes_store
         self.capability_request_store = comm.capability_request_store
         self.skill_request_store = comm.skill_request_store
         self.tool_registry = comm.tool_registry

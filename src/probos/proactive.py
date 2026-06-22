@@ -2392,6 +2392,13 @@ class ProactiveCognitiveLoop:
                             pair_count += 1
                     if pair_count > 0:
                         result["self_similarity"] = round(total_sim / pair_count, 2)
+                        # AD-903: record into the self-similarity history ring
+                        # for the Counselor clinical trend surface. Guarded —
+                        # an absent ring degrades silently; inside the existing
+                        # try/except so any failure stays non-fatal.
+                        hist = getattr(rt, "self_similarity_history", None)
+                        if hist is not None:
+                            hist.record(agent.id, result["self_similarity"])
             except Exception:
                 logger.debug("Self-monitoring: similarity calc failed for %s", callsign, exc_info=True)
 
