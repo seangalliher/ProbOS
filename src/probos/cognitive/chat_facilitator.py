@@ -21,6 +21,7 @@ which cannot be pointed at chat_thread_messages rows.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
 
@@ -101,6 +102,35 @@ def build_room_signal(
     }
 
 
+def facilitation_mode(
+    participant_count: int,
+    *,
+    threshold: int = 5,
+    force_min: int = 0,
+) -> Literal["advisory", "gating"]:
+    """AD-956 (Natural Conversation epic #882): classify how the facilitator
+    ENFORCES who speaks, as a pure function of room size.
+
+    Span-of-control grounding: a small room (2-4 voices) self-regulates — the
+    AD-955 advisory room-awareness signal is enough, so the per-turn cap stays
+    OFF and every relevant crew member may answer (still convergence-gated,
+    [NO_RESPONSE]-thinned, and ``max_agent_rounds``-bounded). A large room
+    (>= the ratified ``threshold`` of 5) exceeds a comfortable span of control
+    and needs the cap to GATE the fan-out so the Captain is not flooded.
+
+    Returns ``"gating"`` iff ``participant_count >= threshold`` OR
+    (``force_min > 0`` and ``participant_count >= force_min``) — the
+    ``force_min`` opt-in floor lets an operator gate even small rooms. Otherwise
+    ``"advisory"``. Total, side-effect-free, no I/O.
+    """
+    count = int(participant_count)
+    if count >= int(threshold):
+        return "gating"
+    if force_min > 0 and count >= int(force_min):
+        return "gating"
+    return "advisory"
+
+
 class ChatFacilitator:
     """Pure facilitator. No I/O, no LLM, no runtime."""
 
@@ -131,7 +161,13 @@ class ChatFacilitator:
         self._w_exploration = max(0.0, float(weight_exploration))
 
     @classmethod
-    def from_config(cls, config: object | None, *, broadcast: bool = False) -> "ChatFacilitator":
+    def from_config(
+        cls,
+        config: object | None,
+        *,
+        broadcast: bool = False,
+        max_speakers_override: int | None = None,
+    ) -> "ChatFacilitator":
         """Build from a SystemConfig-like object. None / missing group_chat
         -> all defaults (zero-config boot; AD-914's minimal runtime).
 
@@ -142,6 +178,12 @@ class ChatFacilitator:
         the standard fixed weights — byte-identical to the pre-AD-963b facilitator.
         DIRECTED / DISCUSSION turns pass ``broadcast=False`` and always get the
         standard weights.
+
+        AD-956: ``max_speakers_override`` (keyword-only) lets the scale-aware
+        caller substitute the per-turn cap. ``None`` (default) reads the
+        configured ``max_speakers_per_turn`` (byte-identical); ``0`` turns the
+        cap OFF (advisory widening — all candidates ranked, still
+        convergence-gated). ``facilitate()`` is unchanged (cap 0 already = all).
         """
         gc = getattr(config, "group_chat", None)
         if gc is None:
@@ -160,7 +202,11 @@ class ChatFacilitator:
             w_department = getattr(gc, "weight_department", 0.25)
             w_trust = getattr(gc, "weight_trust", 0.10)
         return cls(
-            max_speakers_per_turn=getattr(gc, "max_speakers_per_turn", 0),
+            max_speakers_per_turn=(
+                max_speakers_override
+                if max_speakers_override is not None
+                else getattr(gc, "max_speakers_per_turn", 0)
+            ),
             convergence_enabled=getattr(gc, "convergence_enabled", True),
             convergence_similarity_threshold=getattr(gc, "convergence_similarity_threshold", 0.6),
             convergence_min_messages=getattr(gc, "convergence_min_messages", 4),

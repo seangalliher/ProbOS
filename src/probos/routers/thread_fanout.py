@@ -26,6 +26,7 @@ from probos.cognitive.chat_facilitator import (
     ChatFacilitator,
     SpeakerSignals,
     build_room_signal,
+    facilitation_mode,
 )
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
@@ -409,6 +410,7 @@ async def _fan_one_round(
     addressed_callsigns: set[str] | None = None,
     room_roster: list[str] | None = None,
     broadcast: bool = False,
+    max_speakers_override: int | None = None,
 ) -> list[dict[str, str]]:
     """One reactivity round (AD-935): facilitate over ``candidate_ids`` (minus
     ``exclude_ids``) using ``trigger_body`` for mention/relevance, dispatch the
@@ -441,7 +443,11 @@ async def _fan_one_round(
     signals: list[SpeakerSignals] = []
     _room_scores: list[Any] = []
     try:
-        facilitator = ChatFacilitator.from_config(getattr(runtime, "config", None), broadcast=broadcast)
+        facilitator = ChatFacilitator.from_config(
+            getattr(runtime, "config", None),
+            broadcast=broadcast,
+            max_speakers_override=max_speakers_override,
+        )
         signals = _assemble_speaker_signals(
             runtime, trigger_body, candidate_pool, prior, addressed_callsigns
         )
@@ -875,6 +881,36 @@ async def group_chat_fanout(
         _directed = _leading if (_leading and _leading in _participant_cs) else None
         turn_mode = classify_turn_mode(captain_body, directed_callsign=_directed)
     broadcast_weights = policy_on and turn_mode == "broadcast"
+    # AD-956 (Natural Conversation epic #882): scale-aware facilitation. When the
+    # master flag is ON, classify the room by participant count: a small room
+    # (2-4, below the ratified threshold of 5) widens to ADVISORY — the per-turn
+    # cap is turned OFF (override=0) so every relevant crew member may answer,
+    # still convergence-gated, [NO_RESPONSE]-thinned, and max_agent_rounds-bounded
+    # (the participant count is the per-round ceiling; advisory only fires for
+    # 2-4-voice rooms => <= 4 parallel/round). A large room (>= threshold) stays
+    # GATING (override=None) so the configured cap throttles the fan-out. Flag OFF
+    # (default) => the classifier never runs, override stays None, and every round
+    # uses ``max_speakers_per_turn`` EXACTLY as today (byte-identical). The widening
+    # raises NEITHER ``max_agent_rounds`` NOR bypasses the convergence gate — only
+    # the per-round cap. Honest-degrade: any classify failure falls back to today's
+    # gating cap (override=None) and never aborts the fan-out.
+    _speakers_override: int | None = None
+    if bool(getattr(cfg, "scale_aware_facilitation_enabled", False)):
+        try:
+            _mode = facilitation_mode(
+                len(agent_ids),
+                threshold=int(getattr(cfg, "facilitation_gate_threshold", 5)),
+                force_min=int(getattr(cfg, "force_facilitation_min", 0)),
+            )
+            if _mode == "advisory":
+                _speakers_override = 0
+        except Exception:
+            logger.warning(
+                "AD-956: facilitation-mode classify failed for thread=%s (n=%d); "
+                "falling back to the configured gating cap",
+                thread_id, len(agent_ids), exc_info=True,
+            )
+            _speakers_override = None
     round0 = await _fan_one_round(
         runtime, store, thread_id,
         trigger_body=captain_body, trigger_speaker="Captain", candidate_ids=agent_ids,
@@ -883,6 +919,7 @@ async def group_chat_fanout(
         before=captain_msg.created_at,
         room_roster=room_roster,
         broadcast=broadcast_weights,
+        max_speakers_override=_speakers_override,
     )
     all_replies.extend(round0)
 
@@ -993,6 +1030,7 @@ async def group_chat_fanout(
                     addressed_callsigns=addressed or None,
                     room_roster=room_roster,
                     broadcast=broadcast_weights,
+                    max_speakers_override=_speakers_override,
                 )
             except Exception:
                 logger.warning(

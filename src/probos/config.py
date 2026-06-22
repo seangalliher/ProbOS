@@ -4273,6 +4273,20 @@ class GroupChatConfig(BaseModel):
     broadcast_weight_recency: float = 0.15
     broadcast_weight_department: float = 0.50
     broadcast_weight_trust: float = 0.10
+    # AD-956 (Natural Conversation epic #882): scale-aware facilitation. The
+    # facilitator already ranks the room every turn (AD-915) and surfaces an
+    # advisory room-awareness signal (AD-955). AD-956 makes ENFORCEMENT
+    # scale-aware: a small room (2-4 voices, below ``facilitation_gate_threshold``)
+    # self-regulates with the cap OFF (advisory) so every relevant crew member may
+    # answer (still convergence-gated, [NO_RESPONSE]-thinned, max_agent_rounds-
+    # bounded); a large room (>= threshold, ratified at 5 on span-of-control
+    # grounds) keeps the cap to GATE the fan-out. ``force_facilitation_min`` is an
+    # opt-in floor that gates even small rooms (0 = off). Master flag ships OFF
+    # (#14, default-OFF byte-identical: the classifier never runs, every round
+    # uses ``max_speakers_per_turn`` EXACTLY as today); ``system.yaml`` flips it on.
+    scale_aware_facilitation_enabled: bool = False
+    facilitation_gate_threshold: int = Field(default=5, ge=2)
+    force_facilitation_min: int = Field(default=0, ge=0)
 
 
 class WardRoomConfig(BaseModel):
