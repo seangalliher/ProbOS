@@ -97,6 +97,18 @@ CREATE TABLE IF NOT EXISTS chat_thread_tombstones (
 CREATE INDEX IF NOT EXISTS idx_tombstones_purged ON chat_thread_tombstones (purged_at);
 """
 
+# AD-791g (#792): fixed per-instance system-thread sentinels. Hyphenated (not
+# ``uuid4().hex``) so they are collision-safe against generated thread ids and
+# human-greppable in the DB. ``MAIN_CHAT_THREAD_ID`` is the single shared thread
+# the multi-mention fan-out (routers/chat.py) seeds + appends every Captain turn
+# and agent reply into; ``COMPUTER_THREAD_ID`` is the Captain↔Ship's-Computer
+# vision / Captain-only thread. Membership is implicit (``participants`` stays
+# ``[]`` — there is exactly one Captain per instance and every on-duty agent is
+# reachable), so neither thread does a participants read-modify-write.
+# ``metadata.kind="system"`` tags them without a schema change.
+MAIN_CHAT_THREAD_ID: str = "system-main-chat"
+COMPUTER_THREAD_ID: str = "system-ships-computer"
+
 
 @dataclass
 class ChatThread:
@@ -818,6 +830,76 @@ class ChatThreadStore:
                     id=thread_id,
                     title=agent_callsign,
                     participants=[agent_id],
+                    project_id=None,
+                    task_id=None,
+                    pinned=False,
+                    archived=False,
+                    personality_override=None,
+                    workspace_root=None,
+                    created_at=now,
+                    last_active_at=now,
+                    preprompt=None,
+                    model=None,
+                    metadata=metadata,
+                )
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    def get_or_create_system_thread(
+        self, thread_id: str, *, title: str
+    ) -> ChatThread:
+        """Atomic find-or-create for a FIXED-id system thread (AD-791g).
+
+        Unlike ``create_thread`` (which mints its own ``uuid4`` id) this
+        inserts the CALLER-SUPPLIED ``thread_id`` — used for the per-instance
+        sentinel threads ``MAIN_CHAT_THREAD_ID`` / ``COMPUTER_THREAD_ID``.
+        Wraps the lookup-then-insert in ``BEGIN IMMEDIATE`` so two concurrent
+        first-turn requests cannot both insert; the second blocks on the
+        RESERVED lock held by the first, then on retry finds the row the first
+        inserted and returns it. Idempotent + self-healing: if the row already
+        exists it is returned unchanged (no upsert of title/metadata).
+
+        ``participants`` is the empty list (implicit membership — the Captain
+        plus every on-duty agent; no roster read-modify-write, so the AD-791
+        write-skew class does not apply here). ``project_id`` is NULL
+        (per-instance, not project-scoped — AD-793 per-project keying is a
+        forward compose). ``metadata.kind="system"`` tags the row without a
+        schema migration.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT * FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is not None:
+                    conn.execute("COMMIT")
+                    return _row_to_thread(row)
+                now = self._clock()
+                metadata = {"kind": "system"}
+                meta_json = json.dumps(metadata)
+                conn.execute(
+                    "INSERT INTO chat_threads "
+                    "(id, title, participants, project_id, task_id, pinned, "
+                    " archived, personality_override, workspace_root, "
+                    " created_at, last_active_at, preprompt, model, metadata) "
+                    "VALUES (?,?,?,NULL,NULL,0,0,NULL,NULL,?,?,NULL,NULL,?)",
+                    (
+                        thread_id,
+                        title,
+                        json.dumps([]),
+                        now,
+                        now,
+                        meta_json,
+                    ),
+                )
+                conn.execute("COMMIT")
+                return ChatThread(
+                    id=thread_id,
+                    title=title,
+                    participants=[],
                     project_id=None,
                     task_id=None,
                     pinned=False,

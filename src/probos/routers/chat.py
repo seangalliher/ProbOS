@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from typing import Any, Callable
@@ -155,6 +156,39 @@ async def chat(
             from probos.api_models import PerAgentReply
             from probos.types import IntentMessage as _IntentMessage
 
+            # AD-791g (#792): seed the single shared main-chat thread and log
+            # the Captain's turn into it. Flag-less honest-degrade — gated only
+            # on store-presence (mirrors AD-791a). Store absent → thread_id on
+            # the N intents stays None and the fan-out episode keeps
+            # chat_thread_id="" (byte-identical to pre-AD-791g). Tier-2: any
+            # store failure logs + drops back to the store-absent path; replies
+            # are never blocked.
+            _main_thread_store = getattr(runtime, "chat_thread_store", None)
+            if _main_thread_store is not None:
+                from probos.threads import MAIN_CHAT_THREAD_ID
+                try:
+                    _main_thread_store.get_or_create_system_thread(
+                        MAIN_CHAT_THREAD_ID, title="Main Chat",
+                    )
+                    _main_thread_store.append_message(
+                        MAIN_CHAT_THREAD_ID,
+                        author_id="captain",
+                        role="captain",
+                        body=remaining_message,
+                        metadata={
+                            "source": "multi_agent_chat",
+                            "mentions": all_callsigns,
+                        },
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "AD-791g: main-chat thread seed/append failed: %s: %s; "
+                        "continuing flag-less — intents carry thread_id=None, "
+                        "replies unaffected",
+                        type(e).__name__, e,
+                    )
+                    _main_thread_store = None
+
             resolved_list: list[tuple[str, dict[str, Any] | None]] = []
             for cs in all_callsigns:
                 resolved_list.append((cs, runtime.callsign_registry.resolve(cs)))
@@ -188,6 +222,7 @@ async def chat(
                     },
                     target_agent_id=resolved["agent_id"],
                     ttl_seconds=60.0,  # AD-636
+                    thread_id=(MAIN_CHAT_THREAD_ID if _main_thread_store is not None else None),  # AD-791g
                 )
                 try:
                     result = await runtime.intent_bus.send(intent)
@@ -213,6 +248,43 @@ async def chat(
                 *[_send_one(cs, r) for cs, r in resolved_list],
             )
             per_agent_replies = list(per_agent_replies_list)
+
+            # AD-791g (#792): log each REAL agent reply into the shared
+            # main-chat thread. Skip stub/placeholder replies (unresolved,
+            # off-duty, no-message, delivery-failed, empty) so the thread
+            # carries only genuine turns. Gated on store-presence; tier-2
+            # honest-degrade per reply (one failure never blocks the others
+            # or the HTTP response).
+            if _main_thread_store is not None:
+                _sentinels = {
+                    "(callsign not recognized)",
+                    "(not currently on duty)",
+                    "(no message — append text after the mentions)",
+                    "(delivery failed)",
+                    "(no response)",
+                }
+                for _reply in per_agent_replies:
+                    if not _reply.agent_id or _reply.text in _sentinels:
+                        continue
+                    try:
+                        _main_thread_store.append_message(
+                            MAIN_CHAT_THREAD_ID,
+                            author_id=_reply.agent_id,
+                            role="agent",
+                            body=_reply.text,
+                            metadata={
+                                "source": "multi_agent_chat",
+                                "callsign": _reply.callsign,
+                            },
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "AD-791g: main-chat reply append failed for %s: "
+                            "%s: %s; continuing — thread gap accepted, replies "
+                            "still returned",
+                            _reply.callsign, type(e).__name__, e,
+                        )
+                        continue
 
             # Episodic write per resolved fan-out reply (one episode per
             # (captain_turn, replying_agent) pair). Stubs (unresolved /
@@ -248,6 +320,29 @@ async def chat(
                                     trigger_type="at_mention_fanout",
                                 ),
                             )
+                        # AD-791g / AD-933a TRAP: anchor the episode to the
+                        # shared main-chat thread AFTER the if/else so BOTH
+                        # branches are reached. ``dream_adapter.build_episode``
+                        # returns a channel="dag" AnchorFrame that does NOT set
+                        # chat_thread_id, so augmenting only the else-branch
+                        # AnchorFrame would silently drop the id in production
+                        # (where a dream_adapter exists). Episode + AnchorFrame
+                        # are BOTH frozen dataclasses, so we rebuild via
+                        # ``dataclasses.replace`` rather than assign in place.
+                        # Gated on store-presence → episode is left untouched
+                        # (stays chat_thread_id="") when absent, byte-identical
+                        # to pre-AD-791g.
+                        if (
+                            _main_thread_store is not None
+                            and episode.anchors is not None
+                        ):
+                            episode = dataclasses.replace(
+                                episode,
+                                anchors=dataclasses.replace(
+                                    episode.anchors,
+                                    chat_thread_id=MAIN_CHAT_THREAD_ID,
+                                ),
+                            )
                         await episodic_memory.store(episode)
                     except Exception as e:
                         logger.warning(
@@ -262,6 +357,7 @@ async def chat(
                 "results": None,
                 "mentions": all_callsigns,
                 "per_agent_replies": [r.model_dump() for r in per_agent_replies],
+                "thread_id": MAIN_CHAT_THREAD_ID if _main_thread_store is not None else None,  # AD-791g
             }
 
     mention = extract_callsign_mention(text)
@@ -531,6 +627,49 @@ async def chat(
                 )
                 t_end_vision = time.monotonic()
 
+                # AD-791g (#792): route the Captain↔Ship's-Computer vision turn
+                # into the fixed Computer thread so the Captain's-Log surface is
+                # non-empty. Flag-less honest-degrade — gated on store-presence;
+                # tier-2 (an append failure logs + drops to the store-absent
+                # path, never blocks the reply or the episode store below).
+                _computer_store = getattr(runtime, "chat_thread_store", None)
+                if _computer_store is not None:
+                    from probos.threads import COMPUTER_THREAD_ID
+                    try:
+                        _computer_store.get_or_create_system_thread(
+                            COMPUTER_THREAD_ID, title="Ship's Computer",
+                        )
+                        _computer_store.append_message(
+                            COMPUTER_THREAD_ID,
+                            author_id="captain",
+                            role="captain",
+                            body=text,
+                            metadata={
+                                "source": "captain_chat_vision",
+                                "attachment_ids": list(req.attachment_ids),
+                            },
+                        )
+                        _computer_reply = llm_response.content or ""
+                        if _computer_reply:
+                            _computer_store.append_message(
+                                COMPUTER_THREAD_ID,
+                                author_id="ships-computer",
+                                role="agent",
+                                body=_computer_reply,
+                                metadata={
+                                    "source": "captain_chat_vision",
+                                    "llm_tier": tier,
+                                },
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "AD-791g: Computer-thread seed/append failed: %s: "
+                            "%s; continuing flag-less — vision episode keeps "
+                            'chat_thread_id="", reply unaffected',
+                            type(e).__name__, e,
+                        )
+                        _computer_store = None
+
                 # AD-720d-3: episodic write for vision-routed /api/chat turns.
                 # The standard NL path stores an episode after decomposition,
                 # but this branch short-circuits via `return` below — so the
@@ -572,9 +711,11 @@ async def chat(
                                 # prevents future contributors from
                                 # accidentally aliasing the Ward Room
                                 # thread_id (above) into the chat-thread
-                                # namespace. Captain↔Computer threading is
-                                # AD-791g territory.
-                                chat_thread_id="",
+                                # namespace. AD-791g resolves this to the
+                                # fixed Captain↔Ship's-Computer thread when
+                                # the chat-thread store is present; stays ""
+                                # (byte-identical to pre-AD-791g) when absent.
+                                chat_thread_id=(COMPUTER_THREAD_ID if _computer_store is not None else ""),  # AD-791g
                             ),
                         )
                         await episodic_memory.store(episode)
