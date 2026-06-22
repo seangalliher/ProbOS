@@ -43,12 +43,17 @@ logger = logging.getLogger(__name__)
 #       (SUBSCRIBER_AGENT_ID = "perception.vision_aggregator")
 #   - "yeoman-proactive-" → probos/cognitive/yeoman.py
 #       (self._proactive_sub_id = f"yeoman-proactive-{self.id[:8]}")
+#   - "group_chat_coordinator" → probos/threads/agent_group_chat.py (BF-634)
+#       (GROUP_CHAT_COORDINATOR_ID; a Ship's Computer coordinator that
+#        subscribes to the bus but is never registered as an agent — the
+#        live 89%-integrity orphan false positive)
 #
 # This narrows the orphan check — it does not disable it. A subscriber that
 # matches neither a registered agent nor a service prefix is still flagged.
 _SERVICE_SUBSCRIBER_PREFIXES: tuple[str, ...] = (
     "perception.",
     "yeoman-proactive-",
+    "group_chat_coordinator",
 )
 
 

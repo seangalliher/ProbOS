@@ -196,7 +196,10 @@ class _FakeActivationTracker:
     def __init__(self, activations: dict[str, float]):
         self._activations = dict(activations)
 
-    def get_activations_batch(self, episode_ids: list[str]) -> dict[str, float]:
+    async def get_activations_batch(self, episode_ids: list[str]) -> dict[str, float]:
+        # BF-633: mirror the REAL ActivationTracker.get_activations_batch, which
+        # is `async def`. A sync fake here is exactly why the missing-await bug
+        # shipped green — the fake's contract diverged from production.
         return {eid: self._activations.get(eid, float("-inf")) for eid in episode_ids}
 
 
@@ -286,13 +289,50 @@ class TestDecaySweep:
         await mem.store(ep)
 
         class _BrokenTracker:
-            def get_activations_batch(self, episode_ids):
+            async def get_activations_batch(self, episode_ids):
                 raise RuntimeError("tracker down")
 
         counts = await mem.sweep_episode_decay(_BrokenTracker())
 
         assert counts["swept"] >= 1
         assert counts["reinforced"] == 0
+
+    @pytest.mark.asyncio
+    async def test_sweep_awaits_async_tracker(self, mem):
+        """BF-633: sweep_episode_decay MUST await the async activation tracker.
+
+        The real ActivationTracker.get_activations_batch is `async def`. The
+        shipped bug called it without `await`, so `activations` was an
+        un-awaited coroutine; every episode then raised AttributeError on
+        `.get(...)` and decay/reinforcement silently no-op'd (the live
+        RuntimeWarning). This locks the contract: the real method is a
+        coroutine function, the fake awaited tap fires, and reinforcement is
+        actually applied.
+        """
+        import inspect
+
+        from probos.cognitive.activation_tracker import ActivationTracker
+
+        assert inspect.iscoroutinefunction(ActivationTracker.get_activations_batch)
+
+        ep = Episode(
+            timestamp=time.time() - 86400.0,
+            user_input="an awaited memory",
+            outcomes=[{"intent": "read_file", "success": True}],
+        )
+        await mem.store(ep)
+
+        awaited = {"called": False}
+
+        class _AsyncTracker:
+            async def get_activations_batch(self, episode_ids):
+                awaited["called"] = True
+                return {ep.id: 3.0}
+
+        counts = await mem.sweep_episode_decay(_AsyncTracker())
+
+        assert awaited["called"] is True
+        assert counts["reinforced"] >= 1
 
 
 # ---------------------------------------------------------------------------

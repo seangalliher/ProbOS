@@ -186,6 +186,23 @@ class TestIntentBusCoherence:
         result = sif.check_intent_bus_coherence()
         assert result.passed
 
+    def test_group_chat_coordinator_is_service_subscriber(self) -> None:
+        """BF-634: the group-chat coordinator is a service subscriber, not an orphan.
+
+        GROUP_CHAT_COORDINATOR_ID ("group_chat_coordinator") subscribes to the
+        intent bus but is never registered as an agent (a Ship's Computer
+        coordinator). Before BF-634 it tripped the orphan check on every boot
+        — the live 89%-integrity false positive.
+        """
+        from probos.threads.agent_group_chat import GROUP_CHAT_COORDINATOR_ID
+
+        sif = StructuralIntegrityField(
+            intent_bus=_make_intent_bus({GROUP_CHAT_COORDINATOR_ID}),
+            spawner=_make_spawner([], registered_ids=set()),
+        )
+        result = sif.check_intent_bus_coherence()
+        assert result.passed
+
     def test_service_subscriber_mixed_with_real_orphan_still_fails(self) -> None:
         """A real orphan is still caught even when service subscribers are present."""
         sif = StructuralIntegrityField(

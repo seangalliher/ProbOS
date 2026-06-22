@@ -1969,7 +1969,11 @@ class EpisodicMemory:
         activations: dict[str, float] = {}
         if activation_tracker is not None:
             try:
-                activations = activation_tracker.get_activations_batch(list(ids)) or {}
+                # BF-633: get_activations_batch is async — it MUST be awaited.
+                # Without await it returns a coroutine (truthy, so `or {}` never
+                # fires); every episode then hit AttributeError on `.get(...)`
+                # and decay/reinforcement silently no-op'd each dream cycle.
+                activations = await activation_tracker.get_activations_batch(list(ids)) or {}
             except Exception:
                 logger.debug("AD-873: activation batch query failed", exc_info=True)
                 activations = {}
