@@ -22,8 +22,9 @@ import SkillLibrary from './SkillLibrary';
 import SkillCoverage from './SkillCoverage';
 import ToolCertifications from './ToolCertifications';
 import RolePicker from './RolePicker';
+import ClinicalPanel from '../clinical/ClinicalPanel';
 
-type ConsoleView = 'roster' | 'skills' | 'tools' | 'roles';
+type ConsoleView = 'roster' | 'skills' | 'tools' | 'roles' | 'clinical';
 
 interface RosterEntry {
   agent_id: string;
@@ -290,6 +291,7 @@ export default function CrewPersonnelConsole() {
           ['roles', 'Roles'],
           ['skills', 'Skill Library'],
           ['tools', 'Tool Certs'],
+          ['clinical', 'Clinical'],
         ] as [ConsoleView, string][]).map(([key, label]) => {
           const active = view === key;
           return (
@@ -340,6 +342,14 @@ export default function CrewPersonnelConsole() {
           style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 }}
         >
           <RolePicker />
+        </div>
+      ) : view === 'clinical' ? (
+        /* Counselor-gated clinical-observation surface (AD-905). */
+        <div
+          data-testid="personnel-clinical-pane"
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 20 }}
+        >
+          <ClinicalPanel />
         </div>
       ) : (
       /* Master-detail body */
