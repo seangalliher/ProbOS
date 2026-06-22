@@ -28,6 +28,10 @@ from probos.cognitive.chat_facilitator import (
     build_room_signal,
     facilitation_mode,
 )
+from probos.cognitive.conversation_trust import (
+    conversation_topic_tag,
+    extract_conversation_trust_outcomes,
+)
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
 from probos.avatars.divergence_detector import strip_intent_self_tag
@@ -792,6 +796,67 @@ async def _fan_one_round(
     return replies
 
 
+def _record_conversation_trust(
+    runtime: Any,
+    thread: Any,
+    all_replies: list[dict[str, str]],
+    agent_ids: list[str],
+) -> None:
+    """AD-958 (epic #882, #894): credit a CONVERGENT conversation as bounded
+    positive trust.
+
+    Default-OFF: when the master flag ``group_chat.conversation_trust_enabled``
+    is False (the default), this returns on the first line so the trust network
+    stays byte-identical to the pre-AD-958 fan-out. When ON, build the pure
+    AD-915 facilitator + the AD-958 extractor, then record one positive per
+    corroborated contributor — each credited by a DISTINCT peer (no
+    self-sourcing). Honest-degrade Tier-2: any extract or record failure logs
+    and returns; the fan-out result is never touched.
+    """
+    cfg = getattr(getattr(runtime, "config", None), "group_chat", None)
+    if not getattr(cfg, "conversation_trust_enabled", False):
+        return
+    tn = getattr(runtime, "trust_network", None)
+    if tn is None or not hasattr(tn, "record_outcome"):
+        return
+    try:
+        facilitator = ChatFacilitator.from_config(runtime.config)
+        topic = conversation_topic_tag(getattr(thread, "title", "") or "")
+        outcomes = extract_conversation_trust_outcomes(
+            all_replies,
+            facilitator=facilitator,
+            intent_type=topic,
+            positive_weight=getattr(cfg, "conversation_trust_positive_weight", 0.05),
+            max_outcomes=getattr(cfg, "conversation_trust_max_outcomes", 4),
+            convergence_window=_CONVERGENCE_WINDOW,
+        )
+    except Exception:
+        logger.warning(
+            "AD-958: conversation-trust extract failed for thread=%s; skipping "
+            "(fan-out result unaffected)",
+            getattr(thread, "id", "?"), exc_info=True,
+        )
+        return
+    for o in outcomes:
+        try:
+            tn.record_outcome(
+                o.agent_id,
+                success=o.success,
+                weight=o.weight,
+                intent_type=o.intent_type,
+                episode_id="",
+                verifier_id=o.verifier_id,
+                source="conversation",
+            )
+        except Exception:
+            logger.warning(
+                "AD-958: conversation-trust record_outcome failed for agent=%s; "
+                "continuing with the remaining outcomes",
+                o.agent_id, exc_info=True,
+            )
+            continue
+
+
 async def group_chat_fanout(
     runtime: Any,
     thread_id: str,
@@ -1045,4 +1110,5 @@ async def group_chat_fanout(
             if broadcast_mode:
                 broadcast_spoke |= {r["agent_id"] for r in nxt if r.get("agent_id")}
             rounds_done += 1
+    _record_conversation_trust(runtime, thread, all_replies, agent_ids)
     return all_replies

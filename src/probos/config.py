@@ -4196,6 +4196,19 @@ class GroupChatConfig(BaseModel):
     # default 0.0 (OFF, ranking byte-identical to pre-AD-958a); system.yaml sets
     # the live value.
     weight_exploration: float = 0.0
+    # AD-958 (Natural Conversation epic #882, #894): conversational trust
+    # learning loop (convergence-only v1). When a group conversation CONVERGES
+    # (the AD-915 facilitator's pure test), credit each corroborated contributor
+    # with a small POSITIVE trust observation, each verified by a DISTINCT peer
+    # (no self-sourcing). The asymmetric negative weight (peer-corrects-peer) is
+    # reserved for AD-958c and validated-but-unused in v1. Master flag ships OFF
+    # (#14, default-OFF byte-identical: no extractor, no facilitator build, no
+    # record_outcome — the trust network is identical to today); system.yaml
+    # flips it on, then the Captain tunes the weights live.
+    conversation_trust_enabled: bool = False
+    conversation_trust_positive_weight: float = 0.05   # small per-contributor positive on convergence
+    conversation_trust_negative_weight: float = 0.15   # asymmetry (>= positive); reserved for AD-958c, unused in v1
+    conversation_trust_max_outcomes: int = 4           # bound: max positives recorded per conversation
     # AD-918: per-agent rate limit on agent-initiated group-chat creation.
     # Conservative defaults prevent a create-storm without blocking
     # legitimate ad-hoc collaboration. Reuses the BF-163 (60s DM cooldown)
@@ -4287,6 +4300,24 @@ class GroupChatConfig(BaseModel):
     scale_aware_facilitation_enabled: bool = False
     facilitation_gate_threshold: int = Field(default=5, ge=2)
     force_facilitation_min: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_conversation_trust(self) -> "GroupChatConfig":
+        """AD-958: enforce the conversational-trust invariants — a non-negative
+        positive weight, the asymmetry (negative >= positive so a future
+        correction always outweighs a corroboration, AD-958c), and a
+        non-negative outcome bound."""
+        if self.conversation_trust_positive_weight < 0:
+            raise ValueError("conversation_trust_positive_weight must be >= 0")
+        if self.conversation_trust_negative_weight < self.conversation_trust_positive_weight:
+            raise ValueError(
+                "conversation_trust_negative_weight must be >= "
+                "conversation_trust_positive_weight (asymmetry: a correction "
+                "outweighs a corroboration)"
+            )
+        if self.conversation_trust_max_outcomes < 0:
+            raise ValueError("conversation_trust_max_outcomes must be >= 0")
+        return self
 
 
 class WardRoomConfig(BaseModel):

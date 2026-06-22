@@ -10,6 +10,30 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-958 — conversational trust learning loop (convergence-only v1, epic #882, #894)
+
+**Context.** The group-chat facilitator (AD-915) already ranks the room with a `trust` term and AD-955 surfaces that ranking as an advisory signal, but trust itself only ever moved from VERIFICATION (red-team / DAG outcomes). A convergent conversation — several crew talking a topic through until they agree — is itself corroboration that was being thrown away. AD-958 closes the loop: a CONVERGENT conversation credits each contributing voice with a small positive trust observation, which then feeds back into the facilitator's ranking (AD-955) on the next turn. Backend only. Current highest landed top-level = **AD-1052**; AD-958 is the **pre-reserved #882/#894 sub-number, NOT a new top-level** (AD-958a — the exploration term — already shipped under this number).
+
+**Verified `record_outcome` signature (trust substrate, untouched).** `consensus/trust.py:217` — `def record_outcome(self, agent_id, success, weight=1.0, intent_type="", episode_id="", verifier_id="", source="verification") -> float`. SYNCHRONOUS (`def`, called with NO `await`). AD-958 does NOT edit `trust.py` at all: `record_outcome` / `get_score` / `TrustEvent` are consumed exactly as they are.
+
+**Phantom-API guards (recorded so a future AD does not trip them).** (1) `get_score(agent_id)` is **GLOBAL** — there is no `intent_type` score-scoping overload; the per-topic signal lives in `TrustEvent.intent_type`, not in a scoped score. (2) The `source` param is **INERT** — it is never stored or consumed by `record_outcome`; we pass `source="conversation"` for forward intent, but the durable discriminators on the resulting `TrustEvent` are `verifier_id` + `intent_type`, never `source`.
+
+**No self-sourcing (anti-gaming).** An agent can NEVER raise its own trust. In `extract_conversation_trust_outcomes` the distinct contributors are sorted and the verifier for contributor `i` is `distinct[(i+1) % n]`; with `n >= 2`, `(i+1) % n != i` for every `i`, so the verifier is always a DIFFERENT agent. Enforced in code AND asserted in the test (`verifier_id != agent_id AND verifier_id in participants`).
+
+**Convergence-only v1 (positives only); correction deferred to AD-958c.** v1 reuses the facilitator's pure `is_converged` (does NOT re-derive convergence) and emits POSITIVES only. The peer-corrects-peer NEGATIVE path is intentionally NOT built here — `CorrectionDetector` is async-LLM and Captain-corrects-DAG-shaped, the wrong primitive for the synchronous multi-agent case. The heavier negative weight is config-encoded and asymmetry-validated but UNUSED in v1.
+
+**Mayer/asymmetry grounding.** Per the trust literature (Mayer/Davis/Schoorman — trust is slow to build, fast to lose), `conversation_trust_negative_weight (0.15) >= conversation_trust_positive_weight (0.05)`, enforced by a `GroupChatConfig` `@model_validator`. A future correction always outweighs a corroboration.
+
+**The 5-way bounded-runaway analysis (why this can't spiral).** (1) BOUNDED COUNT — at most `conversation_trust_max_outcomes` (4) positives per conversation. (2) SMALL WEIGHT — `positive_weight=0.05` (vs verification's 1.0), and `record_outcome`'s AD-558 progressive dampening/cold-start scaling further shrink it. (3) CONVERGENCE-GATED — nothing is recorded unless the conversation actually converged (`>= min_messages` from `>= min_agents` at mean Jaccard `>= threshold`). (4) NO SELF-SOURCING — an agent cannot bootstrap itself; credit always comes from a distinct peer. (5) CORE IMMUNITY — `record_outcome` already early-returns for `CORE_INFRASTRUCTURE` agents (tier registry), so infrastructure trust is never moved.
+
+**Default-OFF byte-identical (proven with a REAL `TrustNetwork`).** Master flag `group_chat.conversation_trust_enabled` defaults False ⇒ `_record_conversation_trust` returns on its first line (no facilitator build, no extractor, no `record_outcome`) ⇒ the trust network is byte-identical to the pre-AD-958 fan-out. The proof test snapshots `get_score` per agent across a fully convergent fan-out with the flag OFF against a REAL `TrustNetwork()` (NOT MagicMock — BF-287) and asserts the scores and the event log are unchanged.
+
+**The loop closes via the AD-955 global read.** After an ON convergent conversation raises a contributor's score, the next `_assemble_speaker_signals` reads `runtime.trust_network.get_score(aid)` into `SpeakerSignals.trust` — so the corroboration measurably shifts the facilitator's next ranking. Tested end-to-end.
+
+**Honest-degrade.** Any extractor or `record_outcome` failure logs and continues; the `group_chat_fanout` return value (`all_replies`) is never touched.
+
+**Decision.** Add a pure `cognitive/conversation_trust.py` (frozen `ConversationTrustOutcome`, `conversation_topic_tag`, `extract_conversation_trust_outcomes`) + 4 default-OFF `GroupChatConfig` fields with an asymmetry validator + a synchronous `_record_conversation_trust` helper called once before `group_chat_fanout` returns. No `trust.py`, no `config/system.yaml`, no Hebbian/REL_SOCIAL, no AD-853, no AD-955/956/963 change. Closes #894.
+
 ### AD-956 — scale-aware facilitation (epic #882, #892)
 
 **Context.** The group-chat facilitator (AD-915) ranks the room every turn and (AD-955) surfaces an advisory room-awareness signal, but ENFORCEMENT is one-size-fits-all: every room uses the configured `max_speakers_per_turn` cap. A 2-3-voice room needs no cap (a hard truncation silences a relevant crew member who would naturally answer), while a large room needs the cap to keep the Captain from being flooded. AD-956 makes enforcement **scale-aware** — the deferred third of the Natural Conversation #892 thread (the AD-955 row recorded it deferred "until the threshold can be calibrated after watching, not guessed"). Backend only. Current highest landed top-level = **AD-1052**; AD-956 is the **pre-reserved #892 sub-number, NOT a new top-level**.
