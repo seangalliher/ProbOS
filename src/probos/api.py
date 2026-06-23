@@ -227,6 +227,7 @@ def create_app(runtime: Any) -> FastAPI:
         mcp_apps as mcp_apps_router,  # AD-1024: MCP-app gallery read API
         ard as ard_router,  # AD-1042: ARD ai-catalog well-known endpoint (epic #989)
         federation_attachments as federation_attachments_router,  # AD-731a-1: cross-host attachment serving (#638)
+        marketplace as marketplace_router,  # AD-813: read-only skill/pack marketplace BROWSE
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -266,6 +267,7 @@ def create_app(runtime: Any) -> FastAPI:
         mcp_apps_router,
         ard_router,  # AD-1042: ARD ai-catalog well-known endpoint (epic #989)
         federation_attachments_router,  # AD-731a-1: cross-host attachment serving (#638)
+        marketplace_router,  # AD-813: read-only skill/pack marketplace BROWSE
     ):
         app.include_router(r.router)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import urllib.parse
 from pathlib import Path
 from typing import Any, Literal
 
@@ -3131,6 +3132,32 @@ class PacksConfig(BaseModel):
     packs_dir: str = "data/packs"
 
 
+class SkillsMarketplaceConfig(BaseModel):
+    """AD-813: remote skill/pack marketplace BROWSE (read-only, default-OFF).
+
+    Fetches an operator-configured registry index so the operator can browse
+    available packs/skills. BROWSE ONLY — nothing downloaded/written/loaded/
+    executed (install deferred to AD-813b behind the trust gate). SSRF guard:
+    the registry URL comes ONLY from registry_url (operator config), NEVER from
+    the request. Disabled when enabled=False OR registry_url empty (no HTTP).
+    """
+
+    enabled: bool = False
+    registry_url: str = ""
+    timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    max_bytes: int = Field(default=2_000_000, gt=0)
+    max_results: int = Field(default=100, ge=1, le=1000)
+    default_page_size: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("registry_url")
+    @classmethod
+    def _validate_scheme(cls, v: str) -> str:
+        v = v.strip()
+        if v and urllib.parse.urlparse(v).scheme not in ("http", "https"):
+            raise ValueError("registry_url must be http(s) or empty")
+        return v
+
+
 class WorkstationsConfig(BaseModel):
     """AD-1022: HXI workstation-type surface (Experience layer).
 
@@ -5799,6 +5826,7 @@ class SystemConfig(BaseModel):
     execution: ExecutionConfig = ExecutionConfig()  # AD-993/994 (default OFF)
     hooks: HooksConfig = HooksConfig()  # AD-1004 (default OFF)
     packs: PacksConfig = Field(default_factory=lambda: PacksConfig())  # AD-1003c (default OFF)
+    skills_marketplace: SkillsMarketplaceConfig = Field(default_factory=SkillsMarketplaceConfig)  # AD-813 (default OFF)
     workstations: WorkstationsConfig = Field(default_factory=WorkstationsConfig)  # AD-1022 (default OFF)
     qa: QAConfig = QAConfig()
     knowledge: KnowledgeConfig = KnowledgeConfig()
