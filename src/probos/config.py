@@ -4209,6 +4209,13 @@ class GroupChatConfig(BaseModel):
     conversation_trust_positive_weight: float = 0.05   # small per-contributor positive on convergence
     conversation_trust_negative_weight: float = 0.15   # asymmetry (>= positive); reserved for AD-958c, unused in v1
     conversation_trust_max_outcomes: int = 4           # bound: max positives recorded per conversation
+    # AD-958c: peer-corrects-peer DETECT-AND-OBSERVE. A SEPARATE switch from the
+    # positive write (conversation_trust_enabled) so the Captain can run the
+    # correction detector in observe-only mode — emitting a structured log per
+    # detected correction, writing NOTHING to the trust ledger — to measure its
+    # precision on live transcripts BEFORE any negative trust write (AD-958d).
+    # Default-OFF byte-identical (the detector never runs); system.yaml flips it.
+    conversation_trust_correction_observe_enabled: bool = False
     # AD-918: per-agent rate limit on agent-initiated group-chat creation.
     # Conservative defaults prevent a create-storm without blocking
     # legitimate ad-hoc collaboration. Reuses the BF-163 (60s DM cooldown)

@@ -16,8 +16,11 @@ outcomes against the trust network.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from probos.crew_profile import extract_directed_callsign
 
 if TYPE_CHECKING:
     from probos.cognitive.chat_facilitator import ChatFacilitator
@@ -94,3 +97,78 @@ def extract_conversation_trust_outcomes(
             verifier_id=verifier,
         ))
     return outcomes
+
+
+# AD-958c: explicit peer-correction cues — an assertion that a PRIOR peer claim
+# is factually WRONG. Tight allowlist (precision over recall): mere disagreement
+# ("I disagree", "I'd weigh it differently", "from my vantage") must NOT match.
+_CORRECTION_CUE_RE = re.compile(
+    r"\b(?:"
+    r"that(?:'s| is) (?:not right|not correct|incorrect|wrong|false|a mistake|an error)"
+    r"|not quite right"
+    r"|you(?:'re| are) (?:wrong|mistaken|incorrect)"
+    r"|correction:"
+    r"|actually,?\s+(?:that(?:'s| is)\s+)?(?:wrong|incorrect|not right|not correct)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class ConversationCorrectionSignal:
+    """AD-958c: one DETECTED peer-correction — corrector ``corrector_id``
+    asserts ``corrected_agent_id``'s prior claim was factually wrong.
+
+    OBSERVE-ONLY in v1: no weight/success — the negative trust write
+    (``record_outcome(success=False)``) is deferred to AD-958d so the detector's
+    precision can be measured on live transcripts first.
+    """
+
+    corrected_agent_id: str
+    corrector_id: str
+    cue: str
+    intent_type: str
+
+
+def detect_conversation_corrections(
+    replies: list[dict[str, str]],
+    *,
+    intent_type: str,
+    max_signals: int,
+) -> list[ConversationCorrectionSignal]:
+    """Pure detector for explicit peer-corrects-peer signals.
+
+    For each reply that (A) matches ``_CORRECTION_CUE_RE`` AND (B) directly
+    addresses (``extract_directed_callsign``) a peer who SPOKE EARLIER in the
+    transcript, emit one signal crediting the corrector. No self-sourcing
+    (corrected != corrector). NOT convergence-gated. Deduped per
+    (corrector, corrected) pair, sorted for determinism, capped at
+    ``max_signals``. ``max_signals <= 0`` -> ``[]``.
+    """
+    if max_signals <= 0:
+        return []
+    seen: set[tuple[str, str]] = set()
+    out: list[ConversationCorrectionSignal] = []
+    spoke_callsign: dict[str, str] = {}  # callsign.lower() -> most-recent prior agent_id
+    for r in replies:
+        corrector = r.get("agent_id", "")
+        text = r.get("text", "")
+        cue_m = _CORRECTION_CUE_RE.search(text or "")
+        if cue_m and corrector:
+            cs = extract_directed_callsign(text)
+            corrected = spoke_callsign.get(cs) if cs else None
+            if corrected and corrected != corrector:
+                pair = (corrector, corrected)
+                if pair not in seen:
+                    seen.add(pair)
+                    out.append(ConversationCorrectionSignal(
+                        corrected_agent_id=corrected,
+                        corrector_id=corrector,
+                        cue=cue_m.group(0),
+                        intent_type=intent_type,
+                    ))
+        cs_self = (r.get("callsign", "") or "").lower()
+        if cs_self and corrector:
+            spoke_callsign[cs_self] = corrector
+    out.sort(key=lambda s: (s.corrected_agent_id, s.corrector_id))
+    return out[:max_signals]

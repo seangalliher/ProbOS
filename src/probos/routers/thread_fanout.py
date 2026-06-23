@@ -30,6 +30,7 @@ from probos.cognitive.chat_facilitator import (
 )
 from probos.cognitive.conversation_trust import (
     conversation_topic_tag,
+    detect_conversation_corrections,
     extract_conversation_trust_outcomes,
 )
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
@@ -876,6 +877,47 @@ def _record_conversation_trust(
             continue
 
 
+def _observe_conversation_corrections(
+    runtime: Any,
+    thread: Any,
+    all_replies: list[dict[str, str]],
+    agent_ids: list[str],
+) -> None:
+    """AD-958c (#882, #894): DETECT-AND-OBSERVE peer-corrects-peer signals.
+
+    Default-OFF: when ``group_chat.conversation_trust_correction_observe_enabled``
+    is False (default), returns on the first line so the fan-out is
+    byte-identical. When ON, run the pure AD-958c detector and emit one
+    structured INFO log per detected correction. OBSERVE-ONLY: writes NOTHING to
+    the trust network (the negative ``record_outcome`` is deferred to AD-958d).
+    Tier-2 honest-degrade: any failure logs a warning and returns.
+    """
+    cfg = getattr(getattr(runtime, "config", None), "group_chat", None)
+    if not getattr(cfg, "conversation_trust_correction_observe_enabled", False):
+        return
+    try:
+        topic = conversation_topic_tag(getattr(thread, "title", "") or "")
+        signals = detect_conversation_corrections(
+            all_replies,
+            intent_type=topic,
+            max_signals=getattr(cfg, "conversation_trust_max_outcomes", 4),
+        )
+    except Exception:
+        logger.warning(
+            "AD-958c: correction observe failed for thread=%s; skipping "
+            "(fan-out result unaffected)",
+            getattr(thread, "id", "?"), exc_info=True,
+        )
+        return
+    for s in signals:
+        logger.info(
+            "AD-958c[observe]: peer-correction detected thread=%s corrector=%s "
+            "corrected=%s cue=%r topic=%s (observe-only, NO trust write)",
+            getattr(thread, "id", "?"), s.corrector_id, s.corrected_agent_id,
+            s.cue, s.intent_type,
+        )
+
+
 async def group_chat_fanout(
     runtime: Any,
     thread_id: str,
@@ -1130,4 +1172,5 @@ async def group_chat_fanout(
                 broadcast_spoke |= {r["agent_id"] for r in nxt if r.get("agent_id")}
             rounds_done += 1
     _record_conversation_trust(runtime, thread, all_replies, agent_ids)
+    _observe_conversation_corrections(runtime, thread, all_replies, agent_ids)
     return all_replies
