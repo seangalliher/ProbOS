@@ -49,6 +49,7 @@ import {
   resetFirstRun,
 } from "./firstRun.js";
 import { setupHtml } from "./setupHtml.js";
+import { diagnosticsHtml } from "./diagnosticsHtml.js";
 import {
   DEFAULT_RUNTIME_URL,
   PORT_CANDIDATES,
@@ -229,6 +230,36 @@ function showManagementView(id: ViewTarget): void {
   });
 }
 
+/**
+ * AD-841f: show the main window (recreating it if the captain closed it —
+ * mirrors showManagementView's guard) and load the Connection diagnostics
+ * panel (runtime URL + live connection status + a Retry button that reuses
+ * the existing probos:retryConnect IPC via window.probos.retryConnect()).
+ * The pure tray builder calls `onShowDiagnostics()`; the side effect is here.
+ */
+function showConnectionDiagnostics(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow();
+    if (!mainWindow) {
+      logWarn("createMainWindow did not produce a window; diagnostics ignored", {});
+      return;
+    }
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow
+    .loadURL(
+      "data:text/html;charset=utf-8," +
+        encodeURIComponent(
+          diagnosticsHtml({ runtimeUrl: getRuntimeUrl(), status: connection.state }),
+        ),
+    )
+    .catch((err: unknown) => {
+      logWarn("diagnostics panel load failed", { err: String(err) });
+    });
+}
+
 function applyViewMode(mode: ViewMode): void {
   viewMode = mode;
   writeViewMode(mode);
@@ -266,6 +297,7 @@ function refreshTrayMenu(): void {
     viewMode,
     onOpenRoute: (route) => showAndRoute(route),
     onOpenView: (id) => showManagementView(id),
+    onShowDiagnostics: () => showConnectionDiagnostics(),
     onToggleProactive: () => {
       proactivePaused = !proactivePaused;
       logInfo("proactive mode toggled (local only in v1)", {

@@ -36,6 +36,8 @@ export interface TrayMenuOptions {
   onStartChatWithAgent?: (agentId: string) => void;
   /** AD-841d: invoked when the captain picks a surface from the "Management" submenu. */
   onOpenView?: (id: ViewTarget) => void;
+  /** AD-841f: invoked when the captain opens the Connection diagnostics panel. */
+  onShowDiagnostics?: () => void;
   onToggleProactive: () => void;
   onToggleViewMode: () => void;
   onCheckForUpdates: () => void;
@@ -79,6 +81,12 @@ export function buildTrayMenu(opts: TrayMenuOptions): TrayMenuItem[] {
       id: "status",
       label: statusLabel(opts.status),
       enabled: false,
+    },
+    {
+      id: "connection-diagnostics",
+      label: "Connection diagnostics…",
+      toolTip: "Show the runtime URL + connection status, and retry the connection.",
+      click: opts.onShowDiagnostics,
     },
     {
       id: "open-chat",

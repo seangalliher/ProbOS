@@ -6,7 +6,7 @@ function noop(): void {
 }
 
 describe("buildTrayMenu", () => {
-  it("returns the documented 11 actionable items in order", () => {
+  it("returns the documented 12 actionable items in order", () => {
     const items = buildTrayMenu({
       status: "connected",
       proactivePaused: false,
@@ -19,9 +19,10 @@ describe("buildTrayMenu", () => {
       onQuit: noop,
     });
 
-    expect(actionableCount(items)).toBe(11);
+    expect(actionableCount(items)).toBe(12);
     expect(items.map((i) => i.id)).toEqual([
       "status",
+      "connection-diagnostics",
       "open-chat",
       "daily-briefing",
       "quick-capture",
@@ -34,6 +35,27 @@ describe("buildTrayMenu", () => {
       "separator-1",
       "quit",
     ]);
+  });
+
+  it("Connection diagnostics entry invokes onShowDiagnostics when clicked", () => {
+    let calls = 0;
+    const items = buildTrayMenu({
+      status: "connected", proactivePaused: false, viewMode: "compact",
+      onOpenRoute: noop, onShowDiagnostics: () => { calls += 1; },
+      onToggleProactive: noop, onToggleViewMode: noop,
+      onCheckForUpdates: noop, onResetSetup: noop, onQuit: noop,
+    });
+    items.find((i) => i.id === "connection-diagnostics")?.click?.();
+    expect(calls).toBe(1);
+  });
+
+  it("Connection diagnostics click is undefined when onShowDiagnostics is absent", () => {
+    const items = buildTrayMenu({
+      status: "connected", proactivePaused: false, viewMode: "compact",
+      onOpenRoute: noop, onToggleProactive: noop, onToggleViewMode: noop,
+      onCheckForUpdates: noop, onResetSetup: noop, onQuit: noop,
+    });
+    expect(items.find((i) => i.id === "connection-diagnostics")?.click).toBeUndefined();
   });
 
   it("status label reflects 'connected' state", () => {
