@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useStore } from './store/useStore';
+import { applyDeepLinkView } from './deepLinkView';
 import { CognitiveCanvas } from './components/CognitiveCanvas';
 import { FullKanban } from './components/bridge/FullKanban';
 import { FullSystem } from './components/bridge/FullSystem';
@@ -78,6 +79,15 @@ export default function App() {
   useEffect(() => {
     void loadSnapshot();
   }, [loadSnapshot]);
+
+  /* AD-841c: deep-link view reader. On boot, parse `#view=<id>` from the URL
+   * hash and dispatch it to the existing management-surface store actions
+   * (Agents · Skills · Settings · Ward Room · Work · System). Default-OFF —
+   * with no `view` param this is a no-op and boot stays byte-identical. The
+   * store handles are injected so the reader stays pure/DI-testable. */
+  useEffect(() => {
+    applyDeepLinkView(window.location.hash, { store: useStore, settings: useSettingsStore });
+  }, []);
 
   /* AD-733c-7-5: arm/disarm the browser-side Silero VAD loop in sync
    * with the snapshot toggle. Solo-Captain deployments (default
