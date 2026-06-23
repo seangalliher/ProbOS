@@ -232,6 +232,20 @@ class FederationBridge:
             ttl_seconds=payload.get("ttl_seconds", 30.0),
         )
 
+        # AD-731a-1c: resolve any referenced attachment bytes this host lacks from
+        # the sender peer, BEFORE local agents consume the refs. Fully guarded +
+        # honest-degrade: never blocks or breaks the broadcast.
+        try:
+            from probos.federation.attachment_resolve import resolve_missing_attachments
+            await resolve_missing_attachments(
+                self._runtime_ref, intent.params, message.source_node
+            )
+        except Exception:
+            logger.warning(
+                "AD-731a-1c: attachment resolution failed; proceeding",
+                exc_info=True,
+            )
+
         # Broadcast locally with federated=False to prevent loop
         local_results = await self._intent_bus.broadcast(intent, federated=False)
 

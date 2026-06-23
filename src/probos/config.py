@@ -2357,6 +2357,11 @@ class AttachmentsConfig(BaseModel):
     # Default-OFF. When True, ALSO requires auth.crew_scope_token to be set (the
     # endpoint 403s otherwise — never serve bytes through a pass-through gate).
     serve_remote_enabled: bool = False
+    # AD-731a-1c: when True, a host that receives an IntentMessage referencing an
+    # attachment SHA it lacks locally auto-fetches the bytes from the SENDER peer
+    # (only when the sender is a configured a2a.outbound_peer with a matching
+    # node_id). Default-OFF -> the resolver never runs (byte-identical).
+    auto_resolve_remote_enabled: bool = False
     attachments_dir: str = "data/attachments"
     max_attachment_bytes: int = 10 * 1024 * 1024           # 10 MiB
     allowed_mime_types: list[str] = Field(
@@ -2876,6 +2881,10 @@ class A2APeerConfig(BaseModel):
 
     peer_url: str
     auth_token: str = ""
+    # AD-731a-1c: optional federation node_id this http-addressable A2A peer
+    # corresponds to. Empty (default) = unmapped -> never an auto-resolution
+    # source (byte-identical). Lets an inbound source_node map to a fetchable peer.
+    node_id: str = ""
 
 
 class FederationA2AConfig(BaseModel):
