@@ -228,6 +228,7 @@ def create_app(runtime: Any) -> FastAPI:
         ard as ard_router,  # AD-1042: ARD ai-catalog well-known endpoint (epic #989)
         federation_attachments as federation_attachments_router,  # AD-731a-1: cross-host attachment serving (#638)
         marketplace as marketplace_router,  # AD-813: read-only skill/pack marketplace BROWSE
+        desktop as desktop_router,  # AD-841: read-only desktop integration status console
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -268,6 +269,7 @@ def create_app(runtime: Any) -> FastAPI:
         ard_router,  # AD-1042: ARD ai-catalog well-known endpoint (epic #989)
         federation_attachments_router,  # AD-731a-1: cross-host attachment serving (#638)
         marketplace_router,  # AD-813: read-only skill/pack marketplace BROWSE
+        desktop_router,  # AD-841: read-only desktop integration status console
     ):
         app.include_router(r.router)
 
