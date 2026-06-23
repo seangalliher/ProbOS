@@ -2352,6 +2352,10 @@ class AttachmentsConfig(BaseModel):
     """
 
     enabled: bool = True                                   # stable feature, default-on
+    # AD-731a-1: serve attachment bytes to authenticated federation peers.
+    # Default-OFF. When True, ALSO requires auth.crew_scope_token to be set (the
+    # endpoint 403s otherwise — never serve bytes through a pass-through gate).
+    serve_remote_enabled: bool = False
     attachments_dir: str = "data/attachments"
     max_attachment_bytes: int = 10 * 1024 * 1024           # 10 MiB
     allowed_mime_types: list[str] = Field(
