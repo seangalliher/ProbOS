@@ -76,16 +76,17 @@ describe("buildTrayMenu with AD-815b agents", () => {
     const idx = ids.indexOf("chat-with");
     expect(ids[idx - 1]).toBe("quick-capture");
     expect(ids[idx + 1]).toBe("toggle-proactive");
-    // 12 baseline (AD-841d Management + AD-841f diagnostics) + chat-with = 13.
-    expect(actionableCount(items)).toBe(13);
+    // 13 baseline (AD-841f diagnostics + AD-841e Command Center) + chat-with = 14.
+    expect(actionableCount(items)).toBe(14);
   });
 
   it("preserves the original 10-item layout when agents is unset", () => {
     const items = buildTrayMenu(baseOpts);
-    expect(actionableCount(items)).toBe(12);
+    expect(actionableCount(items)).toBe(13);
     expect(items.map((i) => i.id)).not.toContain("chat-with");
     expect(items.map((i) => i.id)).toContain("management");
     expect(items.map((i) => i.id)).toContain("connection-diagnostics");
+    expect(items.map((i) => i.id)).toContain("command-center");
   });
 });
 

@@ -76,6 +76,7 @@ function statusLabel(status: ConnectionStatus): string {
  * test.
  */
 export function buildTrayMenu(opts: TrayMenuOptions): TrayMenuItem[] {
+  const onOpenView = opts.onOpenView;
   return [
     {
       id: "status",
@@ -92,6 +93,12 @@ export function buildTrayMenu(opts: TrayMenuOptions): TrayMenuItem[] {
       id: "open-chat",
       label: "Open chat",
       click: () => opts.onOpenRoute("/"),
+    },
+    {
+      id: "command-center",
+      label: "Open Command Center",
+      toolTip: "Open the full HXI Command Center on the crew roster.",
+      click: onOpenView ? (): void => onOpenView("agents") : undefined,
     },
     {
       id: "daily-briefing",

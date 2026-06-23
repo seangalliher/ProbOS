@@ -6,7 +6,7 @@ function noop(): void {
 }
 
 describe("buildTrayMenu", () => {
-  it("returns the documented 12 actionable items in order", () => {
+  it("returns the documented 13 actionable items in order", () => {
     const items = buildTrayMenu({
       status: "connected",
       proactivePaused: false,
@@ -19,11 +19,12 @@ describe("buildTrayMenu", () => {
       onQuit: noop,
     });
 
-    expect(actionableCount(items)).toBe(12);
+    expect(actionableCount(items)).toBe(13);
     expect(items.map((i) => i.id)).toEqual([
       "status",
       "connection-diagnostics",
       "open-chat",
+      "command-center",
       "daily-briefing",
       "quick-capture",
       "toggle-proactive",
@@ -56,6 +57,27 @@ describe("buildTrayMenu", () => {
       onCheckForUpdates: noop, onResetSetup: noop, onQuit: noop,
     });
     expect(items.find((i) => i.id === "connection-diagnostics")?.click).toBeUndefined();
+  });
+
+  it("Open Command Center entry invokes onOpenView with 'agents' when clicked", () => {
+    const seen: string[] = [];
+    const items = buildTrayMenu({
+      status: "connected", proactivePaused: false, viewMode: "compact",
+      onOpenRoute: noop, onOpenView: (id) => seen.push(id),
+      onToggleProactive: noop, onToggleViewMode: noop,
+      onCheckForUpdates: noop, onResetSetup: noop, onQuit: noop,
+    });
+    items.find((i) => i.id === "command-center")?.click?.();
+    expect(seen).toEqual(["agents"]);
+  });
+
+  it("Open Command Center click is undefined when onOpenView is absent", () => {
+    const items = buildTrayMenu({
+      status: "connected", proactivePaused: false, viewMode: "compact",
+      onOpenRoute: noop, onToggleProactive: noop, onToggleViewMode: noop,
+      onCheckForUpdates: noop, onResetSetup: noop, onQuit: noop,
+    });
+    expect(items.find((i) => i.id === "command-center")?.click).toBeUndefined();
   });
 
   it("status label reflects 'connected' state", () => {
