@@ -9,6 +9,15 @@
 export type ConnectionStatus = "connected" | "connecting" | "disconnected";
 export type ViewMode = "compact" | "full";
 
+/**
+ * AD-841d: management surfaces reachable from the tray "Management" submenu.
+ * Each id MUST match a `ViewTarget` in `ui/src/deepLinkView.ts` (AD-841c).
+ * `desktop/` and `ui/` are separate TS projects with no shared module, so the
+ * list is duplicated here — keep both in sync. "Skills" = the Ship's Locker.
+ */
+export type ViewTarget =
+  | "agents" | "skills" | "settings" | "wardroom" | "work" | "system";
+
 export interface TrayAgent {
   /** Stable agent id used as path segment for /api/agents/{id}/chat */
   id: string;
@@ -25,6 +34,8 @@ export interface TrayMenuOptions {
   onOpenRoute: (route: string) => void;
   /** AD-815b: invoked when the captain picks an agent from the submenu. */
   onStartChatWithAgent?: (agentId: string) => void;
+  /** AD-841d: invoked when the captain picks a surface from the "Management" submenu. */
+  onOpenView?: (id: ViewTarget) => void;
   onToggleProactive: () => void;
   onToggleViewMode: () => void;
   onCheckForUpdates: () => void;
@@ -102,6 +113,7 @@ export function buildTrayMenu(opts: TrayMenuOptions): TrayMenuItem[] {
           : "Show the chat-only experience (like Copilot / Claude Chat).",
       click: opts.onToggleViewMode,
     },
+    ...buildManagementSubmenu(opts),
     {
       id: "settings",
       label: "Settings",
@@ -164,6 +176,38 @@ export function buildChatWithSubmenu(
         id: `chat-with:${a.id}`,
         label: a.name,
         click: onStart ? (): void => onStart(a.id) : undefined,
+      })),
+    },
+  ];
+}
+
+const MANAGEMENT_VIEWS: readonly { id: ViewTarget; label: string }[] = [
+  { id: "agents", label: "Agents" },
+  { id: "skills", label: "Skills" },
+  { id: "settings", label: "Settings" },
+  { id: "wardroom", label: "Ward Room" },
+  { id: "work", label: "Work" },
+  { id: "system", label: "System" },
+];
+
+/**
+ * AD-841d: build the "Management" submenu. Unlike `buildChatWithSubmenu`, it is
+ * ALWAYS present (the six surfaces are static). Each entry calls
+ * `opts.onOpenView?.(id)` — NO Electron side effects, so the builder stays pure.
+ */
+export function buildManagementSubmenu(
+  opts: Pick<TrayMenuOptions, "onOpenView">,
+): TrayMenuItem[] {
+  const onOpenView = opts.onOpenView;
+  return [
+    {
+      id: "management",
+      label: "Management",
+      type: "submenu",
+      submenu: MANAGEMENT_VIEWS.map((v) => ({
+        id: `view:${v.id}`,
+        label: v.label,
+        click: onOpenView ? (): void => onOpenView(v.id) : undefined,
       })),
     },
   ];

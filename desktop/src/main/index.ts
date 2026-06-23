@@ -35,7 +35,7 @@ import {
   acquireSingleInstanceLock,
   decideSecondInstanceAction,
 } from "./singleInstance.js";
-import { buildTrayMenu, ConnectionStatus, type ViewMode } from "./trayMenu.js";
+import { buildTrayMenu, ConnectionStatus, type TrayMenuItem, type ViewMode, type ViewTarget } from "./trayMenu.js";
 import {
   createConnectionStateMachine,
   type ConnectionStateMachine,
@@ -112,6 +112,16 @@ function urlForViewMode(mode: ViewMode, route = "/"): string {
   // switch between full HXI and the chat-only Yeo surface.
   const hash = mode === "compact" ? "#compact" : "";
   return `${getRuntimeUrl()}${route}${hash}`;
+}
+
+/**
+ * AD-841d: FULL-mode deep link to a management surface. The AD-841c reader
+ * (`ui/src/deepLinkView.ts`) maps `#view=<id>` to a surface that exists ONLY in
+ * `<App>` (not `<CompactApp>`) — so we MUST NOT append `#compact`. The
+ * `#view=<id>` hash IS the entire hash.
+ */
+function urlForManagementView(id: ViewTarget): string {
+  return `${getRuntimeUrl()}/#view=${id}`;
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -197,6 +207,28 @@ function showAndRoute(route: string): void {
   });
 }
 
+/**
+ * AD-841d: show the main window (recreating it if the captain closed it —
+ * mirrors showAndRoute's guard) and load a management deep link in FULL mode.
+ * The pure tray builder calls `onOpenView(id)`; the Electron side effect is here.
+ */
+function showManagementView(id: ViewTarget): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow();
+    if (!mainWindow) {
+      logWarn("createMainWindow did not produce a window; view ignored", { id });
+      return;
+    }
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  const target = urlForManagementView(id);
+  mainWindow.loadURL(target).catch((err: unknown) => {
+    logWarn("management deep-link load failed", { target, err: String(err) });
+  });
+}
+
 function applyViewMode(mode: ViewMode): void {
   viewMode = mode;
   writeViewMode(mode);
@@ -210,6 +242,22 @@ function applyViewMode(mode: ViewMode): void {
   refreshTrayMenu();
 }
 
+/**
+ * AD-841d: map a pure TrayMenuItem to Electron's template, RECURSING into
+ * `submenu`. The previous flat map dropped `submenu`, so the AD-815b
+ * "Chat with…" and AD-841d "Management" submenus rendered empty.
+ */
+function trayItemToTemplate(i: TrayMenuItem): MenuItemConstructorOptions {
+  return {
+    label: i.label,
+    enabled: i.enabled,
+    type: i.type,
+    toolTip: i.toolTip,
+    click: i.click,
+    submenu: i.submenu?.map(trayItemToTemplate),
+  };
+}
+
 function refreshTrayMenu(): void {
   if (!tray) return;
   const items = buildTrayMenu({
@@ -217,6 +265,7 @@ function refreshTrayMenu(): void {
     proactivePaused,
     viewMode,
     onOpenRoute: (route) => showAndRoute(route),
+    onOpenView: (id) => showManagementView(id),
     onToggleProactive: () => {
       proactivePaused = !proactivePaused;
       logInfo("proactive mode toggled (local only in v1)", {
@@ -245,13 +294,7 @@ function refreshTrayMenu(): void {
     },
     onQuit: () => app.quit(),
   });
-  const template: MenuItemConstructorOptions[] = items.map((i) => ({
-    label: i.label,
-    enabled: i.enabled,
-    type: i.type,
-    toolTip: i.toolTip,
-    click: i.click,
-  }));
+  const template: MenuItemConstructorOptions[] = items.map(trayItemToTemplate);
   tray.setContextMenu(Menu.buildFromTemplate(template));
   tray.setToolTip(`ProbOS (${connection.state})`);
 }
