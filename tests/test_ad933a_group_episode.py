@@ -128,7 +128,7 @@ def _make_canned_handler(received: dict, agent_id: str, text: str):
 
 
 def _make_silent_handler(agent_id: str):
-    """Empty result -> ``_send_one`` ships the ``"(no response)"`` sentinel."""
+    """Empty result -> BF-636 thins it (no visible reply, no episode)."""
 
     async def _h(intent: IntentMessage) -> IntentResult:
         return IntentResult(intent_id=intent.id, agent_id=agent_id, success=True, result="")
@@ -244,13 +244,15 @@ async def test_sentinel_reply_skipped(tmp_path):
         agents={"scout1": "scout", "counselor1": "counselor"},
         callsigns={"scout": "Scout", "counselor": "Troi"},
         episodic=rec,
-        silent={"counselor1"},  # empty result -> "(no response)" sentinel
+        silent={"counselor1"},  # empty result -> thinned (BF-636)
     )
     t = store.create_thread(title="room", participants=["scout1", "counselor1"])
     cap = store.append_message(t.id, author_id="captain", role="captain", body="status?")
     replies = await group_chat_fanout(runtime, t.id, captain_body="status?", captain_msg=cap)
-    assert len(replies) == 2  # fan-out still returns both replies
-    # only the non-sentinel reply produced an episode
+    # BF-636: an empty result is THINNED (not returned as a "(no response)"
+    # sentinel), so only the real reply comes back -- and only it produces an episode.
+    assert len(replies) == 1
+    assert replies[0]["agent_id"] == "scout1"
     assert len(rec.episodes) == 1
     assert rec.episodes[0].agent_ids == ["scout1"]
 

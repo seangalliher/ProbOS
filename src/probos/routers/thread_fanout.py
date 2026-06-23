@@ -565,24 +565,43 @@ async def _fan_one_round(
             ttl_seconds=60.0,
             thread_id=thread_id,
         )
-        try:
-            result = await runtime.intent_bus.send(intent)
-        except Exception as e:
-            logger.warning(
-                "AD-914 fan-out send failed for %s: %s: %s; other recipients unaffected",
-                agent_id, type(e).__name__, e,
-            )
-            return {"agent_id": agent_id, "callsign": callsign, "text": "(delivery failed)"}
-        reply_text = str(result.result) if (result and result.result) else "(no response)"
-        # BF-622: a degraded LLM proxy can echo its INPUT (which includes the
-        # AD-978 scene block) back as the completion. Strip any visual-context
-        # scaffolding from the reply before persist/return so internal context
-        # never surfaces in the chat. Guarded on the marker so a normal reply is
-        # untouched; an emptied reply (it was ONLY echoed scaffolding) degrades
-        # to the non-reply sentinel.
-        if "Current Visual Context" in reply_text:
-            from probos.perception.working_memory import strip_visual_context_block
-            reply_text = strip_visual_context_block(reply_text) or "(no response)"
+        async def _dispatch_intent() -> tuple[Any, str]:
+            """BF-636: one send attempt -> (result, cleaned_text). An empty/None
+            result OR a delivery exception yields text="" — NOT a visible
+            "(no response)"/"(delivery failed)" placeholder — so the _declined
+            check below thins it exactly like a [NO_RESPONSE] decline. A transient
+            LLM failure (proxy timeout / echo / overload) therefore never gets
+            persisted into the transcript as a fake agent reply."""
+            try:
+                res = await runtime.intent_bus.send(intent)
+            except Exception as exc:
+                logger.warning(
+                    "AD-914 fan-out send failed for %s: %s: %s; other recipients unaffected",
+                    agent_id, type(exc).__name__, exc,
+                )
+                return None, ""
+            txt = str(res.result) if (res and res.result) else ""
+            # BF-622: a degraded LLM proxy can echo its INPUT (the AD-978 scene
+            # block) back as the completion. Strip any visual-context scaffolding
+            # so internal context never surfaces; an only-echo reply degrades to
+            # "" (thinned below, not a visible placeholder).
+            if txt and "Current Visual Context" in txt:
+                from probos.perception.working_memory import strip_visual_context_block
+                txt = strip_visual_context_block(txt) or ""
+            return res, txt
+
+        result, reply_text = await _dispatch_intent()
+        # BF-636: an EMPTY result is a transient LLM failure, NOT a reply. For an
+        # explicitly ADDRESSED (hard-included) agent — the peer a prior speaker or
+        # the Captain named (AD-951) — retry ONCE before giving up; un-addressed
+        # agents are thinned immediately so a whole-room failure never doubles the
+        # load on an already-struggling proxy. Either way an empty reply falls to
+        # the _declined thinning below and is never shown as "(no response)".
+        _is_addressed = bool(
+            addressed_callsigns and callsign and callsign.lower() in addressed_callsigns
+        )
+        if not reply_text.strip() and _is_addressed:
+            result, reply_text = await _dispatch_intent()
         # AD-933b: SHA refs of any image step_4c generates below. Initialized
         # here so it is always defined for the persist block even when the
         # escalation subset is skipped (no reply / no agent) or raises.

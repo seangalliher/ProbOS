@@ -939,6 +939,12 @@ def extract_directed_callsign(text: str) -> str | None:
     return None
 
 
+# BF-635: how many sentences BEFORE the last one to scan for a sentence-opening
+# vocative hand-off ("Anvil, <reason>. <the actual question>?"). Bounded small so
+# a referential name far up-message is never read as a closing hand-off.
+_HANDOFF_WINDOW = 2
+
+
 def extract_handoff_callsign(text: str) -> str | None:
     r"""BF-619: the callsign an agent hands the turn to, at the START or END
     of its message, or None.
@@ -955,8 +961,14 @@ def extract_handoff_callsign(text: str) -> str | None:
       2. the FINAL sentence STARTING with a vocative: "... . Yeo, your read?".
       3. a TRAILING comma-vocative before terminal punctuation:
          "..., Yeo?" / "what do you think, Yeo".
+      4. BF-635: a vocative OPENING a sentence in the final stretch when the
+         question runs PAST it ("Anvil, you're in Engineering - ...? ...").
+         Cases 2-3 inspect only the LAST sentence, so an address that opens the
+         penultimate sentence (the most natural multi-sentence hand-off) was
+         missed; scan a small window back from the last sentence, most-recent
+         first.
 
-    The comma/colon (cases 1-2) and the preceding comma (case 3) are the
+    The comma/colon (cases 1-2, 4) and the preceding comma (case 3) are the
     discriminator that keeps a referential mention ("I agree with Yeo.", "I
     told Yeo") from being read as a hand-off — only a message TO a peer counts,
     never one ABOUT them (the BF #467 / is_directed_mention discipline). Returns
@@ -984,5 +996,17 @@ def extract_handoff_callsign(text: str) -> str | None:
     m = re.search(r',\s*@?(\w+)\s*$', last)
     if m:
         return m.group(1).lower()
+    # 4. BF-635: a vocative OPENING a sentence in the final stretch, with the
+    #    question continuing PAST it ("Anvil, you're in Engineering - ...? ...").
+    #    Cases 2-3 only inspect the LAST sentence, so an address that opens the
+    #    penultimate sentence (the most natural multi-sentence hand-off) was
+    #    missed and the addressed peer never got pulled into the cascade. Scan a
+    #    small window back from the last sentence, MOST-RECENT first; the
+    #    sentence-opening comma/colon preserves the BF #467 ABOUT-vs-TO
+    #    discipline (only a sentence ADDRESSED to a peer matches).
+    for s in reversed(sentences[-(_HANDOFF_WINDOW + 1):-1]):
+        m = re.match(r'@?(\w+)\s*[,:]', s)
+        if m:
+            return m.group(1).lower()
     return None
 

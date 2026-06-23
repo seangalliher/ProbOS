@@ -244,24 +244,29 @@ async def test_one_agent_no_subscriber_does_not_block_other(tmp_path):
     replies = await group_chat_fanout(runtime, t.id, captain_body="who's there", captain_msg=cap)
     by_id = {r["agent_id"]: r["text"] for r in replies}
     assert by_id["scout1"] == "reply::scout1"
-    assert by_id["counselor1"] == "(no response)"
+    # BF-636: counselor1 (no subscriber -> empty result) is THINNED like a decline,
+    # not shown as a "(no response)" placeholder; scout1 is unaffected.
+    assert "counselor1" not in by_id
     bodies = {m.body for m in store.list_messages(t.id, limit=1000) if m.role == "agent"}
     assert "reply::scout1" in bodies
+    assert "(no response)" not in bodies
 
 
-async def test_one_agent_handler_raise_returns_delivery_failed(tmp_path):
+async def test_one_agent_handler_raise_is_thinned(tmp_path):
     store, runtime, _ = _build_env(
         tmp_path,
         agents={"scout1": "scout", "counselor1": "counselor"},
-        raising=["counselor1"],  # counselor1's handler raises -> "(delivery failed)"
+        raising=["counselor1"],  # counselor1's handler raises -> thinned (BF-636)
     )
     t = store.create_thread(title="room", participants=["scout1", "counselor1"])
     cap = store.append_message(t.id, author_id="captain", role="captain", body="trigger")
     replies = await group_chat_fanout(runtime, t.id, captain_body="trigger", captain_msg=cap)
     by_id = {r["agent_id"]: r["text"] for r in replies}
     assert by_id["scout1"] == "reply::scout1"
-    assert by_id["counselor1"] == "(delivery failed)"
-    # The delivery-failed reply is NOT persisted; scout1's is.
+    # BF-636: a raising handler (delivery failure) is THINNED like a decline, not
+    # shown as a "(delivery failed)" placeholder; the other recipient is unaffected.
+    assert "counselor1" not in by_id
+    # Neither the thinned reply nor a placeholder is persisted; scout1's is.
     agent_rows = [m for m in store.list_messages(t.id, limit=1000) if m.role == "agent"]
     assert {m.body for m in agent_rows} == {"reply::scout1"}
 
