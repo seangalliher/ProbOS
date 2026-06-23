@@ -10,6 +10,19 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-841a (2026-06-23) — mount the read-only Desktop Console in the FullSystem (System Management) view (issue #816)
+
+**Context.** AD-841 v1 shipped the read-only `DesktopConsole.tsx` standalone and DELIBERATELY did NOT mount it (NOT in App.tsx) — it was built but unsurfaced. AD-841a is the MOUNT half (a=mount, b=control); it surfaces the console inside the existing `FullSystem` (System Management) host, beside `ServicesGrid`, with no behavior change to the console, the endpoint, or any other panel. PRE-RESERVED AD-841 sub-number (current highest landed top-level = **AD-1052**) — NOT a new top-level.
+
+**Decision.** Two surgical lines in `ui/src/components/bridge/FullSystem.tsx` — import `DesktopConsole` (after the `Glyphs` import) and render `<DesktopConsole />` immediately after `<ServicesGrid />` in the system flex column — plus a new `FullSystem.test.tsx`. `DesktopConsole.tsx`, `GET /api/desktop/status`, `stations.tsx`, `App.tsx`, and `config/system.yaml` are UNTOUCHED. NO new store flag / overlay / nav entry.
+
+**Design decisions.**
+- **DD-1 (host beside ServicesGrid, global fetch).** `FullSystem` renders the console with NO `fetchImpl`, so it uses the global `fetch` against the live `GET /api/desktop/status` (same as the rest of the System view's host fetches). The console's own self-gating (null on hard failure / no data; calm "Off" when `enabled:false`) is preserved unchanged — no host-side conditional. The OFF payload still wraps in the `desktop-console` panelShell, so the mount is observable even when desktop integration is off.
+- **DD-2 (reuse the engineering-system launch — no new nav).** The System view is already reachable via the AD-1001b `engineering` station's `engineering-system` action (`mainViewer:'system'`). AD-841a adds NO new launch path, store flag, or overlay — the console rides the existing System surface.
+- **DD-3 (test the mount, not the console internals).** `FullSystem.test.tsx` stubs `global.fetch` with a URL router (desktop OFF + empty `services`/`threads`) restored in `afterEach`, and asserts only the mount (`desktop-console` testid present), the host's survival (heading + `SERVICES`), and the launch (`buildBridgeStations` engineering-system `onInvoke` → `mainViewer:'system'`). The console's row/off/self-gate behavior stays covered by the untouched `DesktopConsole.test.tsx`.
+
+**Gates.** NEW `ui/src/components/bridge/FullSystem.test.tsx` (3). Focused `FullSystem.test.tsx DesktopConsole.test.tsx` → **8 passed** (2 files); full UI → **274 files / 1757 passed | 1 skipped** (0 regressions, +3 new); `npm run build` clean (tsc -b catches import errors). Left UNCOMMITTED.
+
 ### AD-731a-1c (2026-06-23) — bus auto-resolution-on-receive for cross-host attachments (issue #638)
 
 **Context.** AD-731a-1 shipped the SERVE side (a default-OFF, content-verifying endpoint + a `fetch_remote_attachment` client) but nothing CALLS the fetcher on the receive path. When a host receives a federated `IntentMessage` referencing an attachment SHA it lacks locally (the AD-731 ref shape — bus carries the SHA, store carries the bytes), the local agents that consume the ref dereference a SHA the store never saw → a `failed_to_load` marker (llm_client.py). AD-731a-1c closes that gap: at the single inbound choke point, auto-fetch the missing bytes from the SENDER peer BEFORE the local broadcast. Default-OFF, non-blocking, honest-degrade. AD-731a-1c is a PRE-RESERVED AD-731a sub-number (current highest landed top-level = **AD-1052**) — NOT a new top-level.
