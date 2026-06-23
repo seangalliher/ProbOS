@@ -9,7 +9,7 @@ import { ProfileMemoryTab } from './ProfileMemoryTab';
 import { SelfImageTab } from './SelfImageTab';
 import { CrewAvatarPopout } from './CrewAvatarPopout';
 import { deriveAgentSignals } from './avatarSignals';
-import { isGroupChat, chatDisplayName } from '../chats/chatFilters';
+import { isGroupChat, chatDisplayName, hostAgentId } from '../chats/chatFilters';
 import type { AgentProfileData, AvatarDSLDict } from '../../store/types';
 
 type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory' | 'self_image' | 'service';
@@ -33,7 +33,7 @@ const DEPT_COLORS: Record<string, string> = {
 };
 
 export function AgentProfilePanel() {
-  const agentId = useStore((s) => s.activeProfileAgent);
+  const activeProfileAgent = useStore((s) => s.activeProfileAgent);
   const agents = useStore((s) => s.agents);
   const pos = useStore((s) => s.profilePanelPos);
   const poolToGroup = useStore((s) => s.poolToGroup);
@@ -41,6 +41,24 @@ export function AgentProfilePanel() {
   // tell when it is hosting a GROUP and present a neutral room identity.
   const activeProfileThreadId = useStore((s) => s.activeProfileThreadId);
   const chatThreads = useStore((s) => s.chatThreads);
+
+  // AD-954a: the group/call surface is keyed by the THREAD, not by
+  // activeProfileAgent. Detect the active group thread (>=2 crew) from
+  // activeProfileThreadId, and derive the ANCHOR agent — the host id
+  // ProfileChatTab needs for its 1:1-fallback plumbing + hostCallsign — FROM
+  // that thread's participants (hostAgentId = first crew). So the room renders
+  // from thread.id and survives an absent/stale activeProfileAgent; a 1:1 keeps
+  // activeProfileAgent as its key, byte-identical.
+  const activeGroupThread = (() => {
+    const tid = activeProfileThreadId;
+    if (!tid) return null;
+    const t = chatThreads.get(tid);
+    return t && isGroupChat(t, agents) ? t : null;
+  })();
+  const isGroupSurface = activeGroupThread !== null;
+  const agentId = activeGroupThread
+    ? (hostAgentId(activeGroupThread, agents) ?? activeProfileAgent)
+    : activeProfileAgent;
 
   const [activeTab, setActiveTab] = useState<ProfileTab>('chat');
   const [profileData, setProfileData] = useState<AgentProfileData | null>(null);
@@ -91,9 +109,12 @@ export function AgentProfilePanel() {
 
   const agent = agentId ? agents.get(agentId) : null;
 
-  // Fetch profile data when agent changes
+  // Fetch profile data when agent changes. AD-954a: a group surface is a ROOM,
+  // not the (derived) anchor's profile — skip the host-scoped fetch (its data
+  // is never shown in group mode: the title is the room title and the
+  // agent-scoped tabs are collapsed) so the panel is not coupled to the host.
   useEffect(() => {
-    if (!agentId) {
+    if (!agentId || isGroupSurface) {
       setProfileData(null);
       return;
     }
@@ -105,14 +126,16 @@ export function AgentProfilePanel() {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [agentId]);
+  }, [agentId, isGroupSurface]);
 
-  // Mark messages read when opening
+  // Mark messages read when opening — AD-954a: only a 1:1. A group surface is a
+  // room, not the host's DM, so opening it must not mark the derived anchor
+  // agent's 1:1 conversation read.
   useEffect(() => {
-    if (agentId) {
+    if (agentId && !isGroupSurface) {
       useStore.getState().markAgentRead(agentId);
     }
-  }, [agentId]);
+  }, [agentId, isGroupSurface]);
 
   // Drag handlers
   const onMouseDown = useCallback((e: React.MouseEvent) => {
@@ -177,14 +200,6 @@ export function AgentProfilePanel() {
   // self_image) are meaningless and collapse to Chat-only. The group lives in
   // the chat tab; GroupChatHeader (inside ProfileChatTab) still owns the
   // participant strip + rename + meeting controls. A 1:1 is byte-identical.
-  const activeGroupThread = (() => {
-    const tid = activeProfileThreadId;
-    if (!tid) return null;
-    const t = chatThreads.get(tid);
-    if (t && isGroupChat(t, agents)) return t;
-    return null;
-  })();
-  const isGroupSurface = activeGroupThread !== null;
   const groupTitle = activeGroupThread ? chatDisplayName(activeGroupThread, agents) : '';
 
   // BF-017: Filter tabs — non-crew agents don't get Chat tab.
