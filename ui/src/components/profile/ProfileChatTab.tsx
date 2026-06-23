@@ -48,6 +48,7 @@ import { ChatMessageRow } from './ChatMessageRow';
 import { TypingIndicator } from './TypingIndicator';
 import { revealRepliesProgressively, type StaggerReply } from '../../chat/staggerReplies';
 import { isPinnedToBottom } from '../../chat/scrollAnchor';
+import { resolveFirstResponder } from '../../chat/firstResponder';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
 import { useScreenStore } from '../../store/useScreenStore';
@@ -659,15 +660,18 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         (id) => id !== 'captain' && _agents.get(id)?.isCrew,
       ).length;
       if (_thread && crewParticipantCount >= 2) {
-        // AD-962: fill the dead air. The group fan-out takes ~10-30s of real
-        // LLM time before ANY reply lands; show a generic "the crew is
-        // thinking" beat the instant the Captain sends, cleared the moment the
-        // first reply arrives (AD-960 setSending below) or on error. Reuses the
-        // AD-952 typingAgent slice + TypingIndicator; the generic callsign and
-        // the "thinking" verb distinguish it from the per-agent compose beat.
-        useStore.getState().setTypingAgent({
-          threadId: activeThreadId ?? null, agentId: '', callsign: 'The crew', verb: 'thinking',
-        });
+        // AD-962 / AD-962a: fill the dead air before the first group reply.
+        // AD-962a names the LIKELY first responder — if the Captain's message
+        // directly addresses a crew participant by callsign ("@ezri ..." /
+        // "Ezri, ..."), the beat reads "{callsign} is thinking…"; else the
+        // AD-962 generic "The crew" beat (byte-identical fallback). Cosmetic
+        // only — the real fan-out reply still arrives correctly regardless.
+        const _firstResponder = resolveFirstResponder(text, _thread.participants ?? [], _agents);
+        useStore.getState().setTypingAgent(
+          _firstResponder
+            ? { threadId: activeThreadId ?? null, agentId: _firstResponder.agentId, callsign: _firstResponder.callsign, verb: 'thinking' }
+            : { threadId: activeThreadId ?? null, agentId: '', callsign: 'The crew', verb: 'thinking' },
+        );
         try {
           // ``body`` has min_length=1 on AppendMessageRequest, so attach-only
           // sends MUST carry the '(attachment)' placeholder or the POST 422s.
