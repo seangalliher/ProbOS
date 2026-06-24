@@ -11,6 +11,7 @@ import { useSettingsStore } from './store/useSettingsStore';
 import { ProfileChatTab } from './components/profile/ProfileChatTab';
 import MobileMesh from './components/mesh/MobileMesh';
 import type { MeshViewport } from './mesh2d/meshProjection';
+import { useSwipe } from './hooks/useSwipe';
 
 const AMBER = '#f0b060';
 const DIM = '#8888a0';
@@ -54,6 +55,13 @@ export default function MobileShell() {
   // AD-708c-3: chat<->mesh body toggle. Default 'chat' -> the phone lands on the
   // AD-708b chat surface; the 2D mesh is opt-in via the header toggle.
   const [view, setView] = useState<'chat' | 'mesh'>('chat');
+
+  // AD-708d: swipe left -> mesh, swipe right -> chat. The header tap toggle
+  // (above) stays the accessible primary; swipe is a touch-only enhancement.
+  const swipe = useSwipe({
+    onSwipeLeft: () => setView('mesh'),
+    onSwipeRight: () => setView('chat'),
+  });
 
   // Measure the body on mount and on window resize. window.innerWidth/Height
   // are non-zero under jsdom (no layout), so the mesh gets a real viewport in
@@ -103,25 +111,32 @@ export default function MobileShell() {
           FULL HXI
         </button>
       </div>
-      {view === 'chat' ? (
-        <div data-testid="mobile-shell-chat" style={{ flex: '1 1 auto', minHeight: 0,
-          display: 'flex', flexDirection: 'column' }}>
-          {yeoId ? (
-            <ProfileChatTab agentId={yeoId} />
-          ) : (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: DIM, fontSize: 12, padding: 24, textAlign: 'center' }}>
-              {waitedTooLong
-                ? 'Waiting for Yeo to come online… make sure the ProbOS runtime is running.'
-                : 'Connecting to Yeo…'}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div data-testid="mobile-shell-mesh" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }}>
-          <MobileMesh viewport={meshViewport} />
-        </div>
-      )}
+      <div
+        data-testid="mobile-shell-body"
+        onPointerDown={swipe.onPointerDown}
+        onPointerUp={swipe.onPointerUp}
+        style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}
+      >
+        {view === 'chat' ? (
+          <div data-testid="mobile-shell-chat" style={{ flex: '1 1 auto', minHeight: 0,
+            display: 'flex', flexDirection: 'column' }}>
+            {yeoId ? (
+              <ProfileChatTab agentId={yeoId} />
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: DIM, fontSize: 12, padding: 24, textAlign: 'center' }}>
+                {waitedTooLong
+                  ? 'Waiting for Yeo to come online… make sure the ProbOS runtime is running.'
+                  : 'Connecting to Yeo…'}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div data-testid="mobile-shell-mesh" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }}>
+            <MobileMesh viewport={meshViewport} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

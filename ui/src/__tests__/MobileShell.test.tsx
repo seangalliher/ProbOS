@@ -113,3 +113,43 @@ describe('AD-708c-3 MobileShell chat<->mesh toggle', () => {
     expect(screen.queryByTestId('mobile-mesh')).not.toBeInTheDocument();
   });
 });
+
+describe('AD-708d MobileShell swipe gestures', () => {
+  it('AD-708d: a left-swipe on the body switches from chat to the mesh', () => {
+    useStore.setState({
+      agents: new Map([['yeo-id', { id: 'yeo-id', callsign: 'Yeo', displayName: 'Yeo' } as any]]),
+    });
+    render(<MobileShell />);
+    const body = screen.getByTestId('mobile-shell-body');
+    fireEvent.pointerDown(body, { clientX: 300, clientY: 200 });
+    fireEvent.pointerUp(body, { clientX: 80, clientY: 205 });
+    expect(screen.getByTestId('mobile-mesh')).toBeInTheDocument();
+    expect(screen.queryByTestId('mobile-shell-chat')).not.toBeInTheDocument();
+  });
+
+  it('AD-708d: a right-swipe on the body switches from the mesh back to chat', () => {
+    useStore.setState({
+      agents: new Map([['yeo-id', { id: 'yeo-id', callsign: 'Yeo', displayName: 'Yeo' } as any]]),
+    });
+    render(<MobileShell />);
+    fireEvent.click(screen.getByTestId('mobile-toggle-mesh'));
+    expect(screen.getByTestId('mobile-mesh')).toBeInTheDocument();
+    const body = screen.getByTestId('mobile-shell-body');
+    fireEvent.pointerDown(body, { clientX: 80, clientY: 200 });
+    fireEvent.pointerUp(body, { clientX: 300, clientY: 205 });
+    expect(screen.getByTestId('mobile-shell-chat')).toBeInTheDocument();
+    expect(screen.queryByTestId('mobile-mesh')).not.toBeInTheDocument();
+  });
+
+  it('AD-708d: the header tap toggle still switches views without any swipe', () => {
+    useStore.setState({
+      agents: new Map([['yeo-id', { id: 'yeo-id', callsign: 'Yeo', displayName: 'Yeo' } as any]]),
+    });
+    render(<MobileShell />);
+    fireEvent.click(screen.getByTestId('mobile-toggle-mesh'));
+    expect(screen.getByTestId('mobile-mesh')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('mobile-toggle-chat'));
+    expect(screen.getByTestId('mobile-shell-chat')).toBeInTheDocument();
+    expect(screen.queryByTestId('mobile-mesh')).not.toBeInTheDocument();
+  });
+});
