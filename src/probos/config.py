@@ -5877,6 +5877,7 @@ class DeviceConfig(BaseModel):
     ``TrustNetwork``; inert until then (no registry is wired in 843b).
     """
 
+    enabled: bool = False  # AD-843c-1: gate device.notify bus subscription (default OFF)
     probationary_alpha: float = Field(default=1.0, gt=0.0)
     probationary_beta: float = Field(default=3.0, gt=0.0)
 

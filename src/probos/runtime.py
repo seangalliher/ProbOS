@@ -891,6 +891,29 @@ class ProbOSRuntime:
             probationary_alpha=self.config.federation.peer_trust.probationary_alpha,
             probationary_beta=self.config.federation.peer_trust.probationary_beta,
         )
+        # AD-843c-1: device tier (brain->limb). Registry constructed eagerly with the
+        # CONCRETE TrustNetwork (mirrors FederationPeerRegistry) -- inert until a device
+        # pairs. The device.notify actuation handler subscribes ONLY when
+        # config.device.enabled (default False) -> byte-identical when off.
+        from probos.substrate.device_node import DeviceNodeRegistry, NoOpDeviceNodeAdapter
+        from probos.substrate.device_service import DeviceNodeService, DEVICE_NODE_SERVICE_ID
+        self.device_node_registry: DeviceNodeRegistry = DeviceNodeRegistry(
+            trust_network=self.trust_network,
+            probationary_alpha=self.config.device.probationary_alpha,
+            probationary_beta=self.config.device.probationary_beta,
+        )
+        self.device_node_service: DeviceNodeService = DeviceNodeService(
+            registry=self.device_node_registry,
+            adapter=NoOpDeviceNodeAdapter(),
+            trust_network=self.trust_network,
+            episodic_provider=lambda: self.episodic_memory,
+        )
+        if self.config.device.enabled:
+            self.intent_bus.subscribe(
+                DEVICE_NODE_SERVICE_ID,
+                self.device_node_service.handle_intent,
+                intent_names=["device.notify"],
+            )
         # AD-480a / AD-480d: inbound servers — None until startup wires them.
         self.federation_mcp_server: "FederationMCPServer | None" = None
         self.federation_a2a_server: "FederationA2AServer | None" = None
