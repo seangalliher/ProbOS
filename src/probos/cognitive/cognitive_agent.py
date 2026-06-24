@@ -2228,6 +2228,72 @@ class CognitiveAgent(BaseAgent):
             "turns, not routine chat."
         )
 
+    def _conversational_a2ui_block(self, observation: dict) -> str:
+        """AD-811a: teach the ``[A2UI]`` choice-widget reply tag to Lieutenant+
+        crew agents WHEN ``CommunicationsConfig.a2ui_enabled`` is True
+        (default OFF -> "").
+
+        When enabled and the agent's LIVE rank is at least ``a2ui_min_rank``
+        (default lieutenant), the agent learns to offer the Captain a
+        single-choice card by emitting ``[A2UI]{json}[/A2UI]`` carrying
+        ``{"kind":"choice","prompt":...,"options":[...]}``.
+        ``DmReplyPipeline.step_4k_extract_a2ui`` then stores the spec as an
+        artifact and leaves an inline stub the HXI renders as clickable
+        buttons; the Captain's pick posts back as a normal chat message.
+
+        Default-OFF / honest-degrade: returns "" when the flag is off, when
+        the agent's rank is below the minimum, or when no runtime/config is
+        wired (getattr-safe). Rank is derived from the LIVE trust score
+        (BF-263: ``self.rank`` is never set on agents). Overridable
+        (Open/Closed); the how-to text is gap-regex-safe (no
+        can't/cannot/unable/don't-have phrasings)."""
+        del observation
+        try:
+            runtime = getattr(self, "_runtime", None)
+            comms_cfg = getattr(
+                getattr(runtime, "config", None), "communications", None
+            )
+            if not getattr(comms_cfg, "a2ui_enabled", False):
+                return ""
+            from probos.crew_profile import Rank
+            _RANK_ORDER = [
+                Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR,
+            ]
+            min_rank_str = getattr(comms_cfg, "a2ui_min_rank", "lieutenant")
+            min_rank = (
+                Rank[min_rank_str.upper()]
+                if min_rank_str.upper() in Rank.__members__
+                else Rank.LIEUTENANT
+            )
+            # BF-263: derive the live rank from the trust score; self.rank is
+            # never set on agents.
+            rank: Rank | None = None
+            trust_net = getattr(runtime, "trust_network", None)
+            if trust_net is not None:
+                live_trust = trust_net.get_score(self.id)
+                if isinstance(live_trust, (int, float)):
+                    rank = Rank.from_trust(float(live_trust))
+            if rank is None:
+                return ""
+            if _RANK_ORDER.index(rank) < _RANK_ORDER.index(min_rank):
+                return ""
+            return (
+                "\n\nOffering the Captain a quick choice: when a question has a "
+                "small set of clear options, you may present them as clickable "
+                "buttons. Emit [A2UI]{\"kind\":\"choice\",\"prompt\":\"your "
+                "question\",\"options\":[\"Option A\",\"Option B\"]}[/A2UI] "
+                "anywhere in your reply. The tag is replaced by an interactive "
+                "card and the Captain's pick comes back as their next message, "
+                "so keep options short (2 to a handful) and continue the "
+                "conversation naturally once they choose."
+            )
+        except Exception:
+            logger.debug(
+                "AD-811a: a2ui teaching block build failed; no block this turn",
+                exc_info=True,
+            )
+            return ""
+
     def _conversational_group_chat_protocol(self, observation: dict) -> str:
         """AD-935 / AD-967 / AD-975: in a group chat, teach (1) WHO is present in
         the room — the AD-967 roster — (2) that responding is OPTIONAL (reply only
@@ -2910,6 +2976,15 @@ class CognitiveAgent(BaseAgent):
             _cap_block = self._conversational_capability_block(observation)
             if _cap_block:
                 composed += _cap_block
+            # AD-811a: A2UI choice-widget protocol. Overridable hook; base
+            # returns "" unless CommunicationsConfig.a2ui_enabled (default OFF)
+            # AND the agent's live rank >= a2ui_min_rank. Teaches the [A2UI]
+            # choice tag that renders a clickable card in the transcript.
+            # Sits next to the BF-599 capability block (both injected the same
+            # way on the composed conversational prompt).
+            _a2ui_block = self._conversational_a2ui_block(observation)
+            if _a2ui_block:
+                composed += _a2ui_block
             # AD-845: task-creation protocol. Overridable hook; base returns
             # "" so only opting-in agents (Yeo) learn the [CREATE_TASK ...]
             # reply tag. Sits next to the BF-599 capability block because

@@ -5203,6 +5203,22 @@ class CommunicationsConfig(BaseModel):
     artifact_min_rank: str = "lieutenant"  # min rank to write an artifact into a task room: ensign|lieutenant|commander|senior
     artifact_max_per_turn: int = 3         # anti-flood: honor at most this many [ARTIFACT] tags per proactive turn
     artifact_max_bytes: int = 262144       # anti-flood: reject artifact bodies larger than 256 KiB (oversized -> honest-degrade)
+    # AD-811a: agent-authored [A2UI] choice widget -> interactive card in the
+    # 1:1 DM transcript. Default-OFF operator opt-in: when a2ui_enabled is
+    # False (default) no agent is taught the tag and the pipeline step skips,
+    # so behavior is byte-identical to pre-AD-811a.
+    a2ui_enabled: bool = Field(
+        default=False,
+        description="AD-811a: enable the [A2UI] choice widget on the 1:1 DM path (default OFF -> byte-identical).",
+    )
+    a2ui_min_rank: str = Field(
+        default="lieutenant",
+        description="AD-811a: min rank to emit an [A2UI] choice widget: ensign|lieutenant|commander|senior",
+    )
+    a2ui_max_options: int = Field(
+        default=10, ge=2, le=20,
+        description="AD-811a: anti-flood cap on choice options honored per [A2UI] block (schema hard-caps at 20).",
+    )
     # AD-928: agent-authored [STATUS] -> task-room "show your work" activity.
     status_min_rank: str = "lieutenant"  # min rank to post a status into a task room: ensign|lieutenant|commander|senior
     status_max_per_turn: int = 3         # anti-flood: honor at most this many [STATUS] tags per proactive turn

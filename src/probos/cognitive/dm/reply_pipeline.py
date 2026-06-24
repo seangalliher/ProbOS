@@ -163,6 +163,7 @@ class DmReplyPipeline:
             self.step_4i_notebook_parse,  # AD-911
             self.step_4h_mesh_read_parse,  # AD-869
             self.step_4f_extract_artifacts,  # AD-797 (Wave 197)
+            self.step_4k_extract_a2ui,  # AD-811a (default-OFF; 1:1 only)
             self.step_4g_create_task_parse,  # AD-845
             self.step_4j_deliberate_parse,  # AD-934
             self.step_5_episodic_store,
@@ -1224,6 +1225,74 @@ class DmReplyPipeline:
         except Exception as exc:
             logger.warning(
                 "AD-797: artifact extractor failed for agent=%s; "
+                "response_text left intact (%s)",
+                self.ctx.agent_id, exc, exc_info=True,
+            )
+
+    # --- step 4k: AD-811a [A2UI]{json}[/A2UI] choice-widget extraction ---
+    async def step_4k_extract_a2ui(self) -> None:
+        """AD-811a: extract ``[A2UI]{json}[/A2UI]`` choice-widget blocks from
+        ``self.ctx.response_text``, persist each as an ``application/json``
+        artifact (the AD-797 two-call write), and rewrite ``response_text``
+        with an inline ``[A2UI: name vN - choice]`` stub so the HXI renders an
+        interactive choice card in the transcript.
+
+        Default-OFF: gated on ``config.communications.a2ui_enabled`` (default
+        False). When off the step returns immediately doing nothing, so the
+        reply is byte-identical to pre-AD-811a. 1:1 only — registered in
+        :meth:`_full_steps` but NOT :meth:`_escalation_steps` (v1 scope).
+
+        Runs adjacent to ``step_4f_extract_artifacts`` (after it, before
+        ``step_4g_create_task_parse``) under the same per-step Tier-2 guard.
+        Honest-degrade: any failure logs a warning and leaves
+        ``response_text`` untouched.
+        """
+        try:
+            text = self.ctx.response_text or ""
+            if not text:
+                return
+            config = getattr(self.ctx.runtime, "config", None)
+            comms_cfg = (
+                getattr(config, "communications", None) if config else None
+            )
+            if not getattr(comms_cfg, "a2ui_enabled", False):
+                return  # default-OFF: byte-identical when the flag is off
+            if "[A2UI]" not in text.upper():
+                return  # cheap early-out before the regex/store work
+            artifact_store = getattr(self.ctx.runtime, "artifact_store", None)
+            attachment_store = getattr(
+                self.ctx.runtime, "attachment_store", None
+            )
+            if artifact_store is None or attachment_store is None:
+                return
+            thread_id = self.ctx.chat_thread_id
+            if not thread_id:
+                return  # no thread context — nothing to anchor extraction
+            max_options = getattr(comms_cfg, "a2ui_max_options", 10)
+            from probos.cognitive.dm.a2ui_extractor import (
+                extract_a2ui,
+                replace_a2ui_with_stubs,
+            )
+            specs = extract_a2ui(text, max_options=max_options)
+            if not specs:
+                return
+            new_text, _artifacts = await replace_a2ui_with_stubs(
+                text, specs,
+                artifact_store=artifact_store,
+                attachment_store=attachment_store,
+                thread_id=thread_id,
+                created_by=self.ctx.agent_id or "agent",
+            )
+            self.ctx.response_text = new_text
+            if _artifacts:
+                logger.info(
+                    "AD-811a: extracted %d A2UI choice widget(s) from "
+                    "agent=%s reply in thread=%s",
+                    len(_artifacts), self.ctx.agent_id, thread_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "AD-811a: A2UI extractor failed for agent=%s; "
                 "response_text left intact (%s)",
                 self.ctx.agent_id, exc, exc_info=True,
             )

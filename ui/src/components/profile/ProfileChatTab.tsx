@@ -6,6 +6,8 @@ import type { PerAgentReply } from '../../audio/meetingVoice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
 import { ArtifactCard } from '../artifacts/ArtifactCard';
 import { parseArtifactStub } from '../artifacts/artifactApi';
+import { A2UIChoiceCard } from '../a2ui/A2UIChoiceCard';
+import { parseA2UIStub } from '../a2ui/a2uiApi';
 // BF-301 (was AD-826) — voice-health response shape (mirror of /api/voice/health).
 interface VoiceHealth {
   primary_stt: 'transformers' | 'whisper' | 'browser';
@@ -101,15 +103,36 @@ function loadMicMode(agentId: string): MicMode {
  *  ``[Artifact: name vN - N lines, mime]`` stubs with the inline
  *  ArtifactCard component. If ``threadId`` is undefined (1:1 cold-start
  *  before a thread exists), the stub is rendered as plain text — the
- *  card cannot resolve without the thread context. */
+ *  card cannot resolve without the thread context.
+ *
+ *  AD-811a: also replaces ``[A2UI: name vN - choice]`` stubs with the
+ *  interactive A2UIChoiceCard (tested BEFORE the artifact stub). The
+ *  optional ``onA2UIChoice`` callback receives the Captain's pick and
+ *  posts it back through the chat ``sendText`` route. */
 function renderMessageBodyWithArtifacts(
   text: string, threadId: string | undefined,
+  onA2UIChoice?: (option: string) => void,
 ): React.ReactNode {
   if (!text) return text;
   const lines = text.split('\n');
   return lines.map((line, idx) => {
-    const stub = parseArtifactStub(line);
     const isLast = idx === lines.length - 1;
+    // AD-811a: A2UI choice stub takes precedence over the artifact stub.
+    const a2ui = parseA2UIStub(line);
+    if (a2ui && threadId) {
+      return (
+        <span key={idx} style={{ display: 'block' }}>
+          <A2UIChoiceCard
+            threadId={threadId}
+            name={a2ui.name}
+            version={a2ui.version}
+            onChoice={onA2UIChoice ?? (() => {})}
+          />
+          {!isLast && '\n'}
+        </span>
+      );
+    }
+    const stub = parseArtifactStub(line);
     if (stub && threadId) {
       return (
         <span key={idx} style={{ display: 'block' }}>
@@ -1144,7 +1167,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             msg={msg}
             hostAgentId={agentId}
             hostCallsign={hostCallsign}
-            body={renderMessageBodyWithArtifacts(msg.text, threadId)}
+            body={renderMessageBodyWithArtifacts(msg.text, threadId, (opt) => sendText(opt))}
           />
         ))}
         {/* AD-952: typing beat for the agent composing the next group reply.
