@@ -21,7 +21,7 @@
  * curated subset. No animation here either (pulse/flash is AD-708c-4).
  */
 
-import type { Agent } from '../store/types'; // type-only — the ONLY store reference
+import type { Agent, Connection } from '../store/types'; // type-only — the ONLY store reference
 
 export interface MeshNode {
   id: string;
@@ -37,6 +37,14 @@ export interface MeshNode {
 export interface MeshViewport {
   width: number;
   height: number;
+}
+
+export interface MeshEdge {
+  x1: number; // px — source node x within the viewport
+  y1: number; // px — source node y
+  x2: number; // px — target node x
+  y2: number; // px — target node y
+  opacity: number; // 0.4..0.9 from connection weight
 }
 
 // --- Trust spectrum stops (re-derived from scene.ts `trustToColor`) ----------
@@ -211,4 +219,33 @@ export function computeMeshLayout(agents: Agent[], viewport: MeshViewport): Mesh
     });
   }
   return nodes;
+}
+
+/**
+ * Projects store `connections` onto the curated mesh nodes. Builds an id -> node
+ * map, then for each connection emits a line between the source and target nodes'
+ * (x, y). Any edge with an endpoint OUTSIDE the curated subset (no matching node)
+ * is DROPPED — the mobile mesh only shows edges between visible nodes. Opacity
+ * encodes weight: min(0.4 + weight * 0.5, 0.9) (0.4 floor keeps faint edges
+ * visible; 0.9 cap leaves headroom under the nodes). Pure, deterministic. `[]`
+ * inputs -> `[]`.
+ */
+export function computeMeshEdges(nodes: MeshNode[], connections: Connection[]): MeshEdge[] {
+  if (nodes.length === 0 || connections.length === 0) return [];
+  const byId = new Map<string, MeshNode>();
+  for (const n of nodes) byId.set(n.id, n);
+  const edges: MeshEdge[] = [];
+  for (const c of connections) {
+    const a = byId.get(c.source);
+    const b = byId.get(c.target);
+    if (!a || !b) continue; // endpoint outside the curated subset -> drop
+    edges.push({
+      x1: a.x,
+      y1: a.y,
+      x2: b.x,
+      y2: b.y,
+      opacity: Math.min(0.4 + c.weight * 0.5, 0.9),
+    });
+  }
+  return edges;
 }

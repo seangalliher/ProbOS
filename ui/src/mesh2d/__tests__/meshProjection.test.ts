@@ -12,9 +12,11 @@ import {
   nodeRadius,
   selectMeshAgents,
   computeMeshLayout,
+  computeMeshEdges,
   type MeshViewport,
+  type MeshEdge,
 } from '../meshProjection';
-import type { Agent } from '../../store/types';
+import type { Agent, Connection } from '../../store/types';
 
 // --- fixtures ---------------------------------------------------------------
 function makeAgent(over: Partial<Agent> & { id: string }): Agent {
@@ -257,6 +259,81 @@ describe('AD-708c-1 computeMeshLayout', () => {
   });
 });
 
+describe('AD-708c-2 computeMeshEdges', () => {
+  const viewport: MeshViewport = { width: 360, height: 360 };
+
+  it('returns [] for empty nodes', () => {
+    const conns: Connection[] = [{ source: 'a', target: 'b', relType: 'r', weight: 1 }];
+    expect(computeMeshEdges([], conns)).toEqual([]);
+  });
+
+  it('returns [] for empty connections', () => {
+    const nodes = computeMeshLayout([makeAgent({ id: 'a' }), makeAgent({ id: 'b' })], viewport);
+    expect(computeMeshEdges(nodes, [])).toEqual([]);
+  });
+
+  it('emits one edge between two in-subset nodes with endpoints + weight opacity', () => {
+    const nodes = computeMeshLayout([makeAgent({ id: 'a' }), makeAgent({ id: 'b' })], viewport);
+    const nodeA = nodes.find((n) => n.id === 'a');
+    const nodeB = nodes.find((n) => n.id === 'b');
+    expect(nodeA).toBeDefined();
+    expect(nodeB).toBeDefined();
+    const edges: MeshEdge[] = computeMeshEdges(nodes, [
+      { source: 'a', target: 'b', relType: 'mentored', weight: 0.6 },
+    ]);
+    expect(edges).toHaveLength(1);
+    expect(edges[0].x1).toBe(nodeA!.x);
+    expect(edges[0].y1).toBe(nodeA!.y);
+    expect(edges[0].x2).toBe(nodeB!.x);
+    expect(edges[0].y2).toBe(nodeB!.y);
+    expect(edges[0].opacity).toBeCloseTo(0.7, 6); // min(0.4 + 0.6 * 0.5, 0.9)
+  });
+
+  it('drops an edge whose SOURCE is outside the curated subset', () => {
+    const nodes = computeMeshLayout([makeAgent({ id: 'a' })], viewport);
+    const edges = computeMeshEdges(nodes, [
+      { source: 'ghost', target: 'a', relType: 'r', weight: 0.5 },
+    ]);
+    expect(edges).toEqual([]);
+  });
+
+  it('drops an edge whose TARGET is outside the curated subset', () => {
+    const nodes = computeMeshLayout([makeAgent({ id: 'a' })], viewport);
+    const edges = computeMeshEdges(nodes, [
+      { source: 'a', target: 'ghost', relType: 'r', weight: 0.5 },
+    ]);
+    expect(edges).toEqual([]);
+  });
+
+  it('opacity floors at 0.4, scales mid, and caps at 0.9', () => {
+    const nodes = computeMeshLayout([makeAgent({ id: 'a' }), makeAgent({ id: 'b' })], viewport);
+    const op = (weight: number): number =>
+      computeMeshEdges(nodes, [{ source: 'a', target: 'b', relType: 'r', weight }])[0].opacity;
+    expect(op(0)).toBeCloseTo(0.4, 6);
+    expect(op(0.5)).toBeCloseTo(0.65, 6);
+    expect(op(1)).toBeCloseTo(0.9, 6);
+    expect(op(2)).toBeCloseTo(0.9, 6); // cap
+  });
+
+  it('drops an edge to an agent capped out of the curated 24', () => {
+    const agents = Array.from({ length: 25 }, (_, i) =>
+      makeAgent({
+        id: `n${i}`,
+        callsign: `n${String(i).padStart(2, '0')}`,
+        trust: i === 24 ? 0 : 0.9,
+      }),
+    );
+    const curated = selectMeshAgents(agents); // caps 24 -> drops the trust-0 'n24'
+    expect(curated).toHaveLength(24);
+    expect(curated.some((a) => a.id === 'n24')).toBe(false);
+    const nodes = computeMeshLayout(curated, viewport);
+    const edges = computeMeshEdges(nodes, [
+      { source: 'n0', target: 'n24', relType: 'r', weight: 1 },
+    ]);
+    expect(edges).toEqual([]); // n24 has no node -> edge dropped
+  });
+});
+
 describe('AD-708c-1 three-free guard', () => {
   it('the module source imports no three.js and no canvas-scene module', () => {
     // Vitest runs with its root as cwd (D:/ProbOS/ui), so resolve the module
@@ -271,6 +348,6 @@ describe('AD-708c-1 three-free guard', () => {
     expect(code).not.toContain('canvas/scene');
     expect(code).not.toContain('canvas/agents');
     // Positively confirm the ONLY store reference is the type-only Agent import.
-    expect(code).toContain("import type { Agent } from '../store/types'");
+    expect(code).toContain("import type { Agent, Connection } from '../store/types'");
   });
 });
