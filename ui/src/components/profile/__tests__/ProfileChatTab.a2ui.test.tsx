@@ -17,6 +17,7 @@ vi.mock('../../artifacts/artifactApi', async (importOriginal) => {
 });
 import { fetchArtifactContent } from '../../artifacts/artifactApi';
 import { A2UIChoiceCard } from '../../a2ui/A2UIChoiceCard';
+import { A2UIMultiSelectCard } from '../../a2ui/A2UIMultiSelectCard';
 import { ArtifactCard } from '../../artifacts/ArtifactCard';
 
 // ?raw import does not execute the heavy module — safe to scan the source.
@@ -24,6 +25,10 @@ import profileChatSource from '../ProfileChatTab.tsx?raw';
 
 const CHOICE_JSON = JSON.stringify({
   kind: 'choice', prompt: 'Pick a plan', options: ['Alpha', 'Beta'],
+});
+
+const MS_JSON = JSON.stringify({
+  kind: 'multiselect', prompt: 'Pick halls', options: ['Alpha', 'Beta', 'Gamma'],
 });
 
 function mkArtifact(p: {
@@ -140,5 +145,53 @@ describe('AD-811a A2UI choice round-trip (mirror of sendText)', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('/api/agent/yeo/chat');
     expect(JSON.parse((init as RequestInit).body as string).message).toBe('Beta');
+  });
+});
+
+describe('AD-811b ProfileChatTab multiselect dispatch', () => {
+  it('renders A2UIMultiSelectCard for the multiselect kind with onA2UIChoice', () => {
+    expect(profileChatSource).toMatch(
+      /<A2UIMultiSelectCard[\s\S]*?onChoice=\{onA2UIChoice/,
+    );
+  });
+
+  it('dispatches on the parsed stub kind (unknown kind falls through)', () => {
+    expect(profileChatSource).toContain("a2ui.kind === 'multiselect'");
+    expect(profileChatSource).toContain("a2ui.kind === 'choice'");
+  });
+
+  it('posts the multiselect picks (option order, comma-join) through sendText', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    useStore.setState({
+      artifactsByThread: new Map([[
+        't1', [mkArtifact({ id: 'a1', threadId: 't1', name: 'a2ui-multiselect-1.json', version: 1 })],
+      ]]),
+    });
+    vi.mocked(fetchArtifactContent).mockResolvedValue({
+      blob: new Blob([MS_JSON]), text: MS_JSON, mime: 'application/json',
+    });
+
+    render(
+      <A2UIMultiSelectCard
+        threadId="t1"
+        name="a2ui-multiselect-1.json"
+        version={1}
+        onChoice={(opt) => sendTextMirror('yeo', opt)}
+      />,
+    );
+    await screen.findByText('Pick halls');
+    fireEvent.click(screen.getByTestId('a2ui-ms-option-2')); // Gamma
+    fireEvent.click(screen.getByTestId('a2ui-ms-option-0')); // Alpha
+    fireEvent.click(screen.getByTestId('a2ui-ms-submit'));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/agent/yeo/chat');
+    expect(JSON.parse((init as RequestInit).body as string).message)
+      .toBe('Alpha, Gamma');
   });
 });

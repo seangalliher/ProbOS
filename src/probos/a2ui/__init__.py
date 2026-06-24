@@ -12,8 +12,9 @@ unless ``CommunicationsConfig.a2ui_enabled`` is True (default False) — with
 the flag off no agent is taught the tag and the schema is never exercised
 on the live path, so behavior is byte-identical to pre-AD-811a.
 
-What v1 does NOT do:
-    * other widget kinds — text input, multi-select, form (AD-811b)
+What this module does NOT do (AD-811b adds ``multiselect``):
+    * other widget kinds — form (AD-811b-1), range (AD-811b-2),
+      date (AD-811b-3)
     * group-chat producer (AD-811c)
     * channel adapters — Slack/Teams/etc. (AD-811d)
     * DecisionQueue -> A2UI surfacing (AD-811e)
@@ -22,9 +23,10 @@ What v1 does NOT do:
 
 from __future__ import annotations
 
+import json
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Schema-level hard cap on the option count, independent of the config
 # gate. The config value ``a2ui_max_options`` (default 10) gates more
@@ -32,6 +34,48 @@ from pydantic import BaseModel, field_validator
 # is safe to construct/parse anywhere without a config handle.
 _MAX_OPTIONS_HARD_CAP = 20
 _MAX_PROMPT_LEN = 500
+
+
+def _clean_prompt(v: str) -> str:
+    """Trim + validate a widget prompt (shared by every A2UI spec).
+
+    AD-811b: extracted from ``AgentUIChoiceSpec`` so each widget kind
+    delegates to ONE implementation (DRY). Behavior is byte-identical to
+    the AD-811a inline validator.
+    """
+    trimmed = (v or "").strip()
+    if not trimmed:
+        raise ValueError("prompt must be a non-empty string")
+    if len(trimmed) > _MAX_PROMPT_LEN:
+        raise ValueError(
+            f"prompt exceeds the {_MAX_PROMPT_LEN}-char limit"
+        )
+    return trimmed
+
+
+def _clean_options(v: list[str]) -> list[str]:
+    """Trim/dedupe/cap a widget option list (shared by every A2UI spec).
+
+    AD-811b: extracted from ``AgentUIChoiceSpec`` so each widget kind
+    delegates to ONE implementation (DRY). Drops empties, dedupes (order
+    preserved), and enforces the 2..20 bounds — byte-identical to the
+    AD-811a inline validator.
+    """
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in v or []:
+        opt = (raw or "").strip()
+        if not opt or opt in seen:
+            continue
+        seen.add(opt)
+        cleaned.append(opt)
+    if len(cleaned) < 2:
+        raise ValueError("a choice spec needs at least 2 distinct options")
+    if len(cleaned) > _MAX_OPTIONS_HARD_CAP:
+        raise ValueError(
+            f"a choice spec accepts at most {_MAX_OPTIONS_HARD_CAP} options"
+        )
+    return cleaned
 
 
 class AgentUIChoiceSpec(BaseModel):
@@ -51,33 +95,12 @@ class AgentUIChoiceSpec(BaseModel):
     @field_validator("prompt")
     @classmethod
     def _validate_prompt(cls, v: str) -> str:
-        trimmed = (v or "").strip()
-        if not trimmed:
-            raise ValueError("prompt must be a non-empty string")
-        if len(trimmed) > _MAX_PROMPT_LEN:
-            raise ValueError(
-                f"prompt exceeds the {_MAX_PROMPT_LEN}-char limit"
-            )
-        return trimmed
+        return _clean_prompt(v)
 
     @field_validator("options")
     @classmethod
     def _validate_options(cls, v: list[str]) -> list[str]:
-        cleaned: list[str] = []
-        seen: set[str] = set()
-        for raw in v or []:
-            opt = (raw or "").strip()
-            if not opt or opt in seen:
-                continue
-            seen.add(opt)
-            cleaned.append(opt)
-        if len(cleaned) < 2:
-            raise ValueError("a choice spec needs at least 2 distinct options")
-        if len(cleaned) > _MAX_OPTIONS_HARD_CAP:
-            raise ValueError(
-                f"a choice spec accepts at most {_MAX_OPTIONS_HARD_CAP} options"
-            )
-        return cleaned
+        return _clean_options(v)
 
     def to_json(self) -> str:
         """Serialize to a compact JSON string (the artifact body)."""
@@ -87,3 +110,100 @@ class AgentUIChoiceSpec(BaseModel):
     def from_json(cls, raw: str) -> "AgentUIChoiceSpec":
         """Parse + validate a JSON string. Raises on malformed/invalid input."""
         return cls.model_validate_json(raw)
+
+
+class AgentUIMultiSelectSpec(BaseModel):
+    """A multi-select widget spec carried by an ``[A2UI]{json}[/A2UI]`` tag.
+
+    AD-811b: the 2nd A2UI widget kind. Like :class:`AgentUIChoiceSpec` but
+    the Captain may pick several options at once. ``prompt``/``options``
+    share the same validators (the DRY ``_clean_*`` helpers).
+    ``min_select``/``max_select`` bound the selection count; the HXI
+    returns the picks joined by commas (option order). The schema enforces
+    the same 2..20 hard cap on options as the choice spec.
+    """
+
+    kind: Literal["multiselect"] = "multiselect"
+    prompt: str
+    options: list[str]
+    min_select: int = Field(default=1, ge=1)
+    max_select: int | None = None
+
+    @field_validator("prompt")
+    @classmethod
+    def _validate_prompt(cls, v: str) -> str:
+        return _clean_prompt(v)
+
+    @field_validator("options")
+    @classmethod
+    def _validate_options(cls, v: list[str]) -> list[str]:
+        return _clean_options(v)
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> "AgentUIMultiSelectSpec":
+        """Enforce the selection bounds against the cleaned option count.
+
+        Runs after field validation, so ``self.options`` is already
+        trimmed/deduped. ``min_select`` must fit within the options;
+        ``max_select`` (when set) must be >= ``min_select`` and is clamped
+        down to the option count when it overshoots.
+        """
+        n = len(self.options)
+        if self.min_select > n:
+            raise ValueError(
+                "min_select cannot exceed the number of options"
+            )
+        if self.max_select is not None:
+            if self.max_select < self.min_select:
+                raise ValueError("max_select cannot be less than min_select")
+            if self.max_select > n:
+                self.max_select = n
+        return self
+
+    def to_json(self) -> str:
+        """Serialize to a compact JSON string (the artifact body)."""
+        return self.model_dump_json()
+
+    @classmethod
+    def from_json(cls, raw: str) -> "AgentUIMultiSelectSpec":
+        """Parse + validate a JSON string. Raises on malformed/invalid input."""
+        return cls.model_validate_json(raw)
+
+
+# --------------------------------------------------------------------------- #
+# AD-811b: N-kind dispatch — a ``kind``-keyed registry + a single parse entry  #
+# point. Adding a widget kind = register its spec class here. The DM extractor #
+# and the HXI both route through this one dispatcher, so the choice path stays #
+# byte-identical while new kinds slot in without touching the call sites.      #
+# --------------------------------------------------------------------------- #
+
+A2UISpec = AgentUIChoiceSpec | AgentUIMultiSelectSpec
+
+_SPEC_BY_KIND: dict[str, type[A2UISpec]] = {
+    "choice": AgentUIChoiceSpec,
+    "multiselect": AgentUIMultiSelectSpec,
+}
+
+
+def parse_a2ui_spec(raw: str) -> A2UISpec | None:
+    """Parse a raw JSON A2UI body into the spec for its ``kind``.
+
+    Honest-degrade (Tier-2): returns ``None`` on malformed JSON, a
+    non-object payload, a missing/non-string/unknown ``kind``, or any
+    schema validation failure \u2014 never raises. This is the single N-kind
+    entry point; register a new kind in :data:`_SPEC_BY_KIND`.
+    """
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    kind = data.get("kind")
+    cls = _SPEC_BY_KIND.get(kind) if isinstance(kind, str) else None
+    if cls is None:
+        return None
+    try:
+        return cls.model_validate(data)
+    except Exception:
+        return None

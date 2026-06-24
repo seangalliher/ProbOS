@@ -24,7 +24,7 @@ import logging
 import re
 from typing import Any
 
-from probos.a2ui import AgentUIChoiceSpec
+from probos.a2ui import A2UISpec, parse_a2ui_spec
 from probos.artifacts import Artifact, ArtifactStore
 
 logger = logging.getLogger(__name__)
@@ -36,34 +36,37 @@ _A2UI_PATTERN = re.compile(r"\[A2UI\](.*?)\[/A2UI\]", re.DOTALL | re.IGNORECASE)
 
 def extract_a2ui(
     text: str, *, max_options: int = 10,
-) -> list[AgentUIChoiceSpec]:
-    """Find ``[A2UI]{json}[/A2UI]`` blocks and parse each as a choice spec.
+) -> list[A2UISpec]:
+    """Find ``[A2UI]{json}[/A2UI]`` blocks and parse each via the kind registry.
 
-    v1 caps at ONE widget per reply (the first valid block wins). Any
-    block whose body is not valid JSON, fails ``AgentUIChoiceSpec``
-    validation, or carries more than ``max_options`` options is skipped
-    (honest-degrade, no raise).
+    AD-811b: dispatches through :func:`~probos.a2ui.parse_a2ui_spec`, so a
+    block of any registered ``kind`` (``choice``, ``multiselect``, …) is
+    recognized; the choice path is unchanged. Caps at ONE widget per reply
+    (the first valid block wins). Any block whose body is not valid JSON,
+    fails its spec validation, carries an unknown/missing ``kind``, or has
+    more than ``max_options`` options is skipped (honest-degrade, no
+    raise).
     """
     if not text:
         return []
-    specs: list[AgentUIChoiceSpec] = []
+    specs: list[A2UISpec] = []
     for m in _A2UI_PATTERN.finditer(text):
         body = (m.group(1) or "").strip()
         if not body:
             continue
-        try:
-            spec = AgentUIChoiceSpec.from_json(body)
-        except Exception:
+        spec = parse_a2ui_spec(body)
+        if spec is None:
             logger.warning(
-                "AD-811a: malformed/invalid [A2UI] block; skipping",
-                exc_info=True,
+                "AD-811b: malformed/invalid/unknown-kind [A2UI] block; "
+                "skipping",
             )
             continue
-        if len(spec.options) > max_options:
+        opts = getattr(spec, "options", None)
+        if opts is not None and len(opts) > max_options:
             logger.warning(
-                "AD-811a: [A2UI] block has %d options > max_options=%d; "
+                "AD-811b: [A2UI] block has %d options > max_options=%d; "
                 "skipping",
-                len(spec.options), max_options,
+                len(opts), max_options,
             )
             continue
         specs.append(spec)
@@ -71,20 +74,25 @@ def extract_a2ui(
     return specs
 
 
-def build_a2ui_stub(name: str, version: int) -> str:
+def build_a2ui_stub(name: str, version: int, kind: str = "choice") -> str:
     """Inline stub left in place of an extracted ``[A2UI]`` block.
+
+    AD-811b: the stub now carries the widget ``kind`` so the HXI can route
+    to the matching renderer. ``kind`` defaults to ``"choice"`` so the
+    AD-811a 2-arg callers stay byte-identical.
 
     Format (ASCII hyphen, NOT em-dash — the UI ``A2UI_STUB_RE`` matches
     the literal hyphen)::
 
         [A2UI: a2ui-choice-1.json v1 - choice]
+        [A2UI: a2ui-multiselect-1.json v1 - multiselect]
     """
-    return f"[A2UI: {name} v{version} - choice]"
+    return f"[A2UI: {name} v{version} - {kind}]"
 
 
 async def replace_a2ui_with_stubs(
     text: str,
-    specs: list[AgentUIChoiceSpec],
+    specs: list[A2UISpec],
     *,
     artifact_store: ArtifactStore,
     attachment_store: Any,
@@ -123,7 +131,7 @@ async def replace_a2ui_with_stubs(
             )
             return text, []
         name_n += 1
-        name = f"a2ui-choice-{name_n}.json"
+        name = f"a2ui-{spec.kind}-{name_n}.json"
         try:
             artifact = artifact_store.add_version(
                 thread_id=thread_id,
@@ -140,7 +148,7 @@ async def replace_a2ui_with_stubs(
             )
             return text, []
         persisted.append(artifact)
-        stub = build_a2ui_stub(artifact.name, artifact.version)
+        stub = build_a2ui_stub(artifact.name, artifact.version, spec.kind)
         # Replace only the first remaining [A2UI] block; the lambda form
         # avoids re.sub interpreting any backslash/group ref in the stub.
         new_text = _A2UI_PATTERN.sub(lambda _m: stub, new_text, count=1)

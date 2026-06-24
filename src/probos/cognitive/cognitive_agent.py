@@ -2281,11 +2281,15 @@ class CognitiveAgent(BaseAgent):
                 "\n\nOffering the Captain a quick choice: when a question has a "
                 "small set of clear options, you may present them as clickable "
                 "buttons. Emit [A2UI]{\"kind\":\"choice\",\"prompt\":\"your "
-                "question\",\"options\":[\"Option A\",\"Option B\"]}[/A2UI] "
-                "anywhere in your reply. The tag is replaced by an interactive "
-                "card and the Captain's pick comes back as their next message, "
-                "so keep options short (2 to a handful) and continue the "
-                "conversation naturally once they choose."
+                "question\",\"options\":[\"Option A\",\"Option B\"]}[/A2UI] for "
+                "a single pick, or [A2UI]{\"kind\":\"multiselect\",\"prompt\":"
+                "\"your question\",\"options\":[\"Option A\",\"Option B\","
+                "\"Option C\"],\"min_select\":1}[/A2UI] when several picks make "
+                "sense at once. The tag becomes an interactive card; a single "
+                "choice comes back as the Captain's next message, and a "
+                "multi-select comes back as their picks joined by commas. Keep "
+                "options short (2 to a handful) and continue the conversation "
+                "naturally once they choose."
             )
         except Exception:
             logger.debug(

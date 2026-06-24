@@ -4,12 +4,20 @@ import {
   A2UI_STUB_RE,
   parseA2UIStub,
   parseChoiceSpec,
+  parseMultiSelectSpec,
 } from '../a2uiApi';
 
 describe('AD-811a parseA2UIStub', () => {
   it('matches a well-formed A2UI stub', () => {
     const got = parseA2UIStub('[A2UI: a2ui-choice-1.json v3 - choice]');
-    expect(got).toEqual({ name: 'a2ui-choice-1.json', version: 3 });
+    expect(got).toEqual({ name: 'a2ui-choice-1.json', version: 3, kind: 'choice' });
+  });
+
+  it('captures the kind for a multiselect stub (AD-811b)', () => {
+    const got = parseA2UIStub('[A2UI: a2ui-multiselect-1.json v1 - multiselect]');
+    expect(got).toEqual({
+      name: 'a2ui-multiselect-1.json', version: 1, kind: 'multiselect',
+    });
   });
 
   it('exposes the regex for reuse', () => {
@@ -79,5 +87,69 @@ describe('AD-811a parseChoiceSpec', () => {
   it('returns null on a non-object payload', () => {
     expect(parseChoiceSpec('42')).toBeNull();
     expect(parseChoiceSpec('null')).toBeNull();
+  });
+});
+
+describe('AD-811b parseMultiSelectSpec', () => {
+  it('parses a valid multiselect spec', () => {
+    const json = JSON.stringify({
+      kind: 'multiselect', prompt: 'Pick some', options: ['A', 'B', 'C'],
+    });
+    expect(parseMultiSelectSpec(json)).toEqual({
+      prompt: 'Pick some', options: ['A', 'B', 'C'], minSelect: 1, maxSelect: null,
+    });
+  });
+
+  it('drops empty/whitespace options', () => {
+    const json = JSON.stringify({
+      kind: 'multiselect', prompt: 'q', options: ['A', '  ', '', 'B'],
+    });
+    expect(parseMultiSelectSpec(json)).toEqual({
+      prompt: 'q', options: ['A', 'B'], minSelect: 1, maxSelect: null,
+    });
+  });
+
+  it('returns null when kind !== "multiselect"', () => {
+    expect(parseMultiSelectSpec(
+      JSON.stringify({ kind: 'choice', prompt: 'q', options: ['A', 'B'] }),
+    )).toBeNull();
+  });
+
+  it('returns null with fewer than 2 options', () => {
+    expect(parseMultiSelectSpec(
+      JSON.stringify({ kind: 'multiselect', prompt: 'q', options: ['only'] }),
+    )).toBeNull();
+  });
+
+  it('defaults minSelect to 1 and maxSelect to null', () => {
+    const spec = parseMultiSelectSpec(JSON.stringify({
+      kind: 'multiselect', prompt: 'q', options: ['A', 'B', 'C'],
+    }));
+    expect(spec?.minSelect).toBe(1);
+    expect(spec?.maxSelect).toBeNull();
+  });
+
+  it('clamps maxSelect down to options.length', () => {
+    const json = JSON.stringify({
+      kind: 'multiselect', prompt: 'q', options: ['A', 'B'],
+      min_select: 1, max_select: 9,
+    });
+    expect(parseMultiSelectSpec(json)?.maxSelect).toBe(2);
+  });
+
+  it('clamps minSelect to options.length', () => {
+    const json = JSON.stringify({
+      kind: 'multiselect', prompt: 'q', options: ['A', 'B'], min_select: 5,
+    });
+    expect(parseMultiSelectSpec(json)?.minSelect).toBe(2);
+  });
+
+  it('returns null on malformed JSON', () => {
+    expect(parseMultiSelectSpec('{not json')).toBeNull();
+  });
+
+  it('returns null on a non-object payload', () => {
+    expect(parseMultiSelectSpec('42')).toBeNull();
+    expect(parseMultiSelectSpec('null')).toBeNull();
   });
 });
