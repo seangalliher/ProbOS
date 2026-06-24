@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Lock, Unlock, Pin } from '../icons/Glyphs';
 import DesktopConsole from '../desktop/DesktopConsole';
+import ConnectPhoneCard from './ConnectPhoneCard';
 
 interface ServiceStatus {
   name: string;
@@ -309,6 +310,7 @@ export function FullSystem() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
         <ServicesGrid />
         <DesktopConsole />
+        <ConnectPhoneCard />
         <ThreadTable />
         <ShutdownPanel />
       </div>
