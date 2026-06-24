@@ -78,3 +78,38 @@ describe('AD-708b MobileShell', () => {
     }
   });
 });
+
+describe('AD-708c-3 MobileShell chat<->mesh toggle', () => {
+  it('AD-708c-3: defaults to the chat view with the toggle present and the mesh absent', () => {
+    useStore.setState({
+      agents: new Map([['yeo-id', { id: 'yeo-id', callsign: 'Yeo', displayName: 'Yeo' } as any]]),
+    });
+    render(<MobileShell />);
+    expect(screen.getByTestId('mobile-view-toggle')).toBeInTheDocument();
+    expect(screen.getByTestId('mobile-shell-chat')).toBeInTheDocument();
+    expect(screen.queryByTestId('mobile-mesh')).not.toBeInTheDocument();
+  });
+
+  it('AD-708c-3: the MESH toggle swaps the body from chat to the 2D mesh', () => {
+    useStore.setState({
+      agents: new Map([['yeo-id', { id: 'yeo-id', callsign: 'Yeo', displayName: 'Yeo' } as any]]),
+    });
+    render(<MobileShell />);
+    fireEvent.click(screen.getByTestId('mobile-toggle-mesh'));
+    expect(screen.getByTestId('mobile-mesh')).toBeInTheDocument();
+    expect(screen.queryByTestId('mobile-shell-chat')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('profile-chat-stub')).not.toBeInTheDocument();
+  });
+
+  it('AD-708c-3: toggling back to CHAT restores the chat surface and removes the mesh', () => {
+    useStore.setState({
+      agents: new Map([['yeo-id', { id: 'yeo-id', callsign: 'Yeo', displayName: 'Yeo' } as any]]),
+    });
+    render(<MobileShell />);
+    fireEvent.click(screen.getByTestId('mobile-toggle-mesh'));
+    expect(screen.getByTestId('mobile-mesh')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('mobile-toggle-chat'));
+    expect(screen.getByTestId('mobile-shell-chat')).toBeInTheDocument();
+    expect(screen.queryByTestId('mobile-mesh')).not.toBeInTheDocument();
+  });
+});
