@@ -84,6 +84,9 @@ copilot = [
 browser = [
     "playwright>=1.50",
 ]
+discovery = [
+    "zeroconf>=0.130",   # AD-708e: LAN mDNS advertisement (LGPL-2.1; optional, never vendored)
+]
 
 [dependency-groups]
 dev = [

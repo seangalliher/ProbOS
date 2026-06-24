@@ -748,6 +748,10 @@ async def _serve(
 
     app = create_app(runtime)
 
+    # AD-708e: bound here so the cleanup `finally` can always reference it,
+    # even if boot fails before the advertiser is built below.
+    _advertiser = None
+
     # Start channel adapters
     adapters: list = []
     if discord or config.channels.discord.enabled:
@@ -811,6 +815,18 @@ async def _serve(
         f"  [dim]POST /api/chat  |  GET /api/status  |  "
         f"GET /api/health  |  WS /ws/events[/dim]"
     )
+
+    # AD-708e: optionally advertise this server on the LAN via mDNS so a phone
+    # can reach the HXI at a stable `.local` address. Default-OFF; NoOp when
+    # disabled, the lib is absent, or bound to loopback. Never blocks boot.
+    from probos.discovery import build_advertiser
+    _advertiser = build_advertiser(getattr(config, "discovery", None), host, port)
+    _advertising = await _advertiser.start()
+    if _advertising:
+        console.print(
+            f"  [green]\u2713[/green] PADD discovery: "
+            f"[bold]http://{config.discovery.hostname}.local:{port}[/bold]"
+        )
 
     # Open HXI in browser (AD-260)
     import webbrowser
@@ -876,6 +892,12 @@ async def _serve(
             _pidfile.unlink(missing_ok=True)
         except Exception:
             pass
+        # AD-708e: stop the LAN mDNS advertiser (idempotent, never raises).
+        if _advertiser is not None:
+            try:
+                await _advertiser.stop()
+            except Exception:
+                pass
         # BF-141: Write session record synchronously BEFORE async shutdown.
         try:
             import json as _json

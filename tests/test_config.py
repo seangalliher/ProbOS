@@ -3,8 +3,9 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from probos.config import SystemConfig, load_config
+from probos.config import DiscoveryConfig, SystemConfig, load_config
 
 
 class TestConfig:
@@ -25,3 +26,22 @@ class TestConfig:
     def test_load_missing_file_returns_defaults(self, tmp_path):
         cfg = load_config(tmp_path / "nonexistent.yaml")
         assert cfg.system.name == "ProbOS"
+
+    def test_discovery_config_default_off(self):
+        # AD-708e: discovery is default-OFF and mounted on the root model.
+        assert DiscoveryConfig().enabled is False
+        assert SystemConfig().discovery.enabled is False
+
+    def test_discovery_config_service_type_validator_rejects_bad(self):
+        # AD-708e: service_type must end with '.local.'.
+        with pytest.raises(ValidationError):
+            DiscoveryConfig(service_type="_probos._tcp")
+
+    def test_discovery_config_hostname_validator_rejects_bad(self):
+        # AD-708e: hostname must be a bare DNS label (no dots/slashes, non-empty).
+        with pytest.raises(ValidationError):
+            DiscoveryConfig(hostname="probos.local")
+        with pytest.raises(ValidationError):
+            DiscoveryConfig(hostname="bad/label")
+        with pytest.raises(ValidationError):
+            DiscoveryConfig(hostname="")

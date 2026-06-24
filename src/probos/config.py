@@ -5755,6 +5755,43 @@ class DesktopConfig(BaseModel):
         return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
 
 
+class DiscoveryConfig(BaseModel):
+    """AD-708e: LAN mDNS service advertisement for PADD discovery (#484).
+
+    Default-OFF (opt-in). Requires the optional `zeroconf` extra
+    (`pip install probos[discovery]`). Advertises a stable `.local`
+    hostname + LAN A record + the live server port so a phone on the
+    LAN can reach the HXI without a DHCP IP. Advertises NOTHING when
+    off, when the lib is absent, or when the server is bound to loopback.
+
+    SECURITY: advertises only non-sensitive fields (service type, instance
+    name, LAN IP, port). Never a token, identity, or path. NOTE: auth is
+    OFF by default (auth.crew_scope_token=""), so advertising a default
+    install makes it LAN-discoverable AND LAN-accessible — set a token and
+    bind --host 0.0.0.0 deliberately before enabling this.
+    """
+
+    enabled: bool = Field(default=False, description="Master switch for LAN mDNS advertisement. Default OFF.")
+    service_type: str = Field(default="_probos._tcp.local.", description="DNS-SD service type (must end in '.local.').")
+    hostname: str = Field(default="probos", description="mDNS host label; advertises '<hostname>.local'. Bare label, no dots.")
+    instance_name: str = Field(default="ProbOS", description="Human-readable DNS-SD instance name. NON-sensitive — never a secret.")
+    txt_path: str = Field(default="/", description="TXT 'path' hint for the HXI entry point.")
+
+    @field_validator("service_type")
+    @classmethod
+    def _validate_service_type(cls, v: str) -> str:
+        if not v.endswith(".local."):
+            raise ValueError("service_type must end with '.local.'")
+        return v
+
+    @field_validator("hostname")
+    @classmethod
+    def _validate_hostname(cls, v: str) -> str:
+        if "." in v or "/" in v or not v:
+            raise ValueError("hostname must be a non-empty bare DNS label (no dots/slashes)")
+        return v
+
+
 class DependencyConfig(BaseModel):
     """AD-838c: Dynamic dependency installation for the task path.
 
@@ -6032,6 +6069,7 @@ class SystemConfig(BaseModel):
     self_distillation: SelfDistillationConfig = SelfDistillationConfig()  # AD-487
     spc: SPCConfig = Field(default_factory=SPCConfig)  # AD-522 v1
     desktop: DesktopConfig = Field(default_factory=DesktopConfig)  # AD-751
+    discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)  # AD-708e
 
     @field_validator("health_probe_interval_seconds")
     @classmethod
