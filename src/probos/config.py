@@ -5869,6 +5869,18 @@ class AgenticDispatchConfig(BaseModel):
     orchestrator_enabled: bool = False
 
 
+class DeviceConfig(BaseModel):
+    """AD-843b: probationary Beta trust prior for paired devices (brain->limb tier).
+
+    Mirrors ``FederationPeerTrustConfig``. Default Beta(1, 3) -> E[trust] = 0.25.
+    Consumed when AD-843c constructs the ``DeviceNodeRegistry`` with a real
+    ``TrustNetwork``; inert until then (no registry is wired in 843b).
+    """
+
+    probationary_alpha: float = Field(default=1.0, gt=0.0)
+    probationary_beta: float = Field(default=3.0, gt=0.0)
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -5884,6 +5896,7 @@ class SystemConfig(BaseModel):
     scaling: ScalingConfig = ScalingConfig()
     federation: FederationConfig = FederationConfig()
     self_mod: SelfModConfig = SelfModConfig()
+    device: DeviceConfig = DeviceConfig()  # AD-843b (probationary device trust prior)
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)  # AD-838c
     execution: ExecutionConfig = ExecutionConfig()  # AD-993/994 (default OFF)
     hooks: HooksConfig = HooksConfig()  # AD-1004 (default OFF)

@@ -28,11 +28,15 @@ imports.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from probos.substrate.device_pairing import verify_signature
 from probos.types import IntentDescriptor, IntentMessage, IntentResult
+
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------
@@ -138,8 +142,19 @@ class DeviceNodeRegistry:
     AD-843b adds it (mirroring ``FederationPeerRegistry``).
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        trust_network: Any | None = None,
+        probationary_alpha: float = 1.0,
+        probationary_beta: float = 3.0,
+    ) -> None:
+        # AD-843b: optional CONCRETE TrustNetwork (typed Any -- the Protocol
+        # lacks create_with_prior). None => pair without a prior (honest-degrade).
         self._devices: dict[str, DeviceNode] = {}
+        self._trust_network = trust_network
+        self._probationary_alpha = probationary_alpha
+        self._probationary_beta = probationary_beta
 
     def register_device(self, device: DeviceNode) -> bool:
         """Register a device. Returns True if newly paired, False if already known."""
@@ -147,6 +162,57 @@ class DeviceNodeRegistry:
             return False
         self._devices[device.device_id] = device
         return True
+
+    def pair_device(
+        self,
+        device_id: str,
+        public_key: str,
+        capabilities: frozenset[str],
+        *,
+        challenge: str,
+        signature: str,
+    ) -> DeviceNode | None:
+        """Crypto-pair a device: verify the challenge signature, then register.
+
+        Verifies the device proved possession of its Ed25519 private key by
+        signing ``challenge``. On a bad signature returns ``None`` (the security
+        gate). On first pairing of ``device_id`` creates the ``DeviceNode`` with
+        the ``public_key`` + capability grant + ``trust_record_id`` and seeds the
+        probationary Beta(alpha, beta) prior (mirrors
+        ``FederationPeerRegistry.register_peer``). Idempotent: re-pairing a known
+        ``device_id`` returns the existing record and does NOT reset the prior.
+        Honest-degrade when no ``TrustNetwork`` was injected (pair, no prior).
+        """
+        if not verify_signature(public_key, challenge, signature):
+            logger.warning("device pairing rejected: bad signature for %s", device_id)
+            return None
+
+        existing = self._devices.get(device_id)
+        if existing is not None:
+            # Idempotent re-pair: do not reset state or the trust prior.
+            return existing
+
+        trust_record_id = f"device:{device_id}"
+        device = DeviceNode(
+            device_id=device_id,
+            capabilities=capabilities,
+            trust_record_id=trust_record_id,
+            public_key=public_key,
+        )
+        self._devices[device_id] = device
+
+        if self._trust_network is not None:
+            self._trust_network.create_with_prior(
+                trust_record_id,
+                self._probationary_alpha,
+                self._probationary_beta,
+            )
+        else:
+            logger.info(
+                "device %s paired without trust prior (no TrustNetwork injected)",
+                device_id,
+            )
+        return device
 
     def get_device(self, device_id: str) -> DeviceNode | None:
         return self._devices.get(device_id)
