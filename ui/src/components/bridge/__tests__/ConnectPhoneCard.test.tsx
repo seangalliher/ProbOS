@@ -93,3 +93,20 @@ describe('ConnectPhoneCard (AD-708f)', () => {
     expect(() => fireEvent.click(screen.getByTestId('connect-phone-copy'))).not.toThrow();
   });
 });
+
+describe('ConnectPhoneCard QR (AD-708f-1)', () => {
+  it('renders a scannable QR (inline svg, not canvas) when discovery is enabled', () => {
+    seed({ config: { discovery: { enabled: true, hostname: 'probos' } } });
+    render(<ConnectPhoneCard />);
+    const qr = screen.getByTestId('connect-phone-qr');
+    expect(qr).toBeTruthy();
+    expect(qr.querySelector('svg')).toBeTruthy();
+    expect(qr.querySelector('canvas')).toBeNull();
+  });
+
+  it('the QR is absent when discovery is disabled', () => {
+    seed({ config: { discovery: { enabled: false, hostname: 'probos' } } });
+    render(<ConnectPhoneCard />);
+    expect(screen.queryByTestId('connect-phone-qr')).toBeNull();
+  });
+});

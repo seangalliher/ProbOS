@@ -8,19 +8,26 @@
  * client-side. It renders ONLY when `discovery.enabled` is true (progressive
  * disclosure, HXI #5) — invisible + byte-identical when off (the default).
  *
- * No backend change, no new endpoint, no new dependency. The QR-code affordance
- * is the deferred AD-708f-1. HXI #3: inline stroke-SVG glyphs only (no emoji),
- * amber/blue palette. The clipboard write is guarded (honest-degrade on an
- * insecure context / old browser — no throw).
+ * No backend change, no new endpoint. AD-708f-1 adds a scannable QR of the same
+ * `url` via `qrcode.react` `QRCodeSVG` (ISC), inside the same `enabled` gate.
+ * HXI #3: inline stroke-SVG glyphs only (no emoji), amber/blue palette. The
+ * clipboard write is guarded (honest-degrade on an insecure context / old
+ * browser — no throw).
  */
 
 import { useState } from 'react';
 import type { ReactElement } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import { Check } from '../icons/Glyphs';
 import { useSettingsStore } from '../../store/useSettingsStore';
 
 const ACTIVE_AMBER = '#f0b060';
 const DIM = '#666';
+// AD-708f-1: a QR must be high-contrast to scan. The HXI bg is #0a0a14 (dark),
+// so the QR renders DARK modules on a LIGHT tile (a deliberate "scan target").
+// Amber-on-dark would not scan — chrome is amber, the QR is not.
+const QR_TILE = '#e8e8f0'; // light quiet-zone tile (also the SVG bgColor — flush)
+const QR_MODULES = '#14141e'; // near-black modules
 
 // ── Local stroke-SVG copy glyph (no shared Copy glyph exists; HXI #3) ──
 function CopyGlyph(): ReactElement {
@@ -128,6 +135,42 @@ export default function ConnectPhoneCard(): ReactElement | null {
         >
           {copied ? <Check size={14} style={{ color: ACTIVE_AMBER }} /> : <CopyGlyph />}
         </button>
+      </div>
+      {/* AD-708f-1: scannable QR of the SAME `url` (single source). Dark modules
+          on a light tile + a 4-module quiet zone (marginSize) so a phone camera
+          scans it off the dark HXI. Inline SVG (QRCodeSVG) — never canvas/raster. */}
+      <div
+        data-testid="connect-phone-qr"
+        style={{
+          display: 'flex',
+          flexDirection: 'column' as const,
+          alignItems: 'center',
+          gap: 6,
+          marginTop: 10,
+        }}
+      >
+        <div
+          style={{
+            background: QR_TILE,
+            borderRadius: 10,
+            padding: 12,
+            display: 'inline-flex',
+            lineHeight: 0,
+          }}
+        >
+          <QRCodeSVG
+            value={url}
+            size={140}
+            level="M"
+            marginSize={4}
+            fgColor={QR_MODULES}
+            bgColor={QR_TILE}
+            title="ProbOS HXI address"
+          />
+        </div>
+        <div style={{ color: DIM, fontSize: 9, padding: '0 2px' }}>
+          Scan to open on your phone
+        </div>
       </div>
       <div style={{ color: DIM, fontSize: 9, marginTop: 6, padding: '0 2px' }}>
         Requires the server bound to the LAN (--host 0.0.0.0).

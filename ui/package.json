@@ -21,6 +21,7 @@
     "@react-three/postprocessing": "^3.0.0",
     "monaco-editor": "^0.55.1",
     "onnxruntime-web": "^1.19.2",
+    "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-force-graph-3d": "^1.29.1",
