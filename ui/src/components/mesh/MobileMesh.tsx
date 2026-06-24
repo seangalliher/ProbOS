@@ -15,10 +15,22 @@ import {
   computeMeshEdges,
   type MeshViewport,
 } from '../../mesh2d/meshProjection';
+import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 
 const BG = '#0a0a14';
 const EDGE_STROKE = '#3a4660';
 const DEFAULT_VIEWPORT: MeshViewport = { width: 360, height: 360 };
+
+// AD-708c-4: uniform gentle "breathing" (HXI #4 — motion = alive). A subtle scale
+// oscillation about each node's OWN center (transform-box: fill-box), gated on the OS
+// reduced-motion preference. Scale (not opacity/r) is chosen because it is ORTHOGONAL
+// to the AD-708c-1 trust-color / confidence-opacity semantics and a SINGLE shared
+// keyframe covers every node regardless of its base radius.
+const BREATH_KEYFRAMES =
+  '@keyframes meshBreath{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}';
+const BREATH_PERIOD_S = 3.5; // ~idle-breath cadence (desktop idle period ~4.19s)
+const BREATH_STAGGER_S = 0.5; // per-node negative-delay stagger (organic)
+const BREATH_STAGGER_MOD = 7; // bound the stagger so it repeats every 7 nodes
 
 interface MobileMeshProps {
   viewport?: MeshViewport;
@@ -34,6 +46,9 @@ export default function MobileMesh({ viewport = DEFAULT_VIEWPORT }: MobileMeshPr
   );
   const edges = useMemo(() => computeMeshEdges(nodes, connections), [nodes, connections]);
 
+  const reducedMotion = usePrefersReducedMotion();
+  const animate = !reducedMotion;
+
   return (
     <svg
       data-testid="mobile-mesh"
@@ -42,6 +57,7 @@ export default function MobileMesh({ viewport = DEFAULT_VIEWPORT }: MobileMeshPr
       viewBox={`0 0 ${viewport.width} ${viewport.height}`}
       style={{ background: BG, display: 'block' }}
     >
+      {animate ? <style>{BREATH_KEYFRAMES}</style> : null}
       {edges.map((e, i) => (
         <line
           key={`edge-${i}`}
@@ -54,7 +70,7 @@ export default function MobileMesh({ viewport = DEFAULT_VIEWPORT }: MobileMeshPr
           opacity={e.opacity}
         />
       ))}
-      {nodes.map((n) => (
+      {nodes.map((n, i) => (
         <circle
           key={n.id}
           data-testid="mobile-mesh-node"
@@ -63,6 +79,16 @@ export default function MobileMesh({ viewport = DEFAULT_VIEWPORT }: MobileMeshPr
           r={n.radius}
           fill={n.color}
           opacity={n.opacity}
+          style={
+            animate
+              ? {
+                  transformBox: 'fill-box',
+                  transformOrigin: 'center',
+                  animation: `meshBreath ${BREATH_PERIOD_S}s ease-in-out infinite`,
+                  animationDelay: `${-((i % BREATH_STAGGER_MOD) * BREATH_STAGGER_S)}s`,
+                }
+              : undefined
+          }
         />
       ))}
     </svg>

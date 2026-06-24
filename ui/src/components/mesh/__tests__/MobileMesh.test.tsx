@@ -4,7 +4,7 @@
 // AD-708c-3 does that), and asserts node/edge geometry comes from the AD-708c-1
 // projection. A source-level guard proves MobileMesh pulls in no three.js /
 // canvas dependency (a phone must never load three.js).
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -45,6 +45,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 describe('AD-708c-2 MobileMesh', () => {
@@ -111,5 +112,42 @@ describe('AD-708c-2 MobileMesh', () => {
     expect(code).not.toContain('canvas/agents');
     // Positively confirm it consumes the AD-708c-1 pure projection.
     expect(code).toContain("from '../../mesh2d/meshProjection'");
+  });
+});
+
+describe('AD-708c-4 MobileMesh breathing (reduced-motion-aware)', () => {
+  it('animates the nodes when motion is allowed (jsdom default: matchMedia absent)', () => {
+    useStore.setState({
+      agents: new Map([
+        ['a', { id: 'a', callsign: 'A', tier: 'core', trust: 0.8, confidence: 0.7 } as any],
+        ['b', { id: 'b', callsign: 'B', tier: 'domain', trust: 0.5, confidence: 0.5 } as any],
+      ]),
+      connections: [],
+    });
+    const { container } = render(<MobileMesh />);
+    const circle = container.querySelector('circle');
+    expect(circle?.getAttribute('style')).toContain('meshBreath');
+    expect(container.querySelector('style')?.textContent).toContain('@keyframes meshBreath');
+  });
+
+  it('renders the static mesh (no animation) when prefers-reduced-motion is set', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+    }));
+    useStore.setState({
+      agents: new Map([['a', { id: 'a', callsign: 'A', tier: 'core', trust: 0.8, confidence: 0.7 } as any]]),
+      connections: [],
+    });
+    const { container } = render(<MobileMesh />);
+    expect(container.querySelector('circle')?.getAttribute('style')).toBeNull();
+    expect(container.querySelector('style')).toBeNull();
+  });
+
+  it('stays three-free (consumes meshProjection + the reduced-motion hook, never three)', () => {
+    const code = readFileSync(resolve(process.cwd(), 'src/components/mesh/MobileMesh.tsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toContain("from 'three'");
+    expect(code).not.toContain('canvas/scene');
+    expect(code).toContain('usePrefersReducedMotion');
   });
 });
