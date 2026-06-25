@@ -210,7 +210,11 @@ dreaming:
   notebook_convergence_threshold: 0.5
   notebook_convergence_min_agents: 3
   notebook_convergence_min_departments: 2
-  active_retrieval_enabled: false
+  # AD-981b: active-retrieval / self-calibration. During idle dreaming the system
+  # re-tests its own recall, finds blind spots, and tunes the confidence
+  # threshold itself. Offline-only (cannot disrupt a live turn). Pydantic default
+  # False; enabled here for the live system.
+  active_retrieval_enabled: true
   retrieval_episodes_per_cycle: 3
   retrieval_success_threshold: 0.6
   retrieval_partial_threshold: 0.3
@@ -986,8 +990,12 @@ eps:
     priority: 6
 mcp:
   enabled: true
+  management_enabled: true   # AD-1015+: runtime MCP server CRUD + AD-1019 per-agent access surface
+  agent_tools_enabled: true  # AD-1019c: MCP tools agent-callable (tier-gated invoke)
   request_timeout_seconds: 30.0
   servers: []
+workstations:
+  enabled: true   # AD-1022: HXI workstation-type registry (tiered OSS baseline / commercial overlay)
 mcp_app_host:
   enabled: false
   serve_internal_games: true
@@ -1613,11 +1621,14 @@ nl_graph_query:
   extraction_max_tokens: 600
   synthesis_max_tokens: 800
 clinical_telemetry:
-  enabled: false
+  # AD-903/904/905 companion: persistent clinical behavioral sampling + audit and
+  # circuit-breaker zone history (the AD-903 trend read can surface it). The two
+  # persistence flags write SQLite under data/ (reversible: flip off + delete db).
+  enabled: true
   audit_max_entries: 1000
-  audit_persistence_enabled: false
+  audit_persistence_enabled: true
   audit_db_path: data/clinical_audit.db
-  circuit_breaker_history_persistence_enabled: false
+  circuit_breaker_history_persistence_enabled: true
   circuit_breaker_history_db_path: data/circuit_breaker_history.db
 consultation_workspaces:
   enabled: true
@@ -1905,6 +1916,21 @@ group_chat:
   # byte-identical to the AD-935/961 discussion cascade. Pydantic default False;
   # enabled here for the live system.
   broadcast_terminator_enabled: true
+  # AD-956: scale-aware facilitation. Once a room reaches >= gate_threshold
+  # active speakers the facilitator switches from advisory (widen the per-turn
+  # cap so everyone is heard, bounded by participant count) to gating (the
+  # AD-915 cap stands) so a large room stays legible. Pydantic default False;
+  # enabled here for the live system.
+  scale_aware_facilitation_enabled: true
+  facilitation_gate_threshold: 5
+  force_facilitation_min: 0
+  # AD-958: conversational trust loop. When a group room GENUINELY converges
+  # (the same is_converged primitive the facilitator uses) each corroborated
+  # agent earns a SMALL positive trust outcome, topic-tagged and verified by a
+  # DIFFERENT agent (no self-sourcing), via the synchronous record_outcome.
+  # Bounded (<= max_outcomes x small weight). Pydantic default False; enabled
+  # here for the live system.
+  conversation_trust_enabled: true
 desktop:
   enabled: false
   tray_autostart: true
