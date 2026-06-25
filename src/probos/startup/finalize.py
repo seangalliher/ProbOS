@@ -126,6 +126,44 @@ async def _wire_desktop_ux(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+async def _wire_device_consensus(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-843c-2: wire the consensus gate for sensitive device intents (#818).
+
+    Default-OFF (``config.device.enabled``): no proposer pool, no sensitive-intent
+    subscription => ``device.location`` / ``device.camera`` / ``device.screen`` stay
+    UNREACHABLE -- byte-identical to AD-843c-1, no governance bypass. When enabled:
+    create the ``DeviceConsensusProposer`` voter pool (so ``device_actuate`` can
+    reach quorum) and subscribe the three ``requires_consensus`` device intents to
+    the runtime's consensus dispatch handler.
+    """
+    if not config.device.enabled:
+        return False
+
+    from probos.agents.device_consensus_proposer import DeviceConsensusProposer
+    from probos.substrate.device_node import DEVICE_INTENT_DESCRIPTORS
+
+    # The device_actuate voter population (propose-only; never actuates). Sized to
+    # the default QuorumPolicy.min_votes so a CONSENSUS-tier actuation reaches quorum.
+    runtime.spawner.register_template(
+        "device_consensus_proposer", DeviceConsensusProposer
+    )
+    await runtime.create_pool(
+        "device_consensus", "device_consensus_proposer", target_size=3
+    )
+
+    # Subscribe the runtime consensus dispatch to the requires_consensus device
+    # intents (single source of truth -- the names come from the descriptor list).
+    sensitive_intents = [
+        d.name for d in DEVICE_INTENT_DESCRIPTORS if d.requires_consensus
+    ]
+    runtime.intent_bus.subscribe(
+        "device_consensus_dispatch",
+        runtime._dispatch_device_consensus_intent,
+        intent_names=sensitive_intents,
+    )
+    return True
+
+
 def _wire_creative_expression(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-525 v1: Wire CreativeSkillsRegistry + CreativeOutputWriter."""
     cfg = getattr(config, "creative_expression", None)
@@ -2601,6 +2639,9 @@ async def finalize_startup(
 
     if await _wire_desktop_ux(runtime=runtime, config=config):
         logger.info("AD-751: Desktop UX Surface wired during finalization")
+
+    if await _wire_device_consensus(runtime=runtime, config=config):
+        logger.info("AD-843c-2: device consensus gate wired during finalization")
 
     if await _wire_self_distillation(runtime=runtime, config=config):
         logger.info("AD-487: Self-distillation v1 wired during finalization")

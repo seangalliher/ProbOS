@@ -895,16 +895,23 @@ class ProbOSRuntime:
         # CONCRETE TrustNetwork (mirrors FederationPeerRegistry) -- inert until a device
         # pairs. The device.notify actuation handler subscribes ONLY when
         # config.device.enabled (default False) -> byte-identical when off.
-        from probos.substrate.device_node import DeviceNodeRegistry, NoOpDeviceNodeAdapter
+        from probos.substrate.device_node import (
+            DeviceNodeAdapter,
+            DeviceNodeRegistry,
+            NoOpDeviceNodeAdapter,
+        )
         from probos.substrate.device_service import DeviceNodeService, DEVICE_NODE_SERVICE_ID
         self.device_node_registry: DeviceNodeRegistry = DeviceNodeRegistry(
             trust_network=self.trust_network,
             probationary_alpha=self.config.device.probationary_alpha,
             probationary_beta=self.config.device.probationary_beta,
         )
+        # AD-843c-2: the actuation adapter is shared by the c-1 device.notify
+        # service AND the c-2 consensus commit (submit_device_actuate_with_consensus).
+        self.device_node_adapter: DeviceNodeAdapter = NoOpDeviceNodeAdapter()
         self.device_node_service: DeviceNodeService = DeviceNodeService(
             registry=self.device_node_registry,
-            adapter=NoOpDeviceNodeAdapter(),
+            adapter=self.device_node_adapter,
             trust_network=self.trust_network,
             episodic_provider=lambda: self.episodic_memory,
         )
@@ -3410,6 +3417,233 @@ class ProbOSRuntime:
                 tool,
                 exc_info=True,
             )
+
+    async def submit_device_actuate_with_consensus(
+        self,
+        device_id: str,
+        intent_name: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+        policy: QuorumPolicy | None = None,
+    ) -> dict[str, Any]:
+        """Actuate a sensitive device intent through the consensus pipeline (AD-843c-2).
+
+        The CONSENSUS-tier "two keys" gate for ``device.location`` /
+        ``device.camera`` / ``device.screen``. Mirrors
+        :meth:`submit_mcp_invoke_with_consensus`: authorize the per-device grant
+        FIRST (c-1 parity), then broadcast a ``device_actuate`` proposal (the
+        :class:`~probos.agents.device_consensus_proposer.DeviceConsensusProposer`
+        pool answers with a proposal only), evaluate quorum + red-team
+        verification, and perform ``DeviceNodeAdapter.actuate`` **commit only on
+        APPROVED with no failed verifications**.
+
+        Learning loop (diverges from the recorded-not-scored MCP tier): an
+        **episode is stored on every path** (approved-and-actuated, blocked,
+        rejected, insufficient, and the pre-consensus grant refusal) for audit /
+        learning completeness. A **trust outcome is recorded ONLY when an
+        actuation was actually attempted** — the APPROVED + no-failed-verification
+        branch, keyed ``success=committed``. A rejected / insufficient /
+        failed-verification / unauthorized path performs no actuation and so
+        writes **no** trust outcome: trust reflects the actuation OUTCOME, not the
+        mesh's governance decision (writing ``success=False`` on a governance
+        rejection would feed consensus weighting into a device lock-out spiral,
+        and an INSUFFICIENT vote — the operator simply did not run the proposer
+        pool — must not penalize the device). A genuine APPROVED-but-actuate-fails
+        still records ``success=False`` (an actuation WAS attempted).
+
+        ⚠️ era-4 / AD-362 guard: an ``IntentResult(success=True)`` from the
+        broadcast is only a *proposal* — ``actuate`` is NEVER performed on the
+        vote. A rejected / insufficient vote performs **zero** ``actuate`` calls.
+        """
+        request_params = dict(params or {})
+
+        # Gate 0: per-device capability grant (c-1 parity -- authorize FIRST).
+        authorized, reason = self.device_node_registry.authorize(device_id, intent_name)
+        if not authorized:
+            await self._store_device_consensus_episode(
+                device_id=device_id,
+                intent_name=intent_name,
+                authorized=False,
+                committed=False,
+                reason=reason,
+            )
+            return {
+                "authorized": False,
+                "committed": False,
+                "consensus": None,
+                "actuate_result": None,
+                "reason": reason,
+            }
+
+        device = self.device_node_registry.get_device(device_id)
+        # authorize() returning True guarantees the device is paired/present.
+        assert device is not None
+
+        result = await self.submit_intent_with_consensus(
+            intent="device_actuate",
+            params={
+                "device_id": device_id,
+                "intent_name": intent_name,
+                "params": request_params,
+            },
+            timeout=timeout,
+            policy=policy,
+        )
+
+        consensus = result["consensus"]
+        committed = False
+        actuate_result: Any = None
+
+        if consensus.outcome == ConsensusOutcome.APPROVED:
+            # Check if any verification flagged issues.
+            failed_verifications = [
+                v for v in result["verifications"] if not v.verified
+            ]
+            if not failed_verifications:
+                # Commit the actuation -- the ONLY place adapter.actuate is called
+                # for the sensitive tier, gated on APPROVED (the era-4 guard).
+                actuate_msg = IntentMessage(intent=intent_name, params=request_params)
+                try:
+                    actuate_result = await self.device_node_adapter.actuate(
+                        device, actuate_msg
+                    )
+                    committed = bool(getattr(actuate_result, "success", False))
+                except Exception:
+                    logger.warning(
+                        "AD-843c-2: device actuate commit failed after approval "
+                        "(device=%s intent=%s); reporting not-committed",
+                        device_id,
+                        intent_name,
+                        exc_info=True,
+                    )
+                    committed = False
+
+                # Trust ONLY on an attempted actuation (c-1 parity: trust reflects
+                # the actuation OUTCOME, not the mesh's governance decision). A
+                # rejected / insufficient vote performs no actuation -> no trust
+                # write (avoids the consensus-weighting lock-out spiral + the
+                # INSUFFICIENT-penalizes-device bug). A genuine actuate failure
+                # after approval still records success=False (it WAS attempted).
+                if self.trust_network is not None and device.trust_record_id:
+                    try:
+                        self.trust_network.record_outcome(
+                            device.trust_record_id,
+                            success=committed,
+                            intent_type=intent_name,
+                            source="device",
+                        )
+                    except Exception:
+                        logger.warning(
+                            "AD-843c-2: trust record_outcome failed for %s",
+                            device.trust_record_id,
+                            exc_info=True,
+                        )
+
+                await self.event_log.log(
+                    category="consensus",
+                    event="device_actuate_committed" if committed else "device_actuate_failed",
+                    detail=f"device={device_id} intent={intent_name}",
+                )
+            else:
+                await self.event_log.log(
+                    category="consensus",
+                    event="device_actuate_blocked",
+                    detail=(
+                        f"device={device_id} intent={intent_name} "
+                        f"failed_verifications={len(failed_verifications)}"
+                    ),
+                )
+
+        # Episode on ALL post-consensus paths (approved-actuated, blocked,
+        # rejected, insufficient) -- audit / learning completeness. reason is
+        # "not_committed" for any non-committed outcome (reject / insufficient /
+        # verify-fail / actuate-fail) since the cause is not solely a rejection.
+        await self._store_device_consensus_episode(
+            device_id=device_id,
+            intent_name=intent_name,
+            authorized=True,
+            committed=committed,
+            reason="" if committed else "not_committed",
+        )
+
+        result["authorized"] = True
+        result["committed"] = committed
+        result["actuate_result"] = actuate_result
+        return result
+
+    async def _store_device_consensus_episode(
+        self,
+        *,
+        device_id: str,
+        intent_name: str,
+        authorized: bool,
+        committed: bool,
+        reason: str,
+    ) -> None:
+        """Persist an episode for one consensus-gated device actuation (AD-843c-2).
+
+        Episodic completeness: every sensitive actuation attempt
+        (approved-and-actuated, rejected, or refused-at-grant) is recorded.
+        Mirrors the AD-843c-1 device episode shape (channel="device") and the
+        ``_store_mcp_invoke_episode`` honest-degrade: no episodic memory => no-op;
+        a store failure is logged at debug and swallowed.
+        """
+        if self.episodic_memory is None:
+            return
+        try:
+            import time as _time
+
+            episode = Episode(
+                user_input=f"[device] {intent_name} -> {device_id}",
+                timestamp=_time.time(),
+                agent_ids=[f"device:{device_id}"] if device_id else [],
+                outcomes=[
+                    {
+                        "kind": "device_actuate",
+                        "intent": intent_name,
+                        "device_id": device_id,
+                        "authorized": authorized,
+                        "success": committed,
+                        "reason": reason,
+                    }
+                ],
+                dag_summary={},
+                anchors=AnchorFrame(channel="device", trigger_type=intent_name),
+            )
+            await self.episodic_memory.store(episode)
+        except Exception:
+            logger.debug(
+                "AD-843c-2: failed to store device consensus episode (%s)",
+                device_id,
+                exc_info=True,
+            )
+
+    async def _dispatch_device_consensus_intent(
+        self, intent: IntentMessage
+    ) -> IntentResult | None:
+        """AD-843c-2: route a sensitive device intent through the consensus gate.
+
+        Subscribed (only when ``config.device.enabled``) to ``device.location`` /
+        ``device.camera`` / ``device.screen``. Extracts the ``device_id`` and
+        routes to :meth:`submit_device_actuate_with_consensus`, which performs the
+        authorize -> quorum -> ``actuate`` commit. Returns an ``IntentResult``
+        reflecting whether the actuation committed.
+        """
+        device_id = str(intent.params.get("device_id", ""))
+        outcome = await self.submit_device_actuate_with_consensus(
+            device_id, intent.intent, dict(intent.params)
+        )
+        committed = bool(outcome.get("committed", False))
+        actuate = outcome.get("actuate_result")
+        return IntentResult(
+            intent_id=intent.id,
+            agent_id=f"device:{device_id}",
+            success=committed,
+            result=actuate.result if (committed and actuate is not None) else None,
+            error=None if committed else str(outcome.get("reason") or "consensus_rejected"),
+            confidence=1.0 if committed else 0.0,
+        )
 
     def _build_system_self_model(self) -> SystemSelfModel:
         """Build structured self-knowledge snapshot (AD-318)."""
