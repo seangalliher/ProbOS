@@ -1191,7 +1191,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             msg={msg}
             hostAgentId={agentId}
             hostCallsign={hostCallsign}
-            body={renderMessageBodyWithArtifacts(msg.text, threadId, (opt) => sendText(opt))}
+            // BF-637: feed the RESOLVED activeThreadId. props.threadId is
+            // undefined at the AgentProfilePanel mount, so passing the bare
+            // prop gated every A2UI + AD-797 artifact card off to plain stub
+            // text (1:1 AND group). activeThreadId is the same id the send path
+            // and transcript selection already use.
+            body={renderMessageBodyWithArtifacts(msg.text, activeThreadId, (opt) => sendText(opt))}
           />
         ))}
         {/* AD-952: typing beat for the agent composing the next group reply.

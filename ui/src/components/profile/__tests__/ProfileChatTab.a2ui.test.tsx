@@ -20,6 +20,7 @@ import { A2UIChoiceCard } from '../../a2ui/A2UIChoiceCard';
 import { A2UIMultiSelectCard } from '../../a2ui/A2UIMultiSelectCard';
 import { A2UIFormCard } from '../../a2ui/A2UIFormCard';
 import { ArtifactCard } from '../../artifacts/ArtifactCard';
+import { resolveProfileThreadId } from '../profileThreadResolution';
 
 // ?raw import does not execute the heavy module — safe to scan the source.
 import profileChatSource from '../ProfileChatTab.tsx?raw';
@@ -86,8 +87,44 @@ describe('AD-811a ProfileChatTab A2UI wiring (source contract)', () => {
 
   it('passes (opt) => sendText(opt) into renderMessageBodyWithArtifacts at the call site', () => {
     expect(profileChatSource).toContain(
-      'renderMessageBodyWithArtifacts(msg.text, threadId, (opt) => sendText(opt))',
+      'renderMessageBodyWithArtifacts(msg.text, activeThreadId, (opt) => sendText(opt))',
     );
+  });
+
+  // BF-637: the render call MUST feed the RESOLVED thread id (activeThreadId =
+  // resolveProfileThreadId(props.threadId, activeProfileThreadId, threadIdByAgent,
+  // agentId)), NOT the bare optional `threadId` prop. The only live mount
+  // (AgentProfilePanel: `<ProfileChatTab agentId={agentId} />`) passes NO
+  // threadId prop, so the bare prop is `undefined` and the card gates
+  // (`if (a2ui && threadId)` / `if (stub && threadId)`) fell through to plain
+  // stub text for BOTH A2UI and AD-797 artifact cards, in 1:1 AND group threads.
+  it('BF-637: the render gate is fed by the RESOLVED activeThreadId, not the bare prop', () => {
+    // revert guard — the old bare-prop wiring must be gone
+    expect(profileChatSource).not.toContain(
+      'renderMessageBodyWithArtifacts(msg.text, threadId,',
+    );
+    // activeThreadId is the resolveProfileThreadId(...) result fed to the gate
+    expect(profileChatSource).toMatch(
+      /const activeThreadId =[\s\S]*?resolveProfileThreadId\(\s*threadId,/,
+    );
+  });
+});
+
+// BF-637: prove the value now feeding the render gate is TRUTHY at the prop-less
+// live mount — an undefined prop resolves to the active group thread or the
+// per-agent 1:1 thread, so the gate passes and the card renders (it degraded to
+// plain stub text before the fix).
+describe('BF-637 render gate is non-undefined at the prop-less mount', () => {
+  it('resolves the active group/profile thread when the threadId prop is undefined', () => {
+    expect(
+      resolveProfileThreadId(undefined, 'group-thread-1', new Map(), 'agent1'),
+    ).toBe('group-thread-1');
+  });
+
+  it('falls back to the per-agent 1:1 thread when no prop and no active profile thread', () => {
+    expect(
+      resolveProfileThreadId(undefined, null, new Map([['agent1', 'dm-thread-1']]), 'agent1'),
+    ).toBe('dm-thread-1');
   });
 });
 
