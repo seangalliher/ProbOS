@@ -12,9 +12,8 @@ unless ``CommunicationsConfig.a2ui_enabled`` is True (default False) — with
 the flag off no agent is taught the tag and the schema is never exercised
 on the live path, so behavior is byte-identical to pre-AD-811a.
 
-What this module does NOT do (AD-811b adds ``multiselect``):
-    * other widget kinds — form (AD-811b-1), range (AD-811b-2),
-      date (AD-811b-3)
+What this module does NOT do (AD-811b-1 adds ``form``):
+    * other widget kinds — range (AD-811b-2), date (AD-811b-3)
     * group-chat producer (AD-811c)
     * channel adapters — Slack/Teams/etc. (AD-811d)
     * DecisionQueue -> A2UI surfacing (AD-811e)
@@ -34,6 +33,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # is safe to construct/parse anywhere without a config handle.
 _MAX_OPTIONS_HARD_CAP = 20
 _MAX_PROMPT_LEN = 500
+
+# AD-811b-1: schema-level hard cap on a form's field count, mirroring
+# `_MAX_OPTIONS_HARD_CAP`. The config gate `a2ui_max_options` is
+# option-specific and no-ops for forms (the extractor reads `spec.options`,
+# which a form lacks), so fields are bounded entirely by the schema.
+_MAX_FIELDS = 20
 
 
 def _clean_prompt(v: str) -> str:
@@ -170,6 +175,76 @@ class AgentUIMultiSelectSpec(BaseModel):
         return cls.model_validate_json(raw)
 
 
+class AgentUIFormField(BaseModel):
+    """One labeled free-text input in an :class:`AgentUIFormSpec`.
+
+    AD-811b-1: v1 fields are free text only (no per-field type system —
+    that is AD-811b-1a if ever warranted). ``label`` is trimmed here; the
+    parent spec drops empty-label fields and dedupes by label (mirroring
+    ``_clean_options``). ``required`` gates the card's Submit button.
+    """
+
+    label: str
+    required: bool = False
+
+    @field_validator("label")
+    @classmethod
+    def _trim_label(cls, v: str) -> str:
+        # Trim only (no raise): the parent spec drops empty labels, mirroring
+        # the trim-then-drop behavior of `_clean_options`.
+        return (v or "").strip()
+
+
+class AgentUIFormSpec(BaseModel):
+    """A multi-field form widget spec carried by an ``[A2UI]{json}[/A2UI]`` tag.
+
+    AD-811b-1: the 3rd A2UI widget kind. ``prompt`` shares the
+    ``_clean_prompt`` validator; ``fields`` is an ordered list of labeled
+    free-text inputs (1..``_MAX_FIELDS`` after validation — empty labels
+    dropped, deduped by label, order preserved). The HXI renders one text
+    input per field and posts the filled values back as ``label: value``
+    lines through the existing ``sendText`` chat route.
+    """
+
+    kind: Literal["form"] = "form"
+    prompt: str
+    fields: list[AgentUIFormField]
+
+    @field_validator("prompt")
+    @classmethod
+    def _validate_prompt(cls, v: str) -> str:
+        return _clean_prompt(v)
+
+    @field_validator("fields")
+    @classmethod
+    def _validate_fields(
+        cls, v: list[AgentUIFormField]
+    ) -> list[AgentUIFormField]:
+        cleaned: list[AgentUIFormField] = []
+        seen: set[str] = set()
+        for f in v or []:
+            if not f.label or f.label in seen:
+                continue
+            seen.add(f.label)
+            cleaned.append(f)
+        if len(cleaned) < 1:
+            raise ValueError("a form spec needs at least 1 field")
+        if len(cleaned) > _MAX_FIELDS:
+            raise ValueError(
+                f"a form spec accepts at most {_MAX_FIELDS} fields"
+            )
+        return cleaned
+
+    def to_json(self) -> str:
+        """Serialize to a compact JSON string (the artifact body)."""
+        return self.model_dump_json()
+
+    @classmethod
+    def from_json(cls, raw: str) -> "AgentUIFormSpec":
+        """Parse + validate a JSON string. Raises on malformed/invalid input."""
+        return cls.model_validate_json(raw)
+
+
 # --------------------------------------------------------------------------- #
 # AD-811b: N-kind dispatch — a ``kind``-keyed registry + a single parse entry  #
 # point. Adding a widget kind = register its spec class here. The DM extractor #
@@ -177,11 +252,12 @@ class AgentUIMultiSelectSpec(BaseModel):
 # byte-identical while new kinds slot in without touching the call sites.      #
 # --------------------------------------------------------------------------- #
 
-A2UISpec = AgentUIChoiceSpec | AgentUIMultiSelectSpec
+A2UISpec = AgentUIChoiceSpec | AgentUIMultiSelectSpec | AgentUIFormSpec
 
 _SPEC_BY_KIND: dict[str, type[A2UISpec]] = {
     "choice": AgentUIChoiceSpec,
     "multiselect": AgentUIMultiSelectSpec,
+    "form": AgentUIFormSpec,
 }
 
 

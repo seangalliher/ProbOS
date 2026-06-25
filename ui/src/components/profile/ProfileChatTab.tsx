@@ -8,6 +8,7 @@ import { ArtifactCard } from '../artifacts/ArtifactCard';
 import { parseArtifactStub } from '../artifacts/artifactApi';
 import { A2UIChoiceCard } from '../a2ui/A2UIChoiceCard';
 import { A2UIMultiSelectCard } from '../a2ui/A2UIMultiSelectCard';
+import { A2UIFormCard } from '../a2ui/A2UIFormCard';
 import { parseA2UIStub } from '../a2ui/a2uiApi';
 // BF-301 (was AD-826) — voice-health response shape (mirror of /api/voice/health).
 interface VoiceHealth {
@@ -120,14 +121,23 @@ function renderMessageBodyWithArtifacts(
     const isLast = idx === lines.length - 1;
     // AD-811a: A2UI choice stub takes precedence over the artifact stub.
     // AD-811b: dispatch on the parsed kind (choice -> A2UIChoiceCard,
-    // multiselect -> A2UIMultiSelectCard). An unknown kind falls through to
-    // the artifact/plain-text path below so it never crashes the transcript.
+    // multiselect -> A2UIMultiSelectCard). AD-811b-1: form -> A2UIFormCard.
+    // An unknown kind falls through to the artifact/plain-text path below so
+    // it never crashes the transcript.
     const a2ui = parseA2UIStub(line);
     if (a2ui && threadId
-        && (a2ui.kind === 'choice' || a2ui.kind === 'multiselect')) {
+        && (a2ui.kind === 'choice' || a2ui.kind === 'multiselect'
+            || a2ui.kind === 'form')) {
       return (
         <span key={idx} style={{ display: 'block' }}>
-          {a2ui.kind === 'multiselect' ? (
+          {a2ui.kind === 'form' ? (
+            <A2UIFormCard
+              threadId={threadId}
+              name={a2ui.name}
+              version={a2ui.version}
+              onChoice={onA2UIChoice ?? (() => {})}
+            />
+          ) : a2ui.kind === 'multiselect' ? (
             <A2UIMultiSelectCard
               threadId={threadId}
               name={a2ui.name}

@@ -114,3 +114,47 @@ export function parseMultiSelectSpec(
   }
   return { prompt: obj.prompt, options, minSelect, maxSelect };
 }
+
+export interface ParsedFormField {
+  label: string;
+  required: boolean;
+}
+
+export interface ParsedFormSpec {
+  prompt: string;
+  fields: ParsedFormField[];
+}
+
+/**
+ * AD-811b-1: shape-validate the stored form A2UI JSON. Returns ``null`` on
+ * ANY hard failure (honest-degrade): malformed JSON, ``kind !== "form"``,
+ * an empty prompt, a non-array ``fields``, or zero valid fields. Each
+ * field's ``label`` is trimmed; empty-label and duplicate-label fields are
+ * dropped (order preserved) — mirroring the backend ``_validate_fields``.
+ * ``required`` is true only for an explicit ``true``.
+ */
+export function parseFormSpec(json: string): ParsedFormSpec | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (typeof data !== 'object' || data === null) return null;
+  const obj = data as Record<string, unknown>;
+  if (obj.kind !== 'form') return null;
+  if (typeof obj.prompt !== 'string' || obj.prompt.trim() === '') return null;
+  if (!Array.isArray(obj.fields)) return null;
+  const fields: ParsedFormField[] = [];
+  const seen = new Set<string>();
+  for (const raw of obj.fields) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const f = raw as Record<string, unknown>;
+    const label = typeof f.label === 'string' ? f.label.trim() : '';
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    fields.push({ label, required: f.required === true });
+  }
+  if (fields.length < 1) return null;
+  return { prompt: obj.prompt, fields };
+}

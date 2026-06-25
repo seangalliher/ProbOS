@@ -4,6 +4,7 @@ import {
   A2UI_STUB_RE,
   parseA2UIStub,
   parseChoiceSpec,
+  parseFormSpec,
   parseMultiSelectSpec,
 } from '../a2uiApi';
 
@@ -151,5 +152,83 @@ describe('AD-811b parseMultiSelectSpec', () => {
   it('returns null on a non-object payload', () => {
     expect(parseMultiSelectSpec('42')).toBeNull();
     expect(parseMultiSelectSpec('null')).toBeNull();
+  });
+});
+
+describe('AD-811b-1 parseFormSpec', () => {
+  it('parses a valid form spec', () => {
+    const json = JSON.stringify({
+      kind: 'form', prompt: 'Tell me',
+      fields: [{ label: 'Name' }, { label: 'Role', required: true }],
+    });
+    expect(parseFormSpec(json)).toEqual({
+      prompt: 'Tell me',
+      fields: [
+        { label: 'Name', required: false },
+        { label: 'Role', required: true },
+      ],
+    });
+  });
+
+  it('defaults required to false and preserves an explicit true', () => {
+    const spec = parseFormSpec(JSON.stringify({
+      kind: 'form', prompt: 'q',
+      fields: [{ label: 'A' }, { label: 'B', required: true }],
+    }));
+    expect(spec?.fields[0].required).toBe(false);
+    expect(spec?.fields[1].required).toBe(true);
+  });
+
+  it('drops empty/whitespace-label fields', () => {
+    const json = JSON.stringify({
+      kind: 'form', prompt: 'q',
+      fields: [{ label: 'A' }, { label: '  ' }, { label: '' }, { label: 'B' }],
+    });
+    expect(parseFormSpec(json)?.fields.map((f) => f.label)).toEqual(['A', 'B']);
+  });
+
+  it('dedupes by label (order preserved)', () => {
+    const json = JSON.stringify({
+      kind: 'form', prompt: 'q',
+      fields: [
+        { label: 'A' }, { label: 'B' }, { label: 'A' },
+        { label: 'C' }, { label: 'B' },
+      ],
+    });
+    expect(parseFormSpec(json)?.fields.map((f) => f.label))
+      .toEqual(['A', 'B', 'C']);
+  });
+
+  it('returns null when kind !== "form"', () => {
+    expect(parseFormSpec(
+      JSON.stringify({ kind: 'choice', prompt: 'q', fields: [{ label: 'A' }] }),
+    )).toBeNull();
+  });
+
+  it('returns null when fields is not an array', () => {
+    expect(parseFormSpec(
+      JSON.stringify({ kind: 'form', prompt: 'q', fields: 'A,B' }),
+    )).toBeNull();
+  });
+
+  it('returns null with zero valid fields', () => {
+    expect(parseFormSpec(
+      JSON.stringify({ kind: 'form', prompt: 'q', fields: [{ label: '  ' }] }),
+    )).toBeNull();
+  });
+
+  it('returns null on an empty prompt', () => {
+    expect(parseFormSpec(
+      JSON.stringify({ kind: 'form', prompt: '  ', fields: [{ label: 'A' }] }),
+    )).toBeNull();
+  });
+
+  it('returns null on malformed JSON', () => {
+    expect(parseFormSpec('{not json')).toBeNull();
+  });
+
+  it('returns null on a non-object payload', () => {
+    expect(parseFormSpec('42')).toBeNull();
+    expect(parseFormSpec('null')).toBeNull();
   });
 });

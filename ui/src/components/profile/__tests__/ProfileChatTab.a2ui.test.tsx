@@ -18,6 +18,7 @@ vi.mock('../../artifacts/artifactApi', async (importOriginal) => {
 import { fetchArtifactContent } from '../../artifacts/artifactApi';
 import { A2UIChoiceCard } from '../../a2ui/A2UIChoiceCard';
 import { A2UIMultiSelectCard } from '../../a2ui/A2UIMultiSelectCard';
+import { A2UIFormCard } from '../../a2ui/A2UIFormCard';
 import { ArtifactCard } from '../../artifacts/ArtifactCard';
 
 // ?raw import does not execute the heavy module — safe to scan the source.
@@ -29,6 +30,11 @@ const CHOICE_JSON = JSON.stringify({
 
 const MS_JSON = JSON.stringify({
   kind: 'multiselect', prompt: 'Pick halls', options: ['Alpha', 'Beta', 'Gamma'],
+});
+
+const FORM_JSON = JSON.stringify({
+  kind: 'form', prompt: 'Tell me',
+  fields: [{ label: 'Name', required: true }, { label: 'Role' }],
 });
 
 function mkArtifact(p: {
@@ -193,5 +199,56 @@ describe('AD-811b ProfileChatTab multiselect dispatch', () => {
     expect(url).toBe('/api/agent/yeo/chat');
     expect(JSON.parse((init as RequestInit).body as string).message)
       .toBe('Alpha, Gamma');
+  });
+});
+
+describe('AD-811b-1 ProfileChatTab form dispatch', () => {
+  it('renders A2UIFormCard for the form kind with onA2UIChoice', () => {
+    expect(profileChatSource).toMatch(
+      /<A2UIFormCard[\s\S]*?onChoice=\{onA2UIChoice/,
+    );
+  });
+
+  it('dispatches on the form kind', () => {
+    expect(profileChatSource).toContain("a2ui.kind === 'form'");
+  });
+
+  it('posts the form values (label: value lines) through sendText', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    useStore.setState({
+      artifactsByThread: new Map([[
+        't1', [mkArtifact({ id: 'a1', threadId: 't1', name: 'a2ui-form-1.json', version: 1 })],
+      ]]),
+    });
+    vi.mocked(fetchArtifactContent).mockResolvedValue({
+      blob: new Blob([FORM_JSON]), text: FORM_JSON, mime: 'application/json',
+    });
+
+    render(
+      <A2UIFormCard
+        threadId="t1"
+        name="a2ui-form-1.json"
+        version={1}
+        onChoice={(opt) => sendTextMirror('yeo', opt)}
+      />,
+    );
+    await screen.findByText('Tell me');
+    fireEvent.change(screen.getByTestId('a2ui-form-input-0'), {
+      target: { value: 'Ada' },
+    });
+    fireEvent.change(screen.getByTestId('a2ui-form-input-1'), {
+      target: { value: 'Engineer' },
+    });
+    fireEvent.click(screen.getByTestId('a2ui-form-submit'));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/agent/yeo/chat');
+    expect(JSON.parse((init as RequestInit).body as string).message)
+      .toBe('Name: Ada\nRole: Engineer');
   });
 });
