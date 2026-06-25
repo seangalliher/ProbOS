@@ -3477,8 +3477,30 @@ class ProbOSRuntime:
             }
 
         device = self.device_node_registry.get_device(device_id)
-        # authorize() returning True guarantees the device is paired/present.
-        assert device is not None
+        if device is None:
+            # authorize() returning True should guarantee the device is
+            # paired/present; guard defensively against a race (device removed
+            # between authorize() and get_device()) -- fail CLOSED, never actuate
+            # on inconsistent state. (-O-safe: an ``assert`` would be stripped.)
+            logger.warning(
+                "AD-843c-2: device %s passed authorize() but is absent from the "
+                "registry; failing closed (not committed)",
+                device_id,
+            )
+            await self._store_device_consensus_episode(
+                device_id=device_id,
+                intent_name=intent_name,
+                authorized=True,
+                committed=False,
+                reason="device_missing",
+            )
+            return {
+                "authorized": True,
+                "committed": False,
+                "consensus": None,
+                "actuate_result": None,
+                "reason": "device_missing",
+            }
 
         result = await self.submit_intent_with_consensus(
             intent="device_actuate",

@@ -387,6 +387,42 @@ async def test_approved_but_actuate_fails_records_trust_failure(runtime, tmp_pat
     assert device_eps[0].outcomes[0]["success"] is False
 
 
+@pytest.mark.asyncio
+async def test_authorized_but_missing_device_fails_closed(runtime, tmp_path):
+    """Defensive guard: authorize() True but get_device() None (removal race) → fail CLOSED.
+
+    Replaces the prior ``assert device is not None`` (which a ``-O`` build strips).
+    No consensus broadcast, zero actuate, an episode is still stored (audit
+    completeness) marked authorized-but-not-committed, and NO trust outcome is
+    written (no actuation was attempted).
+    """
+    adapter = _CountingAdapter()
+    trust_spy, ep_spy = _install_spies(runtime, tmp_path, adapter=adapter)
+    _pair(runtime.device_node_registry, "phone-1", frozenset({"device.location"}))
+    # authorize() reads ``_devices`` directly (still True); simulate the node
+    # vanishing between authorize() and get_device().
+    runtime.device_node_registry.get_device = lambda _id: None
+
+    result = await runtime.submit_device_actuate_with_consensus(
+        "phone-1", "device.location", {}
+    )
+
+    assert result["authorized"] is True
+    assert result["committed"] is False
+    assert result["consensus"] is None          # never reached the broadcast
+    assert result["reason"] == "device_missing"
+    assert len(adapter.calls) == 0              # fail-closed: zero actuate
+    # Episode stored, authorized=True but not committed.
+    device_eps = _device_episodes(ep_spy)
+    assert len(device_eps) == 1
+    assert device_eps[0].outcomes[0]["authorized"] is True
+    assert device_eps[0].outcomes[0]["success"] is False
+    assert device_eps[0].outcomes[0]["reason"] == "device_missing"
+    # No actuation attempted → no trust outcome.
+    device_outcomes = [o for o in trust_spy.outcomes if o[0] == "device:phone-1"]
+    assert device_outcomes == []
+
+
 # ------------------------------------------------------------------
 # Wiring + c-1 regression tests (own runtime, no start() needed)
 # ------------------------------------------------------------------
