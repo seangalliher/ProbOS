@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-639: _emit_event_local retains coroutine event-listener task references (#1003)
+
+**Context.** `ProbOSRuntime._emit_event_local` (the AD-637d in-memory event fallback) dispatched coroutine listeners with `asyncio.create_task(fn(event))` and dropped the task reference. The surrounding `try/except` only catches SYNCHRONOUS failures (task creation); exceptions raised later when the coroutine runs are silently swallowed once the un-referenced task is GC'd (worst case a `RuntimeWarning: coroutine never awaited`). Violates the async-discipline standing order ("always hold a reference to tasks created with `asyncio.create_task()`"). The NATS dispatch path ~10 lines above already does it correctly (`_nats_publish_tasks.add(task)` + `add_done_callback`). Found in the 2026-06-24 weekly review (pre-existing, AD-637d-era).
+
+**Decision.** Mirror the `_nats_publish_tasks` pattern: a new `self._event_listener_tasks: set[asyncio.Task]` registry; `_emit_event_local` stores the task + `task.add_done_callback(self._event_listener_tasks.discard)`. Deliberately NOT `_background_tasks` — that set is the AD-824 shutdown-cancel registry for long-lived loops; per-event one-shot fan-out tasks use a per-feature registry (the in-`__init__` comment says so explicitly). The listener-failure log is promoted `debug → warning` with context (the listener + the event type).
+
+**Tests + gates.** The `_FakeRuntime` port in `test_ad637d_system_events_nats.py` (a "Port of runtime._emit_event") had diverged from the real method — updated to stay faithful (BF-287). NEW `test_emit_event_local_retains_then_discards_coroutine_task` (behavioral: a coroutine listener's task is held while in flight, discarded on completion) + `test_real_runtime_emit_event_local_holds_task_reference` (source-contract on the REAL `ProbOSRuntime._emit_event_local` — guards against the port + the real method diverging again). `test_ad637d` 12 passed; `get_errors` clean. `config/system.yaml` UNTOUCHED. Left UNCOMMITTED (LOCAL).
+
 ### BF-638: AttentionFaculty._coerce_exogenous_bid copies a caller-supplied AttentionBid (#1002)
 
 **Context.** `_coerce_exogenous_bid` returned a ready `AttentionBid` BY REFERENCE (`return payload`); `_drain_pending_exogenous` then repriced `bid.zone_floor`/`bid.salience` in place. A caller that delivered a reusable `AttentionBid` would have it silently overwritten on the next reuse (a no-side-effects-on-input / Law of Demeter violation). Latent today — the live exogenous path coerces from a mesh dict/string and builds a FRESH bid via `_text_bid`/`_build_event_bid`, so no production caller currently passes a shared instance — but the first that does hits silent state corruption. Found in the 2026-06-24 weekly review of the composable-cognition cluster (AD-1032).

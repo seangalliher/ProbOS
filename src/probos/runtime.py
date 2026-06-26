@@ -1054,6 +1054,10 @@ class ProbOSRuntime:
         # --- HXI event listeners (AD-254) ---
         self._event_listeners: list[tuple[Callable[..., Any], frozenset[str] | None]] = []
         self._nats_publish_tasks: set[asyncio.Task] = set()  # AD-637d: prevents GC of publish tasks
+        # BF-639: per-event coroutine-listener tasks — held so they aren't GC'd
+        # mid-flight (mirrors _nats_publish_tasks). NOT _background_tasks (that set
+        # is the AD-824 shutdown-cancel registry for long-lived loops).
+        self._event_listener_tasks: set[asyncio.Task] = set()
 
         # AD-824: registry for long-lived runtime-owned background loops.
         # The shutdown sequence in startup/shutdown.py cancels everything in
@@ -1365,11 +1369,21 @@ class ProbOSRuntime:
                 continue
             try:
                 if asyncio.iscoroutinefunction(fn):
-                    asyncio.create_task(fn(event))
+                    # BF-639: retain the task reference (mirrors _nats_publish_tasks)
+                    # so a coroutine listener is not garbage-collected mid-flight and
+                    # its exceptions are not silently swallowed.
+                    task = asyncio.create_task(fn(event))
+                    self._event_listener_tasks.add(task)
+                    task.add_done_callback(self._event_listener_tasks.discard)
                 else:
                     fn(event)
             except Exception:
-                logger.debug("Event listener failed for %s", type_str, exc_info=True)
+                logger.warning(
+                    "BF-639: event listener %r failed for event %s",
+                    fn,
+                    type_str,
+                    exc_info=True,
+                )
 
     def emit_event(self, event: BaseEvent | str | EventType, data: dict[str, Any] | None = None) -> None:
         """Public typed event emission (AD-527).  Delegates to _emit_event."""

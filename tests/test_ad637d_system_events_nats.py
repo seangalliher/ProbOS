@@ -1,6 +1,7 @@
 """AD-637d: System Event Migration (EventEmitter → NATS) tests."""
 
 import asyncio
+import inspect
 import time
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,7 @@ class _FakeRuntime:
         self.nats_bus = nats_bus
         self._event_listeners: list[tuple] = []
         self._nats_publish_tasks: set[asyncio.Task] = set()
+        self._event_listener_tasks: set[asyncio.Task] = set()  # BF-639: faithful port
         self._night_orders_mgr = None
         self._escalation_calls: list[tuple] = []
 
@@ -51,13 +53,16 @@ class _FakeRuntime:
             self._emit_event_local(event, type_str)
 
     def _emit_event_local(self, event, type_str):
-        """In-memory dispatch (fallback)."""
+        """In-memory dispatch (fallback). BF-639: faithful port — retains the
+        coroutine-listener task reference like the real ProbOSRuntime."""
         for fn, type_filter in self._event_listeners:
             if type_filter is not None and type_str not in type_filter:
                 continue
             try:
                 if asyncio.iscoroutinefunction(fn):
-                    asyncio.create_task(fn(event))
+                    task = asyncio.create_task(fn(event))
+                    self._event_listener_tasks.add(task)
+                    task.add_done_callback(self._event_listener_tasks.discard)
                 else:
                     fn(event)
             except Exception:
@@ -345,3 +350,44 @@ class TestSystemEventsNATS:
         assert len(received) == 1
         assert received[0]["type"] == "test_event"
         assert len(bus.published) == 0  # nothing went to NATS
+
+
+class TestBF639EventListenerTaskReference:
+    """BF-639 (#1003): _emit_event_local must retain coroutine-listener task
+    references until completion (no fire-and-forget GC that swallows exceptions)."""
+
+    @pytest.mark.asyncio
+    async def test_emit_event_local_retains_then_discards_coroutine_task(self):
+        """A coroutine listener's task is held in ``_event_listener_tasks`` while in
+        flight and discarded on completion (mirrors ``_nats_publish_tasks``)."""
+        rt = _FakeRuntime()  # NATS disconnected -> local dispatch
+        gate = asyncio.Event()
+        seen: list = []
+
+        async def listener(ev):
+            seen.append(ev)
+            gate.set()
+
+        rt.add_event_listener(listener)
+        rt._emit_event_local({"type": "x", "data": {}}, "x")
+
+        # retained while in flight
+        assert len(rt._event_listener_tasks) == 1
+        await asyncio.wait_for(gate.wait(), timeout=2.0)
+        await asyncio.sleep(0)  # let the done-callback fire
+        # discarded on completion
+        assert rt._event_listener_tasks == set()
+        assert seen == [{"type": "x", "data": {}}]
+
+    def test_real_runtime_emit_event_local_holds_task_reference(self):
+        """Source contract on the REAL ``ProbOSRuntime._emit_event_local`` (the
+        ``_FakeRuntime`` above is only a port): the coroutine branch must register the
+        task in ``_event_listener_tasks`` + ``add_done_callback`` rather than a bare
+        fire-and-forget ``create_task`` — guards against the port and the real method
+        diverging again (the BF-287 'tested a copy' lesson)."""
+        from probos.runtime import ProbOSRuntime
+
+        src = inspect.getsource(ProbOSRuntime._emit_event_local)
+        assert "task = asyncio.create_task(fn(event))" in src
+        assert "self._event_listener_tasks.add(task)" in src
+        assert "task.add_done_callback(self._event_listener_tasks.discard)" in src
