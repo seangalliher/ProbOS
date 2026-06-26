@@ -58,6 +58,7 @@ import {
   resolveRuntimeUrl,
   saveRuntimeConfig,
 } from "./runtimeConfig.js";
+import { startOsActivityWatcher } from "./osActivityWatcher.js";
 
 /**
  * AD-817: runtime URL is now operator-configurable via the wizard and
@@ -127,6 +128,7 @@ function urlForManagementView(id: ViewTarget): string {
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let stopOsActivityWatcher: (() => void) | null = null;
 let proactivePaused = false;
 let viewMode: ViewMode = "compact";
 const connection: ConnectionStateMachine = createConnectionStateMachine("connecting");
@@ -485,6 +487,11 @@ function bootstrap(): void {
 
     createMainWindow();
 
+    // AD-1054: arm the OS-activity sensor. It self-gates on the runtime
+    // consent flag (GET /api/os-activity) and does NOT capture the active
+    // window unless the Captain has enabled it (default OFF). Local-only.
+    stopOsActivityWatcher = startOsActivityWatcher({ getRuntimeUrl });
+
     // Preload-driven IPC handlers.
     ipcMain.handle("probos:getRuntimeStatus", () => connection.state);
     ipcMain.handle("probos:retryConnect", () => {
@@ -648,6 +655,13 @@ function bootstrap(): void {
     }
 
     logInfo("tray initialized", { status: connection.state });
+  });
+
+  app.on("before-quit", () => {
+    if (stopOsActivityWatcher) {
+      stopOsActivityWatcher();
+      stopOsActivityWatcher = null;
+    }
   });
 
   app.on("window-all-closed", () => {

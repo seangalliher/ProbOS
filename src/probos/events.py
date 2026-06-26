@@ -152,6 +152,10 @@ class EventType(str, Enum):
     TASK_CREATED = "task_created"
     TASK_UPDATED = "task_updated"
 
+    # OS-activity sensor (AD-1054) -- raw desktop foreground-window metadata.
+    # Pure sensor; emitted in-process. Nothing in OSS consumes it.
+    OS_ACTIVITY = "os_activity"
+
     # Initiative
     INITIATIVE_PROPOSAL = "initiative_proposal"
 
@@ -1160,3 +1164,25 @@ class ConsultationFailedEvent(BaseEvent):
     target_agent_id: str = ""
     topic: str = ""
     error: str = ""
+
+
+# ---------------------------------------------------------------------------
+# OS-activity sensor (AD-1054)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class OSActivityEvent(BaseEvent):
+    """AD-1054: a desktop OS foreground-window activity sample (pure sensor).
+
+    Active-window METADATA ONLY -- app name + window title + optional app
+    executable path / browser url. NO keystrokes, screen content, or clipboard.
+    ``ts`` is the client (watcher) capture time; ``BaseEvent.timestamp`` is the
+    server emit time. Emitted in-process; not persisted/exported by this AD.
+    """
+
+    event_type: EventType = field(default=EventType.OS_ACTIVITY, init=False)
+    active_app: str = ""
+    window_title: str = ""
+    app_path: str = ""
+    url: str = ""
+    ts: float = 0.0

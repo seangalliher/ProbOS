@@ -5882,6 +5882,31 @@ class DeviceConfig(BaseModel):
     probationary_beta: float = Field(default=3.0, gt=0.0)
 
 
+class OSActivityConfig(BaseModel):
+    """AD-1054: consent gate for the desktop OS-activity sensor.
+
+    A default-OFF, local-only foreground-window watcher in the desktop app
+    (AD-759) reports active-window METADATA ONLY (app name + window title +
+    optional app path/url) -- NEVER keystrokes, screen content, or clipboard.
+    The event is emitted in-process; this AD does not persist or export it.
+
+    Privacy-by-design: ``enabled`` defaults False (no capture without consent);
+    the desktop watcher self-gates on this flag AND the runtime ingestion
+    endpoint refuses when off (defense in depth).
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Consent gate for the OS-activity sensor. Default OFF (no capture without consent).",
+    )
+    poll_interval_seconds: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+        description="Heartbeat cadence (seconds) the desktop watcher reads to poll the active window.",
+    )
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -5898,6 +5923,7 @@ class SystemConfig(BaseModel):
     federation: FederationConfig = FederationConfig()
     self_mod: SelfModConfig = SelfModConfig()
     device: DeviceConfig = DeviceConfig()  # AD-843b (probationary device trust prior)
+    os_activity: OSActivityConfig = Field(default_factory=OSActivityConfig)  # AD-1054 (default OFF)
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)  # AD-838c
     execution: ExecutionConfig = ExecutionConfig()  # AD-993/994 (default OFF)
     hooks: HooksConfig = HooksConfig()  # AD-1004 (default OFF)

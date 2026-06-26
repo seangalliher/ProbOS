@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -13,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from probos.api_models import ShutdownRequest
+from probos.events import OSActivityEvent
 from probos.proactive import build_proactive_status_snapshot
 from probos.routers.deps import get_runtime, get_task_tracker
 from probos.types import IntentMessage
@@ -466,6 +468,65 @@ async def accept_notification(
         return {"dispatched": False, "reason": "dispatch_error"}
     nq.acknowledge(notification_id)
     return {"dispatched": True, "intent": str(intent_name), "responders": len(results)}
+
+
+class OSActivityIngest(BaseModel):
+    """AD-1054: desktop OS-activity sensor payload -- active-window metadata only."""
+
+    active_app: str = Field(min_length=1, max_length=256)
+    window_title: str = Field(default="", max_length=1024)
+    app_path: str | None = Field(default=None, max_length=2048)
+    url: str | None = Field(default=None, max_length=2048)
+    ts: float | None = None
+
+
+@router.get("/os-activity")
+async def os_activity_consent(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """AD-1054: the desktop watcher's self-gate read.
+
+    Returns ONLY ``{enabled, poll_interval_seconds}`` (no secrets) so the
+    watcher can decide whether to start polling the active window WITHOUT
+    crew-scope auth. The authoritative gate is the POST endpoint below.
+    """
+    cfg = getattr(runtime.config, "os_activity", None)
+    if cfg is None:
+        return {"enabled": False, "poll_interval_seconds": 5}
+    return {
+        "enabled": bool(cfg.enabled),
+        "poll_interval_seconds": int(cfg.poll_interval_seconds),
+    }
+
+
+@router.post("/os-activity")
+async def ingest_os_activity(
+    body: OSActivityIngest, runtime: Any = Depends(get_runtime)
+) -> dict[str, Any]:
+    """AD-1054: consent-gated ingestion of a desktop foreground-window sample.
+
+    OFF (default) -> no-op, NO event (byte-identical). ON -> emit ``OS_ACTIVITY``.
+    Pure plumbing: the event is emitted in-process and NOT persisted/exported by
+    this AD. Honest-degrade HTTP-200 -- never a 500.
+    """
+    cfg = getattr(runtime.config, "os_activity", None)
+    if cfg is None or not cfg.enabled:
+        # Default path: consent off -> the sensor signal is dropped, no event.
+        return {"ingested": False, "reason": "disabled"}
+    try:
+        runtime.emit_event(
+            OSActivityEvent(
+                active_app=body.active_app,
+                window_title=body.window_title,
+                app_path=body.app_path or "",
+                url=body.url or "",
+                ts=body.ts if body.ts is not None else time.time(),
+            )
+        )
+    except Exception:
+        logger.warning(
+            "AD-1054: emit OS_ACTIVITY failed; sample dropped", exc_info=True
+        )
+        return {"ingested": False, "reason": "emit_error"}
+    return {"ingested": True}
 
 @router.get("/emergence")
 async def get_emergence_metrics(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:

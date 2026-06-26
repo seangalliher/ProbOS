@@ -13,6 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "dependencies": {
+    "get-windows": "^9.2.0"
+  },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "electron": "^30.0.0",
