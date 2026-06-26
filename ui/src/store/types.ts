@@ -350,6 +350,16 @@ export interface NotificationView {
   title: string;
   detail: string;
   action_url: string;
+  // AD-1053: optional actionable affordance. When present (with a label), the
+  // card renders an "Accept" button that POSTs to
+  // /api/notifications/{id}/accept, dispatching the producer-authored intent.
+  // Absent -> no button, byte-identical to pre-AD-1053 cards.
+  suggested_action?: {
+    label?: string;
+    intent?: string;
+    params?: Record<string, unknown>;
+    target_agent_id?: string;
+  };
   created_at: number;
   acknowledged: boolean;
 }

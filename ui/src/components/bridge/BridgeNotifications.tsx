@@ -1,5 +1,7 @@
 /* Bridge Notifications — notification card extracted from NotificationDropdown (AD-325) */
 
+import type { MouseEvent } from 'react';
+
 import type { NotificationView } from '../../store/types';
 import { DEPT_COLORS } from './BridgeCards';
 
@@ -22,10 +24,19 @@ export function formatRelativeTime(timestamp: number): string {
 export function NotificationCard({ notification }: { notification: NotificationView }) {
   const borderColor = TYPE_COLORS[notification.notification_type] || '#5090d0';
   const isUnread = !notification.acknowledged;
+  const acceptLabel = notification.suggested_action?.label;
 
   async function handleAck() {
     try {
       await fetch(`/api/notifications/${notification.id}/ack`, { method: 'POST' });
+    } catch { /* swallow */ }
+  }
+
+  async function handleAccept(e: MouseEvent) {
+    // Do not also trigger the card's onClick={handleAck}.
+    e.stopPropagation();
+    try {
+      await fetch(`/api/notifications/${notification.id}/accept`, { method: 'POST' });
     } catch { /* swallow */ }
   }
 
@@ -74,6 +85,33 @@ export function NotificationCard({ notification }: { notification: NotificationV
         <span style={{ color: '#444' }}>{'\u00B7'}</span>
         <span>{formatRelativeTime(notification.created_at)}</span>
       </div>
-    </div>
+      {acceptLabel && (
+        <button
+          type="button"
+          data-testid="notification-accept"
+          onClick={handleAccept}
+          style={{
+            marginTop: 6,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            padding: '3px 8px',
+            borderRadius: 5,
+            border: '1px solid #f0b060',
+            background: 'rgba(240,176,96,0.12)',
+            color: '#f0b060',
+            fontSize: 10,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          <svg width={11} height={11} viewBox="0 0 24 24" fill="none"
+            stroke="#f0b060" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+          {acceptLabel}
+        </button>
+      )}    </div>
   );
 }

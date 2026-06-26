@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from probos.api_models import ShutdownRequest
 from probos.proactive import build_proactive_status_snapshot
 from probos.routers.deps import get_runtime, get_task_tracker
+from probos.types import IntentMessage
 
 logger = logging.getLogger(__name__)
 
@@ -420,6 +421,51 @@ async def ack_all_notifications(runtime: Any = Depends(get_runtime)) -> dict[str
     count = runtime.notification_queue.acknowledge_all()
     return {"acknowledged": count}
 
+
+@router.post("/notifications/{notification_id}/accept")
+async def accept_notification(
+    notification_id: str, runtime: Any = Depends(get_runtime)
+) -> dict[str, Any]:
+    """Accept an actionable notification: dispatch its suggested_action (AD-1053).
+
+    Reads the PRE-AUTHORED ``suggested_action`` on the notification (the client
+    cannot inject the intent — it only references an existing notification id),
+    broadcasts it into the mesh, then acknowledges the notification. The dispatch
+    still passes the AD-698 pre-intent-authorization seam + consensus gating (if
+    the carried intent ``requires_consensus``). Honest-degrade: any missing piece
+    returns ``{"dispatched": False, "reason": ...}`` with HTTP 200 — never a 500.
+    """
+    nq = getattr(runtime, "notification_queue", None)
+    n = nq.get(notification_id) if nq is not None else None
+    if n is None:
+        return {"dispatched": False, "reason": "not_found"}
+    action = n.suggested_action or {}
+    intent_name = action.get("intent")
+    if not intent_name:
+        # Nothing to dispatch — treat Accept as an acknowledgement.
+        if nq is not None:
+            nq.acknowledge(notification_id)
+        return {"dispatched": False, "reason": "no_action"}
+    bus = getattr(runtime, "intent_bus", None)
+    if bus is None:
+        return {"dispatched": False, "reason": "no_bus"}
+    msg = IntentMessage(
+        intent=str(intent_name),
+        params=dict(action.get("params") or {}),
+        target_agent_id=action.get("target_agent_id"),
+    )
+    try:
+        # broadcast() delegates to send() when target_agent_id is set (intent.py).
+        results = await bus.broadcast(msg)
+    except Exception:
+        logger.warning(
+            "AD-1053: dispatch of accepted notification %s (intent=%s) failed; "
+            "leaving it unacknowledged for retry",
+            notification_id, intent_name, exc_info=True,
+        )
+        return {"dispatched": False, "reason": "dispatch_error"}
+    nq.acknowledge(notification_id)
+    return {"dispatched": True, "intent": str(intent_name), "responders": len(results)}
 
 @router.get("/emergence")
 async def get_emergence_metrics(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:

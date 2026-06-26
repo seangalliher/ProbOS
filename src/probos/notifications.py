@@ -26,6 +26,18 @@ class AgentNotification:
     title: str = ""
     detail: str = ""
     action_url: str = ""  # optional link context (e.g. task_id, intent)
+    # AD-1053: optional actionable affordance. When present, the HXI renders an
+    # "Accept" button; POST /api/notifications/{id}/accept dispatches the carried
+    # intent into the mesh. Shape (all keys optional except a non-empty "intent"
+    # is required to dispatch):
+    #   {"label": str,             # button text (Ship's-Computer voiced)
+    #    "intent": str,            # IntentMessage.intent to dispatch
+    #    "params": dict,           # IntentMessage.params
+    #    "target_agent_id": str}   # optional; targeted send() vs broadcast()
+    # The producer authors the action; the client only references a notification
+    # id (it cannot inject an intent). Default None -> no button, byte-identical
+    # to pre-AD-1053 notifications.
+    suggested_action: dict[str, Any] | None = None
     created_at: float = field(default_factory=time.time)
     acknowledged: bool = False
 
@@ -39,6 +51,7 @@ class AgentNotification:
             "title": self.title,
             "detail": self.detail,
             "action_url": self.action_url,
+            "suggested_action": self.suggested_action,
             "created_at": self.created_at,
             "acknowledged": self.acknowledged,
         }
@@ -61,6 +74,7 @@ class NotificationQueue:
         detail: str = "",
         notification_type: str = "info",
         action_url: str = "",
+        suggested_action: dict[str, Any] | None = None,
     ) -> AgentNotification:
         n = AgentNotification(
             agent_id=agent_id,
@@ -70,10 +84,15 @@ class NotificationQueue:
             detail=detail,
             notification_type=notification_type,
             action_url=action_url,
+            suggested_action=suggested_action,
         )
         self._notifications[n.id] = n
         self._emit(EventType.NOTIFICATION, n)
         return n
+
+    def get(self, notification_id: str) -> AgentNotification | None:
+        """Return a notification by id, or None if not present (AD-1053)."""
+        return self._notifications.get(notification_id)
 
     def acknowledge(self, notification_id: str) -> bool:
         n = self._notifications.get(notification_id)
