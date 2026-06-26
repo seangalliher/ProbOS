@@ -449,3 +449,41 @@ def test_arousal_path_has_no_bus_call() -> None:
         code = _code_without_docstring(method)
         for forbidden in ("intent_bus", ".broadcast(", ".publish(", "create_task"):
             assert forbidden not in code, f"{method.__name__} must not call {forbidden!r}"
+
+
+# ---------------------------------------------------------------------------
+# BF-638 (#1002): _coerce_exogenous_bid must not alias a caller-supplied bid
+# ---------------------------------------------------------------------------
+
+
+def test_coerce_exogenous_bid_copies_a_ready_attention_bid() -> None:
+    """BF-638: passing a ready ``AttentionBid`` returns a DISTINCT copy (no aliasing),
+    with the same field values."""
+    _spine, faculty = _attach(_att_cfg())
+    original = _bid("caller", "x", salience=7.0, zone_floor=3, pin=True)
+    coerced = faculty._coerce_exogenous_bid(original)
+    assert coerced is not None
+    assert coerced is not original
+    assert (coerced.source, coerced.salience, coerced.zone_floor, coerced.pin) == (
+        original.source,
+        original.salience,
+        original.zone_floor,
+        original.pin,
+    )
+
+
+def test_delivering_an_attention_bid_does_not_mutate_the_caller_object() -> None:
+    """BF-638: a caller that delivers a reusable ``AttentionBid`` keeps its
+    ``salience``/``zone_floor``. ``_coerce_exogenous_bid`` copies, so the in-place
+    reprice in ``_drain_pending_exogenous`` hits the faculty's COPY, never the
+    caller's object."""
+    spine, faculty = _attach(_att_cfg())
+    original = _bid("caller", "reusable bid", salience=99.0, zone_floor=99)
+
+    spine.deliver_exogenous(original)  # public inlet -> coerce(copy) -> _pending_exogenous
+    assert faculty.pending_exogenous_count == 1
+    faculty.arbitrate([_bid("a", "alpha")], token_budget=10_000)  # drains + reprices
+
+    # the caller's bid is untouched (the faculty repriced its own copy, not this one)
+    assert original.salience == 99.0
+    assert original.zone_floor == 99

@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-638: AttentionFaculty._coerce_exogenous_bid copies a caller-supplied AttentionBid (#1002)
+
+**Context.** `_coerce_exogenous_bid` returned a ready `AttentionBid` BY REFERENCE (`return payload`); `_drain_pending_exogenous` then repriced `bid.zone_floor`/`bid.salience` in place. A caller that delivered a reusable `AttentionBid` would have it silently overwritten on the next reuse (a no-side-effects-on-input / Law of Demeter violation). Latent today — the live exogenous path coerces from a mesh dict/string and builds a FRESH bid via `_text_bid`/`_build_event_bid`, so no production caller currently passes a shared instance — but the first that does hits silent state corruption. Found in the 2026-06-24 weekly review of the composable-cognition cluster (AD-1032).
+
+**Decision.** Copy on coercion: `return replace(payload)` (`dataclasses.replace`) so the faculty owns a fresh bid and the in-place reprice never touches the caller's object. `AttentionBid` is a plain mutable dataclass (defaults on all fields), so `replace` is a clean shallow copy (the `render` callable is shared by reference — intended; it is a lazy renderer, never mutated). Preferred over a "consume-semantics" docstring contract — it removes the footgun entirely.
+
+**Tests + gates.** NEW (`test_ad1032_arousal.py`): `test_coerce_exogenous_bid_copies_a_ready_attention_bid` (coercion returns a distinct copy with the same field values) + `test_delivering_an_attention_bid_does_not_mutate_the_caller_object` (deliver via the public `deliver_exogenous` inlet → `arbitrate` drains/reprices → the caller's original keeps `salience=99.0`/`zone_floor=99`). Attention faculty suites (AD-1032 + AD-1029 + AD-1030 + AD-1036) 86 passed, 0 regressions; `get_errors` clean. `config/system.yaml` UNTOUCHED. Left UNCOMMITTED (LOCAL).
+
 ### AD-811c: group-chat A2UI producer (#735)
 
 **Context.** The #735 A2UI epic shipped three widget kinds (AD-811a choice, AD-811b multiselect, AD-811b-1 form) that worked only in 1:1 DMs. The group fan-out (`thread_fanout._send_one`) ALREADY runs the DM reply pipeline (AD-933) via `run_escalation_only()` → `_escalation_steps()`, but `step_4k_extract_a2ui` was in `_full_steps()` and DELIBERATELY excluded from `_escalation_steps()` ("v1, 1:1 only"). That single exclusion was the entire gap: a widget tag emitted by a group agent was never extracted into a stub + artifact, so it reached the transcript as raw `[A2UI: …]` text. (The UI is already shared — group transcripts render through the SAME `ProfileChatTab`, and BF-637 just fixed the render gate so the cards actually show.)

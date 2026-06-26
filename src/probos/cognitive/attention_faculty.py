@@ -43,7 +43,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
@@ -567,7 +567,10 @@ class AttentionFaculty(BaseCognitiveOrgan):
         if payload is None:
             return None
         if isinstance(payload, AttentionBid):
-            return payload
+            # BF-638: return a COPY, never the caller's reference. The faculty
+            # reprices zone_floor/salience in place in _drain_pending_exogenous,
+            # so aliasing a caller-supplied bid would silently corrupt it on reuse.
+            return replace(payload)
         if isinstance(payload, str):
             return self._text_bid("exogenous", payload, modality="exogenous") if payload else None
         if isinstance(payload, Mapping):
