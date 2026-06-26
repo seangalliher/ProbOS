@@ -163,7 +163,7 @@ class DmReplyPipeline:
             self.step_4i_notebook_parse,  # AD-911
             self.step_4h_mesh_read_parse,  # AD-869
             self.step_4f_extract_artifacts,  # AD-797 (Wave 197)
-            self.step_4k_extract_a2ui,  # AD-811a (default-OFF; 1:1 only)
+            self.step_4k_extract_a2ui,  # AD-811a (default-OFF; group via AD-811c)
             self.step_4g_create_task_parse,  # AD-845
             self.step_4j_deliberate_parse,  # AD-934
             self.step_5_episodic_store,
@@ -179,16 +179,20 @@ class DmReplyPipeline:
         Each step is a strict no-op for any reply lacking its marker, and the
         markers are emitted only by specifically-taught agents, so the subset
         is inherently bounded and safe outside the 1:1 path. Relative order is
-        preserved from :meth:`_full_steps` (4c -> 4e -> 4i -> 4h -> 4f -> 4g ->
-        4j).
+        preserved from :meth:`_full_steps` (4c -> 4e -> 4i -> 4h -> 4f -> 4k ->
+        4g -> 4j).
 
         Included: ``step_4c_image_gen_parse`` (AD-730-3 ``[GEN_IMAGE]``, added
         AD-933b), ``step_4e_action_dispatch`` (AD-745 ``[ACTION]``),
         ``step_4i_notebook_parse`` (AD-911), ``step_4h_mesh_read_parse``
         (AD-869 read-only mesh), ``step_4f_extract_artifacts`` (AD-797),
-        ``step_4g_create_task_parse`` (AD-845 ``[CREATE_TASK]``),
-        ``step_4j_deliberate_parse`` (AD-934 ``[THINK]``/``[DELIBERATE]``
-        deep-tier re-roll, flag-gated, appended last).
+        ``step_4k_extract_a2ui`` (AD-811a/c — extracts ``[A2UI]`` widget tags
+        into artifacts + inline stubs; channel-agnostic, reads
+        ``chat_thread_id`` / ``a2ui_enabled``; AD-811c activates it on the
+        group fan-out path), ``step_4g_create_task_parse`` (AD-845
+        ``[CREATE_TASK]``), ``step_4j_deliberate_parse`` (AD-934
+        ``[THINK]``/``[DELIBERATE]`` deep-tier re-roll, flag-gated, appended
+        last).
 
         Excluded (1:1 semantics / mislabel risk): sanity-gate retry (1),
         games (2/3), self-check (4), follow-up (4d), outbound-DM (4b),
@@ -204,6 +208,7 @@ class DmReplyPipeline:
             self.step_4i_notebook_parse,
             self.step_4h_mesh_read_parse,
             self.step_4f_extract_artifacts,
+            self.step_4k_extract_a2ui,  # AD-811c (group A2UI producer; #735)
             self.step_4g_create_task_parse,
             self.step_4j_deliberate_parse,  # AD-934
         )
@@ -1239,8 +1244,10 @@ class DmReplyPipeline:
 
         Default-OFF: gated on ``config.communications.a2ui_enabled`` (default
         False). When off the step returns immediately doing nothing, so the
-        reply is byte-identical to pre-AD-811a. 1:1 only — registered in
-        :meth:`_full_steps` but NOT :meth:`_escalation_steps` (v1 scope).
+        reply is byte-identical to pre-AD-811a. AD-811c registers this in BOTH
+        :meth:`_full_steps` (1:1) and :meth:`_escalation_steps` (group
+        fan-out); it is channel-agnostic — ``chat_thread_id`` and
+        ``a2ui_enabled`` are set on both paths.
 
         Runs adjacent to ``step_4f_extract_artifacts`` (after it, before
         ``step_4g_create_task_parse``) under the same per-step Tier-2 guard.

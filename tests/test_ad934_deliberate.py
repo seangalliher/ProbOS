@@ -233,7 +233,7 @@ def test_full_steps_orders_4j_between_4g_and_5() -> None:
         _make_ctx(runtime=SimpleNamespace(), response_text="x", sanity_gate=None)
     )
     names = [s.__name__ for s in pipeline._full_steps()]
-    assert len(names) == 18
+    assert len(names) == 19  # AD-811a added step_4k_extract_a2ui to _full_steps
     assert (
         names.index("step_4g_create_task_parse")
         < names.index("step_4j_deliberate_parse")
@@ -252,6 +252,7 @@ def test_escalation_subset_appends_4j_after_4g() -> None:
         "step_4i_notebook_parse",
         "step_4h_mesh_read_parse",
         "step_4f_extract_artifacts",
+        "step_4k_extract_a2ui",  # AD-811c: group fan-out now extracts A2UI (4f -> 4k -> 4g)
         "step_4g_create_task_parse",
         "step_4j_deliberate_parse",
     ]

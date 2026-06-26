@@ -332,11 +332,15 @@ def test_full_steps_order_regression() -> None:
     assert names[i + 1] == "step_4g_create_task_parse"
 
 
-def test_a2ui_step_not_in_escalation_steps() -> None:
-    # v1 is 1:1 only — must NOT be wired into the group-chat escalation subset.
+def test_a2ui_step_in_escalation_steps_after_artifacts() -> None:
+    # AD-811c (was the v1 "1:1 only" negative guard): group fan-out now
+    # extracts A2UI too (step_4k after 4f, before 4g).
     pipe = DmReplyPipeline(_ctx())
     esc_names = [s.__name__ for s in pipe._escalation_steps()]
-    assert "step_4k_extract_a2ui" not in esc_names
+    assert "step_4k_extract_a2ui" in esc_names
+    i = esc_names.index("step_4k_extract_a2ui")
+    assert esc_names[i - 1] == "step_4f_extract_artifacts"
+    assert esc_names[i + 1] == "step_4g_create_task_parse"
 
 
 # --------------------------------------------------------------------------- #
