@@ -103,6 +103,11 @@ export function CloudPicker({
     // so we don't miss the event if the popup completes before the listener
     // is attached (rare with manual login, but tight loops can race).
     const onMessage = (ev: MessageEvent) => {
+      // BF-640 (security hygiene): defense-in-depth — only trust a SAME-ORIGIN
+      // oauth_complete message. The callback page is served from our own origin,
+      // so any cross-origin postMessage is forged and must be ignored (otherwise
+      // any script/iframe could drive setAuthorized(true) + loadFiles('')).
+      if (ev.origin !== window.location.origin) return;
       if (
         ev?.data &&
         typeof ev.data === 'object' &&

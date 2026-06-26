@@ -18,6 +18,22 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/** BF-640: dispatch an ``oauth_complete`` MessageEvent with an explicit origin.
+ *  jsdom's ``window.postMessage`` does not set a usable ``event.origin``, and the
+ *  CloudPicker now requires ``ev.origin === window.location.origin``. Pass a
+ *  different ``origin`` to simulate a forged cross-origin message. */
+function dispatchOauthComplete(
+  provider = 'google_drive',
+  origin = window.location.origin,
+) {
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      data: { type: 'oauth_complete', provider },
+      origin,
+    }),
+  );
+}
+
 describe('CloudPicker (AD-720c)', () => {
   beforeEach(() => {
     // Stub window.open so authorize tests don't actually open popups.
@@ -72,11 +88,45 @@ describe('CloudPicker (AD-720c)', () => {
     fireEvent.click(screen.getByTestId('cloud-picker-authorize'));
     await waitFor(() => expect(window.open).toHaveBeenCalled());
     // Simulate the popup posting back the oauth_complete message.
-    window.postMessage({ type: 'oauth_complete', provider: 'google_drive' }, '*');
+    dispatchOauthComplete();
     await waitFor(() =>
       expect(screen.getByTestId('cloud-picker-file-list')).toBeTruthy(),
     );
     await waitFor(() => expect(screen.getByTestId('cloud-picker-file-f1')).toBeTruthy());
+  });
+
+  it('ignores a forged cross-origin oauth_complete message (BF-640)', async () => {
+    installFetch(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/cloud-pickers/google_drive/start')) {
+        return jsonResponse({ auth_url: 'https://example/auth', state: 'st-x' });
+      }
+      if (url.includes('/api/cloud-pickers/google_drive/files')) {
+        return jsonResponse({
+          files: [
+            { id: 'f1', name: 'a.pdf', mime: 'application/pdf', size_bytes: 100, modified_at: '' },
+          ],
+          next_page_token: null,
+        });
+      }
+      return new Response('', { status: 404 });
+    });
+    render(<CloudPicker open onClose={vi.fn()} onAttached={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('cloud-picker-provider-google_drive'));
+    fireEvent.click(screen.getByTestId('cloud-picker-authorize'));
+    await waitFor(() => expect(window.open).toHaveBeenCalled());
+
+    // A message from a DIFFERENT origin must be IGNORED — no setAuthorized, no files.
+    dispatchOauthComplete('google_drive', 'https://evil.example.com');
+    await Promise.resolve();
+    expect(screen.queryByTestId('cloud-picker-file-list')).toBeNull();
+    // still on the authorize screen (unauthorized — the forged message was dropped)
+    expect(screen.getByTestId('cloud-picker-authorize')).toBeTruthy();
+
+    // a SAME-origin message still drives the flow (the guard is origin-specific,
+    // not a block-all, and the early return did not detach the listener)
+    dispatchOauthComplete();
+    await waitFor(() => expect(screen.getByTestId('cloud-picker-file-list')).toBeTruthy());
   });
 
   it('honest-degrades with 503 banner when feature disabled', async () => {
@@ -123,7 +173,8 @@ describe('CloudPicker (AD-720c)', () => {
     render(<CloudPicker open onClose={onClose} onAttached={onAttached} />);
     fireEvent.click(screen.getByTestId('cloud-picker-provider-google_drive'));
     fireEvent.click(screen.getByTestId('cloud-picker-authorize'));
-    window.postMessage({ type: 'oauth_complete', provider: 'google_drive' }, '*');
+    await waitFor(() => expect(window.open).toHaveBeenCalled());
+    dispatchOauthComplete();
     await waitFor(() => expect(screen.getByTestId('cloud-picker-file-fid')).toBeTruthy());
     fireEvent.click(screen.getByTestId('cloud-picker-file-fid'));
     await waitFor(() => expect(onAttached).toHaveBeenCalledTimes(1));
@@ -146,7 +197,8 @@ describe('CloudPicker (AD-720c)', () => {
     render(<CloudPicker open onClose={vi.fn()} onAttached={vi.fn()} />);
     fireEvent.click(screen.getByTestId('cloud-picker-provider-google_drive'));
     fireEvent.click(screen.getByTestId('cloud-picker-authorize'));
-    window.postMessage({ type: 'oauth_complete', provider: 'google_drive' }, '*');
+    await waitFor(() => expect(window.open).toHaveBeenCalled());
+    dispatchOauthComplete();
     await waitFor(() => {
       const banner = screen.getByTestId('cloud-picker-error');
       expect(banner.textContent).toMatch(/reauthorize/i);
