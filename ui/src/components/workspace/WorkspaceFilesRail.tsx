@@ -7,7 +7,9 @@
  *   INPUTS  — the AD-926 ``InputsList``, fed by ``fetchThreadInputs``.
  *   OUTPUTS — the AD-797 ``ArtifactList``, fed by ``fetchThreadArtifacts``.
  *
- * Self-contained: it owns its own fetch + local state (mirrors AD-926's
+ * AD-1083: a TODOS section (the AD-1080 senior-validation checklist) sits above
+ * Inputs when the room has a bound task; the Captain confirms/rejects submitted
+ * steps inline. Self-contained: it owns its own fetch + local state (mirrors AD-926's
  * ``InputsList`` + ``inputsApi`` pattern), with no coupling to the global
  * ``selectedArtifactId`` / ``artifactsByThread`` slice that the standalone
  * ``ArtifactDrawer`` owns. The full ``ArtifactDrawer`` is therefore never
@@ -31,6 +33,8 @@ import { fetchThreadInputs, attachTaskInputs, type TaskInput } from '../inputs/i
 import { ArtifactList } from '../artifacts/ArtifactList';
 import { ArtifactViewer } from '../artifacts/ArtifactViewer';
 import { fetchThreadArtifacts } from '../artifacts/artifactApi';
+import { TodosList } from './TodosList';
+import { fetchTaskSteps, updateTaskStep, type TodoStep } from './todosApi';
 import type { ArtifactView } from '../../store/useStore';
 
 const AMBER = '#f0b060';
@@ -69,6 +73,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   const { threadId, taskId } = props;
   const [inputs, setInputs] = useState<TaskInput[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
+  const [steps, setSteps] = useState<TodoStep[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Default-collapsed on first run (null from storage). Divergence from
   // ArtifactDrawer's default-expanded — justified by the 420px floating
@@ -129,7 +134,26 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     }
   }, [taskId]);
 
-  const totalCount = inputs.length + artifacts.length;
+  // AD-1083: load the room Todo checklist when the task changes, and on
+  // confirm/reject by the Captain. Honest-degrade to [] (no task / no steps).
+  const refreshSteps = useCallback(async () => {
+    if (!taskId) { setSteps([]); return; }
+    try { setSteps(await fetchTaskSteps(taskId)); } catch { setSteps([]); }
+  }, [taskId]);
+  useEffect(() => { void refreshSteps(); }, [refreshSteps]);
+  const handleConfirm = useCallback(async (idx: number) => {
+    if (!taskId) return;
+    try { await updateTaskStep(taskId, idx, { status: 'done', actor: 'captain' }); } catch { /* keep list */ }
+    void refreshSteps();
+  }, [taskId, refreshSteps]);
+  const handleReject = useCallback(async (idx: number) => {
+    if (!taskId) return;
+    try { await updateTaskStep(taskId, idx, { status: 'rejected', actor: 'captain' }); } catch { /* keep list */ }
+    void refreshSteps();
+  }, [taskId, refreshSteps]);
+  const doneCount = steps.filter((s) => s.status === 'done').length;
+
+  const totalCount = inputs.length + artifacts.length + steps.length;
   // BF-642: the output selected for in-app preview (Cowork-style file preview).
   const selectedArtifact = selectedId ? (artifacts.find((a) => a.id === selectedId) ?? null) : null;
 
@@ -225,6 +249,21 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
           </svg>
         </button>
       </div>
+
+      {/* AD-1083: room Todo checklist (the AD-1080 senior-validation loop). Only
+          when the room has a bound task; the Captain confirms/rejects submitted
+          steps inline. */}
+      {taskId && (
+        <div data-testid="workspace-files-todos" style={{ flex: '0 0 auto', maxHeight: '34%', overflowY: 'auto', borderBottom: '1px solid rgba(240, 176, 96, 0.10)' }}>
+          <div
+            data-testid="workspace-files-todos-label"
+            style={{ fontSize: 10, letterSpacing: 1.5, color: DIM, padding: '8px 10px 4px' }}
+          >
+            TODOS{steps.length > 0 ? ` (${doneCount}/${steps.length})` : ''}
+          </div>
+          <TodosList steps={steps} onConfirm={handleConfirm} onReject={handleReject} />
+        </div>
+      )}
 
       <div style={{ flex: '1 1 50%', overflowY: 'auto', minHeight: 0 }}>
         <div

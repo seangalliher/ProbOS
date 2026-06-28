@@ -1,0 +1,77 @@
+/**
+ * AD-1083: tests for the room Todo checklist (TodosList rows + the
+ * WorkspaceFilesRail TODOS section count/visibility gate).
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+
+import type { TaskInput } from '../../inputs/inputsApi';
+import type { ArtifactView } from '../../../store/useStore';
+import type { TodoStep } from '../todosApi';
+
+vi.mock('../../inputs/inputsApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../inputs/inputsApi')>();
+  return { ...actual, fetchThreadInputs: vi.fn() };
+});
+vi.mock('../../artifacts/artifactApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../artifacts/artifactApi')>();
+  return { ...actual, fetchThreadArtifacts: vi.fn() };
+});
+vi.mock('../todosApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../todosApi')>();
+  return { ...actual, fetchTaskSteps: vi.fn(), updateTaskStep: vi.fn() };
+});
+
+import { fetchThreadInputs } from '../../inputs/inputsApi';
+import { fetchThreadArtifacts } from '../../artifacts/artifactApi';
+import { fetchTaskSteps, updateTaskStep } from '../todosApi';
+import { WorkspaceFilesRail } from '../WorkspaceFilesRail';
+import { TodosList } from '../TodosList';
+
+const STEPS: TodoStep[] = [
+  { label: 'Draft what-is-ai.docx', status: 'done' },
+  { label: 'Yeo: AI Agent paragraph', status: 'submitted' },
+  { label: 'Review + closing', status: 'pending' },
+];
+
+beforeEach(() => {
+  localStorage.clear();
+  localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+  vi.mocked(fetchThreadInputs).mockResolvedValue([] as TaskInput[]);
+  vi.mocked(fetchThreadArtifacts).mockResolvedValue([] as ArtifactView[]);
+  vi.mocked(fetchTaskSteps).mockResolvedValue(STEPS);
+  vi.mocked(updateTaskStep).mockResolvedValue();
+});
+afterEach(() => { cleanup(); localStorage.clear(); vi.clearAllMocks(); });
+
+describe('WorkspaceFilesRail TODOS (AD-1083)', () => {
+  it('shows the TODOS section with a done/total count when the room has a task', async () => {
+    render(<WorkspaceFilesRail threadId="t1" taskId="wi-1" />);
+    expect(await screen.findByText('TODOS (1/3)')).toBeTruthy();
+  });
+
+  it('hides TODOS when there is no bound task', async () => {
+    render(<WorkspaceFilesRail threadId="t1" />);
+    await waitFor(() => expect(fetchThreadInputs).toHaveBeenCalled());
+    expect(screen.queryByTestId('workspace-files-todos')).toBeNull();
+  });
+
+  it('Captain confirm PATCHes the submitted step to done', async () => {
+    render(<WorkspaceFilesRail threadId="t1" taskId="wi-1" />);
+    fireEvent.click(await screen.findByTestId('todo-confirm-1'));
+    await waitFor(() => expect(updateTaskStep).toHaveBeenCalledWith('wi-1', 1, { status: 'done', actor: 'captain' }));
+  });
+});
+
+describe('TodosList (AD-1083)', () => {
+  it('shows confirm/reject only on submitted steps', () => {
+    render(<TodosList steps={STEPS} onConfirm={() => {}} onReject={() => {}} />);
+    expect(screen.getByTestId('todo-confirm-1')).toBeTruthy();
+    expect(screen.queryByTestId('todo-confirm-0')).toBeNull();
+  });
+
+  it('renders empty state', () => {
+    render(<TodosList steps={[]} onConfirm={() => {}} onReject={() => {}} />);
+    expect(screen.getByTestId('todos-empty')).toBeTruthy();
+  });
+});

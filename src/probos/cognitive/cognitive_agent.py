@@ -2433,8 +2433,10 @@ class CognitiveAgent(BaseAgent):
             return ""
         return (
             "\n\nShared task checklist: when this room is working a task, track "
-            "it as a numbered checklist. To set the plan, list the steps inside "
-            "[TODOS] and [/TODOS], one step per line. Mark your own step "
+            "it as a numbered checklist. When the Captain asks you to create "
+            "todos or plan a task, FIRST write the plan as the steps inside "
+            "[TODOS] and [/TODOS], one step per line, BEFORE starting the work. "
+            "Mark your own step "
             "finished with [TODO_DONE n] (n is the step number). A senior or the "
             "facilitator confirms finished work with [TODO_CONFIRM n] or returns "
             "it with [TODO_REJECT n: reason] — a step counts as complete only "
