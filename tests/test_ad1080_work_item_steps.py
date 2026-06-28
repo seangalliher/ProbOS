@@ -37,15 +37,17 @@ async def store(tmp_path: Path):
 
 def test_validate_step_transition_happy_path():
     assert validate_step_transition("pending", "in_progress")
+    assert validate_step_transition("pending", "submitted")   # worker reports done w/o explicit start
     assert validate_step_transition("in_progress", "submitted")
     assert validate_step_transition("submitted", "done")
     assert validate_step_transition("submitted", "rejected")
     assert validate_step_transition("rejected", "in_progress")
+    assert validate_step_transition("rejected", "submitted")  # rework reported done
 
 
 def test_validate_step_transition_rejects_skips_and_unknown():
     assert not validate_step_transition("pending", "done")       # cannot skip review
-    assert not validate_step_transition("pending", "submitted")  # must be worked first
+    assert not validate_step_transition("pending", "rejected")   # cannot reject un-submitted work
     assert not validate_step_transition("done", "in_progress")   # done is terminal
     assert not validate_step_transition("pending", "banana")     # unknown status
     assert validate_step_transition("in_progress", "in_progress")  # idempotent

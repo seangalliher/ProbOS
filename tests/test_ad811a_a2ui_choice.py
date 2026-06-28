@@ -318,6 +318,7 @@ def test_full_steps_order_regression() -> None:
         "step_4f_extract_artifacts",
         "step_4k_extract_a2ui",
         "step_4g_create_task_parse",
+        "step_4l_extract_todos",
         "step_4j_deliberate_parse",
         "step_5_episodic_store",
         "step_6_working_memory_record",

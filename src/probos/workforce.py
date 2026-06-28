@@ -933,10 +933,10 @@ STEP_STATUSES: frozenset[str] = frozenset(
     {"pending", "in_progress", "submitted", "done", "rejected"}
 )
 _STEP_TRANSITIONS: dict[str, frozenset[str]] = {
-    "pending": frozenset({"in_progress"}),
+    "pending": frozenset({"in_progress", "submitted"}),
     "in_progress": frozenset({"submitted", "pending"}),
     "submitted": frozenset({"done", "rejected", "in_progress"}),
-    "rejected": frozenset({"in_progress"}),
+    "rejected": frozenset({"in_progress", "submitted"}),
     "done": frozenset(),
 }
 

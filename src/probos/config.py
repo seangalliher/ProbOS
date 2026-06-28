@@ -5260,6 +5260,17 @@ class CommunicationsConfig(BaseModel):
         default=10, ge=2, le=20,
         description="AD-811a: anti-flood cap on choice options honored per [A2UI] block (schema hard-caps at 20).",
     )
+    # AD-1081: agent-driven room Todo checklist (the AD-1080 senior-validation
+    # loop). Default-OFF operator opt-in: when room_todos_enabled is False no
+    # agent is taught the tags and the pipeline step skips -> byte-identical.
+    room_todos_enabled: bool = Field(
+        default=False,
+        description="AD-1081: enable [TODOS]/[TODO_DONE]/[TODO_CONFIRM]/[TODO_REJECT] room-task tags (default OFF).",
+    )
+    room_todos_min_rank: str = Field(
+        default="commander",
+        description="AD-1081: min rank to seed the plan + confirm/reject Todos (the senior/facilitator): ensign|lieutenant|commander|senior",
+    )
     # AD-928: agent-authored [STATUS] -> task-room "show your work" activity.
     status_min_rank: str = "lieutenant"  # min rank to post a status into a task room: ensign|lieutenant|commander|senior
     status_max_per_turn: int = 3         # anti-flood: honor at most this many [STATUS] tags per proactive turn

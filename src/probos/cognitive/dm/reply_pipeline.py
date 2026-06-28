@@ -165,6 +165,7 @@ class DmReplyPipeline:
             self.step_4f_extract_artifacts,  # AD-797 (Wave 197)
             self.step_4k_extract_a2ui,  # AD-811a (default-OFF; group via AD-811c)
             self.step_4g_create_task_parse,  # AD-845
+            self.step_4l_extract_todos,  # AD-1081 room-Todo validation loop
             self.step_4j_deliberate_parse,  # AD-934
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
@@ -210,6 +211,7 @@ class DmReplyPipeline:
             self.step_4f_extract_artifacts,
             self.step_4k_extract_a2ui,  # AD-811c (group A2UI producer; #735)
             self.step_4g_create_task_parse,
+            self.step_4l_extract_todos,  # AD-1081 room-Todo validation loop
             self.step_4j_deliberate_parse,  # AD-934
         )
 
@@ -1303,6 +1305,86 @@ class DmReplyPipeline:
                 "response_text left intact (%s)",
                 self.ctx.agent_id, exc, exc_info=True,
             )
+
+    # --- step 4l: AD-1081 room-Todo tags -> the AD-1080 validation loop ---
+    async def step_4l_extract_todos(self) -> None:
+        """AD-1081: drive the AD-1080 senior-validation Todo loop from an agent's
+        room reply. Tags: [TODOS]...[/TODOS] (a SENIOR seeds the plan),
+        [TODO_DONE n] (a worker self-reports step n -> submitted),
+        [TODO_CONFIRM n] / [TODO_REJECT n: reason] (a SENIOR confirms/rejects).
+        Default-OFF (``communications.room_todos_enabled``). Resolves the room's
+        task via ``chat_thread_id -> thread.task_id``; no task -> strip-only.
+        Tier-2 honest-degrade: any failure logs and leaves the reply intact."""
+        try:
+            text = self.ctx.response_text or ""
+            if not text:
+                return
+            config = getattr(self.ctx.runtime, "config", None)
+            comms_cfg = getattr(config, "communications", None) if config else None
+            if not getattr(comms_cfg, "room_todos_enabled", False):
+                return  # default-OFF: byte-identical when the flag is off
+            from probos.cognitive.dm.todo_extractor import (
+                has_todo_tag, parse_todo_tags, strip_todo_tags,
+            )
+            if not has_todo_tag(text):
+                return  # cheap early-out before any store/thread work
+            store = getattr(self.ctx.runtime, "work_item_store", None)
+            thread_store = getattr(self.ctx.runtime, "chat_thread_store", None)
+            thread_id = self.ctx.chat_thread_id
+            if store is None or thread_store is None or not thread_id:
+                self.ctx.response_text = strip_todo_tags(text)
+                return
+            thread = thread_store.get_thread(thread_id)
+            task_id = getattr(thread, "task_id", None) if thread else None
+            if task_id:
+                await self._apply_room_todos(store, task_id, parse_todo_tags(text))
+            self.ctx.response_text = strip_todo_tags(text)
+        except Exception as exc:
+            logger.warning(
+                "AD-1081: todo extractor failed for agent=%s; text left intact (%s)",
+                self.ctx.agent_id, exc, exc_info=True,
+            )
+
+    def _todo_actor_is_senior(self, agent_id: str) -> bool:
+        """AD-1081: True iff the actor's rank >= ``room_todos_min_rank`` (the
+        senior/facilitator who owns the plan + validation). Honest-degrade to
+        False on any error (deny the privileged action, never raise)."""
+        rt = self.ctx.runtime
+        try:
+            from probos.crew_profile import Rank
+            tn = getattr(rt, "trust_network", None)
+            if tn is None:
+                return False
+            rank = Rank.from_trust(tn.get_score(agent_id))
+            comms = getattr(getattr(rt, "config", None), "communications", None)
+            min_str = str(getattr(comms, "room_todos_min_rank", "commander"))
+            order = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
+            min_rank = (
+                Rank[min_str.upper()]
+                if min_str.upper() in Rank.__members__
+                else Rank.COMMANDER
+            )
+            return order.index(rank) >= order.index(min_rank)
+        except Exception:
+            return False
+
+    async def _apply_room_todos(self, store: Any, task_id: str, parsed: Any) -> None:
+        """AD-1081: apply parsed room-todo intents to the task work item. The
+        plan-seed + confirm/reject are SENIOR-gated (the facilitator owns the
+        plan and validation); a worker may self-report its own step (submit)."""
+        actor = self.ctx.agent_id or "agent"
+        is_senior = self._todo_actor_is_senior(actor)
+        if parsed.plan is not None and is_senior:
+            await store.set_steps(task_id, parsed.plan, gate_completion=True)
+        for idx in parsed.submit:
+            await store.update_step(task_id, idx, status="submitted", actor=actor)
+        if is_senior:
+            for idx in parsed.confirm:
+                await store.update_step(task_id, idx, status="done", actor=actor)
+            for idx, reason in parsed.reject:
+                await store.update_step(
+                    task_id, idx, status="rejected", actor=actor, note=reason,
+                )
 
     # --- step 4g: AD-845 [CREATE_TASK ...] parse + dispatchable work item ---
     async def step_4g_create_task_parse(self) -> None:
