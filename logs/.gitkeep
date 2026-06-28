@@ -1,0 +1,4 @@
+# This directory holds throwaway dev gate/build log captures (pytest/vitest/build
+# output) written during the build workflow. Per prompts/BUILDER-EXECUTION-PLAN.md,
+# capture gate output here (e.g. logs/adNNN_gate.txt), NOT the repo root.
+# Everything in this directory except this .gitkeep is gitignored.

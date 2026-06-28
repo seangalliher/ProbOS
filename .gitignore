@@ -104,8 +104,13 @@ data/avatar-assets/_outfits/
 data/avatar-assets/_materials/
 data/avatar-assets/ATTRIBUTION.txt
 
-# Throwaway test-gate / build logs written to the repo root during dev gating
-# (pytest blast-radius, vitest, npm build captures). Regenerable; never committed.
+# Dev gate/build log captures. CONVENTION (2026-06-27): write these to logs/
+# (e.g. logs/adNNN_gate.txt), NOT the repo root - see prompts/BUILDER-EXECUTION-PLAN.md.
+# logs/ is the canonical location (ignored except .gitkeep). The root-anchored
+# patterns below stay as a back-compat safety net so a stray root capture is
+# still never committed. All regenerable; never committed.
+/logs/*
+!/logs/.gitkeep
 /*_gate.txt
 /*_blast.txt
 /*_blast2.txt
