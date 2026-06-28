@@ -16,7 +16,7 @@
  * ``(threadId, name, version)`` against
  * ``useStore.artifactsByThread`` to find the row.
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 
 const AMBER = '#f0b060';
@@ -37,11 +37,29 @@ export function ArtifactCard(props: ArtifactCardProps) {
   const artifactsByThread = useStore((s) => s.artifactsByThread);
   const selectArtifact = useStore((s) => s.selectArtifact);
   const setCollapsed = useStore((s) => s.setArtifactDrawerCollapsed);
+  const hydrateArtifacts = useStore((s) => s.hydrateArtifacts);
 
   const resolved = useMemo(() => {
     const list = artifactsByThread.get(threadId) ?? [];
     return list.find((a) => a.name === name && a.version === version) ?? null;
   }, [artifactsByThread, threadId, name, version]);
+
+  // AD-1074c: a freshly-produced artifact's card mounts before the thread's
+  // artifact list has been (re)fetched, so it can't resolve. Pull the thread's
+  // artifacts once so the card resolves and the drawer surfaces + auto-opens
+  // the new document (ArtifactDrawer AD-1074c). Honest-degrade on failure.
+  const fetchedRef = useRef(false);
+  useEffect(() => {
+    if (resolved || fetchedRef.current || !threadId) return;
+    fetchedRef.current = true;
+    (async () => {
+      try {
+        const { fetchThreadArtifacts } = await import('./artifactApi');
+        const list = await fetchThreadArtifacts(threadId);
+        hydrateArtifacts(threadId, list);
+      } catch { /* honest-degrade - the card stays in its loading state */ }
+    })();
+  }, [resolved, threadId, hydrateArtifacts]);
 
   const onClick = () => {
     if (!resolved) return;

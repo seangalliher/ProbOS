@@ -13,7 +13,7 @@
  * AND no project pins surface, the drawer auto-collapses to rail
  * unless the Captain manually expanded it.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { ArtifactList } from './ArtifactList';
 import { ArtifactViewer } from './ArtifactViewer';
@@ -97,6 +97,29 @@ export function ArtifactDrawer(props: ArtifactDrawerProps) {
     () => (activeThreadId ? artifactsByThread.get(activeThreadId) ?? [] : []),
     [artifactsByThread, activeThreadId],
   );
+
+  // AD-1074c: auto-open a freshly-produced document. When the active thread's
+  // artifact list GROWS in place (a live arrival - not a thread switch or the
+  // initial load), select the newest + uncollapse so the document opens in the
+  // split-view embedded viewer (the Cowork experience).
+  const autoOpenRef = useRef<{ thread: string | null; count: number }>({ thread: null, count: -1 });
+  useEffect(() => {
+    const t = activeThreadId ?? null;
+    const count = artifacts.length;
+    const prev = autoOpenRef.current;
+    autoOpenRef.current = { thread: t, count };
+    if (prev.thread !== t || prev.count < 0) return; // thread switch / first load
+    if (count > prev.count) {
+      const newest = artifacts.reduce(
+        (a, b) => (b.created_at >= a.created_at ? b : a), artifacts[0],
+      );
+      if (newest) {
+        selectArtifact(newest.id);
+        setCollapsed(false);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifacts, activeThreadId]);
 
   const selectedArtifact = useMemo(
     () => artifacts.find((a) => a.id === selectedId) ?? artifacts[0] ?? null,
