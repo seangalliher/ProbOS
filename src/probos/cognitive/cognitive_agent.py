@@ -2440,8 +2440,11 @@ class CognitiveAgent(BaseAgent):
             "finished with [TODO_DONE n] (n is the step number). A senior or the "
             "facilitator confirms finished work with [TODO_CONFIRM n] or returns "
             "it with [TODO_REJECT n: reason] — a step counts as complete only "
-            "once a senior confirms it. If a step yields a document, save it with "
-            "the artifact tag so it lands in Outputs. Put the tags inline in your "
+            "once a senior confirms it. If a step yields a document, save it "
+            "with the artifact tag so it lands in Outputs; for a Word document "
+            "use the artifact name ending .docx and mime application/vnd."
+            "openxmlformats-officedocument.wordprocessingml.document (not "
+            "markdown). Put the tags inline in your "
             "reply; they are applied and hidden from the transcript."
         )
 

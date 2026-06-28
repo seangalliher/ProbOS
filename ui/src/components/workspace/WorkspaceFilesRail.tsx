@@ -121,6 +121,20 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     return () => { cancelled = true; };
   }, [threadId]);
 
+  // BF-644: poll outputs + todos every 5s so files/steps the crew produce
+  // mid-session fill in without reopening the rail (no WS yet). Stops when the
+  // rail is collapsed (offscreen) to avoid needless fetches.
+  useEffect(() => {
+    if (collapsed) return;
+    const t = setInterval(() => {
+      (async () => { try { setArtifacts(await fetchThreadArtifacts(threadId)); } catch { /* keep */ } })();
+      if (effectiveTaskId) {
+        (async () => { try { setSteps(await fetchTaskSteps(effectiveTaskId)); } catch { /* keep */ } })();
+      }
+    }, 5000);
+    return () => clearInterval(t);
+  }, [collapsed, threadId, effectiveTaskId]);
+
   const handleToggle = useCallback(() => {
     setCollapsed((prev) => {
       const next = !prev;
