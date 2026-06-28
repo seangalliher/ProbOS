@@ -229,6 +229,66 @@ async def claim_work_item(
     return {"work_item": work_item.to_dict(), "booking": booking.to_dict()}
 
 
+# -- Todo checklist steps (AD-1080) --
+
+
+@router.get("/work-items/{work_item_id}/steps")
+async def get_work_item_steps(
+    work_item_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1080: the work item's Todo checklist (the room plan + validation state)."""
+    if not runtime.work_item_store:
+        raise HTTPException(503, "Workforce engine not enabled")
+    item = await runtime.work_item_store.get_work_item(work_item_id)
+    if not item:
+        raise HTTPException(404, "Work item not found")
+    return {
+        "steps": item.steps,
+        "gate_completion": bool((item.metadata or {}).get("steps_gate_completion")),
+    }
+
+
+@router.put("/work-items/{work_item_id}/steps")
+async def set_work_item_steps(
+    work_item_id: str, request: Request,
+    runtime: Any = Depends(get_runtime),
+    broadcast: Callable = Depends(get_ws_broadcast),
+) -> dict[str, Any]:
+    """AD-1080: seed/replace the Todo checklist (the room plan)."""
+    if not runtime.work_item_store:
+        raise HTTPException(503, "Workforce engine not enabled")
+    body = await request.json()
+    item = await runtime.work_item_store.set_steps(
+        work_item_id, body.get("steps", []),
+        gate_completion=bool(body.get("gate_completion", False)),
+    )
+    if not item:
+        raise HTTPException(404, "Work item not found")
+    broadcast({"type": "work_item_updated", "data": {"work_item": item.to_dict()}})
+    return {"work_item": item.to_dict()}
+
+
+@router.patch("/work-items/{work_item_id}/steps/{index}")
+async def update_work_item_step(
+    work_item_id: str, index: int, request: Request,
+    runtime: Any = Depends(get_runtime),
+    broadcast: Callable = Depends(get_ws_broadcast),
+) -> dict[str, Any]:
+    """AD-1080: transition one Todo step (submit / confirm / reject — the
+    senior-validation loop)."""
+    if not runtime.work_item_store:
+        raise HTTPException(503, "Workforce engine not enabled")
+    body = await request.json()
+    item = await runtime.work_item_store.update_step(
+        work_item_id, index,
+        status=body.get("status"), actor=body.get("actor"), note=body.get("note"),
+    )
+    if not item:
+        raise HTTPException(400, "Work item not found, bad index, or invalid step transition")
+    broadcast({"type": "work_item_updated", "data": {"work_item": item.to_dict()}})
+    return {"work_item": item.to_dict()}
+
+
 @router.delete("/work-items/{work_item_id}")
 async def delete_work_item(
     work_item_id: str,

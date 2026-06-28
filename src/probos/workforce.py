@@ -924,6 +924,40 @@ _JSON_FIELDS = frozenset({
 # Immutable fields that cannot be updated
 _IMMUTABLE_FIELDS = frozenset({"id", "created_at", "created_by"})
 
+# AD-1080: room-Todo checklist step state machine. A step is a dict
+# {label, status, assigned_to?, submitted_by?, confirmed_by?, note?}. The loop:
+# an agent works a step (in_progress), self-reports it done (submitted), and a
+# SENIOR agent confirms (done) or rejects it (rejected -> back to in_progress) —
+# nothing is 'done' until senior-validated.
+STEP_STATUSES: frozenset[str] = frozenset(
+    {"pending", "in_progress", "submitted", "done", "rejected"}
+)
+_STEP_TRANSITIONS: dict[str, frozenset[str]] = {
+    "pending": frozenset({"in_progress"}),
+    "in_progress": frozenset({"submitted", "pending"}),
+    "submitted": frozenset({"done", "rejected", "in_progress"}),
+    "rejected": frozenset({"in_progress"}),
+    "done": frozenset(),
+}
+
+
+def validate_step_transition(old: str, new: str) -> bool:
+    """AD-1080: True iff a Todo step may move old->new (a same-status set is an
+    idempotent no-op)."""
+    if new not in STEP_STATUSES:
+        return False
+    if old == new:
+        return True
+    return new in _STEP_TRANSITIONS.get(old, frozenset())
+
+
+def _all_steps_done(steps: list[dict[str, Any]]) -> bool:
+    """AD-1080: True iff there is at least one step and every step is confirmed
+    'done' (the completion gate — nothing complete until validated)."""
+    return bool(steps) and all(
+        str(s.get("status", "pending")) == "done" for s in steps
+    )
+
 
 # ---------------------------------------------------------------------------
 # WorkItemStore — SQLite-backed persistence
@@ -1163,6 +1197,77 @@ class WorkItemStore(EventEmitterMixin):
         self._emit(EventType.WORK_ITEM_UPDATED, {"work_item": updated.to_dict() if updated else {}})
         return updated
 
+    async def set_steps(
+        self, work_item_id: str, steps: list, *, gate_completion: bool = False,
+    ) -> "WorkItem | None":
+        """AD-1080: seed/replace a work item's Todo checklist (the room plan).
+        Each step normalizes to {label, status}; a bare string becomes a pending
+        step. ``gate_completion`` marks the item so it cannot transition to 'done'
+        until every step is senior-confirmed."""
+        item = await self.get_work_item(work_item_id)
+        if not item:
+            return None
+        norm: list[dict[str, Any]] = []
+        for s in steps or []:
+            if isinstance(s, str):
+                label = s.strip()
+                if label:
+                    norm.append({"label": label, "status": "pending"})
+                continue
+            if not isinstance(s, dict):
+                continue
+            label = str(s.get("label", "")).strip()
+            if not label:
+                continue
+            st = str(s.get("status", "pending"))
+            if st not in STEP_STATUSES:
+                st = "pending"
+            entry: dict[str, Any] = {"label": label, "status": st}
+            for k in ("assigned_to", "submitted_by", "confirmed_by", "note"):
+                if s.get(k):
+                    entry[k] = s[k]
+            norm.append(entry)
+        updates: dict[str, Any] = {"steps": norm}
+        if gate_completion:
+            md = dict(item.metadata or {})
+            md["steps_gate_completion"] = True
+            updates["metadata"] = md
+        return await self.update_work_item(work_item_id, **updates)
+
+    async def update_step(
+        self, work_item_id: str, index: int, *,
+        status: str | None = None, actor: str | None = None,
+        note: str | None = None,
+    ) -> "WorkItem | None":
+        """AD-1080: transition one Todo step (the senior-validation loop). Records
+        the actor by destination status (assigned_to on in_progress, submitted_by
+        on submitted, confirmed_by on done/rejected). Returns None on a bad index
+        or an invalid step transition (prior steps left untouched)."""
+        item = await self.get_work_item(work_item_id)
+        if not item or index < 0 or index >= len(item.steps):
+            return None
+        steps = [dict(s) for s in item.steps]
+        step = steps[index]
+        old = str(step.get("status", "pending"))
+        if status is not None and status != old:
+            if not validate_step_transition(old, status):
+                logger.warning(
+                    "AD-1080: invalid step transition %s->%s on %s[%d]",
+                    old, status, work_item_id, index,
+                )
+                return None
+            step["status"] = status
+            if actor:
+                if status == "in_progress":
+                    step["assigned_to"] = actor
+                elif status == "submitted":
+                    step["submitted_by"] = actor
+                elif status in ("done", "rejected"):
+                    step["confirmed_by"] = actor
+        if note is not None:
+            step["note"] = note
+        return await self.update_work_item(work_item_id, steps=steps)
+
     async def transition_work_item(
         self, work_item_id: str, new_status: str, source: str = "system",
     ) -> WorkItem | None:
@@ -1183,6 +1288,22 @@ class WorkItemStore(EventEmitterMixin):
         # the item unchanged: no DB write, no STATUS_CHANGED event, no warning.
         if new_status == item.status:
             return item
+        # AD-1080: senior-validation completion gate. A work item whose room
+        # Todos gate completion cannot be marked 'done' until EVERY step is
+        # senior-confirmed (nothing complete until validated). Un-gated items
+        # (no flag — the default) are byte-identical to AD-498.
+        if (
+            new_status == "done"
+            and (item.metadata or {}).get("steps_gate_completion")
+            and not _all_steps_done(item.steps)
+        ):
+            logger.info(
+                "AD-1080: refusing 'done' for %s — %d/%d steps confirmed",
+                work_item_id,
+                sum(1 for s in item.steps if str(s.get("status")) == "done"),
+                len(item.steps),
+            )
+            return None
         # AD-498: Validate against work type state machine
         valid, reason = self.work_type_registry.validate_transition(
             item.work_type, item.status, new_status,
