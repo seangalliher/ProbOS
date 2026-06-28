@@ -388,6 +388,33 @@ def build_proactive_status_snapshot(runtime: Any) -> ProactiveStatusSnapshot:
     )
 
 
+def _distinct_post_authors(posts: list) -> set[str]:
+    """AD-1079: walk the nested Ward Room post tree, collecting distinct author
+    ids (the count of crew actively contributing to a thread)."""
+    authors: set[str] = set()
+    stack = list(posts or [])
+    while stack:
+        p = stack.pop()
+        if not isinstance(p, dict):
+            continue
+        aid = p.get("author_id")
+        if aid:
+            authors.add(str(aid))
+        kids = p.get("children")
+        if kids:
+            stack.extend(kids)
+    return authors
+
+
+def should_suggest_escalation(
+    distinct_crew: int, post_count: int, *, min_crew: int, min_posts: int,
+) -> bool:
+    """AD-1079: a Ward Room thread is a group-chat candidate when several
+    distinct crew have sustained a multi-post exchange. Pure + conservative —
+    both floors must clear, and never below 2 (a room needs >=2 crew)."""
+    return distinct_crew >= max(2, min_crew) and post_count >= max(2, min_posts)
+
+
 class ProactiveCognitiveLoop:
     """Periodic idle-think cycle for crew agents.
 
@@ -3792,6 +3819,10 @@ class ProactiveCognitiveLoop:
                     "length": len(reply_body),
                 })
                 actions.extend(reply_cmd_actions)
+                # AD-1079: a sustained multi-crew Ward Room exchange is a
+                # candidate for a dedicated room — hint a Commander+ participant
+                # (default-OFF). Reuses the thread fetched above.
+                self._maybe_suggest_escalation(agent, thread)
                 logger.debug(
                     "AD-437: %s replied to thread %s (%d chars)",
                     agent.agent_type, thread_id, len(reply_body),
@@ -4149,6 +4180,57 @@ class ProactiveCognitiveLoop:
         note = self._gc_coaching.pop(agent_id, None)
         if note:
             context["system_note"] = note
+
+    def _record_escalation_suggestion(self, agent_id: str, title: str) -> None:
+        """AD-1079: queue a one-shot Ward-Room->room escalation hint. Never
+        overwrites a pending suppression coaching note (AD-1077 is higher
+        priority — the agent just failed to open a room)."""
+        if not agent_id or agent_id in self._gc_coaching:
+            return
+        title = (title or "this thread").strip() or "this thread"
+        self._gc_coaching[agent_id] = (
+            f'SYSTEM NOTE: The Ward Room discussion "{title}" has several crew '
+            "coordinating closely. If this has become focused work that needs a "
+            "dedicated space, consider opening a group chat: "
+            '[GROUP_CHAT title="..." @Callsign, @Callsign].'
+        )
+
+    def _maybe_suggest_escalation(self, agent: Any, thread: Any) -> None:
+        """AD-1079: hint a Commander+ participant to convene a room when a Ward
+        Room thread has become a sustained multi-crew exchange (the 'social
+        spark' the original agent-created rooms had). Default-OFF; one-shot;
+        delivered next cycle via the AD-1077 note slot; only to an agent who can
+        actually convene (>= group_chat_min_rank)."""
+        rt = self._runtime
+        cfg = getattr(getattr(rt, "config", None), "group_chat", None)
+        if not getattr(cfg, "escalation_suggestion_enabled", False):
+            return
+        if not isinstance(thread, dict):
+            return
+        try:
+            rank = Rank.from_trust(rt.trust_network.get_score(agent.id))
+            comms = getattr(rt.config, "communications", None)
+            gc_min_rank_str = getattr(comms, "group_chat_min_rank", "commander")
+            gc_min_rank = (
+                Rank[gc_min_rank_str.upper()]
+                if gc_min_rank_str.upper() in Rank.__members__
+                else Rank.COMMANDER
+            )
+            order = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
+            if order.index(rank) < order.index(gc_min_rank):
+                return
+            post_count = int(thread.get("total_post_count", 0) or 0)
+            authors = _distinct_post_authors(thread.get("posts", []))
+            title = str((thread.get("thread", {}) or {}).get("title", "") or "this thread")
+        except Exception:
+            logger.debug("AD-1079: escalation evaluation failed", exc_info=True)
+            return
+        min_crew = int(getattr(cfg, "escalation_min_crew", 3))
+        min_posts = int(getattr(cfg, "escalation_min_posts", 6))
+        if should_suggest_escalation(
+            len(authors), post_count, min_crew=min_crew, min_posts=min_posts,
+        ):
+            self._record_escalation_suggestion(agent.id, title)
 
     async def _kickoff_group_chat(
         self, thread_id: str, opener_id: str, opening_body: str,

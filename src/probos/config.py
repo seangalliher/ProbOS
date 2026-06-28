@@ -4338,6 +4338,14 @@ class GroupChatConfig(BaseModel):
     # cascade exists. Transitional flag (#14) — ships OFF (zero-config boot keeps
     # the AD-918 quiet-create behavior); system.yaml flips it on.
     agent_initiated_kickoff_enabled: bool = False
+    # AD-1079: hint a Commander+ participant to convene a dedicated group chat
+    # when a Ward Room thread becomes a sustained multi-crew working exchange
+    # (the "social spark" the original agent-created rooms had). Default OFF — a
+    # proactive nudge, opt in after watching cadence. Thresholds are conservative
+    # so routine chatter is never nudged.
+    escalation_suggestion_enabled: bool = False
+    escalation_min_crew: int = 3
+    escalation_min_posts: int = 6
     # AD-963a: broadcast turn-mode terminator. The AD-935 cascade stops at
     # ``max_agent_rounds`` or the convergence gate — right for a DISCUSSION
     # ("hash this out"), but wrong for a BROADCAST ("what do you ALL think?")
