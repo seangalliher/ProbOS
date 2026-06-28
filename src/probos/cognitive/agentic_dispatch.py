@@ -466,6 +466,9 @@ class WorkItemAgenticExecutor:
         runtime: Any,
         department: str = "",
         rank: str = "ensign",
+        thread_id: str = "",
+        max_iterations: int | None = None,
+        tier: str | None = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -534,7 +537,67 @@ class WorkItemAgenticExecutor:
                 )
                 mcp_ids = []
 
-        tool_ids = list(dict.fromkeys([*granted_ids, *mesh_ids, *mcp_ids]))
+        # AD-1066: offer the sandboxed code-execution tool when the operator has
+        # enabled execution (config.execution.enabled). It is the keystone for
+        # document / data tasks — the agent writes a Python script (python-docx,
+        # openpyxl, matplotlib, reportlab, …) and any file it produces becomes a
+        # downloadable artifact on the chat thread. Registered idempotently
+        # (mirrors the AD-856 mesh-tool registration); gated + sandboxed
+        # (AD-993/994); empty default_permissions ⇒ ship-wide READ ⇒ invokable.
+        exec_ids: list[str] = []
+        exec_cfg = getattr(getattr(runtime, "config", None), "execution", None)
+        if getattr(exec_cfg, "enabled", False) and registry is not None:
+            try:
+                from probos.tools.code_execution_tool import CodeExecutionTool
+
+                if registry.get("run_python") is None:
+                    registry.register(
+                        CodeExecutionTool(runtime=runtime),
+                        provider="AD-1066",
+                        tags=["run_python", "code_execution"],
+                    )
+                exec_ids = ["run_python"]
+            except Exception:
+                logger.warning(
+                    "AD-1066: failed to register/offer the code-execution tool "
+                    "for agent %s; continuing without it",
+                    agent_id, exc_info=True,
+                )
+                exec_ids = []
+
+        # AD-1068: offer the use_skill tool whenever the cognitive-skill catalog
+        # is wired — it loads a skill's SKILL.md body + bundled-script manifest
+        # into the loop so the agent can run the skill's scripts via run_python
+        # (AD-1066) by absolute path. Read-only (does NOT itself require
+        # execution.enabled; running the returned scripts does). Registered
+        # idempotently (mirrors the AD-1066 block); empty default_permissions ⇒
+        # ship-wide READ ⇒ invokable.
+        skill_ids: list[str] = []
+        if (
+            getattr(runtime, "cognitive_skill_catalog", None) is not None
+            and registry is not None
+        ):
+            try:
+                from probos.tools.use_skill_tool import UseSkillTool
+
+                if registry.get("use_skill") is None:
+                    registry.register(
+                        UseSkillTool(runtime=runtime),
+                        provider="AD-1068",
+                        tags=["use_skill", "skills"],
+                    )
+                skill_ids = ["use_skill"]
+            except Exception:
+                logger.warning(
+                    "AD-1068: failed to register/offer the use_skill tool for "
+                    "agent %s; continuing without it",
+                    agent_id, exc_info=True,
+                )
+                skill_ids = []
+
+        tool_ids = list(
+            dict.fromkeys([*granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids])
+        )
 
         tools: list[dict] = []
         if registry is not None:
@@ -544,10 +607,20 @@ class WorkItemAgenticExecutor:
                     continue
                 tools.append(tool_registration_to_llm_definition(reg))
 
+        # AD-1065: the conversational chat path passes a lower iteration cap +
+        # a faster tier than the task-path defaults (25 / deep). When both are
+        # None (the AD-839/859 task callers) the AgenticLoop defaults are used,
+        # so the task path is byte-identical.
+        _loop_kwargs: dict[str, Any] = {}
+        if max_iterations is not None:
+            _loop_kwargs["max_iterations"] = max_iterations
+        if tier is not None:
+            _loop_kwargs["tier"] = tier
         loop = AgenticLoop(
             llm_client=self._llm,
             tool_executor=executor,
             event_emit_fn=getattr(runtime, "emit_event", None),
+            **_loop_kwargs,
         )
         agentic_result = await loop.run(
             system_prompt=instructions or "",
@@ -557,6 +630,7 @@ class WorkItemAgenticExecutor:
                 "agent_id": agent_id,
                 "department": department,
                 "rank": rank,
+                "thread_id": thread_id,
             },
         )
 

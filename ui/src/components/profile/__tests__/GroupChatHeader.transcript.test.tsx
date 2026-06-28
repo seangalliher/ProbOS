@@ -90,13 +90,15 @@ describe('AD-923 GroupChatHeader transcript writeback', () => {
   });
 
   it('append fires BEFORE the meeting flag is cleared', async () => {
+    // AD-1058: the GroupChatHeader call toggle is GROUP-only now (a 1:1 uses the
+    // CallMenu), so the End-marker logic is exercised on a 2-crew group.
     seed(
-      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
-      [mkAgent({ id: 'a1', callsign: 'Vex' })],
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], metadata: { meeting_active: true } }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Bones' })],
     );
     vi.mocked(appendMessage).mockResolvedValue({});
     vi.mocked(setMeetingActive).mockResolvedValue(
-      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: {} }),
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], metadata: {} }),
     );
     render(<GroupChatHeader threadId="t1" />);
 
@@ -109,9 +111,13 @@ describe('AD-923 GroupChatHeader transcript writeback', () => {
   });
 
   it('Start does NOT append a marker', async () => {
-    seed(mkThread({ id: 't1', participants: ['captain', 'a1'] }), [mkAgent({ id: 'a1', callsign: 'Vex' })]);
+    // AD-1058: group context (the GroupChatHeader toggle is group-only now).
+    seed(
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'] }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Bones' })],
+    );
     vi.mocked(setMeetingActive).mockResolvedValue(
-      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], metadata: { meeting_active: true } }),
     );
     render(<GroupChatHeader threadId="t1" />);
 

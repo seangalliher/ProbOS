@@ -61,6 +61,9 @@ def _req(message: str, thread_id: str | None = None):
     r.history = []
     r.attachment_ids = []
     r.thread_id = thread_id
+    # AD-1062: explicit False — the new system_trigger gate must not read a
+    # truthy MagicMock proxy (would skip the auto-name this file asserts).
+    r.system_trigger = False
     return r
 
 

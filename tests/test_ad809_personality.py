@@ -196,6 +196,8 @@ def _req(message: str, thread_id: str | None = None):
     r.history = []
     r.attachment_ids = []
     r.thread_id = thread_id
+    # AD-1062: explicit False for the new system_trigger gate.
+    r.system_trigger = False
     return r
 
 

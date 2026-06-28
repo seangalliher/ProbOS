@@ -87,7 +87,7 @@ describe('AD-811a ProfileChatTab A2UI wiring (source contract)', () => {
 
   it('passes (opt) => sendText(opt) into renderMessageBodyWithArtifacts at the call site', () => {
     expect(profileChatSource).toContain(
-      'renderMessageBodyWithArtifacts(msg.text, activeThreadId, (opt) => sendText(opt))',
+      'renderMessageBodyWithArtifacts(item.msg.text, activeThreadId, (opt) => sendText(opt))',
     );
   });
 

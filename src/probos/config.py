@@ -919,21 +919,35 @@ class AttentionConfig(BaseModel):
     w_imp: float = Field(default=0.5, ge=0.0)   # importance (AD-598)
     # Recency decay time-constant (seconds): exp(-age / half_life). Default 1 day.
     recency_half_life_seconds: float = Field(default=86400.0, gt=0.0)
-    # AD-1031: camera/visual scene as a salience-gated bid. Default-OFF ⇒ the
-    # AD-733a router prepend runs exactly as today (byte-identical) and the
-    # agent emits no camera bid. When ON the rendered scene is handed to the
-    # agent (via params, NOT prepended onto the Captain turn), which bids it
-    # PROMINENT only when SALIENT — the Captain referenced vision, the frame
-    # MATERIALLY CHANGED (novelty ≥ camera_novelty_minimum), or it is a VISUAL
-    # TASK (image attachment) — and RECESSIVE (a one-line "live camera" summary,
-    # present-but-quiet) otherwise. Stops agents over-narrating an unchanged
-    # scene (#973) and removes the visual block's prompt dominance (BF-632).
-    camera_scene_bid_enabled: bool = False
+    # AD-1031: camera/visual scene as a salience-gated bid. AD-1061 (2026-06-27,
+    # Captain-directed after live validation) flipped the default to True: the
+    # rendered scene is handed to the agent (via params, NOT prepended onto the
+    # Captain turn), bid PROMINENT only when SALIENT — the Captain referenced
+    # vision, the frame MATERIALLY CHANGED (novelty ≥ camera_novelty_minimum), or
+    # it is a VISUAL TASK (image attachment) — and RECESSIVE (a one-line "live
+    # camera" summary, present-but-quiet) otherwise. Stops agents over-narrating
+    # an unchanged scene (#973) and removes the visual block's prompt dominance
+    # (BF-632). Set False to restore the legacy AD-733a router prepend (the full
+    # block on every turn).
+    camera_scene_bid_enabled: bool = True
     # Minimum novelty_score (0.0–1.0) for a frame to count as "materially
     # changed" and surface the full scene on CHANGE alone (an explicit visual
     # reference always surfaces it, independent of this gate). Captain-approved
     # default 0.3 (2026-06-19).
     camera_novelty_minimum: float = Field(default=0.3, ge=0.0, le=1.0)
+    # AD-1060: adaptive injection FREQUENCY (the cadence the visual scene enters
+    # the prompt, vs AD-1031 which sets its prominence). ``camera_novelty_ema_alpha``
+    # is the EMA weight on each newer frame's novelty (higher = more reactive to
+    # the latest frame). ``camera_recessive_suppress_threshold`` — once the
+    # decayed (EMA) novelty falls below it, a non-referenced, non-task,
+    # low-raw-novelty frame is SUPPRESSED entirely (the feed fades to background)
+    # instead of injecting a recessive one-liner every turn. AD-1061b (2026-06-27,
+    # Captain-directed after live validation) flipped the default to 0.15 ⇒
+    # suppression ON for perception-enabled operators; set 0.0 to disable (the
+    # AD-1031 always-inject bid). A raw-novelty spike, an explicit visual
+    # reference, or a visual task always injects regardless.
+    camera_novelty_ema_alpha: float = Field(default=0.3, gt=0.0, le=1.0)
+    camera_recessive_suppress_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
     # AD-1032: faculty-local arousal model (exogenous interrupts → cognitive-zone
     # reconfiguration; the cognitive-layer mirror of HXI Design Principle #9).
     # Default-OFF ⇒ ``AttentionFaculty.arbitrate`` is byte-identical to AD-1029.
@@ -2647,6 +2661,15 @@ class PerceptionConfig(BaseModel):
     # can disable for cost-discipline experiments.
     dm_force_describe_enabled: bool = Field(default=True,
         description="On every DM, synchronously describe the latest captured frame before composing the reply (4s timeout floor).",
+    )
+
+    # AD-1055 (Wave): prompt-injection freshness window. A latest vision
+    # observation older than this (seconds) is treated as "camera off" and the
+    # agent gets the no-data sentinel instead of a stale scene. The AD-742f ring
+    # is disk-persisted across restart, so without this guard a prior session's
+    # frame leaks into a new chat where the camera is off (the BF-624 class).
+    prompt_freshness_seconds: float = Field(default=120.0, ge=0.0, le=86400.0,
+        description="A vision observation older than this many seconds is treated as no-current-data (camera off) for prompt injection. 0 = disable the freshness guard (legacy behavior).",
     )
 
     # AD-733c-4 (Wave 172): idle drop-back thresholds. ENGAGED -> AMBIENT
@@ -5650,6 +5673,20 @@ class DmDeliberateConfig(BaseModel):  # AD-934
     max_tokens: int = 800
 
 
+class DmAgenticConfig(BaseModel):  # AD-1065
+    """AD-1065: flag-gated conversational agentic turn. When enabled, a 1:1
+    ``direct_message`` reply runs the AgenticLoop (tool-calling) instead of a
+    single LLM pass, so an agent can read / write / execute on the Captain's
+    behalf mid-conversation (Claude Cowork / Codex / Copilot parity). A no-tool
+    turn is a single pass (the model just answers), so the flag only adds latency
+    when the agent actually calls a tool. Default OFF (opt-in: adds tool-calling
+    + per-call latency); 1:1 only (group / ward-room / proactive / vision turns
+    keep the single-pass path)."""
+    enabled: bool = False
+    max_iterations: int = Field(default=5, ge=1, le=25)
+    tier: str = "standard"
+
+
 class DmMeshSynthesisConfig(BaseModel):  # BF-629
     """BF-629: after a requires_reflect inline mesh read (web_search / read_page)
     on the conversational path, make ONE LLM pass so the originating agent
@@ -6008,6 +6045,7 @@ class SystemConfig(BaseModel):
     dm_sanity_gate: DmSanityGateConfig = Field(default_factory=DmSanityGateConfig)  # AD-724
     dm_targeted_lookup: DmTargetedLookupConfig = Field(default_factory=DmTargetedLookupConfig)  # AD-725 (Wave 159)
     dm_deliberate: DmDeliberateConfig = Field(default_factory=DmDeliberateConfig)  # AD-934
+    dm_agentic: DmAgenticConfig = Field(default_factory=DmAgenticConfig)  # AD-1065
     dm_mesh_synthesis: DmMeshSynthesisConfig = Field(default_factory=DmMeshSynthesisConfig)  # BF-629
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     cloud_pickers: CloudPickersConfig = Field(default_factory=CloudPickersConfig)  # AD-720c

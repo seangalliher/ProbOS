@@ -181,6 +181,14 @@ class AgentChatRequest(BaseModel):
     # When set, must reference an existing thread that includes this agent
     # in its participants list; otherwise the router returns 400.
     thread_id: str | None = None
+    # AD-1062: marks a turn as a system-originated trigger (e.g. the call-open
+    # greeting) rather than a Captain utterance. When ``True`` the router still
+    # dispatches ``direct_message`` (so the agent greets in voice, with the same
+    # perception context) but does NOT log ``message`` as a Captain message and
+    # does NOT use it to auto-name the thread. Only the agent's reply is
+    # persisted, so the transcript shows a one-sided greeting, not a synthetic
+    # Captain line.
+    system_trigger: bool = False
 
 
 # ── Ward Room models (AD-407, AD-424) ────────────────────────────

@@ -84,6 +84,7 @@ class TestMoveParsing:
         req = MagicMock()
         req.message = "Make your move"
         req.history = []
+        req.system_trigger = False  # AD-1062: explicit False for the system_trigger gate
 
         with _CREW_PATCH:
             result = await agent_chat("test-id", req, runtime)
@@ -100,6 +101,7 @@ class TestMoveParsing:
         req = MagicMock()
         req.message = "Your move"
         req.history = []
+        req.system_trigger = False  # AD-1062: explicit False for the system_trigger gate
 
         with _CREW_PATCH:
             result = await agent_chat("test-id", req, runtime)

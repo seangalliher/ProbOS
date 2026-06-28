@@ -393,7 +393,11 @@ def _render_agent_scene_block(runtime: Any, agent_id: str) -> str:
             _own = _wm.latest()
             if _own is None or _shared.timestamp > _own.timestamp:
                 _wm.append(_shared)
-        return _wm.render_for_prompt() or ""
+        # AD-1055: a stale (camera-off) frame renders as the no-data sentinel,
+        # not a carried-over scene from a prior session.
+        return _wm.render_for_prompt(
+            freshness_s=getattr(_cfg, "prompt_freshness_seconds", None),
+        ) or ""
     except Exception:
         logger.debug("AD-978: scene render failed for %s", agent_id, exc_info=True)
         return ""

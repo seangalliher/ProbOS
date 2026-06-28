@@ -65,8 +65,13 @@ afterEach(() => {
 
 describe('AD-920 GroupChatHeader meeting toggle', () => {
   it('start meeting: click calls setMeetingActive(threadId, true) and hydrates the store', async () => {
-    seed(mkThread({ id: 't1', participants: ['captain', 'a1'] }), [mkAgent({ id: 'a1', callsign: 'Vex' })]);
-    const updated = mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } });
+    // AD-1058: the GroupChatHeader call toggle is GROUP-only now (a 1:1 uses the
+    // Teams-style CallMenu); exercise it on a 2-crew group.
+    seed(
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'] }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Bones' })],
+    );
+    const updated = mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], metadata: { meeting_active: true } });
     vi.mocked(setMeetingActive).mockResolvedValue(updated);
     render(<GroupChatHeader threadId="t1" />);
 
@@ -82,12 +87,13 @@ describe('AD-920 GroupChatHeader meeting toggle', () => {
   });
 
   it('end meeting: click on an active meeting calls setMeetingActive(threadId, false)', async () => {
+    // AD-1058: group context (the toggle is group-only now).
     seed(
-      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
-      [mkAgent({ id: 'a1', callsign: 'Vex' })],
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], metadata: { meeting_active: true } }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Bones' })],
     );
     vi.mocked(setMeetingActive).mockResolvedValue(
-      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: {} }),
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], metadata: {} }),
     );
     render(<GroupChatHeader threadId="t1" />);
 
@@ -97,29 +103,37 @@ describe('AD-920 GroupChatHeader meeting toggle', () => {
   });
 
   it('AD-954: the toggle is framed as "Start call" / "End call" (Teams mental model)', () => {
-    seed(mkThread({ id: 't1', participants: ['captain', 'a1'] }), [mkAgent({ id: 'a1', callsign: 'Vex' })]);
+    // AD-1058: group context (the toggle is group-only now).
+    seed(
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'] }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Bones' })],
+    );
     const { rerender } = render(<GroupChatHeader threadId="t1" />);
     // Inactive -> "Start call".
     expect(screen.getByTestId('meeting-toggle').getAttribute('aria-label')).toBe('Start call');
     expect(screen.getByTestId('meeting-toggle').getAttribute('title')).toBe('Start call');
     // Active -> "End call".
     useStore.getState().setChatThread(
-      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], metadata: { meeting_active: true } }),
     );
     rerender(<GroupChatHeader threadId="t1" />);
     expect(screen.getByTestId('meeting-toggle').getAttribute('aria-label')).toBe('End call');
   });
 
   it('aria-pressed reflects metadata.meeting_active (true when active, false when inactive)', () => {
+    // AD-1058: group context (the toggle is group-only now).
     seed(
-      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
-      [mkAgent({ id: 'a1', callsign: 'Vex' })],
+      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], metadata: { meeting_active: true } }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Bones' })],
     );
     render(<GroupChatHeader threadId="t1" />);
     expect(screen.getByTestId('meeting-toggle').getAttribute('aria-pressed')).toBe('true');
 
     cleanup();
-    seed(mkThread({ id: 't2', participants: ['captain', 'a1'] }), [mkAgent({ id: 'a1', callsign: 'Vex' })]);
+    seed(
+      mkThread({ id: 't2', participants: ['captain', 'a1', 'a2'] }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Bones' })],
+    );
     render(<GroupChatHeader threadId="t2" />);
     expect(screen.getByTestId('meeting-toggle').getAttribute('aria-pressed')).toBe('false');
   });

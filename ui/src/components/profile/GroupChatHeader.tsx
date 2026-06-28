@@ -239,8 +239,9 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
           AD-947 face-framed avatar gallery + AD-949 call audio — the Teams-style
           "turn the chat into a call" step. Local inline video glyph (HXI #3 —
           no emoji, no Glyphs.tsx export so the Glyphs.test.tsx count is
-          untouched). Shown when there is at least one crew participant. */}
-      {crewParticipants.length >= 1 && (
+          untouched). AD-1058: shown for GROUPS (>=2 crew); a 1:1 uses the
+          Teams-style CallMenu at the top of ProfileChatTab instead. */}
+      {crewParticipants.length >= 2 && (
         <button
           type="button"
           data-testid="meeting-toggle"

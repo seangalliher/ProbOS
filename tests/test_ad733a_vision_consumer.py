@@ -192,7 +192,7 @@ def test_strategy_protocol_pluggable() -> None:
     assert decision.allow is False
 
 
-# ---------- WorkingMemory (4) ----------
+# ---------- WorkingMemory (12) ----------
 
 
 def test_empty_buffer_renders_no_data_sentinel() -> None:
@@ -221,6 +221,114 @@ def test_render_shows_latest_with_age() -> None:
     assert "novelty=0.42" in rendered
     assert "subject=captain" in rendered
     assert "a green mug on a desk" in rendered
+
+
+def test_stale_latest_renders_no_data_sentinel() -> None:
+    # AD-1055: a latest observation older than the freshness window is treated
+    # as camera-off — the agent must NOT describe a carried-over scene (the
+    # BF-624 class: a prior session's disk-hydrated frame).
+    wm = VisionWorkingMemory()
+    now = time.time()
+    wm.append(VisionObservation(
+        timestamp=now - 3600,  # 1h old
+        attachment_ref="old1",
+        description="a plaid shirt and a bookshelf",
+        novelty_score=0.5,
+        subject_identity="captain",
+    ))
+    rendered = wm.render_for_prompt(now=now, freshness_s=120.0)
+    assert "Camera not active or no frames described yet" in rendered
+    assert "plaid shirt" not in rendered
+
+
+def test_fresh_latest_within_window_still_renders() -> None:
+    # AD-1055: an observation INSIDE the freshness window renders normally.
+    wm = VisionWorkingMemory()
+    now = time.time()
+    wm.append(VisionObservation(
+        timestamp=now - 10,
+        attachment_ref="fresh1",
+        description="a green mug on a desk",
+        novelty_score=0.42,
+        subject_identity="captain",
+    ))
+    rendered = wm.render_for_prompt(now=now, freshness_s=120.0)
+    assert "a green mug on a desk" in rendered
+    assert "Camera not active" not in rendered
+
+
+def test_freshness_disabled_renders_stale_observation() -> None:
+    # AD-1055: freshness_s=None (default) / 0 disables the guard — byte-identical
+    # to the pre-AD-1055 legacy behavior.
+    wm = VisionWorkingMemory()
+    now = time.time()
+    wm.append(VisionObservation(
+        timestamp=now - 86400,  # a day old
+        attachment_ref="old2",
+        description="an orange cat",
+        novelty_score=0.5,
+    ))
+    assert "an orange cat" in wm.render_for_prompt(now=now)            # default None
+    assert "an orange cat" in wm.render_for_prompt(now=now, freshness_s=0)
+
+
+def test_render_includes_background_disposition() -> None:
+    # AD-1059: the rendered scene carries the "background context, do not narrate
+    # by default" disposition so agents stop over-narrating an unchanged feed.
+    wm = VisionWorkingMemory()
+    now = time.time()
+    wm.append(VisionObservation(
+        timestamp=now - 5, attachment_ref="d1",
+        description="a desk and a window", novelty_score=0.4,
+        subject_identity="captain",
+    ))
+    rendered = wm.render_for_prompt(now=now)
+    assert "BACKGROUND context" in rendered
+    assert "only when" in rendered
+    assert "a desk and a window" in rendered
+
+
+def test_no_data_sentinel_omits_disposition_keeps_guard() -> None:
+    # AD-1059: the no-data sentinel keeps its OWN confabulation guard and does
+    # NOT carry the background disposition (there is nothing to be quiet about).
+    rendered = VisionWorkingMemory().render_for_prompt()
+    assert "BACKGROUND context" not in rendered
+    assert "Do NOT describe what you cannot see" in rendered
+
+
+def test_decayed_novelty_empty_ring_is_zero() -> None:
+    # AD-1060: no observations -> 0.0.
+    assert VisionWorkingMemory(capacity=8).decayed_novelty(alpha=0.3) == 0.0
+
+
+def test_decayed_novelty_ema_decays_then_recovers() -> None:
+    # AD-1060: a high frame then stable low frames decays the EMA below the
+    # "materially changed" threshold; a fresh high frame pulls it back up.
+    wm = VisionWorkingMemory(capacity=8)
+    base = time.time()
+    for i, nov in enumerate([0.9, 0.05, 0.05, 0.05, 0.05]):
+        wm.append(VisionObservation(
+            timestamp=base + i, attachment_ref=f"s{i}",
+            description="x", novelty_score=nov,
+        ))
+    settled = wm.decayed_novelty(alpha=0.3)
+    assert settled < 0.3
+    wm.append(VisionObservation(
+        timestamp=base + 5, attachment_ref="s5",
+        description="x", novelty_score=0.95,
+    ))
+    assert wm.decayed_novelty(alpha=0.3) > settled
+
+
+def test_decayed_novelty_stale_ring_is_zero() -> None:
+    # AD-1060: a stale ring (camera off) has no current novelty (AD-1055 rule).
+    wm = VisionWorkingMemory(capacity=8)
+    now = time.time()
+    wm.append(VisionObservation(
+        timestamp=now - 3600, attachment_ref="old",
+        description="x", novelty_score=0.9,
+    ))
+    assert wm.decayed_novelty(alpha=0.3, now=now, freshness_s=120.0) == 0.0
 
 
 def test_ring_buffer_eviction() -> None:

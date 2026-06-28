@@ -210,6 +210,7 @@ class AgenticLoop:
                         params=use.tool_call.arguments,
                         agent_department=context.get("department", "engineering"),
                         agent_rank=context.get("rank", "ensign"),
+                        context=context,
                     )
                     duration_ms = (time.perf_counter() - start) * 1000.0
                     tcr = ToolCallResult.from_tool_result(

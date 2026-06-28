@@ -38,7 +38,7 @@ import { subscribePcm } from '../../audio/voiceActivity';
 import type { ChatAttachment } from '../../store/types';
 // AD-938: thread-keyed transcript helpers (extracted for testability — the
 // AD-936 ChatMessageRow precedent; keeps the heavy audio deps out of the test).
-import { selectTranscriptMessages, loadThreadMessages } from './profileTranscript';
+import { selectTranscriptMessages, loadThreadMessages, buildTranscriptItems } from './profileTranscript';
 import { ModulationIndicator } from './ModulationIndicator';
 import { GroupChatHeader } from './GroupChatHeader';
 // AD-932: discoverable "+ Add people" on a fresh/empty 1:1 (no thread yet).
@@ -46,6 +46,11 @@ import { EmptyChatAddPeople } from './EmptyChatAddPeople';
 // AD-937: 3-way thread resolver (prop > group override > per-agent 1:1).
 import { resolveProfileThreadId } from './profileThreadResolution';
 import { MeetingView } from './MeetingView';
+// AD-1058: Teams-style call control + the get-or-create-1:1-thread helper that
+// lets a call start from a fresh chat (no message first), and the shared camera.
+import { CallMenu } from './CallMenu';
+import { setMeetingActive, getOrCreateAgentThread } from '../sidebar/threadApi';
+import { startCameraStream, stopCameraStream } from '../../hooks/useCameraStream';
 // AD-936: per-message avatar + timestamp row (extracted; keeps the heavy
 // bubble JSX out of this audio-dep-laden module and independently testable).
 import { ChatMessageRow } from './ChatMessageRow';
@@ -178,6 +183,33 @@ function renderMessageBodyWithArtifacts(
     );
   });
 }
+
+// AD-1056: a calendar-day separator row in the transcript (Today / Yesterday /
+// date). Subtle hairline + centered label, HXI-styled (no emoji), WCAG-AA text.
+function DaySeparator({ label }: { label: string }) {
+  return (
+    <div
+      data-testid="chat-day-separator"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        margin: '12px 4px 6px', userSelect: 'none',
+      }}
+    >
+      <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.06)' }} />
+      <span style={{ color: '#9a9ab2', fontSize: 11, whiteSpace: 'nowrap' }}>{label}</span>
+      <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.06)' }} />
+    </div>
+  );
+}
+
+// AD-1062: the synthetic trigger sent (with system_trigger=true, so the backend
+// does NOT log it as a Captain message or auto-name the thread from it) when the
+// Captain opens a 1:1 call. It prompts a brief, in-voice greeting from the agent;
+// only the agent's reply is persisted, so the transcript shows a one-sided hello.
+const CALL_OPEN_TRIGGER =
+  '(System: the Captain just opened a live video call with you — you can see and ' +
+  'hear each other now. Open with a brief, warm greeting, the way you naturally ' +
+  'would at the start of a call. Keep it to a sentence or two.)';
 
 export function ProfileChatTab({ agentId, threadId }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
@@ -534,6 +566,93 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   useEffect(() => {
     speakingAgentIdRef.current = speakingAgentId;
   }, [speakingAgentId]);
+  // AD-1058: Teams-style call control. The CallMenu (top of a 1:1 crew chat)
+  // starts a call straight from a fresh chat — no message needed.
+  // ``handleStartCall`` ensures the canonical 1:1 thread (get-or-create: the SAME
+  // thread the first DM resolves to, so nothing forks), flips meeting_active, and
+  // — for a video call — starts the shared camera; ``handleEndCall`` clears the
+  // flag + stops the camera. Honest-degrade: a null thread aborts quietly.
+  const [callBusy, setCallBusy] = useState(false);
+  // AD-1062: proactive call-open greeting. ``greetedThreadsRef`` makes it
+  // once-per-call — the thread id is recorded on greet and cleared on End, so
+  // reopening a call greets again but a mid-call re-render does not.
+  // ``greetTokenRef`` is the "yield if the Captain speaks first" guard: sendText
+  // bumps it on every Captain send, so a greeting still generating when the
+  // Captain has already spoken is dropped (no double-greeting / no talking over).
+  const greetedThreadsRef = useRef<Set<string>>(new Set());
+  const greetTokenRef = useRef(0);
+  const triggerCallGreeting = useCallback(async (tid: string) => {
+    if (!tid || greetedThreadsRef.current.has(tid)) return;
+    greetedThreadsRef.current.add(tid);
+    const token = greetTokenRef.current;
+    try {
+      const res = await fetch(`/api/agent/${agentId}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: CALL_OPEN_TRIGGER, system_trigger: true, thread_id: tid }),
+      });
+      const data = await res.json();
+      // Yield-if-you-speak-first: the Captain sent a message while the greeting
+      // was generating -> drop it (their real turn already has the agent's
+      // attention; greeting on top would talk over the answer).
+      if (token !== greetTokenRef.current) return;
+      const reply = (data?.response as string) || '';
+      // Honest-degrade: an empty/error/system reply means the call just opens
+      // quietly rather than emitting a placeholder.
+      if (!reply || reply.startsWith('(') || data?.system === true) return;
+      useStore.getState().addAgentMessage(agentId, 'agent', reply);
+      useStore.getState().appendThreadMessage(tid, {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: 'agent',
+        text: reply,
+        timestamp: Date.now() / 1000,
+        authorId: agentId,
+      });
+      if (ttsEnabled) {
+        speakResponse(stripMarkdownForSpeech(reply), voiceProfile ?? undefined, agentId);
+      }
+    } catch {
+      // Honest-degrade: a failed greeting just means the call opens quietly.
+    }
+  }, [agentId, ttsEnabled, voiceProfile]);
+  const handleStartCall = useCallback(async (video: boolean) => {
+    if (callBusy) return;
+    setCallBusy(true);
+    try {
+      let tid = activeThreadId;
+      if (!tid) {
+        const thread = await getOrCreateAgentThread(agentId);
+        if (!thread) return;
+        useStore.getState().setChatThread(thread);
+        useStore.getState().setThreadForAgent(agentId, thread.id);
+        tid = thread.id;
+      }
+      const updated = await setMeetingActive(tid, true);
+      if (updated) useStore.getState().setChatThread(updated);
+      if (video) void startCameraStream();
+      // AD-1062: greet once the call surface is live (1:1 only — the CallMenu
+      // that invokes this is gated to <2 crew participants).
+      void triggerCallGreeting(tid);
+    } finally {
+      setCallBusy(false);
+    }
+  }, [activeThreadId, agentId, callBusy, triggerCallGreeting]);
+  const handleEndCall = useCallback(async () => {
+    if (callBusy || !activeThreadId) return;
+    setCallBusy(true);
+    try {
+      const updated = await setMeetingActive(activeThreadId, false);
+      if (updated) useStore.getState().setChatThread(updated);
+      void stopCameraStream();
+      // AD-1062: clear the once-per-call flag so reopening the call greets again.
+      greetedThreadsRef.current.delete(activeThreadId);
+    } finally {
+      setCallBusy(false);
+    }
+  }, [activeThreadId, callBusy]);
+  // The call control shows for a 1:1 crew chat (groups keep the GroupChatHeader
+  // toggle). A 1:1 has <2 crew participants (0 before its thread exists).
+  const showCallMenu = !!agentsMap.get(agentId)?.isCrew && meetingParticipantIds.length < 2;
   // AD-952: the agent currently "typing" a group reply (progressive reveal).
   // Drives the TypingIndicator bubble; threadId-guarded so it only shows in the
   // thread it belongs to.
@@ -555,11 +674,35 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pinnedToBottomRef = useRef(true);
 
-  // Auto-scroll on new messages — only when pinned to the bottom (AD-984c).
+  // AD-1056: scroll management. On a context switch (agent/thread) or a BULK
+  // load (the initial history), snap INSTANTLY to the bottom — no smooth
+  // animation through the whole transcript (the disorienting "stream from the
+  // top"). Only an incremental live message (+1) while pinned animates (the
+  // AD-984c interruptible-follow is preserved).
+  const scrollStateRef = useRef<{ key: string; count: number }>({ key: '', count: 0 });
   useEffect(() => {
-    if (!pinnedToBottomRef.current) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+    const key = `${agentId}::${activeThreadId ?? ''}`;
+    const st = scrollStateRef.current;
+    const switched = st.key !== key;
+    const prevCount = switched ? 0 : st.count;
+    scrollStateRef.current = { key, count: messages.length };
+    if (messages.length === 0) return;
+    const isIncremental = !switched && messages.length === prevCount + 1;
+    if (isIncremental) {
+      if (pinnedToBottomRef.current) {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
+      return;
+    }
+    // Bulk load / context switch — jump with NO animation.
+    pinnedToBottomRef.current = true;
+    const el = scrollContainerRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }
+  }, [messages.length, agentId, activeThreadId]);
 
   // BF-293: reset the empty-transcript counter when the agent replies so
   // the whisperStt fallback isn't surprise-triggered by stale empty
@@ -654,6 +797,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     if ((!text && pendingAttachments.length === 0) || sending) return;
     setInput('');
     setSending(true);
+    // AD-1062: the Captain spoke — invalidate any in-flight call-open greeting so
+    // it yields to this real turn instead of double-greeting / talking over.
+    greetTokenRef.current += 1;
 
     // AD-430b: Capture conversation history BEFORE adding current message
     const conv = useStore.getState().agentConversations.get(agentId);
@@ -1144,7 +1290,24 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     <div style={{ display: 'flex', flexDirection: 'row', height: '100%' }}>
       {/* AD-929: chat column (primary). Wraps all existing children so the
           conversation behavior is byte-identical; the Files rail is a sibling. */}
-      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, height: '100%' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, height: '100%' }}>
+      {/* AD-1058: Teams-style call control at the top of a 1:1 crew chat — start
+          a Video/Audio call straight from a fresh chat (no message first). */}
+      {showCallMenu && (
+        <div data-testid="chat-call-bar" style={{
+          display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
+          padding: '6px 12px', borderBottom: '1px solid rgba(255,255,255,0.04)',
+          flexShrink: 0,
+        }}>
+          <CallMenu
+            active={meetingActive}
+            busy={callBusy}
+            onVideoCall={() => { void handleStartCall(true); }}
+            onAudioCall={() => { void handleStartCall(false); }}
+            onEndCall={() => { void handleEndCall(); }}
+          />
+        </div>
+      )}
       {/* AD-917: in-chat group controls (rename / participants / add). Renders
           nothing until a thread exists. Mounted above the message list. */}
       {activeThreadId && <GroupChatHeader threadId={activeThreadId} />}
@@ -1175,6 +1338,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         }}
         style={{
         flex: 1,
+        minHeight: 0,
         overflowY: 'auto',
         padding: '8px 12px',
         // AD-984b: condensed strip while a meeting is active + chat shown.
@@ -1185,10 +1349,13 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             Send a message to start a conversation.
           </div>
         )}
-        {messages.map(msg => (
+        {buildTranscriptItems(messages).map(item => (
+          item.kind === 'day' ? (
+            <DaySeparator key={item.id} label={item.label} />
+          ) : (
           <ChatMessageRow
-            key={msg.id}
-            msg={msg}
+            key={item.id}
+            msg={item.msg}
             hostAgentId={agentId}
             hostCallsign={hostCallsign}
             // BF-637: feed the RESOLVED activeThreadId. props.threadId is
@@ -1196,8 +1363,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             // prop gated every A2UI + AD-797 artifact card off to plain stub
             // text (1:1 AND group). activeThreadId is the same id the send path
             // and transcript selection already use.
-            body={renderMessageBodyWithArtifacts(msg.text, activeThreadId, (opt) => sendText(opt))}
+            body={renderMessageBodyWithArtifacts(item.msg.text, activeThreadId, (opt) => sendText(opt))}
           />
+          )
         ))}
         {/* AD-952: typing beat for the agent composing the next group reply.
             AD-962: also the generic "the crew is thinking" beat during the
@@ -1217,6 +1385,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           borderTop: '1px solid rgba(255,255,255,0.04)',
           display: 'flex', flexWrap: 'wrap', gap: 4,
           fontSize: 11,
+          flexShrink: 0,
         }}>
           {pendingAttachments.map(a => (
             <span key={a.attachment_id} style={{
@@ -1253,6 +1422,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         gap: 6,
         padding: '8px 12px',
         borderTop: '1px solid rgba(255,255,255,0.06)',
+        flexShrink: 0,
       }}>
         <input
           ref={fileInputRef}

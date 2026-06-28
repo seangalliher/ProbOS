@@ -112,6 +112,10 @@ def _req(message: str = "look at this", attachment_ids: list[str] | None = None)
     # request through the explicit-thread path and 400 on participants
     # mismatch.
     r.thread_id = None
+    # AD-1062: same truthy-MagicMock trap for the new system_trigger flag —
+    # explicit False so the router treats this as a real Captain DM (logs the
+    # captain message) rather than a system-originated greeting trigger.
+    r.system_trigger = False
     return r
 
 

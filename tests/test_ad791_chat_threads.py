@@ -120,6 +120,37 @@ def test_list_messages_before_filter(tmp_path):
     assert [m.body for m in msgs] == ["m0", "m1"]
 
 
+def test_list_messages_newest_returns_most_recent_in_order(tmp_path):
+    """AD-1063: ``newest=True`` returns the most-recent ``limit`` messages in
+    chronological order, so a long transcript shows the recent turns instead of
+    the oldest ``limit`` (the "chat history jumped back to this morning" bug:
+    ``ORDER BY created_at ASC LIMIT N`` returned the OLDEST N)."""
+    clock = {"t": 1.0}
+    store = ChatThreadStore(tmp_path / "threads.db", clock=lambda: clock["t"])
+    t = store.create_thread(title="t", participants=[])
+    for i in range(5):
+        clock["t"] = float(10 + i)
+        store.append_message(t.id, author_id="a", role="agent", body=f"m{i}")
+
+    # Default (oldest-N) is UNCHANGED — the load-bearing contract the AD-914
+    # fan-out tail-slice + AD-794 first-message auto-name depend on.
+    assert [m.body for m in store.list_messages(t.id, limit=2)] == ["m0", "m1"]
+
+    # newest=True returns the most-recent 2, still sorted oldest->newest for display.
+    assert [m.body for m in store.list_messages(t.id, limit=2, newest=True)] == ["m3", "m4"]
+
+    # newest=True composes with the ``before`` pagination cursor: the 2 most
+    # recent strictly before t=13.5 are m2 (t=12) and m3 (t=13).
+    assert [
+        m.body for m in store.list_messages(t.id, limit=2, newest=True, before=13.5)
+    ] == ["m2", "m3"]
+
+    # When the thread is shorter than the limit, newest=True == full history ASC.
+    assert [m.body for m in store.list_messages(t.id, limit=100, newest=True)] == [
+        "m0", "m1", "m2", "m3", "m4",
+    ]
+
+
 # ---------------- REST ----------------
 
 

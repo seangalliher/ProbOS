@@ -199,3 +199,34 @@ def visual_reference_score(text: str) -> float:
     if tokens & _VISUAL_REFERENCE_WORDS:
         return 1.0
     return 0.0
+
+
+def suppress_visual_injection(
+    *,
+    referenced: bool,
+    is_visual_task: bool,
+    raw_novelty: float,
+    decayed_novelty: float,
+    novelty_minimum: float,
+    suppress_threshold: float,
+) -> bool:
+    """AD-1060: decide whether to SUPPRESS visual-scene injection this turn.
+
+    Pure (no I/O, no model, no clock). The camera feed fades to background when
+    the scene is a stable, unremarkable constant: suppress ONLY when the decayed
+    (EMA) novelty has fallen below ``suppress_threshold`` AND the latest frame
+    did not materially change (``raw_novelty < novelty_minimum``) AND the Captain
+    did not reference vision AND it is not a visual task. Any of those escape
+    hatches forces injection, preserving responsiveness (a sudden change after a
+    long quiet stretch still surfaces immediately via ``raw_novelty``).
+
+    ``suppress_threshold <= 0`` disables suppression entirely \u2014 byte-identical to
+    the AD-1031 always-inject bid.
+    """
+    if suppress_threshold <= 0.0:
+        return False
+    if referenced or is_visual_task:
+        return False
+    if raw_novelty >= novelty_minimum:
+        return False
+    return decayed_novelty < suppress_threshold

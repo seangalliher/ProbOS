@@ -2209,6 +2209,50 @@ class CognitiveAgent(BaseAgent):
             "saved something without it."
         )
 
+    def _conversational_artifact_block(self, observation: dict) -> str:
+        """AD-1064: teach every crew agent to produce a downloadable DOCUMENT
+        (a saved file the Captain can open + download) in a 1:1 chat.
+
+        The Captain frequently asks an agent to "write it up", "save this", or
+        "put it in a document/file". The wired path is the AD-797 artifact
+        extractor (``DmReplyPipeline.step_4f_extract_artifacts``): the agent
+        wraps the document body in an ``<artifact name="..." mime="...">
+        ...</artifact>`` tag anywhere in its reply; the pipeline persists it to
+        the ArtifactStore (versioned, content-addressable) and replaces the
+        block with a stub the HXI renders as a clickable, downloadable card.
+        Without this grounding an agent confabulates a write verb (e.g. a
+        ``[MESH create_file ...]`` tag — the AD-869 ``[MESH ...]`` seam is
+        read-only and has no such verb), so the document is never saved.
+
+        Honest-degrade: returns "" when the artifact substrate is absent, so an
+        agent is never told it can save a file the ship cannot persist (the
+        BF-599 / AD-592 lesson). The how-to text is gap-regex-safe. Overridable
+        (Open/Closed)."""
+        del observation
+        runtime = getattr(self, "_runtime", None)
+        if runtime is None:
+            return ""
+        if (
+            getattr(runtime, "artifact_store", None) is None
+            or getattr(runtime, "attachment_store", None) is None
+        ):
+            return ""
+        return (
+            "\n\nSaving a document the Captain can download: when the Captain "
+            "asks you to write up, save, export, or put something into a "
+            "document or file, wrap the full content in an artifact tag "
+            "anywhere in your reply. Open with "
+            '<artifact name="recommendations.md" mime="text/markdown">, put '
+            "the document body on the following lines, and close with "
+            "</artifact> on its own line. The system saves it and shows the "
+            "Captain a downloadable card; the tag itself is removed before the "
+            "Captain sees your reply, so confirm conversationally that you have "
+            "saved it. Use a simple filename (letters, numbers, dots, dashes) "
+            "with a matching extension, and prefer Markdown (name ending .md, "
+            "mime text/markdown) for written reports. Only say a document is "
+            "saved when you actually emit this tag."
+        )
+
     def _conversational_deliberate_protocol(self, observation: dict) -> str:
         """AD-934 (Option C): teach the [THINK] reply marker to all crew agents
         WHEN config.dm_deliberate.enabled is True (default OFF -> ""). The agent
@@ -3008,6 +3052,16 @@ class CognitiveAgent(BaseAgent):
             _nb_proto = self._conversational_notebook_protocol(observation)
             if _nb_proto:
                 composed += _nb_proto
+            # AD-1064: artifact/document protocol. Overridable hook; base
+            # returns "" only when the ArtifactStore/AttachmentStore are not
+            # wired (they always are on a real runtime). Teaches the AD-797
+            # <artifact name="..." mime="...">...</artifact> tag so an agent can
+            # save a downloadable document when the Captain asks — instead of
+            # confabulating a [MESH create_file ...] write verb (the [MESH ...]
+            # seam is read-only). Sits next to the notebook protocol.
+            _artifact_block = self._conversational_artifact_block(observation)
+            if _artifact_block:
+                composed += _artifact_block
             # AD-934 (Option C): deliberate re-roll protocol. Overridable hook;
             # base returns "" unless config.dm_deliberate.enabled (default OFF),
             # so the [THINK] marker is taught only when the flag is on.
@@ -3107,6 +3161,25 @@ class CognitiveAgent(BaseAgent):
                 "level_rank": int(observation.get("level_rank", 0)),
                 "short_circuit_reason": "ad-700c-no-llm-tier",
             }
+
+        # AD-1065: conversational agentic turn. When ``config.dm_agentic.enabled``,
+        # a 1:1 ``direct_message`` runs the AgenticLoop (tool-calling) so the agent
+        # can perform tasks (read / write / execute, make documents) mid-chat —
+        # Claude Cowork / Codex / Copilot parity. A no-tool turn is a single pass.
+        # Honest-degrades to the single-pass path below on any miss/failure
+        # (the helper returns None), so the flag never drops the Captain's turn.
+        _agentic_output = await self._maybe_run_conversational_agentic(
+            observation, system_prompt=composed, user_message=user_message,
+        )
+        if _agentic_output is not None:
+            decision = {
+                "action": "execute",
+                "llm_output": _agentic_output,
+                "tier_used": "agentic",
+            }
+            if applied_strategy_ids:
+                decision["_applied_strategy_ids"] = applied_strategy_ids
+            return decision
 
         # AD-730 (Wave 151): vision pipe-through for DM perception.
         # When the intent params carry vision_messages (Captain attached an
@@ -3233,6 +3306,60 @@ class CognitiveAgent(BaseAgent):
             decision["_applied_strategy_ids"] = applied_strategy_ids
 
         return decision
+
+    async def _maybe_run_conversational_agentic(
+        self, observation: dict, *, system_prompt: str, user_message: str,
+    ) -> str | None:
+        """AD-1065: run the conversational agentic (tool-calling) loop for a 1:1
+        ``direct_message`` when ``config.dm_agentic.enabled``.
+
+        Returns the loop's final reply text, or ``None`` to fall through to the
+        single-pass LLM path. ``None`` covers: flag off, non-1:1 turns (group /
+        ward-room / proactive), vision turns (multimodal single-pass), no
+        runtime, an empty result, or any failure (honest-degrade — a broken loop
+        must never drop the Captain's turn). Reuses
+        :class:`WorkItemAgenticExecutor` (the task-path loop) so governance
+        (grants / restrictions), tool assembly, and tool-trace persistence are
+        shared — one agentic substrate, DRY."""
+        runtime = getattr(self, "_runtime", None)
+        if runtime is None:
+            return None
+        cfg = getattr(getattr(runtime, "config", None), "dm_agentic", None)
+        if not getattr(cfg, "enabled", False):
+            return None
+        # 1:1 direct_message only — group / ward / proactive keep the single pass.
+        if observation.get("intent") != "direct_message":
+            return None
+        params = observation.get("params", {}) or {}
+        if params.get("is_group_chat"):
+            return None
+        # Vision turns are multimodal single-pass (the loop is text-tool only).
+        if params.get("vision_messages"):
+            return None
+        try:
+            from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+
+            executor = WorkItemAgenticExecutor(llm_client=self._llm_client)
+            outcome = await executor.run(
+                agent_id=self.id,
+                instructions=system_prompt,
+                task_text=user_message,
+                runtime=runtime,
+                department=getattr(self, "department", "") or "",
+                rank=str(getattr(self, "rank", "ensign") or "ensign"),
+                thread_id=str(observation.get("thread_id", "") or ""),
+                max_iterations=getattr(cfg, "max_iterations", 5),
+                tier=getattr(cfg, "tier", "standard"),
+            )
+            text = (getattr(outcome, "final_text", "") or "").strip()
+            return text or None
+        except Exception:
+            logger.warning(
+                "AD-1065: conversational agentic loop failed for agent=%s; "
+                "falling back to the single-pass reply path",
+                self.id, exc_info=True,
+            )
+            return None
 
     async def _run_llm_fallback(self, observation: dict[str, Any]) -> dict[str, Any] | None:
         """AD-534b: Re-run through LLM path, skipping procedural memory and decision cache."""

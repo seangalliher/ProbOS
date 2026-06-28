@@ -138,6 +138,20 @@ describe('AD-939 MeetingView Captain slot', () => {
     expect(slots[0].getAttribute('data-testid')).toBe('captain-slot');
   });
 
+  it('AD-1057b: the meeting view is a flex filler so the composer stays anchored on resize', () => {
+    seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [
+      mkAgent({ id: 'echo', callsign: 'Echo' }),
+    ]);
+    render(<MeetingView threadId="t1" />);
+    const root = screen.getByTestId('meeting-view');
+    // It must absorb the chat column's free space (flex:1) and scroll its own
+    // content (minHeight:0 + overflowY) rather than push the input down — in a
+    // meeting the transcript is a fixed strip, so MeetingView is the filler.
+    expect(root.style.minHeight).toBe('0px');
+    expect(root.style.overflowY).toBe('auto');
+    expect(`${root.style.flex} ${root.style.flexGrow}`).toMatch(/1/);
+  });
+
   it('camera active -> shows captain-video (camera preferred), attaches the stream', () => {
     const fakeStream = {} as unknown as MediaStream;
     camMock.stream = fakeStream;

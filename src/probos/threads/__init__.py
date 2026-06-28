@@ -958,18 +958,38 @@ class ChatThreadStore:
         *,
         limit: int = 200,
         before: float | None = None,
+        newest: bool = False,
     ) -> list[ChatThreadMessage]:
         clauses = ["thread_id = ?"]
         params: list = [thread_id]
         if before is not None:
             clauses.append("created_at < ?")
             params.append(before)
+        where = " AND ".join(clauses)
         with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM chat_thread_messages WHERE {' AND '.join(clauses)} "
-                "ORDER BY created_at ASC LIMIT ?",
-                (*params, limit),
-            ).fetchall()
+            if newest:
+                # AD-1063: return the most-recent ``limit`` rows, sorted
+                # chronologically (ASC) for display. A bare ``ORDER BY
+                # created_at ASC LIMIT N`` returns the OLDEST N, which silently
+                # truncates the most recent turns once a thread grows past
+                # ``limit`` (the "chat history jumped back to this morning" bug:
+                # a transcript past 200 messages showed only the opening 200).
+                # Select the newest N first, then re-sort ASC for the UI. The
+                # default (newest=False) keeps the OLDEST-N contract that the
+                # AD-914 fan-out tail-slice + AD-794 first-message auto-name rely
+                # on — do not change it globally.
+                rows = conn.execute(
+                    f"SELECT * FROM (SELECT * FROM chat_thread_messages "
+                    f"WHERE {where} ORDER BY created_at DESC LIMIT ?) "
+                    "ORDER BY created_at ASC",
+                    (*params, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"SELECT * FROM chat_thread_messages WHERE {where} "
+                    "ORDER BY created_at ASC LIMIT ?",
+                    (*params, limit),
+                ).fetchall()
         return [_row_to_message(r) for r in rows]
 
     # AD-792: search + recents helpers for the sidebar.

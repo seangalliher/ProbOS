@@ -353,6 +353,12 @@ export function MeetingView({
       data-testid="meeting-view"
       style={{
         display: 'flex', flexDirection: 'column', gap: 8,
+        // AD-1057b: fill the chat column's free space + scroll internally so the
+        // composer stays pinned to the bottom on resize. In a meeting the
+        // transcript is a fixed condensed strip (flex:0 0 auto), so MeetingView
+        // was the missing flex:1 filler — without it nothing absorbed the column
+        // height and the input drifted on resize.
+        flex: 1, minHeight: 0, overflowY: 'auto',
         padding: 12, borderBottom: '1px solid rgba(240,176,96,0.15)',
         background: 'rgba(240,176,96,0.04)',
       }}

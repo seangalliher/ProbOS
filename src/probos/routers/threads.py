@@ -296,8 +296,12 @@ async def list_messages(
     store = _get_store(runtime)
     if store.get_thread(thread_id) is None:
         raise HTTPException(status_code=404, detail="Thread not found")
+    # AD-1063: the transcript shows the MOST RECENT ``limit`` turns (sorted
+    # chronologically), not the oldest — a long thread must not jump back to its
+    # opening once it passes ``limit`` messages. ``before`` still paginates older
+    # pages (newest N strictly before the cursor).
     msgs = store.list_messages(
-        thread_id, limit=max(1, min(limit, 1000)), before=before
+        thread_id, limit=max(1, min(limit, 1000)), before=before, newest=True
     )
     return {"thread_id": thread_id, "messages": [m.to_dict() for m in msgs]}
 

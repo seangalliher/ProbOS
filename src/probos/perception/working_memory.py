@@ -19,6 +19,20 @@ from dataclasses import dataclass
 from threading import Lock
 
 
+# AD-1059: standing disposition for the visual feed. Prepended inside the
+# rendered scene block (NOT the empty/stale sentinel, which keeps its own
+# confabulation guard) so an agent treats the camera as BACKGROUND context and
+# stops over-narrating an unchanged scene. Behavioral layer that complements the
+# AD-1031 salience gate + AD-1060 frequency taper (engineering). Wording avoids
+# capability-gap phrasing (no "can't"/"unable") so it never trips the gap regex.
+_VISUAL_DISPOSITION: str = (
+    "(This visual feed is BACKGROUND context. Do not narrate it by default. "
+    "Mention what you see only when it is genuinely novel or unusual, when it is "
+    "directly relevant to the task, or when the Captain asks — a brief, natural "
+    "acknowledgement when a call first opens is welcome.)"
+)
+
+
 @dataclass(frozen=True)
 class VisionObservation:
     """One supervisor-flagged + LLM-described frame."""
@@ -83,15 +97,34 @@ class VisionWorkingMemory:
         with self._lock:
             self._buf.clear()
 
-    def render_for_prompt(self, *, now: float | None = None) -> str:
+    def render_for_prompt(
+        self, *, now: float | None = None, freshness_s: float | None = None,
+    ) -> str:
         """Render the buffer for LLM prompt injection.
 
         Confabulation guard: when empty, returns a non-empty string that
         explicitly says no visual data is available. The agent's prompt
         builder MUST receive a clear "no data" signal rather than an
         empty string the agent might fill in from imagination.
+
+        AD-1055: ``freshness_s`` — when set (> 0), a latest observation OLDER
+        than this many seconds is treated as "no current visual data" (the
+        same camera-off sentinel). The AD-742f ring is disk-persisted, so
+        without this guard a frame from a PRIOR session survives a restart and
+        the agent describes a scene it can no longer see (the BF-624 class:
+        "a 22h-old black shirt"). ``None``/``<= 0`` disables the check
+        (byte-identical to pre-AD-1055).
         """
         entries = self.entries()
+        now_ts = time.time() if now is None else now
+        # AD-1055: drop a stale latest observation (camera effectively off) so
+        # the agent gets the explicit no-data sentinel instead of a carried-over
+        # scene. Applied before the empty-check so a stale ring renders exactly
+        # like an empty one.
+        if entries and freshness_s is not None and freshness_s > 0:
+            stale_age = max(0.0, now_ts - entries[-1].timestamp)
+            if stale_age > freshness_s:
+                entries = []
         if not entries:
             return (
                 "--- Current Visual Context ---\n"
@@ -100,13 +133,13 @@ class VisionWorkingMemory:
                 "--- End Visual Context ---"
             )
 
-        now_ts = time.time() if now is None else now
         latest = entries[-1]
         age_s = max(0.0, now_ts - latest.timestamp)
         age_str = _format_age(age_s)
 
         lines = [
             "--- Current Visual Context ---",
+            _VISUAL_DISPOSITION,
             (
                 f"Most recent observation ({age_str} ago, "
                 f"novelty={latest.novelty_score:.2f}, "
@@ -118,6 +151,37 @@ class VisionWorkingMemory:
             lines.append(f"Prior {len(entries) - 1} observation(s) in working memory.")
         lines.append("--- End Visual Context ---")
         return "\n".join(lines)
+
+    def decayed_novelty(
+        self,
+        *,
+        alpha: float = 0.3,
+        now: float | None = None,
+        freshness_s: float | None = None,
+    ) -> float:
+        """AD-1060: an exponential moving average of recent observation novelty.
+
+        Folded oldest->newest with weight ``alpha`` on each newer frame, so a
+        sustained run of low-novelty (stable-scene) frames decays toward 0 while
+        a recent spike pulls it back up. The router uses this to taper visual
+        injection FREQUENCY — once the decayed novelty falls below a threshold
+        the scene has settled into the background and injection is suppressed
+        (a raw-novelty spike still injects immediately, independent of this).
+
+        Returns 0.0 for an empty ring, or for a stale ring when ``freshness_s``
+        is set (a camera-off scene has no current novelty — the AD-1055 rule).
+        """
+        entries = self.entries()
+        if entries and freshness_s is not None and freshness_s > 0:
+            now_ts = time.time() if now is None else now
+            if max(0.0, now_ts - entries[-1].timestamp) > freshness_s:
+                return 0.0
+        if not entries:
+            return 0.0
+        ema = entries[0].novelty_score
+        for obs in entries[1:]:
+            ema = alpha * obs.novelty_score + (1.0 - alpha) * ema
+        return ema
 
 
 def _format_age(seconds: float) -> str:

@@ -2448,6 +2448,39 @@ async def agent_avatar_divergence_history(
     }
 
 
+@router.post("/{agent_id}/thread")
+async def get_or_create_agent_thread(
+    agent_id: str, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1058: get-or-create the implicit default 1:1 thread for a crew agent.
+
+    Lets the HXI materialize the canonical 1:1 thread WITHOUT sending a message
+    — e.g. to start a call from a fresh chat. Returns the SAME race-safe
+    ``get_or_create_default_for_agent`` thread the first DM would resolve to (the
+    AD-791a default-thread convention), so a later message reconciles to it
+    rather than forking a parallel thread. Crew-only, mirroring ``agent_chat``.
+    """
+    agent = runtime.registry.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+    if not is_crew_agent(agent, runtime.ontology):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Agent {agent_id} is not a crew agent — direct chat is crew-only",
+        )
+    store = getattr(runtime, "chat_thread_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="chat thread store unavailable")
+    callsign = ""
+    if hasattr(runtime, "callsign_registry"):
+        try:
+            callsign = runtime.callsign_registry.get_callsign(agent.agent_type) or ""
+        except Exception:
+            callsign = ""
+    thread = store.get_or_create_default_for_agent(agent_id, callsign or agent_id)
+    return thread.to_dict()
+
+
 @router.post("/{agent_id}/chat")
 async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """Send a direct message to a specific agent and get their response."""
@@ -2563,8 +2596,10 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # AD-794: first-turn auto-name from the message body. Idempotent;
     # returns None when the thread is locked, already renamed, or the
     # heuristic produced no useful title. Refresh the local ``thread``
-    # var after so downstream code sees the new title.
-    if _thread_store is not None and thread is not None:
+    # var after so downstream code sees the new title. AD-1062: a system
+    # trigger (e.g. a call-open greeting) carries synthetic stage-direction
+    # text — never name the thread from it.
+    if _thread_store is not None and thread is not None and not req.system_trigger:
         try:
             _renamed = _thread_store.maybe_auto_name(thread.id, req.message)
             if _renamed is not None:
@@ -2578,8 +2613,10 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # AD-791a: log the captain side of the turn before dispatch so the
     # message log reflects the operator's input even if the downstream
     # pipeline raises. (Moved below the /personality guard + auto-name
-    # per AD-794 Section 2 ordering.)
-    if _thread_store is not None and thread is not None:
+    # per AD-794 Section 2 ordering.) AD-1062: a system trigger (call-open
+    # greeting) is NOT a Captain utterance — skip logging it so only the
+    # agent's greeting reply lands in the transcript.
+    if _thread_store is not None and thread is not None and not req.system_trigger:
         try:
             _thread_store.append_message(
                 thread.id,
@@ -2967,7 +3004,11 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                     )
             from probos.perception.consumer import get_or_create_working_memory
             _wm = get_or_create_working_memory(agent_id)
-            _scene_block = _wm.render_for_prompt()
+            # AD-1055: a stale (camera-off) frame renders as the no-data
+            # sentinel, not a carried-over scene from a prior session.
+            _scene_block = _wm.render_for_prompt(
+                freshness_s=getattr(_perception_cfg, "prompt_freshness_seconds", None),
+            )
             if _camera_scene_bid_on:
                 # AD-1031 ON: hand the rendered scene + change signals to the
                 # agent for a salience-gated bid (do NOT prepend onto the
@@ -2975,13 +3016,56 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                 # ran (those are side effects, not prompt content).
                 if _scene_block:
                     _lat = _wm.latest()
-                    _visual_scene_for_bid = _scene_block
-                    _visual_novelty_for_bid = (
-                        _lat.novelty_score if _lat is not None else 0.0
-                    )
-                    _visual_summary_for_bid = (
-                        _lat.description if _lat is not None else ""
-                    )
+                    if "Camera not active" in _scene_block:
+                        # AD-1060: a no-data sentinel (empty OR AD-1055-stale)
+                        # surfaces PROMINENTLY — never as a "live camera"
+                        # one-liner built from a stale description. An empty
+                        # summary forces the agent's prominent branch.
+                        _visual_scene_for_bid = _scene_block
+                        _visual_novelty_for_bid = 0.0
+                        _visual_summary_for_bid = ""
+                    else:
+                        from probos.cognitive.salience import (
+                            suppress_visual_injection,
+                            visual_reference_score,
+                        )
+                        _raw_novelty = (
+                            _lat.novelty_score if _lat is not None else 0.0
+                        )
+                        _att = getattr(
+                            getattr(getattr(runtime, "config", None), "memory", None),
+                            "attention", None,
+                        )
+                        # AD-1060: adaptive injection frequency — fade the feed to
+                        # background once the decayed novelty settles low (unless
+                        # the Captain referenced vision, it's a visual task, or the
+                        # latest frame materially changed). Default threshold 0.0
+                        # ⇒ never suppress ⇒ byte-identical to AD-1031.
+                        _suppress = suppress_visual_injection(
+                            referenced=visual_reference_score(req.message) > 0.0,
+                            is_visual_task=vision_messages is not None,
+                            raw_novelty=_raw_novelty,
+                            decayed_novelty=_wm.decayed_novelty(
+                                alpha=float(
+                                    getattr(_att, "camera_novelty_ema_alpha", 0.3) or 0.3
+                                ),
+                                freshness_s=getattr(
+                                    _perception_cfg, "prompt_freshness_seconds", None,
+                                ),
+                            ),
+                            novelty_minimum=float(
+                                getattr(_att, "camera_novelty_minimum", 0.3) or 0.0
+                            ),
+                            suppress_threshold=float(
+                                getattr(_att, "camera_recessive_suppress_threshold", 0.0) or 0.0
+                            ),
+                        )
+                        if not _suppress:
+                            _visual_scene_for_bid = _scene_block
+                            _visual_novelty_for_bid = _raw_novelty
+                            _visual_summary_for_bid = (
+                                _lat.description if _lat is not None else ""
+                            )
             elif _scene_block:
                 # AD-1031 OFF (default): byte-identical AD-733a prepend.
                 message_text = f"{_scene_block}\n\n{message_text}"

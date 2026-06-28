@@ -15,7 +15,10 @@ vi.mock('../../sidebar/threadApi', () => ({
   listMessages: vi.fn(),
 }));
 import { listMessages } from '../../sidebar/threadApi';
-import { threadDtoToMessage, selectTranscriptMessages, loadThreadMessages } from '../profileTranscript';
+import {
+  threadDtoToMessage, selectTranscriptMessages, loadThreadMessages,
+  buildTranscriptItems, transcriptDayLabel, TRANSCRIPT_RENDER_CAP, type TranscriptItem,
+} from '../profileTranscript';
 import { ChatMessageRow } from '../ChatMessageRow';
 
 // ?raw imports do not execute the module — safe to scan the heavy sources.
@@ -124,6 +127,91 @@ describe('AD-938 selectTranscriptMessages', () => {
   });
 });
 
+describe('AD-1056 buildTranscriptItems', () => {
+  // Local-time anchor (no TZ designator => parsed as local), so day bucketing is
+  // timezone-independent: every date below is built in the SAME local frame.
+  const NOW = new Date('2026-06-27T12:00:00').getTime();
+  const sec = (iso: string) => Math.floor(new Date(iso).getTime() / 1000);
+  const mkMsg = (id: string, timestamp: number, text = 'hi'): AgentProfileMessage =>
+    ({ id, role: 'agent', text, timestamp });
+  const msgItems = (its: TranscriptItem[]) =>
+    its.filter((i): i is Extract<TranscriptItem, { kind: 'msg' }> => i.kind === 'msg');
+  const dayItems = (its: TranscriptItem[]) =>
+    its.filter((i): i is Extract<TranscriptItem, { kind: 'day' }> => i.kind === 'day');
+
+  it('returns [] for no messages', () => {
+    expect(buildTranscriptItems([], { nowMs: NOW })).toEqual([]);
+  });
+
+  it('inserts ONE day separator before a single-day run', () => {
+    const items = buildTranscriptItems([
+      mkMsg('m1', sec('2026-06-27T09:00:00')),
+      mkMsg('m2', sec('2026-06-27T10:00:00')),
+    ], { nowMs: NOW });
+    expect(items.map(i => i.kind)).toEqual(['day', 'msg', 'msg']);
+    expect(items[0]).toMatchObject({ kind: 'day', label: 'Today' });
+  });
+
+  it('inserts a separator at each LOCAL-day boundary', () => {
+    const items = buildTranscriptItems([
+      mkMsg('m1', sec('2026-06-25T09:00:00')),
+      mkMsg('m2', sec('2026-06-26T10:00:00')),
+      mkMsg('m3', sec('2026-06-27T11:00:00')),
+    ], { nowMs: NOW });
+    expect(items.map(i => i.kind)).toEqual(['day', 'msg', 'day', 'msg', 'day', 'msg']);
+    const labels = dayItems(items).map(i => i.label);
+    expect(labels[1]).toBe('Yesterday');
+    expect(labels[2]).toBe('Today');
+  });
+
+  it('labels Today / Yesterday / an explicit date for older days', () => {
+    expect(transcriptDayLabel(sec('2026-06-27T01:00:00'), NOW)).toBe('Today');
+    expect(transcriptDayLabel(sec('2026-06-26T23:00:00'), NOW)).toBe('Yesterday');
+    const older = transcriptDayLabel(sec('2026-06-20T08:00:00'), NOW);
+    expect(older).not.toBe('Today');
+    expect(older).not.toBe('Yesterday');
+    expect(older.length).toBeGreaterThan(0);
+  });
+
+  it('caps to the most recent ``cap`` messages (newest kept)', () => {
+    const base = sec('2026-06-27T00:00:00');
+    const msgs = Array.from({ length: 250 }, (_, i) => mkMsg(`m${i}`, base + i * 60));
+    const rendered = msgItems(buildTranscriptItems(msgs, { nowMs: NOW, cap: 50 }));
+    expect(rendered).toHaveLength(50);
+    expect(rendered[0].msg.id).toBe('m200');   // the last 50 of 250
+    expect(rendered[49].msg.id).toBe('m249');
+  });
+
+  it('cap=0 disables the cap (renders all)', () => {
+    const base = sec('2026-06-27T00:00:00');
+    const msgs = Array.from({ length: 5 }, (_, i) => mkMsg(`m${i}`, base + i * 60));
+    expect(msgItems(buildTranscriptItems(msgs, { nowMs: NOW, cap: 0 }))).toHaveLength(5);
+  });
+
+  it('defaults to TRANSCRIPT_RENDER_CAP when no cap is given', () => {
+    const base = sec('2026-06-27T00:00:00');
+    const msgs = Array.from({ length: TRANSCRIPT_RENDER_CAP + 10 }, (_, i) => mkMsg(`m${i}`, base + i * 60));
+    expect(msgItems(buildTranscriptItems(msgs, { nowMs: NOW }))).toHaveLength(TRANSCRIPT_RENDER_CAP);
+  });
+
+  it('does not force a separator for a message with no/invalid timestamp', () => {
+    const items = buildTranscriptItems([
+      mkMsg('m1', 0),
+      mkMsg('m2', sec('2026-06-27T10:00:00')),
+    ], { nowMs: NOW });
+    expect(items.map(i => i.kind)).toEqual(['msg', 'day', 'msg']);
+  });
+
+  it('day separator ids are unique + stable', () => {
+    const items = buildTranscriptItems([
+      mkMsg('m1', sec('2026-06-26T09:00:00')),
+      mkMsg('m2', sec('2026-06-27T11:00:00')),
+    ], { nowMs: NOW });
+    const dayIds = dayItems(items).map(i => i.id);
+    expect(new Set(dayIds).size).toBe(dayIds.length);
+  });
+});
+
 describe('AD-938 group transcript per-author avatars', () => {
   it('renders two DISTINCT avatars for two thread messages from different agents', () => {
     const agents = seedAgents([
@@ -223,5 +311,45 @@ describe('AD-938 HXI no-emoji guard (#3)', () => {
     for (const src of [profileChatSource, transcriptSource, chatsPanelSource, newChatSource, threadApiSource]) {
       expect(src).not.toMatch(EMOJI_RE);
     }
+  });
+});
+
+describe('AD-1056/1057 transcript layout + scroll guards', () => {
+  it('AD-1056: renders day separators via buildTranscriptItems', () => {
+    expect(profileChatSource).toMatch(/buildTranscriptItems\(messages\)/);
+    expect(profileChatSource).toMatch(/<DaySeparator\b/);
+    expect(profileChatSource).toMatch(/data-testid="chat-day-separator"/);
+  });
+
+  it('AD-1056: snaps instantly on bulk load, animates only incremental messages', () => {
+    // Bulk load / context switch jumps with NO animation...
+    expect(profileChatSource).toMatch(/el\.scrollTop = el\.scrollHeight/);
+    expect(profileChatSource).toMatch(/behavior: 'auto'/);
+    // ...the incremental-follow path still smooth-scrolls.
+    expect(profileChatSource).toMatch(/behavior: 'smooth'/);
+    // The disorienting unconditional smooth-on-every-length-change effect is gone.
+    expect(profileChatSource).not.toMatch(/Auto-scroll on new messages/);
+  });
+
+  it('AD-1057: transcript + input are flex-anchored so the input never floats up', () => {
+    // minHeight:0 lets the scroll container overflow-scroll instead of growing
+    // the column; flexShrink:0 keeps the input row pinned to the bottom.
+    expect(profileChatSource).toMatch(/minHeight: 0/);
+    expect(profileChatSource).toMatch(/flexShrink: 0/);
+  });
+});
+
+describe('AD-1058 call-control wiring', () => {
+  it('renders the CallMenu in a top bar for a 1:1 crew chat', () => {
+    expect(profileChatSource).toMatch(/<CallMenu\b/);
+    expect(profileChatSource).toMatch(/data-testid="chat-call-bar"/);
+    expect(profileChatSource).toMatch(/showCallMenu = .*isCrew.*meetingParticipantIds\.length < 2/);
+  });
+
+  it('starts a call by ensuring the canonical 1:1 thread (no message first)', () => {
+    expect(profileChatSource).toMatch(/getOrCreateAgentThread\(agentId\)/);
+    expect(profileChatSource).toMatch(/setMeetingActive\(tid, true\)/);
+    // a video call also starts the shared camera; audio call does not.
+    expect(profileChatSource).toMatch(/if \(video\) void startCameraStream\(\)/);
   });
 });

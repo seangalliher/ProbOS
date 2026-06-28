@@ -24,7 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from probos.cognitive.cognitive_agent import _dm_recall_query
-from probos.cognitive.salience import visual_reference_score
+from probos.cognitive.salience import suppress_visual_injection, visual_reference_score
 from probos.config import SystemConfig
 from probos.perception.working_memory import VisionObservation, VisionWorkingMemory
 from tests.fixtures.ad1028_golden._capture_golden import (
@@ -159,6 +159,58 @@ def test_visual_reference_score_word_boundary_no_false_positive() -> None:
 def test_visual_reference_score_empty_and_nonstring() -> None:
     assert visual_reference_score("") == 0.0
     assert visual_reference_score(None) == 0.0  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# AD-1060: suppress_visual_injection — adaptive injection-frequency gate
+# ---------------------------------------------------------------------------
+
+
+def test_suppress_off_when_threshold_zero() -> None:
+    # threshold 0 disables suppression entirely (byte-identical to AD-1031).
+    assert suppress_visual_injection(
+        referenced=False, is_visual_task=False, raw_novelty=0.0,
+        decayed_novelty=0.0, novelty_minimum=0.3, suppress_threshold=0.0,
+    ) is False
+
+
+def test_suppress_when_stable_low_novelty() -> None:
+    # stable background: decayed < threshold, raw < min, no ref/task -> suppress.
+    assert suppress_visual_injection(
+        referenced=False, is_visual_task=False, raw_novelty=0.05,
+        decayed_novelty=0.08, novelty_minimum=0.3, suppress_threshold=0.15,
+    ) is True
+
+
+def test_no_suppress_on_visual_reference() -> None:
+    # an explicit visual reference ALWAYS injects.
+    assert suppress_visual_injection(
+        referenced=True, is_visual_task=False, raw_novelty=0.05,
+        decayed_novelty=0.08, novelty_minimum=0.3, suppress_threshold=0.15,
+    ) is False
+
+
+def test_no_suppress_on_visual_task() -> None:
+    assert suppress_visual_injection(
+        referenced=False, is_visual_task=True, raw_novelty=0.05,
+        decayed_novelty=0.08, novelty_minimum=0.3, suppress_threshold=0.15,
+    ) is False
+
+
+def test_no_suppress_on_raw_novelty_spike() -> None:
+    # a sudden change (raw >= min) injects even if the EMA is still low.
+    assert suppress_visual_injection(
+        referenced=False, is_visual_task=False, raw_novelty=0.5,
+        decayed_novelty=0.08, novelty_minimum=0.3, suppress_threshold=0.15,
+    ) is False
+
+
+def test_no_suppress_when_decayed_above_threshold() -> None:
+    # a still-active scene (decayed >= threshold) keeps injecting.
+    assert suppress_visual_injection(
+        referenced=False, is_visual_task=False, raw_novelty=0.05,
+        decayed_novelty=0.2, novelty_minimum=0.3, suppress_threshold=0.15,
+    ) is False
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from probos.threads import ChatThreadStore
 
@@ -100,13 +101,80 @@ def _make_runtime_for_ad791a(
     return runtime
 
 
-def _req(message: str = "hello", thread_id: str | None = None):
+def _req(message: str = "hello", thread_id: str | None = None, *, system_trigger: bool = False):
     r = MagicMock()
     r.message = message
     r.history = []
     r.attachment_ids = []
     r.thread_id = thread_id
+    # AD-1062: explicit so the system_trigger gate never reads a truthy
+    # MagicMock proxy (default False mirrors AgentChatRequest's default).
+    r.system_trigger = system_trigger
     return r
+
+
+# ──────────────────────────────────────────────────────────────────
+# AD-1058 — POST /api/agent/{id}/thread get-or-create (start-call-from-fresh-chat)
+# ──────────────────────────────────────────────────────────────────
+
+async def test_get_or_create_agent_thread_returns_default_thread(tmp_path) -> None:
+    """The endpoint returns the canonical default 1:1 thread (is_default, sole
+    participant) WITHOUT a message having been sent."""
+    from probos.routers.agents import get_or_create_agent_thread
+
+    runtime = _make_runtime_for_ad791a(tmp_path=tmp_path)
+    with _CREW_PATCH:
+        result = await get_or_create_agent_thread("test-agent", runtime)
+
+    assert isinstance(result["id"], str) and result["id"]
+    assert result["participants"] == ["test-agent"]
+    assert result["metadata"].get("is_default") is True
+
+
+async def test_get_or_create_agent_thread_is_idempotent(tmp_path) -> None:
+    """A second call returns the SAME thread — no duplicate row."""
+    from probos.routers.agents import get_or_create_agent_thread
+
+    runtime = _make_runtime_for_ad791a(tmp_path=tmp_path)
+    with _CREW_PATCH:
+        first = await get_or_create_agent_thread("test-agent", runtime)
+        second = await get_or_create_agent_thread("test-agent", runtime)
+    assert first["id"] == second["id"]
+
+
+async def test_eager_thread_reconciles_with_the_dm_path(tmp_path) -> None:
+    """The eagerly-created thread is the SAME one the first DM resolves to, so a
+    call started before any message never forks a parallel thread."""
+    from probos.routers.agents import get_or_create_agent_thread
+
+    runtime = _make_runtime_for_ad791a(tmp_path=tmp_path)
+    with _CREW_PATCH:
+        eager = await get_or_create_agent_thread("test-agent", runtime)
+    # The DM path (agent_chat) resolves via the same store method + callsign title.
+    dm_thread = runtime.chat_thread_store.get_or_create_default_for_agent(
+        "test-agent", "Ezri",
+    )
+    assert dm_thread.id == eager["id"]
+
+
+async def test_get_or_create_agent_thread_404_for_unknown_agent(tmp_path) -> None:
+    from probos.routers.agents import get_or_create_agent_thread
+
+    runtime = _make_runtime_for_ad791a(tmp_path=tmp_path)
+    runtime.registry.get.return_value = None
+    with pytest.raises(HTTPException) as exc:
+        await get_or_create_agent_thread("ghost", runtime)
+    assert exc.value.status_code == 404
+
+
+async def test_get_or_create_agent_thread_400_for_non_crew(tmp_path) -> None:
+    from probos.routers.agents import get_or_create_agent_thread
+
+    runtime = _make_runtime_for_ad791a(tmp_path=tmp_path)
+    with patch("probos.routers.agents.is_crew_agent", return_value=False):
+        with pytest.raises(HTTPException) as exc:
+            await get_or_create_agent_thread("test-agent", runtime)
+    assert exc.value.status_code == 400
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -545,3 +613,86 @@ async def test_agent_chat_dispatched_intent_carries_thread_id(tmp_path) -> None:
     assert sent_intent.thread_id != ""
     threads = runtime.chat_thread_store.list_threads()
     assert sent_intent.thread_id == threads[0].id
+
+
+# ──────────────────────────────────────────────────────────────────
+# AD-1062 — call-open greeting (system_trigger)
+# ──────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_agent_chat_system_trigger_skips_captain_log(tmp_path) -> None:
+    """AD-1062: a system-triggered turn (the call-open greeting) still dispatches
+    ``direct_message`` and persists the agent's reply, but does NOT log the
+    synthetic trigger text as a Captain message. The transcript shows a
+    one-sided greeting, not a fabricated Captain line.
+    """
+    from probos.routers.agents import agent_chat
+
+    runtime = _make_runtime_for_ad791a(tmp_path=tmp_path, response_text="Good to see you.")
+    req = _req(message="(System: call opened — greet briefly.)", system_trigger=True)
+
+    with _CREW_PATCH:
+        result = await agent_chat("test-agent", req, runtime)
+
+    threads = runtime.chat_thread_store.list_threads()
+    assert len(threads) == 1
+    thread = threads[0]
+
+    # Only the agent's greeting is persisted — the synthetic trigger is NOT
+    # logged as a Captain message.
+    msgs = runtime.chat_thread_store.list_messages(thread.id)
+    assert len(msgs) == 1
+    assert msgs[0].role == "agent"
+    assert msgs[0].body == "Good to see you."
+
+    # The reply is surfaced to the caller (the HXI renders it as the greeting).
+    assert result.get("response") == "Good to see you."
+    # The intent still dispatches as a normal direct_message — system_trigger
+    # only gates Captain-side logging, not the agent's turn (so the greeting
+    # keeps the agent's voice + perception context).
+    sent_intent = runtime.intent_bus.send.call_args.args[0]
+    assert sent_intent.intent == "direct_message"
+
+
+@pytest.mark.asyncio
+async def test_agent_chat_system_trigger_does_not_auto_name_thread(tmp_path) -> None:
+    """AD-1062: the synthetic trigger text must never become the thread title.
+    The greeting leaves the default title intact so the Captain's FIRST real
+    message names the thread instead of the stage-direction text.
+    """
+    from probos.routers.agents import agent_chat
+
+    runtime = _make_runtime_for_ad791a(tmp_path=tmp_path, response_text="Hello there.")
+
+    with _CREW_PATCH:
+        await agent_chat(
+            "test-agent",
+            _req(message="(System: call opened — greet the Captain.)", system_trigger=True),
+            runtime,
+        )
+
+    thread = runtime.chat_thread_store.list_threads()[0]
+    title = thread.title or ""
+    assert "System" not in title
+    assert "call opened" not in title.lower()
+    assert "greet" not in title.lower()
+
+
+@pytest.mark.asyncio
+async def test_agent_chat_non_trigger_still_logs_captain(tmp_path) -> None:
+    """AD-1062 guard: a normal DM (system_trigger defaults False) is unchanged —
+    both the Captain message and the agent reply are logged. Proves the gate is
+    specific to system-triggered turns and didn't regress the default path.
+    """
+    from probos.routers.agents import agent_chat
+
+    runtime = _make_runtime_for_ad791a(tmp_path=tmp_path)
+    with _CREW_PATCH:
+        await agent_chat("test-agent", _req(message="Status report."), runtime)
+
+    thread = runtime.chat_thread_store.list_threads()[0]
+    msgs = runtime.chat_thread_store.list_messages(thread.id)
+    assert len(msgs) == 2
+    assert msgs[0].role == "captain"
+    assert msgs[0].body == "Status report."
+    assert msgs[1].role == "agent"

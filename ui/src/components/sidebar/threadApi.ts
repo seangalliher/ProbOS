@@ -131,6 +131,29 @@ export async function getThread(
 }
 
 /**
+ * AD-1058: get-or-create the canonical default 1:1 thread for a crew agent
+ * WITHOUT sending a message — lets the HXI start a call from a fresh chat. The
+ * server returns the SAME race-safe default thread the first DM resolves to, so
+ * a later message reconciles to it (never forks a parallel thread). 404 (unknown
+ * agent) / 400 (non-crew) / parse / !ok all honest-degrade to null.
+ */
+export async function getOrCreateAgentThread(
+  agentId: string,
+): Promise<AD791aChatThreadView | null> {
+  try {
+    const res = await fetch(`/api/agent/${encodeURIComponent(agentId)}/thread`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as AD791aChatThreadView;
+    return data && typeof data.id === 'string' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * AD-920: start/end meeting mode on a group thread.
  * PATCH /api/threads/{id}  body {meeting_active}  -> updated thread.to_dict()
  * (404 honest-degrades to null). The returned thread carries

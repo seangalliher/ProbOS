@@ -354,6 +354,9 @@ def _req(message: str = "look at this", attachment_ids: list[str] | None = None)
     r.message = message
     r.history = []
     r.attachment_ids = attachment_ids or []
+    # AD-1062: explicit False so the new system_trigger gate doesn't read a
+    # truthy MagicMock proxy.
+    r.system_trigger = False
     return r
 
 
