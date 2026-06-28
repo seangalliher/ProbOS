@@ -43,6 +43,13 @@ _SIGNATURES: dict[str, list[tuple[int, bytes]]] = {
     "audio/ogg": [
         (0, b"OggS"),                # Ogg container (any codec)
     ],
+    # BF-643: Office OOXML deliverables are ZIP containers (PK\x03\x04). One
+    # ZIP magic distinguishes them from text/image; the byte-identical magic
+    # across docx/xlsx/pptx is acceptable — the allow-list + extension carry
+    # the type. Agents produce .docx via the AD-1064/code-exec path.
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document":   [(0, b"PK\x03\x04")],
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         [(0, b"PK\x03\x04")],
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": [(0, b"PK\x03\x04")],
 }
 
 # MIMEs whose sigs are alternatives (any-of) instead of conjunctions (all-of).

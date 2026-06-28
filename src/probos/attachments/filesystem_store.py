@@ -46,6 +46,13 @@ _MIME_TO_EXT: dict[str, str] = {
     "text/markdown":     "md",
     "application/json":  "json",
     "text/csv":          "csv",
+    # BF-643: Office document deliverables (agents produce .docx via the
+    # AD-1064/code-exec path; .xlsx/.pptx round out the set). All are ZIP-based
+    # OOXML containers; the allow-list gates persistence, magic-byte signatures
+    # live in ``attachments/mime.py``.
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document":   "docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         "xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
     # AD-721b-1 (Wave 155): browser-captured utterance audio for the
     # rhubarb-lip-sync backend. Magic-byte signatures are registered in
     # ``attachments/mime.py._SIGNATURES``; the store needs the

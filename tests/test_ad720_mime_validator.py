@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from probos.attachments.mime import validate_image_bytes
+from probos.attachments.mime import validate_attachment_bytes, validate_image_bytes
 
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"x" * 16
@@ -10,6 +10,17 @@ _JPEG = b"\xff\xd8\xff\xe0" + b"x" * 16
 _GIF87 = b"GIF87a" + b"x" * 16
 _GIF89 = b"GIF89a" + b"x" * 16
 _WEBP = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"x" * 16
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_DOCX = b"PK\x03\x04" + b"x" * 16
+
+
+def test_validate_docx_happy_bf643():
+    assert validate_attachment_bytes(_DOCX, _DOCX_MIME) == (True, _DOCX_MIME)
+
+
+def test_validate_docx_header_mismatch_rejected_bf643():
+    ok, reason = validate_attachment_bytes(b"not a zip", _DOCX_MIME)
+    assert ok is False and reason == "header_mismatch"
 
 
 def test_validate_png_happy():

@@ -34,6 +34,15 @@ async def test_filesystem_store_write_persists_blob(store, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_filesystem_store_persists_docx_bf643(store):
+    blob = b"PK\x03\x04" + b"x" * 64
+    h = hashlib.sha256(blob).hexdigest()
+    mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    path = await store.write(h, blob, mime)
+    assert path.exists() and path.name == f"{h}.docx"
+
+
+@pytest.mark.asyncio
 async def test_filesystem_store_write_is_idempotent(store):
     blob, h = _make_blob(b"b")
     p1 = await store.write(h, blob, "image/png")
