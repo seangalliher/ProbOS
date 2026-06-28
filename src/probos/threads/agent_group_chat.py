@@ -108,7 +108,17 @@ class AgentGroupChatService:
 
     def _resolve_participant(self, ref: str) -> str | None:
         """Resolve a participant ref (agent_id OR callsign) to a crew agent_id.
-        Tier-2: unresolvable / non-crew refs are dropped, not raised."""
+        Tier-2: unresolvable / non-crew refs are dropped, not raised.
+
+        AD-1076: resolution is LIVENESS-INDEPENDENT. Group-chat membership is
+        persistent — a correctly-named crew peer that is merely idle/asleep at
+        this instant still belongs in the room and sees it when it next runs.
+        ``CallsignRegistry.resolve`` only returns an ``agent_id`` for a LIVE
+        agent (``state in {ACTIVE, DEGRADED}``), but a proactive crew is idle
+        most of the time — so a named-but-resting peer (e.g. the observed
+        ``refs=['Lyra']`` suppression) used to drop, and when it was the only
+        named peer the whole room was AD-966-suppressed. When the live path
+        misses, fall back to any registered crew agent of the resolved type."""
         if not ref or not ref.strip():
             return None
         ref = ref.strip()
@@ -121,8 +131,29 @@ class AgentGroupChatService:
         except Exception:
             logger.debug("AD-918: callsign resolve failed for %s", ref, exc_info=True)
             resolved = None
-        if resolved and resolved.get("agent_id") and self._is_crew(resolved["agent_id"]):
-            return resolved["agent_id"]
+        if not resolved:
+            return None
+        # Live agent of the resolved type (the original AD-918 path).
+        aid = resolved.get("agent_id")
+        if aid and self._is_crew(aid):
+            return aid
+        # AD-1076: liveness-independent fallback. The callsign mapped to a type
+        # but no agent of that type is currently ACTIVE/DEGRADED; resolve to a
+        # registered (idle/resting) crew agent of that type so a resting peer
+        # still joins the persistent room.
+        agent_type = resolved.get("agent_type")
+        if agent_type:
+            try:
+                pool = self._registry.get_by_pool(agent_type) or []
+            except Exception:
+                logger.debug(
+                    "AD-1076: get_by_pool failed for %s", agent_type, exc_info=True,
+                )
+                pool = []
+            for a in pool:
+                cand = getattr(a, "id", None)
+                if cand and self._is_crew(cand):
+                    return cand
         return None
 
     def _rate_ok(self, creator_id: str) -> bool:
