@@ -12,8 +12,10 @@
  * ``selectedArtifactId`` / ``artifactsByThread`` slice that the standalone
  * ``ArtifactDrawer`` owns. The full ``ArtifactDrawer`` is therefore never
  * mounted twice — this rail composes the lighter presentational
- * ``ArtifactList`` instead. Outputs rows open ``/api/artifacts/{id}/content``
- * in a new tab (read-only parity with ``InputsList``).
+ * ``ArtifactList`` instead. BF-642: clicking an Output opens an in-app
+ * ``ArtifactViewer`` preview overlay (Cowork parity) — no new tab. The
+ * standalone ``ArtifactDrawer`` is suppressed in workspace rooms (gated in
+ * ``AgentProfilePanel``) so this is the single Files surface.
  *
  * Collapse state persists under localStorage ``probos.workspaceFiles.collapsed``
  * (mirrors ``ArtifactDrawer``), but defaults to COLLAPSED on first run — the
@@ -27,6 +29,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { InputsList } from '../inputs/InputsList';
 import { fetchThreadInputs, attachTaskInputs, type TaskInput } from '../inputs/inputsApi';
 import { ArtifactList } from '../artifacts/ArtifactList';
+import { ArtifactViewer } from '../artifacts/ArtifactViewer';
 import { fetchThreadArtifacts } from '../artifacts/artifactApi';
 import type { ArtifactView } from '../../store/useStore';
 
@@ -107,12 +110,10 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   }, []);
 
   const openArtifact = useCallback((id: string) => {
+    // BF-642: open the in-app ArtifactViewer preview (Cowork parity) rather
+    // than dumping raw bytes in a new tab. The selected output renders in an
+    // overlay below; the Captain closes it to return to the lists.
     setSelectedId(id);
-    window.open(
-      `/api/artifacts/${encodeURIComponent(id)}/content`,
-      '_blank',
-      'noopener',
-    );
   }, []);
 
   // AD-926a: attach one or more files to the room's work item (task). One
@@ -129,6 +130,8 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   }, [taskId]);
 
   const totalCount = inputs.length + artifacts.length;
+  // BF-642: the output selected for in-app preview (Cowork-style file preview).
+  const selectedArtifact = selectedId ? (artifacts.find((a) => a.id === selectedId) ?? null) : null;
 
   if (collapsed) {
     return (
@@ -183,7 +186,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
       data-testid="workspace-files-rail"
       data-collapsed="false"
       style={{
-        flex: '0 0 300px', width: 300,
+        flex: '0 0 300px', width: 300, position: 'relative',
         background: 'rgba(10, 10, 18, 0.92)',
         borderLeft: '1px solid rgba(240, 176, 96, 0.15)',
         display: 'flex', flexDirection: 'column',
@@ -286,6 +289,46 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
           onSelect={openArtifact}
         />
       </div>
+      {/* BF-642: in-app preview overlay (Cowork parity) — clicking an output
+          opens the ArtifactViewer here instead of a raw new tab. */}
+      {selectedArtifact && (
+        <div
+          data-testid="workspace-files-preview"
+          style={{
+            position: 'absolute', inset: 0, zIndex: 30,
+            display: 'flex', flexDirection: 'column',
+            background: 'rgba(8, 8, 14, 0.98)',
+          }}
+        >
+          <div style={{
+            flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 8,
+            padding: '6px 10px', borderBottom: '1px solid rgba(240, 176, 96, 0.15)',
+          }}>
+            <span style={{ flex: '1 1 auto', fontSize: 11, letterSpacing: 1, color: AMBER, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {selectedArtifact.name}
+            </span>
+            <button
+              type="button" onClick={() => setSelectedId(null)}
+              data-testid="workspace-files-preview-close" title="Close preview"
+              style={{ background: 'transparent', border: 'none', color: DIM, cursor: 'pointer', padding: 4 }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth={1.5} strokeLinecap="round"
+                strokeLinejoin="round" aria-label="close preview">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          </div>
+          <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+            <ArtifactViewer
+              artifact={selectedArtifact}
+              versions={artifacts}
+              onSelectVersion={setSelectedId}
+              projectIdForPinning={null}
+            />
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

@@ -4,7 +4,7 @@
  * The rail is self-fetching, so the inputs/artifact api modules are
  * partially mocked (``importOriginal`` keeps ``attachmentUrl`` real so the
  * composed ``InputsList`` rows still render). Covers the Inputs/Outputs
- * sections, the self-fetch calls, the open-in-new-tab Outputs action, the
+ * sections, the self-fetch calls, the in-app preview Outputs action, the
  * collapse persistence, the default-collapsed-on-first-run behaviour, and
  * the HXI no-emoji guard. localStorage is cleared between tests.
  */
@@ -92,18 +92,16 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     await waitFor(() => expect(fetchThreadArtifacts).toHaveBeenCalledWith('t1'));
   });
 
-  it('opens /api/artifacts/{id}/content in a new tab when an Outputs row is clicked', async () => {
+  it('opens an in-app preview overlay when an Outputs row is clicked (BF-642)', async () => {
     localStorage.setItem('probos.workspaceFiles.collapsed', '0');
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     render(<WorkspaceFilesRail threadId="t1" />);
     const row = await screen.findByTestId('artifact-row-art1');
     fireEvent.click(row);
-    expect(openSpy).toHaveBeenCalledWith(
-      '/api/artifacts/art1/content',
-      '_blank',
-      'noopener',
-    );
-    openSpy.mockRestore();
+    const preview = await screen.findByTestId('workspace-files-preview');
+    expect(preview).toBeTruthy();
+    expect(preview.textContent).toContain('report.md');
+    fireEvent.click(screen.getByTestId('workspace-files-preview-close'));
+    expect(screen.queryByTestId('workspace-files-preview')).toBeNull();
   });
 
   it('collapse toggle persists "1" to localStorage and renders data-collapsed="true"', async () => {

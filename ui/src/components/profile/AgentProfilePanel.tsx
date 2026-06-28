@@ -11,6 +11,7 @@ import { SelfImageTab } from './SelfImageTab';
 import { CrewAvatarPopout } from './CrewAvatarPopout';
 import { deriveAgentSignals } from './avatarSignals';
 import { isGroupChat, chatDisplayName, hostAgentId } from '../chats/chatFilters';
+import { isWorkspaceRoom } from '../workspace/isWorkspaceRoom';
 import type { AgentProfileData, AvatarDSLDict } from '../../store/types';
 
 type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory' | 'self_image' | 'service';
@@ -57,6 +58,13 @@ export function AgentProfilePanel() {
     return t && isGroupChat(t, agents) ? t : null;
   })();
   const isGroupSurface = activeGroupThread !== null;
+  // BF-642: a workspace room already renders WorkspaceFilesRail (Inputs +
+  // Outputs) inside ProfileChatTab. Mounting the standalone ArtifactDrawer
+  // beside it (AD-1074a) double-shows artifacts. Suppress the drawer when the
+  // active thread is a workspace room so a single Cowork-style Files panel owns
+  // the surface; 1:1 chats (no rail) keep the drawer.
+  const activeWorkspaceThread = activeProfileThreadId ? chatThreads.get(activeProfileThreadId) : undefined;
+  const isWorkspaceFilesRoom = isWorkspaceRoom(activeWorkspaceThread, agents);
   const agentId = activeGroupThread
     ? (hostAgentId(activeGroupThread, agents) ?? activeProfileAgent)
     : activeProfileAgent;
@@ -549,7 +557,7 @@ export function AgentProfilePanel() {
             <div style={{ flex: '1 1 auto', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <ProfileChatTab agentId={agentId} />
             </div>
-            <ArtifactDrawer />
+            {!isWorkspaceFilesRoom && <ArtifactDrawer />}
           </div>
         )}
         {effectiveTab === 'work' && <ProfileWorkTab agentId={agentId} />}
