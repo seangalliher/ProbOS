@@ -1059,7 +1059,12 @@ export const useStore = create<HXIState>((set, get) => ({
     activeProfileThreadId: threadId,
     pinnedAgent: null,
   }),
-  closeAgentProfile: () => set({ activeProfileAgent: null }),
+  // BF: clear activeProfileThreadId too. The group/call surface (AD-954a)
+  // renders from the THREAD id and re-derives the host from the thread's
+  // participants, so nulling only activeProfileAgent leaves an agent-created
+  // group chat open (the close ✕ appears to do nothing). A 1:1 keyed on
+  // activeProfileAgent is unaffected (its threadId override is already null).
+  closeAgentProfile: () => set({ activeProfileAgent: null, activeProfileThreadId: null }),
   // AD-513: Crew Manifest actions
   openCrewManifest: async () => {
     set({ crewManifestOpen: true });
@@ -1341,7 +1346,10 @@ export const useStore = create<HXIState>((set, get) => ({
     if (conv) {
       convs.set(agentId, { ...conv, minimized: true });
     }
-    set({ activeProfileAgent: null, agentConversations: convs });
+    // Clear the group-thread override too (AD-954a): the group surface renders
+    // from activeProfileThreadId, so it must be nulled to actually minimize a
+    // group chat (same root cause as the closeAgentProfile fix).
+    set({ activeProfileAgent: null, activeProfileThreadId: null, agentConversations: convs });
   },
   addAgentMessage: (agentId, role, text, opts) => {
     const convs = new Map(get().agentConversations);

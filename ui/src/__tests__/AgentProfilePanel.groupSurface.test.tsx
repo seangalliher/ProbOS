@@ -2,7 +2,7 @@
  *  GROUP thread (>=2 crew), its identity is the group title (not the host agent)
  *  and the agent-scoped tabs collapse to Chat-only. A 1:1 is byte-identical. */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, act } from '@testing-library/react';
 import React from 'react';
 
 vi.mock('@react-three/fiber', () => ({
@@ -160,5 +160,32 @@ describe('AD-965 group surface', () => {
     expect(screen.queryByTestId('group-surface-title')).toBeNull();
     expect(screen.getByText('Work')).toBeTruthy();
     expect(screen.getByText('Health')).toBeTruthy();
+  });
+
+  it('closing an agent-created group surface unmounts the panel', async () => {
+    useStore.setState({
+      activeProfileAgent: HOST,
+      activeProfileThreadId: 'g1',
+      agents: _seedAgents(),
+      chatThreads: new Map([[
+        'g1',
+        {
+          id: 'g1', title: '', participants: ['captain', HOST, PEER],
+          metadata: { created_by_agent: HOST }, created_at: 0, last_active_at: 0,
+        } as any,
+      ]]),
+      profilePanelPos: { x: 0, y: 0 },
+      poolToGroup: { medical: 'medical' },
+      agentConversations: new Map(),
+    });
+    render(<AgentProfilePanel />);
+    await waitFor(() => screen.getByTestId('group-surface-title'));
+
+    // The close handler must dismiss the panel even though activeProfileAgent is
+    // the host re-derived from the thread (the group close bug).
+    act(() => { useStore.getState().closeAgentProfile(); });
+
+    await waitFor(() => expect(screen.queryByTestId('group-surface-title')).toBeNull());
+    expect(useStore.getState().activeProfileThreadId).toBeNull();
   });
 });

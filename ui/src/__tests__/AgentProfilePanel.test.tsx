@@ -24,10 +24,20 @@ describe('AgentProfilePanel store (AD-406)', () => {
     expect(useStore.getState().pinnedAgent).toBeNull();
   });
 
-  it('closeAgentProfile clears activeProfileAgent', () => {
-    useStore.setState({ activeProfileAgent: 'a1' });
+  it('closeAgentProfile clears activeProfileAgent and the group-thread override', () => {
+    // The group/call surface is keyed by activeProfileThreadId (AD-954a), so
+    // close must clear BOTH or an agent-created group chat stays open.
+    useStore.setState({ activeProfileAgent: 'a1', activeProfileThreadId: 'g1' });
     useStore.getState().closeAgentProfile();
     expect(useStore.getState().activeProfileAgent).toBeNull();
+    expect(useStore.getState().activeProfileThreadId).toBeNull();
+  });
+
+  it('minimizeAgentProfile clears the group-thread override too', () => {
+    useStore.setState({ activeProfileAgent: 'a1', activeProfileThreadId: 'g1' });
+    useStore.getState().minimizeAgentProfile();
+    expect(useStore.getState().activeProfileAgent).toBeNull();
+    expect(useStore.getState().activeProfileThreadId).toBeNull();
   });
 
   it('panel hidden when no agent selected', () => {
