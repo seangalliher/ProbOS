@@ -150,6 +150,11 @@ class CodeExecutionTool:
         workdir = scratch_root / f"exec-{uuid.uuid4().hex}"
         try:
             workdir.mkdir(parents=True, exist_ok=True)
+            # AD-1074d: stage the thread's current documents into the workdir so
+            # the script can read + modify them in place (the Cowork round-trip).
+            staged: dict[str, str] = {}
+            if getattr(cfg, "stage_thread_artifacts", False):
+                staged = await self._stage_thread_artifacts(workdir, thread_id, cfg)
             sandbox = SubprocessSandbox(scratch_root=str(scratch_root))
             timeout = self._resolve_timeout(
                 (params or {}).get("timeout"), getattr(cfg, "timeout_seconds", 30),
@@ -164,7 +169,9 @@ class CodeExecutionTool:
                     allow_network=False,
                 )
             )
-            produced = await self._capture_artifacts(workdir, thread_id, created_by)
+            produced = await self._capture_artifacts(
+                workdir, thread_id, created_by, staged,
+            )
             return ToolResult(
                 output={
                     "stdout": res.stdout,
@@ -187,16 +194,67 @@ class CodeExecutionTool:
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
+    async def _stage_thread_artifacts(
+        self, workdir: Path, thread_id: str, cfg: Any,
+    ) -> dict[str, str]:
+        """AD-1074d: copy the thread's current artifacts (latest version of each
+        name) into ``workdir`` so a script can read + modify them in place (the
+        Cowork round-trip). Returns ``{name: content_hash}`` of what was staged
+        so ``_capture_artifacts`` can skip unchanged inputs. Honest-degrade: no
+        stores / no thread / a missing blob => stage what it can, never raise."""
+        artifact_store = getattr(self._runtime, "artifact_store", None)
+        attachment_store = getattr(self._runtime, "attachment_store", None)
+        if artifact_store is None or attachment_store is None or not thread_id:
+            return {}
+        try:
+            latest = artifact_store.list_thread_latest(thread_id)
+        except Exception:
+            logger.warning(
+                "AD-1074d: could not list artifacts for thread %s; staging skipped",
+                thread_id, exc_info=True,
+            )
+            return {}
+        cap = max(0, int(getattr(cfg, "max_staged_artifacts", 20)))
+        staged: dict[str, str] = {}
+        for art in latest[:cap]:
+            name = getattr(art, "name", "")
+            # Never stage the sandbox's own script, or a name that would escape
+            # the workdir (path traversal / nested paths).
+            if not name or name == _SCRIPT_NAME or "/" in name or "\\" in name:
+                continue
+            if getattr(art, "size_bytes", 0) > _MAX_ARTIFACT_BYTES:
+                continue
+            try:
+                blob = await attachment_store.read(art.content_hash)
+            except Exception:
+                logger.warning(
+                    "AD-1074d: blob missing for staged artifact %s; skipping it",
+                    name,
+                )
+                continue
+            try:
+                (workdir / name).write_bytes(blob)
+            except OSError:
+                continue
+            staged[name] = art.content_hash
+        return staged
+
     async def _capture_artifacts(
         self, workdir: Path, thread_id: str, created_by: str,
+        staged: dict[str, str] | None = None,
     ) -> list[dict]:
         """Persist every file the script produced (except the sandbox script)
         to the AD-797 stores and return their metadata. Honest-degrade: no
-        stores or no thread_id ⇒ nothing captured (stdout still returns)."""
+        stores or no thread_id => nothing captured (stdout still returns).
+
+        AD-1074d: ``staged`` maps ``name -> content_hash`` for documents copied
+        into the workdir before the run; a produced file whose name+hash matches
+        a staged input is an unchanged read and is NOT re-versioned."""
         artifact_store = getattr(self._runtime, "artifact_store", None)
         attachment_store = getattr(self._runtime, "attachment_store", None)
         if artifact_store is None or attachment_store is None or not thread_id:
             return []
+        staged = staged or {}
         out: list[dict] = []
         for p in sorted(workdir.rglob("*")):
             if not p.is_file():
@@ -213,9 +271,13 @@ class CodeExecutionTool:
             if not blob or len(blob) > _MAX_ARTIFACT_BYTES:
                 continue
             name = p.name
+            content_hash = hashlib.sha256(blob).hexdigest()
+            # AD-1074d: a staged input the script left untouched - don't create a
+            # spurious new version of a document the agent only read.
+            if staged.get(name) == content_hash:
+                continue
             mime = _mime_for(name)
             try:
-                content_hash = hashlib.sha256(blob).hexdigest()
                 await attachment_store.write(
                     content_hash, blob, mime, origin="agent_artifact",
                 )

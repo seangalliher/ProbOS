@@ -3129,6 +3129,16 @@ class ExecutionConfig(BaseModel):
     timeout_seconds: float = 30.0
     max_output_bytes: int = 65536           # 64 KB per stream
     max_memory_mb: int = 512                # RLIMIT_AS on POSIX; advisory on Windows
+    # AD-1074d: stage the chat thread's current artifacts (the latest version of
+    # each name) into the sandbox working folder BEFORE the script runs, so a
+    # crew agent can READ + MODIFY an existing document (the Cowork round-trip:
+    # "change the heading to bold"). Only files the script actually changes — or
+    # newly creates — are re-captured as a new version; unchanged staged inputs
+    # are skipped. Default OFF (behavior-preserving: the workdir is empty as
+    # before). ``max_staged_artifacts`` caps how many documents are copied in so
+    # a thread with many artifacts can't bloat the sandbox.
+    stage_thread_artifacts: bool = False
+    max_staged_artifacts: int = 20
     # Library installation (pip into a per-task ephemeral venv). Separately
     # gated because installing arbitrary PyPI packages is a supply-chain risk;
     # the package names are surfaced in the consensus-gated intent.
