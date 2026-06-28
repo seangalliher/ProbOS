@@ -19,12 +19,12 @@ vi.mock('../../artifacts/artifactApi', async (importOriginal) => {
 });
 vi.mock('../todosApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../todosApi')>();
-  return { ...actual, fetchTaskSteps: vi.fn(), updateTaskStep: vi.fn() };
+  return { ...actual, fetchTaskSteps: vi.fn(), updateTaskStep: vi.fn(), ensureRoomTask: vi.fn() };
 });
 
 import { fetchThreadInputs } from '../../inputs/inputsApi';
 import { fetchThreadArtifacts } from '../../artifacts/artifactApi';
-import { fetchTaskSteps, updateTaskStep } from '../todosApi';
+import { fetchTaskSteps, updateTaskStep, ensureRoomTask } from '../todosApi';
 import { WorkspaceFilesRail } from '../WorkspaceFilesRail';
 import { TodosList } from '../TodosList';
 
@@ -41,6 +41,7 @@ beforeEach(() => {
   vi.mocked(fetchThreadArtifacts).mockResolvedValue([] as ArtifactView[]);
   vi.mocked(fetchTaskSteps).mockResolvedValue(STEPS);
   vi.mocked(updateTaskStep).mockResolvedValue();
+  vi.mocked(ensureRoomTask).mockResolvedValue('wi-bound');
 });
 afterEach(() => { cleanup(); localStorage.clear(); vi.clearAllMocks(); });
 
@@ -51,9 +52,16 @@ describe('WorkspaceFilesRail TODOS (AD-1083)', () => {
   });
 
   it('hides TODOS when there is no bound task', async () => {
+    vi.mocked(ensureRoomTask).mockRejectedValueOnce(new Error('no engine'));
     render(<WorkspaceFilesRail threadId="t1" />);
     await waitFor(() => expect(fetchThreadInputs).toHaveBeenCalled());
     expect(screen.queryByTestId('workspace-files-todos')).toBeNull();
+  });
+
+  it('AD-1084: a task-less workspace room self-binds a task and shows TODOS', async () => {
+    render(<WorkspaceFilesRail threadId="t1" />);
+    await waitFor(() => expect(ensureRoomTask).toHaveBeenCalledWith('t1', expect.any(String)));
+    expect(await screen.findByTestId('workspace-files-todos')).toBeTruthy();
   });
 
   it('Captain confirm PATCHes the submitted step to done', async () => {

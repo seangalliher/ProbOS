@@ -34,7 +34,7 @@ import { ArtifactList } from '../artifacts/ArtifactList';
 import { ArtifactViewer } from '../artifacts/ArtifactViewer';
 import { fetchThreadArtifacts } from '../artifacts/artifactApi';
 import { TodosList } from './TodosList';
-import { fetchTaskSteps, updateTaskStep, type TodoStep } from './todosApi';
+import { fetchTaskSteps, updateTaskStep, ensureRoomTask, type TodoStep } from './todosApi';
 import type { ArtifactView } from '../../store/useStore';
 
 const AMBER = '#f0b060';
@@ -74,7 +74,22 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   const [inputs, setInputs] = useState<TaskInput[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [steps, setSteps] = useState<TodoStep[]>([]);
+  const [localTaskId, setLocalTaskId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // AD-1084: a workspace room without a bound task self-binds one so the Todo
+  // loop + Inputs have somewhere to land (Captain-made rooms get no task_id).
+  const effectiveTaskId = taskId ?? localTaskId;
+  useEffect(() => {
+    if (taskId || !threadId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const id = await ensureRoomTask(threadId, 'Room workspace');
+        if (!cancelled) setLocalTaskId(id);
+      } catch { /* honest-degrade: room stays task-less */ }
+    })();
+    return () => { cancelled = true; };
+  }, [taskId, threadId]);
   // Default-collapsed on first run (null from storage). Divergence from
   // ArtifactDrawer's default-expanded — justified by the 420px floating
   // AgentProfilePanel host (see module header).
@@ -125,32 +140,32 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   // multipart request for all files (mirrors ProfileChatTab.uploadAttachment).
   // On success the rail's local inputs state is replaced by the returned list.
   const handleAttach = useCallback(async (picked: File[]) => {
-    if (!taskId || picked.length === 0) return;
+    if (!effectiveTaskId || picked.length === 0) return;
     try {
-      const updated = await attachTaskInputs(taskId, picked);
+      const updated = await attachTaskInputs(effectiveTaskId, picked);
       setInputs(updated);
     } catch {
       // honest-degrade — the attach failed; the rail keeps its current list.
     }
-  }, [taskId]);
+  }, [effectiveTaskId]);
 
   // AD-1083: load the room Todo checklist when the task changes, and on
   // confirm/reject by the Captain. Honest-degrade to [] (no task / no steps).
   const refreshSteps = useCallback(async () => {
-    if (!taskId) { setSteps([]); return; }
-    try { setSteps(await fetchTaskSteps(taskId)); } catch { setSteps([]); }
-  }, [taskId]);
+    if (!effectiveTaskId) { setSteps([]); return; }
+    try { setSteps(await fetchTaskSteps(effectiveTaskId)); } catch { setSteps([]); }
+  }, [effectiveTaskId]);
   useEffect(() => { void refreshSteps(); }, [refreshSteps]);
   const handleConfirm = useCallback(async (idx: number) => {
-    if (!taskId) return;
-    try { await updateTaskStep(taskId, idx, { status: 'done', actor: 'captain' }); } catch { /* keep list */ }
+    if (!effectiveTaskId) return;
+    try { await updateTaskStep(effectiveTaskId, idx, { status: 'done', actor: 'captain' }); } catch { /* keep list */ }
     void refreshSteps();
-  }, [taskId, refreshSteps]);
+  }, [effectiveTaskId, refreshSteps]);
   const handleReject = useCallback(async (idx: number) => {
-    if (!taskId) return;
-    try { await updateTaskStep(taskId, idx, { status: 'rejected', actor: 'captain' }); } catch { /* keep list */ }
+    if (!effectiveTaskId) return;
+    try { await updateTaskStep(effectiveTaskId, idx, { status: 'rejected', actor: 'captain' }); } catch { /* keep list */ }
     void refreshSteps();
-  }, [taskId, refreshSteps]);
+  }, [effectiveTaskId, refreshSteps]);
   const doneCount = steps.filter((s) => s.status === 'done').length;
 
   const totalCount = inputs.length + artifacts.length + steps.length;
@@ -253,7 +268,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
       {/* AD-1083: room Todo checklist (the AD-1080 senior-validation loop). Only
           when the room has a bound task; the Captain confirms/rejects submitted
           steps inline. */}
-      {taskId && (
+      {effectiveTaskId && (
         <div data-testid="workspace-files-todos" style={{ flex: '0 0 auto', maxHeight: '34%', overflowY: 'auto', borderBottom: '1px solid rgba(240, 176, 96, 0.10)' }}>
           <div
             data-testid="workspace-files-todos-label"
@@ -275,7 +290,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
           }}
         >
           <span style={{ flex: '1 1 auto' }}>INPUTS</span>
-          {taskId && (
+          {effectiveTaskId && (
             <label
               data-testid="workspace-files-attach"
               title="Attach files to this task"
