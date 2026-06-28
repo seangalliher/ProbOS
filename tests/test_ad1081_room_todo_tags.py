@@ -83,6 +83,7 @@ def _runtime(store, *, trust: float, enabled: bool = True, task_id: str | None =
         config=SimpleNamespace(
             communications=SimpleNamespace(
                 room_todos_enabled=enabled, room_todos_min_rank="commander",
+                room_todos_seed_min_rank="ensign",
             ),
         ),
     )
@@ -111,11 +112,13 @@ async def test_senior_seeds_plan_and_strips_tags(store):
 
 
 @pytest.mark.asyncio
-async def test_non_senior_cannot_seed_plan(store):
+async def test_any_crew_can_seed_plan_ad1082(store):
     wi = await store.create_work_item(title="T", work_type="task")
     rt = _runtime(store, trust=0.4, task_id=wi.id)  # ensign
     await DmReplyPipeline(_ctx(rt, response_text="[TODOS]\n- a\n[/TODOS]", agent_id="ensign-1")).step_4l_extract_todos()
-    assert (await store.get_work_item(wi.id)).steps == []  # plan-seed is senior-gated
+    # AD-1082: plan-seed is open (room_todos_seed_min_rank default 'ensign') so
+    # the asked agent can write the checklist; only confirm/reject stay gated.
+    assert [s["label"] for s in (await store.get_work_item(wi.id)).steps] == ["a"]
 
 
 @pytest.mark.asyncio
@@ -170,3 +173,34 @@ async def test_no_task_link_strips_only(store):
     await DmReplyPipeline(ctx).step_4l_extract_todos()
     assert "[TODO_DONE" not in ctx.response_text  # stripped so it never reaches the transcript
     assert "hello" in ctx.response_text
+
+
+# ---------------- AD-1082: agents are taught the tags ----------------
+
+
+def _proto_self(enabled: bool):
+    return SimpleNamespace(
+        _runtime=SimpleNamespace(
+            config=SimpleNamespace(
+                communications=SimpleNamespace(room_todos_enabled=enabled),
+            ),
+        ),
+    )
+
+
+def test_room_todo_protocol_taught_in_group_when_enabled():
+    from probos.cognitive.cognitive_agent import CognitiveAgent
+    txt = CognitiveAgent._conversational_room_todo_protocol(
+        _proto_self(True), {"params": {"is_group_chat": True}}
+    )
+    assert "[TODOS]" in txt and "[TODO_DONE n]" in txt and "[TODO_CONFIRM n]" in txt
+
+
+def test_room_todo_protocol_silent_off_or_one_to_one():
+    from probos.cognitive.cognitive_agent import CognitiveAgent
+    assert CognitiveAgent._conversational_room_todo_protocol(
+        _proto_self(False), {"params": {"is_group_chat": True}}
+    ) == ""
+    assert CognitiveAgent._conversational_room_todo_protocol(
+        _proto_self(True), {"params": {"is_group_chat": False}}
+    ) == ""

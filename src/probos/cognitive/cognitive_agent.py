@@ -2415,6 +2415,34 @@ class CognitiveAgent(BaseAgent):
             "turn, address them by name and they will be invited to respond."
         )
 
+    def _conversational_room_todo_protocol(self, observation: dict) -> str:
+        """AD-1082: teach the room-Todo checklist tags so an agent asked to plan
+        a task in a workspace room actually drives the AD-1080 senior-validation
+        loop instead of guessing the tag (a live test had an agent write [TODO]
+        / [TODO @peer], which the parser ignores). Gated on the group fan-out
+        param ``is_group_chat`` + ``CommunicationsConfig.room_todos_enabled`` so
+        1:1 DMs and flag-off systems are byte-identical. Universal (all crew),
+        like the AD-912 notebook capability. Overridable (Open/Closed).
+        Gap-regex-safe (no can't/cannot/don't have/unable to/not able to)."""
+        params = observation.get("params") or {}
+        if not params.get("is_group_chat"):
+            return ""
+        comm = getattr(getattr(self, "_runtime", None), "config", None)
+        comm = getattr(comm, "communications", None)
+        if not getattr(comm, "room_todos_enabled", False):
+            return ""
+        return (
+            "\n\nShared task checklist: when this room is working a task, track "
+            "it as a numbered checklist. To set the plan, list the steps inside "
+            "[TODOS] and [/TODOS], one step per line. Mark your own step "
+            "finished with [TODO_DONE n] (n is the step number). A senior or the "
+            "facilitator confirms finished work with [TODO_CONFIRM n] or returns "
+            "it with [TODO_REJECT n: reason] — a step counts as complete only "
+            "once a senior confirms it. If a step yields a document, save it with "
+            "the artifact tag so it lands in Outputs. Put the tags inline in your "
+            "reply; they are applied and hidden from the transcript."
+        )
+
     def _conversational_proactivity_protocol(self, observation: dict) -> str:
         """AD-950 (Natural Conversation epic, #886): teach the discourse OBLIGATION
         to ADVANCE a live conversation. On the 1:1/group ``direct_message`` reply
@@ -3111,6 +3139,14 @@ class CognitiveAgent(BaseAgent):
             _room_proto = self._conversational_room_awareness_protocol(observation)
             if _room_proto:
                 composed += _room_proto
+            # AD-1082: room-Todo checklist protocol. Overridable hook; base
+            # returns "" unless this is a group fan-out AND room_todos_enabled.
+            # Teaches the [TODOS]/[TODO_DONE n]/[TODO_CONFIRM n]/[TODO_REJECT n]
+            # tags so an agent asked to plan a task drives the AD-1080 loop
+            # instead of guessing a tag the parser ignores. Composes above.
+            _todo_proto = self._conversational_room_todo_protocol(observation)
+            if _todo_proto:
+                composed += _todo_proto
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),

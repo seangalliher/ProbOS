@@ -5271,6 +5271,10 @@ class CommunicationsConfig(BaseModel):
         default="commander",
         description="AD-1081: min rank to seed the plan + confirm/reject Todos (the senior/facilitator): ensign|lieutenant|commander|senior",
     )
+    room_todos_seed_min_rank: str = Field(
+        default="ensign",
+        description="AD-1082: min rank to SEED the plan ([TODOS]) — open to any crew so the asked agent can plan; confirm/reject stay at room_todos_min_rank.",
+    )
     # AD-928: agent-authored [STATUS] -> task-room "show your work" activity.
     status_min_rank: str = "lieutenant"  # min rank to post a status into a task room: ensign|lieutenant|commander|senior
     status_max_per_turn: int = 3         # anti-flood: honor at most this many [STATUS] tags per proactive turn

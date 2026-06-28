@@ -1349,6 +1349,17 @@ class DmReplyPipeline:
         """AD-1081: True iff the actor's rank >= ``room_todos_min_rank`` (the
         senior/facilitator who owns the plan + validation). Honest-degrade to
         False on any error (deny the privileged action, never raise)."""
+        return self._todo_actor_meets(agent_id, "room_todos_min_rank", "commander")
+
+    def _todo_actor_can_seed(self, agent_id: str) -> bool:
+        """AD-1082: True iff the actor's rank >= ``room_todos_seed_min_rank``.
+        Seeding the plan is open by default (any crew can write the checklist
+        the Captain asked for); only confirm/reject stay senior-gated."""
+        return self._todo_actor_meets(agent_id, "room_todos_seed_min_rank", "ensign")
+
+    def _todo_actor_meets(self, agent_id: str, field: str, fallback: str) -> bool:
+        """AD-1082: True iff the actor's rank >= the named config min-rank.
+        Honest-degrade to False on any error (deny, never raise)."""
         rt = self.ctx.runtime
         try:
             from probos.crew_profile import Rank
@@ -1357,12 +1368,12 @@ class DmReplyPipeline:
                 return False
             rank = Rank.from_trust(tn.get_score(agent_id))
             comms = getattr(getattr(rt, "config", None), "communications", None)
-            min_str = str(getattr(comms, "room_todos_min_rank", "commander"))
+            min_str = str(getattr(comms, field, fallback))
             order = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
             min_rank = (
                 Rank[min_str.upper()]
                 if min_str.upper() in Rank.__members__
-                else Rank.COMMANDER
+                else Rank[fallback.upper()]
             )
             return order.index(rank) >= order.index(min_rank)
         except Exception:
@@ -1370,11 +1381,12 @@ class DmReplyPipeline:
 
     async def _apply_room_todos(self, store: Any, task_id: str, parsed: Any) -> None:
         """AD-1081: apply parsed room-todo intents to the task work item. The
-        plan-seed + confirm/reject are SENIOR-gated (the facilitator owns the
-        plan and validation); a worker may self-report its own step (submit)."""
+        confirm/reject are SENIOR-gated (the facilitator owns validation); plan
+        seeding is open (AD-1082) so the asked agent can write the checklist; a
+        worker may self-report its own step (submit)."""
         actor = self.ctx.agent_id or "agent"
         is_senior = self._todo_actor_is_senior(actor)
-        if parsed.plan is not None and is_senior:
+        if parsed.plan is not None and self._todo_actor_can_seed(actor):
             await store.set_steps(task_id, parsed.plan, gate_completion=True)
         for idx in parsed.submit:
             await store.update_step(task_id, idx, status="submitted", actor=actor)
