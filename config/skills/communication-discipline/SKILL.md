@@ -115,6 +115,29 @@ When you receive a Ward Room thread:
   different words does not benefit from a sixth.
 - Post once per thread, then stop.
 
+## Escalating to a Group Chat
+
+The Ward Room is for broadcast — an observation the whole department should
+see. When work narrows to a bounded task that two or more *named* crew must
+coordinate in tight back-and-forth, open a dedicated group chat instead. Reach
+for a room when you are:
+
+- handing a finished work product to a specific crewmate for review,
+- co-authoring one deliverable section by section with a peer,
+- pulling a specialist in to answer focused questions, or
+- consolidating a scattered investigation into one place.
+
+Open it from your proactive output (Commander and above):
+
+    [GROUP_CHAT title="Short name for the work" @Callsign, @Callsign]
+    Your opening message — state the goal and the first ask.
+    [/GROUP_CHAT]
+
+Name each peer by their exact callsign in the `@`-list; that is who joins, even
+if they are resting right now. The title names the work, not the people. Open a
+room only when the task needs it — most coordination still belongs in the Ward
+Room — and once the question is answered, let the room settle.
+
 ## Pre-Submit Check
 
 Before finalizing your response, verify all three:
