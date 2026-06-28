@@ -155,6 +155,11 @@ class CodeExecutionTool:
             staged: dict[str, str] = {}
             if getattr(cfg, "stage_thread_artifacts", False):
                 staged = await self._stage_thread_artifacts(workdir, thread_id, cfg)
+            # AD-1073: detect missing imports and (approval-gated) install them
+            # BEFORE the run, reusing runtime.ensure_dependency. Default-OFF and
+            # byte-identical to AD-1066 when dependency.dynamic_install_enabled is
+            # False (returns None => no behavior change, no extra output key).
+            dep_summary = await self._maybe_install_missing(code)
             sandbox = SubprocessSandbox(scratch_root=str(scratch_root))
             timeout = self._resolve_timeout(
                 (params or {}).get("timeout"), getattr(cfg, "timeout_seconds", 30),
@@ -172,16 +177,19 @@ class CodeExecutionTool:
             produced = await self._capture_artifacts(
                 workdir, thread_id, created_by, staged,
             )
+            output: dict[str, Any] = {
+                "stdout": res.stdout,
+                "stderr": res.stderr,
+                "exit_code": res.exit_code,
+                "success": res.success,
+                "timed_out": res.timed_out,
+                "artifacts": [a["name"] for a in produced],
+                "artifact_details": produced,
+            }
+            if dep_summary is not None:
+                output["dependencies"] = dep_summary
             return ToolResult(
-                output={
-                    "stdout": res.stdout,
-                    "stderr": res.stderr,
-                    "exit_code": res.exit_code,
-                    "success": res.success,
-                    "timed_out": res.timed_out,
-                    "artifacts": [a["name"] for a in produced],
-                    "artifact_details": produced,
-                },
+                output=output,
                 error=(res.error or None),
                 duration_ms=(time.monotonic() - t0) * 1000.0,
             )
@@ -193,6 +201,53 @@ class CodeExecutionTool:
             return ToolResult(error=f"execution failed: {exc}")
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
+
+    async def _maybe_install_missing(self, code: str) -> dict | None:
+        """AD-1073: detect missing third-party imports in ``code`` and, when the
+        operator has opted in (``dependency.dynamic_install_enabled``), route them
+        through ``runtime.ensure_dependency`` - the existing approval-gated
+        detect -> approve -> install -> verify path (AD-838c). Installing into the
+        runtime venv (which the AD-1066 sandbox shares via ``sys.executable``)
+        means the very next run can import the package.
+
+        Returns a summary dict (``missing`` / ``installed`` / ``declined`` /
+        ``error``) for the tool output, or ``None`` when the feature is OFF or
+        nothing is missing - keeping the default-OFF path byte-identical. Honest-
+        degrade (AD-592): when no approval surface is wired, ``ensure_dependency``
+        hard-declines and the script simply runs and reports the import error."""
+        dep_cfg = getattr(getattr(self._runtime, "config", None), "dependency", None)
+        if dep_cfg is None or not getattr(dep_cfg, "dynamic_install_enabled", False):
+            return None
+        resolver = getattr(self._runtime, "dependency_resolver", None)
+        ensure = getattr(self._runtime, "ensure_dependency", None)
+        if resolver is None or ensure is None:
+            return None
+        try:
+            missing = resolver.detect_missing(code)
+        except Exception:
+            logger.warning("AD-1073: detect_missing failed", exc_info=True)
+            return None
+        if not missing:
+            return None
+        try:
+            res = await ensure(missing)
+        except Exception:
+            logger.warning(
+                "AD-1073: ensure_dependency raised for %s", missing, exc_info=True,
+            )
+            return {
+                "missing": missing, "installed": [], "declined": [],
+                "error": "install attempt failed",
+            }
+        return {
+            "missing": missing,
+            "installed": list(getattr(res, "installed", []) or []),
+            "declined": (
+                list(getattr(res, "declined", []) or [])
+                + list(getattr(res, "failed", []) or [])
+            ),
+            "error": getattr(res, "error", None),
+        }
 
     async def _stage_thread_artifacts(
         self, workdir: Path, thread_id: str, cfg: Any,
