@@ -13,24 +13,29 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import DOMPurify from 'dompurify';
 import type { ArtifactView } from '../../store/useStore';
 import { useStore } from '../../store/useStore';
 import { fetchArtifactContent, pinArtifactToProject } from './artifactApi';
 
 const AMBER = '#f0b060';
 const DIM = '#888899';
+// AD-1074b: the OOXML Word mime - rendered to sanitized HTML via mammoth.
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 interface ContentState {
   status: 'idle' | 'loading' | 'ready' | 'error';
   text: string;
   blob: Blob | null;
   imageUrl: string | null;
+  html: string;             // AD-1074b: docx -> mammoth-converted, sanitized HTML
+  objectUrl: string | null; // AD-1074b: pdf -> blob URL for the native viewer
   mime: string;
   error: string | null;
 }
 
 const EMPTY_STATE: ContentState = {
-  status: 'idle', text: '', blob: null, imageUrl: null, mime: '', error: null,
+  status: 'idle', text: '', blob: null, imageUrl: null, html: '', objectUrl: null, mime: '', error: null,
 };
 
 export interface ArtifactViewerProps {
@@ -57,29 +62,43 @@ export function ArtifactViewer(props: ArtifactViewerProps) {
         if (mime.startsWith('image/')) {
           const url = URL.createObjectURL(blob);
           revoked = url;
-          setContent({
-            status: 'ready', text: '', blob, imageUrl: url, mime, error: null,
-          });
+          setContent({ ...EMPTY_STATE, status: 'ready', blob, imageUrl: url, mime });
           return;
         }
         if (mime.startsWith('text/uri-list')) {
-          // Body is the URL — parse, render <img>.
+          // Body is the URL - parse, render <img>.
           const urlText = text.split('\n').find((l) => l.trim() && !l.startsWith('#')) || '';
-          setContent({
-            status: 'ready', text: urlText, blob, imageUrl: urlText, mime,
-            error: null,
-          });
+          setContent({ ...EMPTY_STATE, status: 'ready', text: urlText, blob, imageUrl: urlText, mime });
           return;
         }
-        setContent({
-          status: 'ready', text, blob, imageUrl: null, mime, error: null,
-        });
+        // AD-1074b: PDF renders natively in the browser / Electron PDF viewer.
+        if (mime === 'application/pdf') {
+          const url = URL.createObjectURL(blob);
+          revoked = url;
+          setContent({ ...EMPTY_STATE, status: 'ready', blob, objectUrl: url, mime });
+          return;
+        }
+        // AD-1074b: DOCX -> mammoth (docx -> HTML) -> DOMPurify-sanitized HTML.
+        if (mime === DOCX_MIME) {
+          try {
+            const mod = await import('mammoth/mammoth.browser');
+            const mammoth = ((mod as unknown as { default?: unknown }).default ?? mod) as {
+              convertToHtml: (o: { arrayBuffer: ArrayBuffer }) => Promise<{ value: string }>;
+            };
+            const conv = await mammoth.convertToHtml({ arrayBuffer: await blob.arrayBuffer() });
+            if (cancelled) return;
+            const safe = DOMPurify.sanitize(String(conv?.value ?? ''));
+            setContent({ ...EMPTY_STATE, status: 'ready', blob, html: safe, mime });
+          } catch {
+            // Honest-degrade: preview unavailable; the toolbar SAVE still works.
+            if (!cancelled) setContent({ ...EMPTY_STATE, status: 'ready', blob, mime, error: 'preview-unavailable' });
+          }
+          return;
+        }
+        setContent({ ...EMPTY_STATE, status: 'ready', text, blob, mime });
       } catch (e) {
         if (cancelled) return;
-        setContent({
-          status: 'error', text: '', blob: null, imageUrl: null, mime: '',
-          error: String(e),
-        });
+        setContent({ ...EMPTY_STATE, status: 'error', error: String(e) });
       }
     })();
 
@@ -166,6 +185,34 @@ export function ArtifactViewer(props: ArtifactViewerProps) {
           data-testid="artifact-image"
           style={{ maxWidth: '100%', maxHeight: '100%' }}
         />
+      );
+    }
+    // AD-1074b: PDF - the browser's native viewer in an iframe.
+    if (m === 'application/pdf' && content.objectUrl) {
+      return (
+        <iframe
+          data-testid="artifact-pdf"
+          src={content.objectUrl}
+          title={artifact.name}
+          style={{ width: '100%', height: '100%', minHeight: 520, border: 'none', background: '#fff' }}
+        />
+      );
+    }
+    // AD-1074b: DOCX - mammoth-converted, DOMPurify-sanitized HTML.
+    if (m === DOCX_MIME) {
+      if (content.html) {
+        return (
+          <div
+            data-testid="artifact-docx"
+            style={{ fontSize: 13, lineHeight: 1.5, color: '#e0dcd4' }}
+            dangerouslySetInnerHTML={{ __html: content.html }}
+          />
+        );
+      }
+      return (
+        <div data-testid="artifact-docx-degraded" style={{ color: DIM, fontSize: 12 }}>
+          Preview unavailable - use SAVE to download.
+        </div>
       );
     }
     if (m === 'text/markdown') {
