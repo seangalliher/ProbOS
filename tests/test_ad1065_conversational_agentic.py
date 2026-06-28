@@ -52,13 +52,20 @@ class _EmptyExecutor:
 
 
 def _agent(runtime):
-    return SimpleNamespace(
+    agent = SimpleNamespace(
         _runtime=runtime,
         _llm_client=object(),
         id="agent-1",
         department="science",
         rank="lieutenant",
     )
+    # AD-1070a: _maybe_run_conversational_agentic now delegates its gate to
+    # self._conversational_agentic_will_run; bind the real method so the
+    # unbound-method-with-SimpleNamespace-self pattern resolves it.
+    agent._conversational_agentic_will_run = (
+        lambda obs: CognitiveAgent._conversational_agentic_will_run(agent, obs)
+    )
+    return agent
 
 
 def _runtime(*, enabled: bool, **cfg):
@@ -85,7 +92,7 @@ async def test_flag_off_returns_none() -> None:
 
 
 async def test_no_runtime_returns_none() -> None:
-    agent = SimpleNamespace(_runtime=None, _llm_client=object(), id="a")
+    agent = _agent(None)
     assert await _call(agent, _dm_obs()) is None
 
 

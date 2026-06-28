@@ -3059,8 +3059,14 @@ class CognitiveAgent(BaseAgent):
             # save a downloadable document when the Captain asks — instead of
             # confabulating a [MESH create_file ...] write verb (the [MESH ...]
             # seam is read-only). Sits next to the notebook protocol.
+            # AD-1070a: when the conversational agentic loop will handle this
+            # turn it offers run_python (real .docx / .xlsx / .pdf via the
+            # AD-1066 produced-file artifact capture), so DON'T also teach the
+            # AD-1064 <artifact> markdown reply-tag - it competes and yields a
+            # markdown body mislabeled with a binary mime. Single-pass turns
+            # (flag off / group / vision) keep the reply-tag path.
             _artifact_block = self._conversational_artifact_block(observation)
-            if _artifact_block:
+            if _artifact_block and not self._conversational_agentic_will_run(observation):
                 composed += _artifact_block
             # AD-934 (Option C): deliberate re-roll protocol. Overridable hook;
             # base returns "" unless config.dm_deliberate.enabled (default OFF),
@@ -3307,6 +3313,31 @@ class CognitiveAgent(BaseAgent):
 
         return decision
 
+    def _conversational_agentic_will_run(self, observation: dict) -> bool:
+        """AD-1065 / AD-1070a: True iff the conversational agentic (tool-calling)
+        loop will handle this turn. Gates: a wired runtime,
+        ``config.dm_agentic.enabled``, a 1:1 ``direct_message`` (not group /
+        ward-room / proactive), and no vision (multimodal turns are single-pass).
+
+        Single source of truth for "is the loop active for this turn?" - used both
+        to dispatch the loop and (AD-1070a) to suppress the single-pass reply-tag
+        teaching hooks (e.g. the AD-1064 ``<artifact>`` tag) that the loop's real
+        tools (``run_python``) replace."""
+        runtime = getattr(self, "_runtime", None)
+        if runtime is None:
+            return False
+        cfg = getattr(getattr(runtime, "config", None), "dm_agentic", None)
+        if not getattr(cfg, "enabled", False):
+            return False
+        if observation.get("intent") != "direct_message":
+            return False
+        params = observation.get("params", {}) or {}
+        if params.get("is_group_chat"):
+            return False
+        if params.get("vision_messages"):
+            return False
+        return True
+
     async def _maybe_run_conversational_agentic(
         self, observation: dict, *, system_prompt: str, user_message: str,
     ) -> str | None:
@@ -3316,26 +3347,15 @@ class CognitiveAgent(BaseAgent):
         Returns the loop's final reply text, or ``None`` to fall through to the
         single-pass LLM path. ``None`` covers: flag off, non-1:1 turns (group /
         ward-room / proactive), vision turns (multimodal single-pass), no
-        runtime, an empty result, or any failure (honest-degrade — a broken loop
+        runtime, an empty result, or any failure (honest-degrade - a broken loop
         must never drop the Captain's turn). Reuses
         :class:`WorkItemAgenticExecutor` (the task-path loop) so governance
         (grants / restrictions), tool assembly, and tool-trace persistence are
-        shared — one agentic substrate, DRY."""
+        shared - one agentic substrate, DRY."""
+        if not self._conversational_agentic_will_run(observation):
+            return None
         runtime = getattr(self, "_runtime", None)
-        if runtime is None:
-            return None
         cfg = getattr(getattr(runtime, "config", None), "dm_agentic", None)
-        if not getattr(cfg, "enabled", False):
-            return None
-        # 1:1 direct_message only — group / ward / proactive keep the single pass.
-        if observation.get("intent") != "direct_message":
-            return None
-        params = observation.get("params", {}) or {}
-        if params.get("is_group_chat"):
-            return None
-        # Vision turns are multimodal single-pass (the loop is text-tool only).
-        if params.get("vision_messages"):
-            return None
         try:
             from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 
