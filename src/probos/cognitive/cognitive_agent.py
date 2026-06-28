@@ -6752,16 +6752,21 @@ class CognitiveAgent(BaseAgent):
     def _sensorium_cold_start_note(self, observation: dict) -> str:
         """AD-723 extraction of baseline step 9: BF-102 cold-start runtime note.
 
-        Returns ``""`` when the runtime is not in cold-start state.
+        AD-1077: when NOT in cold-start, this situational slot carries a
+        transient proactive self-note (e.g. a group-chat suppression coaching
+        message) threaded in via proactive ``context_parts['system_note']`` — so
+        a suppressed [GROUP_CHAT] attempt is fed back to the agent on its next
+        cycle instead of failing silently. Returns ``""`` when neither applies.
         """
-        del observation
         rt = getattr(self, "_runtime", None)
         if rt and getattr(rt, "is_cold_start", False):
             return (
                 "SYSTEM NOTE: This is a fresh start. You have no prior "
                 "episodic memories. Do not reference or invent past experiences."
             )
-        return ""
+        cp = observation.get("_context_parts") if isinstance(observation, dict) else None
+        note = (cp or {}).get("system_note") if isinstance(cp, dict) else None
+        return str(note) if note else ""
 
     def _sensorium_source_attribution_rich(self, observation: dict) -> str:
         """AD-723 extraction of baseline step 10: AD-568d rich attribution override.

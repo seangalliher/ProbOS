@@ -434,6 +434,10 @@ class ProactiveCognitiveLoop:
         self._dm_response_counts: dict[str, list[float]] = {}  # BF-257: agent_id -> [timestamps]
         self._dm_pair_counts: dict[str, list[float]] = {}      # BF-257: "a_id:b_id" -> [timestamps]
         self._pending_notebook_reads: dict[str, str] = {}  # AD-504: agent_id -> topic_slug
+        # AD-1077: agent_id -> one-shot self-note delivered on the next proactive
+        # cycle when a [GROUP_CHAT] attempt is suppressed (operant feedback so the
+        # behavior does not extinguish on a silent failure).
+        self._gc_coaching: dict[str, str] = {}
         self._llm_failure_count: int = 0  # BF-069: consecutive proactive failures
         self._llm_status: str = "operational"  # AD-576: "operational" | "degraded" | "offline"
         self._llm_offline_since: float = 0.0   # AD-576: monotonic timestamp of first failure
@@ -1480,6 +1484,10 @@ class ProactiveCognitiveLoop:
                 "not a demotion. Build trust through demonstrated competence. "
                 "You have no prior episodic memories — do not reference or invent past experiences."
             )
+
+        # AD-1077: deliver a one-shot group-chat suppression coaching note (only
+        # when not cold-starting, which keeps its own note above).
+        self._inject_pending_coaching(getattr(agent, "id", ""), context)
 
         # AD-572b: Captain engagement signals into proactive context
         engagement_provider = getattr(rt, "captain_engagement_provider", None)
@@ -4091,12 +4099,56 @@ class ProactiveCognitiveLoop:
                     await self._kickoff_group_chat(result.thread.id, agent.id, body)
             else:
                 actions.append({"type": "group_chat_suppressed", "reason": result.error})
+                self._record_group_chat_coaching(
+                    getattr(agent, "id", ""), result.error, title,
+                )
                 logger.debug(
                     "AD-924: group chat suppressed for %s: %s",
                     getattr(agent, "id", "?"), result.error,
                 )
         text = _GROUP_CHAT_PATTERN.sub("", text)
         return text, actions
+
+    def _record_group_chat_coaching(self, agent_id: str, reason: str, title: str) -> None:
+        """AD-1077: stash a one-shot self-note so a SUPPRESSED [GROUP_CHAT] is fed
+        back to the agent on its next proactive cycle instead of vanishing
+        silently. The agent can then correct the input (a real callsign, a
+        different cadence) rather than the action producing nothing and the
+        behavior extinguishing."""
+        if not agent_id:
+            return
+        title = (title or "the room").strip() or "the room"
+        notes = {
+            "no_participant_resolved": (
+                "SYSTEM NOTE: Your last attempt to open a group chat "
+                f'("{title}") was not created because no named crewmate resolved '
+                "to a real peer. Name participants by their exact callsign in the "
+                'tag header, e.g. [GROUP_CHAT title="..." @Reed, @Forge]. The '
+                "title names the work; the @-list names the crew."
+            ),
+            "rate_limited": (
+                "SYSTEM NOTE: You have opened several group chats recently, so the "
+                "next was rate-limited. Continue the work in an existing room "
+                "rather than opening another."
+            ),
+            "empty_title": (
+                "SYSTEM NOTE: Your last [GROUP_CHAT] had no title and was not "
+                "created. Give the room a short title describing the work."
+            ),
+        }
+        note = notes.get(reason)
+        if note:
+            self._gc_coaching[agent_id] = note
+
+    def _inject_pending_coaching(self, agent_id: str, context: dict) -> None:
+        """AD-1077: deliver a pending group-chat coaching note (if any) into the
+        situational ``system_note`` slot for this cycle, one-shot. Never clobbers
+        a cold-start note already set this cycle."""
+        if not agent_id or context.get("system_note"):
+            return
+        note = self._gc_coaching.pop(agent_id, None)
+        if note:
+            context["system_note"] = note
 
     async def _kickoff_group_chat(
         self, thread_id: str, opener_id: str, opening_body: str,
