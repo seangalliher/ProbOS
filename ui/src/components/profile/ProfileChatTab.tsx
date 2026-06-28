@@ -56,7 +56,8 @@ import { startCameraStream, stopCameraStream } from '../../hooks/useCameraStream
 import { ChatMessageRow } from './ChatMessageRow';
 import { TypingIndicator } from './TypingIndicator';
 import { revealRepliesProgressively, type StaggerReply } from '../../chat/staggerReplies';
-import { isPinnedToBottom } from '../../chat/scrollAnchor';
+import { isPinnedToBottom, decideScrollOnUpdate } from '../../chat/scrollAnchor';
+import { clampMeetingChatHeight, loadMeetingChatHeight, MEETING_CHAT_HEIGHT_KEY } from '../../chat/meetingChatHeight';
 import { resolveFirstResponder } from '../../chat/firstResponder';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
 import { startScreenStream, stopScreenStream } from '../../hooks/useScreenStream';
@@ -687,22 +688,66 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     const prevCount = switched ? 0 : st.count;
     scrollStateRef.current = { key, count: messages.length };
     if (messages.length === 0) return;
-    const isIncremental = !switched && messages.length === prevCount + 1;
-    if (isIncremental) {
-      if (pinnedToBottomRef.current) {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }
+    // AD-1075: the Captain's own send ALWAYS follows to the bottom (don't leave
+    // their just-sent message above the fold); an agent message follows only
+    // when they're already pinned (don't yank them off an earlier turn). The
+    // decision is pure + unit-tested; the DOM scroll targets the CONTAINER's
+    // scrollHeight (the true bottom) after a rAF, so a message that reflows
+    // (markdown / an artifact card) doesn't land the scroll a little short -
+    // the BF the Captain hit on send + receive.
+    const lastRole = (messages[messages.length - 1] as { role?: string } | undefined)?.role;
+    const lastFromSelf = lastRole === 'user' || lastRole === 'captain';
+    const decision = decideScrollOnUpdate({
+      switched, prevCount, count: messages.length,
+      pinned: pinnedToBottomRef.current, lastFromSelf,
+    });
+    if (decision.jump) {
+      pinnedToBottomRef.current = true;
+      const el = scrollContainerRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+      else messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
       return;
     }
-    // Bulk load / context switch — jump with NO animation.
-    pinnedToBottomRef.current = true;
-    const el = scrollContainerRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    } else {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    if (decision.follow) {
+      if (lastFromSelf) pinnedToBottomRef.current = true;
+      requestAnimationFrame(() => {
+        const c = scrollContainerRef.current;
+        if (!c) { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); return; }
+        // Guard scrollTo: jsdom (tests) does not implement it — fall back to the
+        // scrollTop assignment the bulk path uses (a no-op there; real in-browser).
+        if (typeof c.scrollTo === 'function') c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
+        else c.scrollTop = c.scrollHeight;
+      });
     }
   }, [messages.length, agentId, activeThreadId]);
+
+  // AD-1075: independently resize the meeting transcript. In a meeting the
+  // avatar gallery (MeetingView) is flex:1 and the transcript was a fixed
+  // condensed strip - so shrinking the avatars (AD-974) left dead space the
+  // chat couldn't reclaim. A draggable divider above the transcript lets the
+  // Captain grab the top of the chat and make it taller; the gallery shrinks +
+  // scrolls. Clamped + persisted (survives reopen); mirrors the AD-974 handle.
+  const [meetingChatHeight, setMeetingChatHeight] = useState<number>(loadMeetingChatHeight);
+  const meetingChatHeightRef = useRef(meetingChatHeight);
+  useEffect(() => { meetingChatHeightRef.current = meetingChatHeight; }, [meetingChatHeight]);
+  const onChatResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = meetingChatHeightRef.current;
+    const onMove = (ev: MouseEvent) => {
+      // Drag UP (clientY decreases) -> a taller chat (the gallery yields space).
+      const next = clampMeetingChatHeight(startH + (startY - ev.clientY));
+      meetingChatHeightRef.current = next;
+      setMeetingChatHeight(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      try { localStorage.setItem(MEETING_CHAT_HEIGHT_KEY, String(meetingChatHeightRef.current)); } catch { /* Tier-2 */ }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
 
   // BF-293: reset the empty-transcript counter when the agent replies so
   // the whisperStt fallback isn't surprise-triggered by stale empty
@@ -1320,6 +1365,29 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           remains the transcript below. AD-923: speakingAgentId lights the
           active speaker's avatar (already in scope from useMeetingVoice). */}
       {activeThreadId && meetingActive && <MeetingView threadId={activeThreadId} speakingAgentId={speakingAgentId} />}
+      {/* AD-1075: drag-to-resize divider between the avatar gallery and the
+          transcript. Only in a meeting (where they share the column). Grab and
+          drag UP to make the chat taller (the gallery shrinks + scrolls). */}
+      {meetingCondensed && (
+        <div
+          data-testid="meeting-chat-resize"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize chat"
+          title="Drag to resize the chat"
+          onMouseDown={onChatResizeMouseDown}
+          style={{
+            flexShrink: 0,
+            height: 10,
+            cursor: 'ns-resize',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            borderTop: '1px solid rgba(240,176,96,0.15)',
+            background: 'rgba(240,176,96,0.04)',
+          }}
+        >
+          <div style={{ width: 36, height: 3, borderRadius: 2, background: 'rgba(240,176,96,0.5)' }} />
+        </div>
+      )}
       {/* Message list. AD-984c: ref + onScroll track whether the Captain is
           pinned to the bottom, so the auto-scroll effect doesn't yank them down
           while reading earlier turns. AD-984a: hidden while a meeting is active
@@ -1342,7 +1410,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         overflowY: 'auto',
         padding: '8px 12px',
         // AD-984b: condensed strip while a meeting is active + chat shown.
-        ...(meetingCondensed ? { flex: '0 0 auto', maxHeight: 160, padding: '4px 12px' } : {}),
+        ...(meetingCondensed ? { flex: '0 0 auto', height: meetingChatHeight, padding: '4px 12px' } : {}),
       }}>
         {messages.length === 0 && (
           <div style={{ color: '#9a9ab2', /* AD-984b: WCAG AA 4.5:1 (was #555568, 2.59:1) */ fontSize: 12, textAlign: 'center', marginTop: 40 }}>

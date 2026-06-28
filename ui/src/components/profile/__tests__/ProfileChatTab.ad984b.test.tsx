@@ -121,7 +121,7 @@ describe('AD-984b ProfileChatTab transcript a11y + condensed + contrast', () => 
     expect(transcript.getAttribute('data-condensed')).toBe('false');
   });
 
-  it('in a meeting with the chat shown the transcript is condensed + height-capped', async () => {
+  it('in a meeting with the chat shown the transcript is condensed + height-sized', async () => {
     useStore.setState({
       agents: new Map([['a1', mkAgent({ id: 'a1', callsign: 'Vex' })]]),
       chatThreads: new Map([
@@ -132,7 +132,9 @@ describe('AD-984b ProfileChatTab transcript a11y + condensed + contrast', () => 
     render(<ProfileChatTab agentId="agent-007" threadId="t1" />);
     const transcript = await screen.findByTestId('chat-transcript');
     expect(transcript.getAttribute('data-condensed')).toBe('true');
-    expect((transcript as HTMLElement).style.maxHeight).toBe('160px');
+    // AD-1075: the condensed transcript is now a resizable, height-driven strip
+    // (default 200px, persisted) instead of the old fixed maxHeight:160 cap.
+    expect((transcript as HTMLElement).style.height).toBe('200px');
   });
 
   it('the empty-state hint uses the AA-contrast color (rgb(154,154,178))', async () => {

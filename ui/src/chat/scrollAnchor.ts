@@ -33,3 +33,38 @@ export function isPinnedToBottom(
   const distanceFromBottom = scrollHeight - clientHeight - scrollTop;
   return distanceFromBottom <= threshold;
 }
+
+/** AD-1075: the scroll action for a transcript update. */
+export interface ScrollDecision {
+  /** Snap to the bottom with NO animation (bulk load / context switch). */
+  jump: boolean;
+  /** Smooth-follow to the bottom (an incremental message we should track). */
+  follow: boolean;
+}
+
+/** AD-1075: decide how the transcript should scroll when its message set
+ *  changes. Pure + DOM-free so it is unit-testable.
+ *
+ *  - **Bulk load / context switch** (agent or thread changed, or more than one
+ *    message appeared at once) → `jump` to the bottom instantly.
+ *  - **One new incremental message** → `follow` smoothly to the bottom **iff**
+ *    the Captain is already pinned to the bottom OR the new message is the
+ *    Captain's own send (sending always follows your own message — the BF the
+ *    Captain hit: a sent/received message left the view a little short).
+ *  - **No change / empty** → do nothing.
+ */
+export function decideScrollOnUpdate(opts: {
+  switched: boolean;
+  prevCount: number;
+  count: number;
+  pinned: boolean;
+  lastFromSelf: boolean;
+}): ScrollDecision {
+  const { switched, prevCount, count, pinned, lastFromSelf } = opts;
+  if (count === 0) return { jump: false, follow: false };
+  const isIncremental = !switched && count === prevCount + 1;
+  if (isIncremental) {
+    return { jump: false, follow: pinned || lastFromSelf };
+  }
+  return { jump: true, follow: false };
+}
