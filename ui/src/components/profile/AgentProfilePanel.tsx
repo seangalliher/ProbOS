@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import { ProfileChatTab } from './ProfileChatTab';
+import { ArtifactDrawer } from '../artifacts/ArtifactDrawer';
 import { ProfileWorkTab } from './ProfileWorkTab';
 import { ProfileInfoTab } from './ProfileInfoTab';
 import { ProfileServiceTab } from './ProfileServiceTab';
@@ -539,7 +540,18 @@ export function AgentProfilePanel() {
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        {effectiveTab === 'chat' && isCrew && <ProfileChatTab agentId={agentId} />}
+        {effectiveTab === 'chat' && isCrew && (
+          <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
+            {/* AD-1074a: chat + the Output/Workspace drawer side by side (the
+                Cowork experience) - mirrors CompactApp's
+                [ProfileChatTab | ArtifactDrawer] row. The drawer is
+                self-contained (thread artifacts, collapsible rail). */}
+            <div style={{ flex: '1 1 auto', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <ProfileChatTab agentId={agentId} />
+            </div>
+            <ArtifactDrawer />
+          </div>
+        )}
         {effectiveTab === 'work' && <ProfileWorkTab agentId={agentId} />}
         {effectiveTab === 'profile' && <ProfileInfoTab profileData={profileData} agent={agent} />}
         {effectiveTab === 'service' && isCrew && <ProfileServiceTab agentId={agentId} />}
