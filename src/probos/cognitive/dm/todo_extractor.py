@@ -93,3 +93,31 @@ def strip_todo_tags(text: str) -> str:
     for rx in (_TODOS_RE, _PLAN_RE, _DONE_RE, _CONFIRM_RE, _REJECT_RE):
         text = rx.sub("", text)
     return text.strip()
+
+
+# AD-1085a: a numbered/bulleted plan line. ≥2 contiguous items are treated as
+# an implicit plan when the agent narrated steps but never emitted [TODOS].
+_NUM_ITEM_RE = re.compile(r"^\s*(?:\d+[.)]|[-*\u2022])\s+(.{3,200})$")
+
+
+def derive_prose_plan(text: str, *, max_items: int = _MAX_TODOS) -> list[str]:
+    """AD-1085a: derive an implicit plan from a numbered/bulleted list in prose.
+
+    Returns the items only when there is ONE contiguous run of >=2 list lines
+    (so a stray single bullet, or scattered numbers in prose, are ignored).
+    Pure; never raises. Empty list = no confident plan found.
+    """
+    runs: list[list[str]] = []
+    cur: list[str] = []
+    for raw in (text or "").splitlines():
+        m = _NUM_ITEM_RE.match(raw)
+        if m:
+            cur.append(m.group(1).strip())
+        elif cur:
+            runs.append(cur)
+            cur = []
+    if cur:
+        runs.append(cur)
+    best = max(runs, key=len) if runs else []
+    return best[:max_items] if len(best) >= 2 else []
+

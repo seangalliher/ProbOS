@@ -1314,6 +1314,8 @@ class DmReplyPipeline:
         [TODO_CONFIRM n] / [TODO_REJECT n: reason] (a SENIOR confirms/rejects).
         Default-OFF (``communications.room_todos_enabled``). Resolves the room's
         task via ``chat_thread_id -> thread.task_id``; no task -> strip-only.
+        AD-1085a: if the agent narrated a numbered plan but skipped [TODOS],
+        seed the checklist from the prose (only when the task has no steps yet).
         Tier-2 honest-degrade: any failure logs and leaves the reply intact."""
         try:
             text = self.ctx.response_text or ""
@@ -1324,21 +1326,31 @@ class DmReplyPipeline:
             if not getattr(comms_cfg, "room_todos_enabled", False):
                 return  # default-OFF: byte-identical when the flag is off
             from probos.cognitive.dm.todo_extractor import (
-                has_todo_tag, parse_todo_tags, strip_todo_tags,
+                has_todo_tag, parse_todo_tags, strip_todo_tags, derive_prose_plan,
             )
-            if not has_todo_tag(text):
-                return  # cheap early-out before any store/thread work
             store = getattr(self.ctx.runtime, "work_item_store", None)
             thread_store = getattr(self.ctx.runtime, "chat_thread_store", None)
             thread_id = self.ctx.chat_thread_id
             if store is None or thread_store is None or not thread_id:
-                self.ctx.response_text = strip_todo_tags(text)
+                if has_todo_tag(text):
+                    self.ctx.response_text = strip_todo_tags(text)
                 return
             thread = thread_store.get_thread(thread_id)
             task_id = getattr(thread, "task_id", None) if thread else None
             if task_id:
-                await self._apply_room_todos(store, task_id, parse_todo_tags(text))
-            self.ctx.response_text = strip_todo_tags(text)
+                if has_todo_tag(text):
+                    await self._apply_room_todos(store, task_id, parse_todo_tags(text))
+                else:
+                    # AD-1085a: deterministic fallback — the agent narrated a
+                    # numbered plan but skipped [TODOS]. Seed from the prose IF
+                    # the task has no steps yet (never clobber an existing plan).
+                    plan = derive_prose_plan(text)
+                    if len(plan) >= 2 and self._todo_actor_can_seed(self.ctx.agent_id or "agent"):
+                        item = await store.get_work_item(task_id)
+                        if item and not (item.steps or []):
+                            await store.set_steps(task_id, plan, gate_completion=True)
+            if has_todo_tag(text):
+                self.ctx.response_text = strip_todo_tags(text)
         except Exception as exc:
             logger.warning(
                 "AD-1081: todo extractor failed for agent=%s; text left intact (%s)",

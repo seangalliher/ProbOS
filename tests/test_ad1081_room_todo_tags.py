@@ -21,6 +21,7 @@ from probos.cognitive.dm.todo_extractor import (
     has_todo_tag,
     parse_todo_tags,
     strip_todo_tags,
+    derive_prose_plan,
 )
 from probos.workforce import WorkItemStore
 
@@ -204,3 +205,35 @@ def test_room_todo_protocol_silent_off_or_one_to_one():
     assert CognitiveAgent._conversational_room_todo_protocol(
         _proto_self(True), {"params": {"is_group_chat": False}}
     ) == ""
+
+
+# ---------------- AD-1085a: deterministic prose-plan seeding ----------------
+
+
+def test_derive_prose_plan_numbered():
+    plan = derive_prose_plan("Here's the plan:\n1. Draft AI section\n2. Yeo writes agent\n3. Review")
+    assert plan == ["Draft AI section", "Yeo writes agent", "Review"]
+
+
+def test_derive_prose_plan_single_item_ignored():
+    assert derive_prose_plan("Just one thing:\n1. only step") == []
+
+
+@pytest.mark.asyncio
+async def test_prose_plan_seeds_when_no_tag(store):
+    wi = await store.create_work_item(title="T", work_type="task")
+    rt = _runtime(store, trust=0.9, task_id=wi.id)
+    ctx = _ctx(rt, response_text="Plan:\n1. Write AI para\n2. Write agent para\n3. Review")
+    await DmReplyPipeline(ctx).step_4l_extract_todos()
+    assert [s["label"] for s in (await store.get_work_item(wi.id)).steps] == [
+        "Write AI para", "Write agent para", "Review",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prose_plan_does_not_clobber_existing(store):
+    wi = await store.create_work_item(title="T", work_type="task")
+    await store.set_steps(wi.id, ["keep"], gate_completion=True)
+    rt = _runtime(store, trust=0.9, task_id=wi.id)
+    await DmReplyPipeline(_ctx(rt, response_text="1. a\n2. b")).step_4l_extract_todos()
+    assert [s["label"] for s in (await store.get_work_item(wi.id)).steps] == ["keep"]
