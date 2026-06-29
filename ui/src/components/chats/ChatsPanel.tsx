@@ -44,6 +44,17 @@ function deptOf(agent: Agent | undefined): string {
   return (agent as (Agent & { department?: string }) | undefined)?.department ?? '';
 }
 
+// AD-1088: compact relative time for room rows (no date/time was visible).
+function fmtAgo(tsSeconds: number | undefined): string {
+  if (!tsSeconds) return '';
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - tsSeconds));
+  if (s < 60) return 'now';
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  if (s < 604800) return `${Math.floor(s / 86400)}d`;
+  return new Date(tsSeconds * 1000).toLocaleDateString();
+}
+
 // Local inline header glyph (LeftRail GlyphAgents precedent — keeps Glyphs.tsx
 // and its export-count test untouched). Stroke-based, no fill, no emoji.
 function GlyphGroup({ color }: { color: string }) {
@@ -84,6 +95,9 @@ export default function ChatsPanel() {
 
   const [threads, setThreads] = useState<AD791aChatThreadView[]>([]);
   const [newChatOpen, setNewChatOpen] = useState(false);
+  // AD-1088: room list controls — search + sort (recent | name).
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<'recent' | 'name'>('recent');
 
   // Fetch on open. The wrapper already honest-degrades to [] (Tier-2), so no
   // try/catch needed here. The `active` guard avoids a setState after unmount.
@@ -134,10 +148,15 @@ export default function ChatsPanel() {
       return s && (s.last_active_at ?? 0) > (t.last_active_at ?? 0) ? s : t;
     })
     .filter((t) => isChat(t, agents))
+    .filter((t) => {
+      const q = query.trim().toLowerCase();
+      return !q || chatDisplayName(t, agents).toLowerCase().includes(q);
+    })
     .sort((a, b) => {
       const aAlert = isAgentCreated(a) && !captainJoined(a) ? 1 : 0;
       const bAlert = isAgentCreated(b) && !captainJoined(b) ? 1 : 0;
       if (aAlert !== bAlert) return bAlert - aAlert;
+      if (sort === 'name') return chatDisplayName(a, agents).localeCompare(chatDisplayName(b, agents));
       return (b.last_active_at ?? 0) - (a.last_active_at ?? 0);
     });
 
@@ -214,7 +233,7 @@ export default function ChatsPanel() {
       >
         <GlyphGroup color={COLOR_ACTIVE} />
         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: COLOR_ACTIVE }}>
-          CHATS
+          CREW COLLABORATION
         </span>
         <div style={{ flex: 1 }} />
         <button
@@ -254,6 +273,32 @@ export default function ChatsPanel() {
 
       {/* Body */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+        {/* AD-1088: search + sort controls */}
+        <div style={{ display: 'flex', gap: 6, padding: '0 4px 8px', alignItems: 'center' }} onMouseDown={(e) => e.stopPropagation()}>
+          <input
+            data-testid="rooms-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search rooms..."
+            style={{
+              flex: 1, fontSize: 12, color: '#e0dcd4', background: 'rgba(0,0,0,0.3)',
+              border: '1px solid rgba(240,176,96,0.2)', borderRadius: 6, padding: '5px 8px',
+              outline: 'none', fontFamily: "'JetBrains Mono', monospace",
+            }}
+          />
+          <button
+            data-testid="rooms-sort"
+            onClick={() => setSort((s) => (s === 'recent' ? 'name' : 'recent'))}
+            title="Toggle sort"
+            style={{
+              fontSize: 10, color: COLOR_ACTIVE, background: 'rgba(240,176,96,0.08)',
+              border: '1px solid rgba(240,176,96,0.3)', borderRadius: 6, padding: '5px 8px',
+              cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            {sort === 'recent' ? 'Recent' : 'A-Z'}
+          </button>
+        </div>
         {chats.length === 0 ? (
           <div
             data-testid="chats-empty"
@@ -295,6 +340,10 @@ export default function ChatsPanel() {
                   />
                   <span style={{ fontSize: 13, fontWeight: 600, color: COLOR_ACTIVE }}>
                     {chatDisplayName(thread, agents)}
+                  </span>
+                  <div style={{ flex: 1 }} />
+                  <span data-testid={`room-time-${thread.id}`} style={{ fontSize: 10, color: COLOR_INACTIVE }}>
+                    {fmtAgo(thread.last_active_at)}
                   </span>
                 </div>
               );
@@ -342,6 +391,8 @@ export default function ChatsPanel() {
                       Started by {creatorCallsign}
                     </span>
                   )}
+                  <div style={{ flex: 1 }} />
+                  <span style={{ fontSize: 10, color: COLOR_INACTIVE }}>{fmtAgo(thread.last_active_at)}</span>
                 </div>
 
                 {/* Participant avatars + Join control */}
