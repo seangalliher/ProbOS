@@ -968,6 +968,32 @@ export function IntentSurface() {
       {/* ── View Switcher (AD-325) ── */}
       <ViewSwitcher />
 
+      {/* AD-1089: Crew Collaboration pill — front-and-center next to Ask ProbOS.
+          Hidden while the intent surface is expanded to avoid overlap. */}
+      {!active && (
+        <button
+          data-testid="crew-collab-pill"
+          onClick={() => useStore.getState().openChats()}
+          title="Crew Collaboration — rooms where the crew work tasks"
+          style={{
+            position: 'fixed', bottom: 46, left: '50%',
+            transform: 'translateX(calc(-50% - 210px))', zIndex: 20,
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '8px 14px', borderRadius: 20,
+            border: '1px solid rgba(240,176,96,0.35)', background: 'rgba(20,22,30,0.85)',
+            color: '#f0b060', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            fontFamily: "'JetBrains Mono', monospace", letterSpacing: 0.5,
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+            strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="6" cy="6" r="2.2" /><path d="M2 13c0-2.2 1.8-3.8 4-3.8s4 1.6 4 3.8" />
+            <path d="M11 5.2a2 2 0 0 1 0 3.6" /><path d="M11.5 9.4c1.8 0 3 1.4 3 3.2" />
+          </svg>
+          Crew
+        </button>
+      )}
+
       {/* ── Canvas dim overlay when active ── */}
       {active && (
         <div style={{

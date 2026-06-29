@@ -98,6 +98,8 @@ export default function ChatsPanel() {
   // AD-1088: room list controls — search + sort (recent | name).
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<'recent' | 'name'>('recent');
+  // AD-1090: status filter chips.
+  const [filter, setFilter] = useState<'all' | 'needs' | 'rooms' | 'dms'>('all');
 
   // Fetch on open. The wrapper already honest-degrades to [] (Tier-2), so no
   // try/catch needed here. The `active` guard avoids a setState after unmount.
@@ -151,6 +153,12 @@ export default function ChatsPanel() {
     .filter((t) => {
       const q = query.trim().toLowerCase();
       return !q || chatDisplayName(t, agents).toLowerCase().includes(q);
+    })
+    .filter((t) => {
+      if (filter === 'needs') return isAgentCreated(t) && !captainJoined(t);
+      if (filter === 'rooms') return isGroupChat(t, agents);
+      if (filter === 'dms') return !isGroupChat(t, agents);
+      return true;
     })
     .sort((a, b) => {
       const aAlert = isAgentCreated(a) && !captainJoined(a) ? 1 : 0;
@@ -298,6 +306,24 @@ export default function ChatsPanel() {
           >
             {sort === 'recent' ? 'Recent' : 'A-Z'}
           </button>
+        </div>
+        {/* AD-1090: status filter chips */}
+        <div style={{ display: 'flex', gap: 6, padding: '0 4px 8px' }} onMouseDown={(e) => e.stopPropagation()}>
+          {([['all', 'All'], ['needs', 'Needs you'], ['rooms', 'Rooms'], ['dms', 'DMs']] as const).map(([k, label]) => (
+            <button
+              key={k}
+              data-testid={`rooms-filter-${k}`}
+              onClick={() => setFilter(k)}
+              style={{
+                fontSize: 10, cursor: 'pointer', borderRadius: 12, padding: '3px 10px',
+                color: filter === k ? '#0a0a12' : COLOR_ACTIVE,
+                background: filter === k ? COLOR_ACTIVE : 'rgba(240,176,96,0.08)',
+                border: '1px solid rgba(240,176,96,0.3)', whiteSpace: 'nowrap',
+              }}
+            >
+              {label}
+            </button>
+          ))}
         </div>
         {chats.length === 0 ? (
           <div
