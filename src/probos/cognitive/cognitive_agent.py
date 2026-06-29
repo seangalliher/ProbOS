@@ -2416,14 +2416,11 @@ class CognitiveAgent(BaseAgent):
         )
 
     def _conversational_room_todo_protocol(self, observation: dict) -> str:
-        """AD-1082: teach the room-Todo checklist tags so an agent asked to plan
-        a task in a workspace room actually drives the AD-1080 senior-validation
-        loop instead of guessing the tag (a live test had an agent write [TODO]
-        / [TODO @peer], which the parser ignores). Gated on the group fan-out
-        param ``is_group_chat`` + ``CommunicationsConfig.room_todos_enabled`` so
-        1:1 DMs and flag-off systems are byte-identical. Universal (all crew),
-        like the AD-912 notebook capability. Overridable (Open/Closed).
-        Gap-regex-safe (no can't/cannot/don't have/unable to/not able to)."""
+        """AD-1082/AD-1085: teach the room-Todo tags AND the heuristic for when
+        to use them — agents plan multi-step work as a checklist on their own
+        (like GitHub Copilot's todo list), not only when asked. Gated on the
+        group fan-out param ``is_group_chat`` + ``room_todos_enabled``.
+        Universal (all crew). Overridable. Gap-regex-safe."""
         params = observation.get("params") or {}
         if not params.get("is_group_chat"):
             return ""
@@ -2432,20 +2429,22 @@ class CognitiveAgent(BaseAgent):
         if not getattr(comm, "room_todos_enabled", False):
             return ""
         return (
-            "\n\nShared task checklist: when this room is working a task, track "
-            "it as a numbered checklist. When the Captain asks you to create "
-            "todos or plan a task, FIRST write the plan as the steps inside "
-            "[TODOS] and [/TODOS], one step per line, BEFORE starting the work. "
-            "Mark your own step "
-            "finished with [TODO_DONE n] (n is the step number). A senior or the "
-            "facilitator confirms finished work with [TODO_CONFIRM n] or returns "
-            "it with [TODO_REJECT n: reason] — a step counts as complete only "
-            "once a senior confirms it. If a step yields a document, save it "
-            "with the artifact tag so it lands in Outputs; for a Word document "
-            "use the artifact name ending .docx and mime application/vnd."
-            "openxmlformats-officedocument.wordprocessingml.document (not "
-            "markdown). Put the tags inline in your "
-            "reply; they are applied and hidden from the transcript."
+            "\n\nShared task checklist: track multi-step work in this room as a "
+            "numbered checklist on your own — without waiting to be asked, the "
+            "way a good assistant plans before acting. The moment a request "
+            "needs more than one step, or hands off between you and a colleague, "
+            "FIRST write the plan as the steps inside [TODOS] and [/TODOS], one "
+            "step per line, BEFORE starting any of them (a single quick reply "
+            "needs no checklist; two or more steps or any handoff always do). "
+            "Mark your own step finished with [TODO_DONE n] (n is the step "
+            "number). A senior or the facilitator confirms finished work with "
+            "[TODO_CONFIRM n] or returns it with [TODO_REJECT n: reason] — a "
+            "step counts as complete only once a senior confirms it. If a step "
+            "yields a document, save it with the artifact tag so it lands in "
+            "Outputs; for a Word document use the artifact name ending .docx and "
+            "mime application/vnd.openxmlformats-officedocument.wordprocessingml."
+            "document (not markdown). Put the tags inline in your reply; they "
+            "are applied and hidden from the transcript."
         )
 
     def _conversational_proactivity_protocol(self, observation: dict) -> str:
