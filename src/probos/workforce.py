@@ -1199,11 +1199,13 @@ class WorkItemStore(EventEmitterMixin):
 
     async def set_steps(
         self, work_item_id: str, steps: list, *, gate_completion: bool = False,
+        facilitator: str | None = None,
     ) -> "WorkItem | None":
         """AD-1080: seed/replace a work item's Todo checklist (the room plan).
         Each step normalizes to {label, status}; a bare string becomes a pending
         step. ``gate_completion`` marks the item so it cannot transition to 'done'
-        until every step is senior-confirmed."""
+        until every step is senior-confirmed. AD-1087: ``facilitator`` records the
+        plan creator so they can confirm/complete regardless of rank."""
         item = await self.get_work_item(work_item_id)
         if not item:
             return None
@@ -1228,9 +1230,12 @@ class WorkItemStore(EventEmitterMixin):
                     entry[k] = s[k]
             norm.append(entry)
         updates: dict[str, Any] = {"steps": norm}
-        if gate_completion:
+        if gate_completion or facilitator:
             md = dict(item.metadata or {})
-            md["steps_gate_completion"] = True
+            if gate_completion:
+                md["steps_gate_completion"] = True
+            if facilitator:
+                md["facilitator"] = facilitator
             updates["metadata"] = md
         return await self.update_work_item(work_item_id, **updates)
 

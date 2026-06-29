@@ -148,6 +148,17 @@ async def test_non_senior_cannot_confirm(store):
 
 
 @pytest.mark.asyncio
+async def test_facilitator_confirms_regardless_of_rank_ad1087(store):
+    wi = await store.create_work_item(title="T", work_type="task")
+    rt = _runtime(store, trust=0.4, task_id=wi.id)  # ensign-rank facilitator
+    # Ensign seeds the plan (becomes facilitator) then a worker submits + facilitator confirms.
+    await DmReplyPipeline(_ctx(rt, response_text="[TODOS]\n- a\n[/TODOS]", agent_id="lead")).step_4l_extract_todos()
+    await DmReplyPipeline(_ctx(rt, response_text="[TODO_DONE 1]", agent_id="lead")).step_4l_extract_todos()
+    await DmReplyPipeline(_ctx(rt, response_text="[TODO_CONFIRM 1]", agent_id="lead")).step_4l_extract_todos()
+    assert (await store.get_work_item(wi.id)).steps[0]["status"] == "done"  # facilitator validated
+
+
+@pytest.mark.asyncio
 async def test_senior_reject_sends_back(store):
     wi = await store.create_work_item(title="T", work_type="task")
     await store.set_steps(wi.id, [{"label": "x", "status": "submitted"}], gate_completion=True)

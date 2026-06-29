@@ -1351,7 +1351,7 @@ class DmReplyPipeline:
                     if len(plan) >= 2 and self._todo_actor_can_seed(self.ctx.agent_id or "agent"):
                         item = await store.get_work_item(task_id)
                         if item and not (item.steps or []):
-                            await store.set_steps(task_id, plan, gate_completion=True)
+                            await store.set_steps(task_id, plan, gate_completion=True, facilitator=self.ctx.agent_id or "agent")
             if has_todo_tag(text):
                 self.ctx.response_text = strip_todo_tags(text)
         except Exception as exc:
@@ -1395,17 +1395,20 @@ class DmReplyPipeline:
             return False
 
     async def _apply_room_todos(self, store: Any, task_id: str, parsed: Any) -> None:
-        """AD-1081: apply parsed room-todo intents to the task work item. The
-        confirm/reject are SENIOR-gated (the facilitator owns validation); plan
-        seeding is open (AD-1082) so the asked agent can write the checklist; a
-        worker may self-report its own step (submit)."""
+        """AD-1081/AD-1087: apply parsed room-todo intents. Plan seeding is open
+        (the seeder is recorded as facilitator); confirm/reject are allowed for a
+        senior OR the facilitator who created the plan (whoever kicked off the
+        task validates it). A worker may self-report its own step (submit)."""
         actor = self.ctx.agent_id or "agent"
+        item = await store.get_work_item(task_id)
+        facilitator = (getattr(item, "metadata", {}) or {}).get("facilitator") if item else None
         is_senior = self._todo_actor_is_senior(actor)
+        can_validate = is_senior or actor == facilitator
         if parsed.plan is not None and self._todo_actor_can_seed(actor):
-            await store.set_steps(task_id, parsed.plan, gate_completion=True)
+            await store.set_steps(task_id, parsed.plan, gate_completion=True, facilitator=actor)
         for idx in parsed.submit:
             await store.update_step(task_id, idx, status="submitted", actor=actor)
-        if is_senior:
+        if can_validate:
             for idx in parsed.confirm:
                 await store.update_step(task_id, idx, status="done", actor=actor)
             for idx, reason in parsed.reject:
