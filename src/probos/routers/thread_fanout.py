@@ -516,6 +516,19 @@ async def _fan_one_round(
                 callsign = runtime.callsign_registry.get_callsign(agent.agent_type) or ""
         except Exception:
             logger.debug("AD-914: callsign resolve failed for %s", agent_id, exc_info=True)
+        # BF-651: saved-output manifest so a reviewer verifies against STORAGE,
+        # not memory (crew read_file outputs/X.docx came back empty — artifacts
+        # live in the ArtifactStore by name, not on disk). Honest-degrade to [].
+        room_outputs: list[str] = []
+        try:
+            _arts = getattr(runtime, "artifact_store", None)
+            if _arts is not None:
+                room_outputs = [
+                    f"{a.name} v{a.version} ({a.size_bytes} B)"
+                    for a in _arts.list_thread_latest(thread_id)
+                ][:20]
+        except Exception:
+            logger.debug("BF-651: outputs manifest build failed for %s", thread_id, exc_info=True)
         params: dict[str, Any] = {
             "text": trigger_body,
             "from": "hxi_profile",
@@ -524,6 +537,7 @@ async def _fan_one_round(
             # AD-935: teach the [NO_RESPONSE] decline option (group-only — the
             # cognitive_agent hook gates the teaching string on this param).
             "is_group_chat": True,
+            "room_outputs": room_outputs,  # BF-651
         }
         # AD-978: prepend THIS agent's visual context (camera/screen) so the
         # crew can SEE in a group chat. The 1:1 path injects it (AD-733a) but the

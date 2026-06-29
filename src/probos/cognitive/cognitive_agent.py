@@ -2448,6 +2448,23 @@ class CognitiveAgent(BaseAgent):
             "in your reply; they are applied and hidden from the transcript."
         )
 
+    def _conversational_room_outputs_block(self, observation: dict) -> str:
+        """BF-651: list the room's SAVED outputs so a reviewer verifies against
+        storage instead of memory. Crew flagged that read_file outputs/X.docx
+        returned empty (artifacts live in the ArtifactStore by name, not disk),
+        so final-review steps trusted memory. Gated on the group fan-out param
+        ``room_outputs`` (built from artifact_store.list_thread_latest). Gap-safe."""
+        outs = (observation.get("params") or {}).get("room_outputs") or []
+        if not isinstance(outs, list) or not outs:
+            return ""
+        listed = "; ".join(str(o) for o in outs[:20])
+        return (
+            "\n\nSaved Outputs in this room (authoritative, in storage): "
+            f"{listed}. These files are persisted — treat them as the source of "
+            "truth when reviewing or revising. Save a new version with the "
+            "artifact tag rather than reading a disk path."
+        )
+
     def _conversational_proactivity_protocol(self, observation: dict) -> str:
         """AD-950 (Natural Conversation epic, #886): teach the discourse OBLIGATION
         to ADVANCE a live conversation. On the 1:1/group ``direct_message`` reply
@@ -3152,6 +3169,10 @@ class CognitiveAgent(BaseAgent):
             _todo_proto = self._conversational_room_todo_protocol(observation)
             if _todo_proto:
                 composed += _todo_proto
+            # BF-651: saved-output manifest so reviewers verify against storage.
+            _outputs_proto = self._conversational_room_outputs_block(observation)
+            if _outputs_proto:
+                composed += _outputs_proto
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),

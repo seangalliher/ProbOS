@@ -218,6 +218,15 @@ def test_room_todo_protocol_silent_off_or_one_to_one():
     ) == ""
 
 
+def test_room_outputs_block_verifies_storage_bf651():
+    from probos.cognitive.cognitive_agent import CognitiveAgent
+    txt = CognitiveAgent._conversational_room_outputs_block(
+        _proto_self(True), {"params": {"room_outputs": ["what-is-ai.docx v3 (36 KB)"]}}
+    )
+    assert "what-is-ai.docx" in txt and "storage" in txt
+    assert CognitiveAgent._conversational_room_outputs_block(_proto_self(True), {"params": {}}) == ""
+
+
 # ---------------- AD-1085a: deterministic prose-plan seeding ----------------
 
 
