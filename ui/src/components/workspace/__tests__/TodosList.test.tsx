@@ -69,6 +69,16 @@ describe('WorkspaceFilesRail TODOS (AD-1083)', () => {
     fireEvent.click(await screen.findByTestId('todo-confirm-1'));
     await waitFor(() => expect(updateTaskStep).toHaveBeenCalledWith('wi-1', 1, { status: 'done', actor: 'captain' }));
   });
+
+  it('BF-650: details panel toggles in the preview', async () => {
+    vi.mocked(fetchThreadArtifacts).mockResolvedValue([
+      { id: 'a1', thread_id: 't1', name: 'doc.docx', version: 1, content_hash: 'h', mime: 'm', size_bytes: 2048, created_by: 'ezri', created_at: 0, supersedes: null, _pinned_from_project: false },
+    ] as ArtifactView[]);
+    render(<WorkspaceFilesRail threadId="t1" taskId="wi-1" />);
+    fireEvent.click(await screen.findByTestId('artifact-row-a1'));
+    fireEvent.click(await screen.findByTestId('workspace-files-details-toggle'));
+    expect(await screen.findByTestId('workspace-files-details')).toBeTruthy();
+  });
 });
 
 describe('TodosList (AD-1083)', () => {

@@ -23,6 +23,15 @@ from dataclasses import dataclass, field
 
 _MAX_TODOS = 30
 
+# BF-650: strip emoji/pictographs from agent-authored step labels (HXI #3).
+_EMOJI_RE = re.compile(
+    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF\u2705\u2714\u2728\u274C]"
+)
+
+
+def _clean_label(s: str) -> str:
+    return _EMOJI_RE.sub("", s).replace("  ", " ").strip()
+
 _TODOS_RE = re.compile(r"\[TODOS\](.*?)\[/TODOS\]", re.DOTALL | re.IGNORECASE)
 _PLAN_RE = re.compile(r"\[PLAN\](.*?)\[/PLAN\]", re.DOTALL | re.IGNORECASE)
 _DONE_RE = re.compile(r"\[TODO_DONE\s+(\d+)\]", re.IGNORECASE)
@@ -55,6 +64,7 @@ def _parse_plan_items(block: str) -> list[str]:
         line = raw.strip()
         line = re.sub(r"^[-*\u2022]\s+", "", line)        # markdown bullet
         line = re.sub(r"^\d+[.)]\s+", "", line).strip()   # ordered-list number
+        line = _clean_label(line)                          # BF-650: drop emoji
         if line:
             items.append(line)
         if len(items) >= _MAX_TODOS:
@@ -112,7 +122,7 @@ def derive_prose_plan(text: str, *, max_items: int = _MAX_TODOS) -> list[str]:
     for raw in (text or "").splitlines():
         m = _NUM_ITEM_RE.match(raw)
         if m:
-            cur.append(m.group(1).strip())
+            cur.append(_clean_label(m.group(1).strip()))
         elif cur:
             runs.append(cur)
             cur = []

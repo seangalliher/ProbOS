@@ -219,6 +219,11 @@ def test_derive_prose_plan_single_item_ignored():
     assert derive_prose_plan("Just one thing:\n1. only step") == []
 
 
+def test_plan_labels_strip_emoji_bf650():
+    p = parse_todo_tags("[TODOS]\n- \u2705 Draft AI\n- Yeo writes \U0001F4DD agent\n[/TODOS]")
+    assert p.plan == ["Draft AI", "Yeo writes agent"]
+
+
 @pytest.mark.asyncio
 async def test_prose_plan_seeds_when_no_tag(store):
     wi = await store.create_work_item(title="T", work_type="task")

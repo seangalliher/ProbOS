@@ -102,6 +102,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     const n = Number(localStorage.getItem('probos.workspaceFiles.previewW'));
     return n >= 360 ? n : 560;
   });
+  const [showDetails, setShowDetails] = useState(false);
   const dragRef = useRef<{ x: number; w: number } | null>(null);
   const startPreviewDrag = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -404,6 +405,17 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
               {selectedArtifact.name}
             </span>
             <button
+              type="button" onClick={() => setShowDetails((d) => !d)}
+              data-testid="workspace-files-details-toggle" title="Details"
+              style={{ background: 'transparent', border: 'none', color: showDetails ? AMBER : DIM, cursor: 'pointer', padding: 4 }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth={1.5} strokeLinecap="round"
+                strokeLinejoin="round" aria-label="details">
+                <circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" />
+              </svg>
+            </button>
+            <button
               type="button" onClick={() => setSelectedId(null)}
               data-testid="workspace-files-preview-close" title="Close preview"
               style={{ background: 'transparent', border: 'none', color: DIM, cursor: 'pointer', padding: 4 }}
@@ -415,13 +427,28 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
               </svg>
             </button>
           </div>
-          <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
-            <ArtifactViewer
-              artifact={selectedArtifact}
-              versions={artifacts}
-              onSelectVersion={setSelectedId}
-              projectIdForPinning={null}
-            />
+          <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'hidden', display: 'flex' }}>
+            <div style={{ flex: '1 1 auto', minWidth: 0, overflow: 'auto' }}>
+              <ArtifactViewer
+                artifact={selectedArtifact}
+                versions={artifacts}
+                onSelectVersion={setSelectedId}
+                projectIdForPinning={null}
+              />
+            </div>
+            {showDetails && (
+              <div data-testid="workspace-files-details" style={{
+                flex: '0 0 180px', borderLeft: '1px solid rgba(240,176,96,0.15)',
+                padding: '8px 10px', fontSize: 11, color: '#cfcfe0', overflowY: 'auto',
+              }}>
+                <div style={{ color: DIM, letterSpacing: 1, marginBottom: 6 }}>DETAILS</div>
+                <div style={{ marginBottom: 4 }}><span style={{ color: DIM }}>Name </span>{selectedArtifact.name}</div>
+                <div style={{ marginBottom: 4 }}><span style={{ color: DIM }}>Version </span>v{selectedArtifact.version}</div>
+                <div style={{ marginBottom: 4 }}><span style={{ color: DIM }}>Type </span>{selectedArtifact.mime.split('.').pop()}</div>
+                <div style={{ marginBottom: 4 }}><span style={{ color: DIM }}>Size </span>{Math.max(1, Math.round((selectedArtifact.size_bytes || 0) / 1024))} KB</div>
+                <div><span style={{ color: DIM }}>By </span>{selectedArtifact.created_by}</div>
+              </div>
+            )}
           </div>
         </div>
       )}
