@@ -32,7 +32,8 @@ import {
   chatDisplayName,
   crewParticipantIds,
   isAgentCreated,
-  isChat,
+  isCollabRoom,
+  isTaskRoom,
   isGroupChat,
   captainJoined,
   hostAgentId,
@@ -101,6 +102,34 @@ export default function ChatsPanel() {
   // AD-1090: status filter chips.
   const [filter, setFilter] = useState<'all' | 'needs' | 'rooms' | 'dms'>('all');
   const [summaries, setSummaries] = useState<Record<string, RoomSummary>>({});
+  // AD-1093: resizable panel (width + height), persisted.
+  const [size, setSize] = useState<{ w: number; h: number }>(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('probos.chatsPanel.size') || '');
+      if (typeof s?.w === 'number' && typeof s?.h === 'number') return s;
+    } catch { /* default */ }
+    return { w: 440, h: 600 };
+  });
+  const resizeRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    resizeRef.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h };
+    const move = (ev: MouseEvent) => {
+      if (!resizeRef.current) return;
+      const w = Math.max(320, Math.min(900, resizeRef.current.w + (ev.clientX - resizeRef.current.x)));
+      const h = Math.max(360, Math.min(window.innerHeight - 80, resizeRef.current.h + (ev.clientY - resizeRef.current.y)));
+      setSize({ w, h });
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }, [size]);
+  useEffect(() => {
+    try { localStorage.setItem('probos.chatsPanel.size', JSON.stringify(size)); } catch { /* best-effort */ }
+  }, [size]);
 
   // Fetch on open. The wrapper already honest-degrades to [] (Tier-2), so no
   // try/catch needed here. The `active` guard avoids a setState after unmount.
@@ -151,15 +180,15 @@ export default function ChatsPanel() {
       const s = storeChatThreads.get(t.id);
       return s && (s.last_active_at ?? 0) > (t.last_active_at ?? 0) ? s : t;
     })
-    .filter((t) => isChat(t, agents))
+    .filter((t) => isCollabRoom(t, agents))
     .filter((t) => {
       const q = query.trim().toLowerCase();
       return !q || chatDisplayName(t, agents).toLowerCase().includes(q);
     })
     .filter((t) => {
       if (filter === 'needs') return isAgentCreated(t) && !captainJoined(t);
-      if (filter === 'rooms') return isGroupChat(t, agents);
-      if (filter === 'dms') return !isGroupChat(t, agents);
+      if (filter === 'rooms') return isTaskRoom(t) || isGroupChat(t, agents);
+      if (filter === 'dms') return !isTaskRoom(t) && !isGroupChat(t, agents);
       return true;
     })
     .sort((a, b) => {
@@ -220,11 +249,8 @@ export default function ChatsPanel() {
         position: 'fixed',
         left: pos.x,
         top: pos.y,
-        width: 440,
-        // AD-940: drag replaces the old top/bottom:60 vertical pin. A maxHeight
-        // keeps the list bounded (the flex:1 body still scrolls) while the panel
-        // moves freely; 120 = the prior 60 top + 60 bottom margins.
-        maxHeight: 'calc(100vh - 120px)',
+        width: size.w,
+        height: size.h,
         zIndex: 30,
         background: 'rgba(10, 10, 18, 0.95)',
         backdropFilter: 'blur(12px)',
@@ -436,6 +462,13 @@ export default function ChatsPanel() {
                   <span style={{ fontSize: 10, color: COLOR_INACTIVE }}>{fmtAgo(thread.last_active_at)}</span>
                 </div>
 
+                {/* AD-1093: room topic/task line */}
+                {summaries[thread.id]?.topic && (
+                  <div data-testid={`room-topic-${thread.id}`} style={{ fontSize: 11, color: '#9a94a8', marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {summaries[thread.id]?.topic}
+                  </div>
+                )}
+
                 {/* Participant avatars + Join control */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                   {crewIds.map((id) => (
@@ -490,6 +523,18 @@ export default function ChatsPanel() {
       </div>
 
       {newChatOpen && <NewChatModal onClose={() => setNewChatOpen(false)} />}
+      {/* AD-1093: resize handle (bottom-right) */}
+      <div
+        data-testid="chats-resize"
+        onMouseDown={startResize}
+        title="Drag to resize"
+        style={{
+          position: 'absolute', right: 0, bottom: 0, width: 16, height: 16,
+          cursor: 'nwse-resize', zIndex: 40,
+          background: 'linear-gradient(135deg, transparent 50%, rgba(240,176,96,0.4) 50%)',
+          borderBottomRightRadius: 8,
+        }}
+      />
     </div>
   );
 }

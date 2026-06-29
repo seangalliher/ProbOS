@@ -53,6 +53,22 @@ export function isChat(thread: AD791aChatThreadView, agents: AgentMap): boolean 
   return isAgentCreated(thread) || crewParticipantIds(thread, agents).length >= 1;
 }
 
+/**
+ * AD-1093: a Collaboration Room = any crew conversation INCLUDING task rooms.
+ * The reframed Crew Collaboration surface IS the rooms list, so unlike `isChat`
+ * it does NOT exclude `task_id` rooms (those are the work rooms the Captain
+ * most wants front-and-center). 1:1 default threads, agent-started groups, and
+ * task-workspace rooms all qualify (>=1 crew participant or agent-created).
+ */
+export function isCollabRoom(thread: AD791aChatThreadView, agents: AgentMap): boolean {
+  return isAgentCreated(thread) || crewParticipantIds(thread, agents).length >= 1 || !!thread.task_id;
+}
+
+/** AD-1093: a task-bound work room (carries a task_id). */
+export function isTaskRoom(thread: AD791aChatThreadView): boolean {
+  return !!thread.task_id;
+}
+
 /** Whether the Captain sentinel is already a participant. */
 export function captainJoined(thread: AD791aChatThreadView): boolean {
   return thread.participants.includes(CAPTAIN_PARTICIPANT_ID);

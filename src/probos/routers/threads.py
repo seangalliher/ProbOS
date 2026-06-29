@@ -206,7 +206,7 @@ async def thread_summaries(runtime: Any = Depends(get_runtime)) -> dict:
     arts = getattr(runtime, "artifact_store", None)
     out: dict[str, dict] = {}
     for t in store.list_threads(include_archived=False):
-        s = {"outputs": 0, "steps_total": 0, "steps_done": 0}
+        s = {"outputs": 0, "steps_total": 0, "steps_done": 0, "topic": ""}
         if arts is not None:
             try:
                 s["outputs"] = len(arts.list_thread_latest(t.id))
@@ -219,6 +219,8 @@ async def thread_summaries(runtime: Any = Depends(get_runtime)) -> dict:
                 steps = (item.steps if item else []) or []
                 s["steps_total"] = len(steps)
                 s["steps_done"] = sum(1 for st in steps if st.get("status") == "done")
+                if item and item.title:
+                    s["topic"] = item.title
             except Exception:
                 pass
         out[t.id] = s

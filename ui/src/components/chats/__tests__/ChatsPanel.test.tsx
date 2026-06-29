@@ -109,15 +109,15 @@ afterEach(() => {
 });
 
 describe('AD-931 ChatsPanel', () => {
-  it('lists BOTH 1:1 and group chats; excludes task rooms', async () => {
+  it('lists 1:1, group, AND task rooms (AD-1093)', async () => {
     await renderOpen();
     expect(screen.getByTestId('chat-row-g1')).toBeTruthy();
     expect(screen.getByTestId('chat-row-g2')).toBeTruthy();
     // g3 (1:1) is now INCLUDED — the AD-919 exclusion contract flips.
     expect(screen.getByTestId('chat-row-g3')).toBeTruthy();
     expect(screen.getByTestId('chat-row-g4')).toBeTruthy();
-    // t1 carries task_id -> excluded from the Chats list (AD-925 task room).
-    expect(screen.queryByTestId('chat-row-t1')).toBeNull();
+    // AD-1093: task rooms are the work rooms — now INCLUDED in Crew Collaboration.
+    expect(screen.getByTestId('chat-row-t1')).toBeTruthy();
   });
 
   it('badges agent-created chats only', async () => {

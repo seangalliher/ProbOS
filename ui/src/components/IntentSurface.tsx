@@ -976,10 +976,9 @@ export function IntentSurface() {
           onClick={() => useStore.getState().openChats()}
           title="Crew Collaboration — rooms where the crew work tasks"
           style={{
-            position: 'fixed', bottom: 46, left: '50%',
-            transform: 'translateX(calc(-50% - 210px))', zIndex: 20,
+            position: 'fixed', top: 12, left: 12, zIndex: 25,
             display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '8px 14px', borderRadius: 20,
+            padding: '6px 12px', borderRadius: 20,
             border: '1px solid rgba(240,176,96,0.35)', background: 'rgba(20,22,30,0.85)',
             color: '#f0b060', fontSize: 12, fontWeight: 600, cursor: 'pointer',
             fontFamily: "'JetBrains Mono', monospace", letterSpacing: 0.5,
