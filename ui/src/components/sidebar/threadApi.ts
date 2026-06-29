@@ -53,6 +53,19 @@ export async function searchThreads(query: string): Promise<AD791aChatThreadView
   }
 }
 
+// AD-1092: per-room status summaries (todos done/total + outputs) in one call.
+export interface RoomSummary { outputs: number; steps_total: number; steps_done: number; }
+export async function fetchRoomSummaries(): Promise<Record<string, RoomSummary>> {
+  try {
+    const res = await fetch('/api/threads/summaries');
+    if (!res.ok) return {};
+    const data = (await res.json()) as { summaries?: Record<string, RoomSummary> };
+    return data?.summaries ?? {};
+  } catch {
+    return {};
+  }
+}
+
 export interface CreateThreadBody {
   title: string;
   participants: string[];

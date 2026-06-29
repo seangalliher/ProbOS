@@ -196,6 +196,35 @@ async def list_recents(limit: int = 20, runtime: Any = Depends(get_runtime)) -> 
     return {"recents": [t.to_dict() for t in items]}
 
 
+# AD-1092: batch per-room status (todos done/total + output count) so the
+# Crew Collaboration list shows progress badges in one call (not N). Registered
+# before /{thread_id} so the literal path wins.
+@router.get("/summaries")
+async def thread_summaries(runtime: Any = Depends(get_runtime)) -> dict:
+    store = _get_store(runtime)
+    wis = getattr(runtime, "work_item_store", None)
+    arts = getattr(runtime, "artifact_store", None)
+    out: dict[str, dict] = {}
+    for t in store.list_threads(include_archived=False):
+        s = {"outputs": 0, "steps_total": 0, "steps_done": 0}
+        if arts is not None:
+            try:
+                s["outputs"] = len(arts.list_thread_latest(t.id))
+            except Exception:
+                pass
+        tid = getattr(t, "task_id", None)
+        if tid and wis is not None:
+            try:
+                item = await wis.get_work_item(tid)
+                steps = (item.steps if item else []) or []
+                s["steps_total"] = len(steps)
+                s["steps_done"] = sum(1 for st in steps if st.get("status") == "done")
+            except Exception:
+                pass
+        out[t.id] = s
+    return {"summaries": out}
+
+
 @router.post("")
 async def create_thread(
     body: CreateThreadRequest, runtime: Any = Depends(get_runtime)

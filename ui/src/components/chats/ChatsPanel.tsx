@@ -23,7 +23,7 @@ import { useStore, type AD791aChatThreadView } from '../../store/useStore';
 import type { Agent } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { UserPlus, Close } from '../icons/Glyphs';
-import { listThreads, addParticipant, getThread } from '../sidebar/threadApi';
+import { listThreads, addParticipant, getThread, fetchRoomSummaries, type RoomSummary } from '../sidebar/threadApi';
 import { NewChatModal } from './NewChatModal';
 import {
   CAPTAIN_PARTICIPANT_ID,
@@ -100,6 +100,7 @@ export default function ChatsPanel() {
   const [sort, setSort] = useState<'recent' | 'name'>('recent');
   // AD-1090: status filter chips.
   const [filter, setFilter] = useState<'all' | 'needs' | 'rooms' | 'dms'>('all');
+  const [summaries, setSummaries] = useState<Record<string, RoomSummary>>({});
 
   // Fetch on open. The wrapper already honest-degrades to [] (Tier-2), so no
   // try/catch needed here. The `active` guard avoids a setState after unmount.
@@ -109,6 +110,7 @@ export default function ChatsPanel() {
     void listThreads({ includeArchived: false }).then((list) => {
       if (active) setThreads(list);
     });
+    void Promise.resolve().then(() => fetchRoomSummaries?.()).then((s) => { if (active && s) setSummaries(s); }).catch(() => {});
     return () => {
       active = false;
     };
@@ -167,6 +169,16 @@ export default function ChatsPanel() {
       if (sort === 'name') return chatDisplayName(a, agents).localeCompare(chatDisplayName(b, agents));
       return (b.last_active_at ?? 0) - (a.last_active_at ?? 0);
     });
+
+  const roomBadge = (id: string) => {
+    const s = summaries[id];
+    if (!s || (s.steps_total === 0 && s.outputs === 0)) return null;
+    return (
+      <span data-testid={`room-badge-${id}`} style={{ fontSize: 9, color: COLOR_INACTIVE, marginRight: 6 }}>
+        {s.steps_total > 0 ? `\u2713 ${s.steps_done}/${s.steps_total}` : ''}{s.steps_total > 0 && s.outputs > 0 ? ' \u00b7 ' : ''}{s.outputs > 0 ? `${s.outputs} out` : ''}
+      </span>
+    );
+  };
 
   async function handleOpen(thread: AD791aChatThreadView): Promise<void> {
     // AD-917/AD-937: open-on-click is per-host (the chat renders in the first
@@ -369,6 +381,7 @@ export default function ChatsPanel() {
                     {chatDisplayName(thread, agents)}
                   </span>
                   <div style={{ flex: 1 }} />
+                  {roomBadge(thread.id)}
                   <span data-testid={`room-time-${thread.id}`} style={{ fontSize: 10, color: COLOR_INACTIVE }}>
                     {fmtAgo(thread.last_active_at)}
                   </span>
@@ -419,6 +432,7 @@ export default function ChatsPanel() {
                     </span>
                   )}
                   <div style={{ flex: 1 }} />
+                  {roomBadge(thread.id)}
                   <span style={{ fontSize: 10, color: COLOR_INACTIVE }}>{fmtAgo(thread.last_active_at)}</span>
                 </div>
 
