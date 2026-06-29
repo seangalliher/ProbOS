@@ -114,6 +114,8 @@ class ExtractedArtifact:
 
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 _MD_BULLET_RE = re.compile(r"^\s*[-*+\u2022]\s+(.*)$")
@@ -191,32 +193,97 @@ def _to_docx_libreoffice(text: str, soffice: str) -> bytes | None:
 
 
 def _to_office_bytes(mime: str, content: bytes, backend: str = "python-docx", soffice_path: str = "") -> bytes:
-    """BF-645/646: build a REAL Office binary from the agent's text. Agents emit
-    a docx artifact whose body is plain prose; persisting that text under a docx
-    mime yields a file Word cannot open. ``backend='libreoffice'`` renders via
-    headless soffice (higher fidelity); default python-docx is zero-dep. Both
-    honest-degrade to the original bytes on failure."""
-    if mime != _DOCX_MIME:
-        return content
+    """BF-645/646/648: build a REAL Office binary from the agent's text. docx via
+    python-docx (markdown-aware) or headless LibreOffice; pptx via python-pptx
+    (a slide per ``#`` heading); xlsx via openpyxl (CSV/tab rows). All honest-
+    degrade to the original bytes on failure."""
     text = content.decode("utf-8", errors="replace")
-    if backend == "libreoffice":
-        soffice = _libreoffice_bin(soffice_path)
-        if soffice:
-            rendered = _to_docx_libreoffice(text, soffice)
-            if rendered:
-                return rendered
-        logger.warning("BF-646: libreoffice backend unavailable; using python-docx")
+    if mime == _DOCX_MIME:
+        if backend == "libreoffice":
+            soffice = _libreoffice_bin(soffice_path)
+            if soffice:
+                rendered = _to_docx_libreoffice(text, soffice)
+                if rendered:
+                    return rendered
+            logger.warning("BF-646: libreoffice backend unavailable; using python-docx")
+        try:
+            from io import BytesIO
+            from docx import Document
+            doc = Document()
+            _render_markdown_docx(doc, text)
+            buf = BytesIO()
+            doc.save(buf)
+            return buf.getvalue()
+        except Exception:
+            logger.warning("BF-645: docx render failed; persisting raw text", exc_info=True)
+            return content
+    if mime == _PPTX_MIME:
+        return _to_pptx(text) or content
+    if mime == _XLSX_MIME:
+        return _to_xlsx(text) or content
+    return content
+
+
+def _to_pptx(text: str) -> bytes | None:
+    """BF-648: a deck where each ``#``/``##`` heading starts a slide; bullets and
+    prose become the body. None on failure -> caller keeps raw bytes."""
     try:
         from io import BytesIO
-        from docx import Document
-        doc = Document()
-        _render_markdown_docx(doc, text)
+        from pptx import Presentation
+        from pptx.util import Inches
+        prs = Presentation()
+        blank = prs.slide_layouts[1]  # title + content
+        title, body = "", []
+
+        def _flush():
+            if not title and not body:
+                return
+            s = prs.slides.add_slide(blank)
+            s.shapes.title.text = title or "Slide"
+            tf = s.placeholders[1].text_frame
+            tf.text = body[0] if body else ""
+            for line in body[1:]:
+                tf.add_paragraph().text = line
+
+        for raw in text.split("\n"):
+            line = raw.rstrip()
+            h = _MD_HEADING_RE.match(line)
+            if h:
+                _flush()
+                title, body = h.group(2).strip(), []
+            elif line.strip():
+                b = _MD_BULLET_RE.match(line) or _MD_NUM_RE.match(line)
+                body.append((b.group(1) if b else line).strip())
+        _flush()
+        if not prs.slides:
+            prs.slides.add_slide(blank).shapes.title.text = text[:80] or "Slide"
         buf = BytesIO()
-        doc.save(buf)
+        prs.save(buf)
         return buf.getvalue()
     except Exception:
-        logger.warning("BF-645: docx render failed; persisting raw text", exc_info=True)
-        return content
+        logger.warning("BF-648: pptx render failed", exc_info=True)
+        return None
+
+
+def _to_xlsx(text: str) -> bytes | None:
+    """BF-648: rows from comma/tab-separated lines. None on failure."""
+    try:
+        from io import BytesIO
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        for raw in text.split("\n"):
+            line = raw.rstrip()
+            if not line.strip():
+                continue
+            cells = line.split("\t") if "\t" in line else line.split(",")
+            ws.append([c.strip() for c in cells])
+        buf = BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+    except Exception:
+        logger.warning("BF-648: xlsx render failed", exc_info=True)
+        return None
 
 
 def _sanitize_name(raw: str) -> str:

@@ -35,6 +35,18 @@ def test_markdown_docx_render_bf647() -> None:
     assert out[:4] == b"PK\x03\x04" and len(out) > 1000
 
 
+def test_pptx_render_bf648() -> None:
+    p = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    out = _to_office_bytes(p, b"# Slide 1\n- a\n- b\n# Slide 2\n- c")
+    assert out[:4] == b"PK\x03\x04" and len(out) > 5000
+
+
+def test_xlsx_render_bf648() -> None:
+    x = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    out = _to_office_bytes(x, b"h1,h2\n1,2\n3,4")
+    assert out[:4] == b"PK\x03\x04" and len(out) > 1000
+
+
 def test_extracts_explicit_tag() -> None:
     body = (
         "Here is your list:\n"

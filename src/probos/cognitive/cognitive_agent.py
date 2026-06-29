@@ -2441,10 +2441,11 @@ class CognitiveAgent(BaseAgent):
             "[TODO_CONFIRM n] or returns it with [TODO_REJECT n: reason] — a "
             "step counts as complete only once a senior confirms it. If a step "
             "yields a document, save it with the artifact tag so it lands in "
-            "Outputs; for a Word document use the artifact name ending .docx and "
-            "mime application/vnd.openxmlformats-officedocument.wordprocessingml."
-            "document (not markdown). Put the tags inline in your reply; they "
-            "are applied and hidden from the transcript."
+            "Outputs; for a Word document use mime application/vnd."
+            "openxmlformats-officedocument.wordprocessingml.document (.docx), a "
+            "presentation .pptx (...presentationml.presentation), a spreadsheet "
+            ".xlsx (...spreadsheetml.sheet) — not markdown. Put the tags inline "
+            "in your reply; they are applied and hidden from the transcript."
         )
 
     def _conversational_proactivity_protocol(self, observation: dict) -> str:
