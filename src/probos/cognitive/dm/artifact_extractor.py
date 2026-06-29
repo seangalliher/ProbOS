@@ -115,6 +115,46 @@ class ExtractedArtifact:
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+_MD_BULLET_RE = re.compile(r"^\s*[-*+\u2022]\s+(.*)$")
+_MD_NUM_RE = re.compile(r"^\s*\d+[.)]\s+(.*)$")
+_MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+
+
+def _add_md_runs(paragraph, text: str) -> None:
+    """BF-647: split **bold** spans into runs so emphasis survives in docx."""
+    pos = 0
+    for m in _MD_BOLD_RE.finditer(text):
+        if m.start() > pos:
+            paragraph.add_run(text[pos:m.start()])
+        paragraph.add_run(m.group(1)).bold = True
+        pos = m.end()
+    if pos < len(text):
+        paragraph.add_run(text[pos:])
+
+
+def _render_markdown_docx(doc, text: str) -> None:
+    """BF-647: markdown-aware python-docx render (no external binary). Maps #
+    headings, -/* bullets, numbered lists, and **bold** to real Word styles so
+    quality is high without LibreOffice."""
+    for raw in text.split("\n"):
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        h = _MD_HEADING_RE.match(line)
+        if h:
+            doc.add_heading(h.group(2).strip(), level=min(len(h.group(1)), 4))
+            continue
+        b = _MD_BULLET_RE.match(line)
+        if b:
+            _add_md_runs(doc.add_paragraph(style="List Bullet"), b.group(1).strip())
+            continue
+        n = _MD_NUM_RE.match(line)
+        if n:
+            _add_md_runs(doc.add_paragraph(style="List Number"), n.group(1).strip())
+            continue
+        _add_md_runs(doc.add_paragraph(), line.strip())
+
 
 def _libreoffice_bin(explicit: str = "") -> str | None:
     """BF-646: resolve the soffice binary (explicit path > PATH). None if absent."""
@@ -170,13 +210,7 @@ def _to_office_bytes(mime: str, content: bytes, backend: str = "python-docx", so
         from io import BytesIO
         from docx import Document
         doc = Document()
-        for block in [b.strip() for b in text.split("\n\n")]:
-            if not block:
-                continue
-            if "\n" not in block and len(block) <= 80 and not block.endswith((".", ":", ",")):
-                doc.add_heading(block, level=1)
-            else:
-                doc.add_paragraph(block)
+        _render_markdown_docx(doc, text)
         buf = BytesIO()
         doc.save(buf)
         return buf.getvalue()

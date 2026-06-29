@@ -30,6 +30,11 @@ def test_libreoffice_backend_degrades_when_absent_bf646() -> None:
     assert out[:4] == b"PK\x03\x04"
 
 
+def test_markdown_docx_render_bf647() -> None:
+    out = _to_office_bytes(_DOCX, b"# Heading\n\nA **bold** line.\n\n- one\n- two")
+    assert out[:4] == b"PK\x03\x04" and len(out) > 1000
+
+
 def test_extracts_explicit_tag() -> None:
     body = (
         "Here is your list:\n"
