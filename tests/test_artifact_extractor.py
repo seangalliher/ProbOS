@@ -24,6 +24,12 @@ def test_to_office_bytes_passes_non_docx_through_bf643() -> None:
     assert _to_office_bytes("text/markdown", b"hello") == b"hello"
 
 
+def test_libreoffice_backend_degrades_when_absent_bf646() -> None:
+    # No soffice on CI -> degrades to python-docx, still a real PK docx.
+    out = _to_office_bytes(_DOCX, b"Title\n\nBody.", "libreoffice", "/nope/soffice")
+    assert out[:4] == b"PK\x03\x04"
+
+
 def test_extracts_explicit_tag() -> None:
     body = (
         "Here is your list:\n"

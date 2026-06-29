@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -115,19 +116,59 @@ class ExtractedArtifact:
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
-def _to_office_bytes(mime: str, content: bytes) -> bytes:
-    """BF-645: build a REAL Office binary from the agent's text. Agents emit a
-    docx artifact whose body is plain prose; persisting that text under a docx
-    mime yields a file Word cannot open. Render it to a genuine .docx via
-    python-docx (blank-line-separated paragraphs; a short heading-like line
-    becomes a heading). Honest-degrade: return original bytes if not docx or
-    conversion fails (worst case = prior behavior)."""
+def _libreoffice_bin(explicit: str = "") -> str | None:
+    """BF-646: resolve the soffice binary (explicit path > PATH). None if absent."""
+    import shutil
+    if explicit:
+        return explicit if os.path.exists(explicit) else None
+    return shutil.which("soffice") or shutil.which("soffice.exe")
+
+
+def _to_docx_libreoffice(text: str, soffice: str) -> bytes | None:
+    """BF-646: render text->docx via headless LibreOffice (higher fidelity).
+    Wrap the prose as minimal HTML and `--convert-to docx`. None on any failure
+    so the caller degrades to python-docx."""
+    import subprocess
+    import tempfile
+    try:
+        paras = "".join(f"<p>{p.strip()}</p>" for p in text.split("\n\n") if p.strip())
+        html = f"<html><body>{paras or '<p></p>'}</body></html>"
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "doc.html")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write(html)
+            subprocess.run(
+                [soffice, "--headless", "--convert-to", "docx", "--outdir", d, src],
+                check=True, capture_output=True, timeout=60,
+            )
+            out = os.path.join(d, "doc.docx")
+            if os.path.exists(out):
+                with open(out, "rb") as f:
+                    return f.read()
+    except Exception:
+        logger.warning("BF-646: LibreOffice render failed; falling back", exc_info=True)
+    return None
+
+
+def _to_office_bytes(mime: str, content: bytes, backend: str = "python-docx", soffice_path: str = "") -> bytes:
+    """BF-645/646: build a REAL Office binary from the agent's text. Agents emit
+    a docx artifact whose body is plain prose; persisting that text under a docx
+    mime yields a file Word cannot open. ``backend='libreoffice'`` renders via
+    headless soffice (higher fidelity); default python-docx is zero-dep. Both
+    honest-degrade to the original bytes on failure."""
     if mime != _DOCX_MIME:
         return content
+    text = content.decode("utf-8", errors="replace")
+    if backend == "libreoffice":
+        soffice = _libreoffice_bin(soffice_path)
+        if soffice:
+            rendered = _to_docx_libreoffice(text, soffice)
+            if rendered:
+                return rendered
+        logger.warning("BF-646: libreoffice backend unavailable; using python-docx")
     try:
         from io import BytesIO
         from docx import Document
-        text = content.decode("utf-8", errors="replace")
         doc = Document()
         for block in [b.strip() for b in text.split("\n\n")]:
             if not block:
@@ -325,6 +366,8 @@ async def replace_with_stubs(
     attachment_store: Any,
     thread_id: str,
     created_by: str,
+    office_backend: str = "python-docx",
+    libreoffice_path: str = "",
 ) -> tuple[str, list[Artifact]]:
     """Persist each extracted artifact and rewrite ``response_text``.
 
@@ -349,7 +392,7 @@ async def replace_with_stubs(
     stubs: list[tuple[tuple[int, int], str]] = []
     for ex in extracted:
         # BF-645: render docx prose to a real Word binary before hashing/persist.
-        blob = _to_office_bytes(ex.mime, ex.content)
+        blob = _to_office_bytes(ex.mime, ex.content, office_backend, libreoffice_path)
         content_hash = hashlib.sha256(blob).hexdigest()
         try:
             await attachment_store.write(

@@ -5275,6 +5275,17 @@ class CommunicationsConfig(BaseModel):
         default="ensign",
         description="AD-1082: min rank to SEED the plan ([TODOS]) — open to any crew so the asked agent can plan; confirm/reject stay at room_todos_min_rank.",
     )
+    # BF-646: backend for rendering agent-produced Office docs. "python-docx"
+    # (default, zero-dep) or "libreoffice" (higher fidelity via headless soffice
+    # convert-to; auto-degrades to python-docx if soffice is not installed).
+    office_backend: str = Field(
+        default="python-docx",
+        description="BF-646: Office doc backend: python-docx (default) | libreoffice (headless soffice, higher fidelity, degrades if absent).",
+    )
+    libreoffice_path: str = Field(
+        default="",
+        description="BF-646: explicit soffice/soffice.exe path; empty = auto-detect on PATH.",
+    )
     # AD-928: agent-authored [STATUS] -> task-room "show your work" activity.
     status_min_rank: str = "lieutenant"  # min rank to post a status into a task room: ensign|lieutenant|commander|senior
     status_max_per_turn: int = 3         # anti-flood: honor at most this many [STATUS] tags per proactive turn

@@ -1215,12 +1215,15 @@ class DmReplyPipeline:
             )
             if not extracted:
                 return
+            comm_cfg = getattr(self.ctx.runtime.config, "communications", None)
             new_text, _artifacts = await replace_with_stubs(
                 text, extracted,
                 artifact_store=artifact_store,
                 attachment_store=attachment_store,
                 thread_id=thread_id,
                 created_by=self.ctx.agent_id or "agent",
+                office_backend=getattr(comm_cfg, "office_backend", "python-docx"),
+                libreoffice_path=getattr(comm_cfg, "libreoffice_path", ""),
             )
             self.ctx.response_text = new_text
             if _artifacts:
