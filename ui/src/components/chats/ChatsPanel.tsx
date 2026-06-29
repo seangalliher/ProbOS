@@ -243,6 +243,7 @@ export default function ChatsPanel() {
         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: COLOR_ACTIVE }}>
           CREW COLLABORATION
         </span>
+        <span style={{ fontSize: 10, color: COLOR_INACTIVE }}>({chats.length})</span>
         <div style={{ flex: 1 }} />
         <button
           data-testid="new-chat-button"
