@@ -27,7 +27,7 @@
  *
  * HXI Design Principle #3 — inline stroke-SVG glyphs only, no emoji.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { InputsList } from '../inputs/InputsList';
 import { fetchThreadInputs, attachTaskInputs, type TaskInput } from '../inputs/inputsApi';
 import { ArtifactList } from '../artifacts/ArtifactList';
@@ -97,6 +97,28 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     const persisted = loadCollapsedFromStorage();
     return persisted ?? true;
   });
+  // BF-649: enlargeable preview width (Cowork-style), drag the left edge.
+  const [previewWidth, setPreviewWidth] = useState<number>(() => {
+    const n = Number(localStorage.getItem('probos.workspaceFiles.previewW'));
+    return n >= 360 ? n : 560;
+  });
+  const dragRef = useRef<{ x: number; w: number } | null>(null);
+  const startPreviewDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { x: e.clientX, w: previewWidth };
+    const move = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      const w = Math.max(360, Math.min(1100, dragRef.current.w + (dragRef.current.x - ev.clientX)));
+      setPreviewWidth(w);
+    };
+    const up = () => {
+      try { localStorage.setItem('probos.workspaceFiles.previewW', String(previewWidth)); } catch { /* best-effort */ }
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }, [previewWidth]);
 
   // Fetch inputs + artifacts on threadId change; honest-degrade to [] so a
   // failed endpoint shows an empty section instead of crashing the rail.
@@ -239,7 +261,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
       data-testid="workspace-files-rail"
       data-collapsed="false"
       style={{
-        flex: '0 0 300px', width: 300, position: 'relative',
+        flex: `0 0 ${selectedArtifact ? previewWidth : 300}px`, width: selectedArtifact ? previewWidth : 300, position: 'relative',
         background: 'rgba(10, 10, 18, 0.92)',
         borderLeft: '1px solid rgba(240, 176, 96, 0.15)',
         display: 'flex', flexDirection: 'column',
@@ -368,6 +390,12 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
             background: 'rgba(8, 8, 14, 0.98)',
           }}
         >
+          <div
+            data-testid="workspace-files-preview-resize"
+            onMouseDown={startPreviewDrag}
+            title="Drag to resize preview"
+            style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 31 }}
+          />
           <div style={{
             flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 8,
             padding: '6px 10px', borderBottom: '1px solid rgba(240, 176, 96, 0.15)',

@@ -687,10 +687,10 @@ export function AgentProfilePanel() {
           position: 'absolute',
           right: 0,
           bottom: 0,
-          width: 14,
-          height: 14,
+          width: 18,
+          height: 18,
           cursor: 'nwse-resize',
-          zIndex: 5,
+          zIndex: 50,
         }}
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#8888a0"
