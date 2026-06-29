@@ -112,6 +112,38 @@ class ExtractedArtifact:
     source_span: tuple[int, int]
 
 
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _to_office_bytes(mime: str, content: bytes) -> bytes:
+    """BF-645: build a REAL Office binary from the agent's text. Agents emit a
+    docx artifact whose body is plain prose; persisting that text under a docx
+    mime yields a file Word cannot open. Render it to a genuine .docx via
+    python-docx (blank-line-separated paragraphs; a short heading-like line
+    becomes a heading). Honest-degrade: return original bytes if not docx or
+    conversion fails (worst case = prior behavior)."""
+    if mime != _DOCX_MIME:
+        return content
+    try:
+        from io import BytesIO
+        from docx import Document
+        text = content.decode("utf-8", errors="replace")
+        doc = Document()
+        for block in [b.strip() for b in text.split("\n\n")]:
+            if not block:
+                continue
+            if "\n" not in block and len(block) <= 80 and not block.endswith((".", ":", ",")):
+                doc.add_heading(block, level=1)
+            else:
+                doc.add_paragraph(block)
+        buf = BytesIO()
+        doc.save(buf)
+        return buf.getvalue()
+    except Exception:
+        logger.warning("BF-645: docx render failed; persisting raw text", exc_info=True)
+        return content
+
+
 def _sanitize_name(raw: str) -> str:
     """Strip path separators; replace disallowed chars with ``_``.
 
@@ -316,11 +348,13 @@ async def replace_with_stubs(
     # First persist; collect (span, stub) pairs.
     stubs: list[tuple[tuple[int, int], str]] = []
     for ex in extracted:
-        content_hash = hashlib.sha256(ex.content).hexdigest()
+        # BF-645: render docx prose to a real Word binary before hashing/persist.
+        blob = _to_office_bytes(ex.mime, ex.content)
+        content_hash = hashlib.sha256(blob).hexdigest()
         try:
             await attachment_store.write(
                 content_hash,
-                ex.content,
+                blob,
                 ex.mime,
                 origin="agent_artifact",
             )
@@ -337,7 +371,7 @@ async def replace_with_stubs(
                 name=ex.name,
                 content_hash=content_hash,
                 mime=ex.mime,
-                size_bytes=len(ex.content),
+                size_bytes=len(blob),
                 created_by=created_by,
             )
         except Exception:

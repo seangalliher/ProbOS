@@ -7,7 +7,21 @@ import pytest
 from probos.cognitive.dm.artifact_extractor import (
     ExtractedArtifact,
     extract_artifacts,
+    _to_office_bytes,
 )
+
+
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def test_to_office_bytes_renders_real_docx_bf643() -> None:
+    out = _to_office_bytes(_DOCX, b"What is AI?\n\nAI is great.")
+    assert out[:4] == b"PK\x03\x04"  # real OOXML zip, not plain text
+    assert len(out) > 1000
+
+
+def test_to_office_bytes_passes_non_docx_through_bf643() -> None:
+    assert _to_office_bytes("text/markdown", b"hello") == b"hello"
 
 
 def test_extracts_explicit_tag() -> None:
