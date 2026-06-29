@@ -101,6 +101,7 @@ export default function ChatsPanel() {
   const [sort, setSort] = useState<'recent' | 'name'>('recent');
   // AD-1090: status filter chips.
   const [filter, setFilter] = useState<'all' | 'needs' | 'rooms' | 'dms'>('all');
+  const [dateFilter, setDateFilter] = useState<'any' | 'today' | 'week' | 'month'>('any');
   const [summaries, setSummaries] = useState<Record<string, RoomSummary>>({});
   // AD-1093: resizable panel (width + height), persisted.
   const [size, setSize] = useState<{ w: number; h: number }>(() => {
@@ -190,6 +191,13 @@ export default function ChatsPanel() {
       if (filter === 'rooms') return isTaskRoom(t) || isGroupChat(t, agents);
       if (filter === 'dms') return !isTaskRoom(t) && !isGroupChat(t, agents);
       return true;
+    })
+    .filter((t) => {
+      if (dateFilter === 'any') return true;
+      const ageS = Date.now() / 1000 - (t.last_active_at ?? 0);
+      if (dateFilter === 'today') return ageS < 86400;
+      if (dateFilter === 'week') return ageS < 604800;
+      return ageS < 2592000; // month
     })
     .sort((a, b) => {
       const aAlert = isAgentCreated(a) && !captainJoined(a) ? 1 : 0;
@@ -358,6 +366,24 @@ export default function ChatsPanel() {
                 color: filter === k ? '#0a0a12' : COLOR_ACTIVE,
                 background: filter === k ? COLOR_ACTIVE : 'rgba(240,176,96,0.08)',
                 border: '1px solid rgba(240,176,96,0.3)', whiteSpace: 'nowrap',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {/* AD-1094: date-range chips */}
+        <div style={{ display: 'flex', gap: 6, padding: '0 4px 8px' }} onMouseDown={(e) => e.stopPropagation()}>
+          {([['any', 'Any time'], ['today', 'Today'], ['week', 'This week'], ['month', 'This month']] as const).map(([k, label]) => (
+            <button
+              key={k}
+              data-testid={`rooms-date-${k}`}
+              onClick={() => setDateFilter(k)}
+              style={{
+                fontSize: 10, cursor: 'pointer', borderRadius: 12, padding: '3px 9px',
+                color: dateFilter === k ? '#0a0a12' : COLOR_INACTIVE,
+                background: dateFilter === k ? COLOR_INACTIVE : 'rgba(120,120,140,0.08)',
+                border: '1px solid rgba(120,120,140,0.3)', whiteSpace: 'nowrap',
               }}
             >
               {label}

@@ -1352,6 +1352,7 @@ class DmReplyPipeline:
                         item = await store.get_work_item(task_id)
                         if item and not (item.steps or []):
                             await store.set_steps(task_id, plan, gate_completion=True, facilitator=self.ctx.agent_id or "agent")
+                            await self._maybe_title_room(store, task_id, item)
             if has_todo_tag(text):
                 self.ctx.response_text = strip_todo_tags(text)
         except Exception as exc:
@@ -1394,6 +1395,34 @@ class DmReplyPipeline:
         except Exception:
             return False
 
+    _GENERIC_ROOM_TITLES = frozenset({"", "room workspace", "untitled", "task"})
+
+    @staticmethod
+    def _derive_room_title(text: str) -> str:
+        """AD-1094: a concise room title from the Captain's request — first
+        sentence/line, trimmed to ~60 chars (e.g. 'Create a Word document...')."""
+        t = (text or "").strip()
+        for sep in ("\n", ". ", "? ", "! "):
+            if sep in t:
+                t = t.split(sep, 1)[0]
+                break
+        t = t.strip().rstrip(".?!").strip()
+        return t[:60].strip()
+
+    async def _maybe_title_room(self, store: Any, task_id: str, item: Any) -> None:
+        """AD-1094: when a room task still has a generic/empty title, name it
+        after the Captain's request so the Crew Collaboration topic line is
+        meaningful. Honest-degrade: any failure leaves the title unchanged."""
+        try:
+            current = (getattr(item, "title", "") or "").strip().lower()
+            if current not in self._GENERIC_ROOM_TITLES:
+                return
+            title = self._derive_room_title(self.ctx.req_message)
+            if title and hasattr(store, "update_work_item"):
+                await store.update_work_item(task_id, title=title)
+        except Exception:
+            logger.debug("AD-1094: room title derive failed for %s", task_id, exc_info=True)
+
     async def _apply_room_todos(self, store: Any, task_id: str, parsed: Any) -> None:
         """AD-1081/AD-1087: apply parsed room-todo intents. Plan seeding is open
         (the seeder is recorded as facilitator); confirm/reject are allowed for a
@@ -1406,6 +1435,7 @@ class DmReplyPipeline:
         can_validate = is_senior or actor == facilitator
         if parsed.plan is not None and self._todo_actor_can_seed(actor):
             await store.set_steps(task_id, parsed.plan, gate_completion=True, facilitator=actor)
+            await self._maybe_title_room(store, task_id, item)
         for idx in parsed.submit:
             await store.update_step(task_id, idx, status="submitted", actor=actor)
         if can_validate:

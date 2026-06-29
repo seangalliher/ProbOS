@@ -227,6 +227,13 @@ def test_room_outputs_block_verifies_storage_bf651():
     assert CognitiveAgent._conversational_room_outputs_block(_proto_self(True), {"params": {}}) == ""
 
 
+def test_derive_room_title_ad1094():
+    f = DmReplyPipeline._derive_room_title
+    assert f("Create a Word document. Add a paragraph on AI.") == "Create a Word document"
+    assert f("") == ""
+    assert len(f("x" * 200)) <= 60
+
+
 # ---------------- AD-1085a: deterministic prose-plan seeding ----------------
 
 
