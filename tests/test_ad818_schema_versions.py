@@ -257,3 +257,28 @@ async def test_migration_times_out_records_nothing() -> None:
 def test_migration_versions_has_exactly_five_versioned_ids() -> None:
     assert set(MIGRATION_VERSIONS) == {"BF-103", "AD-570", "AD-570b", "AD-584", "AD-605"}
     assert "BF-207" not in MIGRATION_VERSIONS
+
+
+@pytest.mark.asyncio
+async def test_real_db_roundtrip_persists_and_reloads(tmp_path) -> None:
+    # A real file-backed store, reopened as a NEW instance over the same path,
+    # reads the persisted row back (proving disk persistence, not
+    # same-connection state — the :memory: fixture is empty on every reopen).
+    db = str(tmp_path / "schema_versions.db")
+    store = SchemaVersionStore(db_path=db)
+    await store.start()
+    await store.record("AD-605", episode_count=88, version_hash="1", applied_at=456.0)
+    await store.stop()
+
+    store2 = SchemaVersionStore(db_path=db)
+    await store2.start()
+    try:
+        row = await store2.get("AD-605")
+        assert row is not None
+        assert row["migration_id"] == "AD-605"
+        assert row["episode_count"] == 88
+        assert row["version_hash"] == "1"
+        assert row["applied_at"] == 456.0
+        assert await store2.is_current("AD-605", "1") is True
+    finally:
+        await store2.stop()

@@ -515,6 +515,34 @@ class TestExtensionStateStore:
         await store.record_state("x", ExtensionState.ENABLED, _make_manifest("x"))
         # No exception ⇒ pass
 
+    @pytest.mark.asyncio
+    async def test_real_db_roundtrip_persists_and_reloads(self, tmp_path: Path) -> None:
+        """A new store over the same DB reloads the enabled row from disk and
+        re-deserializes the manifest JSON (model_validate_json) — the
+        TestExtensionStateStore fixture only ever proves same-connection state."""
+        db = str(tmp_path / "ext_roundtrip.db")
+        store = ExtensionStateStore(db_path=db)
+        await store.start()
+        manifest = _make_manifest("e1", name="Demo Extension", version="2.3.0")
+        await store.record_state("e1", ExtensionState.ENABLED, manifest)
+        await store.stop()
+
+        store2 = ExtensionStateStore(db_path=db)
+        await store2.start()
+        try:
+            assert await store2.get_state("e1") == ExtensionState.ENABLED
+            rows = await store2.list_enabled()
+            assert len(rows) == 1
+            ext_id, loaded_manifest = rows[0]
+            assert ext_id == "e1"
+            # manifest_json re-deserialized into an ExtensionManifest on reload
+            assert isinstance(loaded_manifest, ExtensionManifest)
+            assert loaded_manifest.extension_id == "e1"
+            assert loaded_manifest.name == "Demo Extension"
+            assert loaded_manifest.version == "2.3.0"
+        finally:
+            await store2.stop()
+
 
 # ---------------------------------------------------------------------------
 # TestSkillManifest — ~8 tests

@@ -174,3 +174,39 @@ async def test_list_by_agent_returns_all_statuses(store: SkillRequestStore) -> N
     by_agent = await store.list_by_agent("agent-7")
     ids = {r.id for r in by_agent}
     assert ids == {r1.id, r2.id}
+
+
+async def test_real_db_roundtrip_persists_and_reloads(tmp_path: Any) -> None:
+    # A new store over the same DB rebuilds its cache from disk via
+    # _refresh_cache -> _row_to_request, exercising every column mapping. The
+    # existing tmp_path tests only read from the same in-process cache.
+    db = str(tmp_path / "skill_roundtrip.db")
+    s = SkillRequestStore(db_path=db)
+    await s.start()
+    req = await s.file_request(
+        "agent-9", "summarization",
+        skill_label="Summarization", source="counselor",
+        justification="condense long incident reports",
+    )
+    updated = await s.decide(req.id, approve=True, reason="clearly useful", decided_by="captain")
+    assert updated is not None
+    await s.stop()
+
+    s2 = SkillRequestStore(db_path=db)
+    await s2.start()
+    try:
+        loaded = await s2.get(req.id)
+        assert loaded is not None
+        assert loaded.id == req.id
+        assert loaded.agent_id == "agent-9"
+        assert loaded.skill_id == "summarization"
+        assert loaded.skill_label == "Summarization"
+        assert loaded.source == "counselor"
+        assert loaded.justification == "condense long incident reports"
+        assert loaded.status == "approved"
+        assert loaded.decided_by == "captain"
+        assert loaded.decision_reason == "clearly useful"
+        assert loaded.created_at == updated.created_at
+        assert loaded.decided_at == updated.decided_at
+    finally:
+        await s2.stop()

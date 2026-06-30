@@ -453,6 +453,50 @@ class TestToolPermissionStore:
         assert active[0].agent_id == "agent_2"
         await store.stop()
 
+    @pytest.mark.asyncio
+    async def test_real_db_roundtrip_persists_and_reloads(self, tmp_path: Any) -> None:
+        """Real SQLite round-trip: a new store over the same DB rebuilds its
+        cache from disk via _load_cache -> _row_to_grant, and revoking a missing
+        id hits the real-DB rowcount==0 -> False branch (unreachable cache-only)."""
+        db = str(tmp_path / "tool_perms.db")
+        store = ToolPermissionStore(db_path=db)
+        await store.start()
+        grant = await store.issue_grant(
+            agent_id="agent_1",
+            tool_id="tool_a",
+            permission=ToolPermission.WRITE,
+            is_restriction=True,
+            reason="captain override",
+            issued_by="captain",
+        )
+        await store.stop()
+
+        # A new store over the same DB reloads grants from disk (_load_cache).
+        store2 = ToolPermissionStore(db_path=db)
+        await store2.start()
+        try:
+            active = store2.get_active_grants_sync("agent_1", "tool_a")
+            assert len(active) == 1
+            loaded = active[0]
+            assert loaded.id == grant.id
+            assert loaded.agent_id == "agent_1"
+            assert loaded.tool_id == "tool_a"
+            assert loaded.permission == ToolPermission.WRITE
+            assert loaded.is_restriction is True
+            assert loaded.reason == "captain override"
+            assert loaded.issued_by == "captain"
+            assert loaded.issued_at == grant.issued_at
+            assert loaded.revoked is False
+            # Real-DB revoke of a missing id: UPDATE rowcount 0 -> False. The
+            # cache-only path always returns True, so this branch is only
+            # reachable with a live SQLite connection.
+            assert await store2.revoke_grant("does-not-exist") is False
+            # Happy-path revoke against real DB returns True and clears cache.
+            assert await store2.revoke_grant(grant.id) is True
+            assert store2.get_active_grants_sync("agent_1", "tool_a") == []
+        finally:
+            await store2.stop()
+
 
 # ===========================================================================
 # Class 7: TestToolAccessCommand (2 tests)

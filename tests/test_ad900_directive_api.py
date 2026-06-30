@@ -318,3 +318,41 @@ async def test_amend_unknown_directive_404(tmp_path: Any) -> None:
     async with _client_for(runtime) as client:
         resp = await client.patch("/api/crew/directives/nope", json={"content": "x"})
     assert resp.status_code == 404
+
+
+def test_real_db_roundtrip_persists_and_reloads(tmp_path: Any) -> None:
+    # DirectiveStore is synchronous (sqlite3). A new instance over the same DB
+    # file reloads the directive via RuntimeDirective.from_dict(json), proving
+    # status/content/timestamps survive the JSON serialization round-trip. The
+    # existing API tests reuse one store instance and never reopen the file.
+    db = str(tmp_path / "directives_roundtrip.db")
+    store = DirectiveStore(db_path=db)
+    directive, _reason = store.create_directive(
+        issuer_type="captain",
+        issuer_department=None,
+        issuer_rank=Rank.LIEUTENANT,
+        target_agent_type="builder",
+        target_department="engineering",
+        directive_type=DirectiveType.CAPTAIN_ORDER,
+        content="Prioritize the test suite",
+        priority=4,
+        expires_at=9999999999.0,
+    )
+    assert directive is not None
+    store.close()
+
+    store2 = DirectiveStore(db_path=db)
+    try:
+        loaded = store2.get(directive.id)
+        assert loaded is not None
+        assert loaded.id == directive.id
+        assert loaded.content == "Prioritize the test suite"
+        assert loaded.status == DirectiveStatus.ACTIVE
+        assert loaded.directive_type == DirectiveType.CAPTAIN_ORDER
+        assert loaded.target_agent_type == "builder"
+        assert loaded.target_department == "engineering"
+        assert loaded.priority == 4
+        assert loaded.created_at == directive.created_at
+        assert loaded.expires_at == 9999999999.0
+    finally:
+        store2.close()
