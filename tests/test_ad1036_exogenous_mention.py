@@ -20,11 +20,12 @@ Coverage maps to the AD-1036 design decisions (DD-1..DD-6):
 * DD-3 not-mentioned no-op ⇒ arousal ON + NOT mentioned ⇒ zone stays GREEN;
 * DD-4 single-fire ⇒ one ``perceive`` ⇒ exactly one ``on_exogenous_event("mention")``;
 * DD-5 non-mention intent ⇒ an intent with no ``was_mentioned`` param ⇒ no arousal;
-* DD-6 source guard ⇒ ``perceive`` contains the was_mentioned-guarded mention call.
+* DD-6 guarded forwarding ⇒ ``perceive`` forwards EXACTLY ONE
+  ``on_exogenous_event("mention")`` when ``was_mentioned`` is set, and NONE when
+  the param is absent (the guard) — asserted behaviorally, not via source scan.
 """
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
 from probos.cognitive.attention_faculty import AttentionFaculty
@@ -184,12 +185,26 @@ async def test_dd5_non_mention_intent_no_arousal() -> None:
 
 
 # ---------------------------------------------------------------------------
-# DD-6: source guard — perceive contains the was_mentioned-guarded mention call
+# DD-6: guarded forwarding (behavioral) — one perceive forwards exactly one
+# on_exogenous_event("mention") when was_mentioned is set, and NONE when the
+# param is absent (the guard). Replaces the prior inspect.getsource scan.
 # ---------------------------------------------------------------------------
 
 
-def test_dd6_perceive_source_has_guarded_mention_call() -> None:
-    src = inspect.getsource(CognitiveAgent.perceive)
-    assert 'on_exogenous_event("mention")' in src
-    # The call is GUARDED by the was_mentioned check (not unconditional).
-    assert 'observation.get("params", {}).get("was_mentioned", False)' in src
+async def test_dd6_perceive_guarded_mention_is_behavioral() -> None:
+    # Positive: the was_mentioned param IS set -> perceive forwards exactly one
+    # "mention" event (the literal event_type reaches the boundary) and the real
+    # faculty arouses GREEN -> AMBER (super() ran, not just the spy counter).
+    fired = _spy_agent(arousal_enabled=True)
+    await fired.perceive(_mention_intent(was_mentioned=True))
+    assert fired.exogenous_calls == ["mention"]
+    assert _faculty(fired).arousal_zone == CognitiveZone.AMBER
+    # Guard: the was_mentioned param is ABSENT ENTIRELY (the ``.get(..., False)``
+    # default path, distinct from DD-4's explicit ``False``) -> no forward, the
+    # faculty stays GREEN. Fresh agent so there is no carryover from above.
+    guarded = _spy_agent(arousal_enabled=True)
+    await guarded.perceive(
+        IntentMessage(intent="ward_room_notification", params={"text": "Scotty?"})
+    )
+    assert guarded.exogenous_calls == []
+    assert _faculty(guarded).arousal_zone == CognitiveZone.GREEN

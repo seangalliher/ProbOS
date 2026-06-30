@@ -483,14 +483,42 @@ class TestHttpFetchNonConsensus:
             await rt.stop()
 
     def test_consensus_intents_exclude_http_fetch(self):
-        """The consensus_intents set used by _validate_remote_result must not include http_fetch."""
-        # Inspect the source to catch hardcoded sets
+        """http_fetch must not be in the consensus_intents set used by
+        _validate_remote_result.
+
+        AST structural guard, not a behavioral test: _validate_remote_result is a
+        placeholder that returns True on BOTH branches, so membership in the set
+        has no observable behavioral surface to assert against. Instead of the
+        prior raw-text scan (which rotted on any rename and used a buggy ``or``),
+        we parse the actual ``consensus_intents`` set literal and check membership
+        — robust to renames/reformatting and failing iff http_fetch is added.
+        """
+        import ast
         import inspect
-        source = inspect.getsource(__import__("probos.runtime", fromlist=["ProbOSRuntime"]).ProbOSRuntime._validate_remote_result)
-        # Find the consensus_intents set literal
-        assert "http_fetch" not in source or '"http_fetch"' not in source, (
-            "http_fetch should not appear in consensus_intents inside _validate_remote_result"
+        import textwrap
+
+        from probos.runtime import ProbOSRuntime
+
+        src = textwrap.dedent(inspect.getsource(ProbOSRuntime._validate_remote_result))
+        tree = ast.parse(src)
+        found: set[str] | None = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "consensus_intents"
+                for t in node.targets
+            ):
+                if isinstance(node.value, ast.Set):
+                    found = {
+                        e.value
+                        for e in node.value.elts
+                        if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                    }
+        assert found is not None, "consensus_intents set literal not found"
+        assert "http_fetch" not in found, (
+            f"http_fetch must NOT be a consensus intent; found {found}"
         )
+        # Proof the parse located the RIGHT set (guards against a vacuous pass).
+        assert "write_file" in found and "run_command" in found
 
 
 # ===================================================================

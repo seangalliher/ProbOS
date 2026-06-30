@@ -23,17 +23,22 @@ store round-trip and classifies as ``know``.
 """
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.cognitive.decomposer import is_capability_gap
 from probos.cognitive.episodic import EpisodicMemory, remember_know_phrase
-from probos.config import MemoryConfig
-from probos.types import AnchorFrame, Episode
+from probos.config import MemoryConfig, SystemConfig
+from probos.types import AnchorFrame, Episode, IntentMessage
+from tests.fixtures.ad1028_golden._capture_golden import (
+    dm_observation,
+    make_dm_agent,
+    wr_observation,
+)
 
 # A distinctive grounded recollection (verbatim query -> strong band; grounded
 # anchors + direct source -> "remember").
@@ -344,19 +349,89 @@ async def test_live_know_composes_into_cue_segment(typed_em) -> None:
 
 
 # --------------------------------------------------------------------------
-# Structural wiring guards
+# Wiring guards (behavioral) — replace the prior inspect.getsource scans
 # --------------------------------------------------------------------------
 
 
-def test_build_user_message_renders_remember_know_at_both_sites() -> None:
-    src = inspect.getsource(CognitiveAgent._build_user_message)
-    # one injection per episodic render branch (DM + WR), mirroring AD-981b.
-    assert src.count("_remember_know_segment(observation)") >= 2
-    assert '_emit("remember_know"' in src
+async def test_build_user_message_renders_remember_know_at_both_sites() -> None:
+    """Behavioral (replaces an inspect.getsource substring-count scan): BOTH the
+    DM and the Ward-Room branches of ``_build_user_message`` invoke
+    ``_remember_know_segment(observation)`` AND emit its cue into the rendered
+    output. Spy on the segment renderer (``wraps`` → delegates to the real
+    method, so the real render still runs) and assert (a) it fired once per
+    branch and (b) the rendered "REMEMBER" cue lands in BOTH branch outputs.
+    """
+    agent = make_dm_agent()  # real CognitiveAgent (golden setup: _runtime/_wm None)
+    # A populated recall_type makes the segment truthy -> the branch emits it.
+    dm_obs = dm_observation()
+    dm_obs["_recall_recall_type"] = "remember"
+    wr_obs = wr_observation()
+    wr_obs["_recall_recall_type"] = "remember"
+
+    with patch.object(
+        agent, "_remember_know_segment", wraps=agent._remember_know_segment
+    ) as spy:
+        dm_msg = await agent._build_user_message(dm_obs)  # DM branch
+        wr_msg = await agent._build_user_message(wr_obs)  # WR branch
+
+    # One invocation per episodic-render branch (the "both sites" invariant).
+    assert spy.call_count == 2
+    # ...and each branch actually EMITTED the rendered cue into its output
+    # (proves the _emit("remember_know", ...) call site, not just the segment).
+    assert "REMEMBER" in dm_msg
+    assert "REMEMBER" in wr_msg
 
 
-def test_probe_block_gates_recall_type_on_typing_flag() -> None:
-    src = inspect.getsource(CognitiveAgent._recall_relevant_memories)
-    assert "_recall_recall_type" in src
-    assert "remember_know_typing_enabled" in src
-    assert "_recall_confidence_probe" in src
+@pytest.mark.asyncio
+async def test_probe_block_gates_recall_type_on_typing_flag() -> None:
+    """Behavioral (replaces an inspect.getsource substring scan): the AD-1038
+    probe block in ``_recall_relevant_memories`` DELEGATES to
+    ``_recall_confidence_probe`` and stashes ``observation["_recall_recall_type"]``
+    ONLY when ``remember_know_typing_enabled`` is set; with the flag OFF the probe
+    is NOT awaited and no key is stashed (byte-identical-OFF).
+
+    The probe itself (and its real-store recall) is covered by
+    ``test_probe_returns_remember_via_real_runtime``; here the probe is spied so
+    the assertion isolates the FLAG GATING / delegation, not the store.
+    """
+
+    def _crew_agent(*, typing_on: bool) -> CognitiveAgent:
+        agent = CognitiveAgent(agent_id="ad1038-probe", instructions="test")
+        agent.agent_type = "scout"  # crew -> passes is_crew_agent legacy gate
+        cfg = SystemConfig()
+        cfg.memory.remember_know_typing_enabled = typing_on
+        # runtime: episodic_memory truthy (guard), ontology attr present+falsy
+        # (-> legacy crew check), real SystemConfig (the probe block reads
+        # config.memory). episodic_memory is a bare stub because the probe is
+        # spied — the store is never reached on this path.
+        agent._runtime = SimpleNamespace(
+            config=cfg,
+            episodic_memory=object(),
+            ontology=None,
+        )
+        return agent
+
+    intent = IntentMessage(intent="direct_message", params={"text": "warp core status"})
+
+    # Flag ON -> the probe is awaited once and its recall_type is stashed.
+    on_agent = _crew_agent(typing_on=True)
+    fake_conf = SimpleNamespace(recall_type="remember", band="strong")
+    with patch.object(
+        on_agent, "_recall_confidence_probe", new=AsyncMock(return_value=fake_conf)
+    ) as probe_on:
+        obs_on = await on_agent._recall_relevant_memories(
+            intent, {"intent": "direct_message", "params": {"text": "warp core status"}}
+        )
+    assert probe_on.await_count == 1  # genuinely reached the probe block (delegated)
+    assert obs_on.get("_recall_recall_type") == "remember"
+
+    # Flag OFF -> the probe is never awaited and no key is stashed.
+    off_agent = _crew_agent(typing_on=False)
+    with patch.object(
+        off_agent, "_recall_confidence_probe", new=AsyncMock(return_value=fake_conf)
+    ) as probe_off:
+        obs_off = await off_agent._recall_relevant_memories(
+            intent, {"intent": "direct_message", "params": {"text": "warp core status"}}
+        )
+    assert probe_off.await_count == 0
+    assert "_recall_recall_type" not in obs_off
