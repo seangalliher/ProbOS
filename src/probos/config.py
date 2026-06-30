@@ -5731,6 +5731,23 @@ class DmAgenticConfig(BaseModel):  # AD-1065
     tier: str = "standard"
 
 
+class AgenticToolsConfig(BaseModel):  # AD-1072
+    """AD-1072: conversational-loop discovery + delegation tools (default-OFF).
+
+    Two keystone tools for the AD-1065 conversational ``AgenticLoop``:
+    ``search_capabilities`` (read-only discovery across tools / skills /
+    mesh-intents) and ``delegate_task`` (hand a bounded subtask to another crew
+    agent by callsign, routed through the same governed
+    ``WorkItemAgenticExecutor`` so its tool permissions / consensus gates /
+    tool-trace logging all apply). Both default OFF and additive: with the flags
+    off, ``WorkItemAgenticExecutor.run`` is byte-identical to today."""
+    tool_search_enabled: bool = False
+    delegation_enabled: bool = False
+    delegation_max_depth: int = Field(default=1, ge=0, le=3)
+    delegation_max_iterations: int = Field(default=5, ge=1, le=25)
+    delegation_tier: str = "standard"
+
+
 class DmMeshSynthesisConfig(BaseModel):  # BF-629
     """BF-629: after a requires_reflect inline mesh read (web_search / read_page)
     on the conversational path, make ONE LLM pass so the originating agent
@@ -6090,6 +6107,7 @@ class SystemConfig(BaseModel):
     dm_targeted_lookup: DmTargetedLookupConfig = Field(default_factory=DmTargetedLookupConfig)  # AD-725 (Wave 159)
     dm_deliberate: DmDeliberateConfig = Field(default_factory=DmDeliberateConfig)  # AD-934
     dm_agentic: DmAgenticConfig = Field(default_factory=DmAgenticConfig)  # AD-1065
+    agentic_tools: AgenticToolsConfig = Field(default_factory=AgenticToolsConfig)  # AD-1072
     dm_mesh_synthesis: DmMeshSynthesisConfig = Field(default_factory=DmMeshSynthesisConfig)  # BF-629
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     cloud_pickers: CloudPickersConfig = Field(default_factory=CloudPickersConfig)  # AD-720c

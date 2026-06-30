@@ -469,6 +469,7 @@ class WorkItemAgenticExecutor:
         thread_id: str = "",
         max_iterations: int | None = None,
         tier: str | None = None,
+        extra_context: dict | None = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -595,8 +596,88 @@ class WorkItemAgenticExecutor:
                 )
                 skill_ids = []
 
+        # AD-1072: the conversational-loop discovery + delegation tools, both
+        # default-OFF (config.agentic_tools). With both flags off this whole
+        # section is inert and ``tool_ids`` is byte-identical to the AD-1068 set.
+        agentic_tools_cfg = getattr(
+            getattr(runtime, "config", None), "agentic_tools", None
+        )
+
+        # AD-1072: offer the read-only capability-search tool when enabled. It
+        # lets the agent discover tools / skills / mesh-intents by keyword before
+        # acting, instead of confabulating a verb (BF-651 / AD-1064). Registered
+        # idempotently (mirrors the AD-1066/1068 blocks); read-only.
+        search_ids: list[str] = []
+        if (
+            getattr(agentic_tools_cfg, "tool_search_enabled", False)
+            and registry is not None
+        ):
+            try:
+                from probos.tools.search_capabilities_tool import (
+                    SearchCapabilitiesTool,
+                )
+
+                if registry.get("search_capabilities") is None:
+                    registry.register(
+                        SearchCapabilitiesTool(runtime=runtime),
+                        provider="AD-1072",
+                        tags=["search_capabilities", "discovery"],
+                    )
+                search_ids = ["search_capabilities"]
+            except Exception:
+                logger.warning(
+                    "AD-1072: failed to register/offer the search_capabilities "
+                    "tool for agent %s; continuing without it",
+                    agent_id, exc_info=True,
+                )
+                search_ids = []
+
+        # AD-1072: offer the delegation tool when enabled. It hands a bounded
+        # subtask to another crew agent by callsign, routed through THIS same
+        # governed executor (so the delegate's tool permissions / consensus gates
+        # / tool-trace all apply). Bounded by delegation_max_depth (recursion
+        # guard) + delegation_max_iterations. The tool reuses the parent
+        # executor's own LLM client (self._llm). Registered idempotently.
+        delegate_ids: list[str] = []
+        if (
+            getattr(agentic_tools_cfg, "delegation_enabled", False)
+            and registry is not None
+        ):
+            try:
+                from probos.tools.delegate_task_tool import DelegateTaskTool
+
+                if registry.get("delegate_task") is None:
+                    registry.register(
+                        DelegateTaskTool(
+                            runtime=runtime,
+                            llm_client=self._llm,
+                            max_depth=getattr(
+                                agentic_tools_cfg, "delegation_max_depth", 1
+                            ),
+                            max_iterations=getattr(
+                                agentic_tools_cfg, "delegation_max_iterations", 5
+                            ),
+                            tier=getattr(
+                                agentic_tools_cfg, "delegation_tier", "standard"
+                            ),
+                        ),
+                        provider="AD-1072",
+                        tags=["delegate_task", "delegation"],
+                    )
+                delegate_ids = ["delegate_task"]
+            except Exception:
+                logger.warning(
+                    "AD-1072: failed to register/offer the delegate_task tool "
+                    "for agent %s; continuing without it",
+                    agent_id, exc_info=True,
+                )
+                delegate_ids = []
+
         tool_ids = list(
-            dict.fromkeys([*granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids])
+            dict.fromkeys([
+                *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
+                *search_ids, *delegate_ids,
+            ])
         )
 
         tools: list[dict] = []
@@ -622,16 +703,24 @@ class WorkItemAgenticExecutor:
             event_emit_fn=getattr(runtime, "emit_event", None),
             **_loop_kwargs,
         )
+        # AD-1072: the 4 core keys are always present; an additive
+        # ``extra_context`` (default None → byte-identical) threads loop-internal
+        # state such as ``_delegation_depth`` for the delegation tool. The
+        # ``_``-prefixed keys never collide with the four core keys, so the
+        # update-merge order is safe.
+        _context: dict[str, Any] = {
+            "agent_id": agent_id,
+            "department": department,
+            "rank": rank,
+            "thread_id": thread_id,
+        }
+        if extra_context:
+            _context.update(extra_context)
         agentic_result = await loop.run(
             system_prompt=instructions or "",
             user_message=task_text,
             tools=tools,
-            context={
-                "agent_id": agent_id,
-                "department": department,
-                "rank": rank,
-                "thread_id": thread_id,
-            },
+            context=_context,
         )
 
         tool_trace_ref = await self._persist_tool_trace(
