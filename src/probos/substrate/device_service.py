@@ -79,8 +79,27 @@ class DeviceNodeService:
             return result
 
         device = self._registry.get_device(device_id)
-        # authorize() returning True guarantees the device is paired/present.
-        assert device is not None
+        if device is None:
+            # BF-652: fail CLOSED, never -O-strippable. authorize() should imply
+            # the device exists, but a race (unpair between authorize and get)
+            # must not fall through to actuate(None). No actuation attempted =>
+            # no trust record. Mirrors the consensus path's device_missing guard
+            # (runtime.submit_device_actuate_with_consensus).
+            logger.warning(
+                "BF-652: device %s passed authorize() but is absent from the "
+                "registry; failing closed (no actuation, no trust write)",
+                device_id,
+            )
+            await self._store_episode(
+                intent, device_id, authorized=True, success=False, reason="device_missing"
+            )
+            return IntentResult(
+                intent_id=intent.id,
+                agent_id=f"device:{device_id}",
+                success=False,
+                error="device_missing",
+                confidence=0.0,
+            )
         result = await self._adapter.actuate(device, intent)
 
         if self._trust_network is not None and device.trust_record_id:
