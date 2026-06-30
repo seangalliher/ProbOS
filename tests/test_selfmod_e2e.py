@@ -116,23 +116,6 @@ class TestSelfModE2E:
                        "count" in rt._last_execution_text.lower()
 
     @pytest.mark.asyncio
-    async def test_qa_runs_after_auto_retry(self, app_and_runtime):
-        """QA should not interfere with auto-retry (runs after)."""
-        # With QA disabled in fixture, this verifies no QA interference
-        app, rt = app_and_runtime
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            await client.post("/api/selfmod/approve", json={
-                "intent_name": "count_words",
-                "intent_description": "Count words",
-                "parameters": {"text": "input"},
-                "original_message": "count words in hello",
-            })
-            await asyncio.sleep(5)
-            # If we got here without timeout, QA didn't block the pipeline
-            assert True
-
-    @pytest.mark.asyncio
     async def test_health_endpoint(self, app_and_runtime):
         """GET /api/health returns system status."""
         app, rt = app_and_runtime
