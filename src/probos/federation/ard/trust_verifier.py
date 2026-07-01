@@ -12,19 +12,23 @@ fraction of checks that passed); the entity's TRUST value is the SEPARATE
 ``trust_network.get_score(id) = alpha / (alpha + beta)``. The two are different
 numbers by construction — a test asserts they are not equal.
 
-JWS honest-degrade (v1): there is NO JWS / JOSE verifier-key infrastructure in
-``src/probos`` (confirmed), so ``signature_verified`` is ALWAYS ``False`` with an
-explanatory note. A present-but-unverified signature does NOT raise trust. No
-signature ISSUANCE here (that is commercial).
+Signature verification (AD-1095): ``signature_verified`` is computed by
+``verify_manifest_signature`` against an OPTIONAL ``issuer_public_key_b64``. It
+is DEFAULT-INERT — with no issuer key supplied (the default) it stays ``False``
+(byte-identical to the AD-1047 honest-degrade), so no evidence accrues. When a
+key IS supplied and the detached Ed25519 signature over the canonical manifest
+JSON verifies, ``signature_verified`` becomes ``True`` and the +signature
+evidence weight fires. Signature ISSUANCE remains out of scope here (commercial).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from .catalog import CatalogEntry
+from .catalog import CatalogEntry, TrustManifest
 from .urn import publisher_domain
 
 logger = logging.getLogger(__name__)
@@ -60,12 +64,49 @@ class VerificationReport:
     notes: list[str] = field(default_factory=list)
 
 
+def verify_manifest_signature(
+    manifest: TrustManifest, *, issuer_public_key_b64: str | None = None
+) -> bool:
+    """AD-1095: verify a manifest's detached signature against an issuer key.
+
+    Honest-degrade / DEFAULT-INERT: returns ``False`` immediately when there is
+    no signature or no ``issuer_public_key_b64`` (the default) — so a caller
+    that supplies no key sees the byte-identical AD-1047 behaviour (no evidence).
+
+    The signed payload is the CANONICAL JSON of ``manifest.to_dict()`` with the
+    ``signature`` field removed, ``sort_keys=True`` and tight
+    ``separators=(",", ":")``. This EXACT canonicalization is the interop
+    contract a (commercial) issuer MUST reproduce to sign; the OSS side only
+    VERIFIES. Reuses the substrate Ed25519 ``verify_signature`` primitive
+    (AD-843b) — no new crypto dependency. Imported lazily to preserve the ARD
+    package's no-cross-layer-at-load-time convention.
+    """
+    if not manifest.signature or not issuer_public_key_b64:
+        return False
+    from probos.substrate.device_pairing import verify_signature
+
+    try:
+        payload = {
+            k: v for k, v in manifest.to_dict().items() if k != "signature"
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return verify_signature(issuer_public_key_b64, canonical, manifest.signature)
+    except Exception:  # noqa: BLE001 — trust boundary: never raise, fail-closed
+        logger.warning(
+            "AD-1095: manifest signature verification errored for identity %r; "
+            "degrading to unverified (no evidence)",
+            getattr(manifest, "identity", "?"),
+        )
+        return False
+
+
 def verify_entry(
     entry: CatalogEntry,
     *,
     endpoint_host: str,
     base_alpha: float = 1.0,
     base_beta: float = 3.0,
+    issuer_public_key_b64: str | None = None,
 ) -> VerificationReport:
     """Verify a catalog entry's published provenance into a report (DD-2).
 
@@ -74,7 +115,9 @@ def verify_entry(
         ``endpoint_host`` (case/port-insensitive).
       * ``has_attestations`` — the trust manifest carries >= 1 attestation.
       * ``signature_present`` — the trust manifest carries a signature string.
-      * ``signature_verified`` — ALWAYS ``False`` in v1 (no verifier-key infra).
+      * ``signature_verified`` — ``True`` iff an ``issuer_public_key_b64`` is
+        supplied AND the manifest's detached signature verifies (AD-1095);
+        ``False`` by default (no key supplied) — byte-identical honest-degrade.
 
     ``alpha`` accrues evidence weight above ``base_alpha`` (domain +1.0,
     attestations +0.5, verified-signature +1.0); ``beta`` stays at ``base_beta``
@@ -88,10 +131,20 @@ def verify_entry(
     domain_match = bool(pub) and _norm_host(pub) == _norm_host(endpoint_host)
     has_attestations = bool(tm and tm.attestations)
     signature_present = bool(tm and tm.signature)
-    signature_verified = False  # DD-2 JWS honest-degrade: no verifier-key infra
+    # AD-1095: verify only when an issuer key is supplied; DEFAULT-INERT → False
+    # (byte-identical to the AD-1047 honest-degrade when no key is passed).
+    signature_verified = (
+        verify_manifest_signature(tm, issuer_public_key_b64=issuer_public_key_b64)
+        if (tm and issuer_public_key_b64)
+        else False
+    )
 
     notes: list[str] = []
-    if signature_present and not signature_verified:
+    if signature_present and signature_verified:
+        notes.append("signature verified against issuer key (AD-1095)")
+    elif signature_present and issuer_public_key_b64:
+        notes.append("signature present but failed verification against issuer key")
+    elif signature_present:
         notes.append("signature present but unverified — no verifier key (v1)")
     if not pub:
         notes.append("no publisher domain in identifier")
