@@ -6112,7 +6112,8 @@ class SystemConfig(BaseModel):
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     cloud_pickers: CloudPickersConfig = Field(default_factory=CloudPickersConfig)  # AD-720c
     lipsync: LipSyncConfig = Field(default_factory=LipSyncConfig)  # AD-721b-1 (Wave 155)
-    tts: TTSConfig = Field(default_factory=TTSConfig)  # AD-738 (Wave 157)    spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
+    tts: TTSConfig = Field(default_factory=TTSConfig)  # AD-738 (Wave 157)
+    spatial_explorer: SpatialExplorerConfig = Field(default_factory=SpatialExplorerConfig)  # AD-520
     knowledge_browser: KnowledgeBrowserConfig = Field(default_factory=KnowledgeBrowserConfig)  # AD-562
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)  # AD-481
     observability_bridge: ObservabilityBridgeConfig = Field(default_factory=ObservabilityBridgeConfig)  # AD-641a
