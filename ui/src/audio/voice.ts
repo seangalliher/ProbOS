@@ -4,6 +4,7 @@ import { applyEmotionalModulation } from './voiceModulation';
 import { deriveAgentSignals } from '../components/profile/avatarSignals';
 import { useStore } from '../store/useStore';
 import { injectLipSyncFrames } from './useLipSyncCapture';
+import { splitIntoSentences, runSentenceQueue } from './voiceChunking';
 
 let voicesLoaded = false;
 let cachedVoice: SpeechSynthesisVoice | null = null;
@@ -132,7 +133,7 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
 /** AD-738: cached server-feature probe. Populated on first speakResponse call;
  *  invalidated on any non-200 response so a runtime restart with backend=piper
  *  lights up without a browser refresh. */
-type TtsStatus = { enabled: boolean; backend: 'browser' | 'piper' | string };
+type TtsStatus = { enabled: boolean; backend: 'browser' | 'piper' | string; sentence_pipelining_enabled: boolean };
 let _ttsStatus: TtsStatus | null = null;
 let _ttsStatusInflight: Promise<TtsStatus | null> | null = null;
 
@@ -143,17 +144,19 @@ async function _fetchTtsStatus(): Promise<TtsStatus | null> {
     try {
       const resp = await fetch('/api/avatars/tts/status', { method: 'GET' });
       if (!resp.ok) {
-        _ttsStatus = { enabled: false, backend: 'browser' };
+        _ttsStatus = { enabled: false, backend: 'browser', sentence_pipelining_enabled: false };
         return _ttsStatus;
       }
       const data = await resp.json();
       _ttsStatus = {
         enabled: !!(data && data.enabled),
         backend: (data && typeof data.backend === 'string') ? data.backend : 'browser',
+        // AD-1071: default-OFF when the field is absent (older runtime).
+        sentence_pipelining_enabled: !!(data && data.sentence_pipelining_enabled),
       };
       return _ttsStatus;
     } catch {
-      _ttsStatus = { enabled: false, backend: 'browser' };
+      _ttsStatus = { enabled: false, backend: 'browser', sentence_pipelining_enabled: false };
       return _ttsStatus;
     } finally {
       _ttsStatusInflight = null;
@@ -192,6 +195,12 @@ export function _resetTtsStatusForTests(): void {
 /** AD-738: track the active <audio> so a second speakResponse cancels the first. */
 let _activeAudio: HTMLAudioElement | null = null;
 
+/** AD-1071: monotonic generation token. Each speakResponse call bumps it; the
+ *  sentence-pipelining queue stops as soon as its captured generation is stale,
+ *  so a newer reply cancels the in-flight one cleanly. Byte-identical for the
+ *  default single-call path, which never reads it. */
+let _speakGeneration = 0;
+
 /** BF-283 (2026-05-13): expose the active audio's playback position so the
  *  CrewVRM viseme sampler can anchor to the audio clock instead of wall
  *  clock. ``audio.currentTime`` already accounts for ``playbackRate``, so
@@ -224,12 +233,17 @@ export function speakResponse(
     _activeAudio = null;
   }
 
+  // AD-1071: bump the generation token so any in-flight sentence-pipelining
+  // queue from a prior reply stops before this call proceeds. Every path
+  // below (including the fast browser fallbacks) supersedes the previous reply.
+  const myGen = ++_speakGeneration;
+
   // Fast synchronous path: if fetch is unavailable OR the cached probe
   // already says "not piper", run the browser fallback synchronously.
   // This preserves the pre-AD-738 synchronous side-effect contract on the
   // default-config path AND avoids an async hop on every warm-cache call.
   if (typeof (globalThis as any).fetch !== 'function') {
-    _ttsStatus = { enabled: false, backend: 'browser' };
+    _ttsStatus = { enabled: false, backend: 'browser', sentence_pipelining_enabled: false };
     _speakBrowserFallback(text, profile, agent_id);
     return;
   }
@@ -246,56 +260,104 @@ export function speakResponse(
       _speakBrowserFallback(text, profile, agent_id);
       return;
     }
-    try {
-      // AD-738e-1: pass v1 emotion name (resolved server-side) so the
-      // TTS endpoint can apply per-emotion prosody. Omit the field when
-      // emotion is undefined — server falls back to defaults.
-      // BF-291 / AD-738f: pass per-agent voice_name when set in the
-      // profile. Server resolves against tools/piper/voices/ and falls
-      // back to the configured tts.voice_model on miss.
-      const _body: { text: string; emotion?: string; voice_name?: string } = { text };
-      if (typeof emotion === 'string' && emotion.length > 0) {
-        _body.emotion = emotion;
-      }
-      if (profile && typeof profile.voice_name === 'string' && profile.voice_name.length > 0) {
-        _body.voice_name = profile.voice_name;
-      }
-      const resp = await fetch('/api/avatars/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(_body),
-      });
-      if (!resp.ok) {
-        _invalidateTtsStatus();
-        _speakBrowserFallback(text, profile, agent_id);
+    // AD-1071: sentence-chunked pipelining (DEFAULT-OFF). When enabled AND the
+    // reply has >1 sentence, synthesize + play sentences SEQUENTIALLY so the
+    // first audio starts after only the FIRST sentence is synthesized (cutting
+    // time-to-first-audio). When OFF (default) OR single-sentence, fall through
+    // to the byte-identical single-call path below. The generation token lets a
+    // newer reply cancel this queue mid-flight.
+    if (status.sentence_pipelining_enabled) {
+      const sentences = splitIntoSentences(text);
+      if (sentences.length > 1) {
+        await runSentenceQueue(
+          sentences,
+          (sentence) => _synthesizeAndPlay(sentence, profile, agent_id, emotion),
+          () => myGen === _speakGeneration,
+        );
         return;
       }
-      const data = await resp.json();
-      if (
-        !data ||
-        data.backend === 'disabled' ||
-        typeof data.audio_attachment_id !== 'string' ||
-        data.audio_attachment_id.length !== 64
-      ) {
-        // Server flipped to disabled — invalidate so the next call re-probes.
-        _invalidateTtsStatus();
-        _speakBrowserFallback(text, profile, agent_id);
-        return;
-      }
-      // Build a synthetic utterance object so existing 'start'/'end' listeners
-      // (AD-718 / AD-721) keep firing the same shape. agent_id propagates.
-      const synth = new SpeechSynthesisUtterance(text);
-      const audio = new Audio(`/api/chat/attachments/${data.audio_attachment_id}`);
-      _activeAudio = audio;
-      const effective = _resolveEffectiveProfile(profile, agent_id);
-      audio.volume = Math.max(0, Math.min(1, effective.volume ?? 0.8));
-      audio.playbackRate = Math.max(0.25, Math.min(4.0, effective.rate ?? 0.95));
-      try { (audio as any).preservesPitch = false; } catch { /* not supported */ }
-      const _clearActive = () => { if (_activeAudio === audio) _activeAudio = null; };
+    }
+    // Single-call path (default): one TTS POST for the whole reply.
+    await _synthesizeAndPlay(text, profile, agent_id, emotion);
+  })();
+}
+
+/** AD-738 / AD-1071: synthesize ONE utterance via the server Piper backend,
+ *  play it, and resolve when playback ENDS — so the AD-1071 sentence queue can
+ *  advance to the next sentence. Each call injects its own visemes for lip-sync.
+ *  Honest-degrade: on any failure it falls back to the browser path for THIS
+ *  utterance and resolves so the caller's queue keeps going. Used by BOTH the
+ *  default single-call path (full reply) and the pipelined path (per sentence),
+ *  so the default path stays byte-identical. */
+async function _synthesizeAndPlay(
+  text: string,
+  profile: VoiceProfile | undefined,
+  agent_id: string | undefined,
+  emotion: string | undefined,
+): Promise<void> {
+  try {
+    // AD-738e-1: pass v1 emotion name (resolved server-side) so the TTS
+    // endpoint can apply per-emotion prosody. Omit when undefined — server
+    // falls back to defaults. BF-291 / AD-738f: pass per-agent voice_name
+    // when set; server resolves against tools/piper/voices/ and falls back
+    // to the configured tts.voice_model on miss.
+    const _body: { text: string; emotion?: string; voice_name?: string } = { text };
+    if (typeof emotion === 'string' && emotion.length > 0) {
+      _body.emotion = emotion;
+    }
+    if (profile && typeof profile.voice_name === 'string' && profile.voice_name.length > 0) {
+      _body.voice_name = profile.voice_name;
+    }
+    const resp = await fetch('/api/avatars/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(_body),
+    });
+    if (!resp.ok) {
+      _invalidateTtsStatus();
+      _speakBrowserFallback(text, profile, agent_id);
+      return;
+    }
+    const data = await resp.json();
+    if (
+      !data ||
+      data.backend === 'disabled' ||
+      typeof data.audio_attachment_id !== 'string' ||
+      data.audio_attachment_id.length !== 64
+    ) {
+      // Server flipped to disabled — invalidate so the next call re-probes.
+      _invalidateTtsStatus();
+      _speakBrowserFallback(text, profile, agent_id);
+      return;
+    }
+    // Build a synthetic utterance object so existing 'start'/'end' listeners
+    // (AD-718 / AD-721) keep firing the same shape. agent_id propagates.
+    const synth = new SpeechSynthesisUtterance(text);
+    const audio = new Audio(`/api/chat/attachments/${data.audio_attachment_id}`);
+    _activeAudio = audio;
+    const effective = _resolveEffectiveProfile(profile, agent_id);
+    audio.volume = Math.max(0, Math.min(1, effective.volume ?? 0.8));
+    audio.playbackRate = Math.max(0.25, Math.min(4.0, effective.rate ?? 0.95));
+    try { (audio as any).preservesPitch = false; } catch { /* not supported */ }
+    await new Promise<void>((resolve) => {
+      let _settled = false;
+      // fireEnd=false on cancel (pause) — matches the pre-AD-1071 single-call
+      // path, which never fired 'end' when a newer reply paused the audio.
+      const _finish = (fireEnd: boolean) => {
+        if (_settled) return;
+        _settled = true;
+        if (_activeAudio === audio) _activeAudio = null;
+        if (fireEnd) _fire({ type: 'end', agent_id, utterance: synth, source: 'server' });
+        resolve();
+      };
       audio.addEventListener('play', () => _fire({ type: 'start', agent_id, utterance: synth, source: 'server' }));
-      audio.addEventListener('ended', () => { _clearActive(); _fire({ type: 'end', agent_id, utterance: synth, source: 'server' }); });
-      audio.addEventListener('error', () => { _clearActive(); _fire({ type: 'end', agent_id, utterance: synth, source: 'server' }); });
-      // AD-738: feed visemes directly to useLipSyncCapture via the new injection setter.
+      audio.addEventListener('ended', () => _finish(true));
+      audio.addEventListener('error', () => _finish(true));
+      // AD-1071: a newer speakResponse pauses _activeAudio — resolve (without a
+      // spurious 'end') so a pipelined queue can re-check its generation token
+      // and stop instead of hanging on an audio that will never fire 'ended'.
+      audio.addEventListener('pause', () => _finish(false));
+      // AD-738: feed visemes directly to useLipSyncCapture via the injection setter.
       if (Array.isArray(data.visemes) && data.visemes.length > 0) {
         try {
           injectLipSyncFrames(data.visemes, agent_id);
@@ -303,17 +365,17 @@ export function speakResponse(
           // ignore — visemes are best-effort
         }
       }
-      try {
-        await audio.play();
-      } catch {
-        _clearActive();
+      audio.play().then(undefined, () => {
+        // play() rejected — fall back to browser for THIS utterance, resolve.
+        if (_activeAudio === audio) _activeAudio = null;
         _speakBrowserFallback(text, profile, agent_id);
-      }
-    } catch {
-      _invalidateTtsStatus();
-      _speakBrowserFallback(text, profile, agent_id);
-    }
-  })();
+        _finish(false);
+      });
+    });
+  } catch {
+    _invalidateTtsStatus();
+    _speakBrowserFallback(text, profile, agent_id);
+  }
 }
 
 /** AD-738: factor out per-agent modulation resolution so both server and

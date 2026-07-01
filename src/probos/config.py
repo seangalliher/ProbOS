@@ -2898,6 +2898,23 @@ class TTSConfig(BaseModel):
     each sentence boundary. Piper upstream default 0.2. A small bump
     here adds natural pauses for paragraph-style replies. Range 0.0-2.0."""
 
+    sentence_pipelining_enabled: bool = False
+    """AD-1071 — Sentence-chunked TTS pipelining (voice edge). Default-OFF.
+
+    When ``True`` AND the backend is ``piper`` AND a reply contains more
+    than one sentence, the browser splits the finished reply into
+    sentences and synthesizes + plays them SEQUENTIALLY (an ordered
+    queue). The first audio then starts after synthesizing only the
+    FIRST sentence instead of the whole reply, cutting time-to-first-
+    audio. This does NOT stream the LLM reply — the reply is still
+    produced in full, then chunked for playback.
+
+    When ``False`` (default) OR the backend is ``browser`` OR the reply
+    is a single sentence, the browser issues one TTS call per full reply
+    exactly as before (byte-identical). Surfaced by
+    ``GET /api/avatars/tts/status`` so the browser can read it via its
+    existing one-time status probe."""
+
 
 class A2APeerConfig(BaseModel):
     """AD-480e: Outbound A2A peer registration entry."""

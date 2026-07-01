@@ -99,10 +99,19 @@ async def tts_status(
     """
     cfg = getattr(runtime.config, "tts", None)
     if cfg is None:
-        return {"enabled": False, "backend": "browser"}
+        return {
+            "enabled": False,
+            "backend": "browser",
+            "sentence_pipelining_enabled": False,
+        }
     return {
         "enabled": bool(cfg.enabled),
         "backend": str(cfg.backend),
+        # AD-1071: surface the sentence-pipelining flag so the browser can
+        # read it via its existing one-time status probe. Default-OFF.
+        "sentence_pipelining_enabled": bool(
+            getattr(cfg, "sentence_pipelining_enabled", False)
+        ),
     }
 
 

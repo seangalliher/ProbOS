@@ -379,7 +379,12 @@ async def test_status_endpoint_returns_browser_default(avatar_client):
     ac, _rt = avatar_client
     resp = await ac.get("/api/avatars/tts/status")
     assert resp.status_code == 200
-    assert resp.json() == {"enabled": True, "backend": "browser"}
+    # AD-1071: status now surfaces the sentence-pipelining flag (default-OFF).
+    assert resp.json() == {
+        "enabled": True,
+        "backend": "browser",
+        "sentence_pipelining_enabled": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -388,7 +393,12 @@ async def test_status_endpoint_returns_piper_when_configured(avatar_client):
     rt.config.tts = TTSConfig(backend="piper")
     resp = await ac.get("/api/avatars/tts/status")
     assert resp.status_code == 200
-    assert resp.json() == {"enabled": True, "backend": "piper"}
+    # AD-1071: status now surfaces the sentence-pipelining flag (default-OFF).
+    assert resp.json() == {
+        "enabled": True,
+        "backend": "piper",
+        "sentence_pipelining_enabled": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -414,7 +424,12 @@ async def test_status_endpoint_when_tts_attr_missing(monkeypatch, tmp_path):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.get("/api/avatars/tts/status")
     assert resp.status_code == 200
-    assert resp.json() == {"enabled": False, "backend": "browser"}
+    # AD-1071: status now surfaces the sentence-pipelining flag (default-OFF).
+    assert resp.json() == {
+        "enabled": False,
+        "backend": "browser",
+        "sentence_pipelining_enabled": False,
+    }
     chat_router_mod._ATTACHMENT_STORE_CACHE.clear()
 
 
