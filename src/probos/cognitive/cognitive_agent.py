@@ -2166,6 +2166,50 @@ class CognitiveAgent(BaseAgent):
             return {}
         return out
 
+    def _conversational_agentic_self_description(self, observation: dict) -> str:
+        """AD-1070: ONE cohesive self-description of the conversational agentic
+        (tool-calling) loop's native capabilities, injected ONLY on the turns the
+        loop actually handles.
+
+        When ``_conversational_agentic_will_run(observation)`` is True (the single
+        source of truth: a wired runtime, ``config.dm_agentic.enabled``, a 1:1
+        ``direct_message``, no group / no vision) the AD-1065 loop assembles real
+        tools this turn -- ``run_python`` (AD-1066: execute code / produce a real
+        downloadable file), ``search_capabilities`` (AD-1072: discover tools /
+        skills / mesh intents), ``use_skill`` (AD-1068: load + run a cognitive
+        skill), and ``delegate_task`` (AD-1072: hand a bounded subtask to a crew
+        peer). Those tools supersede the scattered single-pass reply-tag teaching
+        (the AD-869 ``[MESH ...]`` read seam, the AD-1064 ``<artifact>`` tag), so
+        this hook unifies the per-tag grounding into one affirmative block that
+        appears only when the loop runs.
+
+        Default-OFF / byte-identical guarantee: returns "" whenever the loop will
+        NOT run (flag off / group / vision / no runtime), so the composed prompt
+        is unchanged from HEAD on every single-pass turn. Gap-regex-safe (AD-957:
+        no can't / cannot / unable / lack / no-capability phrasing) so the block
+        never trips the AD-596 capability-gap detector. Overridable (Open/Closed).
+        """
+        if not self._conversational_agentic_will_run(observation):
+            return ""
+        return (
+            "\n\nActing directly this turn: you have a working loop that runs real "
+            "tools before you reply, so do the work and report the result rather "
+            "than only describing how it might be done. The tools you have this "
+            "turn:\n"
+            "- run_python: execute Python to compute, transform data, or produce a "
+            "real downloadable file (a .docx, .xlsx, .pdf, chart, or archive) the "
+            "Captain can open -- write and run the code, then hand back the result.\n"
+            "- search_capabilities: discover the tools, skills, and mesh intents "
+            "reachable right now, so your reply is grounded in what the ship truly "
+            "offers this turn.\n"
+            "- use_skill: load and run a saved cognitive skill to carry a "
+            "specialized task through end to end.\n"
+            "- delegate_task: hand a bounded subtask to another crew agent by "
+            "callsign and fold their result into your reply.\n"
+            "Prefer these tools to finish the task within this turn; describe an "
+            "approach only when the Captain asks for the plan itself."
+        )
+
     def _conversational_task_protocol(self, observation: dict) -> str:
         """Overridable hook (AD-845): task-creation protocol appended to the
         conversational system prompt. Default returns "" so only opting-in
@@ -3075,9 +3119,18 @@ class CognitiveAgent(BaseAgent):
             # BF-599: Append live-capability grounding to EVERY conversational
             # reply (1:1, ward room, proactive). Overridable hook; base returns
             # "" so only opting-in agents (e.g. Yeo) are affected.
+            # AD-1070: agentic loop's search_capabilities/run_python supersede the [MESH] read teaching
             _cap_block = self._conversational_capability_block(observation)
-            if _cap_block:
+            if _cap_block and not self._conversational_agentic_will_run(observation):
                 composed += _cap_block
+            # AD-1070: when the conversational agentic loop will handle this turn,
+            # inject ONE cohesive self-description of the loop-native capabilities
+            # (run_python / search_capabilities / use_skill / delegate_task) that
+            # supersede the scattered single-pass reply-tag teaching. Returns ""
+            # when the loop will NOT run (flag off / group / vision) -> byte-identical.
+            _agentic_self_desc = self._conversational_agentic_self_description(observation)
+            if _agentic_self_desc:
+                composed += _agentic_self_desc
             # AD-811a: A2UI choice-widget protocol. Overridable hook; base
             # returns "" unless CommunicationsConfig.a2ui_enabled (default OFF)
             # AND the agent's live rank >= a2ui_min_rank. Teaches the [A2UI]
