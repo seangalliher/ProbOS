@@ -6,6 +6,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from probos.types import Episode, AnchorFrame
 
 
+class _FakeRegistry:
+    """Minimal real AgentRegistry stand-in: typed get/all/count over a dict."""
+
+    def __init__(self, agents):
+        self.agents = dict(agents)
+
+    def get(self, agent_id):
+        return self.agents.get(agent_id)
+
+    def all(self):
+        return list(self.agents.values())
+
+    @property
+    def count(self):
+        return len(self.agents)
+
+
 def _make_episode(
     ep_id: str = "ep-001",
     user_input: str = "test input",
@@ -46,8 +63,7 @@ def _make_runtime(episodes: list[Episode] | None = None):
     runtime.episodic_memory._collection = None  # No ChromaDB in tests
     runtime.episodic_memory._activation_tracker = None
     runtime.identity_registry = None
-    runtime.registry = MagicMock()
-    runtime.registry.all.return_value = []
+    runtime.registry = _FakeRegistry({})
 
     return runtime
 
@@ -230,7 +246,7 @@ async def test_ship_wide_merges_agents():
     agent_a.id = "agent-a"
     agent_b = MagicMock()
     agent_b.id = "agent-b"
-    runtime.registry.all.return_value = [agent_a, agent_b]
+    runtime.registry = _FakeRegistry({"agent-a": agent_a, "agent-b": agent_b})
 
     # Mock is_crew_agent to return True for both
     with patch("probos.crew_utils.is_crew_agent", return_value=True):

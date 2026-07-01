@@ -11,7 +11,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from probos.crew_profile import PerceptionProfile
+from probos.crew_profile import CrewProfile, PerceptionProfile
 
 
 def _make_jpeg(color: tuple[int, int, int]) -> bytes:
@@ -49,13 +49,14 @@ def test_bound_sources_filter_restricts_wm_fan_out() -> None:
     runtime.config = SystemConfig()
     runtime.intent_bus = MagicMock()
 
-    # Real ProfileStore would be heavy here — we stub the .get() shape.
+    # Typed CrewProfile values (was MagicMock) so a production read of any
+    # profile field other than ``perception`` surfaces instead of auto-faking.
     profile_store = MagicMock()
-    counselor_profile = MagicMock()
+    counselor_profile = CrewProfile(agent_id="counselor", agent_type="counselor")
     counselor_profile.perception = PerceptionProfile(bound_sources=["camera"])
-    ops_profile = MagicMock()
+    ops_profile = CrewProfile(agent_id="ops", agent_type="operations")
     ops_profile.perception = PerceptionProfile(bound_sources=["screen"])
-    legacy_profile = MagicMock()
+    legacy_profile = CrewProfile(agent_id="legacy", agent_type="counselor")
     legacy_profile.perception = PerceptionProfile()  # default both
     profile_store.get.side_effect = lambda aid: {
         "counselor": counselor_profile,
@@ -85,7 +86,7 @@ def test_bound_sources_fused_visible_if_any_intersect() -> None:
     runtime.config = SystemConfig()
     runtime.intent_bus = MagicMock()
     profile_store = MagicMock()
-    p = MagicMock()
+    p = CrewProfile(agent_id="counselor", agent_type="counselor")
     p.perception = PerceptionProfile(bound_sources=["camera"])
     profile_store.get.return_value = p
     runtime.profile_store = profile_store
@@ -123,9 +124,9 @@ async def test_bound_sources_restricts_episodic_anchor(tmp_path) -> None:
     )
 
     profile_store = MagicMock()
-    counselor = MagicMock()
+    counselor = CrewProfile(agent_id="counselor", agent_type="counselor")
     counselor.perception = PerceptionProfile(bound_sources=["camera"])
-    ops = MagicMock()
+    ops = CrewProfile(agent_id="ops", agent_type="operations")
     ops.perception = PerceptionProfile(bound_sources=["screen"])
     profile_store.get.side_effect = lambda aid: {
         "counselor": counselor,

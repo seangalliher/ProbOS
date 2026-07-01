@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
-from probos.config import AuthConfig, CognitiveConfig
+from probos.config import AuthConfig, CognitiveConfig, SystemConfig
 
 
 class _Agent:
@@ -34,10 +34,10 @@ def _client(agent: Any = None):
     agent = agent if agent is not None else _Agent()
     runtime = MagicMock()
     runtime.registry.get = MagicMock(return_value=agent)
-    cfg = MagicMock()
-    cfg.cognitive = CognitiveConfig()   # REAL config — gating the available-tiers list
-    cfg.auth = AuthConfig()
-    runtime.config = cfg
+    # BF-287: a REAL SystemConfig at the config boundary — a MagicMock cfg would
+    # auto-fake any config axis production reads (e.g. corrupt the available-tiers
+    # list via truthy getattr(config.cognitive, "llm_model_*")).
+    runtime.config = SystemConfig(cognitive=CognitiveConfig(), auth=AuthConfig())
     return TestClient(create_app(runtime)), runtime
 
 

@@ -6,6 +6,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from probos.config import (
+    FederationConfig,
+    MedicalConfig,
+    ScalingConfig,
+    SelfModConfig,
+    SystemConfig,
+    UtilityAgentsConfig,
+)
 from probos.substrate.pool_group import PoolGroup, PoolGroupRegistry
 
 
@@ -79,12 +87,13 @@ def test_phase_summary() -> None:
 async def test_core_is_phase_1() -> None:
     from probos.startup.fleet_organization import organize_fleet
 
-    config = MagicMock()
-    config.federation.enabled = False
-    config.scaling.enabled = False
-    config.utility_agents.enabled = False
-    config.medical.enabled = False
-    config.self_mod.enabled = False
+    config = SystemConfig(
+        federation=FederationConfig(enabled=False),
+        scaling=ScalingConfig(enabled=False),
+        utility_agents=UtilityAgentsConfig(enabled=False),
+        medical=MedicalConfig(enabled=False),
+        self_mod=SelfModConfig(enabled=False),
+    )
     pool_groups = PoolGroupRegistry()
 
     await organize_fleet(

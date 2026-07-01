@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from probos.runtime import ProbOSRuntime
+from probos.substrate.registry import AgentRegistry
 from probos.skill_framework import SkillProfile
 from probos.acm import (
     AgentCapitalService,
@@ -156,8 +157,7 @@ class TestConsolidatedProfile:
         rt = MagicMock(spec=ProbOSRuntime)
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.65)
-        rt.registry = MagicMock()
-        rt.registry.get = MagicMock(return_value=None)
+        rt.registry = AgentRegistry()
         rt.skill_service = None
         rt.episodic_memory = None
         rt.profile_store = None
@@ -173,8 +173,7 @@ class TestConsolidatedProfile:
         rt = MagicMock(spec=ProbOSRuntime)
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.7523)
-        rt.registry = MagicMock()
-        rt.registry.get = MagicMock(return_value=None)
+        rt.registry = AgentRegistry()
         rt.skill_service = None
         rt.episodic_memory = None
         rt.profile_store = None
@@ -194,8 +193,7 @@ class TestConsolidatedProfile:
         rt = MagicMock(spec=ProbOSRuntime)
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.7)
-        rt.registry = MagicMock()
-        rt.registry.get = MagicMock(return_value=None)
+        rt.registry = AgentRegistry()
         rt.skill_service = MagicMock()
         rt.skill_service.get_profile = AsyncMock(return_value=mock_skill_profile)
         rt.episodic_memory = None
@@ -212,8 +210,7 @@ class TestConsolidatedProfile:
         rt = MagicMock(spec=ProbOSRuntime)
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.7)
-        rt.registry = MagicMock()
-        rt.registry.get = MagicMock(return_value=None)
+        rt.registry = AgentRegistry()
         rt.skill_service = None
         rt.profile_store = None
         rt.episodic_memory = MagicMock()
@@ -316,8 +313,7 @@ class TestACMEndpoints:
         rt = MagicMock(spec=ProbOSRuntime)
         rt.trust_network = MagicMock()
         rt.trust_network.get_score = MagicMock(return_value=0.7)
-        rt.registry = MagicMock()
-        rt.registry.get = MagicMock(return_value=None)
+        rt.registry = AgentRegistry()
         rt.skill_service = None
         rt.episodic_memory = None
         rt.profile_store = None

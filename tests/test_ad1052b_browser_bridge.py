@@ -306,9 +306,38 @@ def test_validate_cdp_endpoint_custom_allowlist() -> None:
 # ---------------------------------------------------------------------------
 
 
+class _FakeProfileStore:
+    """Minimal real ProfileStore stand-in: typed ``get`` over a dict of CrewProfile.
+
+    Replaces ``MagicMock()`` so a production read of any profile-store method
+    other than ``get`` surfaces (AttributeError) instead of being auto-faked.
+    """
+
+    def __init__(self, profiles: dict[str, CrewProfile]) -> None:
+        self.profiles = dict(profiles)
+
+    def get(self, agent_id: str) -> CrewProfile | None:
+        return self.profiles.get(agent_id)
+
+
+class _FakeRegistry:
+    """Minimal real AgentRegistry stand-in: typed get/get_by_pool/all over a dict."""
+
+    def __init__(self, agents: dict[str, Any]) -> None:
+        self.agents = dict(agents)
+
+    def get(self, agent_id: str) -> Any:
+        return self.agents.get(agent_id)
+
+    def get_by_pool(self, pool_name: str) -> list[Any]:
+        return [a for a in self.agents.values() if getattr(a, "pool", None) == pool_name]
+
+    def all(self) -> list[Any]:
+        return list(self.agents.values())
+
+
 def _make_runtime(*, crew_scope_token: str = "") -> Any:
     runtime = MagicMock()
-    runtime.registry = MagicMock()
 
     cid = "crew-a"
     ag = MagicMock()
@@ -317,16 +346,12 @@ def _make_runtime(*, crew_scope_token: str = "") -> Any:
     ag.agent_type = "counselor"
     ag.state = AgentState.ACTIVE
     ag.last_reply_emitted_at = 0.0
-    runtime.registry.agents = {cid: ag}
-    runtime.registry.get = lambda aid: runtime.registry.agents.get(aid)
+    runtime.registry = _FakeRegistry({cid: ag})
 
     crew = CrewProfile(agent_id=cid, agent_type="counselor")
     crew.appearance = AppearanceProfile(vrm_url="", dsl=None)
     crew.voice = VoiceProfile()
-    profile_store = MagicMock()
-    profile_store.profiles = {cid: crew}
-    profile_store.get = lambda aid: profile_store.profiles.get(aid)
-    runtime.profile_store = profile_store
+    runtime.profile_store = _FakeProfileStore({cid: crew})
 
     runtime.trust_network = MagicMock()
     runtime.trust_network.get_history.return_value = []

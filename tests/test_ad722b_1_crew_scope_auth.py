@@ -17,7 +17,13 @@ from fastapi.testclient import TestClient
 from probos.avatars.events import AvatarEventBus
 from probos.avatars.sampling_state import AvatarSamplingStateMachine
 from probos.avatars.ws_connection_manager import AvatarTelemetryConnectionManager
-from probos.config import SamplingRatesConfig
+from probos.config import (
+    AuthConfig,
+    AvatarsConfig,
+    AvatarTelemetryConfig,
+    SamplingRatesConfig,
+    SystemConfig,
+)
 from probos.crew_profile import AppearanceProfile, CrewProfile, VoiceProfile
 from probos.types import AgentState
 
@@ -50,26 +56,30 @@ def _make_runtime(*, crew_scope_token: str = "") -> Any:
     runtime.bridge_alerts = MagicMock()
     runtime.bridge_alerts.get_recent_alerts.return_value = []
 
-    cfg = MagicMock()
-    cfg.avatars = MagicMock()
-    cfg.avatars.enabled = True
-    cfg.avatars.avatars_dir = "data/avatars"
-    cfg.avatars.max_vrm_size_bytes = 25 * 1024 * 1024
-    cfg.avatar_telemetry = MagicMock()
-    cfg.avatar_telemetry.enabled = True
-    cfg.avatar_telemetry.inject_into_agent_context = False
-    cfg.avatar_telemetry.mouth_active_window_seconds = 3.0
-    cfg.avatar_telemetry.polling_interval_ms = 2000
-    cfg.avatar_telemetry.max_connections_per_agent = 4
-    cfg.avatar_telemetry.ws_diff_enabled = False
-    cfg.avatar_telemetry.ws_diff_threshold = 0.05
-    cfg.avatar_telemetry.ws_full_snapshot_every_n = 10
-    cfg.avatar_telemetry.fleet_stream_enabled = True
-    cfg.avatar_telemetry.history_enabled = False
-    cfg.avatar_telemetry.history_retention_days = 7
-    cfg.auth = MagicMock()
-    cfg.auth.crew_scope_token = crew_scope_token
-    runtime.config = cfg
+    # BF-287/AD-722b-1a: REAL SystemConfig at the boundary so a phantom config
+    # axis read by create_app / the telemetry endpoint surfaces instead of being
+    # auto-faked. All values mirror the prior MagicMock-set values.
+    runtime.config = SystemConfig(
+        avatars=AvatarsConfig(
+            enabled=True,
+            avatars_dir="data/avatars",
+            max_vrm_size_bytes=25 * 1024 * 1024,
+        ),
+        avatar_telemetry=AvatarTelemetryConfig(
+            enabled=True,
+            inject_into_agent_context=False,
+            mouth_active_window_seconds=3.0,
+            polling_interval_ms=2000,
+            max_connections_per_agent=4,
+            ws_diff_enabled=False,
+            ws_diff_threshold=0.05,
+            ws_full_snapshot_every_n=10,
+            fleet_stream_enabled=True,
+            history_enabled=False,
+            history_retention_days=7,
+        ),
+        auth=AuthConfig(crew_scope_token=crew_scope_token),
+    )
 
     rates = SamplingRatesConfig()
     runtime.avatar_sampling_state = AvatarSamplingStateMachine(rates=rates)

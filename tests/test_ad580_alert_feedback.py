@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from probos.bridge_alerts import BridgeAlertService
+from probos.substrate.registry import AgentRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -235,9 +236,7 @@ class TestAlertAPI:
         from probos.runtime import ProbOSRuntime
         runtime = MagicMock(spec=ProbOSRuntime)
         runtime._started = True
-        runtime.registry = MagicMock()
-        runtime.registry.count = 0
-        runtime.registry.all.return_value = []
+        runtime.registry = AgentRegistry()
 
         # Provide a real BridgeAlertService for suppression API tests
         runtime.bridge_alerts = _make_service()

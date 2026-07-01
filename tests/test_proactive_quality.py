@@ -32,7 +32,7 @@ def _make_engine_and_rt(trust_score=0.55):
     rt.trust_network.get_score = MagicMock(return_value=trust_score)
     rt.ward_room_router = MagicMock(spec=WardRoomRouter)
     rt.ward_room_router.extract_endorsements = MagicMock(return_value=("", []))
-    rt._records_store = MagicMock(spec=RecordsStore)
+    rt._records_store = AsyncMock(spec=RecordsStore)
     rt._records_store.write_notebook = AsyncMock()
     rt.ontology = None
     rt.callsign_registry = MagicMock(spec=CallsignRegistry)

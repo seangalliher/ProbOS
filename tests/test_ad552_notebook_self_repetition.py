@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from probos.config import RecordsConfig
+from probos.config import RecordsConfig, SystemConfig
 from probos.events import EventType, NotebookSelfRepetitionEvent
 
 
@@ -49,8 +49,7 @@ def _make_runtime(records_config=None):
     rt._records_store = AsyncMock()
     rt._emit_event = AsyncMock()
     rc = records_config or RecordsConfig()
-    rt.config = MagicMock()
-    rt.config.records = rc
+    rt.config = SystemConfig(records=rc)
     rt.ontology = None
     rt.ward_room_router = None
     return rt

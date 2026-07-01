@@ -201,7 +201,7 @@ class TestProactiveReplyExtraction:
         runtime.ward_room_router.extract_endorsements.return_value = ("text", [])
         runtime.ward_room_router.process_endorsements = AsyncMock()
         runtime.is_cold_start = False
-        runtime._records_store = MagicMock(spec=RecordsStore)
+        runtime._records_store = AsyncMock(spec=RecordsStore)
         runtime._records_store.write_notebook = AsyncMock()
         runtime.ontology = None
         runtime.callsign_registry = MagicMock(spec=CallsignRegistry)

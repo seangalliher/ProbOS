@@ -265,7 +265,7 @@ def _make_loop():
     rt.trust_network.record_outcome = MagicMock(return_value=0.6)
     rt.ward_room_router = MagicMock(spec=WardRoomRouter)
     rt.ward_room_router.extract_endorsements = MagicMock(return_value=("", []))
-    rt._records_store = MagicMock(spec=RecordsStore)
+    rt._records_store = AsyncMock(spec=RecordsStore)
     rt._records_store.write_notebook = AsyncMock()
     rt.ontology = None
     rt.callsign_registry = MagicMock(spec=CallsignRegistry)
