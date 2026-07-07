@@ -893,6 +893,16 @@ class LLMRateConfig(BaseModel):
     # AD-636: Reserved slots for interactive (Captain DM) priority
     interactive_reserved_slots: int = 2
 
+    # BF-654: max simultaneous in-flight requests to any SINGLE LLM endpoint
+    # (keyed by base_url|api_format, i.e. the httpx pool). Bounds total
+    # concurrency to the shared Copilot proxy during a boot burst, composing
+    # with — not replacing — the AD-636 priority lanes. Endpoints on distinct
+    # base_urls (e.g. the Copilot proxy vs. ollama for vision) get INDEPENDENT
+    # caps, so vision is never throttled by the text cap. CRITICAL (interactive)
+    # calls BYPASS this cap so the Captain is never throttled. 0/negative =
+    # disabled (unbounded past the lane fail-open = pre-BF-654 byte-identical).
+    max_inflight_per_endpoint: int = 8
+
 
 class AttentionConfig(BaseModel):
     """AD-1028: ContextAssembler / global token-budget configuration.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 import time
 import uuid
@@ -191,6 +192,32 @@ class OpenAICompatibleClient(BaseLLMClient):
         _background_slots = max(1, _max_concurrent - _interactive_reserved)
         self._interactive_semaphore = asyncio.Semaphore(_interactive_reserved)
         self._background_semaphore = asyncio.Semaphore(_background_slots)
+
+        # BF-654: per-endpoint in-flight cap. One asyncio.Semaphore per distinct
+        # upstream (keyed by _client_key = base_url|api_format, matching the
+        # httpx pool grouping in self._clients) bounds TOTAL simultaneous
+        # requests to each endpoint — the hard backstop the AD-636 lane
+        # fail-open lacks. Text tiers (fast/standard/deep) share one key
+        # (the Copilot proxy) and thus one cap; vision/ollama get their own,
+        # so a saturated proxy never starves vision and vice-versa. Constructed
+        # here (no running loop needed on 3.10+, exactly like the AD-636
+        # semaphores above). <= 0 disables the feature (dict stays empty =>
+        # complete() skips the whole endpoint block => pre-BF-654 byte-identical).
+        _max_inflight = 8
+        if rate_config and hasattr(rate_config, "max_inflight_per_endpoint"):
+            _max_inflight = rate_config.max_inflight_per_endpoint
+        self._endpoint_semaphores: dict[str, asyncio.Semaphore] = {}
+        if _max_inflight and _max_inflight > 0:
+            for tier in _LLM_TIERS:
+                key = self._client_key(tier)
+                if key not in self._endpoint_semaphores:
+                    self._endpoint_semaphores[key] = asyncio.Semaphore(_max_inflight)
+        # BF-654: how long a background call waits for an endpoint slot before
+        # the last-resort jittered fail-open. Longer than the 30s lane timeout
+        # so the endpoint cap holds firm through the boot-burst drain, shorter
+        # than the 300s deep httpx timeout so slots always free.
+        self._endpoint_acquire_timeout: float = 120.0
+        self._endpoint_failopen_jitter_seconds: float = 0.5
 
     # Backward-compat properties
     @property
@@ -533,7 +560,8 @@ class OpenAICompatibleClient(BaseLLMClient):
         LOW is an observability label — same semaphore as NORMAL.
         """
         # AD-637f: CRITICAL uses reserved interactive slots; NORMAL and LOW share background
-        sem = self._interactive_semaphore if priority == Priority.CRITICAL else self._background_semaphore
+        is_critical = priority == Priority.CRITICAL
+        sem = self._interactive_semaphore if is_critical else self._background_semaphore
         try:
             await asyncio.wait_for(sem.acquire(), timeout=30.0)
         except asyncio.TimeoutError:
@@ -541,9 +569,44 @@ class OpenAICompatibleClient(BaseLLMClient):
             logger.warning("AD-636: %s semaphore acquisition timed out, proceeding without", priority)
             sem = None  # type: ignore[assignment]
 
+        # BF-654: per-endpoint in-flight cap. Acquired AFTER the priority lane
+        # (single global lock order L->E => no deadlock) and released BEFORE it
+        # in the finally. CRITICAL bypasses the cap entirely so the Captain is
+        # never queued behind background work (no interactive starvation). The
+        # endpoint is fixed by request.tier: the text fallback chain stays on
+        # one base_url and vision never falls back, so this key is correct for
+        # the whole call incl. the BF-612 retry.
+        endpoint_sem: asyncio.Semaphore | None = None
+        if not is_critical:
+            _tier = request.tier or self.default_tier
+            if _tier not in self._tier_configs:
+                _tier = self.default_tier
+            endpoint_sem = self._endpoint_semaphores.get(self._client_key(_tier))
+        endpoint_acquired = False
+        if endpoint_sem is not None:
+            try:
+                await asyncio.wait_for(
+                    endpoint_sem.acquire(), timeout=self._endpoint_acquire_timeout
+                )
+                endpoint_acquired = True
+            except asyncio.TimeoutError:
+                # Last-resort fail-open. Unlike the lane, jitter the proceed so a
+                # saturated-endpoint herd de-synchronizes instead of re-flooding
+                # the proxy in lockstep (the BF-654 root cause).
+                await asyncio.sleep(
+                    random.uniform(0.0, self._endpoint_failopen_jitter_seconds)
+                )
+                logger.warning(
+                    "BF-654: endpoint in-flight cap acquire timed out (tier=%s); "
+                    "proceeding after jitter",
+                    request.tier or self.default_tier,
+                )
+
         try:
             return await self._complete_inner(request)
         finally:
+            if endpoint_acquired and endpoint_sem is not None:
+                endpoint_sem.release()
             if sem is not None:
                 sem.release()
 
@@ -680,6 +743,13 @@ class OpenAICompatibleClient(BaseLLMClient):
                             "retrying once on a fresh socket",
                             attempt_tier, model, response.prompt_tokens,
                         )
+                        # BF-654: de-sync a synchronized empty-200 herd so the
+                        # recycled sockets don't all retry the proxy in lockstep.
+                        # No-op when the endpoint cap is disabled (byte-identical).
+                        if self._endpoint_semaphores:
+                            await asyncio.sleep(
+                                random.uniform(0.0, self._endpoint_failopen_jitter_seconds)
+                            )
                         await self._refresh_client(attempt_tier)
                         client = self._clients[self._client_key(attempt_tier)]
                         response = await self._call_api(
