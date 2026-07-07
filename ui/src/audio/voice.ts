@@ -341,8 +341,10 @@ async function _synthesizeAndPlay(
     try { (audio as any).preservesPitch = false; } catch { /* not supported */ }
     await new Promise<void>((resolve) => {
       let _settled = false;
-      // fireEnd=false on cancel (pause) — matches the pre-AD-1071 single-call
-      // path, which never fired 'end' when a newer reply paused the audio.
+      // BF-655: fireEnd=false is now used ONLY by the play()-reject path below,
+      // where the 'play' event never fired so no 'start' was emitted — firing
+      // no 'end' there keeps start/end balanced. Every path that DID emit
+      // 'start' (ended / error / pause) fires exactly one terminal 'end'.
       const _finish = (fireEnd: boolean) => {
         if (_settled) return;
         _settled = true;
@@ -353,10 +355,17 @@ async function _synthesizeAndPlay(
       audio.addEventListener('play', () => _fire({ type: 'start', agent_id, utterance: synth, source: 'server' }));
       audio.addEventListener('ended', () => _finish(true));
       audio.addEventListener('error', () => _finish(true));
-      // AD-1071: a newer speakResponse pauses _activeAudio — resolve (without a
-      // spurious 'end') so a pipelined queue can re-check its generation token
-      // and stop instead of hanging on an audio that will never fire 'ended'.
-      audio.addEventListener('pause', () => _finish(false));
+      // BF-655 (refines AD-1071): a newer speakResponse pauses _activeAudio to
+      // supersede this utterance. Fire the terminal 'end' (same agent_id,
+      // source:'server') — the old utterance is genuinely over, so the
+      // modulation icon, avatar head-bob, and PTT gate MUST reset. This is NOT
+      // a spurious 'end' (a spurious end would cut a still-playing utterance;
+      // pause never does that here). The _settled guard above makes this a
+      // no-op if 'ended'/'error' already ran, so there is no double-'end'. The
+      // AD-1071 pipelined queue still stops via the _speakGeneration token (not
+      // this event), and _finish still resolve()s, so the queue advances/stops
+      // exactly as before.
+      audio.addEventListener('pause', () => _finish(true));
       // AD-738: feed visemes directly to useLipSyncCapture via the injection setter.
       if (Array.isArray(data.visemes) && data.visemes.length > 0) {
         try {
@@ -427,7 +436,20 @@ function _speakBrowserFallback(
   const voice = named ?? langMatch ?? findPreferredVoice();
   if (voice) utterance.voice = voice;
   utterance.onstart = () => _fire({ type: 'start', agent_id, utterance, source: 'browser' });
-  utterance.onend = () => _fire({ type: 'end', agent_id, utterance, source: 'browser' });
+  // BF-655: onend and onerror share a single-settle guard so exactly one
+  // terminal 'end' fires, whichever resolves first. speechSynthesis.cancel()
+  // (a newer reply superseding this one) makes many browsers fire onerror
+  // ('interrupted' / 'canceled'), NOT onend — without this the PTT gate,
+  // modulation icon, and head-bob would latch forever. General onend flakiness
+  // (long text, backgrounded tab) is the same class.
+  let _ended = false;
+  const _fireBrowserEnd = () => {
+    if (_ended) return;
+    _ended = true;
+    _fire({ type: 'end', agent_id, utterance, source: 'browser' });
+  };
+  utterance.onend = _fireBrowserEnd;
+  utterance.onerror = _fireBrowserEnd;
   // 'boundary' reserved for AD-721b phoneme work; not wired in v1.
   speechSynthesis.speak(utterance);
 }

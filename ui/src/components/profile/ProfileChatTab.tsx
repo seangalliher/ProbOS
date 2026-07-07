@@ -212,6 +212,13 @@ const CALL_OPEN_TRIGGER =
   'hear each other now. Open with a brief, warm greeting, the way you naturally ' +
   'would at the start of a call. Keep it to a sentence or two.)';
 
+// BF-655: bounded ceiling for the PTT TTS-gate self-heal watchdog. This is a
+// safety net, not a precise timer: it must be longer than any single legitimate
+// utterance (so it never cuts a real one) but bounded (so a stranded gate
+// self-heals). The SpeechEvent carries no audio duration, so a fixed ceiling
+// re-armed on every fresh 'start' is the minimal robust choice.
+const PTT_TTS_WATCHDOG_MS = 45000;
+
 export function ProfileChatTab({ agentId, threadId }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
   const [input, setInput] = useState('');
@@ -232,6 +239,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // legacy callers that don't pass agent_id).
   const ttsActiveRef = useRef(false);
   const [ttsActive, setTtsActive] = useState(false);
+  // BF-655 — bounded self-heal for the BF-300 PTT gate. If a terminal 'end' is
+  // ever missed (superseded audio, browser cancel/interrupt, or a future
+  // producer regression), this timer clears the gate so the mic cannot lock
+  // out permanently. Re-armed on every fresh 'start'; cleared on 'end' and on
+  // unmount.
+  const ttsWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // BF-294b — subscribe to voiceActivity PCM tap while listening; compute
   // RMS per frame, smooth via EMA (alpha=0.3, Discord-style), and flush
@@ -422,13 +435,36 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       if (event.type === 'start') {
         ttsActiveRef.current = true;
         setTtsActive(true);
+        // BF-655: (re)arm the bounded self-heal watchdog. Clear any prior timer
+        // first so a fresh utterance resets the ceiling.
+        if (ttsWatchdogRef.current !== null) clearTimeout(ttsWatchdogRef.current);
+        ttsWatchdogRef.current = setTimeout(() => {
+          ttsWatchdogRef.current = null;
+          ttsActiveRef.current = false;
+          setTtsActive(false);
+          console.warn(
+            '[ProfileChatTab] BF-655: PTT TTS gate self-healed after ' +
+            `${PTT_TTS_WATCHDOG_MS}ms with no terminal 'end' — clearing the mic ` +
+            'lockout so the Captain is not stranded (a producer end was missed).',
+          );
+        }, PTT_TTS_WATCHDOG_MS);
       } else if (event.type === 'end') {
         ttsActiveRef.current = false;
         setTtsActive(false);
+        // BF-655: the utterance ended normally — cancel the watchdog.
+        if (ttsWatchdogRef.current !== null) {
+          clearTimeout(ttsWatchdogRef.current);
+          ttsWatchdogRef.current = null;
+        }
       }
     });
     return () => {
       try { unsub(); } catch { /* Tier-2 */ }
+      // BF-655: never leave a dangling watchdog timer on unmount.
+      if (ttsWatchdogRef.current !== null) {
+        clearTimeout(ttsWatchdogRef.current);
+        ttsWatchdogRef.current = null;
+      }
     };
   }, [agentId]);
 
