@@ -199,7 +199,25 @@ class WarmBootService:
                             sys.modules.pop(module_name, None)
 
                         if handler is None:
-                            logger.warning("Warm boot: no handler function for skill %s", intent_name)
+                            # BF-656: a source that parses/exec's fine but has no
+                            # handle_<name> function can NEVER restore — a PERMANENT
+                            # condition. Prune it from the knowledge store so it stops
+                            # being retried (and re-warned) every boot. Do NOT prune on
+                            # the transient exec-failure path (outer except below): a
+                            # SyntaxError/ImportError/top-level raise may be
+                            # environment-recoverable.
+                            logger.info(
+                                "Warm boot: skill %s has no handle_%s function "
+                                "(permanent); pruning from knowledge store",
+                                intent_name, intent_name,
+                            )
+                            try:
+                                await ks.remove_skill(intent_name)
+                            except Exception as prune_err:  # log-and-degrade — never block boot on a prune
+                                logger.warning(
+                                    "Warm boot: failed to prune un-restorable skill %s: %s",
+                                    intent_name, prune_err,
+                                )
                             continue
 
                         from probos.types import IntentDescriptor as _ID, Skill as _Skill

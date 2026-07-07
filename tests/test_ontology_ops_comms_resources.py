@@ -196,7 +196,9 @@ class TestToolCapabilities:
     @pytest.mark.asyncio
     async def test_all_capabilities(self, service: VesselOntologyService) -> None:
         tc = service.get_tool_capabilities()
-        assert len(tc) >= 7
+        # BF-656: codebase_query graduated to the AD-544 native tool and was
+        # removed from the ontology taxonomy → 6 tool_capabilities remain.
+        assert len(tc) >= 6
 
     @pytest.mark.asyncio
     async def test_filtered_capabilities(self, service: VesselOntologyService) -> None:

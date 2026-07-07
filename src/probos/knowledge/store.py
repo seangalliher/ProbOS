@@ -248,6 +248,14 @@ class KnowledgeStore:
                 log.warning("Failed to load skill %s: %s", intent_name, exc)
         return results
 
+    async def remove_skill(self, intent_name: str) -> None:
+        """Delete skill files and commit removal (mirrors remove_agent)."""
+        py_path = self._repo_path / "skills" / f"{intent_name}.py"
+        json_path = self._repo_path / "skills" / f"{intent_name}.json"
+        py_path.unlink(missing_ok=True)
+        json_path.unlink(missing_ok=True)
+        await self._schedule_commit(f"Remove skill {intent_name}")
+
     # ------------------------------------------------------------------
     # Trust persistence (AD-168)
     # ------------------------------------------------------------------

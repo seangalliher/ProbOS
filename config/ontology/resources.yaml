@@ -47,11 +47,12 @@ model_assignments:
 # These are capabilities an agent can invoke, not a runtime registry.
 # AD-423 (Tool Registry) will implement the runtime version.
 tool_capabilities:
-  - id: codebase_query
-    name: "Codebase Query"
-    description: "Search and analyze the codebase via CodebaseIndex"
-    provider: ship_computer
-    available_to: all_crew
+  # NOTE (BF-656): `codebase_query` removed here — it graduated to the real
+  # AD-544 native CodebaseQueryTool (tool_id "codebase_query", registered by the
+  # SWE harness at boot with ensign→read perms). Keeping the placeholder made the
+  # AD-423a seed register a no-op adapter that the real tool then legitimately
+  # replaced, emitting "Replacing existing tool registration: codebase_query"
+  # every boot. The remaining entries have no native tool yet, so they stay.
   - id: ward_room_post
     name: "Ward Room Post"
     description: "Post to Ward Room channels"
