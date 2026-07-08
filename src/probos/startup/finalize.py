@@ -136,7 +136,16 @@ async def _wire_device_consensus(*, runtime: Any, config: "SystemConfig") -> boo
     reach quorum) and subscribe the three ``requires_consensus`` device intents to
     the runtime's consensus dispatch handler.
     """
-    if not config.device.enabled:
+    # Defensive boundary check (mirrors _wire_self_distillation): some tests pass
+    # a MagicMock for config, which makes ``config.device.enabled`` a truthy proxy
+    # and would then ``await runtime.create_pool(...)`` on a MagicMock. Skip wiring
+    # unless we have a real Pydantic DeviceConfig. In production config.device is
+    # always a DeviceConfig, so this is behavior-neutral there.
+    from probos.config import DeviceConfig
+    device_cfg = getattr(config, "device", None)
+    if not isinstance(device_cfg, DeviceConfig):
+        return False
+    if not device_cfg.enabled:
         return False
 
     from probos.agents.device_consensus_proposer import DeviceConsensusProposer

@@ -159,6 +159,9 @@ class TestGatherContextSkills:
         loop._cooldown = 120.0
         loop._config = MagicMock()
         loop._config.system = MagicMock()
+        # AD-1077: _gather_context -> _inject_pending_coaching reads this dict.
+        # __new__ bypasses __init__ (proactive.py:467), so set it explicitly.
+        loop._gc_coaching = {}
 
         # Runtime mock — disable deep code paths by setting to None
         rt = MagicMock()

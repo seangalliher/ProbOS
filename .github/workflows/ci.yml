@@ -14,7 +14,11 @@ jobs:
     # aggregator, AD-747 conversation controller). With BF-320's per-test
     # 180s allowance, the cumulative suite needs 18-22 min on GHA runners.
     # 30 min gives a 10-min safety margin without masking real regressions.
-    timeout-minutes: 30
+    # BF-657: bumped 30 -> 45. The embedding crash previously bailed the suite
+    # early (--maxfail); with CI now running the FULL suite green, and xdist
+    # reduced from -n 16 to -n auto (matched to the runner cores to kill the
+    # oversubscription timing flakes), the full run needs more wall-clock.
+    timeout-minutes: 45
 
     env:
       # BF-657: force the network-free local embedding fallback so ChromaDB
@@ -33,7 +37,10 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies
-        run: uv sync --group dev
+        # BF-657: install the discovery (zeroconf) + browser (playwright pkg,
+        # no browsers) extras so the AD-708e mDNS + AD-1052b browser-bridge
+        # tests run instead of failing on the missing optional import.
+        run: uv sync --group dev --extra discovery --extra browser
 
       - name: Run tests
         # BF-322: dropped -x (fail-fast). Per user-memory rule, -x with xdist
@@ -41,7 +48,11 @@ jobs:
         # to still bail on real regressions while tolerating documented
         # flakes (test_dreaming::test_nl_to_dream_cycle_changes_weights,
         # test_ward_room sort isolation flake).
-        run: uv run pytest tests/ --maxfail=10 -q --tb=short
+        # BF-657: -n auto (was the pyproject default -n 16). 16 workers on a
+        # 4-vCPU runner is 4x oversubscription -> asyncio teardown races
+        # ("Event loop is closed") + timing-test flakes (bf304 single-flight,
+        # ad1032 arousal decay). -n auto matches workers to cores.
+        run: uv run pytest tests/ -n auto --maxfail=10 -q --tb=short
 
   ui-tests:
     runs-on: ubuntu-latest
