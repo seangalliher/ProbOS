@@ -414,8 +414,8 @@ async def init_cognitive_services(
     if episodic_memory and not _skip_migrations:
         from probos.cognitive.episodic import migrate_embedding_model
         from probos.cognitive.schema_versions import MIGRATION_VERSIONS
-        from probos.knowledge.embeddings import get_embedding_model_name
-        _embedding_model_name = get_embedding_model_name()
+        from probos.knowledge.embeddings import get_active_embedding_model_name
+        _embedding_model_name = get_active_embedding_model_name()
         await _run_one_migration(
             "AD-584",
             lambda: migrate_embedding_model(episodic_memory, _embedding_model_name),

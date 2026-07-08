@@ -52,12 +52,15 @@ class SemanticKnowledgeLayer:
     async def start(self) -> None:
         """Initialize ChromaDB client and create/get all collections."""
         import chromadb
-        from probos.knowledge.embeddings import get_embedding_function, get_embedding_model_name
+        from probos.knowledge.embeddings import (
+            get_active_embedding_model_name,
+            get_collection_embedding_function,
+        )
 
         self._db_path.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(self._db_path))
-        ef = get_embedding_function()
-        model_name = get_embedding_model_name()
+        ef = get_collection_embedding_function()
+        model_name = get_active_embedding_model_name()
 
         for name, collection_name in self.COLLECTIONS.items():
             try:

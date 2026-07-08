@@ -11,16 +11,24 @@ same 384 dimensions, dramatically better Q->A cosine similarity.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
+import os
 import re
 from collections import Counter
 from typing import Any, Callable
+
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 
 logger = logging.getLogger(__name__)
 
 # AD-584: Active embedding model name (used for migration detection)
 _MODEL_NAME = "multi-qa-MiniLM-L6-cos-v1"
+
+# BF-657: Network-free local embedding fallback (see LocalHashEmbeddingFunction).
+_LOCAL_EMBED_DIM = 384
+_LOCAL_MODEL_NAME = "probos-local-hash-v1"
 
 # ------------------------------------------------------------------
 # Keyword-overlap fallback (moved from episodic.py)
@@ -93,6 +101,57 @@ def get_embedding_model_name() -> str:
     return _MODEL_NAME
 
 
+def _stable_bucket(token: str) -> int:
+    """Return a process-stable bucket integer for a token (BF-657).
+
+    Uses a blake2b digest, NOT the builtin ``hash()`` (which is per-process
+    salted via ``PYTHONHASHSEED`` and would land persisted vectors and
+    post-restart query vectors in different buckets — breaking recall after a
+    reboot).
+    """
+    return int.from_bytes(
+        hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest(), "big"
+    )
+
+
+class LocalHashEmbeddingFunction(EmbeddingFunction[Documents]):
+    """Network-free deterministic bag-of-hashed-tokens embedding function (BF-657).
+
+    Lexical fallback so ChromaDB collection creation never passes ``None``
+    (which makes Chroma substitute its own network-downloaded default ONNX
+    embedding function — the model that cannot fetch ``onnx.tar.gz`` in CI).
+    NOT a semantic model: it ranks texts by shared surface tokens only. Vectors
+    are stable across process restarts, so a persisted collection's stored
+    vectors still match query vectors after a reboot.
+    """
+
+    def __init__(self, dim: int = _LOCAL_EMBED_DIM) -> None:
+        self._dim = dim
+
+    def __call__(self, input: Documents) -> Embeddings:
+        vectors: list[list[float]] = []
+        for doc in input:
+            vec = [0.0] * self._dim
+            for token in _tokenize(doc):
+                vec[_stable_bucket(token) % self._dim] += 1.0
+            norm = math.sqrt(sum(v * v for v in vec))
+            if norm > 0.0:
+                vec = [v / norm for v in vec]
+            vectors.append(vec)
+        return vectors
+
+    @staticmethod
+    def name() -> str:
+        return _LOCAL_MODEL_NAME
+
+    def get_config(self) -> dict[str, Any]:
+        return {"dim": self._dim}
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> "LocalHashEmbeddingFunction":
+        return LocalHashEmbeddingFunction(dim=config.get("dim", _LOCAL_EMBED_DIM))
+
+
 def get_embedding_function() -> Any | None:
     """Return ChromaDB embedding function for multi-qa-MiniLM-L6-cos-v1 (lazy singleton).
 
@@ -101,6 +160,14 @@ def get_embedding_function() -> Any | None:
     sentence-transformers is unavailable, then to keyword overlap.
     """
     global _embedding_fn, _embedding_available
+    # BF-657: CI/determinism toggle — force the network-free local fallback so
+    # collection creation never triggers Chroma's downloaded default ONNX EF.
+    # Skips the slow HF / Chroma-S3 download probes; embed_text/compute_similarity
+    # keep their keyword-overlap fallback (None-return semantics unchanged).
+    if os.getenv("PROBOS_EMBEDDINGS", "").strip().lower() == "local":
+        _embedding_fn = None
+        _embedding_available = False
+        return None
     if _embedding_available is not None:
         return _embedding_fn
 
@@ -139,6 +206,31 @@ def get_embedding_function() -> Any | None:
         _embedding_fn = None
         _embedding_available = False
         return None
+
+
+def get_collection_embedding_function() -> Any:
+    """Return an embedding function for ChromaDB collection creation — NEVER None.
+
+    Returns the real network embedding function when one is available, otherwise
+    the network-free :class:`LocalHashEmbeddingFunction` (BF-657). Passing
+    ``None`` to ``get_or_create_collection`` does NOT disable embeddings — Chroma
+    substitutes its own downloaded default ONNX embedding function, which cannot
+    fetch ``onnx.tar.gz`` in CI.
+    """
+    return get_embedding_function() or LocalHashEmbeddingFunction()
+
+
+def get_active_embedding_model_name() -> str:
+    """Return the ``embedding_model`` metadata name for the ACTIVE backend.
+
+    Returns the local fallback EF name when no network model is available (so an
+    offline->online transition triggers a clean re-embed via the name
+    comparison, agreeing with Chroma's EF-config conflict detection), otherwise
+    the real model name.
+    """
+    if get_embedding_function() is None:
+        return LocalHashEmbeddingFunction.name()
+    return get_embedding_model_name()
 
 
 def embed_text(text: str) -> list[float]:

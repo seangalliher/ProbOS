@@ -680,9 +680,9 @@ async def migrate_embedding_model(
             return 0
 
         # Delete and recreate collection with new embedding function
-        from probos.knowledge.embeddings import get_embedding_function
+        from probos.knowledge.embeddings import get_collection_embedding_function
         episodic_memory._client.delete_collection("episodes")
-        ef = get_embedding_function()
+        ef = get_collection_embedding_function()
         episodic_memory._collection = episodic_memory._client.get_or_create_collection(
             name="episodes",
             embedding_function=ef,
@@ -1290,13 +1290,13 @@ class EpisodicMemory:
 
     async def start(self) -> None:
         import chromadb
-        from probos.knowledge.embeddings import get_embedding_function
+        from probos.knowledge.embeddings import get_collection_embedding_function
 
         db_dir = Path(self.db_path).parent
         db_dir.mkdir(parents=True, exist_ok=True)
 
         self._client = chromadb.PersistentClient(path=str(db_dir))
-        ef = get_embedding_function()
+        ef = get_collection_embedding_function()
         try:
             self._collection = self._client.get_or_create_collection(
                 name="episodes",
@@ -1329,13 +1329,13 @@ class EpisodicMemory:
                 raise
 
         # AD-584: Ensure collection metadata includes embedding model name
-        from probos.knowledge.embeddings import get_embedding_model_name
+        from probos.knowledge.embeddings import get_active_embedding_model_name
         try:
             col_meta = self._collection.metadata or {}
             if "embedding_model" not in col_meta:
                 self._collection.modify(metadata={
                     **col_meta,
-                    "embedding_model": get_embedding_model_name(),
+                    "embedding_model": get_active_embedding_model_name(),
                 })
         except Exception:
             logger.debug("AD-584: Could not set embedding_model metadata", exc_info=True)

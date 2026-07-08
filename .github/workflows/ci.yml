@@ -16,6 +16,12 @@ jobs:
     # 30 min gives a 10-min safety margin without masking real regressions.
     timeout-minutes: 30
 
+    env:
+      # BF-657: force the network-free local embedding fallback so ChromaDB
+      # collections never trigger Chroma's downloaded default ONNX EF (CI has
+      # no onnx cache and cannot download). Production stays on real embeddings.
+      PROBOS_EMBEDDINGS: local
+
     steps:
       - uses: actions/checkout@v4
 
@@ -28,9 +34,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --group dev
-
-      - name: Clear stale chroma onnx cache
-        run: rm -rf ~/.cache/chroma/onnx_models || true
 
       - name: Run tests
         # BF-322: dropped -x (fail-fast). Per user-memory rule, -x with xdist

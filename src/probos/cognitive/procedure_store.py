@@ -275,13 +275,16 @@ class ProcedureStore:
         """Initialize ChromaDB collection for semantic procedure search."""
         try:
             import chromadb
-            from probos.knowledge.embeddings import get_embedding_function, get_embedding_model_name
+            from probos.knowledge.embeddings import (
+                get_active_embedding_model_name,
+                get_collection_embedding_function,
+            )
 
             client = chromadb.PersistentClient(
                 path=str(self._data_dir / "chroma")
             )
-            ef = get_embedding_function()
-            model_name = get_embedding_model_name()
+            ef = get_collection_embedding_function()
+            model_name = get_active_embedding_model_name()
             try:
                 self._chroma_collection = client.get_or_create_collection(
                     name="procedures",

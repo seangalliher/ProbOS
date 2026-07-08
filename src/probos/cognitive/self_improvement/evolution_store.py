@@ -63,9 +63,9 @@ class EvolutionStore:
         if self._collection is not None:
             return
         try:
-            from probos.knowledge.embeddings import get_embedding_function
+            from probos.knowledge.embeddings import get_collection_embedding_function
 
-            ef = get_embedding_function()
+            ef = get_collection_embedding_function()
             self._collection = self._client.get_or_create_collection(
                 name=self._collection_name,
                 embedding_function=ef,
