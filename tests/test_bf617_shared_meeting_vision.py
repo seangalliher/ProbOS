@@ -48,9 +48,9 @@ class _FakeConsumer:
         return self._obs
 
 
-def _obs(desc: str) -> VisionObservation:
+def _obs(desc: str, ts: float | None = None) -> VisionObservation:
     return VisionObservation(
-        timestamp=time.time(),
+        timestamp=time.time() if ts is None else ts,
         attachment_ref="sha-shared",
         description=desc,
         novelty_score=0.9,
@@ -69,10 +69,16 @@ def _runtime(*, enabled: bool, consumer):
 
 def test_observer_with_own_ring_sees_own_frame():
     # An observer (e.g. Ezri) has her own ring populated -> renders THAT, not
-    # the shared fallback.
+    # the shared fallback. Deterministic timestamps model an up-to-date observer
+    # (own frame no older than the shared feed) so the BF-624 "share only when
+    # STRICTLY fresher" branch does not fire — both are within the AD-1055
+    # freshness window. (Plain ``time.time()`` for both is a race: the shared obs
+    # is constructed microseconds later, so on a fine-resolution clock its
+    # timestamp is strictly newer and it wrongly overwrites the own frame.)
+    now = time.time()
     wm = get_or_create_working_memory("ezri")
-    wm.append(_obs("Ezri's own view: the Captain at a desk."))
-    rt = _runtime(enabled=True, consumer=_FakeConsumer(_obs("shared view")))
+    wm.append(_obs("Ezri's own view: the Captain at a desk.", ts=now))
+    rt = _runtime(enabled=True, consumer=_FakeConsumer(_obs("shared view", ts=now - 5.0)))
     out = _render_agent_scene_block(rt, "ezri")
     assert "Ezri's own view" in out
     assert "shared view" not in out

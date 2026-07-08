@@ -302,14 +302,23 @@ def test_decay_steps_down_one_level_per_quiet_arbitrate() -> None:
     assert faculty.arousal_zone == CognitiveZone.GREEN
 
 
-def test_full_decay_resets_to_green_after_window() -> None:
+def test_full_decay_resets_to_green_after_window(monkeypatch) -> None:
+    # Deterministic clock: the event stamps ``_last_event_at`` at ``now``; a long
+    # quiet gap then makes the next quiet arbitrate jump STRAIGHT to GREEN (not
+    # the one-level step-down to AMBER). Patching the faculty's monotonic clock
+    # (instead of ``_last_event_at = time.monotonic() - 10_000``) keeps the test
+    # independent of the runner's boot time: on a freshly-booted CI runner
+    # ``time.monotonic()`` is small, so ``monotonic() - 10_000`` goes NEGATIVE and
+    # trips the ``_last_event_at > 0.0`` guard, wrongly stepping down to AMBER.
+    import types as _types
+    import probos.cognitive.attention_faculty as af_mod
+    clock = {"t": 100_000.0}
+    monkeypatch.setattr(af_mod, "time", _types.SimpleNamespace(monotonic=lambda: clock["t"]))
     spine, faculty = _attach(_att_cfg())  # full_decay default 300s
-    spine.deliver_exogenous({"event_type": "alert"})  # RED
+    spine.deliver_exogenous({"event_type": "alert"})  # RED (stamps _last_event_at)
     faculty.arbitrate([], token_budget=10_000)  # event turn: RED
     assert faculty.arousal_zone == CognitiveZone.RED
-    # Simulate a long quiet period: the next quiet arbitrate jumps STRAIGHT to GREEN
-    # (not the one-level step-down to AMBER).
-    faculty._last_event_at = time.monotonic() - 10_000.0
+    clock["t"] += 10_000.0  # quiet period far past the 300s full-decay window
     faculty.arbitrate([], token_budget=10_000)
     assert faculty.arousal_zone == CognitiveZone.GREEN
 

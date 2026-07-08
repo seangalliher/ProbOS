@@ -13,6 +13,13 @@ class TestEmbeddingFunction:
         """get_embedding_function() returns a callable."""
         from probos.knowledge.embeddings import get_embedding_function
         ef = get_embedding_function()
+        if ef is None:
+            pytest.skip(
+                "get_embedding_function() returns None when the real embedding "
+                "model is unavailable; CI forces PROBOS_EMBEDDINGS=local, which "
+                "uses the network-free keyword-overlap fallback by design. This "
+                "test targets the real-model path."
+            )
         assert ef is not None
         assert callable(ef)
 
@@ -37,7 +44,14 @@ class TestEmbeddingFunction:
 
     def test_semantic_similarity_ordering(self):
         """Semantically similar text scores higher than dissimilar text."""
-        from probos.knowledge.embeddings import compute_similarity
+        from probos.knowledge.embeddings import compute_similarity, get_embedding_function
+        if get_embedding_function() is None:
+            pytest.skip(
+                "semantic ordering requires a real embedding model; the BF-657 "
+                "keyword-overlap fallback (CI forces PROBOS_EMBEDDINGS=local) "
+                "shares no surface tokens between 'deploy the API' and "
+                "'push to production', so both similarities are 0.0"
+            )
         sim_related = compute_similarity("deploy the API", "push to production")
         sim_unrelated = compute_similarity("deploy the API", "bake a cake")
         assert sim_related > sim_unrelated

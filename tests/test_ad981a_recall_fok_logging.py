@@ -118,6 +118,14 @@ async def test_band_is_agent_scoped_not_global(memory):
     # unrelated one. Querying the counselor's topic AS the yeoman must NOT yield
     # a strong band — the signal is the yeoman's OWN accessibility, not the
     # global best (which belongs to the counselor).
+    from probos.knowledge.embeddings import get_embedding_function
+    if get_embedding_function() is None:
+        pytest.skip(
+            "the counselor's strong band requires real-model semantic "
+            "similarity; the BF-657 lexical local fallback (CI forces "
+            "PROBOS_EMBEDDINGS=local) shifts the similarity distribution and "
+            "yields a weak band"
+        )
     await memory.store(Episode(
         user_input="Photosynthesis converts light energy into chemical sugar.",
         agent_ids=["counselor"],
