@@ -116,6 +116,15 @@ class KnowledgeStore:
                     anchors=anchors,
                 )
                 episodes.append(ep)
+            except FileNotFoundError:
+                # BF-658: TOCTOU race — the file was globbed but concurrently
+                # evicted (_evict_episodes) / removed before this async read.
+                # Benign (the episode was over-capacity and being deleted
+                # anyway); skip quietly instead of a misleading WARNING.
+                log.debug(
+                    "Episode %s vanished between listing and read "
+                    "(concurrent eviction)", fp.name,
+                )
             except Exception as exc:
                 log.warning("Failed to load episode %s: %s", fp.name, exc)
 
@@ -204,6 +213,13 @@ class KnowledgeStore:
                 metadata = await self._read_json(json_fp)
                 source_code = py_fp.read_text(encoding="utf-8")
                 results.append((metadata, source_code))
+            except FileNotFoundError:
+                # BF-658: TOCTOU race — globbed but concurrently removed
+                # (remove_agent) before this read. Benign; skip quietly.
+                log.debug(
+                    "Agent %s vanished between listing and read "
+                    "(concurrent removal)", agent_type,
+                )
             except Exception as exc:
                 log.warning("Failed to load agent %s: %s", agent_type, exc)
         return results
@@ -244,6 +260,13 @@ class KnowledgeStore:
                 descriptor = await self._read_json(json_fp)
                 source_code = py_fp.read_text(encoding="utf-8")
                 results.append((intent_name, source_code, descriptor))
+            except FileNotFoundError:
+                # BF-658: TOCTOU race — globbed but concurrently removed
+                # (remove_skill) before this read. Benign; skip quietly.
+                log.debug(
+                    "Skill %s vanished between listing and read "
+                    "(concurrent removal)", intent_name,
+                )
             except Exception as exc:
                 log.warning("Failed to load skill %s: %s", intent_name, exc)
         return results

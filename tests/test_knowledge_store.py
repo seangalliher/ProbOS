@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -394,6 +395,64 @@ class TestKnowledgeStoreEpisodes:
         await knowledge_store.initialize()
         loaded = await knowledge_store.load_episodes()
         assert loaded == []
+
+    @pytest.mark.asyncio
+    async def test_load_episodes_concurrent_deletion_skips_quietly(
+        self, knowledge_store, caplog,
+    ):
+        """BF-658: a file globbed but concurrently evicted/removed before its
+        async read is skipped at DEBUG (not a misleading WARNING); surviving
+        episodes still load."""
+        await knowledge_store.initialize()
+        await knowledge_store.store_episode(_make_test_episode("keep", ts=100.0))
+        await knowledge_store.store_episode(_make_test_episode("raced", ts=200.0))
+
+        # Simulate the TOCTOU race: the "raced" episode is deleted between the
+        # glob and its read, so _read_json raises FileNotFoundError for it.
+        real_read = knowledge_store._read_json
+
+        async def _racy_read(path):
+            if path.stem == "raced":
+                raise FileNotFoundError(2, "No such file or directory", str(path))
+            return await real_read(path)
+
+        knowledge_store._read_json = _racy_read
+
+        with caplog.at_level(logging.DEBUG, logger="probos.knowledge.store"):
+            loaded = await knowledge_store.load_episodes()
+
+        assert {e.id for e in loaded} == {"keep"}  # raced one skipped, keep loads
+        assert not any(
+            r.levelno == logging.WARNING and "Failed to load episode" in r.getMessage()
+            for r in caplog.records
+        )
+        assert any(
+            r.levelno == logging.DEBUG
+            and "vanished between listing and read" in r.getMessage()
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_load_episodes_corrupt_file_still_warns(
+        self, knowledge_store, caplog,
+    ):
+        """BF-658: a genuinely unreadable episode (parse error, not a race) STILL
+        logs a WARNING — the FileNotFoundError carve-out must not swallow it."""
+        await knowledge_store.initialize()
+        await knowledge_store.store_episode(_make_test_episode("good", ts=100.0))
+        # A corrupt file present at glob time raises JSONDecodeError on read.
+        (knowledge_store.repo_path / "episodes" / "bad.json").write_text(
+            "{ not valid json", encoding="utf-8",
+        )
+
+        with caplog.at_level(logging.WARNING, logger="probos.knowledge.store"):
+            loaded = await knowledge_store.load_episodes()
+
+        assert {e.id for e in loaded} == {"good"}
+        assert any(
+            r.levelno == logging.WARNING and "Failed to load episode" in r.getMessage()
+            for r in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_max_episodes_eviction(self, tmp_path):
