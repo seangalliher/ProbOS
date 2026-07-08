@@ -21,6 +21,8 @@ import math
 import re
 import time
 
+import pytest
+
 from probos.cognitive.agent_working_memory import AgentWorkingMemory
 from probos.cognitive.salience import (
     SalienceWeights,
@@ -30,7 +32,7 @@ from probos.cognitive.salience import (
     recency_decay,
 )
 from probos.config import AttentionConfig, SystemConfig
-from probos.knowledge.embeddings import embed_text
+from probos.knowledge.embeddings import embed_text, get_embedding_function
 from tests.fixtures.ad1028_golden._capture_golden import make_dm_agent
 
 
@@ -194,6 +196,11 @@ def test_salience_scoring_enabled_false_by_default() -> None:
 
 
 def test_salience_rank_memories_real_embeddings_orders_by_relevance() -> None:
+    if get_embedding_function() is None:
+        pytest.skip(
+            "real-embedding relevance ordering; the BF-657 lexical local fallback "
+            "(CI PROBOS_EMBEDDINGS=local) cannot rank by semantic relevance"
+        )
     agent = make_dm_agent()
     agent._runtime = _Rt(_salience_on_config())
     now = time.time()
@@ -255,6 +262,11 @@ def _enriched_dm_observation() -> dict:
 
 
 async def test_build_user_message_salience_on_reorders_episodic_block() -> None:
+    if get_embedding_function() is None:
+        pytest.skip(
+            "salience reorder needs real-embedding relevance; the BF-657 lexical "
+            "local fallback (CI PROBOS_EMBEDDINGS=local) cannot reorder by relevance"
+        )
     agent = make_dm_agent()
     agent._runtime = _Rt(_salience_on_config())
     msg = await agent._build_user_message(_enriched_dm_observation())

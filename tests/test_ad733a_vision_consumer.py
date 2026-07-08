@@ -582,36 +582,42 @@ async def test_bf304_single_flight_drops_concurrent_describe(tmp_path: Path) -> 
 
     describe_calls = 0
     release = asyncio.Event()
+    describe_started = asyncio.Event()
 
     async def _slow_describe(_sha: str) -> str:
         nonlocal describe_calls
         describe_calls += 1
+        describe_started.set()
         await release.wait()
         return "described content"
 
     with mock.patch.object(consumer, "_describe", side_effect=_slow_describe):
         sha_a = await _store_frame(runtime, _make_jpeg())
         sha_b = await _store_frame(runtime, _make_jpeg(color=(30, 30, 200)))
-        # Fire both concurrently; first acquires the lock, second hits the
-        # locked() guard and returns immediately.
+        # Fire the first, then DETERMINISTICALLY wait until it is actually
+        # inside _slow_describe (holding the single-flight lock) before firing
+        # the second. Relying on sleep(0) yields is a scheduling RACE under load
+        # (the CI flake: the second task could acquire the lock first and then
+        # block on `release` forever -> wait_for times out). Waiting on the real
+        # describe_started event makes the ordering deterministic.
         first = asyncio.create_task(consumer._handle(IntentMessage(
             intent="vision_observation",
             params={"attachment_ref": sha_a, "session_id": "s1", "force": True},
         )))
-        # Yield once so the first task is inside _slow_describe.
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        await asyncio.wait_for(describe_started.wait(), timeout=10.0)
         second = asyncio.create_task(consumer._handle(IntentMessage(
             intent="vision_observation",
             params={"attachment_ref": sha_b, "session_id": "s1", "force": True},
         )))
-        # Second should complete quickly (dropped) — if it queued behind the
-        # gated first describe, wait_for would time out. 2s tolerates xdist
-        # scheduling pressure under parallel workers.
-        await asyncio.wait_for(second, timeout=2.0)
+        # Second must complete quickly (dropped by the locked() guard). If it
+        # queued behind the gated first describe, wait_for would time out.
+        await asyncio.wait_for(second, timeout=10.0)
         assert describe_calls == 1, (
             f"BF-304: expected single describe in flight, got {describe_calls}"
         )
+        # Release the gated first describe so the task completes cleanly (no leak).
+        release.set()
+        await asyncio.gather(first, return_exceptions=True)
 
         # Release the first call so the test can finish.
         release.set()
