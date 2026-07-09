@@ -1059,6 +1059,12 @@ class ProbOSRuntime:
         # is the AD-824 shutdown-cancel registry for long-lived loops).
         self._event_listener_tasks: set[asyncio.Task] = set()
 
+        # AD-1121: best-effort background tasks for the cascade-confab divergence
+        # probe (per-event, non-blocking; NOT _background_tasks — those are
+        # runtime-lifetime loops). Public so the fan-out seam can register without
+        # reaching into a private attr (mirrors the _nats_publish_tasks pattern).
+        self.confab_probe_tasks: set[asyncio.Task] = set()
+
         # AD-824: registry for long-lived runtime-owned background loops.
         # The shutdown sequence in startup/shutdown.py cancels everything in
         # this set before AD-820's mark_clean_shutdown so a stuck loop can

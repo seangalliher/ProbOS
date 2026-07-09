@@ -6032,6 +6032,51 @@ class OSActivityConfig(BaseModel):
     )
 
 
+class GroundingConfig(BaseModel):
+    """AD-1119: consent/enable gate for the referent-grounding gate (guard G1).
+
+    A default-OFF, observe-only gate wired at the group-chat fan-out choke point
+    (``group_chat_fanout``) that resolves each candidate referent in the room
+    seed (git object / agent / ward-room channel) BEFORE the crew reasons on it,
+    and logs a gap-regex-safe honest-absence cue for the unresolved ones. When
+    OFF (default) the fan-out is byte-identical — no gate is built, no git
+    subprocess runs. Enabling it changes NO behavior on its own (AD-1119 is
+    observe-only; the cue is computed and logged, never injected). AD-1120 adds
+    ``ground_before_collaborate_enabled`` — when that AND ``referent_gate_enabled``
+    are both ON, the honest-absence cue for an unresolved CENTRAL referent IS
+    injected into each dispatched crew agent's context (still default OFF). AD-1121
+    adds ``confab_probe_enabled`` — when that AND ``referent_gate_enabled`` are both
+    ON, a context-free self-consistency divergence probe runs on an UNRESOLVED
+    central referent and, on a divergence verdict, records a CASCADE_CONFAB
+    observation and notifies the Captain (best-effort, non-blocking; still default
+    OFF).
+    """
+
+    referent_gate_enabled: bool = Field(
+        default=False,
+        description="AD-1119: consent/enable gate for the referent-grounding gate. Default OFF (byte-identical when off).",
+    )
+    ground_before_collaborate_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1120: when True (and referent_gate_enabled is also True), inject the "
+            "AD-1119 honest-absence cue for an unresolved CENTRAL room referent into "
+            "each dispatched crew agent's context. Default OFF (injection path "
+            "byte-identical when off; has no effect unless referent_gate_enabled is on)."
+        ),
+    )
+    confab_probe_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1121: when True (and referent_gate_enabled is also True), run a "
+            "context-free self-consistency divergence probe on an UNRESOLVED central "
+            "room referent; on a divergence verdict, record a CASCADE_CONFAB "
+            "observation and notify the Captain. Best-effort + non-blocking. Default "
+            "OFF (byte-identical when off; no effect unless referent_gate_enabled is on)."
+        ),
+    )
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -6049,6 +6094,7 @@ class SystemConfig(BaseModel):
     self_mod: SelfModConfig = SelfModConfig()
     device: DeviceConfig = DeviceConfig()  # AD-843b (probationary device trust prior)
     os_activity: OSActivityConfig = Field(default_factory=OSActivityConfig)  # AD-1054 (default OFF)
+    grounding: GroundingConfig = Field(default_factory=GroundingConfig)  # AD-1119 (default OFF)
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)  # AD-838c
     execution: ExecutionConfig = ExecutionConfig()  # AD-993/994 (default OFF)
     hooks: HooksConfig = HooksConfig()  # AD-1004 (default OFF)

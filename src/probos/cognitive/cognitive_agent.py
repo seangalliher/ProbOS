@@ -2509,6 +2509,23 @@ class CognitiveAgent(BaseAgent):
             "artifact tag rather than reading a disk path."
         )
 
+    def _conversational_grounding_cue_block(self, observation: dict) -> str:
+        """AD-1120: inject the honest-absence cue for an unresolved CENTRAL room
+        referent so the LLM is steered to the "structurally unresolvable" close
+        instead of confabulating. Gated to the GROUP fan-out path: returns ""
+        unless ``params["is_group_chat"]`` AND the fan-out attached a
+        ``grounding_cue`` (only set when ``ground_before_collaborate_enabled`` +
+        an eligible unresolved central referent). The cue is the AD-1119 string
+        verbatim — already ``is_capability_gap``-clean. Overridable (Open/Closed).
+        Byte-identical when no cue is attached."""
+        params = observation.get("params") or {}
+        if not params.get("is_group_chat"):
+            return ""
+        cue = params.get("grounding_cue")
+        if not isinstance(cue, str) or not cue.strip():
+            return ""
+        return "\n\n" + cue.strip()
+
     def _conversational_proactivity_protocol(self, observation: dict) -> str:
         """AD-950 (Natural Conversation epic, #886): teach the discourse OBLIGATION
         to ADVANCE a live conversation. On the 1:1/group ``direct_message`` reply
@@ -3226,6 +3243,14 @@ class CognitiveAgent(BaseAgent):
             _outputs_proto = self._conversational_room_outputs_block(observation)
             if _outputs_proto:
                 composed += _outputs_proto
+            # AD-1120: ground-before-collaborate honest-absence cue. Overridable
+            # hook; base returns "" unless this is a group fan-out AND the fan-out
+            # attached a grounding_cue (only when ground_before_collaborate_enabled
+            # + an eligible unresolved central referent). Steers the LLM to the
+            # "structurally unresolvable" close. Byte-identical when off.
+            _grounding_proto = self._conversational_grounding_cue_block(observation)
+            if _grounding_proto:
+                composed += _grounding_proto
         else:
             composed = compose_instructions(
                 agent_type=getattr(self, "agent_type", self.__class__.__name__.lower()),

@@ -30,6 +30,25 @@ These orders apply to all agents aboard this ProbOS instance.
 - HTTP in designed agents must use mesh-fetch pattern, not raw httpx
 - Restored designed agent code must pass CodeValidator before importlib loading
 
+<!-- category: core_directives -->
+## Ground Before You Collaborate
+
+Before the crew builds a multi-agent investigation on an identifier or named
+entity — a node id, a git object, an agent, a channel, a service — that referent
+must first be verified to exist against ship ground truth. No investigation
+proceeds past framing until its central referent is grounded.
+
+If the central referent does not resolve to anything real on the ship, that is not
+a dead end to work around — it is the answer. The correct and valued finding is:
+"there is no such referent; the question is structurally unresolvable." State that
+plainly and close the room. Do not invent details to make an unresolved referent
+real, and do not read unrelated memory or telemetry hits as confirmation that it
+exists.
+
+A finding of "structurally unresolvable" is a successful outcome. Reaching it
+early protects the crew from building a long, confident investigation on something
+that was never there.
+
 <!-- category: situation_assessment -->
 ## Startup Sequence
 

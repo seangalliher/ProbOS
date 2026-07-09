@@ -212,6 +212,70 @@ class EvidenceCollector:
             )
             return None
 
+    async def record_observation(
+        self,
+        *,
+        behavior_code: BehaviorCode,
+        thread_id: str,
+        author_id: str,
+        author_callsign: str = "",
+        reasoning: str = "",
+        confidence: float = 1.0,
+    ) -> EvidenceObservation | None:
+        """AD-1121: persist a PRE-CLASSIFIED observation (bypasses the LLM classifier).
+
+        For detectors that already know the code (e.g. the AD-1121 divergence
+        probe). Reuses the dedup window + gapless OBS-NNNN numbering. Tier-2:
+        returns None on dedup / persist failure; never raises.
+        """
+        try:
+            now = time.time()
+            if self._is_duplicate(
+                author_id=author_id, codes=(behavior_code,), now=now
+            ):
+                logger.debug(
+                    "AD-1121: observation for author=%s code=%s deduped within "
+                    "%.0fs window.",
+                    author_id, behavior_code.value, self._dedup_window_seconds,
+                )
+                return None
+            clamped = float(confidence)
+            if clamped < 0.0:
+                clamped = 0.0
+            elif clamped > 1.0:
+                clamped = 1.0
+            text = reasoning or ""
+            if len(text) > self._max_reasoning_chars:
+                text = text[: self._max_reasoning_chars]
+            obs = EvidenceObservation(
+                obs_id="OBS-PENDING",  # filled in by _persist under lock
+                timestamp=now,
+                trial_id=self._trial_id,
+                post_id=f"{thread_id}:{behavior_code.value}",
+                thread_id=thread_id,
+                author_id=author_id,
+                author_callsign=author_callsign,
+                behavior_codes=(behavior_code,),
+                confidence=clamped,
+                reasoning=text,
+                raw_response="",
+            )
+            persisted = await self._persist(obs)
+            if persisted is None:
+                return None
+            self._record_dedup(
+                author_id=author_id, codes=(behavior_code,), ts=now
+            )
+            return persisted
+        except Exception:
+            logger.exception(
+                "AD-1121: unexpected error recording observation (code=%s, "
+                "thread=%s, trial=%s); skipping.",
+                getattr(behavior_code, "value", behavior_code),
+                thread_id, self._trial_id,
+            )
+            return None
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

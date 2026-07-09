@@ -34,6 +34,14 @@ from probos.cognitive.conversation_trust import (
     extract_conversation_trust_outcomes,
 )
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+from probos.cognitive.confab_probe import probe_referent
+from probos.cognitive.emergence_taxonomy import BehaviorCode
+from probos.cognitive.referent_gate import (
+    GitObjectResolver,
+    ReferentGroundingGate,
+    build_default_resolvers,
+    extract_referents,
+)
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
 from probos.avatars.divergence_detector import strip_intent_self_tag
 from probos.crew_profile import (
@@ -72,6 +80,19 @@ _BROADCAST_CUE_RE = re.compile(
     r"whole (?:room|team|crew))\b",
     re.IGNORECASE,
 )
+
+
+# AD-1120: kinds eligible for cue INJECTION. `service` (AD-1119 DD-5) is excluded
+# — its Capitalized-word match can capture a sentence-initial determiner ("The
+# node" -> "The"), acceptable in an observe log but not as a behavioral cue.
+# Injection changes behavior, so it is restricted to the high-precision kinds.
+_GROUNDING_INJECT_KINDS = frozenset({"hex", "entity"})
+# AD-1120: determiner / stop-word guard (defense-in-depth for an `entity` capture
+# like "node the" -> "the"). Lower-cased comparison.
+_GROUNDING_STOPWORDS = frozenset({
+    "the", "a", "an", "this", "that", "these", "those", "it", "its", "their",
+    "our", "your", "his", "her", "node", "record", "entity", "service",
+})
 
 
 def classify_broadcast(text: str) -> bool:
@@ -418,6 +439,7 @@ async def _fan_one_round(
     before: float | None = None,
     addressed_callsigns: set[str] | None = None,
     room_roster: list[str] | None = None,
+    grounding_cue: str | None = None,
     broadcast: bool = False,
     max_speakers_override: int | None = None,
 ) -> list[dict[str, str]]:
@@ -558,6 +580,11 @@ async def _fan_one_round(
         # the same params dict as is_group_chat; omitted when empty.
         if room_roster:
             params["room_roster"] = room_roster
+        # AD-1120: honest-absence cue for an unresolved CENTRAL room referent.
+        # Rides the same params dict as room_roster (AD-967); omitted when None
+        # (default-OFF / resolved / ineligible) so the fan-out is byte-identical.
+        if grounding_cue:
+            params["grounding_cue"] = grounding_cue
         # AD-955: advisory room-awareness signal for this speaker (when one is
         # salient). The cognitive_agent hook renders it; it never changes
         # dispatch. Rides the same params dict as is_group_chat (small struct).
@@ -936,6 +963,236 @@ def _observe_conversation_corrections(
         )
 
 
+async def _observe_referent_grounding(
+    runtime: Any,
+    thread: Any,
+    seed_text: str,
+) -> str | None:
+    """AD-1119/AD-1120 (#1022/#1023): ground the room seed's referents and,
+    when AD-1120 is enabled, RETURN the honest-absence cue for the CENTRAL one.
+
+    ``seed_text`` is the Captain's current-turn text — the input the crew reasons
+    on, at the fan-out choke point where a cascade-confabulation begins. When a
+    central referent (a git object, an agent, a ward-room channel) cannot be
+    resolved, the crew is at risk of building an investigation on a fabricated id
+    (the live ``e77acec7`` case).
+
+    Default-OFF: when ``grounding.referent_gate_enabled`` is False (default),
+    returns ``None`` on the first line so the fan-out is byte-identical — NO gate
+    is built and NO git subprocess runs (the AD-1119 ``test_observe_off_is_noop``
+    contract). When ON, build the gate from the runtime's narrow deps, evaluate
+    the seed, and emit one structured WARNING per unresolved referent (the AD-1119
+    observe log, unchanged).
+
+    AD-1120 (behavioral half): after the observe log, when
+    ``grounding.ground_before_collaborate_enabled`` is ALSO True, select the
+    CENTRAL unresolved referent (DD-1120-2/3) and RETURN its ``is_capability_gap``
+    -clean cue so the fan-out injects it into each dispatched crew agent's
+    context. When that flag is off (default) this returns ``None`` after the
+    observe log — the two-flag dependency — so both AD-1119 (observe-only) and
+    the injection path stay byte-identical. Tier-2 honest-degrade: any failure
+    logs a warning and returns ``None`` (no injection).
+    """
+    cfg = getattr(getattr(runtime, "config", None), "grounding", None)
+    if not getattr(cfg, "referent_gate_enabled", False):
+        return None
+    try:
+        gate = ReferentGroundingGate(
+            build_default_resolvers(
+                registry=getattr(runtime, "registry", None),
+                callsign_registry=getattr(runtime, "callsign_registry", None),
+                ward_room=getattr(runtime, "ward_room", None),
+            )
+        )
+        verdict = await gate.evaluate(seed_text or "")
+    except Exception:
+        logger.warning(
+            "AD-1119: referent grounding observe failed for thread=%s; skipping "
+            "(fan-out result unaffected)",
+            getattr(thread, "id", "?"), exc_info=True,
+        )
+        return None
+    for token in verdict.unresolved:
+        logger.warning(
+            "AD-1119[observe]: unresolved referent thread=%s token=%r cue=%r "
+            "(observe-only, no behavioral change)",
+            getattr(thread, "id", "?"), token, verdict.cues.get(token, ""),
+        )
+    # AD-1120/AD-1121: behavioral half. Observe-only (return None) unless B2 or
+    # the AD-1121 probe is enabled — this preserves the AD-1119 observe-only
+    # contract (its call-site tests assert None with both flags default-off) AND
+    # avoids computing the central token / a second git-HEAD probe when neither
+    # behavioral half is on.
+    probe_on = getattr(cfg, "confab_probe_enabled", False)
+    b2_on = getattr(cfg, "ground_before_collaborate_enabled", False)
+    if not (probe_on or b2_on):
+        return None
+    # Compute the central unresolved referent TOKEN exactly ONCE (DD-1121-6) and
+    # reuse it for BOTH the AD-1121 probe and the AD-1120 cue return — one gate,
+    # one git-HEAD availability probe.
+    central_token = await _select_central_referent(verdict, seed_text or "")
+    if probe_on and central_token is not None:
+        # AD-1121: schedule the context-free divergence probe as a BEST-EFFORT
+        # background task (non-blocking) so it never delays the crew reply. Hold
+        # the task reference in runtime.confab_probe_tasks (async discipline) and
+        # self-discard on completion (mirrors _nats_publish_tasks).
+        try:
+            task = asyncio.create_task(
+                _probe_cascade_confab(runtime, thread, central_token)
+            )
+            runtime.confab_probe_tasks.add(task)
+            task.add_done_callback(runtime.confab_probe_tasks.discard)
+        except Exception:
+            logger.warning(
+                "AD-1121: failed to schedule confab probe for thread=%s token=%r; "
+                "skipping (fan-out result unaffected)",
+                getattr(thread, "id", "?"), central_token, exc_info=True,
+            )
+    if not b2_on:
+        return None
+    return verdict.cues.get(central_token) if central_token is not None else None
+
+
+async def _select_central_referent(verdict: Any, seed_text: str) -> str | None:
+    """AD-1120/AD-1121: the CENTRAL unresolved referent TOKEN, or None.
+
+    The token-selection half of the former ``_select_central_cue`` (kind /
+    stop-word filter + the ONE git-HEAD availability probe for a hex). AD-1120
+    maps the returned token to ``verdict.cues[token]`` (the injected honest-absence
+    cue); AD-1121 feeds the token to the context-free divergence probe. Selection
+    (DD-1120-2/3): re-extract referents (pure — NOT a re-resolve; the git
+    subprocesses live in ``evaluate``) for their kinds, keep the first unresolved
+    token (seed-appearance order) whose kind is injectable (hex/entity), which is
+    not a determiner/stop-word, and — for a hex — only when git is actually
+    available (DD-1120-3, so a git-less deploy does not falsely flag every hex).
+    Returns the token verbatim or ``None`` when nothing qualifies. Tier-2
+    honest-degrade: any failure returns ``None``.
+    """
+    try:
+        kinds = {r.token: r.kind for r in extract_referents(seed_text)}
+    except Exception:
+        logger.warning(
+            "AD-1120: referent re-extract failed; skipping central-token selection",
+            exc_info=True,
+        )
+        return None
+    # Candidate tokens in seed order, kind- and stop-word-filtered.
+    candidates = [
+        t
+        for t in verdict.unresolved
+        if kinds.get(t) in _GROUNDING_INJECT_KINDS
+        and t.lower() not in _GROUNDING_STOPWORDS
+    ]
+    if not candidates:
+        return None
+    # DD-1120-3: probe git availability ONCE, only when a hex candidate exists —
+    # a git-less deploy reads every hex as UNRESOLVED, which would falsely tell
+    # the crew every hex id is fabricated. ``GitObjectResolver().resolve("HEAD")``
+    # reuses the shipped resolver as a positive control (no referent_gate.py edit).
+    git_ok = True
+    if any(kinds.get(t) == "hex" for t in candidates):
+        try:
+            git_ok = await GitObjectResolver().resolve("HEAD")
+        except Exception:
+            logger.warning(
+                "AD-1120: git availability probe failed; treating git as "
+                "unavailable (hex tokens skipped)",
+                exc_info=True,
+            )
+            git_ok = False
+    for t in candidates:
+        if kinds.get(t) == "hex" and not git_ok:
+            continue
+        return t
+    return None
+
+
+async def _probe_cascade_confab(runtime: Any, thread: Any, token: str) -> None:
+    """AD-1121: context-free divergence probe on an UNRESOLVED central referent.
+
+    Best-effort. On a divergence verdict: record a CASCADE_CONFAB observation
+    (via the AD-454 collector, if wired) and notify the Captain (always). NEVER
+    raises out (scheduled fire-and-forget); NEVER auto-acts on the room.
+    """
+    try:
+        llm = getattr(runtime, "llm_client", None)
+        if llm is None:
+            return
+        result = await probe_referent(llm, token)
+        if not result.is_divergent:
+            return
+        room_title = getattr(thread, "title", "") or ""
+        thread_id = getattr(thread, "id", "") or ""
+        sample_digest = " | ".join(
+            s.strip().replace("\n", " ") for s in result.samples
+        )
+        if len(sample_digest) > 600:
+            sample_digest = sample_digest[:600] + "…"
+        reasoning = (
+            f"AD-1121 divergence probe: referent '{token}' is unresolved by ship "
+            f"ground truth and independent context-free samples failed to affirm "
+            f"its existence ({result.affirm}/{result.usable} affirmed). Possible "
+            f"cascade confabulation. Samples: {sample_digest}"
+        )
+        logger.info(
+            "AD-1121: divergence flagged thread=%s token=%r affirm=%d usable=%d "
+            "(recording observation + notifying Captain)",
+            thread_id, token, result.affirm, result.usable,
+        )
+        # (1) Record a CASCADE_CONFAB observation via the AD-454 taxonomy pipeline.
+        # Skip when the collector is disabled (its default) — honest-degrade; the
+        # notification still fires.
+        collector = getattr(runtime, "evidence_collector", None)
+        if collector is not None:
+            try:
+                await collector.record_observation(
+                    behavior_code=BehaviorCode.CASCADE_CONFAB,
+                    thread_id=thread_id,
+                    author_id=thread_id,
+                    author_callsign="confab-probe",
+                    reasoning=reasoning,
+                    confidence=round(1.0 - result.affirm_rate, 3),
+                )
+            except Exception:
+                logger.warning(
+                    "AD-1121: failed to record CASCADE_CONFAB observation for "
+                    "thread=%s token=%r (notification still fires)",
+                    thread_id, token, exc_info=True,
+                )
+        # (2) Notify the Captain — ALWAYS fires (surface, don't act). No
+        # suggested_action: the divergence verdict is a signal for human
+        # adjudication, never an auto-terminate / room-close gate.
+        nq = getattr(runtime, "notification_queue", None)
+        if nq is not None:
+            try:
+                nq.notify(
+                    agent_id="confab-probe",
+                    agent_type="utility",
+                    department="science",
+                    title=f"Possible confabulation cascade: '{token}'",
+                    detail=(
+                        f"The referent '{token}' at the centre of room "
+                        f"\"{room_title}\" cannot be resolved against ship ground "
+                        f"truth, and {result.usable - result.affirm} of "
+                        f"{result.usable} independent context-free checks found no "
+                        f"record of it. Recommend reviewing this room before the "
+                        f"crew builds further findings on it."
+                    ),
+                    notification_type="action_required",
+                )
+            except Exception:
+                logger.warning(
+                    "AD-1121: failed to notify Captain for thread=%s token=%r",
+                    thread_id, token, exc_info=True,
+                )
+    except Exception:
+        logger.warning(
+            "AD-1121: cascade-confab probe wiring raised for thread=%s token=%r; "
+            "skipping (best-effort, no room action)",
+            getattr(thread, "id", "?"), token, exc_info=True,
+        )
+
+
 async def group_chat_fanout(
     runtime: Any,
     thread_id: str,
@@ -970,6 +1227,14 @@ async def group_chat_fanout(
     if thread is None:
         return []
     agent_ids = crew_agent_participants(runtime, thread.participants)
+    # AD-1119/AD-1120 (#1022/#1023): referent-grounding gate on the room seed —
+    # resolve each candidate referent (git object / agent / ward-room channel)
+    # before the crew reasons on it, logging an honest-absence cue for the
+    # unresolved ones (AD-1119, observe-only). AD-1120 (both flags on) RETURNS the
+    # central unresolved referent's cue so the fan-out injects it into each
+    # dispatched agent's context via the AD-967 param path. Default-OFF (None) →
+    # byte-identical.
+    grounding_cue = await _observe_referent_grounding(runtime, thread, captain_body)
     # AD-967: build the present-participant roster ONCE (stable across rounds):
     # crew callsigns + "the Captain" when the Captain has joined. Each dispatched
     # agent receives it so it addresses only present members and asks the Captain
@@ -1062,6 +1327,7 @@ async def group_chat_fanout(
         vision_messages=vision_messages, sanity_gate=sanity_gate, t_start=t_start,
         before=captain_msg.created_at,
         room_roster=room_roster,
+        grounding_cue=grounding_cue,
         broadcast=broadcast_weights,
         max_speakers_override=_speakers_override,
     )
@@ -1173,6 +1439,7 @@ async def group_chat_fanout(
                     vision_messages=None, sanity_gate=sanity_gate, t_start=t_start,
                     addressed_callsigns=addressed or None,
                     room_roster=room_roster,
+                    grounding_cue=grounding_cue,
                     broadcast=broadcast_weights,
                     max_speakers_override=_speakers_override,
                 )
