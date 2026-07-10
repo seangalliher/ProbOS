@@ -11,7 +11,9 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections import OrderedDict, deque
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import Any
 
 import httpx
@@ -20,6 +22,11 @@ from probos.types import LLMRequest, LLMResponse, Priority
 from probos.attachments.store import AttachmentStore
 
 logger = logging.getLogger(__name__)
+
+
+_ENDPOINT_GOVERNED: ContextVar[bool] = ContextVar(
+    "probos_llm_endpoint_governed", default=True
+)
 
 
 # AD-732: single source of truth for the LLM tier set. State-init loops, health
@@ -202,7 +209,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         # so a saturated proxy never starves vision and vice-versa. Constructed
         # here (no running loop needed on 3.10+, exactly like the AD-636
         # semaphores above). <= 0 disables the feature (dict stays empty =>
-        # complete() skips the whole endpoint block => pre-BF-654 byte-identical).
+        # _endpoint_permit() is a no-op => pre-BF-654 byte-identical).
         _max_inflight = 8
         if rate_config and hasattr(rate_config, "max_inflight_per_endpoint"):
             _max_inflight = rate_config.max_inflight_per_endpoint
@@ -212,11 +219,6 @@ class OpenAICompatibleClient(BaseLLMClient):
                 key = self._client_key(tier)
                 if key not in self._endpoint_semaphores:
                     self._endpoint_semaphores[key] = asyncio.Semaphore(_max_inflight)
-        # BF-654: how long a background call waits for an endpoint slot before
-        # the last-resort jittered fail-open. Longer than the 30s lane timeout
-        # so the endpoint cap holds firm through the boot-burst drain, shorter
-        # than the 300s deep httpx timeout so slots always free.
-        self._endpoint_acquire_timeout: float = 120.0
         self._endpoint_failopen_jitter_seconds: float = 0.5
 
     # Backward-compat properties
@@ -243,6 +245,21 @@ class OpenAICompatibleClient(BaseLLMClient):
         """Return the client lookup key for a tier."""
         tc = self._tier_configs[tier]
         return f"{tc['base_url']}|{tc.get('api_format', 'openai')}"
+
+    @asynccontextmanager
+    async def _endpoint_permit(self, attempt_tier: str) -> AsyncIterator[None]:
+        """Hold the endpoint permit for one background transport attempt."""
+        endpoint_semaphores = getattr(self, "_endpoint_semaphores", {})
+        if not _ENDPOINT_GOVERNED.get() or not endpoint_semaphores:
+            yield
+            return
+
+        endpoint_sem = endpoint_semaphores[self._client_key(attempt_tier)]
+        await endpoint_sem.acquire()
+        try:
+            yield
+        finally:
+            endpoint_sem.release()
 
     def _build_client(self, tier: str) -> httpx.AsyncClient:
         """Construct a fresh httpx client for a tier's base_url|format pool.
@@ -562,52 +579,24 @@ class OpenAICompatibleClient(BaseLLMClient):
         # AD-637f: CRITICAL uses reserved interactive slots; NORMAL and LOW share background
         is_critical = priority == Priority.CRITICAL
         sem = self._interactive_semaphore if is_critical else self._background_semaphore
+        lane_acquired = False
         try:
-            await asyncio.wait_for(sem.acquire(), timeout=30.0)
-        except asyncio.TimeoutError:
-            # Fail-open: if semaphore times out, proceed without it (degrade, don't block Captain)
-            logger.warning("AD-636: %s semaphore acquisition timed out, proceeding without", priority)
-            sem = None  # type: ignore[assignment]
-
-        # BF-654: per-endpoint in-flight cap. Acquired AFTER the priority lane
-        # (single global lock order L->E => no deadlock) and released BEFORE it
-        # in the finally. CRITICAL bypasses the cap entirely so the Captain is
-        # never queued behind background work (no interactive starvation). The
-        # endpoint is fixed by request.tier: the text fallback chain stays on
-        # one base_url and vision never falls back, so this key is correct for
-        # the whole call incl. the BF-612 retry.
-        endpoint_sem: asyncio.Semaphore | None = None
-        if not is_critical:
-            _tier = request.tier or self.default_tier
-            if _tier not in self._tier_configs:
-                _tier = self.default_tier
-            endpoint_sem = self._endpoint_semaphores.get(self._client_key(_tier))
-        endpoint_acquired = False
-        if endpoint_sem is not None:
             try:
-                await asyncio.wait_for(
-                    endpoint_sem.acquire(), timeout=self._endpoint_acquire_timeout
-                )
-                endpoint_acquired = True
+                await asyncio.wait_for(sem.acquire(), timeout=30.0)
+                lane_acquired = True
             except asyncio.TimeoutError:
-                # Last-resort fail-open. Unlike the lane, jitter the proceed so a
-                # saturated-endpoint herd de-synchronizes instead of re-flooding
-                # the proxy in lockstep (the BF-654 root cause).
-                await asyncio.sleep(
-                    random.uniform(0.0, self._endpoint_failopen_jitter_seconds)
-                )
+                # Fail-open: if semaphore times out, proceed without it (degrade, don't block Captain)
                 logger.warning(
-                    "BF-654: endpoint in-flight cap acquire timed out (tier=%s); "
-                    "proceeding after jitter",
-                    request.tier or self.default_tier,
+                    "AD-636: %s semaphore acquisition timed out, proceeding without",
+                    priority,
                 )
-
-        try:
-            return await self._complete_inner(request)
+            token = _ENDPOINT_GOVERNED.set(not is_critical)
+            try:
+                return await self._complete_inner(request)
+            finally:
+                _ENDPOINT_GOVERNED.reset(token)
         finally:
-            if endpoint_acquired and endpoint_sem is not None:
-                endpoint_sem.release()
-            if sem is not None:
+            if lane_acquired:
                 sem.release()
 
     async def _complete_inner(self, request: LLMRequest) -> LLMResponse:
@@ -669,7 +658,6 @@ class OpenAICompatibleClient(BaseLLMClient):
         _refreshed_tiers: set[str] = set()
         for attempt_tier in fallback_tiers:
             tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
-            client = self._clients[self._client_key(attempt_tier)]
             # AD-463: ModelRouter override (caller-optional; absent = existing path)
             _override = self._resolve_model_for_tier(attempt_tier)
             model = _override or tc["model"]
@@ -706,52 +694,12 @@ class OpenAICompatibleClient(BaseLLMClient):
             # transport layer never reads global tier state (DIP).
             effective_system_suffix = tc.get("system_prompt_suffix")
 
-            # AD-617: Inner retry loop for 429 backpressure (stays on same tier)
-            _max_429_retries = 5
-            for _429_attempt in range(_max_429_retries):
-                try:
-                    response = await self._call_api(
-                        request, model, client, api_format=api_format,
-                        timeout=tier_timeout,
-                        effective_temp=effective_temp,
-                        effective_top_p=effective_top_p,
-                        effective_max_tokens=effective_max_tokens,
-                        effective_system_suffix=effective_system_suffix,
-                    )
-                    # BF-612: empty-content 200 → recycle the socket and retry
-                    # once on this tier. A degraded keep-alive connection to the
-                    # proxy returns HTTP 200 with empty content (no error, so the
-                    # transport raises nothing). The pooled socket is bound to a
-                    # rotated-out upstream session and never self-heals under
-                    # continuous load — the failure a proxy restart "fixes". A
-                    # fresh socket reproduces that fix in-process. Guarded to one
-                    # refresh per tier per call so a genuinely empty upstream
-                    # (or a tool-only / multimodal response that legitimately has
-                    # no text) does not spin: tool-call replies carry
-                    # ``content_blocks`` and are never treated as empty here.
-                    if (
-                        not response.content
-                        and not response.content_blocks
-                        and not response.error
-                        and api_format != "ollama"
-                        and attempt_tier not in _refreshed_tiers
-                    ):
-                        _refreshed_tiers.add(attempt_tier)
-                        logger.warning(
-                            "BF-612: empty content from tier=%s (model=%s, "
-                            "prompt_tokens=%d) — recycling connection pool and "
-                            "retrying once on a fresh socket",
-                            attempt_tier, model, response.prompt_tokens,
-                        )
-                        # BF-654: de-sync a synchronized empty-200 herd so the
-                        # recycled sockets don't all retry the proxy in lockstep.
-                        # No-op when the endpoint cap is disabled (byte-identical).
-                        if self._endpoint_semaphores:
-                            await asyncio.sleep(
-                                random.uniform(0.0, self._endpoint_failopen_jitter_seconds)
-                            )
-                        await self._refresh_client(attempt_tier)
-                        client = self._clients[self._client_key(attempt_tier)]
+            async with self._endpoint_permit(attempt_tier):
+                client = self._clients[self._client_key(attempt_tier)]
+                # AD-617: Inner retry loop for 429 backpressure (stays on same tier)
+                _max_429_retries = 5
+                for _429_attempt in range(_max_429_retries):
+                    try:
                         response = await self._call_api(
                             request, model, client, api_format=api_format,
                             timeout=tier_timeout,
@@ -760,130 +708,172 @@ class OpenAICompatibleClient(BaseLLMClient):
                             effective_max_tokens=effective_max_tokens,
                             effective_system_suffix=effective_system_suffix,
                         )
-                        if response.content:
-                            logger.info(
-                                "BF-612: tier=%s recovered after connection "
-                                "pool recycle (model=%s)",
-                                attempt_tier, model,
+                        # BF-612: empty-content 200 → recycle the socket and retry
+                        # once on this tier. A degraded keep-alive connection to the
+                        # proxy returns HTTP 200 with empty content (no error, so the
+                        # transport raises nothing). The pooled socket is bound to a
+                        # rotated-out upstream session and never self-heals under
+                        # continuous load — the failure a proxy restart "fixes". A
+                        # fresh socket reproduces that fix in-process. Guarded to one
+                        # refresh per tier per call so a genuinely empty upstream
+                        # (or a tool-only / multimodal response that legitimately has
+                        # no text) does not spin: tool-call replies carry
+                        # ``content_blocks`` and are never treated as empty here.
+                        if (
+                            not response.content
+                            and not response.content_blocks
+                            and not response.error
+                            and api_format != "ollama"
+                            and attempt_tier not in _refreshed_tiers
+                        ):
+                            _refreshed_tiers.add(attempt_tier)
+                            logger.warning(
+                                "BF-612: empty content from tier=%s (model=%s, "
+                                "prompt_tokens=%d) — recycling connection pool and "
+                                "retrying once on a fresh socket",
+                                attempt_tier, model, response.prompt_tokens,
                             )
-                    # Cache successful non-empty responses (keyed by original
-                    # tier + prompt). BF-272 (2026-05-12): empty content is
-                    # never cached — it poisons all future calls with the same
-                    # cache key. Multimodal requests carry their content in
-                    # ``messages`` not ``prompt``, so they share a degenerate
-                    # cache key ('vision:hash("")') and would always collide.
-                    # The multimodal-skip below handles that lookup-side; this
-                    # write-side guard catches any tier that returns empty.
-                    if request.messages is None and response.content:
-                        cache_key = self._cache_key(tier, request.prompt)
-                        self._cache[cache_key] = response
-                        self._cache.move_to_end(cache_key)  # AD-617: LRU
-                        # AD-617: Evict oldest if over limit
-                        if hasattr(self, '_cache_max_entries'):
-                            while len(self._cache) > self._cache_max_entries:
-                                self._cache.popitem(last=False)
-                    # BF-240: Dwell-time recovery — track consecutive successes
-                    prev_failures = self._consecutive_failures[attempt_tier]
-                    self._consecutive_successes[attempt_tier] += 1
-                    self._last_success[attempt_tier] = time.monotonic()
-                    self._consecutive_429s[attempt_tier] = 0  # AD-617: Reset 429 backoff
+                            # BF-654: de-sync a synchronized empty-200 herd so the
+                            # recycled sockets don't all retry the proxy in lockstep.
+                            # No-op when the endpoint cap is disabled (byte-identical).
+                            if self._endpoint_semaphores:
+                                await asyncio.sleep(
+                                    random.uniform(0.0, self._endpoint_failopen_jitter_seconds)
+                                )
+                            await self._refresh_client(attempt_tier)
+                            client = self._clients[self._client_key(attempt_tier)]
+                            response = await self._call_api(
+                                request, model, client, api_format=api_format,
+                                timeout=tier_timeout,
+                                effective_temp=effective_temp,
+                                effective_top_p=effective_top_p,
+                                effective_max_tokens=effective_max_tokens,
+                                effective_system_suffix=effective_system_suffix,
+                            )
+                            if response.content:
+                                logger.info(
+                                    "BF-612: tier=%s recovered after connection "
+                                    "pool recycle (model=%s)",
+                                    attempt_tier, model,
+                                )
+                        # Cache successful non-empty responses (keyed by original
+                        # tier + prompt). BF-272 (2026-05-12): empty content is
+                        # never cached — it poisons all future calls with the same
+                        # cache key. Multimodal requests carry their content in
+                        # ``messages`` not ``prompt``, so they share a degenerate
+                        # cache key ('vision:hash("")') and would always collide.
+                        # The multimodal-skip below handles that lookup-side; this
+                        # write-side guard catches any tier that returns empty.
+                        if request.messages is None and response.content:
+                            cache_key = self._cache_key(tier, request.prompt)
+                            self._cache[cache_key] = response
+                            self._cache.move_to_end(cache_key)  # AD-617: LRU
+                            # AD-617: Evict oldest if over limit
+                            if hasattr(self, '_cache_max_entries'):
+                                while len(self._cache) > self._cache_max_entries:
+                                    self._cache.popitem(last=False)
+                        # BF-240: Dwell-time recovery — track consecutive successes
+                        prev_failures = self._consecutive_failures[attempt_tier]
+                        self._consecutive_successes[attempt_tier] += 1
+                        self._last_success[attempt_tier] = time.monotonic()
+                        self._consecutive_429s[attempt_tier] = 0  # AD-617: Reset 429 backoff
 
-                    if self._consecutive_successes[attempt_tier] >= self._min_consecutive_healthy:
-                        self._consecutive_failures[attempt_tier] = 0
-                        if prev_failures > 0:
-                            logger.info(
-                                "LLM tier %s recovered after %d consecutive failures "
-                                "(dwell: %d consecutive healthy, threshold: %d, model=%s)",
-                                attempt_tier, prev_failures,
+                        if self._consecutive_successes[attempt_tier] >= self._min_consecutive_healthy:
+                            self._consecutive_failures[attempt_tier] = 0
+                            if prev_failures > 0:
+                                logger.info(
+                                    "LLM tier %s recovered after %d consecutive failures "
+                                    "(dwell: %d consecutive healthy, threshold: %d, model=%s)",
+                                    attempt_tier, prev_failures,
+                                    self._consecutive_successes[attempt_tier],
+                                    self._min_consecutive_healthy, model,
+                                )
+                        elif prev_failures > 0:
+                            logger.debug(
+                                "LLM tier %s healthy check %d/%d (model=%s)",
+                                attempt_tier,
                                 self._consecutive_successes[attempt_tier],
                                 self._min_consecutive_healthy, model,
                             )
-                    elif prev_failures > 0:
-                        logger.debug(
-                            "LLM tier %s healthy check %d/%d (model=%s)",
-                            attempt_tier,
-                            self._consecutive_successes[attempt_tier],
-                            self._min_consecutive_healthy, model,
-                        )
-                    if attempt_tier != tier:
-                        logger.info(
-                            "LLM tier fallback: %s → %s (model=%s)",
-                            tier, attempt_tier, model,
-                        )
-                    return response
-                except httpx.ConnectError:
-                    last_error = f"LLM endpoint unreachable at {tc['base_url']}"
-                    self._consecutive_failures[attempt_tier] += 1
-                    self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
-                    self._last_failure[attempt_tier] = time.monotonic()
-                    logger.warning(
-                        "%s (tier=%s, model=%s, consecutive_failures=%d/%d)",
-                        last_error, attempt_tier, model,
-                        self._consecutive_failures[attempt_tier],
-                        self._UNREACHABLE_THRESHOLD,
-                    )
-                    break  # Move to next tier
-                except httpx.TimeoutException:
-                    last_error = f"LLM request timed out after {tc['timeout']:.0f}s"
-                    self._consecutive_failures[attempt_tier] += 1
-                    self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
-                    self._last_failure[attempt_tier] = time.monotonic()
-                    logger.warning(
-                        "%s (tier=%s, model=%s, consecutive_failures=%d/%d)",
-                        last_error, attempt_tier, model,
-                        self._consecutive_failures[attempt_tier],
-                        self._UNREACHABLE_THRESHOLD,
-                    )
-                    break  # Move to next tier
-                except httpx.HTTPStatusError as e:
-                    status_code = e.response.status_code
-                    if status_code == 429:
-                        # AD-617: Specific 429 handling with exponential backoff
-                        retry_after = e.response.headers.get("Retry-After")
-                        if retry_after:
-                            try:
-                                wait = float(retry_after)
-                            except ValueError:
-                                wait = 2.0
-                        else:
-                            # Exponential backoff: track consecutive 429s per tier
-                            c429 = self._consecutive_429s.get(attempt_tier, 0) + 1
-                            self._consecutive_429s[attempt_tier] = c429
-                            wait = min(2 ** c429, 8.0)  # 2s, 4s, 8s, cap at 8
-
-                        logger.warning(
-                            "LLM endpoint returned 429 (tier=%s, wait=%.1fs, retry_after=%s)",
-                            attempt_tier, wait, retry_after,
-                        )
-                        await asyncio.sleep(wait)
-                        # Don't count 429 as a tier failure — retry same tier
-                        continue
-                    else:
-                        last_error = f"LLM endpoint returned HTTP {status_code}"
+                        if attempt_tier != tier:
+                            logger.info(
+                                "LLM tier fallback: %s → %s (model=%s)",
+                                tier, attempt_tier, model,
+                            )
+                        return response
+                    except httpx.ConnectError:
+                        last_error = f"LLM endpoint unreachable at {tc['base_url']}"
                         self._consecutive_failures[attempt_tier] += 1
                         self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                         self._last_failure[attempt_tier] = time.monotonic()
                         logger.warning(
-                            "%s (tier=%s, model=%s, consecutive_failures=%d/%d): %s",
+                            "%s (tier=%s, model=%s, consecutive_failures=%d/%d)",
                             last_error, attempt_tier, model,
                             self._consecutive_failures[attempt_tier],
                             self._UNREACHABLE_THRESHOLD,
-                            e.response.text[:200],
                         )
                         break  # Move to next tier
-                except Exception as e:
-                    last_error = f"{type(e).__name__}: {e}"
-                    self._consecutive_failures[attempt_tier] += 1
-                    self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
-                    self._last_failure[attempt_tier] = time.monotonic()
-                    logger.warning(
-                        "LLM call failed (tier=%s, model=%s, consecutive_failures=%d/%d): %s",
-                        attempt_tier, model,
-                        self._consecutive_failures[attempt_tier],
-                        self._UNREACHABLE_THRESHOLD,
-                        last_error,
-                    )
-                    break  # Move to next tier
+                    except httpx.TimeoutException:
+                        last_error = f"LLM request timed out after {tc['timeout']:.0f}s"
+                        self._consecutive_failures[attempt_tier] += 1
+                        self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
+                        self._last_failure[attempt_tier] = time.monotonic()
+                        logger.warning(
+                            "%s (tier=%s, model=%s, consecutive_failures=%d/%d)",
+                            last_error, attempt_tier, model,
+                            self._consecutive_failures[attempt_tier],
+                            self._UNREACHABLE_THRESHOLD,
+                        )
+                        break  # Move to next tier
+                    except httpx.HTTPStatusError as e:
+                        status_code = e.response.status_code
+                        if status_code == 429:
+                            # AD-617: Specific 429 handling with exponential backoff
+                            retry_after = e.response.headers.get("Retry-After")
+                            if retry_after:
+                                try:
+                                    wait = float(retry_after)
+                                except ValueError:
+                                    wait = 2.0
+                            else:
+                                # Exponential backoff: track consecutive 429s per tier
+                                c429 = self._consecutive_429s.get(attempt_tier, 0) + 1
+                                self._consecutive_429s[attempt_tier] = c429
+                                wait = min(2 ** c429, 8.0)  # 2s, 4s, 8s, cap at 8
+
+                            logger.warning(
+                                "LLM endpoint returned 429 (tier=%s, wait=%.1fs, retry_after=%s)",
+                                attempt_tier, wait, retry_after,
+                            )
+                            await asyncio.sleep(wait)
+                            # Don't count 429 as a tier failure — retry same tier
+                            continue
+                        else:
+                            last_error = f"LLM endpoint returned HTTP {status_code}"
+                            self._consecutive_failures[attempt_tier] += 1
+                            self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
+                            self._last_failure[attempt_tier] = time.monotonic()
+                            logger.warning(
+                                "%s (tier=%s, model=%s, consecutive_failures=%d/%d): %s",
+                                last_error, attempt_tier, model,
+                                self._consecutive_failures[attempt_tier],
+                                self._UNREACHABLE_THRESHOLD,
+                                e.response.text[:200],
+                            )
+                            break  # Move to next tier
+                    except Exception as e:
+                        last_error = f"{type(e).__name__}: {e}"
+                        self._consecutive_failures[attempt_tier] += 1
+                        self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
+                        self._last_failure[attempt_tier] = time.monotonic()
+                        logger.warning(
+                            "LLM call failed (tier=%s, model=%s, consecutive_failures=%d/%d): %s",
+                            attempt_tier, model,
+                            self._consecutive_failures[attempt_tier],
+                            self._UNREACHABLE_THRESHOLD,
+                            last_error,
+                        )
+                        break  # Move to next tier
 
         # Try cache (keyed by original tier).
         # BF-272: multimodal requests bypass the cache — their content lives
