@@ -25,9 +25,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from subprocess import DEVNULL
 from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,45 @@ _HEX_RE = re.compile(r"\b(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{7,40}\b")
 _ENTITY_RE = re.compile(
     r"\b(?:node(?:\s+id)?|record|entity)\s+([A-Za-z0-9_\-]{2,64})\b",
     re.IGNORECASE,
+)
+_ENTITY_GRAMMAR_STOP_WORDS = frozenset(
+    {
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "shows",
+        "showed",
+        "showing",
+        "has",
+        "have",
+        "had",
+        "does",
+        "did",
+        "will",
+        "would",
+        "can",
+        "could",
+        "should",
+        "seems",
+        "appears",
+        "indicates",
+        "exists",
+        "may",
+        "not",
+        "of",
+        "to",
+        "the",
+        "this",
+        "that",
+        "these",
+        "those",
+        "a",
+        "an",
+    }
 )
 # service: a conservative "asserted live system" span — a Capitalized word (or a
 # `*_service` snake token) immediately followed by one of the system keywords.
@@ -103,6 +144,18 @@ def _strip_code_spans(text: str) -> str:
     return text
 
 
+def _is_entity_identifier(token: str) -> bool:
+    """Return whether a regex-located entity token is identifier-like.
+
+    Digits, underscores, and hyphens are strong machine-identifier signals.
+    Plain alphabetic identifiers remain valid unless they are common grammar
+    words that occur naturally after ``node`` / ``record`` / ``entity``.
+    """
+    if any(char.isdigit() or char in "_-" for char in token):
+        return True
+    return token.casefold() not in _ENTITY_GRAMMAR_STOP_WORDS
+
+
 def extract_referents(text: str) -> list[Referent]:
     """Extract candidate referents from ``text`` (pure, no I/O).
 
@@ -118,7 +171,9 @@ def extract_referents(text: str) -> list[Referent]:
     for m in _HEX_RE.finditer(stripped):
         matches.append((m.start(), m.group(0), "hex", m.group(0)))
     for m in _ENTITY_RE.finditer(stripped):
-        matches.append((m.start(1), m.group(1), "entity", m.group(0)))
+        token = m.group(1)
+        if _is_entity_identifier(token):
+            matches.append((m.start(1), token, "entity", m.group(0)))
     for m in _SERVICE_RE.finditer(stripped):
         matches.append((m.start(1), m.group(1), "service", m.group(0)))
     matches.sort(key=lambda t: t[0])
@@ -139,13 +194,23 @@ class ReferentResolver(Protocol):
 
     ``kind`` is a short label for logging. ``resolve`` returns True only when the
     resolver CONFIRMS the token exists; it must honest-degrade to False on any
-    failure and never raise.
+    operational failure. Task cancellation remains control flow and propagates.
     """
 
     kind: str
 
     async def resolve(self, token: str) -> bool:  # pragma: no cover - protocol
         ...
+
+
+@dataclass(frozen=True)
+class _GitProcessResult:
+    """Small cross-thread result for one ``git cat-file`` process."""
+
+    returncode: int | None = None
+    timed_out: bool = False
+    cancelled: bool = False
+    start_error: OSError | None = None
 
 
 class GitObjectResolver:
@@ -155,11 +220,12 @@ class GitObjectResolver:
     abbreviations + packed objects, so an 8-char prefix like ``e77acec7`` is
     checked correctly (a raw ``.git/objects/`` filesystem probe could not).
     Honest-degrades to False: a missing git binary / non-repo ``cwd`` / non-zero
-    exit / timeout all return False (logged), never an exception, never a false
-    True.
+    exit / timeout all return False (logged), never a false True. Task
+    cancellation kills and reaps the child before propagating.
     """
 
     kind = "git"
+    _POLL_INTERVAL_SECONDS = 0.01
 
     def __init__(self, *, repo_root: Path | None = None, timeout: float = 5.0) -> None:
         # Default anchors to the repo root (src/probos/cognitive/ -> parents[3]);
@@ -169,40 +235,27 @@ class GitObjectResolver:
 
     async def resolve(self, token: str) -> bool:
         """Return True iff ``token`` resolves to a git object under ``repo_root``."""
+        cancel_requested = threading.Event()
+        worker = asyncio.get_running_loop().run_in_executor(
+            None,
+            self._resolve_sync,
+            token,
+            cancel_requested,
+        )
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "cat-file",
-                "-e",
-                f"{token}^{{object}}",
-                cwd=str(self._repo_root),
-                stdout=DEVNULL,
-                stderr=DEVNULL,
-            )
-        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
-            logger.debug(
-                "AD-1119 GitObjectResolver: git unavailable for token=%r cwd=%s "
-                "(%s); treating as unresolved",
-                token,
-                self._repo_root,
-                exc,
-            )
-            return False
-        try:
-            returncode = await asyncio.wait_for(proc.wait(), timeout=self._timeout)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "AD-1119 GitObjectResolver: git cat-file timed out after %.1fs for "
-                "token=%r; treating as unresolved",
-                self._timeout,
-                token,
-            )
+            result = await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            cancel_requested.set()
             try:
-                proc.kill()
-                await proc.wait()
+                await asyncio.shield(worker)
             except Exception:
-                pass
-            return False
+                logger.warning(
+                    "BF-660 GitObjectResolver: cancellation cleanup worker "
+                    "failed for token=%r; cancellation will still propagate",
+                    token,
+                    exc_info=True,
+                )
+            raise
         except Exception:
             logger.warning(
                 "AD-1119 GitObjectResolver: git cat-file failed for token=%r; "
@@ -211,7 +264,75 @@ class GitObjectResolver:
                 exc_info=True,
             )
             return False
-        return returncode == 0
+
+        if result.start_error is not None:
+            logger.debug(
+                "AD-1119 GitObjectResolver: git unavailable for token=%r cwd=%s "
+                "(%s); treating as unresolved",
+                token,
+                self._repo_root,
+                result.start_error,
+            )
+            return False
+        if result.timed_out:
+            logger.warning(
+                "AD-1119 GitObjectResolver: git cat-file timed out after %.1fs for "
+                "token=%r; treating as unresolved",
+                self._timeout,
+                token,
+            )
+            return False
+        return result.returncode == 0
+
+    def _resolve_sync(
+        self,
+        token: str,
+        cancel_requested: threading.Event,
+    ) -> _GitProcessResult:
+        """Run one selector-compatible Git probe in a worker thread."""
+        if cancel_requested.is_set():
+            return _GitProcessResult(cancelled=True)
+
+        proc: subprocess.Popen[bytes] | None = None
+        try:
+            try:
+                proc = subprocess.Popen(
+                    ["git", "cat-file", "-e", "--", f"{token}^{{object}}"],
+                    cwd=str(self._repo_root),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    shell=False,
+                )
+            except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+                return _GitProcessResult(start_error=exc)
+
+            deadline = time.monotonic() + max(0.0, self._timeout)
+            while True:
+                returncode = proc.poll()
+                if returncode is not None:
+                    return _GitProcessResult(returncode=returncode)
+                if cancel_requested.is_set():
+                    self._kill_and_reap(proc)
+                    return _GitProcessResult(cancelled=True)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    self._kill_and_reap(proc)
+                    return _GitProcessResult(timed_out=True)
+                cancel_requested.wait(
+                    min(self._POLL_INTERVAL_SECONDS, remaining)
+                )
+        finally:
+            if proc is not None and proc.poll() is None:
+                self._kill_and_reap(proc)
+
+    @staticmethod
+    def _kill_and_reap(proc: subprocess.Popen[bytes]) -> None:
+        """Kill ``proc`` and synchronously reap it before returning."""
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        proc.wait()
 
 
 class AgentResolver:

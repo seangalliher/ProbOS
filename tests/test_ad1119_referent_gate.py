@@ -11,9 +11,12 @@ at the registry / git / ward-room boundary.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import subprocess
+import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -68,6 +71,29 @@ class _RaisingResolver:
 
     async def resolve(self, token: str) -> bool:
         raise RuntimeError("resolver boom")
+
+
+class _StrictProcess:
+    """A strict ``Popen`` fake that exits only after ``kill`` when requested."""
+
+    def __init__(self, *, returncode: int | None = None) -> None:
+        self.returncode = returncode
+        self.spawned = threading.Event()
+        self.kill_calls = 0
+        self.wait_calls = 0
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        self.returncode = -9
+
+    def wait(self) -> int:
+        self.wait_calls += 1
+        if self.returncode is None:
+            raise AssertionError("wait() called before the strict fake exited")
+        return self.returncode
 
 
 def _init_git_repo(root: Path) -> str:
@@ -131,6 +157,33 @@ def test_extract_dedupes_first_seen_and_caps():
     ]
 
 
+def test_extract_rejects_ordinary_verb_after_entity_prefix():
+    text = (
+        "node is healthy; record shows progress; entity was removed; "
+        "NODE ARE stable; RECORD SHOWED results; ENTITY SHOWING activity; "
+        "node has capacity; record does exist; entity will recover; "
+        "node this time and record the result; node seems healthy; "
+        "node appears stable; record indicates progress; record exists; "
+        "entity may recover; node not found; record of changes; entity to update"
+    )
+    assert extract_referents(text) == []
+
+
+def test_extract_preserves_known_valid_entity_identifiers():
+    cases = {
+        "node oracle_probe": [("entity", "oracle_probe")],
+        "node id oracle_probe": [("entity", "oracle_probe")],
+        "node oracle": [("entity", "oracle")],
+        "record alpha": [("entity", "alpha")],
+        "entity atlas": [("entity", "atlas")],
+        "record alpha_1": [("entity", "alpha_1")],
+        "entity alpha-2": [("entity", "alpha-2")],
+        "entity abcdef1": [("hex", "abcdef1")],
+    }
+    for text, expected in cases.items():
+        assert [(ref.kind, ref.token) for ref in extract_referents(text)] == expected
+
+
 # ---------------- resolvers (real git + real registry) ----------------
 
 
@@ -147,6 +200,170 @@ async def test_git_resolver_resolves_real_object(tmp_path):
     assert verdict.results.get(sha) == "RESOLVED"
     assert sha not in verdict.unresolved
     assert verdict.has_unresolved is False
+
+
+@_requires_git
+async def test_git_resolver_uses_threaded_popen_not_asyncio_subprocess(
+    tmp_path, monkeypatch
+):
+    sha = _init_git_repo(tmp_path)
+
+    async def _forbidden_async_subprocess(*args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError("selector loops do not support subprocess transport")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _forbidden_async_subprocess)
+    resolver = GitObjectResolver(repo_root=tmp_path)
+    assert await resolver.resolve(sha) is True
+    assert await resolver.resolve(sha[:8]) is True
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="WindowsSelectorEventLoopPolicy is Windows-only",
+)
+@_requires_git
+def test_git_resolver_resolves_under_real_windows_selector_policy(tmp_path):
+    sha = _init_git_repo(tmp_path)
+    previous_policy = asyncio.get_event_loop_policy()
+    selector_policy_type = getattr(asyncio, "WindowsSelectorEventLoopPolicy")
+    selector_policy = selector_policy_type()
+    loop: asyncio.AbstractEventLoop | None = None
+
+    async def _resolve_both() -> tuple[bool, bool]:
+        resolver = GitObjectResolver(repo_root=tmp_path)
+        return await resolver.resolve(sha), await resolver.resolve(sha[:8])
+
+    try:
+        asyncio.set_event_loop_policy(selector_policy)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        assert loop.run_until_complete(_resolve_both()) == (True, True)
+    finally:
+        if loop is not None:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.run_until_complete(loop.shutdown_default_executor())
+            asyncio.set_event_loop(None)
+            loop.close()
+        asyncio.set_event_loop_policy(previous_policy)
+
+    assert asyncio.get_event_loop_policy() is previous_policy
+
+
+async def test_git_resolver_argv_is_shell_free_and_option_terminated(
+    tmp_path, monkeypatch
+):
+    recorded: dict[str, Any] = {}
+    process = _StrictProcess(returncode=1)
+    event_loop_thread_id = threading.get_ident()
+
+    def _popen(args: list[str], **kwargs: Any) -> _StrictProcess:
+        recorded["args"] = args
+        recorded["kwargs"] = kwargs
+        recorded["thread_id"] = threading.get_ident()
+        return process
+
+    monkeypatch.setattr(
+        "probos.cognitive.referent_gate.subprocess.Popen",
+        _popen,
+    )
+    resolver = GitObjectResolver(repo_root=tmp_path)
+    assert await resolver.resolve("--help") is False
+    assert recorded["args"] == [
+        "git",
+        "cat-file",
+        "-e",
+        "--",
+        "--help^{object}",
+    ]
+    assert isinstance(recorded["args"], list)
+    assert recorded["kwargs"] == {
+        "cwd": str(tmp_path),
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "shell": False,
+    }
+    assert recorded["thread_id"] != event_loop_thread_id
+
+
+async def test_git_resolver_timeout_kills_and_reaps(tmp_path, monkeypatch):
+    process = _StrictProcess()
+    monkeypatch.setattr(
+        "probos.cognitive.referent_gate.subprocess.Popen",
+        lambda *args, **kwargs: process,
+    )
+    resolver = GitObjectResolver(repo_root=tmp_path, timeout=0.01)
+    assert await resolver.resolve("e77acec7") is False
+    assert process.kill_calls == 1
+    assert process.wait_calls == 1
+
+
+async def test_git_resolver_cancellation_kills_reaps_and_reraises(
+    tmp_path, monkeypatch
+):
+    process = _StrictProcess()
+
+    def _popen(*args: Any, **kwargs: Any) -> _StrictProcess:
+        process.spawned.set()
+        return process
+
+    monkeypatch.setattr(
+        "probos.cognitive.referent_gate.subprocess.Popen",
+        _popen,
+    )
+    resolver = GitObjectResolver(repo_root=tmp_path, timeout=30.0)
+    task = asyncio.create_task(resolver.resolve("e77acec7"))
+    assert await asyncio.to_thread(process.spawned.wait, 1.0) is True
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert process.kill_calls == 1
+    assert process.wait_calls == 1
+
+
+def test_git_resolver_loop_shutdown_cancel_all_is_bounded_and_reaps_once(
+    tmp_path, monkeypatch
+):
+    process = _StrictProcess()
+    tasks: list[asyncio.Task[bool]] = []
+    runner_errors: list[BaseException] = []
+
+    def _popen(*args: Any, **kwargs: Any) -> _StrictProcess:
+        process.spawned.set()
+        return process
+
+    monkeypatch.setattr(
+        "probos.cognitive.referent_gate.subprocess.Popen",
+        _popen,
+    )
+    resolver = GitObjectResolver(repo_root=tmp_path, timeout=30.0)
+
+    async def _leave_resolve_pending_for_runner_shutdown() -> None:
+        task = asyncio.create_task(resolver.resolve("e77acec7"))
+        tasks.append(task)
+        deadline = asyncio.get_running_loop().time() + 1.0
+        while not process.spawned.is_set():
+            if asyncio.get_running_loop().time() >= deadline:
+                raise AssertionError("strict Popen fake did not start")
+            await asyncio.sleep(0.001)
+
+    def _run_and_shutdown_loop() -> None:
+        try:
+            asyncio.run(_leave_resolve_pending_for_runner_shutdown())
+        except BaseException as exc:
+            runner_errors.append(exc)
+
+    runner = threading.Thread(target=_run_and_shutdown_loop, daemon=True)
+    runner.start()
+    runner.join(timeout=3.0)
+
+    assert runner.is_alive() is False
+    assert runner_errors == []
+    assert len(tasks) == 1
+    assert tasks[0].cancelled() is True
+    assert process.kill_calls == 1
+    assert process.wait_calls == 1
 
 
 async def test_agent_resolver_resolves_real_agent():
@@ -219,6 +436,33 @@ async def test_git_resolver_non_repo_returns_false(tmp_path):
     gate = ReferentGroundingGate([resolver])
     verdict = await gate.evaluate("investigate e77acec7 urgently")
     assert verdict.results.get("e77acec7") == "UNRESOLVED"
+
+
+@_requires_git
+async def test_git_resolver_nonrepo_and_missing_git_degrade_false(
+    tmp_path, monkeypatch, caplog
+):
+    resolver = GitObjectResolver(repo_root=tmp_path)
+    with caplog.at_level(logging.DEBUG):
+        assert await resolver.resolve("e77acec7") is False
+    assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+
+    caplog.clear()
+
+    def _missing_git(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError("git missing")
+
+    monkeypatch.setattr(
+        "probos.cognitive.referent_gate.subprocess.Popen",
+        _missing_git,
+    )
+    with caplog.at_level(logging.DEBUG):
+        assert await resolver.resolve("e77acec7") is False
+    assert any(
+        record.levelno == logging.DEBUG and "git unavailable" in record.getMessage()
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.WARNING for record in caplog.records)
 
 
 async def test_evaluate_empty_text_is_empty_verdict():
