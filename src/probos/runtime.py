@@ -10,7 +10,7 @@ import sys
 import time
 import uuid as _uuid
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1064,6 +1064,10 @@ class ProbOSRuntime:
         # runtime-lifetime loops). Public so the fan-out seam can register without
         # reaching into a private attr (mirrors the _nats_publish_tasks pattern).
         self.confab_probe_tasks: set[asyncio.Task] = set()
+        # BF-663: synchronous scheduling gate. Shutdown closes this before its
+        # first await so no later fan-out callback can register an LLM-dependent
+        # probe while the existing task registry is being drained.
+        self._confab_probe_scheduling_open: bool = True
 
         # AD-824: registry for long-lived runtime-owned background loops.
         # The shutdown sequence in startup/shutdown.py cancels everything in
@@ -2624,6 +2628,47 @@ class ProbOSRuntime:
         return connectors
 
     # --- BF-071: Retention prune loops ---
+
+    def schedule_confab_probe(
+        self,
+        probe_factory: Callable[[], Coroutine[Any, Any, Any]],
+        *,
+        name: str = "confab-probe",
+    ) -> asyncio.Task[Any] | None:
+        """Schedule one confab probe while runtime-owned scheduling is open.
+
+        The gate check, coroutine creation, task creation, and registration are
+        synchronous, making them atomic with ``close_confab_probe_scheduling``
+        in one event loop. The factory is not invoked after closure, so refusal
+        cannot leak an un-awaited coroutine.
+        """
+        if not self._confab_probe_scheduling_open:
+            return None
+        probe_coro = probe_factory()
+        try:
+            task = asyncio.create_task(probe_coro, name=name)
+        except BaseException:
+            probe_coro.close()
+            raise
+        self.confab_probe_tasks.add(task)
+        task.add_done_callback(self.confab_probe_tasks.discard)
+        return task
+
+    def close_confab_probe_scheduling(self) -> None:
+        """Refuse new probes and synchronously request cancellation of existing ones."""
+        if not self._confab_probe_scheduling_open:
+            return
+        self._confab_probe_scheduling_open = False
+        cancelled = 0
+        for task in tuple(self.confab_probe_tasks):
+            if not task.done() and task.cancelling() == 0:
+                task.cancel()
+                cancelled += 1
+        logger.debug(
+            "BF-663: confab probe scheduling closed; cancellation requested "
+            "for %d registered task(s)",
+            cancelled,
+        )
 
     def _spawn_background(
         self,

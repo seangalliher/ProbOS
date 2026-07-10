@@ -286,6 +286,8 @@ def test_disabled_config_wirer_returns_false_and_no_listener_registered(
 ) -> None:
     config = SystemConfig()
     assert config.emergence_collector.enabled is False
+    assert config.grounding.referent_gate_enabled is False
+    assert config.grounding.confab_probe_enabled is False
     runtime = _FakeRuntime(llm_client=_FakeLLMClient(), ward_room=_FakeWardRoom())
 
     result = _wire_emergence_collector(runtime=runtime, config=config)
@@ -383,7 +385,7 @@ async def test_unknown_codes_filtered_and_skipped(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_enabled_wirer_registers_listener(tmp_path: Path) -> None:
-    """Happy-path wirer: cfg.enabled=True wires collector and listener."""
+    """Emergence-only mode preserves the collector + one-listener behavior."""
     config = SystemConfig()
     config.emergence_collector = EmergenceCollectorConfig(
         enabled=True,
@@ -404,4 +406,131 @@ async def test_enabled_wirer_registers_listener(tmp_path: Path) -> None:
     assert isinstance(runtime.evidence_collector, EvidenceCollector)
     assert len(runtime.listeners) == 1
     fn, types = runtime.listeners[0]
+    assert fn == runtime.evidence_collector.on_ward_room_post
     assert "ward_room_post_created" in [str(t) for t in types]
+
+
+@pytest.mark.asyncio
+async def test_confab_record_only_wires_without_llm_or_ward_room(
+    tmp_path: Path,
+) -> None:
+    config = SystemConfig()
+    config.emergence_collector = EmergenceCollectorConfig(
+        enabled=False,
+        output_dir=str(tmp_path),
+        trial_id="record-only-trial",
+    )
+    config.grounding.referent_gate_enabled = True
+    config.grounding.confab_probe_enabled = True
+    runtime = _FakeRuntime(llm_client=None, ward_room=None)
+
+    result = _wire_emergence_collector(runtime=runtime, config=config)
+    observation = await runtime.evidence_collector.record_observation(
+        behavior_code=BehaviorCode.CASCADE_CONFAB,
+        thread_id="record-only-thread",
+        author_id="record-only-thread",
+        reasoning="preclassified divergence",
+    )
+
+    assert result is True
+    assert isinstance(runtime.evidence_collector, EvidenceCollector)
+    assert runtime.listeners == []
+    assert observation is not None
+    assert observation.trial_id == "record-only-trial"
+    assert len(list((tmp_path / "record-only-trial").glob("OBS-*.yaml"))) == 1
+
+
+async def test_both_modes_reuse_one_collector_and_one_listener(tmp_path: Path) -> None:
+    config = SystemConfig()
+    config.emergence_collector = EmergenceCollectorConfig(
+        enabled=True,
+        output_dir=str(tmp_path),
+        trial_id="both-trial",
+    )
+    config.grounding.referent_gate_enabled = True
+    config.grounding.confab_probe_enabled = True
+    runtime = _FakeRuntime(
+        llm_client=_FakeLLMClient(),
+        ward_room=_FakeWardRoom(),
+    )
+
+    result = _wire_emergence_collector(runtime=runtime, config=config)
+    collector = runtime.evidence_collector
+    observation = await collector.record_observation(
+        behavior_code=BehaviorCode.CASCADE_CONFAB,
+        thread_id="both-thread",
+        author_id="both-thread",
+        reasoning="preclassified divergence",
+    )
+
+    assert result is True
+    assert isinstance(collector, EvidenceCollector)
+    assert len(runtime.listeners) == 1
+    assert runtime.listeners[0][0] == collector.on_ward_room_post
+    assert observation is not None
+    assert observation.trial_id == "both-trial"
+    assert len(list((tmp_path / "both-trial").glob("OBS-*.yaml"))) == 1
+
+
+@pytest.mark.parametrize("missing_dependency", ["llm", "ward_room"])
+def test_both_modes_missing_classification_dependency_keep_record_collector(
+    tmp_path: Path,
+    missing_dependency: str,
+) -> None:
+    config = SystemConfig()
+    config.emergence_collector = EmergenceCollectorConfig(
+        enabled=True,
+        output_dir=str(tmp_path),
+        trial_id=f"both-missing-{missing_dependency}",
+    )
+    config.grounding.referent_gate_enabled = True
+    config.grounding.confab_probe_enabled = True
+    runtime = _FakeRuntime(
+        llm_client=None if missing_dependency == "llm" else _FakeLLMClient(),
+        ward_room=None if missing_dependency == "ward_room" else _FakeWardRoom(),
+    )
+
+    result = _wire_emergence_collector(runtime=runtime, config=config)
+
+    assert result is True
+    assert isinstance(runtime.evidence_collector, EvidenceCollector)
+    assert runtime.listeners == []
+
+
+@pytest.mark.parametrize("missing_dependency", ["llm", "ward_room"])
+def test_emergence_only_missing_dependency_preserves_no_collector_behavior(
+    tmp_path: Path,
+    missing_dependency: str,
+) -> None:
+    config = SystemConfig()
+    config.emergence_collector = EmergenceCollectorConfig(
+        enabled=True,
+        output_dir=str(tmp_path),
+    )
+    runtime = _FakeRuntime(
+        llm_client=None if missing_dependency == "llm" else _FakeLLMClient(),
+        ward_room=None if missing_dependency == "ward_room" else _FakeWardRoom(),
+    )
+
+    result = _wire_emergence_collector(runtime=runtime, config=config)
+
+    assert result is False
+    assert runtime.evidence_collector is None
+    assert runtime.listeners == []
+
+
+def test_confab_probe_without_referent_gate_remains_inert(tmp_path: Path) -> None:
+    config = SystemConfig()
+    config.emergence_collector = EmergenceCollectorConfig(
+        enabled=False,
+        output_dir=str(tmp_path),
+    )
+    config.grounding.referent_gate_enabled = False
+    config.grounding.confab_probe_enabled = True
+    runtime = _FakeRuntime(llm_client=None, ward_room=None)
+
+    result = _wire_emergence_collector(runtime=runtime, config=config)
+
+    assert result is False
+    assert runtime.evidence_collector is None
+    assert runtime.listeners == []

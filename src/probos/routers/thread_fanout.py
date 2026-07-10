@@ -1033,15 +1033,25 @@ async def _observe_referent_grounding(
     central_token = await _select_central_referent(verdict, seed_text or "")
     if probe_on and central_token is not None:
         # AD-1121: schedule the context-free divergence probe as a BEST-EFFORT
-        # background task (non-blocking) so it never delays the crew reply. Hold
-        # the task reference in runtime.confab_probe_tasks (async discipline) and
-        # self-discard on completion (mirrors _nats_publish_tasks).
+        # background task (non-blocking) so it never delays the crew reply. The
+        # public runtime scheduler atomically owns both shutdown admission and
+        # task registration; this router never reads a private lifecycle flag.
         try:
-            task = asyncio.create_task(
-                _probe_cascade_confab(runtime, thread, central_token)
+            task = runtime.schedule_confab_probe(
+                lambda: _probe_cascade_confab(runtime, thread, central_token),
+                name=f"confab-probe:{getattr(thread, 'id', '?')}:{central_token}",
             )
-            runtime.confab_probe_tasks.add(task)
-            task.add_done_callback(runtime.confab_probe_tasks.discard)
+            if task is None:
+                logger.debug(
+                    "BF-663: confab probe scheduling closed for thread=%s "
+                    "token=%r; probe refused during shutdown",
+                    getattr(thread, "id", "?"), central_token,
+                )
+        except AttributeError:
+            # The promoted scheduler is a stable production runtime contract.
+            # A malformed runtime must fail loudly rather than silently skip
+            # the lifecycle safety seam.
+            raise
         except Exception:
             logger.warning(
                 "AD-1121: failed to schedule confab probe for thread=%s token=%r; "

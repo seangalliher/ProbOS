@@ -603,27 +603,50 @@ def _wire_boot_camp_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
 
 
 def _wire_emergence_collector(*, runtime: Any, config: "SystemConfig") -> bool:
-    """AD-454: Wire EvidenceCollector if enabled. Default off.
+    """AD-454/BF-663: wire one collector for classification and/or recording.
 
-    Pure observer — subscribes to WARD_ROOM_POST_CREATED, classifies posts
-    against the AD-454 taxonomy via fast-tier LLM, writes OBS-NNNN.yaml
-    files. No trust, Hebbian, or consensus participation.
+    Classification mode subscribes to WARD_ROOM_POST_CREATED and therefore
+    requires the Ward Room plus an LLM. Record-only mode persists preclassified
+    AD-1121 observations without either dependency or an event listener. No
+    trust, Hebbian, or consensus participation.
     """
+    from probos.config import EmergenceCollectorConfig, GroundingConfig
+
     cfg = getattr(config, "emergence_collector", None)
-    if not cfg or not cfg.enabled:
+    collector_cfg = (
+        cfg if isinstance(cfg, EmergenceCollectorConfig)
+        else EmergenceCollectorConfig()
+    )
+    classification_requested = bool(
+        isinstance(cfg, EmergenceCollectorConfig) and cfg.enabled
+    )
+    grounding_cfg = getattr(config, "grounding", None)
+    record_only_on = bool(
+        isinstance(grounding_cfg, GroundingConfig)
+        and grounding_cfg.referent_gate_enabled
+        and grounding_cfg.confab_probe_enabled
+    )
+    if not classification_requested and not record_only_on:
         return False
 
-    if getattr(runtime, "llm_client", None) is None:
+    llm_ready = getattr(runtime, "llm_client", None) is not None
+    ward_room_ready = getattr(runtime, "ward_room", None) is not None
+    if classification_requested and not llm_ready:
         logger.warning(
             "AD-454: EvidenceCollector wants llm_client but runtime.llm_client "
-            "is None; collector NOT wired. Configure an LLM client to enable."
+            "is None; classification listener NOT wired. Record-only evidence "
+            "persistence remains available when requested."
         )
-        return False
-    if getattr(runtime, "ward_room", None) is None:
+    if classification_requested and not ward_room_ready:
         logger.warning(
             "AD-454: EvidenceCollector wants ward_room but runtime.ward_room "
-            "is None; collector NOT wired."
+            "is None; classification listener NOT wired. Record-only evidence "
+            "persistence remains available when requested."
         )
+    classification_ready = bool(
+        classification_requested and llm_ready and ward_room_ready
+    )
+    if not classification_ready and not record_only_on:
         return False
 
     from probos.cognitive.evidence_collector import EvidenceCollector
@@ -631,24 +654,32 @@ def _wire_emergence_collector(*, runtime: Any, config: "SystemConfig") -> bool:
 
     collector = EvidenceCollector(
         runtime=runtime,
-        confidence_threshold=cfg.confidence_threshold,
-        dedup_window_seconds=cfg.dedup_window_seconds,
-        output_dir=cfg.output_dir,
-        llm_tier=cfg.llm_tier,
-        trial_id=cfg.trial_id,
-        thread_context_limit=cfg.thread_context_limit,
-        max_reasoning_chars=cfg.max_reasoning_chars,
+        confidence_threshold=collector_cfg.confidence_threshold,
+        dedup_window_seconds=collector_cfg.dedup_window_seconds,
+        output_dir=collector_cfg.output_dir,
+        llm_tier=collector_cfg.llm_tier,
+        trial_id=collector_cfg.trial_id,
+        thread_context_limit=collector_cfg.thread_context_limit,
+        max_reasoning_chars=collector_cfg.max_reasoning_chars,
     )
     runtime.evidence_collector = collector  # public attribute (Wave 5 convention #1)
-    runtime.add_event_listener(
-        collector.on_ward_room_post,
-        event_types=[EventType.WARD_ROOM_POST_CREATED.value],
+    if classification_ready:
+        runtime.add_event_listener(
+            collector.on_ward_room_post,
+            event_types=[EventType.WARD_ROOM_POST_CREATED.value],
+        )
+    mode = (
+        "classification+record"
+        if classification_ready and record_only_on
+        else "classification"
+        if classification_ready
+        else "record-only"
     )
     logger.info(
-        "AD-454: EvidenceCollector wired (trial=%s, threshold=%.2f, "
-        "dedup_window=%.0fs, output=%s)",
-        cfg.trial_id, cfg.confidence_threshold,
-        cfg.dedup_window_seconds, cfg.output_dir,
+        "AD-454/BF-663: EvidenceCollector wired (mode=%s, trial=%s, "
+        "threshold=%.2f, dedup_window=%.0fs, output=%s)",
+        mode, collector_cfg.trial_id, collector_cfg.confidence_threshold,
+        collector_cfg.dedup_window_seconds, collector_cfg.output_dir,
     )
     return True
 

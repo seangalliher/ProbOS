@@ -35,6 +35,83 @@ def _memory_field(runtime: Any, name: str, default: float) -> float:
     return float(getattr(cfg, name, default))
 
 
+async def _cancel_confab_probe_tasks(runtime: Any) -> None:
+    """BF-663: cancel and reap every one-shot probe before LLM shutdown.
+
+    Probe tasks depend on ``runtime.llm_client`` and therefore must not be
+    folded into the earlier bounded background-task sweep, which can abandon
+    tasks after five seconds. Cancellation is unbounded here by design: the
+    client remains open until every probe has run its ``finally`` cleanup.
+    The production caller closes probe admission synchronously at shutdown
+    entry; this helper retains missing-registry tolerance for partial runtimes.
+    """
+    registry = getattr(runtime, "confab_probe_tasks", None)
+    if not registry:
+        return
+
+    tasks = tuple(registry)
+    cancelled = 0
+    for task in tasks:
+        if not task.done() and task.cancelling() == 0:
+            task.cancel()
+            cancelled += 1
+    logger.info(
+        "BF-663: cancelling and awaiting %d confab probe task(s) before LLM "
+        "client shutdown (unfinished=%d)",
+        len(tasks), cancelled,
+    )
+
+    async def _drain_snapshot() -> list[Any]:
+        return await asyncio.gather(*tasks, return_exceptions=True)
+
+    drain_task = asyncio.create_task(
+        _drain_snapshot(),
+        name="bf663-confab-probe-shutdown-drain",
+    )
+    try:
+        try:
+            results = await asyncio.shield(drain_task)
+        except asyncio.CancelledError:
+            # Preserve the original snapshot drain across outer shutdown
+            # cancellation. Re-await the SAME shielded drain without issuing a
+            # second cancel to probes already running awaited finally cleanup,
+            # then propagate the outer cancellation only after they finish.
+            while True:
+                try:
+                    await asyncio.shield(drain_task)
+                    break
+                except asyncio.CancelledError:
+                    continue
+            raise
+    finally:
+        for task in tasks:
+            registry.discard(task)
+
+    failures = [
+        result
+        for result in results
+        if isinstance(result, BaseException)
+        and not isinstance(result, asyncio.CancelledError)
+    ]
+    if failures:
+        logger.warning(
+            "BF-663: %d confab probe task(s) failed during shutdown cleanup; "
+            "all probes are reaped and LLM shutdown will continue",
+            len(failures),
+        )
+    logger.debug(
+        "BF-663: reaped %d confab probe task(s) before LLM shutdown "
+        "(cancelled=%d failures=%d)",
+        len(tasks), cancelled, len(failures),
+    )
+
+
+async def _close_llm_client_after_confab_probes(runtime: Any) -> None:
+    """Close the LLM only after the stable confab-probe registry is drained."""
+    await _cancel_confab_probe_tasks(runtime)
+    await runtime.llm_client.close()
+
+
 async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     """Graceful shutdown of all pools, mesh services, and persistence."""
     # BF-598: idempotency guard. A second shutdown() invocation (a duplicate
@@ -52,6 +129,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         )
         return
     runtime._shutdown_started = True
+
+    # BF-663: close the public probe-scheduling gate synchronously at shutdown
+    # entry, before the first await. This makes the later registry snapshot a
+    # stable shutdown barrier instead of a point-in-time view that fan-out can
+    # append to while teardown is in progress. The method also requests
+    # cancellation immediately, preventing a registered-but-not-started probe
+    # from beginning after shutdown starts.
+    runtime.close_confab_probe_scheduling()
 
     # BF-135: Persist session record FIRST — synchronous file write, microseconds.
     # Must happen before any async operations (Ward Room, event log) because
@@ -875,8 +960,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         pass
     await runtime.event_log.stop()
 
-    # Clean up LLM client — after consolidation so dream_cycle can make LLM calls
-    await runtime.llm_client.close()
+    # BF-663: one-shot confab probes use the LLM but are not part of the generic
+    # background registry. The production close seam drains the now-stable
+    # registry before closing its dependency, so no evidence or notification can
+    # arrive after shutdown. Dream consolidation remains earlier in the order.
+    await _close_llm_client_after_confab_probes(runtime)
 
     # Stop dreaming scheduler
     if runtime.dream_scheduler:

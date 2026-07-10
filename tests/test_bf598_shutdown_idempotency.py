@@ -69,9 +69,14 @@ class _FakeRuntime:
         self._start_time = 0.0
         self.registry = _FakeRegistry()
         self.ontology = None
+        self.confab_probe_tasks: set = set()
+        self._confab_probe_scheduling_open = True
         self.dream_scheduler = None
         self.episodic_memory = None
         self.config = None
+
+    def close_confab_probe_scheduling(self) -> None:
+        self._confab_probe_scheduling_open = False
 
 
 # --------------------------------------------------------------------------- #
