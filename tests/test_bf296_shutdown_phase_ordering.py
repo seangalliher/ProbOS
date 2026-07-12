@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from probos.startup.shutdown import shutdown
+from probos.startup.shutdown import _stop_runtime_sqlite_sidecars, shutdown
 
 
 @pytest.mark.asyncio
@@ -164,3 +164,73 @@ async def test_phase_a_honest_degrades_when_method_missing(
 
     # Should NOT have the "Phase A closed" INFO line (method was absent),
     # but should also NOT have raised. Honest-degrade.
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_evolution_store_before_episodic_memory(
+    tmp_path: Any,
+) -> None:
+    """BF-662: the second Chroma client closes before episodic persistence."""
+    call_order: list[str] = []
+    runtime = MagicMock()
+    runtime._started = True
+    runtime._shutdown_started = False
+    runtime._session_id = "s1"
+    runtime._start_time_wall = time.time()
+    runtime._start_time = time.monotonic()
+    runtime._data_dir = tmp_path
+    runtime.registry.all.return_value = []
+    runtime.ontology = MagicMock()
+    runtime.event_log.log = AsyncMock()
+    runtime.ward_room = None
+    runtime.intent_bus = object()
+    runtime.dream_scheduler = None
+    runtime.config.memory.shutdown_drain_timeout_s = 1.0
+    runtime.config.memory.shutdown_consolidation_timeout_s = 1.0
+    runtime.evolution_store = MagicMock()
+    runtime.evolution_store.stop.side_effect = lambda: call_order.append("evolution")
+    runtime.episodic_memory = MagicMock()
+
+    async def _stop_episodic() -> None:
+        call_order.append("episodic")
+
+    runtime.episodic_memory.stop = _stop_episodic
+
+    with patch("probos.startup.shutdown.asyncio.sleep", new_callable=AsyncMock):
+        try:
+            await shutdown(runtime, reason="test")
+        except Exception:
+            pass
+
+    assert call_order[:2] == ["evolution", "episodic"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_sqlite_sidecars_close_and_clear_despite_one_failure() -> None:
+    runtime = MagicMock()
+    runtime.capability_request_store = MagicMock()
+    runtime.capability_request_store.stop = AsyncMock()
+    runtime.knowledge_edges = MagicMock()
+    runtime.knowledge_edges.stop = AsyncMock(
+        side_effect=RuntimeError("injected close failure")
+    )
+    runtime.personal_ontology_prober = MagicMock()
+    runtime.personal_ontology_prober.stop = AsyncMock()
+    runtime.rejection_cache = MagicMock()
+    runtime.rejection_cache.stop = AsyncMock()
+    services = [
+        runtime.capability_request_store,
+        runtime.knowledge_edges,
+        runtime.personal_ontology_prober,
+        runtime.rejection_cache,
+    ]
+
+    await _stop_runtime_sqlite_sidecars(runtime)
+    await _stop_runtime_sqlite_sidecars(runtime)
+
+    for service in services:
+        service.stop.assert_awaited_once_with()
+    assert runtime.capability_request_store is None
+    assert runtime.knowledge_edges is None
+    assert runtime.personal_ontology_prober is None
+    assert runtime.rejection_cache is None

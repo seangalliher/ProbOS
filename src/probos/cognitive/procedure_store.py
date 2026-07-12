@@ -11,6 +11,7 @@ Consumed by:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -133,29 +134,37 @@ class ProcedureStore:
             self._connection_factory = default_factory
         self._write_lock = threading.Lock()
         self._chroma_collection: Any = None
+        self._chroma_client: Any = None
 
     async def start(self) -> None:
         """Initialize SQLite index and ChromaDB collection."""
-        self._data_dir.mkdir(parents=True, exist_ok=True)
-        db_path = str(self._data_dir / "procedures.db")
-        self._db = await self._connection_factory.connect(db_path)
-        await self._db.executescript(_SCHEMA)
-        await self._db.commit()
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA foreign_keys=ON")
-        # AD-535: Schema migration — add consecutive_successes column if missing
-        await self._ensure_consecutive_successes_column()
-        # AD-536: Schema migration — add promotion tracking columns
-        await self._ensure_promotion_columns()
-        # AD-537: Schema migration — add learned_via/learned_from columns
-        await self._ensure_learned_via_columns()
-        # AD-538: Schema migration — add lifecycle columns
-        await self._ensure_lifecycle_columns()
-        # AD-567d: Schema migration — add source_anchors_json column
-        await self._ensure_source_anchors_column()
-        self._init_chroma()
-        # AD-535: Auto-promote qualifying Level 1 procedures to Level 2
-        await self._migrate_qualifying_procedures()
+        try:
+            self._data_dir.mkdir(parents=True, exist_ok=True)
+            db_path = str(self._data_dir / "procedures.db")
+            self._db = await self._connection_factory.connect(db_path)
+            await self._db.executescript(_SCHEMA)
+            await self._db.commit()
+            await self._db.execute("PRAGMA journal_mode=WAL")
+            await self._db.execute("PRAGMA foreign_keys=ON")
+            # AD-535: Schema migration — add consecutive_successes column if missing
+            await self._ensure_consecutive_successes_column()
+            # AD-536: Schema migration — add promotion tracking columns
+            await self._ensure_promotion_columns()
+            # AD-537: Schema migration — add learned_via/learned_from columns
+            await self._ensure_learned_via_columns()
+            # AD-538: Schema migration — add lifecycle columns
+            await self._ensure_lifecycle_columns()
+            # AD-567d: Schema migration — add source_anchors_json column
+            await self._ensure_source_anchors_column()
+            await self._init_chroma()
+            # AD-535: Auto-promote qualifying Level 1 procedures to Level 2
+            await self._migrate_qualifying_procedures()
+        except asyncio.CancelledError:
+            await self._close_resources()
+            raise
+        except Exception:
+            await self._close_resources()
+            raise
 
     async def _ensure_consecutive_successes_column(self) -> None:
         """AD-535: Add consecutive_successes column if not present."""
@@ -267,15 +276,42 @@ class ProcedureStore:
 
     async def stop(self) -> None:
         """Close database connections."""
-        if self._db:
-            await self._db.close()
-            self._db = None
+        await self._close_resources()
 
-    def _init_chroma(self) -> None:
-        """Initialize ChromaDB collection for semantic procedure search."""
+    async def _close_resources(self) -> None:
+        """Close and clear all resources acquired by this store."""
+        self._chroma_collection = None
+        chroma_client = self._chroma_client
+        self._chroma_client = None
+        if chroma_client is not None:
+            try:
+                chroma_client.close()
+            except Exception:
+                logger.warning(
+                    "BF-662: failed to close ProcedureStore Chroma client; "
+                    "semantic handles are being cleared and shutdown will continue",
+                    exc_info=True,
+                )
+        database = self._db
+        self._db = None
+        if database is not None:
+            try:
+                await database.close()
+            except Exception:
+                logger.warning(
+                    "BF-662: failed to close ProcedureStore database after a "
+                    "partial start; references are cleared and the error path "
+                    "will continue",
+                    exc_info=True,
+                )
+
+    async def _init_chroma(self) -> None:
+        """Initialize or rebuild the SQLite-authoritative semantic index."""
+        client: Any = None
         try:
             import chromadb
             from probos.knowledge.embeddings import (
+                get_active_embedding_backend_id,
                 get_active_embedding_model_name,
                 get_collection_embedding_function,
             )
@@ -283,47 +319,189 @@ class ProcedureStore:
             client = chromadb.PersistentClient(
                 path=str(self._data_dir / "chroma")
             )
+            self._chroma_client = client
             ef = get_collection_embedding_function()
             model_name = get_active_embedding_model_name()
+            backend_id = get_active_embedding_backend_id()
+            conflict = False
             try:
                 self._chroma_collection = client.get_or_create_collection(
                     name="procedures",
                     embedding_function=ef,
-                    metadata={"hnsw:space": "cosine"},
+                    metadata={
+                        "hnsw:space": "cosine",
+                        "embedding_model": model_name,
+                        "embedding_backend_id": backend_id,
+                        "procedure_index_state": "rebuilding",
+                    },
                 )
             except ValueError as exc:
                 if "Embedding function conflict" in str(exc):
-                    logger.warning("AD-584: Embedding function conflict for 'procedures' — opening without EF for migration")
-                    self._chroma_collection = client.get_or_create_collection(
-                        name="procedures",
-                        metadata={"hnsw:space": "cosine"},
+                    conflict = True
+                    logger.warning(
+                        "BF-662: embedding function conflict for procedure index; "
+                        "opening the old index raw for inspection before rebuilding "
+                        "from authoritative SQLite"
                     )
-                    # Clear stale metadata so migration detects the mismatch
-                    try:
-                        self._chroma_collection.modify(metadata={"embedding_model": "__ef_conflict__"})
-                    except Exception:
-                        pass
+                    self._chroma_collection = client.get_collection(
+                        name="procedures",
+                        embedding_function=None,
+                    )
+                    logger.info(
+                        "BF-662: inspected raw procedure index before transition "
+                        "(rows=%d); SQLite remains the copy authority",
+                        self._chroma_collection.count(),
+                    )
                 else:
                     raise
-
-            # AD-584: Check for embedding model migration
             col_meta = self._chroma_collection.metadata or {}
-            stored_model = col_meta.get("embedding_model", "")
-            if stored_model != model_name:
-                # Delete and recreate — data is backed by SQLite, will be re-indexed
+            rebuild_required = (
+                conflict
+                or col_meta.get("embedding_model", "") != model_name
+                or col_meta.get("embedding_backend_id", "") != backend_id
+                or col_meta.get("procedure_index_state", "") != "ready"
+            )
+            if rebuild_required:
                 client.delete_collection("procedures")
-                self._chroma_collection = client.get_or_create_collection(
+                self._chroma_collection = client.create_collection(
                     name="procedures",
                     embedding_function=ef,
-                    metadata={"hnsw:space": "cosine", "embedding_model": model_name},
+                    metadata={
+                        "hnsw:space": "cosine",
+                        "embedding_model": model_name,
+                        "embedding_backend_id": backend_id,
+                        "procedure_index_state": "rebuilding",
+                    },
                 )
-                logger.info("AD-584: Recreated procedure ChromaDB collection for model %s", model_name)
-                self._chroma_client = client  # Keep ref for reindex
+                indexed = await self._rebuild_chroma_from_sqlite(
+                    model_name=model_name,
+                    backend_id=backend_id,
+                )
+                logger.info(
+                    "BF-662: rebuilt procedure semantic index from SQLite "
+                    "(valid_rows=%d model=%s backend=%s)",
+                    indexed,
+                    model_name,
+                    backend_id,
+                )
         except Exception as e:
             logger.warning(
-                "ChromaDB unavailable for procedure semantic index: %s", e
+                "BF-662: ProcedureStore semantic index initialization failed: %s; "
+                "SQLite remains authoritative and semantic matching is disabled "
+                "until the next start retries",
+                e,
+                exc_info=True,
             )
             self._chroma_collection = None
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    logger.warning(
+                        "BF-662: failed to close unattached ProcedureStore Chroma "
+                        "client after initialization failure; OS cleanup is the fallback",
+                        exc_info=True,
+                    )
+            if self._chroma_client is client:
+                self._chroma_client = None
+
+    async def _load_rebuild_page(
+        self,
+        after_id: str,
+        *,
+        page_size: int = 200,
+    ) -> list[tuple[str, str]]:
+        """Read one deterministic SQLite keyset page for semantic rebuilding."""
+        if self._db is None:
+            return []
+        cursor = await self._db.execute(
+            "SELECT id, content_snapshot FROM procedure_records "
+            "WHERE id > ? ORDER BY id LIMIT ?",
+            (after_id, page_size),
+        )
+        rows = await cursor.fetchall()
+        return [(str(row[0]), str(row[1])) for row in rows]
+
+    async def _rebuild_chroma_from_sqlite(
+        self,
+        *,
+        model_name: str,
+        backend_id: str,
+    ) -> int:
+        """Rebuild the semantic index from valid authoritative SQLite rows."""
+        if self._chroma_collection is None:
+            raise RuntimeError("procedure semantic collection is unavailable")
+
+        from probos.cognitive.procedures import Procedure
+
+        valid_rows = 0
+        after_id = ""
+        while True:
+            rows = await self._load_rebuild_page(after_id)
+            if not rows:
+                break
+            for sqlite_id, snapshot in rows:
+                after_id = sqlite_id
+                try:
+                    data = json.loads(snapshot)
+                    if not isinstance(data, dict):
+                        raise ValueError("content_snapshot is not a JSON object")
+                    procedure = Procedure.from_dict(data)
+                    if procedure.id != sqlite_id:
+                        raise ValueError(
+                            f"snapshot id {procedure.id!r} does not match SQLite key"
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "BF-662: skipping malformed procedure snapshot id=%s during "
+                        "semantic rebuild (%s); SQLite row is preserved unchanged",
+                        sqlite_id,
+                        exc,
+                    )
+                    continue
+
+                try:
+                    self._write_to_chroma(procedure)
+                except Exception:
+                    self._chroma_collection = None
+                    logger.exception(
+                        "BF-662: failed to index valid procedure id=%s; aborting "
+                        "semantic rebuild with on-disk state=rebuilding so the next "
+                        "start retries while SQLite remains untouched",
+                        sqlite_id,
+                    )
+                    raise
+                valid_rows += 1
+
+            if len(rows) < 200:
+                break
+
+        collection = self._chroma_collection
+        if collection is None:
+            raise RuntimeError("procedure semantic collection was lost during rebuild")
+        actual_count = collection.count()
+        if actual_count != valid_rows:
+            self._chroma_collection = None
+            raise RuntimeError(
+                "procedure semantic rebuild count mismatch: "
+                f"expected {valid_rows}, found {actual_count}"
+            )
+
+        safe_meta = {
+            key: value
+            for key, value in (collection.metadata or {}).items()
+            if not key.startswith("hnsw:")
+        }
+        collection.modify(
+            metadata={
+                **safe_meta,
+                "embedding_model": model_name,
+                "embedding_backend_id": backend_id,
+                "procedure_index_state": "ready",
+                "procedure_indexed_count": valid_rows,
+            }
+        )
+        return valid_rows
 
     # ------------------------------------------------------------------
     # CRUD operations (Part 3)
@@ -431,25 +609,45 @@ class ProcedureStore:
         except Exception as e:
             logger.debug("Failed to write procedure to Ship's Records: %s", e)
 
-    def _save_to_chroma(self, procedure: "Any") -> None:
-        """Add/update procedure in ChromaDB semantic index."""
+    @staticmethod
+    def _chroma_payload(procedure: "Any") -> tuple[str, dict[str, Any]]:
+        """Build the canonical procedure document and metadata payload."""
+        text = f"{procedure.name}. {procedure.description}. Preconditions: {', '.join(procedure.preconditions)}"
+        metadata = {
+            "evolution_type": procedure.evolution_type,
+            "is_active": procedure.is_active,
+            "is_negative": procedure.is_negative,
+            "compilation_level": procedure.compilation_level,
+            "intent_types": json.dumps(procedure.intent_types),
+        }
+        return text, metadata
+
+    def _write_to_chroma(self, procedure: "Any") -> None:
+        """Write one procedure to ChromaDB, propagating any write failure."""
+        if self._chroma_collection is None:
+            raise RuntimeError("procedure semantic collection is unavailable")
+        text, metadata = self._chroma_payload(procedure)
+        self._chroma_collection.upsert(
+            ids=[procedure.id],
+            documents=[text],
+            metadatas=[metadata],
+        )
+
+    def _save_to_chroma(self, procedure: "Any") -> bool:
+        """Add/update a procedure in ChromaDB, reporting whether it succeeded."""
         if not self._chroma_collection:
-            return
+            return False
         try:
-            text = f"{procedure.name}. {procedure.description}. Preconditions: {', '.join(procedure.preconditions)}"
-            self._chroma_collection.upsert(
-                ids=[procedure.id],
-                documents=[text],
-                metadatas=[{
-                    "evolution_type": procedure.evolution_type,
-                    "is_active": procedure.is_active,
-                    "is_negative": procedure.is_negative,
-                    "compilation_level": procedure.compilation_level,
-                    "intent_types": json.dumps(procedure.intent_types),
-                }],
-            )
+            self._write_to_chroma(procedure)
+            return True
         except Exception as e:
-            logger.debug("Failed to index procedure in ChromaDB: %s", e)
+            logger.warning(
+                "Procedure %s could not be written to the semantic index: %s; "
+                "SQLite and Ship's Records remain authoritative",
+                getattr(procedure, "id", "<unknown>"),
+                e,
+            )
+            return False
 
     async def get(self, procedure_id: str) -> "Any | None":
         """Load a procedure from SQLite index by ID."""
@@ -579,16 +777,23 @@ class ProcedureStore:
             return []
 
         try:
-            where_filter: dict[str, Any] = {"is_active": True}
+            where_conditions: list[dict[str, Any]] = [{"is_active": True}]
             if exclude_negative:
-                where_filter["is_negative"] = False
+                where_conditions.append({"is_negative": False})
             if min_compilation_level > 0:
-                where_filter["compilation_level"] = {"$gte": min_compilation_level}
+                where_conditions.append(
+                    {"compilation_level": {"$gte": min_compilation_level}}
+                )
+            where_filter = (
+                where_conditions[0]
+                if len(where_conditions) == 1
+                else {"$and": where_conditions}
+            )
 
             results = self._chroma_collection.query(
                 query_texts=[query],
                 n_results=n_results,
-                where=where_filter if len(where_filter) > 1 else {"is_active": True},
+                where=where_filter,
             )
 
             if not results or not results.get("ids") or not results["ids"][0]:

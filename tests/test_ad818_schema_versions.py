@@ -8,11 +8,16 @@ configurable int.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import aiosqlite
 import pytest
 
 from probos.cognitive.schema_versions import MIGRATION_VERSIONS, SchemaVersionStore
-from probos.startup.cognitive_services import _run_one_migration
+from probos.startup.cognitive_services import (
+    _run_embedding_migration,
+    _run_one_migration,
+)
 
 
 def _store() -> SchemaVersionStore:
@@ -190,6 +195,185 @@ async def test_matching_version_skips_migration() -> None:
         assert stub.called is False
     finally:
         await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_matching_backend_qualified_version_skips() -> None:
+    store = _store()
+    await store.start()
+    try:
+        qualified = f"{MIGRATION_VERSIONS['AD-584']}:backend-a"
+        await store.record("AD-584", episode_count=0, version_hash=qualified)
+        stub = _StubMigration(returns=3)
+        await _run_one_migration(
+            "AD-584",
+            stub,
+            5.0,
+            "ok %d %.1f",
+            "noop %.1f",
+            schema_store=store,
+            migration_id="AD-584",
+            version_hash=qualified,
+        )
+        assert stub.called is False
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_backend_change_runs_and_updates_qualified_version() -> None:
+    store = _store()
+    await store.start()
+    try:
+        old = f"{MIGRATION_VERSIONS['AD-584']}:backend-a"
+        new = f"{MIGRATION_VERSIONS['AD-584']}:backend-b"
+        await store.record("AD-584", episode_count=1, version_hash=old)
+        stub = _StubMigration(returns=4)
+        await _run_one_migration(
+            "AD-584",
+            stub,
+            5.0,
+            "ok %d %.1f",
+            "noop %.1f",
+            schema_store=store,
+            migration_id="AD-584",
+            version_hash=new,
+        )
+        assert stub.called is True
+        row = await store.get("AD-584")
+        assert row is not None
+        assert row["version_hash"] == new
+        assert row["episode_count"] == 4
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_force_run_bypasses_matching_qualified_version() -> None:
+    store = _store()
+    await store.start()
+    try:
+        qualified = f"{MIGRATION_VERSIONS['AD-584']}:backend-a"
+        await store.record("AD-584", episode_count=0, version_hash=qualified)
+        stub = _StubMigration(returns=2)
+        await _run_one_migration(
+            "AD-584",
+            stub,
+            5.0,
+            "ok %d %.1f",
+            "noop %.1f",
+            schema_store=store,
+            migration_id="AD-584",
+            version_hash=qualified,
+            force_run=True,
+        )
+        assert stub.called is True
+        row = await store.get("AD-584")
+        assert row is not None
+        assert row["episode_count"] == 2
+        assert row["version_hash"] == qualified
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_force_run_failure_records_nothing() -> None:
+    store = _store()
+    await store.start()
+    try:
+        qualified = f"{MIGRATION_VERSIONS['AD-584']}:backend-a"
+        await store.record("AD-584", episode_count=5, version_hash=qualified)
+
+        async def _boom() -> int:
+            raise RuntimeError("forced migration failed")
+
+        await _run_one_migration(
+            "AD-584",
+            _boom,
+            5.0,
+            "ok %d %.1f",
+            "noop %.1f",
+            schema_store=store,
+            migration_id="AD-584",
+            version_hash=qualified,
+            force_run=True,
+        )
+        row = await store.get("AD-584")
+        assert row is not None
+        assert row["episode_count"] == 5
+        assert row["version_hash"] == qualified
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_current_qualified_sidecar_with_required_predicate_runs_ad584() -> None:
+    class _RequiredEpisodicMemory:
+        def __init__(self) -> None:
+            self.backend_pairs: list[tuple[str, str]] = []
+
+        def embedding_migration_required(
+            self,
+            active_model_name: str,
+            active_backend_id: str,
+        ) -> bool:
+            self.backend_pairs.append((active_model_name, active_backend_id))
+            return True
+
+    store = _store()
+    await store.start()
+    try:
+        backend_id = "backend-current"
+        qualified = f"{MIGRATION_VERSIONS['AD-584']}:{backend_id}"
+        await store.record("AD-584", episode_count=5, version_hash=qualified)
+        episodic_memory = _RequiredEpisodicMemory()
+        migration = AsyncMock(return_value=7)
+        with (
+            patch(
+                "probos.knowledge.embeddings.get_active_embedding_model_name",
+                return_value="model-current",
+            ),
+            patch(
+                "probos.knowledge.embeddings.get_active_embedding_backend_id",
+                return_value=backend_id,
+            ),
+            patch(
+                "probos.cognitive.episodic.migrate_embedding_model",
+                migration,
+            ),
+        ):
+            await _run_embedding_migration(episodic_memory, 5.0, store)
+
+        assert episodic_memory.backend_pairs == [
+            ("model-current", backend_id)
+        ]
+        migration.assert_awaited_once_with(
+            episodic_memory,
+            "model-current",
+            backend_id,
+        )
+        row = await store.get("AD-584")
+        assert row is not None
+        assert row["episode_count"] == 7
+        assert row["version_hash"] == qualified
+    finally:
+        await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_missing_embedding_migration_required_method_fails_contract() -> None:
+    with (
+        patch(
+            "probos.knowledge.embeddings.get_active_embedding_model_name",
+            return_value="model-current",
+        ),
+        patch(
+            "probos.knowledge.embeddings.get_active_embedding_backend_id",
+            return_value="backend-current",
+        ),
+    ):
+        with pytest.raises(AttributeError, match="embedding_migration_required"):
+            await _run_embedding_migration(object(), 5.0, None)
 
 
 @pytest.mark.asyncio

@@ -44,6 +44,7 @@ async def _run_one_migration(
     schema_store: Any | None = None,   # AD-818
     migration_id: str | None = None,   # AD-818
     version_hash: str | None = None,   # AD-818
+    force_run: bool = False,           # BF-662
 ) -> None:
     """BF-295 (#748): wrap a single episodic-memory migration with start log,
     timeout, elapsed-time logging, and honest-degrade on failure.
@@ -64,7 +65,12 @@ async def _run_one_migration(
     exception — a migration that does not complete must retry next boot).
     """
     # AD-818: short-circuit — recorded schema version matches → skip the scan.
-    if schema_store is not None and migration_id is not None and version_hash is not None:
+    if (
+        not force_run
+        and schema_store is not None
+        and migration_id is not None
+        and version_hash is not None
+    ):
         if await schema_store.is_current(migration_id, version_hash):
             logger.info(
                 "%s: schema current (version %s) — skipping scan",
@@ -100,6 +106,42 @@ async def _run_one_migration(
         )
     except Exception:
         logger.warning("%s: failed (non-fatal)", label, exc_info=True)
+
+
+async def _run_embedding_migration(
+    episodic_memory: Any,
+    timeout_s: float,
+    schema_store: Any | None,
+) -> None:
+    """Run backend-qualified AD-584 migration through its required public API."""
+    from probos.cognitive.episodic import migrate_embedding_model
+    from probos.cognitive.schema_versions import MIGRATION_VERSIONS
+    from probos.knowledge.embeddings import (
+        get_active_embedding_backend_id,
+        get_active_embedding_model_name,
+    )
+
+    active_model_name = get_active_embedding_model_name()
+    active_backend_id = get_active_embedding_backend_id()
+    migration_required = episodic_memory.embedding_migration_required(
+        active_model_name,
+        active_backend_id,
+    )
+    await _run_one_migration(
+        "AD-584",
+        lambda: migrate_embedding_model(
+            episodic_memory,
+            active_model_name,
+            active_backend_id,
+        ),
+        timeout_s,
+        "AD-584: Re-embedded %d episodes with new model in %.1fs",
+        "AD-584: embedding model migration completed in %.1fs (no episodes needed migration)",
+        schema_store=schema_store,
+        migration_id="AD-584",
+        version_hash=f"{MIGRATION_VERSIONS['AD-584']}:{active_backend_id}",
+        force_run=migration_required,
+    )
 
 
 async def init_cognitive_services(
@@ -412,19 +454,10 @@ async def init_cognitive_services(
 
     # AD-584: Embedding model migration (re-embed if model changed)
     if episodic_memory and not _skip_migrations:
-        from probos.cognitive.episodic import migrate_embedding_model
-        from probos.cognitive.schema_versions import MIGRATION_VERSIONS
-        from probos.knowledge.embeddings import get_active_embedding_model_name
-        _embedding_model_name = get_active_embedding_model_name()
-        await _run_one_migration(
-            "AD-584",
-            lambda: migrate_embedding_model(episodic_memory, _embedding_model_name),
+        await _run_embedding_migration(
+            episodic_memory,
             _migration_timeout_s,
-            "AD-584: Re-embedded %d episodes with new model in %.1fs",
-            "AD-584: embedding model migration completed in %.1fs (no episodes needed migration)",
-            schema_store=schema_store,
-            migration_id="AD-584",
-            version_hash=MIGRATION_VERSIONS["AD-584"],
+            schema_store,
         )
 
     # AD-605: Re-embed with enriched anchor metadata (AD-818a-2: async + paginated)

@@ -37,12 +37,32 @@ class MockEpisodicMemory:
         self.max_episodes = max_episodes
         self.relevance_threshold = relevance_threshold
         self._episodes: list[Episode] = []
+        self._activation_tracker: Any = None
+        self._participant_index: Any = None
 
     async def start(self) -> None:
         pass
 
     async def stop(self) -> None:
-        pass
+        if self._participant_index is not None:
+            await self._participant_index.stop()
+            self._participant_index = None
+
+    def set_activation_tracker(self, tracker: Any) -> None:
+        """Wire the activation tracker through the real public contract."""
+        self._activation_tracker = tracker
+
+    def set_participant_index(self, index: Any) -> None:
+        """Wire the participant sidecar owned by episodic-memory lifecycle."""
+        self._participant_index = index
+
+    def embedding_migration_required(
+        self,
+        active_model_name: str,
+        active_backend_id: str,
+    ) -> bool:
+        """Return False because the in-memory implementation has no index."""
+        return False
 
     @staticmethod
     def should_store(episode: Episode) -> bool:

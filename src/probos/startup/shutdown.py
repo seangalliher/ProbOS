@@ -112,6 +112,31 @@ async def _close_llm_client_after_confab_probes(runtime: Any) -> None:
     await runtime.llm_client.close()
 
 
+async def _stop_runtime_sqlite_sidecars(runtime: Any) -> None:
+    """Close runtime-owned SQLite services without another lifecycle owner."""
+    services = (
+        ("capability_request_store", "capability request store"),
+        ("knowledge_edges", "knowledge edge store"),
+        ("personal_ontology_prober", "personal ontology prober"),
+        ("rejection_cache", "relationship rejection cache"),
+    )
+    for attribute, label in services:
+        service = getattr(runtime, attribute, None)
+        if service is None:
+            continue
+        try:
+            await service.stop()
+        except Exception:
+            logger.warning(
+                "BF-662: failed to close %s during runtime shutdown; "
+                "remaining sidecars will still be closed",
+                label,
+                exc_info=True,
+            )
+        finally:
+            setattr(runtime, attribute, None)
+
+
 async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     """Graceful shutdown of all pools, mesh services, and persistence."""
     # BF-598: idempotency guard. A second shutdown() invocation (a duplicate
@@ -414,6 +439,20 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                 _ds_present, _em_present, _consolidation_result,
             )
 
+    # BF-662: EvolutionStore may own a second PersistentClient on the same data
+    # root. Release it before episodic Chroma shutdown so Windows does not retain
+    # a competing handle during critical persistence cleanup.
+    if getattr(runtime, "evolution_store", None) is not None:
+        try:
+            runtime.evolution_store.stop()
+        except Exception:
+            logger.warning(
+                "BF-662: EvolutionStore stop failed before episodic shutdown; "
+                "critical persistence cleanup will continue",
+                exc_info=True,
+            )
+        runtime.evolution_store = None
+
     # BF-207: Close episodic memory (ChromaDB) immediately after dream
     # consolidation — this is the critical operation that caused hash mismatches
     # when it was positioned after ~25 service stops.
@@ -552,6 +591,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         )
 
     # ── Phase 2: Service Cleanup ───────────────────────────────────────
+
+    # BF-662 lifecycle: these runtime-owned SQLite services were
+    # opened during startup but had no shutdown owner. Their non-daemon
+    # aiosqlite workers kept pytest alive after all assertions completed.
+    await _stop_runtime_sqlite_sidecars(runtime)
 
     # Stop ACM (AD-427)
     if runtime.acm:

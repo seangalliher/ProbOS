@@ -636,6 +636,7 @@ async def migrate_anchor_metadata(episodic_memory: "EpisodicMemory") -> int:
 async def migrate_embedding_model(
     episodic_memory: "EpisodicMemory",
     model_name: str,
+    active_backend_id: str,
 ) -> int:
     """AD-584: Re-embed all episodes when the embedding model changes.
 
@@ -653,34 +654,50 @@ async def migrate_embedding_model(
 
     collection = episodic_memory._collection
     stored_model = ""
+    stored_backend_id = ""
     try:
         meta = collection.metadata or {}
         stored_model = meta.get("embedding_model", "")
+        stored_backend_id = meta.get("embedding_backend_id", "")
     except Exception:
         pass
 
-    if stored_model == model_name:
-        logger.debug("AD-584: Embedding model unchanged (%s), skipping migration", model_name)
+    if stored_model == model_name and stored_backend_id == active_backend_id:
+        logger.debug(
+            "AD-584: Embedding backend unchanged (%s, %s), skipping migration",
+            model_name,
+            active_backend_id,
+        )
         return 0
 
     t0 = time.time()
     migrated = 0
 
     try:
-        # Read all existing documents
+        # Read all existing documents. A conflicted source was opened with an
+        # explicit None EF in start(), so only raw count/get operations occur.
         existing = collection.get(include=["documents", "metadatas"])
         ids = existing.get("ids") or []
         documents = existing.get("documents") or []
         metadatas = existing.get("metadatas") or []
 
-        if not ids:
-            # No episodes to re-embed — just update metadata
-            collection.modify(metadata={"embedding_model": model_name})
-            logger.info("AD-584: No episodes to re-embed, updated collection metadata to %s", model_name)
-            return 0
+        # Keep the source conflict-qualified until a fully rebuilt active
+        # collection has been populated and verified by successful adds.
+        source_meta = {
+            key: value
+            for key, value in (collection.metadata or {}).items()
+            if not key.startswith("hnsw:")
+        }
+        collection.modify(
+            metadata={
+                **source_meta,
+                "embedding_model": "__ef_conflict__",
+                "embedding_backend_id": "__ef_conflict__",
+            }
+        )
 
-        # Delete and recreate collection with new embedding function
         from probos.knowledge.embeddings import get_collection_embedding_function
+
         episodic_memory._client.delete_collection("episodes")
         ef = get_collection_embedding_function()
         episodic_memory._collection = episodic_memory._client.get_or_create_collection(
@@ -688,13 +705,15 @@ async def migrate_embedding_model(
             embedding_function=ef,
             metadata={
                 "hnsw:space": "cosine",
-                "embedding_model": model_name,
+                "embedding_model": "__ef_conflict__",
+                "embedding_backend_id": "__ef_conflict__",
                 "hnsw:sync_threshold": int(episodic_memory._hnsw_sync_threshold),
                 "hnsw:batch_size": int(episodic_memory._hnsw_batch_size),
             },
         )
 
-        # Re-add in batches of 100
+        # Re-add in batches of 100. An add failure propagates to the startup
+        # wrapper; the recreated collection remains conflict-qualified.
         batch_size = 100
         for start in range(0, len(ids), batch_size):
             end = min(start + batch_size, len(ids))
@@ -707,14 +726,35 @@ async def migrate_embedding_model(
                 metadatas=batch_metas,
             )
 
+        rebuilt_meta = {
+            key: value
+            for key, value in (episodic_memory._collection.metadata or {}).items()
+            if not key.startswith("hnsw:")
+        }
+        episodic_memory._collection.modify(
+            metadata={
+                **rebuilt_meta,
+                "embedding_model": model_name,
+                "embedding_backend_id": active_backend_id,
+            }
+        )
+        episodic_memory._embedding_conflict_detected = False
+
         migrated = len(ids)
         elapsed = time.time() - t0
         logger.info(
-            "AD-584: Re-embedded %d episodes with %s (%.1fs)",
-            migrated, model_name, elapsed,
+            "AD-584: Re-embedded %d episodes with model=%s backend=%s (%.1fs)",
+            migrated,
+            model_name,
+            active_backend_id,
+            elapsed,
         )
     except Exception:
-        logger.warning("AD-584: Embedding model migration failed (non-fatal)", exc_info=True)
+        logger.exception(
+            "AD-584: embedding migration failed; collection remains conflict-qualified "
+            "and the startup wrapper will retry without recording success"
+        )
+        raise
 
     return migrated
 
@@ -1151,6 +1191,7 @@ class EpisodicMemory:
         self._recall_rerank_weights: dict[str, float] = dict(recall_rerank_weights or {})
         self._client: Any = None
         self._collection: Any = None
+        self._embedding_conflict_detected = False
         self._fts_db: Any = None  # AD-567b: FTS5 sidecar
         self._activation_tracker: Any = None  # AD-567d: ACT-R activation tracker
         self._reconsolidation_scheduler: Any = None  # AD-574: spaced review scheduling
@@ -1288,57 +1329,97 @@ class EpisodicMemory:
             self._tcm_weight = tcm.config.weight
             self._tcm_fallback_watch_weight = tcm.config.fallback_watch_weight
 
+    def embedding_migration_required(
+        self,
+        active_model_name: str,
+        active_backend_id: str,
+    ) -> bool:
+        """Return whether the episodic collection needs an embedding rebuild."""
+        if self._collection is None:
+            return False
+        if self._embedding_conflict_detected:
+            return True
+        try:
+            metadata = self._collection.metadata or {}
+            stored_model = metadata.get("embedding_model", "")
+            stored_backend_id = metadata.get("embedding_backend_id", "")
+        except Exception:
+            logger.warning(
+                "BF-662: episodic embedding metadata could not be read; "
+                "forcing AD-584 so the collection is retried safely",
+                exc_info=True,
+            )
+            return True
+        return (
+            not stored_model
+            or not stored_backend_id
+            or stored_model == "__ef_conflict__"
+            or stored_backend_id == "__ef_conflict__"
+            or stored_model != active_model_name
+            or stored_backend_id != active_backend_id
+        )
+
     async def start(self) -> None:
         import chromadb
-        from probos.knowledge.embeddings import get_collection_embedding_function
+        from probos.knowledge.embeddings import (
+            get_active_embedding_backend_id,
+            get_active_embedding_model_name,
+            get_collection_embedding_function,
+        )
 
         db_dir = Path(self.db_path).parent
         db_dir.mkdir(parents=True, exist_ok=True)
 
         self._client = chromadb.PersistentClient(path=str(db_dir))
+        self._embedding_conflict_detected = False
         ef = get_collection_embedding_function()
+        model_name = get_active_embedding_model_name()
+        backend_id = get_active_embedding_backend_id()
         try:
             self._collection = self._client.get_or_create_collection(
                 name="episodes",
                 embedding_function=ef,
                 metadata={
                     "hnsw:space": "cosine",
+                    "embedding_model": model_name,
+                    "embedding_backend_id": backend_id,
                     "hnsw:sync_threshold": int(self._hnsw_sync_threshold),
                     "hnsw:batch_size": int(self._hnsw_batch_size),
                 },
             )
         except ValueError as exc:
             if "Embedding function conflict" in str(exc):
+                self._embedding_conflict_detected = True
                 # AD-584: Embedding function type changed (e.g. default → sentence_transformer).
                 # Open WITHOUT embedding function so migration can read and re-embed.
                 logger.warning("AD-584: Embedding function conflict detected — opening collection without EF for migration")
-                self._collection = self._client.get_or_create_collection(
+                self._collection = self._client.get_collection(
                     name="episodes",
-                    metadata={
-                        "hnsw:space": "cosine",
-                        "hnsw:sync_threshold": int(self._hnsw_sync_threshold),
-                        "hnsw:batch_size": int(self._hnsw_batch_size),
-                    },
+                    embedding_function=None,
                 )
-                # Clear stale embedding_model metadata so migration detects the mismatch
+                # Keep the raw source readable while making the recovery need
+                # explicit even if the qualified sidecar already matches.
                 try:
-                    self._collection.modify(metadata={"embedding_model": "__ef_conflict__"})
+                    safe_meta = {
+                        key: value
+                        for key, value in (self._collection.metadata or {}).items()
+                        if not key.startswith("hnsw:")
+                    }
+                    self._collection.modify(
+                        metadata={
+                            **safe_meta,
+                            "embedding_model": "__ef_conflict__",
+                            "embedding_backend_id": "__ef_conflict__",
+                        }
+                    )
                 except Exception:
-                    pass
+                    logger.warning(
+                        "BF-662: failed to mark episodic EF conflict metadata; "
+                        "the public migration guard will force a safe retry",
+                        exc_info=True,
+                    )
             else:
                 raise
-
-        # AD-584: Ensure collection metadata includes embedding model name
-        from probos.knowledge.embeddings import get_active_embedding_model_name
-        try:
-            col_meta = self._collection.metadata or {}
-            if "embedding_model" not in col_meta:
-                self._collection.modify(metadata={
-                    **col_meta,
-                    "embedding_model": get_active_embedding_model_name(),
-                })
-        except Exception:
-            logger.debug("AD-584: Could not set embedding_model metadata", exc_info=True)
 
         # AD-567b: FTS5 keyword search sidecar
         try:

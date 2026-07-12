@@ -13,8 +13,14 @@ the process-singleton state does not leak between tests.
 
 from __future__ import annotations
 
+import json
 import math
+import os
+from pathlib import Path
+import subprocess
+import sys
 import warnings
+from unittest.mock import MagicMock
 
 import chromadb
 import pytest
@@ -22,9 +28,15 @@ import pytest
 from probos.knowledge import embeddings
 from probos.knowledge.embeddings import (
     LocalHashEmbeddingFunction,
+    get_active_embedding_backend_id,
     get_active_embedding_model_name,
     get_collection_embedding_function,
+    get_embedding_backend_id,
     get_embedding_model_name,
+)
+from tests.fixtures.bf662_embedding_fakes import (
+    BF662EmbeddingFunctionA,
+    BF662EmbeddingFunctionB,
 )
 
 
@@ -92,6 +104,130 @@ class TestLocalEmbeddingFunction:
         # Lexical: the token-sharing pair (cat/mat) ranks above the unrelated text.
         assert _cosine(vec_a, vec_b) > _cosine(vec_a, vec_c)
 
+    def test_local_ef_registered_once_and_reconstructable(self, tmp_path) -> None:
+        path = str(tmp_path / "registered-local")
+        client = chromadb.PersistentClient(path=path)
+        try:
+            collection = client.create_collection(
+                name="bf662-local-registered",
+                embedding_function=LocalHashEmbeddingFunction(),
+            )
+            collection.add(ids=["local-id"], documents=["registered local tokens"])
+        finally:
+            client.close()
+
+        reopened = chromadb.PersistentClient(path=path)
+        try:
+            reconstructed = reopened.get_collection("bf662-local-registered")
+            result = reconstructed.query(
+                query_texts=["registered tokens"], n_results=1
+            )
+            assert reconstructed.count() == 1
+            assert result["ids"] == [["local-id"]]
+        finally:
+            reopened.close()
+
+    def test_backend_id_is_deterministic_and_config_sensitive(self) -> None:
+        local = LocalHashEmbeddingFunction()
+        assert get_embedding_backend_id(local) == get_embedding_backend_id(
+            LocalHashEmbeddingFunction()
+        )
+        assert get_embedding_backend_id(local) != get_embedding_backend_id(
+            LocalHashEmbeddingFunction(dim=32)
+        )
+        assert get_embedding_backend_id(BF662EmbeddingFunctionA()) != (
+            get_embedding_backend_id(BF662EmbeddingFunctionB())
+        )
+
+        first = MagicMock()
+        first.name.return_value = "ordered-config"
+        first.get_config.return_value = {"alpha": 1, "nested": {"x": 2, "y": 3}}
+        second = MagicMock()
+        second.name.return_value = "ordered-config"
+        second.get_config.return_value = {"nested": {"y": 3, "x": 2}, "alpha": 1}
+        assert get_embedding_backend_id(first) == get_embedding_backend_id(second)
+
+        non_finite = MagicMock()
+        non_finite.name.return_value = "non-finite-config"
+        non_finite.get_config.return_value = {"temperature": float("nan")}
+        with pytest.raises(ValueError):
+            get_embedding_backend_id(non_finite)
+
+    def test_fresh_process_queries_registered_local_ef_without_explicit_argument(
+        self, tmp_path
+    ) -> None:
+        path = str(tmp_path / "fresh-process")
+        parent_backend_id = get_embedding_backend_id(LocalHashEmbeddingFunction())
+        client = chromadb.PersistentClient(path=path)
+        try:
+            collection = client.create_collection(
+                name="bf662-fresh-process",
+                embedding_function=LocalHashEmbeddingFunction(),
+                metadata={"embedding_backend_id": parent_backend_id},
+            )
+            collection.add(
+                ids=["fresh-id"], documents=["fresh process reconstruction tokens"]
+            )
+            assert collection.count() == 1
+        finally:
+            client.close()
+
+        child_code = """
+import json
+import sys
+import chromadb
+import probos.knowledge.embeddings as embeddings
+
+client = chromadb.PersistentClient(path=sys.argv[1])
+try:
+    collection = client.get_collection(sys.argv[2])
+    result = collection.query(query_texts=[\"reconstruction tokens\"], n_results=1)
+    print(\"BF662_JSON=\" + json.dumps({
+        \"backend_id\": embeddings.get_active_embedding_backend_id(),
+        \"count\": collection.count(),
+        \"ids\": result[\"ids\"],
+    }, sort_keys=True))
+finally:
+    client.close()
+"""
+        env = os.environ.copy()
+        env.update(
+            {
+                "PROBOS_EMBEDDINGS": "local",
+                "HF_HUB_OFFLINE": "1",
+                "TRANSFORMERS_OFFLINE": "1",
+            }
+        )
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                child_code,
+                path,
+                "bf662-fresh-process",
+            ],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            env=env,
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        machine_lines = [
+            line.removeprefix("BF662_JSON=")
+            for line in completed.stdout.splitlines()
+            if line.startswith("BF662_JSON=")
+        ]
+        assert len(machine_lines) == 1, completed.stdout
+        child = json.loads(machine_lines[0])
+        assert child == {
+            "backend_id": parent_backend_id,
+            "count": 1,
+            "ids": [["fresh-id"]],
+        }
+
 
 class TestGetCollectionEmbeddingFunction:
     """The collection helper is never None; the active-name helper tracks backend."""
@@ -116,6 +252,16 @@ class TestGetCollectionEmbeddingFunction:
         monkeypatch.setattr(embeddings, "get_embedding_function", lambda: sentinel)
         assert get_active_embedding_model_name() == get_embedding_model_name()
 
+    def test_active_backend_id_uses_collection_backend(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            embeddings,
+            "get_collection_embedding_function",
+            lambda: BF662EmbeddingFunctionA(),
+        )
+        assert get_active_embedding_backend_id() == get_embedding_backend_id(
+            BF662EmbeddingFunctionA()
+        )
+
 
 class TestRealChromaNetworkFree:
     """A real PersistentClient collection works with the local EF, no network."""
@@ -130,26 +276,29 @@ class TestRealChromaNetworkFree:
         assert isinstance(ef, LocalHashEmbeddingFunction)
 
         client = chromadb.PersistentClient(path=str(tmp_path / "chroma_nn"))
-        collection = client.get_or_create_collection(
-            name="bf657docs",
-            embedding_function=ef,
-            metadata={
-                "hnsw:space": "cosine",
-                "embedding_model": get_active_embedding_model_name(),
-            },
-        )
-        collection.add(
-            ids=["a", "b", "c"],
-            documents=[
-                "cat sat on the mat",
-                "the cat on a mat",
-                "quarterly revenue taxes budget",
-            ],
-        )
-        result = collection.query(query_texts=["cat mat"], n_results=3)
-        assert result["ids"] and len(result["ids"][0]) == 3
-        # The two token-sharing docs (a, b) rank above the unrelated doc (c).
-        assert result["ids"][0].index("c") == 2
+        try:
+            collection = client.get_or_create_collection(
+                name="bf657docs",
+                embedding_function=ef,
+                metadata={
+                    "hnsw:space": "cosine",
+                    "embedding_model": get_active_embedding_model_name(),
+                },
+            )
+            collection.add(
+                ids=["a", "b", "c"],
+                documents=[
+                    "cat sat on the mat",
+                    "the cat on a mat",
+                    "quarterly revenue taxes budget",
+                ],
+            )
+            result = collection.query(query_texts=["cat mat"], n_results=3)
+            assert result["ids"] and len(result["ids"][0]) == 3
+            # The two token-sharing docs (a, b) rank above the unrelated doc (c).
+            assert result["ids"][0].index("c") == 2
+        finally:
+            client.close()
 
     def test_collection_reopen_preserves_count(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setattr(embeddings, "get_embedding_function", lambda: None)
@@ -157,26 +306,31 @@ class TestRealChromaNetworkFree:
         path = str(tmp_path / "chroma_reopen")
 
         client = chromadb.PersistentClient(path=path)
-        collection = client.get_or_create_collection(
-            name="bf657reopen",
-            embedding_function=ef,
-            metadata={
-                "hnsw:space": "cosine",
-                "embedding_model": get_active_embedding_model_name(),
-            },
-        )
-        collection.add(ids=["x", "y"], documents=["alpha beta gamma", "delta epsilon zeta"])
-        assert collection.count() == 2
+        try:
+            collection = client.get_or_create_collection(
+                name="bf657reopen",
+                embedding_function=ef,
+                metadata={
+                    "hnsw:space": "cosine",
+                    "embedding_model": get_active_embedding_model_name(),
+                },
+            )
+            collection.add(ids=["x", "y"], documents=["alpha beta gamma", "delta epsilon zeta"])
+            assert collection.count() == 2
+        finally:
+            client.close()
 
-        del collection, client
         # Reopen a fresh client over the same path with the SAME local EF config.
         client2 = chromadb.PersistentClient(path=path)
-        collection2 = client2.get_or_create_collection(
-            name="bf657reopen", embedding_function=ef
-        )
-        assert collection2.count() == 2
-        result = collection2.query(query_texts=["alpha beta"], n_results=2)
-        assert result["ids"] and len(result["ids"][0]) == 2
+        try:
+            collection2 = client2.get_or_create_collection(
+                name="bf657reopen", embedding_function=ef
+            )
+            assert collection2.count() == 2
+            result = collection2.query(query_texts=["alpha beta"], n_results=2)
+            assert result["ids"] and len(result["ids"][0]) == 2
+        finally:
+            client2.close()
 
 
 class TestPreviouslyFailingUnderForcedLocal:

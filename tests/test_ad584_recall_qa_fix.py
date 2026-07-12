@@ -47,6 +47,22 @@ def _make_episode(
     )
 
 
+@pytest.mark.asyncio
+async def test_mock_episodic_memory_participant_index_stop_is_idempotent() -> None:
+    from probos.cognitive.episodic_mock import MockEpisodicMemory
+
+    participant_index = MagicMock()
+    participant_index.stop = AsyncMock()
+    memory = MockEpisodicMemory()
+    memory.set_participant_index(participant_index)
+
+    await memory.stop()
+    assert memory._participant_index is None
+    await memory.stop()
+
+    participant_index.stop.assert_awaited_once_with()
+
+
 # ===========================================================================
 # Group 1: Embedding Model (6 tests)
 # ===========================================================================
@@ -234,15 +250,17 @@ class TestRecallPipelineIntegration:
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100,
                             query_reformulation_enabled=True)
         await _start_episodic_memory(em)
+        try:
+            ep = _make_episode(user_input="The pool health threshold was set to 0.7")
+            await em.store(ep)
 
-        ep = _make_episode(user_input="The pool health threshold was set to 0.7")
-        await em.store(ep)
-
-        # Actual ChromaDB query — results depend on embedding model availability
-        results = await em.recall_for_agent_scored("agent-001", "What is the pool health threshold?", k=5)
-        # If ChromaDB embeddings work, should return something
-        # (if ONNX unavailable, collection.query may fail — test is informational)
-        assert isinstance(results, list)
+            # Actual ChromaDB query — results depend on embedding model availability
+            results = await em.recall_for_agent_scored("agent-001", "What is the pool health threshold?", k=5)
+            # If ChromaDB embeddings work, should return something
+            # (if ONNX unavailable, collection.query may fail — test is informational)
+            assert isinstance(results, list)
+        finally:
+            await em.stop()
 
     @pytest.mark.asyncio
     async def test_recall_for_agent_scored_without_reformulation(self, tmp_path):
@@ -251,12 +269,14 @@ class TestRecallPipelineIntegration:
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100,
                             query_reformulation_enabled=False)
         await _start_episodic_memory(em)
+        try:
+            ep = _make_episode(user_input="Trust score for Counselor is 0.85")
+            await em.store(ep)
 
-        ep = _make_episode(user_input="Trust score for Counselor is 0.85")
-        await em.store(ep)
-
-        results = await em.recall_for_agent_scored("agent-001", "What is the trust score?", k=5)
-        assert isinstance(results, list)
+            results = await em.recall_for_agent_scored("agent-001", "What is the trust score?", k=5)
+            assert isinstance(results, list)
+        finally:
+            await em.stop()
 
     @pytest.mark.asyncio
     async def test_dual_query_dedup(self, tmp_path):
@@ -264,14 +284,16 @@ class TestRecallPipelineIntegration:
         from probos.cognitive.episodic import EpisodicMemory
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100)
         await _start_episodic_memory(em)
+        try:
+            ep = _make_episode(user_input="The health threshold is 0.7")
+            await em.store(ep)
 
-        ep = _make_episode(user_input="The health threshold is 0.7")
-        await em.store(ep)
-
-        results = await em.recall_for_agent_scored("agent-001", "What is the health threshold?", k=5)
-        # Each episode should appear at most once
-        ep_ids = [r[0].id for r in results]
-        assert len(ep_ids) == len(set(ep_ids))
+            results = await em.recall_for_agent_scored("agent-001", "What is the health threshold?", k=5)
+            # Each episode should appear at most once
+            ep_ids = [r[0].id for r in results]
+            assert len(ep_ids) == len(set(ep_ids))
+        finally:
+            await em.stop()
 
     @pytest.mark.asyncio
     async def test_dual_query_takes_best_score(self, tmp_path):
@@ -307,12 +329,14 @@ class TestRecallPipelineIntegration:
         from probos.cognitive.episodic import EpisodicMemory
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100)
         await _start_episodic_memory(em)
+        try:
+            ep = _make_episode(user_input="The configuration was updated to version 2.0")
+            await em.store(ep)
 
-        ep = _make_episode(user_input="The configuration was updated to version 2.0")
-        await em.store(ep)
-
-        results = await em.recall_weighted("agent-001", "What version was configured?", k=5)
-        assert isinstance(results, list)
+            results = await em.recall_weighted("agent-001", "What version was configured?", k=5)
+            assert isinstance(results, list)
+        finally:
+            await em.stop()
 
     def test_bf029_prefix_removed(self):
         """Test 22: direct_message recall query does NOT prepend 'Ward Room {callsign}'."""
@@ -354,13 +378,15 @@ class TestRecallPipelineIntegration:
         from probos.cognitive.episodic import EpisodicMemory
         em = EpisodicMemory(str(tmp_path / "ep.db"), max_episodes=100)
         await _start_episodic_memory(em)
+        try:
+            ep = _make_episode(user_input="Agent health status is nominal")
+            await em.store(ep)
 
-        ep = _make_episode(user_input="Agent health status is nominal")
-        await em.store(ep)
-
-        # BASIC tier uses k=3 (from resolve_recall_tier_params)
-        results = await em.recall_for_agent_scored("agent-001", "What is the health status?", k=3)
-        assert isinstance(results, list)
+            # BASIC tier uses k=3 (from resolve_recall_tier_params)
+            results = await em.recall_for_agent_scored("agent-001", "What is the health status?", k=3)
+            assert isinstance(results, list)
+        finally:
+            await em.stop()
 
 
 # ===========================================================================
@@ -370,6 +396,61 @@ class TestRecallPipelineIntegration:
 
 class TestEmbeddingModelMigration:
     """AD-584: Embedding model migration tests."""
+
+    def test_embedding_migration_required_for_conflict_missing_and_mismatch(self) -> None:
+        from probos.cognitive.episodic import EpisodicMemory
+
+        em = EpisodicMemory("unused.db")
+        collection = MagicMock()
+        em._collection = collection
+
+        collection.metadata = {}
+        assert em.embedding_migration_required("model-a", "backend-a") is True
+        collection.metadata = {
+            "embedding_model": "__ef_conflict__",
+            "embedding_backend_id": "backend-a",
+        }
+        assert em.embedding_migration_required("model-a", "backend-a") is True
+        collection.metadata = {
+            "embedding_model": "model-a",
+            "embedding_backend_id": "__ef_conflict__",
+        }
+        assert em.embedding_migration_required("model-a", "backend-a") is True
+        collection.metadata = {
+            "embedding_model": "model-b",
+            "embedding_backend_id": "backend-a",
+        }
+        assert em.embedding_migration_required("model-a", "backend-a") is True
+        collection.metadata = {
+            "embedding_model": "model-a",
+            "embedding_backend_id": "backend-b",
+        }
+        assert em.embedding_migration_required("model-a", "backend-a") is True
+
+    def test_embedding_migration_required_same_backend_is_false(self) -> None:
+        from probos.cognitive.episodic import EpisodicMemory
+
+        em = EpisodicMemory("unused.db")
+        assert em.embedding_migration_required("model-a", "backend-a") is False
+        collection = MagicMock()
+        collection.metadata = {
+            "embedding_model": "model-a",
+            "embedding_backend_id": "backend-a",
+        }
+        em._collection = collection
+        assert em.embedding_migration_required("model-a", "backend-a") is False
+
+        em._embedding_conflict_detected = True
+        assert em.embedding_migration_required("model-a", "backend-a") is True
+        em._embedding_conflict_detected = False
+
+        class _UnreadableMetadata:
+            @property
+            def metadata(self):
+                raise RuntimeError("metadata unavailable")
+
+        em._collection = _UnreadableMetadata()
+        assert em.embedding_migration_required("model-a", "backend-a") is True
 
     @pytest.mark.asyncio
     async def test_migration_detects_model_mismatch(self, tmp_path):
@@ -387,8 +468,17 @@ class TestEmbeddingModelMigration:
         em._collection.modify(metadata={"embedding_model": "all-MiniLM-L6-v2"})
 
         # Run migration
-        migrated = await migrate_embedding_model(em, "multi-qa-MiniLM-L6-cos-v1")
-        assert migrated > 0
+        from probos.knowledge.embeddings import get_active_embedding_backend_id
+
+        try:
+            migrated = await migrate_embedding_model(
+                em,
+                "multi-qa-MiniLM-L6-cos-v1",
+                get_active_embedding_backend_id(),
+            )
+            assert migrated > 0
+        finally:
+            await em.stop()
 
     @pytest.mark.asyncio
     async def test_migration_preserves_episode_count(self, tmp_path):
@@ -407,10 +497,17 @@ class TestEmbeddingModelMigration:
 
         # Force migration
         em._collection.modify(metadata={"embedding_model": "old-model"})
-        await migrate_embedding_model(em, "new-model")
+        from probos.knowledge.embeddings import get_active_embedding_backend_id
 
-        count_after = em._collection.count()
-        assert count_after == count_before
+        try:
+            await migrate_embedding_model(
+                em, "new-model", get_active_embedding_backend_id()
+            )
+
+            count_after = em._collection.count()
+            assert count_after == count_before
+        finally:
+            await em.stop()
 
     @pytest.mark.asyncio
     async def test_migration_updates_metadata(self, tmp_path):
@@ -424,10 +521,80 @@ class TestEmbeddingModelMigration:
         await em.store(ep)
 
         em._collection.modify(metadata={"embedding_model": "old-model"})
-        await migrate_embedding_model(em, "new-model-v2")
+        from probos.knowledge.embeddings import get_active_embedding_backend_id
 
-        new_meta = em._collection.metadata or {}
-        assert new_meta.get("embedding_model") == "new-model-v2"
+        backend_id = get_active_embedding_backend_id()
+        try:
+            await migrate_embedding_model(em, "new-model-v2", backend_id)
+
+            new_meta = em._collection.metadata or {}
+            assert new_meta.get("embedding_model") == "new-model-v2"
+            assert new_meta.get("embedding_backend_id") == backend_id
+        finally:
+            await em.stop()
+
+    @pytest.mark.asyncio
+    async def test_embedding_migration_writes_model_and_backend_identity(
+        self, tmp_path
+    ) -> None:
+        from probos.cognitive.episodic import EpisodicMemory, migrate_embedding_model
+        from probos.knowledge.embeddings import get_active_embedding_backend_id
+
+        em = EpisodicMemory(str(tmp_path / "identity.db"), max_episodes=100)
+        await _start_episodic_memory(em)
+        backend_id = get_active_embedding_backend_id()
+        try:
+            em._collection.modify(
+                metadata={
+                    "embedding_model": "old-model",
+                    "embedding_backend_id": "old-backend",
+                }
+            )
+            migrated = await migrate_embedding_model(
+                em, "active-model", backend_id
+            )
+            assert migrated == 0
+            assert em._collection.metadata.get("embedding_model") == "active-model"
+            assert em._collection.metadata.get("embedding_backend_id") == backend_id
+        finally:
+            await em.stop()
+
+    @pytest.mark.asyncio
+    async def test_embedding_migration_failure_leaves_conflict_identity_and_propagates(
+        self, tmp_path
+    ) -> None:
+        from probos.cognitive.episodic import EpisodicMemory, migrate_embedding_model
+        from probos.knowledge.embeddings import get_active_embedding_backend_id
+
+        em = EpisodicMemory(str(tmp_path / "failure.db"), max_episodes=100)
+        await _start_episodic_memory(em)
+        await em.store(_make_episode(user_input="migration must fail visibly"))
+        em._collection.modify(
+            metadata={
+                "embedding_model": "old-model",
+                "embedding_backend_id": "old-backend",
+            }
+        )
+        collection_type = type(em._collection)
+        try:
+            with patch.object(
+                collection_type,
+                "add",
+                side_effect=RuntimeError("injected re-add failure"),
+            ):
+                with pytest.raises(RuntimeError, match="injected re-add failure"):
+                    await migrate_embedding_model(
+                        em,
+                        "active-model",
+                        get_active_embedding_backend_id(),
+                    )
+            assert em._collection.metadata.get("embedding_model") == "__ef_conflict__"
+            assert (
+                em._collection.metadata.get("embedding_backend_id")
+                == "__ef_conflict__"
+            )
+        finally:
+            await em.stop()
 
     @pytest.mark.asyncio
     async def test_migration_skips_when_model_matches(self, tmp_path):
@@ -442,8 +609,22 @@ class TestEmbeddingModelMigration:
 
         # Set metadata to match
         em._collection.modify(metadata={"embedding_model": "current-model"})
-        migrated = await migrate_embedding_model(em, "current-model")
-        assert migrated == 0
+        from probos.knowledge.embeddings import get_active_embedding_backend_id
+
+        backend_id = get_active_embedding_backend_id()
+        em._collection.modify(
+            metadata={
+                "embedding_model": "current-model",
+                "embedding_backend_id": backend_id,
+            }
+        )
+        try:
+            migrated = await migrate_embedding_model(
+                em, "current-model", backend_id
+            )
+            assert migrated == 0
+        finally:
+            await em.stop()
 
     @pytest.mark.asyncio
     async def test_migration_handles_no_collection(self):
@@ -452,7 +633,7 @@ class TestEmbeddingModelMigration:
 
         em = MagicMock()
         em._collection = None
-        result = await migrate_embedding_model(em, "any-model")
+        result = await migrate_embedding_model(em, "any-model", "any-backend")
         assert result == 0
 
     @pytest.mark.asyncio
@@ -465,12 +646,19 @@ class TestEmbeddingModelMigration:
 
         # Don't store any episodes
         em._collection.modify(metadata={"embedding_model": "old-model"})
-        migrated = await migrate_embedding_model(em, "new-model")
-        assert migrated == 0  # No episodes to re-embed
+        from probos.knowledge.embeddings import get_active_embedding_backend_id
 
-        # But metadata should still be updated
-        meta = em._collection.metadata or {}
-        assert meta.get("embedding_model") == "new-model"
+        backend_id = get_active_embedding_backend_id()
+        try:
+            migrated = await migrate_embedding_model(em, "new-model", backend_id)
+            assert migrated == 0  # No episodes to re-embed
+
+            # But metadata should still be updated
+            meta = em._collection.metadata or {}
+            assert meta.get("embedding_model") == "new-model"
+            assert meta.get("embedding_backend_id") == backend_id
+        finally:
+            await em.stop()
 
 
 # ===========================================================================

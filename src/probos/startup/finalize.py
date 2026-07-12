@@ -1842,9 +1842,10 @@ def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
     * ``runtime.agent_persistence`` -- LocalDiskPersistence default impl.
     * ``runtime.shadow_deployment_policy`` -- NoOpShadowDeploymentPolicy default.
 
-    Tier-2 log-and-degrade: missing chroma_client downgrades EvolutionStore to
-    in-memory fallback; missing spawner downgrades QAAgentPool to a single
-    in-process SystemQAAgent (Shapley still produces equal contributions).
+    Tier-2 log-and-degrade: a persistent Chroma open failure downgrades
+    EvolutionStore to in-memory fallback; missing spawner downgrades QAAgentPool
+    to a single in-process SystemQAAgent (Shapley still produces equal
+    contributions).
     """
     cfg = config.self_improvement
     if not cfg.enabled:
@@ -1873,10 +1874,9 @@ def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
         return False
 
     emit = getattr(runtime, "emit_event", None)
-    chroma_client = getattr(runtime, "_chroma_client", None)
 
     evolution_store = EvolutionStore(
-        chroma_client=chroma_client,
+        chroma_path=runtime.data_dir,
         collection_name=cfg.evolution_collection_name,
         half_life_seconds=cfg.evolution_half_life_seconds,
         event_emit_fn=emit,

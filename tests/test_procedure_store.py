@@ -13,15 +13,23 @@ Tests cover:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import chromadb
 import pytest
 
 from probos.cognitive.procedures import Procedure, ProcedureStep
+from probos.knowledge.embeddings import get_embedding_backend_id
 from probos.types import Episode
+from tests.fixtures.bf662_embedding_fakes import (
+    BF662EmbeddingFunctionA,
+    BF662EmbeddingFunctionB,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +113,44 @@ def _make_cluster(
     c.participating_agents = participating_agents or ["agent-a"]
     c.intent_types = intent_types or ["read"]
     return c
+
+
+@contextmanager
+def _patched_embedding_backend(embedding_function):
+    backend_id = get_embedding_backend_id(embedding_function)
+    with (
+        patch(
+            "probos.knowledge.embeddings.get_collection_embedding_function",
+            return_value=embedding_function,
+        ),
+        patch(
+            "probos.knowledge.embeddings.get_active_embedding_model_name",
+            return_value=embedding_function.name(),
+        ),
+        patch(
+            "probos.knowledge.embeddings.get_active_embedding_backend_id",
+            return_value=backend_id,
+        ),
+    ):
+        yield backend_id
+
+
+async def _snapshot_rows(store) -> list[tuple[str, str]]:
+    cursor = await store._db.execute(
+        "SELECT id, content_snapshot FROM procedure_records ORDER BY id"
+    )
+    return [(str(row[0]), str(row[1])) for row in await cursor.fetchall()]
+
+
+def _mark_procedure_index_rebuilding(store) -> None:
+    metadata = {
+        key: value
+        for key, value in (store._chroma_collection.metadata or {}).items()
+        if not key.startswith("hnsw:")
+    }
+    store._chroma_collection.modify(
+        metadata={**metadata, "procedure_index_state": "rebuilding"}
+    )
 
 
 @pytest.fixture
@@ -236,7 +282,10 @@ class TestStoreInit:
 
         s = ProcedureStore(data_dir=tmp_path / "proc")
         # Ensure that _init_chroma's internal try/except catches the error
-        with patch("probos.cognitive.procedure_store.ProcedureStore._init_chroma") as mock_init:
+        with patch(
+            "probos.cognitive.procedure_store.ProcedureStore._init_chroma",
+            new_callable=AsyncMock,
+        ) as mock_init:
             mock_init.side_effect = None  # Don't raise, let it be a no-op
             await s.start()
             assert s._chroma_collection is None  # Was never set
@@ -416,6 +465,409 @@ class TestSemanticSearch:
         store._chroma_collection = None
         results = await store.find_matching("read file")
         assert results == []
+
+
+class TestBF662ProcedureIndexTransitions:
+    """SQLite remains authoritative across embedding backend transitions."""
+
+    @pytest.mark.asyncio
+    async def test_transition_a_to_b_rebuilds_from_sqlite_losslessly(
+        self, tmp_path: Path
+    ) -> None:
+        from probos.cognitive.procedure_store import ProcedureStore
+
+        root = tmp_path / "a-to-b"
+        procedure = _make_procedure(
+            proc_id="procedure-a-b",
+            name="Read navigation manifest",
+            description="Read the navigation manifest safely",
+        )
+        with _patched_embedding_backend(BF662EmbeddingFunctionA()):
+            first = ProcedureStore(root)
+            await first.start()
+            try:
+                await first.save(procedure)
+                before_rows = await _snapshot_rows(first)
+                assert first._chroma_collection.count() == 1
+            finally:
+                await first.stop()
+
+        with _patched_embedding_backend(BF662EmbeddingFunctionB()):
+            second = ProcedureStore(root)
+            await second.start()
+            try:
+                assert second._chroma_collection.count() == 1
+                matches = await second.find_matching("navigation manifest")
+                assert [match["id"] for match in matches] == [procedure.id]
+                loaded = await second.get(procedure.id)
+                assert loaded is not None
+                assert loaded.to_dict() == procedure.to_dict()
+                assert await _snapshot_rows(second) == before_rows
+            finally:
+                await second.stop()
+
+    @pytest.mark.asyncio
+    async def test_transition_b_to_a_rebuilds_from_sqlite_losslessly(
+        self, tmp_path: Path
+    ) -> None:
+        from probos.cognitive.procedure_store import ProcedureStore
+
+        root = tmp_path / "b-to-a"
+        procedure = _make_procedure(
+            proc_id="procedure-b-a",
+            name="Calibrate sensor array",
+            description="Calibrate every sensor in deterministic order",
+        )
+        with _patched_embedding_backend(BF662EmbeddingFunctionB()):
+            first = ProcedureStore(root)
+            await first.start()
+            try:
+                await first.save(procedure)
+                before_rows = await _snapshot_rows(first)
+            finally:
+                await first.stop()
+
+        with _patched_embedding_backend(BF662EmbeddingFunctionA()):
+            second = ProcedureStore(root)
+            await second.start()
+            try:
+                assert second._chroma_collection.count() == 1
+                matches = await second.find_matching("calibrate sensor")
+                assert [match["id"] for match in matches] == [procedure.id]
+                loaded = await second.get(procedure.id)
+                assert loaded is not None
+                assert loaded.to_dict() == procedure.to_dict()
+                assert await _snapshot_rows(second) == before_rows
+            finally:
+                await second.stop()
+
+    @pytest.mark.asyncio
+    async def test_rebuild_skips_malformed_snapshot_and_keeps_valid_rows(
+        self, tmp_path: Path
+    ) -> None:
+        from probos.cognitive.procedure_store import ProcedureStore
+
+        root = tmp_path / "malformed"
+        valid = _make_procedure(proc_id="valid-row", name="Valid procedure")
+        with _patched_embedding_backend(BF662EmbeddingFunctionA()):
+            first = ProcedureStore(root)
+            await first.start()
+            try:
+                await first.save(valid)
+                await first._db.execute(
+                    "INSERT INTO procedure_records (id, name, content_snapshot) "
+                    "VALUES (?, ?, ?)",
+                    ("bad-list", "Bad list", '["not", "an", "object"]'),
+                )
+                await first._db.execute(
+                    "INSERT INTO procedure_records (id, name, content_snapshot) "
+                    "VALUES (?, ?, ?)",
+                    ("bad-id", "Bad id", json.dumps({"id": "other-id"})),
+                )
+                await first._db.commit()
+                before_rows = await _snapshot_rows(first)
+                _mark_procedure_index_rebuilding(first)
+            finally:
+                await first.stop()
+
+            second = ProcedureStore(root)
+            await second.start()
+            try:
+                assert second._chroma_collection.count() == 1
+                assert second._chroma_collection.get()["ids"] == [valid.id]
+                assert await _snapshot_rows(second) == before_rows
+                loaded = await second.get(valid.id)
+                assert loaded is not None
+                assert loaded.to_dict() == valid.to_dict()
+            finally:
+                await second.stop()
+
+    @pytest.mark.asyncio
+    async def test_interrupted_rebuild_marker_retries_next_start(
+        self, tmp_path: Path
+    ) -> None:
+        from probos.cognitive.procedure_store import ProcedureStore
+
+        root = tmp_path / "interrupted"
+        procedure = _make_procedure(proc_id="retry-row", name="Retry procedure")
+        with _patched_embedding_backend(BF662EmbeddingFunctionA()):
+            first = ProcedureStore(root)
+            await first.start()
+            try:
+                await first.save(procedure)
+                first._chroma_collection.delete(ids=[procedure.id])
+                _mark_procedure_index_rebuilding(first)
+                assert first._chroma_collection.count() == 0
+            finally:
+                await first.stop()
+
+            second = ProcedureStore(root)
+            await second.start()
+            try:
+                assert second._chroma_collection.count() == 1
+                assert second._chroma_collection.get()["ids"] == [procedure.id]
+                assert second._chroma_collection.metadata["procedure_index_state"] == "ready"
+            finally:
+                await second.stop()
+
+    @pytest.mark.asyncio
+    async def test_same_backend_ready_index_is_idempotent(
+        self, tmp_path: Path
+    ) -> None:
+        from probos.cognitive.procedure_store import ProcedureStore
+
+        root = tmp_path / "same-backend"
+        with _patched_embedding_backend(BF662EmbeddingFunctionA()):
+            first = ProcedureStore(root)
+            await first.start()
+            try:
+                await first.save(_make_procedure(proc_id="same-row"))
+                before = first._chroma_collection.get(
+                    include=["documents", "metadatas"]
+                )
+            finally:
+                await first.stop()
+
+            with patch.object(
+                ProcedureStore,
+                "_rebuild_chroma_from_sqlite",
+                new_callable=AsyncMock,
+            ) as rebuild:
+                second = ProcedureStore(root)
+                await second.start()
+                try:
+                    rebuild.assert_not_awaited()
+                    assert second._chroma_collection.get(
+                        include=["documents", "metadatas"]
+                    ) == before
+                    assert second._chroma_collection.metadata["procedure_index_state"] == "ready"
+                finally:
+                    await second.stop()
+
+    @pytest.mark.asyncio
+    async def test_empty_sqlite_transition_marks_empty_index_ready(
+        self, tmp_path: Path
+    ) -> None:
+        from probos.cognitive.procedure_store import ProcedureStore
+
+        root = tmp_path / "empty-transition"
+        with _patched_embedding_backend(BF662EmbeddingFunctionA()):
+            first = ProcedureStore(root)
+            await first.start()
+            await first.stop()
+
+        with _patched_embedding_backend(BF662EmbeddingFunctionB()) as backend_id:
+            second = ProcedureStore(root)
+            await second.start()
+            try:
+                assert second._chroma_collection.count() == 0
+                metadata = second._chroma_collection.metadata
+                assert metadata["procedure_index_state"] == "ready"
+                assert metadata["procedure_indexed_count"] == 0
+                assert metadata["embedding_backend_id"] == backend_id
+            finally:
+                await second.stop()
+
+    @pytest.mark.asyncio
+    async def test_valid_row_index_failure_degrades_and_retries(
+        self, tmp_path: Path
+    ) -> None:
+        from probos.cognitive.procedure_store import ProcedureStore
+
+        root = tmp_path / "write-failure"
+        procedure = _make_procedure(proc_id="write-failure-row")
+        with _patched_embedding_backend(BF662EmbeddingFunctionA()):
+            first = ProcedureStore(root)
+            await first.start()
+            try:
+                await first.save(procedure)
+                _mark_procedure_index_rebuilding(first)
+            finally:
+                await first.stop()
+
+            with patch.object(
+                ProcedureStore,
+                "_write_to_chroma",
+                side_effect=RuntimeError("injected index failure"),
+            ):
+                failed = ProcedureStore(root)
+                await failed.start()
+                try:
+                    assert failed._chroma_collection is None
+                    assert failed._chroma_client is None
+                    loaded = await failed.get(procedure.id)
+                    assert loaded is not None
+                    verifier = chromadb.PersistentClient(
+                        path=str(root / "chroma")
+                    )
+                    try:
+                        raw = verifier.get_collection(
+                            name="procedures", embedding_function=None
+                        )
+                        assert raw.metadata["procedure_index_state"] == "rebuilding"
+                    finally:
+                        verifier.close()
+                finally:
+                    await failed.stop()
+
+            recovered = ProcedureStore(root)
+            await recovered.start()
+            try:
+                assert recovered._chroma_collection.count() == 1
+                assert recovered._chroma_collection.metadata["procedure_index_state"] == "ready"
+            finally:
+                await recovered.stop()
+
+    @pytest.mark.asyncio
+    async def test_stop_closes_owned_chroma_client(
+        self, tmp_path: Path
+    ) -> None:
+        from probos.cognitive.procedure_store import ProcedureStore
+
+        with _patched_embedding_backend(BF662EmbeddingFunctionA()):
+            procedure_store = ProcedureStore(tmp_path / "stop-client")
+            await procedure_store.start()
+            client = procedure_store._chroma_client
+            database = procedure_store._db
+            assert client is not None
+            assert database is not None
+            with (
+                patch.object(client, "close", wraps=client.close) as client_close,
+                patch.object(database, "close", wraps=database.close) as db_close,
+            ):
+                await procedure_store.stop()
+                await procedure_store.stop()
+                client_close.assert_called_once_with()
+                db_close.assert_awaited_once_with()
+            assert procedure_store._chroma_client is None
+            assert procedure_store._chroma_collection is None
+            assert procedure_store._db is None
+
+    @pytest.mark.asyncio
+    async def test_start_cancelled_during_rebuild_closes_partial_resources_and_retries(
+        self, tmp_path: Path
+    ) -> None:
+        from probos.cognitive.procedure_store import ProcedureStore
+
+        root = tmp_path / "cancelled-rebuild"
+        procedure = _make_procedure(
+            proc_id="cancelled-rebuild-row",
+            name="Retry after cancelled rebuild",
+        )
+        with _patched_embedding_backend(BF662EmbeddingFunctionA()):
+            seeded = ProcedureStore(root)
+            await seeded.start()
+            try:
+                await seeded.save(procedure)
+                seeded._chroma_collection.delete(ids=[procedure.id])
+                _mark_procedure_index_rebuilding(seeded)
+            finally:
+                await seeded.stop()
+
+            blocked = ProcedureStore(root)
+            entered = asyncio.Event()
+            original_load_page = blocked._load_rebuild_page
+
+            async def _blocked_load_page(
+                after_id: str,
+                *,
+                page_size: int = 200,
+            ) -> list[tuple[str, str]]:
+                entered.set()
+                await asyncio.Event().wait()
+                return await original_load_page(after_id, page_size=page_size)
+
+            with patch.object(blocked, "_load_rebuild_page", _blocked_load_page):
+                start_task = asyncio.create_task(blocked.start())
+                try:
+                    await entered.wait()
+                    partial_db = blocked._db
+                    partial_client = blocked._chroma_client
+                    assert partial_db is not None
+                    assert partial_client is not None
+                    with patch.object(
+                        partial_client,
+                        "close",
+                        wraps=partial_client.close,
+                    ) as close:
+                        start_task.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await start_task
+                        close.assert_called_once_with()
+                    assert blocked._db is None
+                    assert blocked._chroma_client is None
+                    assert blocked._chroma_collection is None
+                    with pytest.raises(ValueError):
+                        await partial_db.execute("SELECT 1")
+                finally:
+                    if not start_task.done():
+                        start_task.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await start_task
+                    await blocked.stop()
+
+            retry = ProcedureStore(root)
+            await retry.start()
+            try:
+                assert retry._chroma_collection is not None
+                assert retry._chroma_collection.count() == 1
+                assert retry._chroma_collection.get()["ids"] == [procedure.id]
+                loaded = await retry.get(procedure.id)
+                assert loaded is not None
+                assert loaded.to_dict() == procedure.to_dict()
+            finally:
+                await retry.stop()
+
+    @pytest.mark.asyncio
+    async def test_start_exception_after_acquisition_closes_resources_before_propagating(
+        self, tmp_path: Path
+    ) -> None:
+        from probos.cognitive.procedure_store import ProcedureStore
+
+        with _patched_embedding_backend(BF662EmbeddingFunctionA()):
+            procedure_store = ProcedureStore(tmp_path / "start-exception")
+            captured: dict[str, object] = {}
+
+            async def _raise_after_acquisition() -> None:
+                captured["database"] = procedure_store._db
+                captured["client"] = procedure_store._chroma_client
+                client = procedure_store._chroma_client
+                assert client is not None
+                close_patcher = patch.object(
+                    client,
+                    "close",
+                    wraps=client.close,
+                )
+                captured["close_patcher"] = close_patcher
+                captured["close"] = close_patcher.start()
+                raise RuntimeError("injected post-acquisition failure")
+
+            try:
+                with patch.object(
+                    procedure_store,
+                    "_migrate_qualifying_procedures",
+                    _raise_after_acquisition,
+                ):
+                    with pytest.raises(
+                        RuntimeError,
+                        match="injected post-acquisition failure",
+                    ):
+                        await procedure_store.start()
+
+                close = captured["close"]
+                assert isinstance(close, MagicMock)
+                close.assert_called_once_with()
+                assert procedure_store._db is None
+                assert procedure_store._chroma_client is None
+                assert procedure_store._chroma_collection is None
+                database = captured["database"]
+                with pytest.raises(ValueError):
+                    await database.execute("SELECT 1")  # type: ignore[attr-defined]
+            finally:
+                close_patcher = captured.get("close_patcher")
+                if close_patcher is not None:
+                    close_patcher.stop()  # type: ignore[attr-defined]
+                await procedure_store.stop()
 
 
 # ===========================================================================
@@ -643,6 +1095,9 @@ class TestDreamCycleIntegration:
         ]
 
         mock_mem = AsyncMock()
+        mock_mem.sweep_episode_decay = AsyncMock(
+            return_value={"swept": 0, "reinforced": 0}
+        )
         mock_mem.recent = AsyncMock(return_value=episodes)
         mock_mem.get_stats = AsyncMock(return_value={"total": 3})
         mock_mem.get_embeddings = AsyncMock(return_value={
@@ -683,6 +1138,9 @@ class TestDreamCycleIntegration:
         ]
 
         mock_mem = AsyncMock()
+        mock_mem.sweep_episode_decay = AsyncMock(
+            return_value={"swept": 0, "reinforced": 0}
+        )
         mock_mem.recent = AsyncMock(return_value=episodes)
         mock_mem.get_stats = AsyncMock(return_value={"total": 3})
         mock_mem.get_embeddings = AsyncMock(return_value={
@@ -733,6 +1191,9 @@ class TestDreamCycleIntegration:
         ]
 
         mock_mem = AsyncMock()
+        mock_mem.sweep_episode_decay = AsyncMock(
+            return_value={"swept": 0, "reinforced": 0}
+        )
         mock_mem.recent = AsyncMock(return_value=episodes)
         mock_mem.get_stats = AsyncMock(return_value={"total": 3})
         mock_mem.get_embeddings = AsyncMock(return_value={
@@ -778,6 +1239,9 @@ class TestDreamCycleIntegration:
         ]
 
         mock_mem = AsyncMock()
+        mock_mem.sweep_episode_decay = AsyncMock(
+            return_value={"swept": 0, "reinforced": 0}
+        )
         mock_mem.recent = AsyncMock(return_value=episodes)
         mock_mem.get_stats = AsyncMock(return_value={"total": 3})
         mock_mem.get_embeddings = AsyncMock(return_value={

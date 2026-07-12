@@ -12,6 +12,7 @@ same 384 dimensions, dramatically better Q->A cosine similarity.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import os
@@ -20,6 +21,7 @@ from collections import Counter
 from typing import Any, Callable
 
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+from chromadb.utils.embedding_functions import register_embedding_function
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,7 @@ def _stable_bucket(token: str) -> int:
     )
 
 
+@register_embedding_function
 class LocalHashEmbeddingFunction(EmbeddingFunction[Documents]):
     """Network-free deterministic bag-of-hashed-tokens embedding function (BF-657).
 
@@ -218,6 +221,27 @@ def get_collection_embedding_function() -> Any:
     fetch ``onnx.tar.gz`` in CI.
     """
     return get_embedding_function() or LocalHashEmbeddingFunction()
+
+
+def get_embedding_backend_id(
+    embedding_function: EmbeddingFunction[Documents],
+) -> str:
+    """Return a deterministic identity for an embedding backend and config."""
+    name = embedding_function.name()
+    canonical = json.dumps(
+        {"name": name, "config": embedding_function.get_config()},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"{name}:{digest}"
+
+
+def get_active_embedding_backend_id() -> str:
+    """Return the deterministic identity of the active collection backend."""
+    return get_embedding_backend_id(get_collection_embedding_function())
 
 
 def get_active_embedding_model_name() -> str:
