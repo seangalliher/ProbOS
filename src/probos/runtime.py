@@ -4916,12 +4916,19 @@ class ProbOSRuntime:
             skill.name,
         )
 
-    async def _add_skill_to_agents(self, skill: Any, target_agent_type: str = "skill_agent") -> None:
+    async def _add_skill_to_agents(
+        self,
+        skill: Any,
+        target_agent_type: str = "skill_agent",
+        *,
+        persist: bool = True,
+    ) -> None:
         """Add a skill to agents of the target type across all pools.
 
         If no agents of the target type are found, falls back to
         SkillBasedAgent instances in the skills pool (backward compat).
-        After adding, refresh decomposer descriptors.
+        After adding, refresh decomposer descriptors. Warm boot passes
+        ``persist=False`` because it is attaching already-persisted source.
         """
         from probos.cognitive.cognitive_agent import CognitiveAgent
 
@@ -4951,7 +4958,12 @@ class ProbOSRuntime:
         self.decomposer.refresh_descriptors(self._collect_intent_descriptors())
 
         # Persist skill to knowledge store
-        if self._knowledge_store and hasattr(skill, "source_code") and hasattr(skill, "descriptor"):
+        if (
+            persist
+            and self._knowledge_store
+            and hasattr(skill, "source_code")
+            and hasattr(skill, "descriptor")
+        ):
             try:
                 descriptor_dict = {
                     "name": skill.descriptor.name,

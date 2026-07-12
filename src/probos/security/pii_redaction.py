@@ -15,7 +15,16 @@ class PIIRedactor:
     _URL_PATTERN = re.compile(r"https?://[^\s]+")
     _DOCID_PATTERN = re.compile(r"(docid|file_id|item_id)=([A-Za-z0-9_\-]+)", re.IGNORECASE)
     _TOKEN_PATTERN = re.compile(
-        r"(?i)\b(api[_-]?key|token|access_token|refresh_token|password)\s*[:=]\s*([^\s,;]+)"
+        r"(?i)(?P<prefix>(?P<key_quote>[\"']?)\b(?:api[_-]?key|token|"
+        r"access[_-]?token|refresh[_-]?token|password|authorization|secret|"
+        r"client[_-]?secret|credential|credentials)\b(?P=key_quote)\s*[:=]\s*)"
+        r"(?P<bearer>bearer\s+)?(?:"
+        r"(?P<quoted>\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*')|"
+        r"(?P<bare>[^\s,;}\]]+))"
+    )
+    _BEARER_PATTERN = re.compile(
+        r"(?i)\bbearer\s+(?:\"(?:\\.|[^\"\\])*\"|"
+        r"'(?:\\.|[^'\\])*'|[^\s,;}\]]+)"
     )
 
     @staticmethod
@@ -41,7 +50,17 @@ class PIIRedactor:
     @staticmethod
     def redact_tokens(text: str) -> str:
         """Replace token/secret-like key-value pairs."""
-        return PIIRedactor._TOKEN_PATTERN.sub(r"\1=[REDACTED]", text)
+        def _redact_key_value(match: re.Match[str]) -> str:
+            quoted = match.group("quoted")
+            scheme = match.group("bearer") or ""
+            if quoted is not None:
+                replacement = f"{scheme}{quoted[0]}[REDACTED]{quoted[-1]}"
+            else:
+                replacement = f"{scheme}[REDACTED]"
+            return f"{match.group('prefix')}{replacement}"
+
+        text = PIIRedactor._TOKEN_PATTERN.sub(_redact_key_value, text)
+        return PIIRedactor._BEARER_PATTERN.sub("Bearer [REDACTED]", text)
 
     @staticmethod
     def redact_all(text: str) -> str:

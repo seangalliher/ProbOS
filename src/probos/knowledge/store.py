@@ -8,26 +8,92 @@ history) is layered on top of the file I/O primitives.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import keyword
 import logging
 import os
+import re
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable, Literal, TypeVar
 
 from probos.config import KnowledgeConfig
+from probos.security.pii_redaction import PIIRedactor
 from probos.types import AnchorFrame, Episode
 
 log = logging.getLogger(__name__)
 
 # Subdirectory names — one per artifact type (AD-160).
-_SUBDIRS = ("episodes", "agents", "skills", "trust", "routing", "workflows", "qa", "proactive")
+_SUBDIRS = (
+    "episodes",
+    "agents",
+    "skills",
+    "skill_quarantine",
+    "trust",
+    "routing",
+    "workflows",
+    "qa",
+    "proactive",
+)
 
 _SCHEMA_VERSION = 1
+_QUARANTINE_MAX_ERRORS = 20
+_QUARANTINE_MAX_TEXT_CHARS = 500
+_QUARANTINE_MAX_FILE_BYTES = 128 * 1024
+_QUARANTINE_FIELDS = frozenset(
+    {"intent_name", "source_sha256", "reason", "errors", "timestamp"}
+)
+_PERSISTED_SKILL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$", re.ASCII)
+_SOURCE_SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
+_SKILL_STORAGE_DIRS = frozenset({"skills", "skill_quarantine"})
+
+_T = TypeVar("_T")
+
+
+@dataclass(frozen=True)
+class _PersistedSkillPaths:
+    """Resolved, containment-checked paths for one persisted skill."""
+
+    source: Path
+    descriptor: Path
+    quarantine: Path
+
+
+def validate_persisted_skill_name(intent_name: str) -> str:
+    """Return an unchanged safe persisted-skill name or raise ``ValueError``."""
+    if (
+        not isinstance(intent_name, str)
+        or not intent_name.isascii()
+        or _PERSISTED_SKILL_NAME_RE.fullmatch(intent_name) is None
+        or keyword.iskeyword(intent_name)
+        or not f"handle_{intent_name}".isidentifier()
+    ):
+        raise ValueError(
+            "Persisted skill names must match ASCII ^[a-z][a-z0-9_]*$ "
+            "and must not be Python keywords"
+        )
+    return intent_name
+
+
+def _validate_source_sha256(source_sha256: str) -> str:
+    """Return a canonical lowercase SHA-256 digest or raise ``ValueError``."""
+    if (
+        not isinstance(source_sha256, str)
+        or _SOURCE_SHA256_RE.fullmatch(source_sha256) is None
+    ):
+        raise ValueError("Expected source hash must be 64 lowercase hexadecimal characters")
+    return source_sha256
+
+
+def _source_sha256(source_code: str) -> str:
+    """Hash persisted UTF-8 skill source."""
+    return hashlib.sha256(source_code.encode("utf-8")).hexdigest()
 
 
 class KnowledgeStore:
@@ -47,6 +113,7 @@ class KnowledgeStore:
         self._flushing: bool = False  # Guard against debounce/flush race (AD-161)
         self._pending_messages: list[str] = []
         self._commit_timer: asyncio.TimerHandle | None = None
+        self._skill_locks: dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -54,9 +121,14 @@ class KnowledgeStore:
 
     async def initialize(self) -> None:
         """Ensure repo directory exists.  Git init on first write, not here (AD-159)."""
-        self._repo_path.mkdir(parents=True, exist_ok=True)
+        repo_root = self._resolved_repo_root()
+        repo_root.mkdir(parents=True, exist_ok=True)
+        safe_skill_dirs = {
+            sub: self._resolve_skill_directory(sub)
+            for sub in _SKILL_STORAGE_DIRS
+        }
         for sub in _SUBDIRS:
-            (self._repo_path / sub).mkdir(exist_ok=True)
+            safe_skill_dirs.get(sub, self._repo_path / sub).mkdir(exist_ok=True)
 
     @property
     def repo_exists(self) -> bool:
@@ -236,30 +308,74 @@ class KnowledgeStore:
     # Skill persistence
     # ------------------------------------------------------------------
 
-    async def store_skill(self, intent_name: str, source_code: str, descriptor: dict) -> None:
+    async def store_skill(
+        self,
+        intent_name: str,
+        source_code: str,
+        descriptor: dict[str, Any],
+    ) -> None:
         """Write skill source to skills/{intent_name}.py and descriptor to skills/{intent_name}.json."""
-        py_path = self._repo_path / "skills" / f"{intent_name}.py"
-        json_path = self._repo_path / "skills" / f"{intent_name}.json"
-        py_path.write_text(source_code, encoding="utf-8")
-        await self._write_json(json_path, descriptor)
-        await self._schedule_commit(f"Store skill {intent_name}")
+        name = validate_persisted_skill_name(intent_name)
+        source_hash = _source_sha256(source_code)
+        self._resolve_skill_paths(name)
 
-    async def load_skills(self) -> list[tuple[str, str, dict]]:
+        async def _store() -> None:
+            paths = self._resolve_skill_paths(name)
+            paths.source.write_text(source_code, encoding="utf-8")
+            paths = self._resolve_skill_paths(name)
+            await self._write_json(paths.descriptor, descriptor)
+            marker = await self._load_skill_quarantine_locked(name)
+            if marker is not None and marker["source_sha256"] != source_hash:
+                paths = self._resolve_skill_paths(name)
+                paths.quarantine.unlink(missing_ok=True)
+            await self._schedule_commit(f"Store skill {name}")
+
+        await self._run_skill_transaction(name, _store)
+
+    async def load_skills(self) -> list[tuple[str, str, dict[str, Any]]]:
         """Load all skills: (intent_name, source_code, descriptor_dict)."""
-        skills_dir = self._repo_path / "skills"
+        try:
+            skills_dir = self._resolve_skill_directory("skills")
+            self._resolve_skill_directory("skill_quarantine")
+        except ValueError as exc:
+            log.warning(
+                "Skipping persisted skill scan because its storage directory "
+                "escapes the resolved knowledge repo; no skill source will be "
+                "read or executed: %s",
+                exc,
+            )
+            return []
         if not skills_dir.is_dir():
             return []
 
-        results: list[tuple[str, str, dict]] = []
+        results: list[tuple[str, str, dict[str, Any]]] = []
         for json_fp in skills_dir.glob("*.json"):
-            intent_name = json_fp.stem
-            py_fp = skills_dir / f"{intent_name}.py"
-            if not py_fp.is_file():
-                continue
             try:
-                descriptor = await self._read_json(json_fp)
-                source_code = py_fp.read_text(encoding="utf-8")
-                results.append((intent_name, source_code, descriptor))
+                intent_name = validate_persisted_skill_name(json_fp.stem)
+            except ValueError as exc:
+                log.warning(
+                    "Skipping persisted skill descriptor %s because its filename "
+                    "is unsafe; the artifact remains untouched: %s",
+                    json_fp.name,
+                    exc,
+                )
+                continue
+
+            try:
+                self._resolve_skill_paths(intent_name)
+                lock = self._skill_lock(intent_name)
+                async with lock:
+                    loaded = await self._load_skill_pair_locked(intent_name)
+                if loaded is not None:
+                    results.append(loaded)
+            except ValueError as exc:
+                log.warning(
+                    "Skipping persisted skill %s because its resolved artifact "
+                    "path escapes the knowledge repo; the entry remains "
+                    "untouched: %s",
+                    intent_name,
+                    exc,
+                )
             except FileNotFoundError:
                 # BF-658: TOCTOU race — globbed but concurrently removed
                 # (remove_skill) before this read. Benign; skip quietly.
@@ -271,13 +387,474 @@ class KnowledgeStore:
                 log.warning("Failed to load skill %s: %s", intent_name, exc)
         return results
 
-    async def remove_skill(self, intent_name: str) -> None:
-        """Delete skill files and commit removal (mirrors remove_agent)."""
-        py_path = self._repo_path / "skills" / f"{intent_name}.py"
-        json_path = self._repo_path / "skills" / f"{intent_name}.json"
-        py_path.unlink(missing_ok=True)
-        json_path.unlink(missing_ok=True)
-        await self._schedule_commit(f"Remove skill {intent_name}")
+    async def load_skill_source(self, intent_name: str) -> str | None:
+        """Load one persisted skill source under its per-intent lock."""
+        name = validate_persisted_skill_name(intent_name)
+        self._resolve_skill_paths(name)
+        lock = self._skill_lock(name)
+        async with lock:
+            return self._load_skill_source_locked(name)
+
+    async def load_skill_quarantine(self, intent_name: str) -> dict[str, Any] | None:
+        """Load a valid skill quarantine marker, if one exists."""
+        name = validate_persisted_skill_name(intent_name)
+        self._resolve_skill_paths(name)
+        lock = self._skill_lock(name)
+        async with lock:
+            return await self._load_skill_quarantine_locked(name)
+
+    async def load_skill_source_and_quarantine(
+        self,
+        intent_name: str,
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """Atomically read one source and its valid marker under one skill lock."""
+        name = validate_persisted_skill_name(intent_name)
+        self._resolve_skill_paths(name)
+        lock = self._skill_lock(name)
+        async with lock:
+            source_code = self._load_skill_source_locked(name)
+            marker = await self._load_skill_quarantine_locked(name)
+            return source_code, marker
+
+    async def quarantine_skill(
+        self,
+        intent_name: str,
+        *,
+        source_code: str,
+        expected_source_sha256: str,
+        reason: str,
+        errors: list[str],
+    ) -> bool:
+        """Publish a marker only while the expected skill source remains current."""
+        name = validate_persisted_skill_name(intent_name)
+        expected_hash = _validate_source_sha256(expected_source_sha256)
+        if not isinstance(source_code, str) or _source_sha256(source_code) != expected_hash:
+            return False
+        if not isinstance(reason, str):
+            raise ValueError("Skill quarantine reason must be a string")
+        if not isinstance(errors, list) or not all(
+            isinstance(error, str) for error in errors
+        ):
+            raise ValueError("Skill quarantine errors must be a list of strings")
+
+        redacted_reason = self._sanitize_quarantine_text(reason)
+        if not redacted_reason:
+            raise ValueError("Skill quarantine reason must not be empty")
+        redacted_errors = [
+            self._sanitize_quarantine_text(error)
+            for error in errors[:_QUARANTINE_MAX_ERRORS]
+        ]
+
+        self._resolve_skill_paths(name)
+
+        async def _quarantine() -> bool:
+            current_source = self._load_skill_source_locked(name)
+            if current_source is None or _source_sha256(current_source) != expected_hash:
+                return False
+
+            path = self._resolve_skill_paths(name).quarantine
+            marker = {
+                "intent_name": name,
+                "source_sha256": expected_hash,
+                "reason": redacted_reason,
+                "errors": redacted_errors,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            await self._write_skill_quarantine_marker(path, marker)
+            await self._schedule_commit(f"Quarantine skill {name}")
+            return True
+
+        return await self._run_skill_transaction(name, _quarantine)
+
+    async def clear_skill_quarantine(
+        self,
+        intent_name: str,
+        *,
+        expected_source_sha256: str,
+    ) -> bool:
+        """Delete only the valid marker identified by ``expected_source_sha256``."""
+        name = validate_persisted_skill_name(intent_name)
+        expected_hash = _validate_source_sha256(expected_source_sha256)
+        self._resolve_skill_paths(name)
+
+        async def _clear() -> bool:
+            marker = await self._load_skill_quarantine_locked(name)
+            if marker is None or marker["source_sha256"] != expected_hash:
+                return False
+
+            path = self._resolve_skill_paths(name).quarantine
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                return False
+            await self._schedule_commit(f"Clear skill quarantine {name}")
+            return True
+
+        return await self._run_skill_transaction(name, _clear)
+
+    async def remove_skill(
+        self,
+        intent_name: str,
+        *,
+        expected_source_sha256: str | None = None,
+    ) -> bool:
+        """Delete a skill, optionally only while its source hash still matches."""
+        name = validate_persisted_skill_name(intent_name)
+        expected_hash = (
+            _validate_source_sha256(expected_source_sha256)
+            if expected_source_sha256 is not None
+            else None
+        )
+        self._resolve_skill_paths(name)
+
+        async def _remove() -> bool:
+            current_source = self._load_skill_source_locked(name)
+            if expected_hash is not None and (
+                current_source is None or _source_sha256(current_source) != expected_hash
+            ):
+                return False
+
+            paths = self._resolve_skill_paths(name)
+            paths_to_remove = [paths.source, paths.descriptor]
+            if expected_hash is None:
+                paths_to_remove.append(paths.quarantine)
+            else:
+                marker = await self._load_skill_quarantine_locked(name)
+                if marker is not None and marker["source_sha256"] == expected_hash:
+                    paths_to_remove.append(paths.quarantine)
+
+            mutated = False
+            for path in paths_to_remove:
+                paths = self._resolve_skill_paths(name)
+                safe_paths = {paths.source, paths.descriptor, paths.quarantine}
+                if path not in safe_paths:
+                    raise ValueError(
+                        f"Persisted skill path changed before removal: {path}"
+                    )
+                try:
+                    path.unlink()
+                    mutated = True
+                except FileNotFoundError:
+                    continue
+            if mutated:
+                await self._schedule_commit(f"Remove skill {name}")
+            return mutated
+
+        return await self._run_skill_transaction(name, _remove)
+
+    async def _run_skill_transaction(
+        self,
+        intent_name: str,
+        operation: Callable[[], Awaitable[_T]],
+    ) -> _T:
+        """Run a complete locked mutation before propagating cancellation."""
+        lock = self._skill_lock(intent_name)
+        await lock.acquire()
+        try:
+            transaction = self._create_skill_transaction_runner(
+                intent_name, operation,
+            )
+            return await self._await_skill_task(transaction)
+        finally:
+            lock.release()
+
+    def _create_skill_transaction_runner(
+        self,
+        intent_name: str,
+        operation: Callable[[], Awaitable[_T]],
+    ) -> asyncio.Task[_T]:
+        """Create the private runner that owns and drains one operation task."""
+        return asyncio.create_task(
+            self._run_skill_transaction_runner(intent_name, operation),
+            name=f"probos-skill-transaction:{intent_name}",
+        )
+
+    async def _run_skill_transaction_runner(
+        self,
+        intent_name: str,
+        operation: Callable[[], Awaitable[_T]],
+    ) -> _T:
+        """Keep the operation alive until all mutation and commit work completes."""
+        operation_task = asyncio.create_task(
+            operation(),
+            name=f"probos-skill-operation:{intent_name}",
+        )
+        return await self._await_skill_task(operation_task)
+
+    @staticmethod
+    async def _await_skill_task(task: asyncio.Task[_T]) -> _T:
+        """Shield and drain a child task before propagating caller cancellation."""
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError as cancellation:
+            current_task = asyncio.current_task()
+            if current_task is None or current_task.cancelling() == 0:
+                return task.result()
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            try:
+                task.result()
+            except BaseException as task_error:
+                raise cancellation from task_error
+            raise cancellation
+
+    def _skill_lock(self, intent_name: str) -> asyncio.Lock:
+        """Return the per-intent lock after the caller has validated the name."""
+        lock = self._skill_locks.get(intent_name)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._skill_locks[intent_name] = lock
+        return lock
+
+    def _resolved_repo_root(self) -> Path:
+        """Return the canonical knowledge root or fail closed on resolution errors."""
+        try:
+            return self._repo_path.resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(
+                f"Knowledge repo path cannot be resolved safely: {self._repo_path}"
+            ) from exc
+
+    @staticmethod
+    def _require_resolved_child(path: Path, parent: Path, *, label: str) -> None:
+        """Require a resolved path to be a strict child of its resolved parent."""
+        try:
+            relative = path.relative_to(parent)
+        except ValueError as exc:
+            raise ValueError(
+                f"{label} resolves outside its allowed directory: {path}"
+            ) from exc
+        if relative == Path("."):
+            raise ValueError(f"{label} must resolve beneath its allowed directory")
+
+    def _resolve_skill_directory(
+        self,
+        directory_name: Literal["skills", "skill_quarantine"],
+    ) -> Path:
+        """Resolve one skill storage directory and reject symlink/junction escape."""
+        if directory_name not in _SKILL_STORAGE_DIRS:
+            raise ValueError(f"Unsupported persisted skill directory: {directory_name}")
+        root = self._resolved_repo_root()
+        raw_directory = self._repo_path / directory_name
+        try:
+            directory = raw_directory.resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(
+                f"Persisted skill directory cannot be resolved: {raw_directory}"
+            ) from exc
+        self._require_resolved_child(
+            directory,
+            root,
+            label=f"Persisted skill directory {directory_name}",
+        )
+        if raw_directory.exists() and not raw_directory.is_dir():
+            raise ValueError(
+                f"Persisted skill directory is not a directory: {raw_directory}"
+            )
+        return directory
+
+    def _resolve_skill_candidate(
+        self,
+        directory_name: Literal["skills", "skill_quarantine"],
+        filename: str,
+    ) -> Path:
+        """Resolve one skill artifact beneath its canonical storage directory."""
+        root = self._resolved_repo_root()
+        directory = self._resolve_skill_directory(directory_name)
+        raw_candidate = self._repo_path / directory_name / filename
+        try:
+            candidate = raw_candidate.resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(
+                f"Persisted skill artifact cannot be resolved: {raw_candidate}"
+            ) from exc
+        self._require_resolved_child(
+            candidate,
+            root,
+            label=f"Persisted skill artifact {filename}",
+        )
+        self._require_resolved_child(
+            candidate,
+            directory,
+            label=f"Persisted skill artifact {filename}",
+        )
+        return candidate
+
+    def _resolve_skill_paths(self, intent_name: str) -> _PersistedSkillPaths:
+        """Resolve all files for one validated skill without creating anything."""
+        name = validate_persisted_skill_name(intent_name)
+        return _PersistedSkillPaths(
+            source=self._resolve_skill_candidate("skills", f"{name}.py"),
+            descriptor=self._resolve_skill_candidate("skills", f"{name}.json"),
+            quarantine=self._resolve_skill_candidate(
+                "skill_quarantine", f"{name}.json"
+            ),
+        )
+
+    async def _load_skill_pair_locked(
+        self,
+        intent_name: str,
+    ) -> tuple[str, str, dict[str, Any]] | None:
+        """Load a source/descriptor pair while the caller holds the skill lock."""
+        paths = self._resolve_skill_paths(intent_name)
+        if not paths.source.is_file():
+            return None
+        descriptor = await self._read_json(paths.descriptor)
+        paths = self._resolve_skill_paths(intent_name)
+        source_code = paths.source.read_text(encoding="utf-8")
+        return intent_name, source_code, descriptor
+
+    def _load_skill_source_locked(self, intent_name: str) -> str | None:
+        """Read one source while the caller holds the validated intent lock."""
+        path = self._resolve_skill_paths(intent_name).source
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+
+    async def _load_skill_quarantine_locked(
+        self,
+        intent_name: str,
+    ) -> dict[str, Any] | None:
+        """Load and validate one marker while the caller holds the skill lock."""
+        path = self._resolve_skill_paths(intent_name).quarantine
+        if not path.is_file():
+            return None
+        try:
+            data = await self._read_skill_quarantine_marker(path)
+            if not self._is_valid_quarantine_marker(data, intent_name):
+                log.warning(
+                    "Skill quarantine marker for %s is malformed or outside its "
+                    "bounds; ignoring it so the preserved source is revalidated",
+                    intent_name,
+                )
+                return None
+            return data
+        except FileNotFoundError:
+            log.debug(
+                "Skill quarantine marker for %s vanished before read; "
+                "the preserved source will be revalidated",
+                intent_name,
+            )
+            return None
+        except Exception as exc:
+            log.warning(
+                "Failed to load skill quarantine marker for %s: %s; "
+                "ignoring the marker so the preserved source is revalidated",
+                intent_name,
+                exc,
+            )
+            return None
+
+    @staticmethod
+    def _is_valid_quarantine_marker(data: Any, intent_name: str) -> bool:
+        """Return whether untrusted persisted marker data has the exact safe shape."""
+        if not isinstance(data, dict) or set(data) != _QUARANTINE_FIELDS:
+            return False
+        source_hash = data.get("source_sha256")
+        reason = data.get("reason")
+        errors = data.get("errors")
+        timestamp = data.get("timestamp")
+        if (
+            data.get("intent_name") != intent_name
+            or not isinstance(source_hash, str)
+            or _SOURCE_SHA256_RE.fullmatch(source_hash) is None
+            or not isinstance(reason, str)
+            or not reason.strip()
+            or len(reason) > _QUARANTINE_MAX_TEXT_CHARS
+            or not isinstance(errors, list)
+            or len(errors) > _QUARANTINE_MAX_ERRORS
+            or any(
+                not isinstance(error, str)
+                or len(error) > _QUARANTINE_MAX_TEXT_CHARS
+                for error in errors
+            )
+            or not isinstance(timestamp, str)
+        ):
+            return False
+        try:
+            parsed_timestamp = datetime.fromisoformat(
+                timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp
+            )
+        except ValueError:
+            return False
+        return (
+            parsed_timestamp.tzinfo is not None
+            and parsed_timestamp.utcoffset() == timedelta(0)
+        )
+
+    async def _read_skill_quarantine_marker(self, path: Path) -> Any:
+        """Read a marker through a bounded quarantine-specific JSON seam."""
+        safe_directory = self._resolve_skill_directory("skill_quarantine")
+        safe_path = path.resolve(strict=False)
+        self._require_resolved_child(
+            safe_path,
+            safe_directory,
+            label=f"Skill quarantine marker {path.name}",
+        )
+        loop = asyncio.get_running_loop()
+
+        def _read() -> Any:
+            with safe_path.open("rb") as marker_file:
+                raw = marker_file.read(_QUARANTINE_MAX_FILE_BYTES + 1)
+            if len(raw) > _QUARANTINE_MAX_FILE_BYTES:
+                raise ValueError("marker exceeds maximum encoded size")
+            return json.loads(raw.decode("utf-8"))
+
+        return await loop.run_in_executor(None, _read)
+
+    async def _write_skill_quarantine_marker(
+        self,
+        path: Path,
+        marker: dict[str, Any],
+    ) -> None:
+        """Atomically publish a quarantine marker through a unique sibling temp."""
+        loop = asyncio.get_running_loop()
+        content = json.dumps(marker, indent=2, ensure_ascii=False)
+
+        def _write() -> None:
+            marker_name = marker.get("intent_name")
+            safe_path = self._resolve_skill_paths(marker_name).quarantine
+            if path.resolve(strict=False) != safe_path:
+                raise ValueError(
+                    f"Skill quarantine marker path changed before write: {path}"
+                )
+            safe_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_name = tempfile.mkstemp(
+                prefix=f".{safe_path.name}.",
+                suffix=".tmp",
+                dir=str(safe_path.parent),
+            )
+            temp_path = Path(temp_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as temp_file:
+                    fd = -1
+                    temp_file.write(content)
+                    temp_file.flush()
+                    os.fsync(temp_file.fileno())
+                os.replace(temp_path, safe_path)
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+                temp_path.unlink(missing_ok=True)
+
+        await loop.run_in_executor(None, _write)
+
+    @staticmethod
+    def _sanitize_quarantine_text(value: Any) -> str:
+        """Redact and bound a marker field without persisting a traceback."""
+        text = PIIRedactor.redact_all(str(value))
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if any(line.startswith("Traceback (most recent call last)") for line in lines):
+            text = lines[-1] if lines else ""
+        else:
+            text = " ".join(lines)
+        return text[:_QUARANTINE_MAX_TEXT_CHARS]
 
     # ------------------------------------------------------------------
     # Trust persistence (AD-168)
@@ -732,15 +1309,18 @@ class KnowledgeStore:
 
         Returns True if rollback succeeded, False if no history found.
         """
-        if not self._git_available or not self.repo_exists:
-            return False
-
-        # Determine file path
         file_path = self._artifact_path(artifact_type, identifier)
         if file_path is None:
             return False
+        if not self._git_available or not self.repo_exists:
+            return False
 
-        rel_path = file_path.relative_to(self._repo_path).as_posix()
+        rel_root = (
+            self._resolved_repo_root()
+            if artifact_type == "skill"
+            else self._repo_path
+        )
+        rel_path = file_path.relative_to(rel_root).as_posix()
 
         # Get the last two commits affecting this file
         try:
@@ -767,6 +1347,12 @@ class KnowledgeStore:
             return False
 
         # Write the previous version
+        if artifact_type == "skill":
+            current_path = self._artifact_path(artifact_type, identifier)
+            if current_path != file_path:
+                raise ValueError(
+                    "Persisted skill artifact path changed before rollback write"
+                )
         file_path.write_text(previous_content, encoding="utf-8")
         await self._git_commit(f"Rollback {artifact_type}/{identifier} to {prev_commit[:8]}")
         return True
@@ -778,14 +1364,18 @@ class KnowledgeStore:
 
         Returns [{commit_hash, timestamp, message}, ...].
         """
-        if not self._git_available or not self.repo_exists:
-            return []
-
         file_path = self._artifact_path(artifact_type, identifier)
         if file_path is None:
             return []
+        if not self._git_available or not self.repo_exists:
+            return []
 
-        rel_path = file_path.relative_to(self._repo_path).as_posix()
+        rel_root = (
+            self._resolved_repo_root()
+            if artifact_type == "skill"
+            else self._repo_path
+        )
+        rel_path = file_path.relative_to(rel_root).as_posix()
         try:
             result = await self._git_run(
                 "log", "--follow", f"--format=%H|%aI|%s", f"-n{limit}",
@@ -817,7 +1407,8 @@ class KnowledgeStore:
         elif artifact_type == "agent":
             return self._repo_path / "agents" / f"{identifier}.json"
         elif artifact_type == "skill":
-            return self._repo_path / "skills" / f"{identifier}.json"
+            skill_name = validate_persisted_skill_name(identifier)
+            return self._resolve_skill_paths(skill_name).descriptor
         elif artifact_type == "trust":
             return self._repo_path / "trust" / "snapshot.json"
         elif artifact_type == "routing":

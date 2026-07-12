@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import shutil
+import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -298,6 +302,91 @@ def knowledge_store_git(tmp_path):
     return __import__("probos.knowledge.store", fromlist=["KnowledgeStore"]).KnowledgeStore(cfg)
 
 
+def _block_next_quarantine_replace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[threading.Event, threading.Event]:
+    """Block one marker publication inside its executor thread."""
+    entered = threading.Event()
+    release = threading.Event()
+    real_replace = os.replace
+    blocked = False
+
+    def _blocked_replace(src: os.PathLike[str], dst: os.PathLike[str]) -> None:
+        nonlocal blocked
+        if not blocked and Path(dst).parent.name == "skill_quarantine":
+            blocked = True
+            entered.set()
+            if not release.wait(timeout=10):
+                raise AssertionError("timed out waiting to release marker publication")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", _blocked_replace)
+    return entered, release
+
+
+def _block_next_skill_descriptor_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[threading.Event, threading.Event]:
+    """Block one skills/wanted.json write inside the JSON executor thread."""
+    entered = threading.Event()
+    release = threading.Event()
+    real_write_text = Path.write_text
+    blocked = False
+
+    def _blocked_write_text(path: Path, data: str, *args: Any, **kwargs: Any) -> int:
+        nonlocal blocked
+        if (
+            not blocked
+            and path.parent.name == "skills"
+            and path.name == "wanted.json"
+        ):
+            blocked = True
+            entered.set()
+            if not release.wait(timeout=10):
+                raise AssertionError("timed out waiting to release descriptor write")
+        return real_write_text(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _blocked_write_text)
+    return entered, release
+
+
+def _create_directory_escape(link: Path, target: Path) -> None:
+    """Create a directory symlink, falling back to a Windows junction."""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return
+    except OSError as symlink_error:
+        if os.name != "nt":
+            pytest.skip(f"directory symlinks unavailable: {symlink_error}")
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        pytest.skip(f"Windows junctions unavailable: {completed.stderr}")
+
+
+def _remove_directory_escape(link: Path) -> None:
+    """Remove a test directory link without touching its target."""
+    if not link.exists() and not link.is_symlink():
+        return
+    if link.is_symlink():
+        link.unlink()
+    else:
+        link.rmdir()
+
+
+async def _deliver_task_cancellation(task: asyncio.Task[Any]) -> None:
+    """Deliver cancellation before a deterministic next-loop checkpoint."""
+    task.cancel()
+    loop = asyncio.get_running_loop()
+    checkpoint: asyncio.Future[None] = loop.create_future()
+    loop.call_soon(checkpoint.set_result, None)
+    await checkpoint
+
+
 def _make_test_episode(id_: str = "test1", user_input: str = "read file", ts: float = 0.0) -> Episode:
     return Episode(
         id=id_,
@@ -323,7 +412,10 @@ class TestKnowledgeStoreInit:
     async def test_initialize_creates_subdirs(self, knowledge_store):
         """initialize() creates all artifact subdirectories."""
         await knowledge_store.initialize()
-        for sub in ("episodes", "agents", "skills", "trust", "routing", "workflows", "qa"):
+        for sub in (
+            "episodes", "agents", "skills", "skill_quarantine",
+            "trust", "routing", "workflows", "qa",
+        ):
             assert (knowledge_store.repo_path / sub).is_dir()
 
     @pytest.mark.asyncio
@@ -573,6 +665,1158 @@ class TestKnowledgeStoreSkills:
         name, source, desc = loaded[0]
         assert name == "summarize"
         assert "handle_summarize" in source
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "name",
+        ["calculate", "translate_text", "count_words", "get_weather", "skill2"],
+    )
+    async def test_persisted_skill_name_valid_conventions_accepted(
+        self, knowledge_store, name,
+    ):
+        await knowledge_store.initialize()
+
+        await knowledge_store.store_skill(name, "pass\n", {"name": name})
+
+        assert await knowledge_store.load_skill_source(name) == "pass\n"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "", " ", ".", "..", "a..b", "/tmp/x", r"C:\tmp\x",
+            r"\\server\share", "a/b", r"a\b", "my-skill", "my skill",
+            "1skill", "Upper", "a:b", "café", "for", None,
+        ],
+    )
+    @pytest.mark.parametrize(
+        "api_name",
+        [
+            "store_skill", "load_skill_source", "load_skill_quarantine",
+            "load_skill_source_and_quarantine", "quarantine_skill",
+            "clear_skill_quarantine", "remove_skill",
+        ],
+    )
+    async def test_invalid_skill_name_rejected_before_side_effects(
+        self, knowledge_store, name, api_name,
+    ):
+        await knowledge_store.initialize()
+        before = sorted(
+            path.relative_to(knowledge_store.repo_path).as_posix()
+            for path in knowledge_store.repo_path.rglob("*")
+        )
+        source = "source"
+        source_hash = hashlib.sha256(source.encode()).hexdigest()
+
+        with pytest.raises(ValueError):
+            if api_name == "store_skill":
+                await knowledge_store.store_skill(name, source, {"name": name})
+            elif api_name == "load_skill_source":
+                await knowledge_store.load_skill_source(name)
+            elif api_name == "load_skill_quarantine":
+                await knowledge_store.load_skill_quarantine(name)
+            elif api_name == "load_skill_source_and_quarantine":
+                await knowledge_store.load_skill_source_and_quarantine(name)
+            elif api_name == "quarantine_skill":
+                await knowledge_store.quarantine_skill(
+                    name,
+                    source_code=source,
+                    expected_source_sha256=source_hash,
+                    reason="invalid",
+                    errors=[],
+                )
+            elif api_name == "clear_skill_quarantine":
+                await knowledge_store.clear_skill_quarantine(
+                    name, expected_source_sha256=source_hash,
+                )
+            else:
+                await knowledge_store.remove_skill(name)
+
+        after = sorted(
+            path.relative_to(knowledge_store.repo_path).as_posix()
+            for path in knowledge_store.repo_path.rglob("*")
+        )
+        assert after == before
+        assert knowledge_store._skill_locks == {}
+        assert knowledge_store._pending_messages == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "unsafe_name",
+        [
+            "..", "../escape", r"..\escape", "/tmp/escape", r"C:\tmp\escape",
+            r"\\server\share", "nested/escape", r"nested\escape",
+        ],
+    )
+    @pytest.mark.parametrize("api_name", ["rollback_artifact", "artifact_history"])
+    async def test_generic_skill_artifact_apis_reject_traversal_without_effects(
+        self, knowledge_store, unsafe_name, api_name,
+    ):
+        await knowledge_store.initialize()
+        knowledge_store._git_available = True
+        knowledge_store._repo_initialised = True
+        git_run = AsyncMock()
+        knowledge_store._git_run = git_run
+        before = sorted(
+            path.relative_to(knowledge_store.repo_path).as_posix()
+            for path in knowledge_store.repo_path.rglob("*")
+        )
+
+        with pytest.raises(ValueError):
+            if api_name == "rollback_artifact":
+                await knowledge_store.rollback_artifact("skill", unsafe_name)
+            else:
+                await knowledge_store.artifact_history("skill", unsafe_name)
+
+        after = sorted(
+            path.relative_to(knowledge_store.repo_path).as_posix()
+            for path in knowledge_store.repo_path.rglob("*")
+        )
+        assert after == before
+        git_run.assert_not_awaited()
+        assert knowledge_store._pending_messages == []
+
+    @pytest.mark.asyncio
+    async def test_skills_directory_junction_escape_fails_closed_before_effects(
+        self, tmp_path, caplog,
+    ):
+        from probos.knowledge.store import KnowledgeStore
+
+        repo = tmp_path / "knowledge"
+        outside = tmp_path / "outside-skills"
+        sentinel = tmp_path / "executed"
+        repo.mkdir()
+        outside.mkdir()
+        (repo / "skill_quarantine").mkdir()
+        outside_source = outside / "wanted.py"
+        outside_descriptor = outside / "wanted.json"
+        outside_source.write_text(
+            f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('ran')\n",
+            encoding="utf-8",
+        )
+        outside_descriptor.write_text('{"name":"wanted"}', encoding="utf-8")
+        source_bytes = outside_source.read_bytes()
+        descriptor_bytes = outside_descriptor.read_bytes()
+        link = repo / "skills"
+        _create_directory_escape(link, outside)
+        store = KnowledgeStore(KnowledgeConfig(repo_path=str(repo), auto_commit=False))
+        store._schedule_commit = AsyncMock()
+        store._git_available = True
+        store._repo_initialised = True
+        store._git_run = AsyncMock()
+
+        try:
+            with pytest.raises(ValueError, match="outside"):
+                await store.initialize()
+            with caplog.at_level(logging.WARNING, logger="probos.knowledge.store"):
+                assert await store.load_skills() == []
+            with pytest.raises(ValueError, match="outside"):
+                await store.load_skill_source("wanted")
+            with pytest.raises(ValueError, match="outside"):
+                await store.store_skill("wanted", "replacement", {"name": "wanted"})
+            with pytest.raises(ValueError, match="outside"):
+                await store.remove_skill("wanted")
+            with pytest.raises(ValueError, match="outside"):
+                await store.artifact_history("skill", "wanted")
+
+            assert outside_source.read_bytes() == source_bytes
+            assert outside_descriptor.read_bytes() == descriptor_bytes
+            assert not sentinel.exists()
+            assert store._skill_locks == {}
+            store._schedule_commit.assert_not_awaited()
+            store._git_run.assert_not_awaited()
+            assert "no skill source will be read or executed" in caplog.text
+        finally:
+            _remove_directory_escape(link)
+
+    @pytest.mark.asyncio
+    async def test_quarantine_directory_junction_escape_fails_closed_before_effects(
+        self, tmp_path, caplog,
+    ):
+        from probos.knowledge.store import KnowledgeStore
+
+        repo = tmp_path / "knowledge"
+        outside = tmp_path / "outside-quarantine"
+        repo.mkdir()
+        outside.mkdir()
+        (repo / "skills").mkdir()
+        outside_marker = outside / "wanted.json"
+        outside_marker.write_text('{"outside":true}', encoding="utf-8")
+        marker_bytes = outside_marker.read_bytes()
+        link = repo / "skill_quarantine"
+        _create_directory_escape(link, outside)
+        store = KnowledgeStore(KnowledgeConfig(repo_path=str(repo), auto_commit=False))
+        store._schedule_commit = AsyncMock()
+
+        try:
+            with pytest.raises(ValueError, match="outside"):
+                await store.initialize()
+            with caplog.at_level(logging.WARNING, logger="probos.knowledge.store"):
+                assert await store.load_skills() == []
+            with pytest.raises(ValueError, match="outside"):
+                await store.store_skill("wanted", "source", {"name": "wanted"})
+            with pytest.raises(ValueError, match="outside"):
+                await store.load_skill_source_and_quarantine("wanted")
+            with pytest.raises(ValueError, match="outside"):
+                await store.remove_skill("wanted")
+
+            assert outside_marker.read_bytes() == marker_bytes
+            assert not (repo / "skills" / "wanted.py").exists()
+            assert store._skill_locks == {}
+            store._schedule_commit.assert_not_awaited()
+            assert "no skill source will be read or executed" in caplog.text
+        finally:
+            _remove_directory_escape(link)
+
+    @pytest.mark.asyncio
+    async def test_skill_source_file_symlink_escape_is_skipped_and_fails_closed(
+        self, knowledge_store, tmp_path, caplog,
+    ):
+        await knowledge_store.initialize()
+        outside_source = tmp_path / "outside-source.py"
+        outside_source.write_text("outside-source", encoding="utf-8")
+        source_bytes = outside_source.read_bytes()
+        descriptor = knowledge_store.repo_path / "skills" / "wanted.json"
+        descriptor.write_text('{"name":"wanted"}', encoding="utf-8")
+        source_link = knowledge_store.repo_path / "skills" / "wanted.py"
+        try:
+            source_link.symlink_to(outside_source)
+        except OSError as exc:
+            pytest.skip(f"file symlinks unavailable: {exc}")
+        knowledge_store._schedule_commit = AsyncMock()
+        knowledge_store._git_available = True
+        knowledge_store._repo_initialised = True
+        knowledge_store._git_run = AsyncMock()
+
+        with caplog.at_level(logging.WARNING, logger="probos.knowledge.store"):
+            assert await knowledge_store.load_skills() == []
+        with pytest.raises(ValueError, match="outside"):
+            await knowledge_store.load_skill_source("wanted")
+        with pytest.raises(ValueError, match="outside"):
+            await knowledge_store.store_skill("wanted", "replacement", {"name": "wanted"})
+        with pytest.raises(ValueError, match="outside"):
+            await knowledge_store.remove_skill("wanted")
+        with pytest.raises(ValueError, match="outside"):
+            await knowledge_store.rollback_artifact("skill", "wanted")
+
+        assert outside_source.read_bytes() == source_bytes
+        assert source_link.is_symlink()
+        assert descriptor.read_text(encoding="utf-8") == '{"name":"wanted"}'
+        assert knowledge_store._skill_locks == {}
+        knowledge_store._schedule_commit.assert_not_awaited()
+        knowledge_store._git_run.assert_not_awaited()
+        assert "resolved artifact path escapes" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_hostile_descriptor_filename_skipped_with_valid_sibling(
+        self, knowledge_store, caplog,
+    ):
+        await knowledge_store.initialize()
+        skills_dir = knowledge_store.repo_path / "skills"
+        hostile_descriptor = skills_dir / "my-skill.json"
+        hostile_source = skills_dir / "my-skill.py"
+        hostile_descriptor.write_text('{"name":"my-skill"}', encoding="utf-8")
+        hostile_source.write_text("pass\n", encoding="utf-8")
+        await knowledge_store.store_skill("valid_skill", "pass\n", {"name": "valid_skill"})
+
+        with caplog.at_level(logging.WARNING, logger="probos.knowledge.store"):
+            loaded = await knowledge_store.load_skills()
+
+        assert [entry[0] for entry in loaded] == ["valid_skill"]
+        assert hostile_descriptor.exists()
+        assert hostile_source.exists()
+        assert "unsafe" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_quarantine_round_trip_is_bounded_redacted_and_preserves_skill(
+        self, knowledge_store,
+    ):
+        await knowledge_store.initialize()
+        source = "async def handle_other(intent, llm_client=None):\n    return None\n"
+        source_hash = hashlib.sha256(source.encode()).hexdigest()
+        descriptor = {"name": "wanted", "description": "exact bytes"}
+        await knowledge_store.store_skill("wanted", source, descriptor)
+        source_path = knowledge_store.repo_path / "skills" / "wanted.py"
+        descriptor_path = knowledge_store.repo_path / "skills" / "wanted.json"
+        source_bytes = source_path.read_bytes()
+        descriptor_bytes = descriptor_path.read_bytes()
+        secrets = [
+            "auth-value", "bare-value", "secret-value", "client-value",
+            "credential-value", "token-value", "password-value", "api-value",
+            "sensitive-value", "quoted-client-value", "two word secret",
+            "alpha", "bravo", "charlie", "delta", "echo", "foxtrot",
+            "golf", "hotel", "india",
+        ]
+        reason = (
+            'Authorization: Bearer auth-value Bearer bare-value '
+            'Authorization : Bearer "alpha bravo charlie" '
+            "authorization = Bearer 'delta echo foxtrot' "
+            'Bearer "golf hotel india" '
+            '{"secret": "sensitive-value"} credentials: "two word secret" '
+            + ("x" * 700)
+        )
+        errors = [
+            "secret=secret-value client_secret=client-value "
+            "{'client_secret': 'quoted-client-value'} "
+            "credential=credential-value token=token-value "
+            "password=password-value api-key=api-value " + ("y" * 700)
+        ] * 25
+
+        mutated = await knowledge_store.quarantine_skill(
+            "wanted",
+            source_code=source,
+            expected_source_sha256=source_hash,
+            reason=reason,
+            errors=errors,
+        )
+        marker = await knowledge_store.load_skill_quarantine("wanted")
+        raw = (
+            knowledge_store.repo_path / "skill_quarantine" / "wanted.json"
+        ).read_text(encoding="utf-8")
+
+        assert mutated is True
+        assert marker is not None
+        assert marker["source_sha256"] == source_hash
+        assert 0 < len(marker["reason"]) <= 500
+        assert len(marker["errors"]) == 20
+        assert all(len(error) <= 500 for error in marker["errors"])
+        assert all(secret not in raw for secret in secrets)
+        assert source_path.read_bytes() == source_bytes
+        assert descriptor_path.read_bytes() == descriptor_bytes
+
+    @pytest.mark.asyncio
+    async def test_expected_hash_compare_failures_do_not_mutate_or_commit(
+        self, knowledge_store,
+    ):
+        await knowledge_store.initialize()
+        source_a = "source-a"
+        source_b = "source-b"
+        hash_a = hashlib.sha256(source_a.encode()).hexdigest()
+        hash_b = hashlib.sha256(source_b.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source_b, {"name": "wanted"})
+        commit_messages: list[str] = []
+
+        async def _capture_commit(message: str) -> None:
+            commit_messages.append(message)
+
+        knowledge_store._schedule_commit = _capture_commit
+        assert await knowledge_store.quarantine_skill(
+            "wanted",
+            source_code=source_a,
+            expected_source_sha256=hash_a,
+            reason="invalid",
+            errors=[],
+        ) is False
+        assert await knowledge_store.clear_skill_quarantine(
+            "wanted", expected_source_sha256=hash_a,
+        ) is False
+        assert await knowledge_store.remove_skill(
+            "wanted", expected_source_sha256=hash_a,
+        ) is False
+
+        assert await knowledge_store.load_skill_source("wanted") == source_b
+        assert await knowledge_store.load_skill_quarantine("wanted") is None
+        assert commit_messages == []
+        assert hash_a != hash_b
+
+    @pytest.mark.asyncio
+    async def test_quarantine_rejects_source_argument_hash_mismatch_without_commit(
+        self, knowledge_store,
+    ):
+        await knowledge_store.initialize()
+        await knowledge_store.store_skill("wanted", "source-a", {"name": "wanted"})
+        expected_hash = hashlib.sha256(b"source-a").hexdigest()
+        commit_messages: list[str] = []
+
+        async def _capture_commit(message: str) -> None:
+            commit_messages.append(message)
+
+        knowledge_store._schedule_commit = _capture_commit
+
+        assert await knowledge_store.quarantine_skill(
+            "wanted",
+            source_code="source-b",
+            expected_source_sha256=expected_hash,
+            reason="invalid",
+            errors=[],
+        ) is False
+        assert await knowledge_store.load_skill_quarantine("wanted") is None
+        assert commit_messages == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_hash", ["", "A" * 64, "g" * 64, "0" * 63])
+    async def test_expected_hash_must_be_lowercase_sha256(
+        self, knowledge_store, bad_hash,
+    ):
+        await knowledge_store.initialize()
+        await knowledge_store.store_skill("wanted", "source", {"name": "wanted"})
+
+        with pytest.raises(ValueError):
+            await knowledge_store.clear_skill_quarantine(
+                "wanted", expected_source_sha256=bad_hash,
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            {"remove_field": "reason"},
+            {"reason": "x" * 501},
+            {"reason": "   \t"},
+            {"errors": ["e"] * 21},
+            {"errors": ["e" * 501]},
+            {"source_sha256": "A" * 64},
+            {"source_sha256": "z" * 64},
+            {"intent_name": "other"},
+            {"timestamp": "2026-07-10T00:00:00"},
+            {"timestamp": "2026-07-10T01:00:00+01:00"},
+            {"timestamp": "not-a-time"},
+            {"errors": "not-a-list"},
+            {"reason": 1},
+        ],
+    )
+    async def test_marker_read_rejects_invalid_or_unbounded_shape(
+        self, knowledge_store, mutation, caplog,
+    ):
+        await knowledge_store.initialize()
+        marker_path = knowledge_store.repo_path / "skill_quarantine" / "wanted.json"
+        marker = {
+            "intent_name": "wanted",
+            "source_sha256": "0" * 64,
+            "reason": "invalid",
+            "errors": ["error"],
+            "timestamp": "2026-07-10T00:00:00+00:00",
+        }
+        mutation = dict(mutation)
+        remove_field = mutation.pop("remove_field", None)
+        marker.update(mutation)
+        if remove_field is not None:
+            marker.pop(remove_field)
+        marker_path.write_text(json.dumps(marker), encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="probos.knowledge.store"):
+            loaded = await knowledge_store.load_skill_quarantine("wanted")
+
+        assert loaded is None
+        assert "quarantine marker" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_marker_read_rejects_raw_file_over_128_kib(
+        self, knowledge_store, caplog,
+    ):
+        await knowledge_store.initialize()
+        marker_path = knowledge_store.repo_path / "skill_quarantine" / "wanted.json"
+        marker_path.write_bytes(b'{"reason":"' + (b"x" * (128 * 1024)) + b'"}')
+        assert marker_path.stat().st_size > 128 * 1024
+
+        with caplog.at_level(logging.WARNING, logger="probos.knowledge.store"):
+            marker = await knowledge_store.load_skill_quarantine("wanted")
+
+        assert marker is None
+        assert "exceeds maximum encoded size" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_load_skill_quarantine_malformed_marker_warns_and_returns_none(
+        self, knowledge_store, caplog,
+    ):
+        await knowledge_store.initialize()
+        marker_path = knowledge_store.repo_path / "skill_quarantine" / "wanted.json"
+        marker_path.write_text("{bad json", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="probos.knowledge.store"):
+            marker = await knowledge_store.load_skill_quarantine("wanted")
+
+        assert marker is None
+        assert "Failed to load skill quarantine marker for wanted" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_store_skill_preserves_valid_same_hash_marker(self, knowledge_store):
+        await knowledge_store.initialize()
+        source = "source-a"
+        source_hash = hashlib.sha256(source.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source, {"name": "wanted"})
+        await knowledge_store.quarantine_skill(
+            "wanted", source_code=source, expected_source_sha256=source_hash,
+            reason="same", errors=[],
+        )
+        marker_path = knowledge_store.repo_path / "skill_quarantine" / "wanted.json"
+        marker_bytes = marker_path.read_bytes()
+
+        await knowledge_store.store_skill(
+            "wanted", source, {"name": "wanted", "description": "updated"},
+        )
+
+        assert marker_path.read_bytes() == marker_bytes
+        marker = await knowledge_store.load_skill_quarantine("wanted")
+        assert marker is not None
+        assert marker["source_sha256"] == source_hash
+
+    @pytest.mark.asyncio
+    async def test_load_source_and_quarantine_returns_one_locked_state(
+        self, knowledge_store,
+    ):
+        await knowledge_store.initialize()
+        source = "source-a"
+        source_hash = hashlib.sha256(source.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source, {"name": "wanted"})
+        await knowledge_store.quarantine_skill(
+            "wanted",
+            source_code=source,
+            expected_source_sha256=source_hash,
+            reason="invalid",
+            errors=[],
+        )
+
+        loaded_source, marker = await knowledge_store.load_skill_source_and_quarantine(
+            "wanted"
+        )
+
+        assert loaded_source == source
+        assert marker is not None
+        assert marker["source_sha256"] == source_hash
+
+    @pytest.mark.asyncio
+    async def test_concurrent_clear_hash_a_does_not_erase_marker_hash_b(
+        self, knowledge_store, monkeypatch,
+    ):
+        await knowledge_store.initialize()
+        source_a = "source-a"
+        source_b = "source-b"
+        hash_a = hashlib.sha256(source_a.encode()).hexdigest()
+        hash_b = hashlib.sha256(source_b.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source_a, {"name": "wanted"})
+        await knowledge_store.quarantine_skill(
+            "wanted", source_code=source_a, expected_source_sha256=hash_a,
+            reason="a", errors=[],
+        )
+        await knowledge_store.store_skill("wanted", source_b, {"name": "wanted"})
+        entered_write = asyncio.Event()
+        release_write = asyncio.Event()
+        real_write = knowledge_store._write_skill_quarantine_marker
+
+        async def _blocked_write(path, marker):
+            entered_write.set()
+            await release_write.wait()
+            await real_write(path, marker)
+
+        monkeypatch.setattr(
+            knowledge_store, "_write_skill_quarantine_marker", _blocked_write,
+        )
+        marker_task = asyncio.create_task(
+            knowledge_store.quarantine_skill(
+                "wanted", source_code=source_b, expected_source_sha256=hash_b,
+                reason="b", errors=[],
+            )
+        )
+        await entered_write.wait()
+        clear_task = asyncio.create_task(
+            knowledge_store.clear_skill_quarantine(
+                "wanted", expected_source_sha256=hash_a,
+            )
+        )
+        assert not clear_task.done()
+        release_write.set()
+
+        assert await marker_task is True
+        assert await clear_task is False
+
+        marker = await knowledge_store.load_skill_quarantine("wanted")
+        assert marker is not None
+        assert marker["source_sha256"] == hash_b
+
+    @pytest.mark.asyncio
+    async def test_quarantine_serialized_with_store_cannot_publish_old_hash(
+        self, knowledge_store, monkeypatch,
+    ):
+        await knowledge_store.initialize()
+        source_a = "source-a"
+        source_b = "source-b"
+        hash_a = hashlib.sha256(source_a.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source_a, {"name": "wanted"})
+        entered_write = asyncio.Event()
+        release_write = asyncio.Event()
+        real_write = knowledge_store._write_skill_quarantine_marker
+
+        async def _blocked_write(path, marker):
+            entered_write.set()
+            await release_write.wait()
+            await real_write(path, marker)
+
+        monkeypatch.setattr(knowledge_store, "_write_skill_quarantine_marker", _blocked_write)
+        quarantine_task = asyncio.create_task(
+            knowledge_store.quarantine_skill(
+                "wanted", source_code=source_a, expected_source_sha256=hash_a,
+                reason="a", errors=[],
+            )
+        )
+        await entered_write.wait()
+        store_task = asyncio.create_task(
+            knowledge_store.store_skill("wanted", source_b, {"name": "wanted"})
+        )
+        assert not store_task.done()
+        release_write.set()
+
+        assert await quarantine_task is True
+        await store_task
+
+        assert await knowledge_store.load_skill_source("wanted") == source_b
+        marker = await knowledge_store.load_skill_quarantine("wanted")
+        assert marker is None
+
+    @pytest.mark.asyncio
+    async def test_quarantine_old_hash_waiting_behind_store_b_returns_false(
+        self, knowledge_store, monkeypatch,
+    ):
+        await knowledge_store.initialize()
+        source_a = "source-a"
+        source_b = "source-b"
+        hash_a = hashlib.sha256(source_a.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source_a, {"name": "wanted"})
+        entered_descriptor_write = asyncio.Event()
+        release_descriptor_write = asyncio.Event()
+        real_write_json = knowledge_store._write_json
+
+        async def _blocked_descriptor_write(path, data):
+            if path.name == "wanted.json" and path.parent.name == "skills":
+                entered_descriptor_write.set()
+                await release_descriptor_write.wait()
+            await real_write_json(path, data)
+
+        monkeypatch.setattr(knowledge_store, "_write_json", _blocked_descriptor_write)
+        store_task = asyncio.create_task(
+            knowledge_store.store_skill("wanted", source_b, {"name": "wanted"})
+        )
+        await entered_descriptor_write.wait()
+        quarantine_task = asyncio.create_task(
+            knowledge_store.quarantine_skill(
+                "wanted", source_code=source_a, expected_source_sha256=hash_a,
+                reason="old", errors=[],
+            )
+        )
+        assert not quarantine_task.done()
+        release_descriptor_write.set()
+
+        await store_task
+        assert await quarantine_task is False
+        assert await knowledge_store.load_skill_source("wanted") == source_b
+        assert await knowledge_store.load_skill_quarantine("wanted") is None
+
+    @pytest.mark.asyncio
+    async def test_cancelled_marker_write_drains_before_store_b_can_overtake(
+        self, knowledge_store, monkeypatch,
+    ):
+        await knowledge_store.initialize()
+        source_a = "source-a"
+        source_b = "source-b"
+        hash_a = hashlib.sha256(source_a.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source_a, {"name": "wanted"})
+        entered_replace, release_replace = _block_next_quarantine_replace(monkeypatch)
+        marker_task = asyncio.create_task(
+            knowledge_store.quarantine_skill(
+                "wanted", source_code=source_a, expected_source_sha256=hash_a,
+                reason="a", errors=[],
+            )
+        )
+        assert await asyncio.to_thread(entered_replace.wait, 10)
+        store_started = asyncio.Event()
+        store_task: asyncio.Task[None] | None = None
+        cancelled = False
+
+        async def _store_b() -> None:
+            store_started.set()
+            await knowledge_store.store_skill(
+                "wanted", source_b, {"name": "wanted"},
+            )
+
+        try:
+            await _deliver_task_cancellation(marker_task)
+            assert not marker_task.done()
+            store_task = asyncio.create_task(_store_b())
+            await store_started.wait()
+            assert not store_task.done()
+            assert (
+                knowledge_store.repo_path / "skills" / "wanted.py"
+            ).read_text(encoding="utf-8") == source_a
+        finally:
+            release_replace.set()
+            try:
+                await marker_task
+            except asyncio.CancelledError:
+                cancelled = True
+            if store_task is not None:
+                await store_task
+
+        assert cancelled is True
+        assert await knowledge_store.load_skill_source("wanted") == source_b
+        assert await knowledge_store.load_skill_quarantine("wanted") is None
+
+    @pytest.mark.asyncio
+    async def test_cancelled_private_runner_drains_before_store_b_can_overtake(
+        self, knowledge_store, monkeypatch,
+    ):
+        await knowledge_store.initialize()
+        source_a = "source-a"
+        source_b = "source-b"
+        hash_a = hashlib.sha256(source_a.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source_a, {"name": "wanted"})
+        source_path = knowledge_store.repo_path / "skills" / "wanted.py"
+        marker_path = (
+            knowledge_store.repo_path / "skill_quarantine" / "wanted.json"
+        )
+        entered_replace, release_replace = _block_next_quarantine_replace(monkeypatch)
+        commit_entered = asyncio.Event()
+        commit_finished = asyncio.Event()
+        release_commit = asyncio.Event()
+        commit_messages: list[str] = []
+
+        async def _capture_commit(message: str) -> None:
+            commit_messages.append(message)
+            if message == "Quarantine skill wanted":
+                marker = json.loads(marker_path.read_text(encoding="utf-8"))
+                assert marker["source_sha256"] == hash_a
+                commit_entered.set()
+                await release_commit.wait()
+                commit_finished.set()
+
+        monkeypatch.setattr(knowledge_store, "_schedule_commit", _capture_commit)
+        created_runners: list[asyncio.Task[Any]] = []
+        create_runner = knowledge_store._create_skill_transaction_runner
+
+        def _capture_runner(intent_name, operation):
+            runner = create_runner(intent_name, operation)
+            created_runners.append(runner)
+            return runner
+
+        monkeypatch.setattr(
+            knowledge_store, "_create_skill_transaction_runner", _capture_runner,
+        )
+        marker_task = asyncio.create_task(
+            knowledge_store.quarantine_skill(
+                "wanted",
+                source_code=source_a,
+                expected_source_sha256=hash_a,
+                reason="a",
+                errors=[],
+            )
+        )
+        assert await asyncio.to_thread(entered_replace.wait, 10)
+        assert len(created_runners) == 1
+        runner = created_runners[0]
+        operation_tasks = [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() == "probos-skill-operation:wanted"
+        ]
+        assert len(operation_tasks) == 1
+        operation_task = operation_tasks[0]
+
+        await _deliver_task_cancellation(runner)
+        await _deliver_task_cancellation(runner)
+        await _deliver_task_cancellation(marker_task)
+        await _deliver_task_cancellation(marker_task)
+        assert not runner.done()
+        assert not operation_task.done()
+        assert not marker_task.done()
+
+        store_started = asyncio.Event()
+
+        async def _store_b() -> None:
+            store_started.set()
+            await knowledge_store.store_skill(
+                "wanted", source_b, {"name": "wanted"},
+            )
+
+        store_task = asyncio.create_task(_store_b())
+        await store_started.wait()
+        assert knowledge_store._skill_locks["wanted"].locked()
+        assert not store_task.done()
+        assert source_path.read_text(encoding="utf-8") == source_a
+
+        release_replace.set()
+        await commit_entered.wait()
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        assert marker["source_sha256"] == hash_a
+        assert not runner.done()
+        assert not marker_task.done()
+        assert knowledge_store._skill_locks["wanted"].locked()
+        assert not store_task.done()
+        assert not commit_finished.is_set()
+
+        release_commit.set()
+        with pytest.raises(asyncio.CancelledError):
+            await marker_task
+        assert commit_finished.is_set()
+        await store_task
+
+        assert commit_messages == [
+            "Quarantine skill wanted",
+            "Store skill wanted",
+        ]
+        assert runner.cancelled()
+        assert operation_task.done()
+        assert await knowledge_store.load_skill_source("wanted") == source_b
+        assert await knowledge_store.load_skill_quarantine("wanted") is None
+        assert not [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() in {
+                "probos-skill-transaction:wanted",
+                "probos-skill-operation:wanted",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_operation_cancelled_error_waits_for_executor_work_before_unlock(
+        self, knowledge_store,
+    ):
+        await knowledge_store.initialize()
+        entered_work = threading.Event()
+        release_work = threading.Event()
+        finished_work = threading.Event()
+
+        async def _operation() -> None:
+            loop = asyncio.get_running_loop()
+
+            def _file_work() -> None:
+                entered_work.set()
+                if not release_work.wait(timeout=10):
+                    raise AssertionError("timed out waiting to release file work")
+                finished_work.set()
+
+            await loop.run_in_executor(None, _file_work)
+            raise asyncio.CancelledError()
+
+        transaction_task = asyncio.create_task(
+            knowledge_store._run_skill_transaction("wanted", _operation)
+        )
+        assert await asyncio.to_thread(entered_work.wait, 10)
+        store_started = asyncio.Event()
+
+        async def _store_b() -> None:
+            store_started.set()
+            await knowledge_store.store_skill(
+                "wanted", "source-b", {"name": "wanted"},
+            )
+
+        store_task = asyncio.create_task(_store_b())
+        await store_started.wait()
+        assert knowledge_store._skill_locks["wanted"].locked()
+        assert not store_task.done()
+
+        release_work.set()
+        with pytest.raises(asyncio.CancelledError):
+            await transaction_task
+        assert finished_work.is_set()
+        await store_task
+
+        assert not knowledge_store._skill_locks["wanted"].locked()
+        assert await knowledge_store.load_skill_source("wanted") == "source-b"
+        assert not [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() in {
+                "probos-skill-transaction:wanted",
+                "probos-skill-operation:wanted",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("competitor", ["remove", "store"])
+    async def test_cancelled_descriptor_write_finishes_before_competitor(
+        self, knowledge_store, monkeypatch, competitor,
+    ):
+        await knowledge_store.initialize()
+        entered_write, release_write = _block_next_skill_descriptor_write(monkeypatch)
+        store_b = asyncio.create_task(
+            knowledge_store.store_skill(
+                "wanted", "source-b", {"name": "generation-b"},
+            )
+        )
+        assert await asyncio.to_thread(entered_write.wait, 10)
+        await _deliver_task_cancellation(store_b)
+        assert not store_b.done()
+
+        competitor_started = asyncio.Event()
+
+        async def _compete() -> bool | None:
+            competitor_started.set()
+            if competitor == "remove":
+                return await knowledge_store.remove_skill("wanted")
+            await knowledge_store.store_skill(
+                "wanted", "source-c", {"name": "generation-c"},
+            )
+            return None
+
+        competing_task = asyncio.create_task(_compete())
+        await competitor_started.wait()
+        assert not competing_task.done()
+        release_write.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await store_b
+        competing_result = await competing_task
+        source_path = knowledge_store.repo_path / "skills" / "wanted.py"
+        descriptor_path = knowledge_store.repo_path / "skills" / "wanted.json"
+        if competitor == "remove":
+            assert competing_result is True
+            assert not source_path.exists()
+            assert not descriptor_path.exists()
+        else:
+            assert source_path.read_text(encoding="utf-8") == "source-c"
+            assert json.loads(descriptor_path.read_text(encoding="utf-8")) == {
+                "name": "generation-c"
+            }
+
+    @pytest.mark.asyncio
+    async def test_cancelled_marker_replace_commits_before_cancellation_propagates(
+        self, knowledge_store, monkeypatch,
+    ):
+        await knowledge_store.initialize()
+        source = "source-a"
+        source_hash = hashlib.sha256(source.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source, {"name": "wanted"})
+        schedule_commit = AsyncMock()
+        knowledge_store._schedule_commit = schedule_commit
+        entered_replace, release_replace = _block_next_quarantine_replace(monkeypatch)
+        marker_task = asyncio.create_task(
+            knowledge_store.quarantine_skill(
+                "wanted",
+                source_code=source,
+                expected_source_sha256=source_hash,
+                reason="invalid",
+                errors=[],
+            )
+        )
+        assert await asyncio.to_thread(entered_replace.wait, 10)
+        await _deliver_task_cancellation(marker_task)
+        assert not marker_task.done()
+        release_replace.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await marker_task
+
+        marker = await knowledge_store.load_skill_quarantine("wanted")
+        assert marker is not None
+        assert marker["source_sha256"] == source_hash
+        schedule_commit.assert_awaited_once_with("Quarantine skill wanted")
+
+    @pytest.mark.asyncio
+    async def test_cancelled_marker_write_drains_before_explicit_remove(
+        self, knowledge_store, monkeypatch,
+    ):
+        await knowledge_store.initialize()
+        source = "source-a"
+        source_hash = hashlib.sha256(source.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source, {"name": "wanted"})
+        entered_replace, release_replace = _block_next_quarantine_replace(monkeypatch)
+        marker_task = asyncio.create_task(
+            knowledge_store.quarantine_skill(
+                "wanted", source_code=source, expected_source_sha256=source_hash,
+                reason="a", errors=[],
+            )
+        )
+        assert await asyncio.to_thread(entered_replace.wait, 10)
+        remove_started = asyncio.Event()
+        remove_task: asyncio.Task[bool] | None = None
+        cancelled = False
+
+        async def _remove() -> bool:
+            remove_started.set()
+            return await knowledge_store.remove_skill("wanted")
+
+        try:
+            await _deliver_task_cancellation(marker_task)
+            assert not marker_task.done()
+            remove_task = asyncio.create_task(_remove())
+            await remove_started.wait()
+            assert not remove_task.done()
+            assert (knowledge_store.repo_path / "skills" / "wanted.py").exists()
+        finally:
+            release_replace.set()
+            try:
+                await marker_task
+            except asyncio.CancelledError:
+                cancelled = True
+            if remove_task is not None:
+                assert await remove_task is True
+
+        assert cancelled is True
+        assert await knowledge_store.load_skill_source("wanted") is None
+        assert await knowledge_store.load_skill_quarantine("wanted") is None
+
+    @pytest.mark.asyncio
+    async def test_cancelled_marker_write_drains_before_requarantine_b(
+        self, knowledge_store, monkeypatch,
+    ):
+        await knowledge_store.initialize()
+        source_a = "source-a"
+        source_b = "source-b"
+        hash_a = hashlib.sha256(source_a.encode()).hexdigest()
+        hash_b = hashlib.sha256(source_b.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source_a, {"name": "wanted"})
+        entered_replace, release_replace = _block_next_quarantine_replace(monkeypatch)
+        marker_a_task = asyncio.create_task(
+            knowledge_store.quarantine_skill(
+                "wanted", source_code=source_a, expected_source_sha256=hash_a,
+                reason="a", errors=[],
+            )
+        )
+        assert await asyncio.to_thread(entered_replace.wait, 10)
+        replace_started = asyncio.Event()
+        marker_b_task: asyncio.Task[bool] | None = None
+        marker_b_result: bool | None = None
+        cancelled = False
+
+        async def _store_and_quarantine_b() -> bool:
+            replace_started.set()
+            await knowledge_store.store_skill(
+                "wanted", source_b, {"name": "wanted"},
+            )
+            return await knowledge_store.quarantine_skill(
+                "wanted", source_code=source_b, expected_source_sha256=hash_b,
+                reason="b", errors=[],
+            )
+
+        try:
+            await _deliver_task_cancellation(marker_a_task)
+            assert not marker_a_task.done()
+            marker_b_task = asyncio.create_task(_store_and_quarantine_b())
+            await replace_started.wait()
+            assert not marker_b_task.done()
+            assert (
+                knowledge_store.repo_path / "skills" / "wanted.py"
+            ).read_text(encoding="utf-8") == source_a
+        finally:
+            release_replace.set()
+            try:
+                await marker_a_task
+            except asyncio.CancelledError:
+                cancelled = True
+            if marker_b_task is not None:
+                marker_b_result = await marker_b_task
+
+        assert cancelled is True
+        assert marker_b_result is True
+        assert await knowledge_store.load_skill_source("wanted") == source_b
+        marker = await knowledge_store.load_skill_quarantine("wanted")
+        assert marker is not None
+        assert marker["source_sha256"] == hash_b
+
+    @pytest.mark.asyncio
+    async def test_remove_serialized_with_marker_write_leaves_no_orphan(
+        self, knowledge_store, monkeypatch,
+    ):
+        await knowledge_store.initialize()
+        source = "source"
+        source_hash = hashlib.sha256(source.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source, {"name": "wanted"})
+        entered_write = asyncio.Event()
+        release_write = asyncio.Event()
+        real_write = knowledge_store._write_skill_quarantine_marker
+
+        async def _blocked_write(path, marker):
+            entered_write.set()
+            await release_write.wait()
+            await real_write(path, marker)
+
+        monkeypatch.setattr(knowledge_store, "_write_skill_quarantine_marker", _blocked_write)
+        marker_task = asyncio.create_task(
+            knowledge_store.quarantine_skill(
+                "wanted", source_code=source, expected_source_sha256=source_hash,
+                reason="invalid", errors=[],
+            )
+        )
+        await entered_write.wait()
+        remove_task = asyncio.create_task(
+            knowledge_store.remove_skill("wanted")
+        )
+        assert not remove_task.done()
+        release_write.set()
+
+        assert await marker_task is True
+        assert await remove_task is True
+
+        assert await knowledge_store.load_skill_source("wanted") is None
+        assert await knowledge_store.load_skill_quarantine("wanted") is None
+
+    @pytest.mark.asyncio
+    async def test_atomic_marker_write_failure_preserves_old_marker_and_cleans_temp(
+        self, knowledge_store, monkeypatch,
+    ):
+        await knowledge_store.initialize()
+        source = "source"
+        source_hash = hashlib.sha256(source.encode()).hexdigest()
+        await knowledge_store.store_skill("wanted", source, {"name": "wanted"})
+        await knowledge_store.quarantine_skill(
+            "wanted", source_code=source, expected_source_sha256=source_hash,
+            reason="first", errors=[],
+        )
+        marker_path = knowledge_store.repo_path / "skill_quarantine" / "wanted.json"
+        old_bytes = marker_path.read_bytes()
+
+        monkeypatch.setattr(os, "replace", lambda *_args: (_ for _ in ()).throw(OSError("boom")))
+
+        with pytest.raises(OSError, match="boom"):
+            await knowledge_store.quarantine_skill(
+                "wanted", source_code=source, expected_source_sha256=source_hash,
+                reason="second", errors=[],
+            )
+
+        assert marker_path.read_bytes() == old_bytes
+        assert list(marker_path.parent.glob(".wanted.json.*.tmp")) == []
+
+    @requires_git
+    @pytest.mark.asyncio
+    async def test_store_and_quarantine_flush_commits_recoverable_source_and_marker(
+        self, tmp_path,
+    ):
+        """One debounced Git commit retains both recoverable artifacts."""
+        from probos.knowledge.store import KnowledgeStore
+
+        cfg = KnowledgeConfig(
+            enabled=True,
+            repo_path=str(tmp_path / "knowledge"),
+            auto_commit=True,
+            commit_debounce_seconds=3600.0,
+        )
+        store = KnowledgeStore(cfg)
+        await store.initialize()
+        source = "async def handle_other(intent, llm_client=None):\n    return None\n"
+        source_hash = hashlib.sha256(source.encode()).hexdigest()
+        try:
+            await store.store_skill("wanted", source, {"name": "wanted"})
+            await store.quarantine_skill(
+                "wanted", source_code=source,
+                expected_source_sha256=source_hash,
+                reason="mismatch", errors=["error"],
+            )
+            await store.flush()
+
+            tree = await store._git_run("ls-tree", "-r", "--name-only", "HEAD")
+            committed_paths = set(tree.stdout.splitlines())
+            assert "skills/wanted.py" in committed_paths
+            assert "skills/wanted.json" in committed_paths
+            assert "skill_quarantine/wanted.json" in committed_paths
+
+            committed_source = await store._git_run("show", "HEAD:skills/wanted.py")
+            committed_marker = await store._git_run(
+                "show", "HEAD:skill_quarantine/wanted.json",
+            )
+            assert committed_source.stdout == source
+            assert json.loads(committed_marker.stdout)["source_sha256"] == source_hash
+
+            history = await store.artifact_history("skill", "wanted")
+            assert len(history) == 1
+            assert "Store skill wanted" in history[0]["message"]
+            assert "Quarantine skill wanted" in history[0]["message"]
+            assert await store.load_skill_source("wanted") == source
+            marker = await store.load_skill_quarantine("wanted")
+            assert marker is not None
+            assert marker["source_sha256"] == source_hash
+        finally:
+            if store._commit_timer is not None:
+                store._commit_timer.cancel()
+                store._commit_timer = None
 
 
 class TestKnowledgeStoreTrust:

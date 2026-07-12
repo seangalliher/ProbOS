@@ -6,13 +6,38 @@ from the knowledge store on boot.
 
 from __future__ import annotations
 
+import ast
+import hashlib
+import inspect
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _is_inert_skill_stub(source_code: str) -> bool:
+    """Return whether source contains only comments, docstrings, or ``pass``."""
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return False
+
+    for index, node in enumerate(tree.body):
+        if isinstance(node, ast.Pass):
+            continue
+        if (
+            index == 0
+            and isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            continue
+        return False
+    return True
 
 
 class WarmBootService:
@@ -162,83 +187,30 @@ class WarmBootService:
         except Exception as e:
             logger.warning("Warm boot: agent restore failed: %s", e)
 
-        # 4. Skills -> compile + attach to SkillBasedAgent
+        # 4. Skills -> validate + compile + attach to SkillBasedAgent
         try:
             skills = await ks.load_skills()
             if skills and self._config.self_mod.enabled:
-                import importlib.util
-                import sys
-                import tempfile
+                from probos.cognitive.skill_validator import SkillValidator
 
+                validator = SkillValidator(self._config.self_mod)
                 for intent_name, source_code, descriptor_dict in skills:
                     try:
-                        # Compile handler
-                        handler = None
-                        func_name = f"handle_{intent_name}"
-                        tmp = tempfile.NamedTemporaryFile(
-                            mode="w", suffix=".py", delete=False, encoding="utf-8",
+                        attached = await self._restore_skill(
+                            intent_name,
+                            source_code,
+                            descriptor_dict,
+                            validator,
                         )
-                        tmp.write(source_code)
-                        tmp.flush()
-                        tmp.close()
-                        tmp_path = tmp.name
-                        module_name = f"_probos_skill_restored_{intent_name}"
-
-                        try:
-                            spec = importlib.util.spec_from_file_location(module_name, tmp_path)
-                            if spec and spec.loader:
-                                module = importlib.util.module_from_spec(spec)
-                                sys.modules[module_name] = module
-                                spec.loader.exec_module(module)
-                                handler = getattr(module, func_name, None)
-                        finally:
-                            try:
-                                Path(tmp_path).unlink(missing_ok=True)
-                            except OSError:
-                                pass
-                            sys.modules.pop(module_name, None)
-
-                        if handler is None:
-                            # BF-656: a source that parses/exec's fine but has no
-                            # handle_<name> function can NEVER restore — a PERMANENT
-                            # condition. Prune it from the knowledge store so it stops
-                            # being retried (and re-warned) every boot. Do NOT prune on
-                            # the transient exec-failure path (outer except below): a
-                            # SyntaxError/ImportError/top-level raise may be
-                            # environment-recoverable.
-                            logger.info(
-                                "Warm boot: skill %s has no handle_%s function "
-                                "(permanent); pruning from knowledge store",
-                                intent_name, intent_name,
-                            )
-                            try:
-                                await ks.remove_skill(intent_name)
-                            except Exception as prune_err:  # log-and-degrade — never block boot on a prune
-                                logger.warning(
-                                    "Warm boot: failed to prune un-restorable skill %s: %s",
-                                    intent_name, prune_err,
-                                )
-                            continue
-
-                        from probos.types import IntentDescriptor as _ID, Skill as _Skill
-                        skill_desc = _ID(
-                            name=descriptor_dict.get("name", intent_name),
-                            params=descriptor_dict.get("params", {}),
-                            description=descriptor_dict.get("description", ""),
-                            requires_reflect=descriptor_dict.get("requires_reflect", True),
-                        )
-                        skill_obj = _Skill(
-                            name=intent_name,
-                            descriptor=skill_desc,
-                            source_code=source_code,
-                            handler=handler,
-                            created_at=descriptor_dict.get("created_at", time.monotonic()),
-                            origin="designed",
-                        )
-                        await self._add_skill_to_agents_fn(skill_obj)
-                        restored.append(f"skill({intent_name})")
+                        if attached:
+                            restored.append(f"skill({intent_name})")
                     except Exception as e:
-                        logger.warning("Warm boot: skill %s restore failed: %s", intent_name, e)
+                        logger.warning(
+                            "Warm boot: skill %s restore failed before attachment; "
+                            "source and descriptor remain preserved for retry: %s",
+                            intent_name,
+                            e,
+                        )
         except Exception as e:
             logger.warning("Warm boot: skill restore failed: %s", e)
 
@@ -295,3 +267,329 @@ class WarmBootService:
                 logger.info("Semantic knowledge reindexed: %s", counts)
             except Exception as e:
                 logger.warning("Semantic knowledge reindex failed: %s", e)
+
+    async def _restore_skill(
+        self,
+        intent_name: str,
+        initial_source: str,
+        descriptor_dict: Any,
+        validator: Any,
+    ) -> bool:
+        """Restore one skill from at most three stable source snapshots."""
+        reread_count = 0
+
+        async def _reread_source() -> str | None:
+            nonlocal reread_count
+            if reread_count >= 2:
+                raise RuntimeError("skill source reread budget exhausted")
+            reread_count += 1
+            return await self._knowledge_store.load_skill_source(intent_name)
+
+        async def _reread_source_and_quarantine(
+        ) -> tuple[str | None, dict[str, Any] | None]:
+            nonlocal reread_count
+            if reread_count >= 2:
+                raise RuntimeError("skill source reread budget exhausted")
+            reread_count += 1
+            return await self._knowledge_store.load_skill_source_and_quarantine(
+                intent_name
+            )
+
+        def _rereads_remaining() -> int:
+            return 2 - reread_count
+
+        source_code: str | None = initial_source
+        candidate_from_reread = False
+        for _snapshot_number in range(1, 4):
+            if source_code is None:
+                return False
+            observed_hash = self._skill_source_hash(source_code)
+            outcome, next_source = await self._restore_skill_snapshot(
+                intent_name,
+                source_code,
+                observed_hash,
+                descriptor_dict,
+                validator,
+                _reread_source,
+                _reread_source_and_quarantine,
+                _rereads_remaining,
+                candidate_from_reread,
+            )
+            if outcome == "attached":
+                return True
+            if outcome == "finished":
+                return False
+            if outcome == "exhausted":
+                break
+            if _rereads_remaining() == 0:
+                break
+            if next_source is None:
+                next_source = await _reread_source()
+            source_code = next_source
+            candidate_from_reread = True
+
+        logger.warning(
+            "Warm boot: skill %s exhausted its initial candidate plus two public "
+            "source rereads; preserving source, descriptor, and marker without "
+            "further execution, attachment, or mutation",
+            intent_name,
+        )
+        return False
+
+    async def _restore_skill_snapshot(
+        self,
+        intent_name: str,
+        source_code: str,
+        observed_hash: str,
+        descriptor_dict: Any,
+        validator: Any,
+        reread_source: Callable[[], Awaitable[str | None]],
+        reread_source_and_quarantine: Callable[
+            [], Awaitable[tuple[str | None, dict[str, Any] | None]]
+        ],
+        rereads_remaining: Callable[[], int],
+        candidate_from_reread: bool,
+    ) -> tuple[str, str | None]:
+        """Process one source candidate within the bounded public-reread budget."""
+        ks = self._knowledge_store
+        try:
+            marker = await ks.load_skill_quarantine(intent_name)
+        except Exception as exc:
+            logger.warning(
+                "Warm boot: failed to inspect quarantine for skill %s: %s; "
+                "stable persisted source will be revalidated",
+                intent_name,
+                exc,
+            )
+            return "finished", None
+        marker_hash = marker.get("source_sha256") if marker is not None else None
+
+        if not candidate_from_reread:
+            current_source = await reread_source()
+            if current_source is None:
+                return "finished", None
+            if self._skill_source_hash(current_source) != observed_hash:
+                return "retry", current_source
+
+        if marker_hash == observed_hash:
+            if candidate_from_reread:
+                current_source = await reread_source()
+                if current_source is None:
+                    return "finished", None
+                if self._skill_source_hash(current_source) != observed_hash:
+                    return "retry", current_source
+            logger.debug(
+                "Warm boot: skill %s remains quarantined for the same stable source "
+                "hash; skipping validation and execution until source changes",
+                intent_name,
+            )
+            return "finished", None
+
+        errors = validator.validate(source_code, intent_name)
+        if errors:
+            if _is_inert_skill_stub(source_code):
+                if rereads_remaining() > 0:
+                    current_source = await reread_source()
+                    if current_source is None:
+                        return "finished", None
+                    if self._skill_source_hash(current_source) != observed_hash:
+                        return "retry", current_source
+                removed = await ks.remove_skill(
+                    intent_name,
+                    expected_source_sha256=observed_hash,
+                )
+                if not removed:
+                    return "retry", None
+                logger.info(
+                    "Warm boot: skill %s was a provably inert stable stub; "
+                    "pruned source, descriptor, and matching quarantine marker",
+                    intent_name,
+                )
+                return "finished", None
+
+            if rereads_remaining() > 0:
+                current_source = await reread_source()
+                if current_source is None:
+                    return "finished", None
+                if self._skill_source_hash(current_source) != observed_hash:
+                    return "retry", current_source
+            quarantined = await ks.quarantine_skill(
+                intent_name,
+                source_code=source_code,
+                expected_source_sha256=observed_hash,
+                reason="skill_validation_failed",
+                errors=errors,
+            )
+            if not quarantined:
+                return "retry", None
+            logger.warning(
+                "Warm boot: skill %s failed stable pre-execution validation; "
+                "source and descriptor remain preserved behind quarantine",
+                intent_name,
+            )
+            return "finished", None
+
+        if rereads_remaining() == 0:
+            return "exhausted", None
+        try:
+            handler = self._load_skill_handler(intent_name, source_code)
+        except Exception as exc:
+            return await self._quarantine_loaded_skill_failure(
+                intent_name,
+                source_code,
+                observed_hash,
+                "skill_source_load_failed",
+                [f"{type(exc).__name__}: {exc}"],
+                reread_source,
+            )
+
+        runtime_errors = self._loaded_handler_errors(handler, intent_name)
+        if runtime_errors:
+            return await self._quarantine_loaded_skill_failure(
+                intent_name,
+                source_code,
+                observed_hash,
+                "skill_handler_runtime_contract_failed",
+                runtime_errors,
+                reread_source,
+            )
+
+        if not isinstance(descriptor_dict, dict):
+            logger.warning(
+                "Warm boot: skill %s has a non-mapping descriptor; source and "
+                "descriptor remain preserved without attachment",
+                intent_name,
+            )
+            return "finished", None
+
+        if marker is not None and marker_hash is not None:
+            await ks.clear_skill_quarantine(
+                intent_name,
+                expected_source_sha256=marker_hash,
+            )
+
+        try:
+            current_source, current_marker = await reread_source_and_quarantine()
+        except Exception as exc:
+            logger.warning(
+                "Warm boot: final atomic source/quarantine check failed for skill %s: %s; "
+                "preserved source will not be attached",
+                intent_name,
+                exc,
+            )
+            return "finished", None
+        if current_source is None:
+            return "finished", None
+        if self._skill_source_hash(current_source) != observed_hash:
+            return "retry", current_source
+        if current_marker is not None:
+            return "finished", None
+
+        from probos.types import IntentDescriptor, Skill
+
+        skill_desc = IntentDescriptor(
+            name=descriptor_dict.get("name", intent_name),
+            params=descriptor_dict.get("params", {}),
+            description=descriptor_dict.get("description", ""),
+            requires_reflect=descriptor_dict.get("requires_reflect", True),
+        )
+        skill_obj = Skill(
+            name=intent_name,
+            descriptor=skill_desc,
+            source_code=source_code,
+            handler=handler,
+            created_at=descriptor_dict.get("created_at", time.monotonic()),
+            origin="designed",
+        )
+        try:
+            # The production callback attaches synchronously before its first
+            # await (persistence is disabled here). Keep this invocation
+            # immediately after the locked final state read: no intervening
+            # await may let an in-process marker/source mutation overtake it.
+            await self._add_skill_to_agents_fn(skill_obj, persist=False)
+        except Exception as exc:
+            logger.warning(
+                "Warm boot: skill %s passed stable source checks but attachment "
+                "failed; it remains unhashed and retryable: %s",
+                intent_name,
+                exc,
+            )
+            return "finished", None
+        return "attached", None
+
+    async def _quarantine_loaded_skill_failure(
+        self,
+        intent_name: str,
+        source_code: str,
+        observed_hash: str,
+        reason: str,
+        errors: list[str],
+        reread_source: Callable[[], Awaitable[str | None]],
+    ) -> tuple[str, str | None]:
+        """Quarantine a post-validation load/runtime failure if source stayed stable."""
+        current_source = await reread_source()
+        if current_source is None:
+            return "finished", None
+        if self._skill_source_hash(current_source) != observed_hash:
+            return "retry", current_source
+        quarantined = await self._knowledge_store.quarantine_skill(
+            intent_name,
+            source_code=source_code,
+            expected_source_sha256=observed_hash,
+            reason=reason,
+            errors=errors,
+        )
+        if not quarantined:
+            return "retry", None
+        logger.warning(
+            "Warm boot: skill %s failed its stable loaded-handler contract; "
+            "source and descriptor remain preserved behind quarantine",
+            intent_name,
+        )
+        return "finished", None
+
+    @staticmethod
+    def _skill_source_hash(source_code: str) -> str:
+        """Return the canonical UTF-8 source digest."""
+        return hashlib.sha256(source_code.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _load_skill_handler(intent_name: str, source_code: str) -> Any:
+        """Import validated source and return its exact persisted-name handler."""
+        import importlib.util
+        import sys
+        import tempfile
+
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8",
+        )
+        tmp.write(source_code)
+        tmp.flush()
+        tmp.close()
+        tmp_path = tmp.name
+        module_name = f"_probos_skill_restored_{intent_name}_{id(source_code)}"
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, tmp_path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"No import loader available for skill {intent_name}")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+            return getattr(module, f"handle_{intent_name}", None)
+        finally:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+            sys.modules.pop(module_name, None)
+
+    @staticmethod
+    def _loaded_handler_errors(handler: Any, intent_name: str) -> list[str]:
+        """Prove the loaded object still supports the real dispatch call shape."""
+        if not inspect.iscoroutinefunction(handler):
+            return [f"Loaded handle_{intent_name} is not an async function"]
+        try:
+            inspect.signature(handler).bind(object(), llm_client=None)
+        except (TypeError, ValueError) as exc:
+            return [f"Loaded handle_{intent_name} cannot bind dispatch call: {exc}"]
+        return []

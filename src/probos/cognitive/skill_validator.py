@@ -60,19 +60,32 @@ class SkillValidator:
             if re.search(pattern, source_code):
                 errors.append(f"Forbidden pattern found: {pattern}")
 
-        # 4. Schema conformance: has async function named handle_{intent_name}
+        # 4. Schema conformance: exactly one top-level async handler with a
+        # signature compatible with handler(intent, llm_client=<client>).
         expected_name = f"handle_{intent_name}"
         async_functions = [
             node for node in ast.walk(tree)
             if isinstance(node, ast.AsyncFunctionDef)
         ]
-
-        matching = [f for f in async_functions if f.name == expected_name]
-        if not matching:
+        exact_definitions = [
+            node for node in tree.body
+            if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+            and node.name == expected_name
+        ]
+        if (
+            len(exact_definitions) != 1
+            or not isinstance(exact_definitions[0], ast.AsyncFunctionDef)
+        ):
             errors.append(
-                f"Missing async function: expected '{expected_name}', "
-                f"found: {[f.name for f in async_functions]}"
+                "Missing async function or duplicate exact handler: "
+                f"Expected exactly one top-level async function '{expected_name}', "
+                f"found {len(exact_definitions)} exact definitions; async functions: "
+                f"{[f.name for f in async_functions]}"
             )
+        else:
+            signature_error = self._validate_handler_signature(exact_definitions[0])
+            if signature_error is not None:
+                errors.append(signature_error)
 
         # 5. No module-level side effects
         for node in ast.iter_child_nodes(tree):
@@ -87,3 +100,67 @@ class SkillValidator:
             )
 
         return errors
+
+    @staticmethod
+    def _validate_handler_signature(handler: ast.AsyncFunctionDef) -> str | None:
+        """Validate the non-executing AST call shape used by ``SkillBasedAgent``."""
+        args = handler.args
+        positional = [*args.posonlyargs, *args.args]
+        positional_defaults = len(args.defaults)
+        required_positional = positional[: len(positional) - positional_defaults]
+
+        intent_is_positional = bool(positional) or args.vararg is not None
+        if not intent_is_positional:
+            return "Handler signature does not accept intent positionally"
+
+        if positional:
+            consumed_intent_name = positional[0].arg
+        else:
+            consumed_intent_name = None
+        if consumed_intent_name == "llm_client":
+            return "Handler signature does not accept distinct intent and llm_client values"
+
+        positional_only_llm_client = any(
+            parameter.arg == "llm_client" for parameter in args.posonlyargs
+        )
+        if positional_only_llm_client:
+            return "Handler signature requires positional-only llm_client"
+
+        unsupplied_required_positional = [
+            parameter.arg
+            for parameter in required_positional
+            if parameter.arg != consumed_intent_name
+            and not (
+                parameter.arg == "llm_client"
+                and any(parameter is named for named in args.args)
+            )
+        ]
+        if unsupplied_required_positional:
+            return (
+                "Handler signature has unsupplied required positional parameters: "
+                f"{unsupplied_required_positional}"
+            )
+
+        named_llm_client = next(
+            (parameter for parameter in args.args if parameter.arg == "llm_client"),
+            None,
+        )
+        keyword_llm_client = (
+            named_llm_client is not None
+            or any(parameter.arg == "llm_client" for parameter in args.kwonlyargs)
+            or args.kwarg is not None
+        )
+        if not keyword_llm_client:
+            return "Handler signature does not accept llm_client by keyword"
+
+        required_keyword_only = [
+            parameter.arg
+            for parameter, default in zip(args.kwonlyargs, args.kw_defaults)
+            if default is None and parameter.arg != "llm_client"
+        ]
+        if required_keyword_only:
+            return (
+                "Handler signature has unsupplied required keyword-only parameters: "
+                f"{required_keyword_only}"
+            )
+        return None

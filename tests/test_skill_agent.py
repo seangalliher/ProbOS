@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -333,6 +335,60 @@ class TestSkillValidator:
         errors = validator.validate(code, "my_skill")
         assert any("side effect" in e.lower() for e in errors)
 
+    @pytest.mark.parametrize(
+        "signature",
+        [
+            "intent, llm_client=None",
+            "intent, *, llm_client=None",
+            "intent, **kwargs",
+            "*args, **kwargs",
+            "intent, llm_client",
+        ],
+    )
+    def test_handler_signature_compatible_with_dispatch_accepted(
+        self, signature: str,
+    ) -> None:
+        validator = SkillValidator(SelfModConfig())
+        code = f"async def handle_my_skill({signature}):\n    return None\n"
+
+        assert validator.validate(code, "my_skill") == []
+
+    @pytest.mark.parametrize(
+        "signature",
+        [
+            "*, intent, llm_client=None",
+            "llm_client=None",
+            "intent, llm_client, /",
+            "intent, llm_client=None, /, **kwargs",
+            "intent, client=None",
+            "intent, llm_client=None, required=None, /",
+            "intent, required, llm_client=None",
+            "intent, *, llm_client=None, required",
+        ],
+    )
+    def test_handler_signature_incompatible_with_dispatch_rejected(
+        self, signature: str,
+    ) -> None:
+        validator = SkillValidator(SelfModConfig())
+        code = f"async def handle_my_skill({signature}):\n    return None\n"
+
+        errors = validator.validate(code, "my_skill")
+
+        assert any("Handler signature" in error for error in errors)
+
+    def test_duplicate_exact_top_level_handlers_rejected(self) -> None:
+        validator = SkillValidator(SelfModConfig())
+        code = (
+            "async def handle_my_skill(intent, llm_client=None):\n"
+            "    return None\n\n"
+            "async def handle_my_skill(intent, **kwargs):\n"
+            "    return None\n"
+        )
+
+        errors = validator.validate(code, "my_skill")
+
+        assert any("Expected exactly one" in error for error in errors)
+
 
 # ---------------------------------------------------------------------------
 # Pipeline skill integration tests
@@ -470,6 +526,61 @@ class TestSkillPipeline:
                     assert "test_skill" in agent._handled_intents
         finally:
             await rt.stop()
+
+    @pytest.mark.asyncio
+    async def test_runtime_add_skill_to_agents_persists_by_default(self):
+        """Normal design-time attachment preserves the default persistence path."""
+        from probos.runtime import ProbOSRuntime
+
+        rt = object.__new__(ProbOSRuntime)
+        rt.pools = {}
+        rt.registry = SimpleNamespace(get=lambda _agent_id: None)
+        rt.decomposer = SimpleNamespace(refresh_descriptors=lambda _items: None)
+        rt._collect_intent_descriptors = lambda: []
+        rt._knowledge_store = SimpleNamespace(store_skill=AsyncMock())
+        rt.oracle = SimpleNamespace(write_semantic=AsyncMock())
+        skill = _make_skill("persisted_skill")
+
+        await rt._add_skill_to_agents(skill)
+
+        rt._knowledge_store.store_skill.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_runtime_restore_attach_completes_before_first_await(self):
+        """Warm-boot callback performs its local attachment synchronously."""
+        from probos.runtime import ProbOSRuntime
+
+        agent = SkillBasedAgent(pool="skills")
+        oracle_entered = asyncio.Event()
+        release_oracle = asyncio.Event()
+
+        async def _write_semantic(*_args, **_kwargs) -> None:
+            oracle_entered.set()
+            await release_oracle.wait()
+
+        rt = object.__new__(ProbOSRuntime)
+        rt.pools = {
+            "skills": SimpleNamespace(healthy_agents=[agent.id]),
+        }
+        rt.registry = SimpleNamespace(
+            get=lambda agent_id: agent if agent_id == agent.id else None,
+        )
+        rt.decomposer = SimpleNamespace(refresh_descriptors=lambda _items: None)
+        rt._collect_intent_descriptors = lambda: []
+        rt._knowledge_store = SimpleNamespace(store_skill=AsyncMock())
+        rt.oracle = SimpleNamespace(write_semantic=_write_semantic)
+        skill = _make_skill("restored_skill")
+
+        attach_task = asyncio.create_task(
+            rt._add_skill_to_agents(skill, persist=False)
+        )
+        try:
+            await oracle_entered.wait()
+            assert skill in agent.skills
+            rt._knowledge_store.store_skill.assert_not_awaited()
+        finally:
+            release_oracle.set()
+            await attach_task
 
     @pytest.mark.asyncio
     async def test_descriptor_refresh_after_skill_addition(self):
