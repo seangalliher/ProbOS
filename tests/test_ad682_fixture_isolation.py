@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.bf662_embedding_fakes import (
+    BF662EmbeddingFunctionA as _FakeEmbeddingFunction,
+)
+
 
 class _FakeTmpPathFactory:
     def __init__(self, root: Path) -> None:
@@ -16,14 +20,6 @@ class _FakeTmpPathFactory:
         path = self._root / basename
         path.mkdir(parents=True, exist_ok=False)
         return path
-
-
-class _FakeEmbeddingFunction:
-    def name(self) -> str:
-        return "ad682-fake-embedding"
-
-    def __call__(self, input: list[str]) -> list[list[float]]:
-        return [[0.1, 0.2, 0.3] for _ in input]
 
 
 def _ad682_conftest_plugin(pytestconfig):
