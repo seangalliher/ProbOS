@@ -42,27 +42,44 @@ export interface ScrollDecision {
   follow: boolean;
 }
 
-/** AD-1075: decide how the transcript should scroll when its message set
- *  changes. Pure + DOM-free so it is unit-testable.
- *
- *  - **Bulk load / context switch** (agent or thread changed, or more than one
- *    message appeared at once) → `jump` to the bottom instantly.
- *  - **One new incremental message** → `follow` smoothly to the bottom **iff**
- *    the Captain is already pinned to the bottom OR the new message is the
- *    Captain's own send (sending always follows your own message — the BF the
- *    Captain hit: a sent/received message left the view a little short).
- *  - **No change / empty** → do nothing.
- */
-export function decideScrollOnUpdate(opts: {
+/** BF-664: the observed transition metadata needed by the scroll policy. */
+export interface ScrollUpdate {
   switched: boolean;
+  remounted: boolean;
   prevCount: number;
   count: number;
+  prevTailId: string | null;
+  tailId: string | null;
+  previousTailContinues: boolean;
   pinned: boolean;
   lastFromSelf: boolean;
-}): ScrollDecision {
-  const { switched, prevCount, count, pinned, lastFromSelf } = opts;
+}
+
+/** AD-1075 / BF-664: decide how the transcript should scroll when its message
+ *  set changes. Pure + DOM-free so it is unit-testable.
+ *
+ *  - **Bulk load / replacement / context switch / transcript remount** →
+ *    `jump` to the bottom instantly.
+ *  - **Incremental message** means the tail changed and the previous tail is
+ *    now its immediate predecessor. This includes both ordinary +1 appends and
+ *    bounded equal-count appends. Follow smoothly iff pinned or Captain-authored.
+ *  - **Same count + unrelated changed tail** is a replacement, not an append.
+ *  - **Same count + same tail / empty** → do nothing.
+ */
+export function decideScrollOnUpdate(opts: ScrollUpdate): ScrollDecision {
+  const {
+    switched, remounted, prevCount, count, prevTailId, tailId,
+    previousTailContinues, pinned, lastFromSelf,
+  } = opts;
   if (count === 0) return { jump: false, follow: false };
-  const isIncremental = !switched && count === prevCount + 1;
+  if (switched || remounted) return { jump: true, follow: false };
+  if (count === prevCount && tailId === prevTailId) {
+    return { jump: false, follow: false };
+  }
+  const tailChanged = prevTailId !== null && tailId !== null && tailId !== prevTailId;
+  const isIncremental = tailChanged
+    && previousTailContinues
+    && (count === prevCount + 1 || count === prevCount);
   if (isIncremental) {
     return { jump: false, follow: pinned || lastFromSelf };
   }

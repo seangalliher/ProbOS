@@ -62,6 +62,12 @@ function setupFetch() {
   }) as any;
 }
 
+function seedColdMessages(count: number): void {
+  for (let index = 0; index < count; index += 1) {
+    useStore.getState().addAgentMessage('a1', 'agent', `seed ${index}`);
+  }
+}
+
 beforeEach(() => {
   Object.values(mocks).forEach((m) => {
     if (typeof m === 'function' && 'mockReset' in m) (m as any).mockReset();
@@ -72,8 +78,18 @@ beforeEach(() => {
   localStorage.clear();
   useStore.setState({
     voiceEnabled: true,
+    activeProfileAgent: 'a1',
+    activeProfileThreadId: null,
     agentConversations: new Map(),
+    threadIdByAgent: new Map(),
+    chatThreads: new Map(),
+    threadMessages: new Map(),
   });
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  });
+  vi.stubGlobal('cancelAnimationFrame', vi.fn());
   if (!(Element.prototype as any).scrollIntoView) {
     (Element.prototype as any).scrollIntoView = vi.fn();
   }
@@ -83,6 +99,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   localStorage.clear();
 });
@@ -121,7 +138,7 @@ describe('BF-293 empty-transcript counter reset on agent reply', () => {
     await waitFor(() => expect(mocks.startListeningMock).toHaveBeenCalledTimes(2));
     (mocks.startListeningMock.mock.calls[1][1] as () => void)();
 
-    // Agent reply appended — effect on [messages.length] resets the counter.
+    // Agent reply appended — the tail-revision effect resets the counter.
     await act(async () => {
       useStore.getState().addAgentMessage('a1', 'agent', 'hello');
     });
@@ -132,7 +149,11 @@ describe('BF-293 empty-transcript counter reset on agent reply', () => {
     expect(mocks.armWhisperSttMock).not.toHaveBeenCalled();
   });
 
-  it('user message append does NOT reset the counter', async () => {
+  it('capped agent reply resets the counter when the cold list stays at 100', async () => {
+    seedColdMessages(100);
+    const before = useStore.getState().agentConversations.get('a1')?.messages ?? [];
+    expect(before).toHaveLength(100);
+    const oldTailId = before[99].id;
     render(<ProfileChatTab agentId="a1" />);
 
     fireEvent.click(await screen.findByLabelText('Voice input'));
@@ -143,10 +164,42 @@ describe('BF-293 empty-transcript counter reset on agent reply', () => {
     await waitFor(() => expect(mocks.startListeningMock).toHaveBeenCalledTimes(2));
     (mocks.startListeningMock.mock.calls[1][1] as () => void)();
 
-    // User-side append must NOT reset.
+    await act(async () => {
+      useStore.getState().addAgentMessage('a1', 'agent', 'capped reply');
+    });
+    const after = useStore.getState().agentConversations.get('a1')?.messages ?? [];
+    expect(after).toHaveLength(100);
+    expect(after[98].id).toBe(oldTailId);
+    expect(after[99].id).not.toBe(oldTailId);
+
+    fireEvent.click(await screen.findByLabelText('Voice input'));
+    await waitFor(() => expect(mocks.startListeningMock).toHaveBeenCalledTimes(3));
+    expect(mocks.armWhisperSttMock).not.toHaveBeenCalled();
+  });
+
+  it('capped user message append does NOT reset the counter', async () => {
+    seedColdMessages(100);
+    const before = useStore.getState().agentConversations.get('a1')?.messages ?? [];
+    expect(before).toHaveLength(100);
+    const oldTailId = before[99].id;
+    render(<ProfileChatTab agentId="a1" />);
+
+    fireEvent.click(await screen.findByLabelText('Voice input'));
+    await waitFor(() => expect(mocks.startListeningMock).toHaveBeenCalledTimes(1));
+    (mocks.startListeningMock.mock.calls[0][1] as () => void)();
+
+    fireEvent.click(await screen.findByLabelText('Voice input'));
+    await waitFor(() => expect(mocks.startListeningMock).toHaveBeenCalledTimes(2));
+    (mocks.startListeningMock.mock.calls[1][1] as () => void)();
+
+    // Capped user-side append must NOT reset despite the tail revision.
     await act(async () => {
       useStore.getState().addAgentMessage('a1', 'user', 'typed text');
     });
+    const after = useStore.getState().agentConversations.get('a1')?.messages ?? [];
+    expect(after).toHaveLength(100);
+    expect(after[98].id).toBe(oldTailId);
+    expect(after[99].id).not.toBe(oldTailId);
 
     // Press 3 — counter still >= 2; must route to whisper fallback.
     fireEvent.click(await screen.findByLabelText('Voice input'));

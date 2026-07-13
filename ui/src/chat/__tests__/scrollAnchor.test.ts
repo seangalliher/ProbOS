@@ -42,32 +42,128 @@ describe('AD-984c isPinnedToBottom', () => {
 
 describe('AD-1075 decideScrollOnUpdate', () => {
   it('does nothing for an empty transcript', () => {
-    expect(decideScrollOnUpdate({ switched: false, prevCount: 0, count: 0, pinned: true, lastFromSelf: false }))
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 0, count: 0,
+      prevTailId: null, tailId: null, previousTailContinues: false,
+      pinned: true, lastFromSelf: false,
+    }))
       .toEqual({ jump: false, follow: false });
   });
 
   it('jumps (instant) on a context switch (agent/thread changed)', () => {
-    expect(decideScrollOnUpdate({ switched: true, prevCount: 0, count: 30, pinned: false, lastFromSelf: false }))
+    expect(decideScrollOnUpdate({
+      switched: true, remounted: false, prevCount: 30, count: 30,
+      prevTailId: 'old-tail', tailId: 'new-tail', previousTailContinues: false,
+      pinned: false, lastFromSelf: false,
+    }))
       .toEqual({ jump: true, follow: false });
   });
 
-  it('jumps (instant) on a bulk load (more than one new message at once)', () => {
-    expect(decideScrollOnUpdate({ switched: false, prevCount: 5, count: 25, pinned: true, lastFromSelf: false }))
+  it('jumps (instant) when a hidden transcript remounts', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: true, prevCount: 30, count: 30,
+      prevTailId: 'tail-30', tailId: 'tail-30', previousTailContinues: false,
+      pinned: false, lastFromSelf: false,
+    }))
       .toEqual({ jump: true, follow: false });
   });
 
-  it('follows a single incremental message when pinned to the bottom', () => {
-    expect(decideScrollOnUpdate({ switched: false, prevCount: 10, count: 11, pinned: true, lastFromSelf: false }))
-      .toEqual({ jump: false, follow: true });
+  it('jumps (instant) on an initial load with no prior-tail continuity', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 0, count: 30,
+      prevTailId: null, tailId: 'tail-30', previousTailContinues: false,
+      pinned: true, lastFromSelf: false,
+    }))
+      .toEqual({ jump: true, follow: false });
   });
 
-  it('does NOT follow an agent message when the Captain has scrolled up', () => {
-    expect(decideScrollOnUpdate({ switched: false, prevCount: 10, count: 11, pinned: false, lastFromSelf: false }))
+  it('does nothing when count and tail are unchanged', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 10, count: 10,
+      prevTailId: 'tail-10', tailId: 'tail-10', previousTailContinues: false,
+      pinned: true, lastFromSelf: false,
+    }))
       .toEqual({ jump: false, follow: false });
   });
 
-  it('ALWAYS follows the Captain\u2019s own send even when not pinned (the BF fix)', () => {
-    expect(decideScrollOnUpdate({ switched: false, prevCount: 10, count: 11, pinned: false, lastFromSelf: true }))
+  it('follows an ordinary agent append when pinned to the bottom', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 10, count: 11,
+      prevTailId: 'tail-10', tailId: 'tail-11', previousTailContinues: true,
+      pinned: true, lastFromSelf: false,
+    }))
       .toEqual({ jump: false, follow: true });
+  });
+
+  it('does NOT follow an ordinary agent append when the Captain has scrolled up', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 10, count: 11,
+      prevTailId: 'tail-10', tailId: 'tail-11', previousTailContinues: true,
+      pinned: false, lastFromSelf: false,
+    }))
+      .toEqual({ jump: false, follow: false });
+  });
+
+  it('ALWAYS follows an ordinary Captain append when not pinned', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 10, count: 11,
+      prevTailId: 'tail-10', tailId: 'tail-11', previousTailContinues: true,
+      pinned: false, lastFromSelf: true,
+    }))
+      .toEqual({ jump: false, follow: true });
+  });
+
+  it('follows an equal-count capped agent append when pinned', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 200, count: 200,
+      prevTailId: 'tail-200', tailId: 'tail-201', previousTailContinues: true,
+      pinned: true, lastFromSelf: false,
+    }))
+      .toEqual({ jump: false, follow: true });
+  });
+
+  it('does NOT follow an equal-count capped agent append when unpinned', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 200, count: 200,
+      prevTailId: 'tail-200', tailId: 'tail-201', previousTailContinues: true,
+      pinned: false, lastFromSelf: false,
+    }))
+      .toEqual({ jump: false, follow: false });
+  });
+
+  it('ALWAYS follows an equal-count capped Captain append when unpinned', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 200, count: 200,
+      prevTailId: 'tail-200', tailId: 'tail-201', previousTailContinues: true,
+      pinned: false, lastFromSelf: true,
+    }))
+      .toEqual({ jump: false, follow: true });
+  });
+
+  it('jumps for a same-count changed-tail replacement without continuity', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 200, count: 200,
+      prevTailId: 'old-tail', tailId: 'replacement-tail', previousTailContinues: false,
+      pinned: true, lastFromSelf: false,
+    }))
+      .toEqual({ jump: true, follow: false });
+  });
+
+  it('jumps when count increases by one without tail continuity', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 10, count: 11,
+      prevTailId: 'old-tail', tailId: 'replacement-tail', previousTailContinues: false,
+      pinned: true, lastFromSelf: false,
+    }))
+      .toEqual({ jump: true, follow: false });
+  });
+
+  it('jumps (instant) on a multi-message load', () => {
+    expect(decideScrollOnUpdate({
+      switched: false, remounted: false, prevCount: 5, count: 25,
+      prevTailId: 'tail-5', tailId: 'tail-25', previousTailContinues: false,
+      pinned: true, lastFromSelf: false,
+    }))
+      .toEqual({ jump: true, follow: false });
   });
 });

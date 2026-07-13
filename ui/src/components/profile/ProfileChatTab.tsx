@@ -571,6 +571,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // cold 1:1 before its first send) fall back to the per-agent buffer.
   const threadMsgs = useStore((s) => (activeThreadId ? s.threadMessages.get(activeThreadId) : undefined));
   const messages = selectTranscriptMessages(activeThreadId, threadMsgs, conversation?.messages);
+  // BF-664: stable transcript revision signal. Both selected sources require
+  // unique message IDs, so the tail changes even when their 200/100-item caps
+  // keep the displayed count constant.
+  const currentTail = messages[messages.length - 1];
+  const currentTailId = currentTail?.id ?? null;
+  const currentTailRole = (currentTail as { role?: string } | undefined)?.role;
 
   // AD-920: meeting-mode flag (persisted on the shared thread). When set, the
   // avatar gallery mounts below the group-controls header. Reactive so the
@@ -711,19 +717,36 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pinnedToBottomRef = useRef(true);
 
-  // AD-1056: scroll management. On a context switch (agent/thread) or a BULK
-  // load (the initial history), snap INSTANTLY to the bottom — no smooth
-  // animation through the whole transcript (the disorienting "stream from the
-  // top"). Only an incremental live message (+1) while pinned animates (the
-  // AD-984c interruptible-follow is preserved).
-  const scrollStateRef = useRef<{ key: string; count: number }>({ key: '', count: 0 });
+  // AD-1056 / BF-664: scroll management. Context switches, transcript remounts,
+  // initial history, and replacement/bulk loads snap INSTANTLY. Ordinary and
+  // bounded equal-count appends animate only when immediate tail continuity
+  // proves that one new message followed the previously observed tail.
+  const scrollStateRef = useRef<{
+    key: string;
+    count: number;
+    tailId: string | null;
+    visible: boolean;
+  }>({ key: '', count: 0, tailId: null, visible: false });
   useEffect(() => {
     const key = `${agentId}::${activeThreadId ?? ''}`;
     const st = scrollStateRef.current;
     const switched = st.key !== key;
     const prevCount = switched ? 0 : st.count;
-    scrollStateRef.current = { key, count: messages.length };
-    if (messages.length === 0) return;
+    const prevTailId = switched ? null : st.tailId;
+    const remounted = !switched && !st.visible && showTranscript;
+    const penultimateTailId = messages[messages.length - 2]?.id ?? null;
+    const previousTailContinues = currentTailId !== prevTailId
+      && prevTailId !== null
+      && penultimateTailId === prevTailId;
+    // Visibility and revisions advance even while the transcript DOM is hidden,
+    // so showing it later is a remount rather than a replay of hidden appends.
+    scrollStateRef.current = {
+      key,
+      count: messages.length,
+      tailId: currentTailId,
+      visible: showTranscript,
+    };
+    if (!showTranscript) return;
     // AD-1075: the Captain's own send ALWAYS follows to the bottom (don't leave
     // their just-sent message above the fold); an agent message follows only
     // when they're already pinned (don't yank them off an earlier turn). The
@@ -731,10 +754,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     // scrollHeight (the true bottom) after a rAF, so a message that reflows
     // (markdown / an artifact card) doesn't land the scroll a little short -
     // the BF the Captain hit on send + receive.
-    const lastRole = (messages[messages.length - 1] as { role?: string } | undefined)?.role;
+    const lastRole = currentTailRole;
     const lastFromSelf = lastRole === 'user' || lastRole === 'captain';
     const decision = decideScrollOnUpdate({
-      switched, prevCount, count: messages.length,
+      switched, remounted, prevCount, count: messages.length,
+      prevTailId, tailId: currentTailId, previousTailContinues,
       pinned: pinnedToBottomRef.current, lastFromSelf,
     });
     if (decision.jump) {
@@ -746,7 +770,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     }
     if (decision.follow) {
       if (lastFromSelf) pinnedToBottomRef.current = true;
-      requestAnimationFrame(() => {
+      const frameId = requestAnimationFrame(() => {
         const c = scrollContainerRef.current;
         if (!c) { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); return; }
         // Guard scrollTo: jsdom (tests) does not implement it — fall back to the
@@ -754,8 +778,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         if (typeof c.scrollTo === 'function') c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
         else c.scrollTop = c.scrollHeight;
       });
+      return () => cancelAnimationFrame(frameId);
     }
-  }, [messages.length, agentId, activeThreadId]);
+  }, [messages.length, currentTailId, agentId, activeThreadId, showTranscript]);
 
   // AD-1075: independently resize the meeting transcript. In a meeting the
   // avatar gallery (MeetingView) is flex:1 and the transcript was a fixed
@@ -792,11 +817,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // (line ~831), and when the fallback fires (line ~807); this closes
   // the cross-turn gap.
   useEffect(() => {
-    const last = messages[messages.length - 1];
-    if (last?.role === 'agent') {
+    if (currentTailRole === 'agent') {
       emptyTranscriptCountRef.current = 0;
     }
-  }, [messages.length]);
+  }, [currentTailId, agentId, activeThreadId]);
 
   // AD-430b: Fetch cross-session memories on mount
   useEffect(() => {
