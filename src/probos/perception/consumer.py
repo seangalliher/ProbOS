@@ -19,9 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
-from typing import Any
+from contextlib import asynccontextmanager
+from threading import Lock
+from typing import Any, AsyncIterator
 
+from probos.perception.working_memory import VisionObservation
 from probos.types import (
     AnchorFrame,
     Episode,
@@ -31,6 +35,9 @@ from probos.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_LatestFrameCandidate = tuple[str, float]
 
 
 # Per-(runtime, agent) WorkingMemory instances keyed by agent_id.
@@ -70,8 +77,9 @@ def reset_working_memories_for_tests() -> None:
 
 def _reset_latest_frame_cache_for_tests(consumer: Any) -> None:
     """AD-733c-1 test helper — clears per-consumer latest-frame caches."""
-    consumer._latest_frame_by_session.clear()
-    consumer._latest_frame_global = None
+    with consumer._latest_frame_lock:
+        consumer._latest_frame_by_session.clear()
+        consumer._latest_frame_global = None
 
 
 class VisionConsumer:
@@ -157,10 +165,13 @@ class VisionConsumer:
         # ``_handle`` BEFORE supervisor admission so dropped/throttled frames
         # still register. Used by ``force_describe_current_frame`` to fetch
         # the most recent visible frame on a DM-receive hook. Each value is
-        # ``(sha, captured_at)``. Module-scoped per-runtime; cleared in
-        # ``reset_working_memories_for_tests``.
-        self._latest_frame_by_session: dict[str, tuple[str, float]] = {}
-        self._latest_frame_global: tuple[str, float] | None = None
+        # ``(sha, captured_at)``. BF-666: one synchronous lock owns snapshots,
+        # monotonic writes, and compare-clears; the separate async force lock
+        # collapses concurrent public force calls before storage selection.
+        self._latest_frame_lock = Lock()
+        self._force_describe_lock = asyncio.Lock()
+        self._latest_frame_by_session: dict[str, _LatestFrameCandidate] = {}
+        self._latest_frame_global: _LatestFrameCandidate | None = None
         # BF-617: the most-recent VisionObservation produced by ``_process``,
         # regardless of which observers it fanned out to. A shared-camera
         # meeting has ONE feed; a present crew member who is not a registered
@@ -348,6 +359,107 @@ class VisionConsumer:
             "next_allowed_in_seconds": round(next_allowed_in, 2),
         }
 
+    def _record_latest_frame(
+        self,
+        sha: str,
+        session_id: str,
+        captured_at: float,
+    ) -> _LatestFrameCandidate | None:
+        """Record one finite frame candidate without regressing newer slots."""
+        if not isinstance(sha, str) or not sha:
+            return None
+        try:
+            normalized_captured_at = float(captured_at)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(normalized_captured_at):
+            return None
+        candidate: _LatestFrameCandidate = (sha, normalized_captured_at)
+        with self._latest_frame_lock:
+            if session_id:
+                current_session = self._latest_frame_by_session.get(session_id)
+                if (
+                    current_session is None
+                    or normalized_captured_at >= current_session[1]
+                ):
+                    self._latest_frame_by_session[session_id] = candidate
+            current_global = self._latest_frame_global
+            if (
+                current_global is None
+                or normalized_captured_at >= current_global[1]
+            ):
+                self._latest_frame_global = candidate
+        return candidate
+
+    def _select_latest_frame(
+        self,
+        session_id: str | None,
+    ) -> _LatestFrameCandidate | None:
+        """Snapshot the requested session candidate, falling back globally."""
+        with self._latest_frame_lock:
+            if session_id:
+                session_candidate = self._latest_frame_by_session.get(session_id)
+                if session_candidate is not None:
+                    return session_candidate
+            return self._latest_frame_global
+
+    def _clear_latest_frame_if_matches(
+        self,
+        candidate: _LatestFrameCandidate,
+    ) -> int:
+        """Atomically clear every session/global alias equal to ``candidate``."""
+        removed = 0
+        with self._latest_frame_lock:
+            matching_sessions = [
+                session_id
+                for session_id, current in self._latest_frame_by_session.items()
+                if current == candidate
+            ]
+            for session_id in matching_sessions:
+                del self._latest_frame_by_session[session_id]
+                removed += 1
+            if self._latest_frame_global == candidate:
+                self._latest_frame_global = None
+                removed += 1
+        return removed
+
+    def _force_describe_max_age_seconds(self) -> float:
+        """Return the configured freshness bound capped by frame retention."""
+        cfg = getattr(getattr(self._runtime, "config", None), "perception", None)
+        try:
+            retention = float(getattr(cfg, "frame_retention_seconds", 300.0))
+        except (TypeError, ValueError, OverflowError):
+            retention = 300.0
+        if not math.isfinite(retention) or retention <= 0.0:
+            retention = 300.0
+        try:
+            freshness = float(getattr(cfg, "prompt_freshness_seconds", 120.0))
+        except (TypeError, ValueError, OverflowError):
+            freshness = 120.0
+        if not math.isfinite(freshness):
+            freshness = 120.0
+        if freshness <= 0.0:
+            return retention
+        return min(retention, freshness)
+
+    @asynccontextmanager
+    async def _force_describe_permit(self) -> AsyncIterator[bool]:
+        """Admit one force call without queuing peers behind its full work."""
+        acquired = False
+        try:
+            try:
+                await asyncio.wait_for(
+                    self._force_describe_lock.acquire(), timeout=0.001,
+                )
+            except asyncio.TimeoutError:
+                yield False
+                return
+            acquired = True
+            yield True
+        finally:
+            if acquired:
+                self._force_describe_lock.release()
+
     async def _handle(self, msg: IntentMessage) -> IntentResult | None:
         """Bus handler — supervisor-gate, LLM-describe, WM-write, episode-anchor."""
         if msg.intent != self.INTENT_NAME:
@@ -355,18 +467,24 @@ class VisionConsumer:
         # AD-733c-1: record the SHA BEFORE supervisor gating so force-describe
         # can fetch it even when the supervisor dropped this frame for
         # low-novelty / throttled reasons.
+        cache_candidate: _LatestFrameCandidate | None = None
         try:
             _sha = msg.params.get("attachment_ref")
-            _captured_at = float(msg.params.get("captured_at", time.time()))
+            _captured_at = (
+                float(msg.params["captured_at"])
+                if "captured_at" in msg.params
+                else time.time()
+            )
             _session_id = str(msg.params.get("session_id", ""))
-            if isinstance(_sha, str) and _sha:
-                if _session_id:
-                    self._latest_frame_by_session[_session_id] = (_sha, _captured_at)
-                self._latest_frame_global = (_sha, _captured_at)
+            cache_candidate = self._record_latest_frame(
+                _sha, _session_id, _captured_at,
+            )
         except Exception:
             logger.debug("AD-733c-1: latest-frame cache update failed", exc_info=True)
         try:
-            await self._process(msg)
+            await self._process(msg, cache_candidate=cache_candidate)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.warning(
                 "AD-733a: VisionConsumer dropped frame "
@@ -378,7 +496,12 @@ class VisionConsumer:
         # treats this as "no reply needed". Matches AD-733 v1 semantics.
         return None
 
-    async def _process(self, msg: IntentMessage) -> None:
+    async def _process(
+        self,
+        msg: IntentMessage,
+        *,
+        cache_candidate: _LatestFrameCandidate | None = None,
+    ) -> VisionObservation | None:
         # AD-746 Layer 1: a fused message carries multiple refs +
         # parallel sources lists. Use the primary (first) ref for the
         # supervisor + describe path; the full sources list flows into
@@ -404,22 +527,59 @@ class VisionConsumer:
         session_id = str(msg.params.get("session_id", ""))
         if not sha or not isinstance(sha, str):
             logger.debug("AD-733a: vision_observation missing attachment_ref; skipping")
-            return
+            return None
+
+        read_candidate = cache_candidate
+        if read_candidate is None and "captured_at" in msg.params:
+            try:
+                explicit_captured_at = float(msg.params["captured_at"])
+            except (TypeError, ValueError, OverflowError):
+                explicit_captured_at = math.nan
+            if math.isfinite(explicit_captured_at):
+                read_candidate = (sha, explicit_captured_at)
 
         # 1) Load bytes from AttachmentStore (AD-731 invariant).
-        from probos.routers.chat import _get_attachment_store
-        store = _get_attachment_store(self._runtime)
         try:
-            frame_bytes = await store.read(sha)
+            from probos.routers.chat import _get_attachment_store
+            store = _get_attachment_store(self._runtime)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.warning(
-                "AD-733a: AttachmentStore.read failed sha=%s; skipping frame",
+                "BF-666: attachment-store resolution failed unexpectedly "
+                "before frame read sha=%s; latest-frame cache retained for "
+                "transient recovery and frame skipped",
                 sha[:8], exc_info=True,
             )
-            return
+            return None
+        try:
+            frame_bytes = await store.read(sha)
+        except asyncio.CancelledError:
+            raise
+        except FileNotFoundError:
+            removed = (
+                self._clear_latest_frame_if_matches(read_candidate)
+                if read_candidate is not None
+                else 0
+            )
+            if removed:
+                logger.debug(
+                    "BF-666: AttachmentStore.read found frame absent sha=%s; "
+                    "removed %d exact latest-frame alias(es), so future "
+                    "describes skip the reaped blob",
+                    sha[:8], removed,
+                )
+            return None
+        except Exception:
+            logger.warning(
+                "BF-666: AttachmentStore.read failed unexpectedly sha=%s; "
+                "latest-frame cache retained for transient retry and frame skipped",
+                sha[:8], exc_info=True,
+            )
+            return None
         if not frame_bytes:
             logger.warning("AD-733a: attachment %s missing; skipping frame", sha[:8])
-            return
+            return None
 
         # 2) Supervisor gate. BF-302: ``force=True`` in intent params bypasses
         # the supervisor entirely — operator-driven preview / debug path.
@@ -442,7 +602,7 @@ class VisionConsumer:
                     "AD-733a: supervisor dropped frame sha=%s reason=%s novelty=%.2f",
                     sha[:8], decision.reason, decision.novelty_score,
                 )
-                return
+                return None
             novelty_score = decision.novelty_score
 
         # 3) Vision LLM describe. BF-304: single-flight — if a describe is
@@ -457,7 +617,7 @@ class VisionConsumer:
                 sha[:8],
             )
             self._recent_decisions.append((time.time(), "busy", sha[:8], novelty_score))
-            return
+            return None
         async with self._describe_lock:
             # AD-742e: thread the current session_id into the consumer so the
             # budget counter's reset-on-session-change logic sees the right
@@ -467,11 +627,9 @@ class VisionConsumer:
             description = await self._describe(sha)
         if not description:
             logger.info("AD-733a: vision LLM returned empty for sha=%s", sha[:8])
-            return
+            return None
 
         # 4) Write to every registered observer's WorkingMemory.
-        from probos.perception.working_memory import VisionObservation
-
         # AD-733b: identity hook — once per session, ask the vision LLM
         # whether the person in frame matches the Captain reference avatar.
         # Skipped when no reference image is available; identity stays "unknown".
@@ -556,6 +714,7 @@ class VisionConsumer:
                         "AD-733b: observer.maybe_emit raised for agent=%s",
                         agent_id, exc_info=True,
                     )
+        return obs
 
     async def force_describe_current_frame(
         self,
@@ -578,51 +737,136 @@ class VisionConsumer:
         spamming this call collapses to one describe per supervisor
         window.
         """
-        if session_id and session_id in self._latest_frame_by_session:
-            sha, captured_at = self._latest_frame_by_session[session_id]
-        elif self._latest_frame_global is not None:
-            sha, captured_at = self._latest_frame_global
-        else:
-            logger.debug(
-                "AD-733c-1: force_describe — no cached frame for session=%s",
-                str(session_id or "*")[:8],
+        async with self._force_describe_permit() as acquired:
+            if not acquired:
+                logger.debug(
+                    "BF-666: force_describe dropped concurrent call for session=%s; "
+                    "existing call owns the current snapshot",
+                    str(session_id or "*")[:8],
+                )
+                return None
+
+            candidate = self._select_latest_frame(session_id)
+            if candidate is None:
+                logger.debug(
+                    "AD-733c-1: force_describe — no cached frame for session=%s",
+                    str(session_id or "*")[:8],
+                )
+                return None
+            sha, captured_at = candidate
+            max_age = self._force_describe_max_age_seconds()
+            age = max(0.0, time.time() - captured_at)
+            if age > max_age:
+                removed = self._clear_latest_frame_if_matches(candidate)
+                if removed:
+                    logger.debug(
+                        "BF-666: force_describe rejected expired frame sha=%s "
+                        "age=%.3fs max_age=%.3fs; removed %d exact alias(es) "
+                        "before storage work",
+                        sha[:8], age, max_age, removed,
+                    )
+                return None
+
+            try:
+                from probos.routers.chat import _get_attachment_store
+                store = _get_attachment_store(self._runtime)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "BF-666: attachment-store resolution failed unexpectedly "
+                    "during force_describe sha=%s; latest-frame cache retained "
+                    "for transient recovery and DM proceeds without a fresh frame",
+                    sha[:8], exc_info=True,
+                )
+                return None
+            try:
+                exists = await store.exists(sha)
+            except asyncio.CancelledError:
+                raise
+            except FileNotFoundError:
+                exists = False
+            except Exception:
+                logger.warning(
+                    "BF-666: AttachmentStore.exists preflight failed "
+                    "unexpectedly sha=%s; latest-frame cache retained for "
+                    "transient retry and DM proceeds without a fresh frame",
+                    sha[:8], exc_info=True,
+                )
+                return None
+            if not exists:
+                removed = self._clear_latest_frame_if_matches(candidate)
+                if removed:
+                    logger.debug(
+                        "BF-666: force_describe preflight found frame absent "
+                        "sha=%s; removed %d exact alias(es), so future calls "
+                        "skip storage",
+                        sha[:8], removed,
+                    )
+                return None
+
+            synthetic = IntentMessage(
+                intent=self.INTENT_NAME,
+                params={
+                    "attachment_ref": sha,
+                    "mime": "image/jpeg",
+                    "captured_at": captured_at,
+                    "source": "force_describe",
+                    "session_id": session_id or "",
+                    "force": True,
+                },
             )
-            return None
-        synthetic = IntentMessage(
-            intent=self.INTENT_NAME,
-            params={
-                "attachment_ref": sha,
-                "mime": "image/jpeg",
-                "captured_at": captured_at,
-                "source": "force_describe",
-                "session_id": session_id or "",
-                "force": True,
-            },
-        )
-        try:
-            await asyncio.wait_for(self._process(synthetic), timeout=timeout_s)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "AD-733c-1: force_describe timed out after %.1fs sha=%s",
-                timeout_s, sha[:8],
-            )
-            return None
-        except Exception:
-            logger.warning(
-                "AD-733c-1: force_describe raised for sha=%s; DM proceeds without fresh frame",
-                sha[:8], exc_info=True,
-            )
-            return None
-        # Pull the just-written description out of any observer's WM.
-        # The describe path wrote the same VisionObservation to every
-        # observer's WM, so the first observer's most-recent entry is the
-        # description we just produced.
-        for agent_id in list(self._observer_agent_ids):
-            wm = get_or_create_working_memory(agent_id, capacity=self._wm_capacity)
-            entries = list(wm.entries())
-            if entries and entries[-1].attachment_ref == sha:
-                return entries[-1].description
-        return None
+            try:
+                produced_observation = await asyncio.wait_for(
+                    self._process(synthetic, cache_candidate=candidate),
+                    timeout=timeout_s,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "AD-733c-1: force_describe timed out after %.1fs sha=%s",
+                    timeout_s, sha[:8],
+                )
+                return None
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "AD-733c-1: force_describe raised for sha=%s; DM proceeds without fresh frame",
+                    sha[:8], exc_info=True,
+                )
+                return None
+
+            try:
+                still_exists = await store.exists(sha)
+            except asyncio.CancelledError:
+                raise
+            except FileNotFoundError:
+                still_exists = False
+            except Exception:
+                logger.warning(
+                    "BF-666: AttachmentStore.exists postcheck failed "
+                    "unexpectedly sha=%s; latest-frame cache retained and any "
+                    "completed working-memory observation remains available",
+                    sha[:8], exc_info=True,
+                )
+                still_exists = True
+            if not still_exists:
+                removed = self._clear_latest_frame_if_matches(candidate)
+                if removed:
+                    logger.debug(
+                        "BF-666: force_describe postcheck found frame reaped "
+                        "sha=%s; removed %d exact alias(es) without undoing "
+                        "completed working-memory work",
+                        sha[:8], removed,
+                    )
+                return None
+
+            if (
+                produced_observation is None
+                or produced_observation.attachment_ref != sha
+            ):
+                return None
+            return produced_observation.description
 
     def record_uploaded_frame(
         self, sha: str, session_id: str, captured_at: float
@@ -637,11 +881,7 @@ class VisionConsumer:
         ``_handle`` write: both store ``(sha, captured_at)`` keyed by session
         plus the global slot. No-op on empty sha.
         """
-        if not sha:
-            return
-        if session_id:
-            self._latest_frame_by_session[session_id] = (sha, captured_at)
-        self._latest_frame_global = (sha, captured_at)
+        self._record_latest_frame(sha, session_id, captured_at)
 
     async def _describe(self, sha: str) -> str:
         """Call the vision LLM on a single frame. Returns description or empty string."""
