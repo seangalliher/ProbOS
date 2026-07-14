@@ -517,7 +517,7 @@ class TestCheckEndpointRouting:
         client = OpenAICompatibleClient(config=cfg)
         try:
             mock_client = client._clients[client._client_key("standard")]
-            probe_resp = _httpx_response(200, json={"choices": [{"message": {"content": ""}}]})
+            probe_resp = _httpx_response(200, json={"choices": [{"message": {"content": "pong"}}]})
             with patch.object(mock_client, "post", new_callable=AsyncMock, return_value=probe_resp) as mock_post:
                 result = await client._check_endpoint("standard")
                 assert result is True
@@ -525,6 +525,104 @@ class TestCheckEndpointRouting:
                 assert call_args[0][0] == "chat/completions"
                 payload = call_args.kwargs.get("json") or call_args[1]["json"]
                 assert payload["max_tokens"] == 1
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_openai_probe_empty_http_200_returns_false(self):
+        client = OpenAICompatibleClient(config=_make_config())
+        try:
+            mock_client = client._clients[client._client_key("standard")]
+            probe_resp = _httpx_response(
+                200, json={"choices": [{"message": {"content": ""}}]}
+            )
+            with patch.object(
+                mock_client, "post", new_callable=AsyncMock,
+                return_value=probe_resp,
+            ):
+                assert await client._check_endpoint("standard") is False
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_openai_probe_reasoning_only_http_200_returns_true(self):
+        client = OpenAICompatibleClient(config=_make_config())
+        try:
+            mock_client = client._clients[client._client_key("standard")]
+            probe_resp = _httpx_response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": "", "reasoning": "pong"}}
+                    ]
+                },
+            )
+            with patch.object(
+                mock_client, "post", new_callable=AsyncMock,
+                return_value=probe_resp,
+            ):
+                assert await client._check_endpoint("standard") is True
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_openai_probe_malformed_http_200_returns_false(self):
+        client = OpenAICompatibleClient(config=_make_config())
+        try:
+            mock_client = client._clients[client._client_key("standard")]
+            probe_resp = _httpx_response(
+                200, json={"choices": [{"message": None}]}
+            )
+            with patch.object(
+                mock_client, "post", new_callable=AsyncMock,
+                return_value=probe_resp,
+            ):
+                assert await client._check_endpoint("standard") is False
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [401, 429])
+    async def test_openai_probe_sub_500_status_returns_true_without_refresh(
+        self, status_code: int
+    ):
+        client = OpenAICompatibleClient(config=_make_config())
+        try:
+            mock_client = client._clients[client._client_key("standard")]
+            probe_resp = _httpx_response(status_code, json={})
+            with patch.object(
+                mock_client,
+                "post",
+                new_callable=AsyncMock,
+                return_value=probe_resp,
+            ), patch.object(
+                client, "_refresh_client", wraps=client._refresh_client
+            ) as mock_refresh:
+                assert await client._check_endpoint("standard") is True
+                mock_refresh.assert_not_awaited()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ollama_probe_empty_http_200_returns_false_without_refresh(self):
+        cfg = _make_config(
+            llm_base_url_fast="http://localhost:11434",
+            llm_api_format_fast="ollama",
+        )
+        client = OpenAICompatibleClient(config=cfg)
+        try:
+            mock_client = client._clients[client._client_key("fast")]
+            probe_resp = _httpx_response(
+                200, json={"message": {"content": ""}, "done": True}
+            )
+            with patch.object(
+                mock_client, "post", new_callable=AsyncMock,
+                return_value=probe_resp,
+            ), patch.object(
+                client, "_refresh_client", wraps=client._refresh_client,
+            ) as mock_refresh:
+                assert await client._check_endpoint("fast") is False
+                mock_refresh.assert_not_awaited()
         finally:
             await client.close()
 

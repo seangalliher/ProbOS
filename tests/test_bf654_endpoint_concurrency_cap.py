@@ -392,6 +392,49 @@ class TestBF654EndpointConcurrencyCap:
             await client.close()
 
     @pytest.mark.asyncio
+    async def test_cancel_during_lane_wait_acquires_no_endpoint_or_lease(self):
+        client = _make_client(
+            max_inflight=1,
+            max_concurrent=3,
+            interactive_reserved=2,
+        )
+        key = client._client_key("standard")
+        lane = client._background_semaphore
+        endpoint = client._endpoint_semaphores[key]
+        state = client._client_pool_states[key]
+        await lane.acquire()
+        task = asyncio.create_task(
+            client.complete(
+                LLMRequest(prompt="cancel-lane-wait", tier="standard"),
+                priority=Priority.NORMAL,
+            )
+        )
+        try:
+            for _ in range(100):
+                if lane._waiters:
+                    break
+                await asyncio.sleep(0)
+            assert lane._waiters is not None
+            assert len(lane._waiters) == 1
+            assert endpoint._value == 1
+            assert state.borrowers == {}
+
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            assert lane._value == 0
+            assert endpoint._value == 1
+            assert state.borrowers == {}
+            assert state.retired == {}
+        finally:
+            lane.release()
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await client.close()
+
+    @pytest.mark.asyncio
     async def test_cancel_during_retry_jitter_restores_lane_and_endpoint(self):
         """Cancellation in BF-612 jitter releases both acquired permits."""
         client = _make_client(
@@ -589,8 +632,8 @@ class TestBF654EndpointConcurrencyCap:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_cancel_inside_refresh_restores_lane_and_endpoint(self):
-        """Cancellation in the real refresh path propagates without leaks."""
+    async def test_cancel_post_swap_retirement_close_drains_then_propagates(self):
+        """Cancellation after the atomic swap drains old-generation close."""
         client = _make_client(
             max_inflight=1,
             max_concurrent=3,
@@ -601,15 +644,18 @@ class TestBF654EndpointConcurrencyCap:
         old_client = client._clients[endpoint_key]
         lane_initial = client._background_semaphore._value
         endpoint_initial = endpoint_sem._value
-        refresh_entered = asyncio.Event()
-        hold_refresh = asyncio.Event()
+        close_entered = asyncio.Event()
+        hold_close = asyncio.Event()
+        close_calls = 0
 
         async def empty_call(request, model, http_client, **kwargs):  # noqa: ANN001
             return LLMResponse(content="", model=model, tier="standard")
 
         async def blocking_close() -> None:
-            refresh_entered.set()
-            await hold_refresh.wait()
+            nonlocal close_calls
+            close_calls += 1
+            close_entered.set()
+            await hold_close.wait()
 
         client._call_api = empty_call
         task: asyncio.Task[LLMResponse] | None = None
@@ -623,27 +669,36 @@ class TestBF654EndpointConcurrencyCap:
                         priority=Priority.NORMAL,
                     )
                 )
-                await asyncio.wait_for(refresh_entered.wait(), timeout=2.0)
+                await asyncio.wait_for(close_entered.wait(), timeout=2.0)
                 assert client._background_semaphore._value == lane_initial - 1
                 assert endpoint_sem._value == endpoint_initial - 1
+                assert client._clients[endpoint_key] is not old_client
+                assert client._client_pool_states[endpoint_key].generation == 1
+                assert 0 in client._client_pool_states[endpoint_key].retirement_closes
 
                 task.cancel()
+                await asyncio.sleep(0)
+                assert task.done() is False
+                hold_close.set()
                 with pytest.raises(asyncio.CancelledError):
                     await task
 
                 assert client._background_semaphore._value == lane_initial
                 assert endpoint_sem._value == endpoint_initial
-                assert client._clients[endpoint_key] is old_client
-                assert not old_client.is_closed
+                assert client._clients[endpoint_key] is not old_client
+                assert client._client_pool_states[endpoint_key].generation == 1
+                assert client._client_pool_states[endpoint_key].retired == {}
+                assert client._client_pool_states[endpoint_key].retirement_closes == {}
+                assert close_calls == 1
         finally:
-            hold_refresh.set()
+            hold_close.set()
             if task is not None and not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_cancel_inside_second_call_restores_lane_and_endpoint(self):
+    async def test_cancel_retry_transport_releases_new_generation_lease(self):
         """Cancellation in BF-612's second transport restores both permits."""
         client = _make_client(
             max_inflight=1,
@@ -983,7 +1038,7 @@ class TestBF654EndpointConcurrencyCap:
         try:
             client._call_api = empty_then_full
             with patch.object(
-                client, "_refresh_client", new_callable=AsyncMock
+                client, "_refresh_client", wraps=client._refresh_client
             ), patch(
                 "probos.cognitive.llm_client.random.uniform", return_value=0.0
             ):
@@ -1112,7 +1167,7 @@ class TestBF654EndpointConcurrencyCap:
             with patch.object(
                 enabled, "_call_api", new_callable=AsyncMock, side_effect=[empty, full]
             ), patch.object(
-                enabled, "_refresh_client", new_callable=AsyncMock
+                enabled, "_refresh_client", wraps=enabled._refresh_client
             ), patch(
                 "probos.cognitive.llm_client.random.uniform", return_value=0.0
             ) as mock_unif:
@@ -1132,7 +1187,7 @@ class TestBF654EndpointConcurrencyCap:
             with patch.object(
                 disabled, "_call_api", new_callable=AsyncMock, side_effect=[empty, full]
             ), patch.object(
-                disabled, "_refresh_client", new_callable=AsyncMock
+                disabled, "_refresh_client", wraps=disabled._refresh_client
             ), patch(
                 "probos.cognitive.llm_client.random.uniform", return_value=0.0
             ) as mock_unif2:
@@ -1141,3 +1196,758 @@ class TestBF654EndpointConcurrencyCap:
                 assert mock_unif2.call_count == 0  # byte-identical: no jitter
         finally:
             await disabled.close()
+
+    @pytest.mark.asyncio
+    async def test_refresh_does_not_close_inflight_peer_at_cap_gt_one(self):
+        client = _make_client(max_inflight=2, max_concurrent=100)
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        old = client._clients[key]
+        peer_entered = asyncio.Event()
+        release_peer = asyncio.Event()
+        peer_saw_open_after_swap = False
+        calls: dict[str, int] = {"empty": 0, "peer": 0}
+
+        async def transport(request, model, http_client, **kwargs):  # noqa: ANN001
+            nonlocal peer_saw_open_after_swap
+            calls[request.prompt] += 1
+            if request.prompt == "peer":
+                assert http_client is old
+                peer_entered.set()
+                await release_peer.wait()
+                peer_saw_open_after_swap = not http_client.is_closed
+                return LLMResponse(content="peer-ok", model=model, tier="standard")
+            if calls["empty"] == 1:
+                await peer_entered.wait()
+                return LLMResponse(content="", model=model, tier="standard")
+            assert http_client is client._clients[key]
+            assert http_client is not old
+            return LLMResponse(content="refreshed", model=model, tier="standard")
+
+        client._call_api = transport
+        tasks: list[asyncio.Task[LLMResponse]] = []
+        try:
+            with patch(
+                "probos.cognitive.llm_client.random.uniform", return_value=0.0
+            ):
+                tasks = [
+                    asyncio.create_task(
+                        client.complete(LLMRequest(prompt="peer", tier="standard"))
+                    ),
+                    asyncio.create_task(
+                        client.complete(LLMRequest(prompt="empty", tier="standard"))
+                    ),
+                ]
+                await asyncio.wait_for(peer_entered.wait(), timeout=2.0)
+                while state.generation == 0:
+                    await asyncio.sleep(0)
+                assert state.generation == 1
+                assert state.borrowers.get(0) == 1
+                assert state.borrowers.get(1, 0) <= 1
+                assert state.retired == {0: old}
+                assert old.is_closed is False
+                release_peer.set()
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks), timeout=2.0
+                )
+
+            assert [result.content for result in results] == ["peer-ok", "refreshed"]
+            assert peer_saw_open_after_swap is True
+            assert old.is_closed is True
+            assert state.borrowers == {}
+            assert state.retired == {}
+        finally:
+            release_peer.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_empty_callers_swap_one_observed_generation(self):
+        client = _make_client(max_inflight=4, max_concurrent=100)
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        old = client._clients[key]
+        all_initial_entered = asyncio.Event()
+        release_initial = asyncio.Event()
+        initial_count = 0
+        seen_clients: list[httpx.AsyncClient] = []
+        built: list[httpx.AsyncClient] = []
+        original_build = client._build_client
+
+        def counted_build(tier: str) -> httpx.AsyncClient:
+            replacement = original_build(tier)
+            built.append(replacement)
+            return replacement
+
+        async def transport(request, model, http_client, **kwargs):  # noqa: ANN001
+            nonlocal initial_count
+            seen_clients.append(http_client)
+            if http_client is old:
+                initial_count += 1
+                if initial_count == 4:
+                    all_initial_entered.set()
+                await release_initial.wait()
+                return LLMResponse(content="", model=model, tier="standard")
+            return LLMResponse(content="ok", model=model, tier="standard")
+
+        client._call_api = transport
+        client._build_client = counted_build
+        tasks = [
+            asyncio.create_task(
+                client.complete(LLMRequest(prompt=f"empty-{i}", tier="standard"))
+            )
+            for i in range(4)
+        ]
+        try:
+            with patch(
+                "probos.cognitive.llm_client.random.uniform", return_value=0.0
+            ):
+                await asyncio.wait_for(all_initial_entered.wait(), timeout=2.0)
+                assert state.borrowers == {0: 4}
+                release_initial.set()
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks), timeout=2.0
+                )
+
+            assert all(result.content == "ok" for result in results)
+            assert len(built) == 1
+            assert state.generation == 1
+            assert client._clients[key] is built[0]
+            assert seen_clients.count(old) == 4
+            assert seen_clients.count(built[0]) == 4
+            assert old.is_closed is True
+            assert state.borrowers == {}
+            assert state.retired == {}
+        finally:
+            release_initial.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_stale_empty_observer_retries_installed_generation_without_second_swap(self):
+        client = _make_client(max_inflight=2, max_concurrent=100)
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        old = client._clients[key]
+        both_initial_entered = asyncio.Event()
+        release_initial = asyncio.Event()
+        initial_count = 0
+        build_count = 0
+        original_build = client._build_client
+
+        def counted_build(tier: str) -> httpx.AsyncClient:
+            nonlocal build_count
+            build_count += 1
+            return original_build(tier)
+
+        async def transport(request, model, http_client, **kwargs):  # noqa: ANN001
+            nonlocal initial_count
+            if http_client is old:
+                initial_count += 1
+                if initial_count == 2:
+                    both_initial_entered.set()
+                await release_initial.wait()
+                return LLMResponse(content="", model=model, tier="standard")
+            return LLMResponse(
+                content=f"new-{request.prompt}", model=model, tier="standard"
+            )
+
+        client._build_client = counted_build
+        client._call_api = transport
+        tasks = [
+            asyncio.create_task(
+                client.complete(LLMRequest(prompt="a", tier="standard"))
+            ),
+            asyncio.create_task(
+                client.complete(LLMRequest(prompt="b", tier="standard"))
+            ),
+        ]
+        try:
+            with patch(
+                "probos.cognitive.llm_client.random.uniform", return_value=0.0
+            ):
+                await asyncio.wait_for(both_initial_entered.wait(), timeout=2.0)
+                release_initial.set()
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks), timeout=2.0
+                )
+
+            assert {result.content for result in results} == {"new-a", "new-b"}
+            assert build_count == 1
+            assert state.generation == 1
+            assert state.borrowers == {}
+            assert state.retired == {}
+        finally:
+            release_initial.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_retired_generation_closes_only_after_final_borrower(self):
+        client = _make_client(max_inflight=2)
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        old = client._clients[key]
+        first_exit = asyncio.Event()
+        second_exit = asyncio.Event()
+        first_entered = asyncio.Event()
+        second_entered = asyncio.Event()
+
+        async def borrower(exit_event: asyncio.Event, entered: asyncio.Event) -> None:
+            async with client._client_lease("standard") as lease:
+                assert lease.client is old
+                entered.set()
+                await exit_event.wait()
+
+        first = asyncio.create_task(borrower(first_exit, first_entered))
+        second = asyncio.create_task(borrower(second_exit, second_entered))
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(first_entered.wait(), second_entered.wait()),
+                timeout=2.0,
+            )
+            assert state.borrowers == {0: 2}
+            assert await client._refresh_client(
+                "standard", observed_generation=0
+            ) is True
+            assert old.is_closed is False
+            assert state.retired == {0: old}
+
+            first_exit.set()
+            await asyncio.wait_for(first, timeout=2.0)
+            assert old.is_closed is False
+            assert state.borrowers == {0: 1}
+
+            second_exit.set()
+            await asyncio.wait_for(second, timeout=2.0)
+            assert old.is_closed is True
+            assert state.borrowers == {}
+            assert state.retired == {}
+        finally:
+            first_exit.set()
+            second_exit.set()
+            for task in (first, second):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(first, second, return_exceptions=True)
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_critical_bypasses_cap_but_holds_lifetime_lease(self):
+        client = _make_client(max_inflight=1, max_concurrent=3, interactive_reserved=1)
+        key = client._client_key("standard")
+        endpoint = client._endpoint_semaphores[key]
+        state = client._client_pool_states[key]
+        observed: list[tuple[int, dict[int, int]]] = []
+
+        async def transport(request, model, http_client, **kwargs):  # noqa: ANN001
+            observed.append((endpoint._value, dict(state.borrowers)))
+            return LLMResponse(content="ok", model=model, tier="standard")
+
+        await endpoint.acquire()
+        try:
+            client._call_api = transport
+            result = await client.complete(
+                LLMRequest(prompt="critical-lease", tier="standard"),
+                priority=Priority.CRITICAL,
+            )
+            assert result.content == "ok"
+            assert observed == [(0, {0: 1})]
+            assert state.borrowers == {}
+            assert state.borrowers_zero.is_set()
+        finally:
+            endpoint.release()
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_cancel_waiting_refresh_lock_restores_lane_endpoint_and_state(self):
+        client = _make_client(max_inflight=1, max_concurrent=3, interactive_reserved=2)
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        endpoint = client._endpoint_semaphores[key]
+        lane = client._background_semaphore
+        old = client._clients[key]
+        await state.refresh_lock.acquire()
+
+        async def empty(request, model, http_client, **kwargs):  # noqa: ANN001
+            return LLMResponse(content="", model=model, tier="standard")
+
+        client._call_api = empty
+        task: asyncio.Task[LLMResponse] | None = None
+        try:
+            with patch(
+                "probos.cognitive.llm_client.random.uniform", return_value=0.0
+            ):
+                task = asyncio.create_task(
+                    client.complete(LLMRequest(prompt="refresh-wait", tier="standard"))
+                )
+                for _ in range(100):
+                    if state.refresh_lock._waiters:
+                        break
+                    await asyncio.sleep(0)
+                assert state.refresh_lock._waiters is not None
+                assert len(state.refresh_lock._waiters) == 1
+                assert state.borrowers == {}
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+            assert lane._value == 1
+            assert endpoint._value == 1
+            assert state.generation == 0
+            assert client._clients[key] is old
+            assert state.borrowers == {}
+            assert state.retired == {}
+        finally:
+            state.refresh_lock.release()
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_cancel_waiting_lease_state_lock_restores_lane_endpoint_and_state(self):
+        client = _make_client(max_inflight=1, max_concurrent=3, interactive_reserved=2)
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        endpoint = client._endpoint_semaphores[key]
+        lane = client._background_semaphore
+        old = client._clients[key]
+        await state.state_lock.acquire()
+        task = asyncio.create_task(
+            client.complete(LLMRequest(prompt="lease-lock-wait", tier="standard"))
+        )
+        try:
+            for _ in range(100):
+                if state.state_lock._waiters:
+                    break
+                await asyncio.sleep(0)
+            assert state.state_lock._waiters is not None
+            assert len(state.state_lock._waiters) == 1
+            assert lane._value == 0
+            assert endpoint._value == 0
+            assert state.borrowers == {}
+
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            assert lane._value == 1
+            assert endpoint._value == 1
+            assert state.generation == 0
+            assert client._clients[key] is old
+            assert state.borrowers == {}
+            assert state.retired == {}
+        finally:
+            state.state_lock.release()
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_cancel_waiting_swap_state_lock_makes_no_mutation(self):
+        client = _make_client(max_inflight=1)
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        old = client._clients[key]
+        await state.state_lock.acquire()
+        task = asyncio.create_task(
+            client._refresh_client("standard", observed_generation=0)
+        )
+        try:
+            for _ in range(100):
+                if state.state_lock._waiters:
+                    break
+                await asyncio.sleep(0)
+            assert state.state_lock._waiters is not None
+            assert len(state.state_lock._waiters) == 1
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert state.generation == 0
+            assert client._clients[key] is old
+            assert state.retired == {}
+        finally:
+            state.state_lock.release()
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_cancel_final_borrower_cleanup_closes_once_and_leaves_no_task(self):
+        client = _make_client(max_inflight=1)
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        old = client._clients[key]
+        lease_entered = asyncio.Event()
+        release_lease = asyncio.Event()
+        close_entered = asyncio.Event()
+        release_close = asyncio.Event()
+        close_calls = 0
+
+        async def blocking_close() -> None:
+            nonlocal close_calls
+            close_calls += 1
+            close_entered.set()
+            await release_close.wait()
+
+        async def borrower() -> None:
+            async with client._client_lease("standard"):
+                lease_entered.set()
+                await release_lease.wait()
+
+        task: asyncio.Task[None] | None = None
+        try:
+            with patch.object(old, "aclose", new=blocking_close):
+                task = asyncio.create_task(borrower())
+                await asyncio.wait_for(lease_entered.wait(), timeout=2.0)
+                assert await client._refresh_client(
+                    "standard", observed_generation=0
+                ) is True
+                release_lease.set()
+                await asyncio.wait_for(close_entered.wait(), timeout=2.0)
+                task.cancel()
+                await asyncio.sleep(0)
+                assert task.done() is False
+                release_close.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+            assert close_calls == 1
+            assert state.borrowers == {}
+            assert state.retired == {}
+            assert state.retirement_closes == {}
+            await asyncio.sleep(0)
+            assert not any(
+                pending.get_name().startswith("probos-llm-client-")
+                for pending in asyncio.all_tasks()
+                if pending is not asyncio.current_task() and not pending.done()
+            )
+        finally:
+            release_lease.set()
+            release_close.set()
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_close_waits_for_active_generation_lease_then_closes_once(self):
+        client = _make_client()
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        current = client._clients[key]
+        lease_entered = asyncio.Event()
+        release_lease = asyncio.Event()
+        close_calls = 0
+        original_close = current.aclose
+
+        async def counted_close() -> None:
+            nonlocal close_calls
+            close_calls += 1
+            await original_close()
+
+        async def borrower() -> None:
+            async with client._client_lease("standard"):
+                lease_entered.set()
+                await release_lease.wait()
+
+        borrower_task = asyncio.create_task(borrower())
+        close_task: asyncio.Task[None] | None = None
+        try:
+            with patch.object(current, "aclose", new=counted_close):
+                await asyncio.wait_for(lease_entered.wait(), timeout=2.0)
+                close_task = asyncio.create_task(client.close())
+                while not client._closing:
+                    await asyncio.sleep(0)
+                assert close_task.done() is False
+                assert close_calls == 0
+                assert state.borrowers == {0: 1}
+                release_lease.set()
+                await asyncio.wait_for(borrower_task, timeout=2.0)
+                await asyncio.wait_for(close_task, timeout=2.0)
+            assert close_calls == 1
+            assert client._closed is True
+            assert state.closed is True
+            assert state.borrowers == {}
+            assert state.retired == {}
+        finally:
+            release_lease.set()
+            for task in (borrower_task, close_task):
+                if task is not None and not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in (borrower_task, close_task) if task is not None),
+                return_exceptions=True,
+            )
+            if not client._closed:
+                await client.close()
+
+    @pytest.mark.asyncio
+    async def test_close_closes_current_and_retired_distinct_clients_once(self):
+        client = _make_client()
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        retired = client._clients[key]
+        current = client._build_client("standard")
+        assert current is not retired
+        retired_close_entered = asyncio.Event()
+        release_retired_close = asyncio.Event()
+        current_close_finished = asyncio.Event()
+        close_waiting_for_retirement = asyncio.Event()
+        close_calls = {"retired": 0, "current": 0}
+        retired_close = retired.aclose
+        current_close = current.aclose
+        refresh_task: asyncio.Task[bool] | None = None
+        close_task: asyncio.Task[None] | None = None
+
+        async def blocking_retired_close() -> None:
+            close_calls["retired"] += 1
+            retired_close_entered.set()
+            await release_retired_close.wait()
+            await retired_close()
+
+        async def counted_current_close() -> None:
+            close_calls["current"] += 1
+            await current_close()
+            current_close_finished.set()
+
+        try:
+            with patch.object(
+                client, "_build_client", return_value=current
+            ), patch.object(
+                retired, "aclose", new=blocking_retired_close
+            ), patch.object(
+                current, "aclose", new=counted_current_close
+            ):
+                refresh_task = asyncio.create_task(
+                    client._refresh_client("standard", observed_generation=0)
+                )
+                await asyncio.wait_for(retired_close_entered.wait(), timeout=2.0)
+                assert state.generation == 1
+                assert client._clients[key] is current
+                assert close_calls == {"retired": 1, "current": 0}
+                assert state.borrowers == {}
+                assert state.retired == {}
+                assert set(state.retirement_closes) == {0}
+                assert retired.is_closed is False
+                retirement_event = state.retirement_closes[0]
+                assert retirement_event.is_set() is False
+                retirement_wait = retirement_event.wait
+
+                async def observed_retirement_wait() -> bool:
+                    close_waiting_for_retirement.set()
+                    return await retirement_wait()
+
+                with patch.object(
+                    retirement_event, "wait", new=observed_retirement_wait
+                ):
+                    close_task = asyncio.create_task(client.close())
+                    await asyncio.wait_for(
+                        current_close_finished.wait(), timeout=2.0
+                    )
+                    await asyncio.wait_for(
+                        close_waiting_for_retirement.wait(), timeout=2.0
+                    )
+                    assert close_task.done() is False
+                    assert retirement_event.is_set() is False
+                    assert close_calls == {"retired": 1, "current": 1}
+                    release_retired_close.set()
+                    assert await asyncio.wait_for(refresh_task, timeout=2.0) is True
+                    await asyncio.wait_for(close_task, timeout=2.0)
+
+            assert retired.is_closed is True
+            assert current.is_closed is True
+            assert close_calls == {"retired": 1, "current": 1}
+            assert client._clients == {}
+            assert state.borrowers == {}
+            assert state.retired == {}
+            assert state.retirement_closes == {}
+            assert all(
+                pool_state.borrowers == {}
+                and pool_state.retired == {}
+                and pool_state.retirement_closes == {}
+                for pool_state in client._client_pool_states.values()
+            )
+        finally:
+            release_retired_close.set()
+            for task in (refresh_task, close_task):
+                if task is not None and not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in (refresh_task, close_task) if task is not None),
+                return_exceptions=True,
+            )
+            if not client._closed:
+                await client.close()
+            if not current.is_closed:
+                await current.aclose()
+
+    @pytest.mark.asyncio
+    async def test_close_rejects_new_lease_after_closing_begins(self):
+        client = _make_client()
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        lease_entered = asyncio.Event()
+        release_lease = asyncio.Event()
+
+        async def borrower() -> None:
+            async with client._client_lease("standard"):
+                lease_entered.set()
+                await release_lease.wait()
+
+        borrower_task = asyncio.create_task(borrower())
+        close_task: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(lease_entered.wait(), timeout=2.0)
+            close_task = asyncio.create_task(client.close())
+            while not state.closing:
+                await asyncio.sleep(0)
+            with pytest.raises(RuntimeError, match="closing"):
+                async with client._client_lease("standard"):
+                    pytest.fail("closing client admitted a new lease")
+            assert state.borrowers == {0: 1}
+            release_lease.set()
+            await asyncio.wait_for(borrower_task, timeout=2.0)
+            await asyncio.wait_for(close_task, timeout=2.0)
+        finally:
+            release_lease.set()
+            for task in (borrower_task, close_task):
+                if task is not None and not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in (borrower_task, close_task) if task is not None),
+                return_exceptions=True,
+            )
+            if not client._closed:
+                await client.close()
+
+    @pytest.mark.asyncio
+    async def test_refresh_waiter_cannot_publish_after_close_begins(self):
+        client = _make_client()
+        key = client._client_key("standard")
+        state = client._client_pool_states[key]
+        old = client._clients[key]
+        await state.refresh_lock.acquire()
+        refresh_task = asyncio.create_task(
+            client._refresh_client("standard", observed_generation=0)
+        )
+        close_task = asyncio.create_task(client.close())
+        try:
+            while not state.closing:
+                await asyncio.sleep(0)
+            state.refresh_lock.release()
+            assert await asyncio.wait_for(refresh_task, timeout=2.0) is False
+            await asyncio.wait_for(close_task, timeout=2.0)
+            assert state.generation == 0
+            assert old.is_closed is True
+            assert client._clients == {}
+        finally:
+            if state.refresh_lock.locked():
+                state.refresh_lock.release()
+            for task in (refresh_task, close_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(refresh_task, close_task, return_exceptions=True)
+            if not client._closed:
+                await client.close()
+
+    @pytest.mark.asyncio
+    async def test_close_is_idempotent(self):
+        client = _make_client()
+        clients = list(client._clients.values())
+        await client.close()
+        await client.close()
+        assert client._closed is True
+        assert client._clients == {}
+        assert all(http_client.is_closed for http_client in clients)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_close_callers_share_one_cleanup(self):
+        client = _make_client()
+        current = client._clients[client._client_key("standard")]
+        close_entered = asyncio.Event()
+        release_close = asyncio.Event()
+        close_calls = 0
+
+        async def blocking_close() -> None:
+            nonlocal close_calls
+            close_calls += 1
+            close_entered.set()
+            await release_close.wait()
+
+        tasks: list[asyncio.Task[None]] = []
+        try:
+            with patch.object(current, "aclose", new=blocking_close):
+                tasks = [asyncio.create_task(client.close()) for _ in range(3)]
+                await asyncio.wait_for(close_entered.wait(), timeout=2.0)
+                assert client._close_task is not None
+                assert all(task.done() is False for task in tasks)
+                release_close.set()
+                await asyncio.wait_for(asyncio.gather(*tasks), timeout=2.0)
+            assert close_calls == 1
+            assert client._closed is True
+        finally:
+            release_close.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            if not client._closed:
+                await client.close()
+
+    @pytest.mark.asyncio
+    async def test_cancel_close_drains_clients_then_propagates(self):
+        client = _make_client()
+        current = client._clients[client._client_key("standard")]
+        close_entered = asyncio.Event()
+        release_close = asyncio.Event()
+        close_calls = 0
+
+        async def blocking_close() -> None:
+            nonlocal close_calls
+            close_calls += 1
+            close_entered.set()
+            await release_close.wait()
+
+        task: asyncio.Task[None] | None = None
+        try:
+            with patch.object(current, "aclose", new=blocking_close):
+                task = asyncio.create_task(client.close())
+                await asyncio.wait_for(close_entered.wait(), timeout=2.0)
+                task.cancel()
+                await asyncio.sleep(0)
+                assert task.done() is False
+                release_close.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            assert close_calls == 1
+            assert client._closed is True
+            assert client._clients == {}
+            assert all(
+                state.borrowers == {}
+                and state.retired == {}
+                and state.retirement_closes == {}
+                and state.closed
+                for state in client._client_pool_states.values()
+            )
+        finally:
+            release_close.set()
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            if not client._closed:
+                await client.close()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import OrderedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -536,36 +535,21 @@ class TestDwellTimeCriterion:
     def _make_client(self, min_consecutive_healthy: int = 3):
         """Create a minimal OpenAICompatibleClient for testing."""
         from probos.cognitive.llm_client import OpenAICompatibleClient
-        client = OpenAICompatibleClient.__new__(OpenAICompatibleClient)
-        client.default_tier = "fast"
+        from probos.config import CognitiveConfig
+
         # AD-732 + AD-706c-2 + AD-730-3 + AD-742a: include vision + vision_fast + compute_use + image_gen in state-init dicts.
         _tiers = ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen")
-        client._tier_configs = {
-            tier: {
-                "base_url": f"http://{tier}.example/v1",
-                "api_key": "",
-                "model": f"{tier}-model",
-                "timeout": 30.0,
-                "api_format": "openai",
-                "temperature": None,
-                "top_p": None,
-            }
-            for tier in _tiers
-        }
-        client._clients = {
-            f"http://{tier}.example/v1|openai": MagicMock()
-            for tier in _tiers
-        }
-        client._tier_status = {}
-        client._cache = OrderedDict()
-        client._cache_max_entries = 500
-        client._rate_config = None
-        client._consecutive_429s = {t: 0 for t in _tiers}
-        client._consecutive_failures = {t: 0 for t in _tiers}
-        client._consecutive_successes = {t: 0 for t in _tiers}
+        client = OpenAICompatibleClient(
+            config=CognitiveConfig(
+                default_llm_tier="fast",
+                llm_base_url="http://shared.example/v1",
+                llm_model_fast="fast-model",
+                llm_model_standard="standard-model",
+                llm_model_deep="deep-model",
+            )
+        )
         client._min_consecutive_healthy = min_consecutive_healthy
-        client._last_success = {}
-        client._last_failure = {}
+        assert set(client._consecutive_failures) == set(_tiers)
         return client
 
     async def _complete_success(self, client, *, tier: str = "fast", prompt: str = "ping"):
@@ -579,42 +563,81 @@ class TestDwellTimeCriterion:
     @pytest.mark.asyncio
     async def test_single_success_does_not_clear_failures(self):
         client = self._make_client()
-        client._consecutive_failures["fast"] = 3
+        try:
+            client._consecutive_failures["fast"] = 3
 
-        await self._complete_success(client, prompt="one")
+            await self._complete_success(client, prompt="one")
 
-        assert client._consecutive_failures["fast"] == 3
-        assert client._consecutive_successes["fast"] == 1
-        status = client.get_health_status()
-        assert status["tiers"]["fast"]["status"] != "operational"
+            assert client._consecutive_failures["fast"] == 3
+            assert client._consecutive_successes["fast"] == 1
+            status = client.get_health_status()
+            assert status["tiers"]["fast"]["status"] != "operational"
+        finally:
+            await client.close()
 
     @pytest.mark.asyncio
     async def test_dwell_threshold_clears_failures(self):
         client = self._make_client()
-        client._consecutive_failures["fast"] = 3
+        try:
+            client._consecutive_failures["fast"] = 3
 
-        for i in range(3):
-            await self._complete_success(client, prompt=f"threshold-{i}")
+            for i in range(3):
+                await self._complete_success(client, prompt=f"threshold-{i}")
 
-        assert client._consecutive_failures["fast"] == 0
-        assert client._consecutive_successes["fast"] == 3
-        status = client.get_health_status()
-        assert status["tiers"]["fast"]["status"] == "operational"
+            assert client._consecutive_failures["fast"] == 0
+            assert client._consecutive_successes["fast"] == 3
+            status = client.get_health_status()
+            assert status["tiers"]["fast"]["status"] == "operational"
+        finally:
+            await client.close()
 
     @pytest.mark.asyncio
     async def test_failure_resets_success_counter(self):
         client = self._make_client()
-        client._consecutive_failures["fast"] = 3
-        for i in range(2):
-            await self._complete_success(client, prompt=f"partial-{i}")
+        try:
+            client._consecutive_failures["fast"] = 3
+            for i in range(2):
+                await self._complete_success(client, prompt=f"partial-{i}")
 
-        client._call_api = AsyncMock(side_effect=RuntimeError("boom"))
-        from probos.types import LLMRequest
+            client._call_api = AsyncMock(side_effect=RuntimeError("boom"))
+            from probos.types import LLMRequest
 
-        await client._complete_inner(LLMRequest(prompt="failure", tier="fast"))
+            await client._complete_inner(LLMRequest(prompt="failure", tier="fast"))
 
-        assert client._consecutive_successes["fast"] == 0
-        assert client._consecutive_failures["fast"] == 4
+            assert client._consecutive_successes["fast"] == 0
+            assert client._consecutive_failures["fast"] == 4
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_persistent_empty_counts_one_failure_and_resets_recovery_dwell(self):
+        from probos.types import LLMRequest, LLMResponse
+
+        client = self._make_client()
+        client._consecutive_failures["fast"] = 2
+        client._consecutive_successes["fast"] = 2
+        client._last_success["fast"] = 42.0
+        before_failure = client._last_failure.get("fast")
+        client._tier_status["standard"] = False
+        client._tier_status["deep"] = False
+        client._call_api = AsyncMock(
+            return_value=LLMResponse(content="", model="fast-model", tier="fast")
+        )
+        try:
+            with patch(
+                "probos.cognitive.llm_client.random.uniform", return_value=0.0
+            ):
+                result = await client._complete_inner(
+                    LLMRequest(prompt="persistent-empty", tier="fast")
+                )
+
+            assert result.error is not None
+            assert client._consecutive_failures["fast"] == 3
+            assert client._consecutive_successes["fast"] == 0
+            assert client._last_success["fast"] == 42.0
+            assert client._last_failure["fast"] != before_failure
+        finally:
+            await client.close()
 
     def test_recovering_status_exposed(self):
         client = self._make_client()
@@ -628,21 +651,24 @@ class TestDwellTimeCriterion:
     @pytest.mark.asyncio
     async def test_connectivity_check_dwell(self):
         client = self._make_client()
-        for tier in ("fast", "standard", "deep"):
-            client._consecutive_failures[tier] = 3
-        client._check_endpoint = AsyncMock(return_value=True)
+        try:
+            for tier in ("fast", "standard", "deep"):
+                client._consecutive_failures[tier] = 3
+            client._check_endpoint = AsyncMock(return_value=True)
 
-        await client.check_connectivity()
-        assert client._consecutive_successes["fast"] == 1
-        assert client._consecutive_failures["fast"] == 3
+            await client.check_connectivity()
+            assert client._consecutive_successes["fast"] == 1
+            assert client._consecutive_failures["fast"] == 3
 
-        await client.check_connectivity()
-        assert client._consecutive_successes["fast"] == 2
-        assert client._consecutive_failures["fast"] == 3
+            await client.check_connectivity()
+            assert client._consecutive_successes["fast"] == 2
+            assert client._consecutive_failures["fast"] == 3
 
-        await client.check_connectivity()
-        assert client._consecutive_successes["fast"] == 3
-        assert client._consecutive_failures["fast"] == 0
+            await client.check_connectivity()
+            assert client._consecutive_successes["fast"] == 3
+            assert client._consecutive_failures["fast"] == 0
+        finally:
+            await client.close()
 
     def test_overall_status_recovering(self):
         client = self._make_client()
@@ -683,13 +709,15 @@ class TestDwellTimeCriterion:
     @pytest.mark.asyncio
     async def test_zero_failures_no_dwell_needed(self):
         client = self._make_client()
+        try:
+            await self._complete_success(client, prompt="already-healthy")
 
-        await self._complete_success(client, prompt="already-healthy")
-
-        status = client.get_health_status()
-        assert client._consecutive_failures["fast"] == 0
-        assert client._consecutive_successes["fast"] == 1
-        assert status["tiers"]["fast"]["status"] == "operational"
+            status = client.get_health_status()
+            assert client._consecutive_failures["fast"] == 0
+            assert client._consecutive_successes["fast"] == 1
+            assert status["tiers"]["fast"]["status"] == "operational"
+        finally:
+            await client.close()
 
     @pytest.mark.asyncio
     async def test_event_includes_dwell_count(self):

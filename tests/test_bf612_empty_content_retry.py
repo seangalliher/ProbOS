@@ -12,6 +12,7 @@ substrate boundary) and patch only ``_call_api`` / ``_build_client`` so the
 retry-and-recycle control flow is exercised without a live endpoint.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -63,44 +64,138 @@ class TestBuildClient:
 
 
 class TestRefreshClient:
-    """_refresh_client closes the stale pool and installs a fresh one."""
+    """_refresh_client conditionally swaps one observed generation."""
 
     @pytest.mark.asyncio
-    async def test_refresh_installs_new_client_same_key(self):
+    async def test_refresh_installs_new_generation_same_key(self):
         client = OpenAICompatibleClient(config=_make_config())
         try:
             key = client._client_key("standard")
+            state = client._client_pool_states[key]
             old = client._clients[key]
-            await client._refresh_client("standard")
+            installed = await client._refresh_client(
+                "standard", observed_generation=state.generation
+            )
             new = client._clients[key]
+            assert installed is True
             assert new is not old
+            assert state.generation == 1
         finally:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_refresh_closes_old_client(self):
+    async def test_refresh_closes_unborrowed_old_generation(self):
         client = OpenAICompatibleClient(config=_make_config())
         try:
-            old = client._clients[client._client_key("standard")]
-            await client._refresh_client("standard")
+            key = client._client_key("standard")
+            state = client._client_pool_states[key]
+            old = client._clients[key]
+            await client._refresh_client(
+                "standard", observed_generation=state.generation
+            )
             assert old.is_closed
+            assert state.retired == {}
+            assert state.retirement_closes == {}
         finally:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_refresh_survives_close_failure(self):
+    async def test_refresh_close_failure_still_keeps_new_generation(self):
         """A close error is logged-and-degraded; a fresh client still lands."""
         client = OpenAICompatibleClient(config=_make_config())
         try:
             key = client._client_key("standard")
+            state = client._client_pool_states[key]
             old = client._clients[key]
             with patch.object(
                 old, "aclose", new_callable=AsyncMock,
                 side_effect=RuntimeError("boom"),
             ):
-                await client._refresh_client("standard")
+                installed = await client._refresh_client(
+                    "standard", observed_generation=state.generation
+                )
+            assert installed is True
             assert client._clients[key] is not old
+            assert state.generation == 1
+            assert state.retired == {}
+            assert state.retirement_closes == {}
         finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_refresh_build_failure_preserves_current_generation(self):
+        client = OpenAICompatibleClient(config=_make_config())
+        try:
+            key = client._client_key("standard")
+            state = client._client_pool_states[key]
+            old = client._clients[key]
+
+            with patch.object(
+                client,
+                "_build_client",
+                side_effect=RuntimeError("injected build failure"),
+            ):
+                installed = await client._refresh_client(
+                    "standard", observed_generation=state.generation
+                )
+
+            assert installed is False
+            assert state.generation == 0
+            assert client._clients[key] is old
+            assert old.is_closed is False
+            assert state.borrowers == {}
+            assert state.retired == {}
+            assert state.retirement_closes == {}
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_refresh_publication_failure_rolls_back_and_closes_unpublished_client_once(self):
+        client = OpenAICompatibleClient(config=_make_config())
+        replacement = client._build_client("standard")
+        replacement_close = replacement.aclose
+        replacement_close_calls = 0
+
+        async def counted_replacement_close() -> None:
+            nonlocal replacement_close_calls
+            replacement_close_calls += 1
+            await replacement_close()
+
+        try:
+            key = client._client_key("standard")
+            state = client._client_pool_states[key]
+            old = client._clients[key]
+            with patch.object(
+                client, "_build_client", return_value=replacement
+            ), patch.object(
+                client,
+                "_claim_retired_locked",
+                side_effect=RuntimeError("injected publication failure"),
+            ) as claim_retired, patch.object(
+                replacement, "aclose", new=counted_replacement_close
+            ):
+                installed = await client._refresh_client(
+                    "standard", observed_generation=state.generation
+                )
+
+            assert installed is False
+            claim_retired.assert_called_once_with(state)
+            assert state.generation == 0
+            assert client._clients[key] is old
+            assert old.is_closed is False
+            assert replacement.is_closed is True
+            assert replacement_close_calls == 1
+            assert state.borrowers == {}
+            assert state.retired == {}
+            assert state.retirement_closes == {}
+            assert not any(
+                task.get_name() == "probos-llm-client-unpublished-close"
+                for task in asyncio.all_tasks()
+                if task is not asyncio.current_task() and not task.done()
+            )
+        finally:
+            if not replacement.is_closed:
+                await replacement.aclose()
             await client.close()
 
 
@@ -118,20 +213,22 @@ class TestEmptyContentRetry:
                 client, "_call_api", new_callable=AsyncMock,
                 side_effect=[empty, full],
             ) as mock_call, patch.object(
-                client, "_refresh_client", new_callable=AsyncMock,
+                client, "_refresh_client", wraps=client._refresh_client,
             ) as mock_refresh:
                 result = await client.complete(
                     LLMRequest(prompt="hi", tier="standard")
                 )
                 assert result.content == "hello"
                 assert mock_call.await_count == 2
-                mock_refresh.assert_awaited_once_with("standard")
+                mock_refresh.assert_awaited_once_with(
+                    "standard", observed_generation=0
+                )
         finally:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_refresh_at_most_once_per_tier(self):
-        """Two empty replies → exactly one refresh, empty surfaces (no spin)."""
+    async def test_refresh_at_most_once_per_endpoint_generation(self):
+        """Each observed endpoint generation receives one refresh budget."""
         client = OpenAICompatibleClient(config=_make_config())
         try:
             empty = LLMResponse(content="", model="claude-sonnet-4.6", tier="standard")
@@ -139,20 +236,20 @@ class TestEmptyContentRetry:
                 client, "_call_api", new_callable=AsyncMock,
                 return_value=empty,
             ) as mock_call, patch.object(
-                client, "_refresh_client", new_callable=AsyncMock,
+                client, "_refresh_client", wraps=client._refresh_client,
             ) as mock_refresh:
                 result = await client.complete(
                     LLMRequest(prompt="hi", tier="standard")
                 )
-                # standard tier: 1 initial + 1 retry, then it is in the
-                # refreshed set so the fallback tiers each get their own single
-                # refresh — assert standard was refreshed exactly once.
+                # Standard gets one refresh for its observed endpoint
+                # generation; fallback tiers may refresh later generations.
                 refreshed_standard = [
                     c for c in mock_refresh.await_args_list
                     if c.args == ("standard",)
                 ]
                 assert len(refreshed_standard) == 1
                 assert result.content == ""
+                assert result.error is not None
                 assert mock_call.await_count >= 2
         finally:
             await client.close()
@@ -231,5 +328,118 @@ class TestEmptyContentRetry:
                     if c.args == ("standard",)
                 ]
                 assert refreshed_standard == []
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_persistent_empty_records_failure_and_falls_back(self):
+        client = OpenAICompatibleClient(
+            config=_make_config(
+                llm_model_fast="fast-model",
+                llm_model_standard="standard-model",
+                llm_model_deep="deep-model",
+            )
+        )
+        try:
+            empty = LLMResponse(
+                content="", model="claude-sonnet-4.6", tier="standard"
+            )
+            fallback = LLMResponse(
+                content="fallback", model="claude-sonnet-4.6", tier="fast"
+            )
+            old_success = 123.0
+            prior_429s = 4
+            client._consecutive_successes["standard"] = 2
+            client._last_success["standard"] = old_success
+            client._consecutive_429s["standard"] = prior_429s
+            before_failure = client._last_failure.get("standard")
+
+            async def empty_then_fallback(request, model, http_client, **kwargs):  # noqa: ANN001
+                if model == "standard-model":
+                    return empty
+                return fallback
+
+            with patch.object(client, "_call_api", side_effect=empty_then_fallback), patch(
+                "probos.cognitive.llm_client.random.uniform", return_value=0.0
+            ):
+                result = await client.complete(
+                    LLMRequest(prompt="persistent", tier="standard")
+                )
+
+            assert result.content == "fallback"
+            assert client._consecutive_failures["standard"] == 1
+            assert client._consecutive_successes["standard"] == 0
+            assert client._last_success["standard"] == old_success
+            assert client._last_failure["standard"] != before_failure
+            assert client._consecutive_429s["standard"] == prior_429s
+            assert client._cache_key("standard", "persistent") in client._cache
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_all_text_tiers_persistent_empty_returns_original_tier_cache_hit(self):
+        client = OpenAICompatibleClient(
+            config=_make_config(
+                llm_model_fast="fast-model",
+                llm_model_standard="standard-model",
+                llm_model_deep="deep-model",
+            )
+        )
+        prompt = "all-empty-cache-hit"
+        cached = LLMResponse(
+            content="cached-original-tier",
+            model="cached-standard-model",
+            tier="standard",
+        )
+        client._cache[client._cache_key("standard", prompt)] = cached
+        attempted_models: list[str] = []
+
+        async def persistent_empty(request, model, http_client, **kwargs):  # noqa: ANN001
+            attempted_models.append(model)
+            return LLMResponse(content="", model=model, tier=request.tier)
+
+        try:
+            with patch.object(
+                client, "_call_api", side_effect=persistent_empty
+            ), patch(
+                "probos.cognitive.llm_client.random.uniform", return_value=0.0
+            ):
+                result = await client.complete(
+                    LLMRequest(prompt=prompt, tier="standard")
+                )
+
+            assert result.content == "cached-original-tier"
+            assert result.model == "cached-standard-model"
+            assert result.tier == "standard"
+            assert result.cached is True
+            assert attempted_models.count("standard-model") == 2
+            assert attempted_models.count("fast-model") == 2
+            assert attempted_models.count("deep-model") == 2
+            assert client._cache[client._cache_key("standard", prompt)] is cached
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_all_text_tiers_persistent_empty_returns_existing_error_on_cache_miss(self):
+        client = OpenAICompatibleClient(config=_make_config())
+        try:
+            empty = LLMResponse(content="", model="empty", tier="standard")
+            with patch.object(client, "_call_api", return_value=empty), patch(
+                "probos.cognitive.llm_client.random.uniform", return_value=0.0
+            ):
+                result = await client.complete(
+                    LLMRequest(prompt="all-empty-cache-miss", tier="standard")
+                )
+
+            assert result.content == ""
+            assert result.error is not None
+            assert result.error.startswith("All LLM tiers unavailable (")
+            assert "Persistent empty LLM response" in result.error
+            assert client._cache == {}
+            for tier in ("standard", "fast", "deep"):
+                assert client._consecutive_failures[tier] == 1
+                assert client._consecutive_successes[tier] == 0
+                assert tier in client._last_failure
+                assert tier not in client._last_success
         finally:
             await client.close()

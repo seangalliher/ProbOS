@@ -14,6 +14,7 @@ from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -44,6 +45,33 @@ _LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision", "vision_fas
 # and image generation has no text-tier substitute. Module-level so
 # source-scan tests can assert membership without scanning function bodies.
 _TIER_ORDER: tuple[str, ...] = ("fast", "standard", "deep")
+
+
+@dataclass(frozen=True, slots=True)
+class _ClientLease:
+    """Immutable snapshot of one pooled-client generation."""
+
+    client_key: str
+    generation: int
+    client: httpx.AsyncClient
+
+
+@dataclass(slots=True)
+class _ClientPoolState:
+    """Endpoint-keyed ownership state for pooled LLM clients."""
+
+    generation: int = 0
+    state_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    borrowers: dict[int, int] = field(default_factory=dict)
+    retired: dict[int, httpx.AsyncClient] = field(default_factory=dict)
+    borrowers_zero: asyncio.Event = field(default_factory=asyncio.Event)
+    retirement_closes: dict[int, asyncio.Event] = field(default_factory=dict)
+    closing: bool = False
+    closed: bool = False
+
+    def __post_init__(self) -> None:
+        self.borrowers_zero.set()
 
 
 class BaseLLMClient(ABC):
@@ -153,6 +181,17 @@ class OpenAICompatibleClient(BaseLLMClient):
             if client_key not in self._clients:
                 self._clients[client_key] = self._build_client(tier)
 
+        # BF-665: generation metadata lives beside the compatibility client
+        # map. Sibling tiers that share one base_url|format share one state.
+        self._client_pool_states: dict[str, _ClientPoolState] = {
+            client_key: _ClientPoolState()
+            for client_key in self._clients
+        }
+        self._closing = False
+        self._closed = False
+        self._close_lock = asyncio.Lock()
+        self._close_task: asyncio.Task[None] | None = None
+
         # Simple response cache keyed by (tier, prompt_hash)
         self._cache: OrderedDict[str, LLMResponse] = OrderedDict()  # AD-617: LRU eviction
         self._cache_max_entries: int = 500  # AD-617: default, overridden by rate_config
@@ -261,6 +300,175 @@ class OpenAICompatibleClient(BaseLLMClient):
         finally:
             endpoint_sem.release()
 
+    @staticmethod
+    async def _await_cleanup_task(task: asyncio.Task[Any]) -> Any:
+        """Shield and drain owned cleanup before propagating cancellation."""
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError as cancellation:
+            current_task = asyncio.current_task()
+            if current_task is None or current_task.cancelling() == 0:
+                return task.result()
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            try:
+                task.result()
+            except BaseException as task_error:
+                raise cancellation from task_error
+            raise cancellation
+
+    @staticmethod
+    def _claim_retired_locked(
+        state: _ClientPoolState,
+    ) -> list[tuple[int, httpx.AsyncClient, asyncio.Event]]:
+        """Claim every zero-borrower retired generation while holding S."""
+        claims: list[tuple[int, httpx.AsyncClient, asyncio.Event]] = []
+        for generation, client in list(state.retired.items()):
+            if state.borrowers.get(generation, 0) != 0:
+                continue
+            if generation in state.retirement_closes:
+                continue
+            close_event = asyncio.Event()
+            state.retirement_closes[generation] = close_event
+            state.retired.pop(generation)
+            claims.append((generation, client, close_event))
+        return claims
+
+    async def _close_retired_claims(
+        self,
+        client_key: str,
+        state: _ClientPoolState,
+        claims: list[tuple[int, httpx.AsyncClient, asyncio.Event]],
+    ) -> None:
+        """Close claimed distinct clients outside locks and signal ownership."""
+        by_client: dict[
+            int, tuple[httpx.AsyncClient, list[tuple[int, asyncio.Event]]]
+        ] = {}
+        for generation, client, close_event in claims:
+            client_id = id(client)
+            if client_id not in by_client:
+                by_client[client_id] = (client, [])
+            by_client[client_id][1].append((generation, close_event))
+
+        for client, generation_events in by_client.values():
+            try:
+                await client.aclose()
+            except Exception:
+                logger.warning(
+                    "BF-665: failed to close retired LLM client for endpoint=%s "
+                    "generations=%s; ownership is released and shutdown will continue",
+                    client_key,
+                    [generation for generation, _ in generation_events],
+                    exc_info=True,
+                )
+            finally:
+                for _, close_event in generation_events:
+                    close_event.set()
+                async with state.state_lock:
+                    for generation, close_event in generation_events:
+                        if state.retirement_closes.get(generation) is close_event:
+                            state.retirement_closes.pop(generation)
+
+    async def _drain_retired_claims(
+        self,
+        client_key: str,
+        state: _ClientPoolState,
+        claims: list[tuple[int, httpx.AsyncClient, asyncio.Event]],
+    ) -> None:
+        """Run locally-owned retirement cleanup to completion."""
+        if not claims:
+            return
+        cleanup_task = asyncio.create_task(
+            self._close_retired_claims(client_key, state, claims),
+            name="probos-llm-client-retirement-cleanup",
+        )
+        await self._await_cleanup_task(cleanup_task)
+
+    async def _close_unpublished_client(
+        self,
+        client_key: str,
+        observed_generation: int,
+        client: httpx.AsyncClient,
+    ) -> None:
+        """Close a replacement that never entered generation ownership."""
+        try:
+            await client.aclose()
+        except Exception:
+            logger.warning(
+                "BF-665: failed to close unpublished replacement for endpoint=%s "
+                "observed_generation=%d; publication stayed rolled back and "
+                "the current generation remains active",
+                client_key,
+                observed_generation,
+                exc_info=True,
+            )
+
+    async def _release_client_lease(
+        self,
+        lease: _ClientLease,
+        state: _ClientPoolState,
+    ) -> None:
+        """Release one borrower and close its retired generation if final."""
+        async with state.state_lock:
+            borrower_count = state.borrowers.get(lease.generation, 0)
+            if borrower_count <= 0:
+                raise RuntimeError(
+                    "BF-665 client lease release has no matching borrower "
+                    f"for endpoint={lease.client_key} generation={lease.generation}"
+                )
+            if borrower_count == 1:
+                state.borrowers.pop(lease.generation)
+            else:
+                state.borrowers[lease.generation] = borrower_count - 1
+            claims = self._claim_retired_locked(state)
+            if not state.borrowers and not claims:
+                # Close ownership is visible in retirement_closes before the
+                # zero-borrower barrier opens.
+                state.borrowers_zero.set()
+        await self._drain_retired_claims(lease.client_key, state, claims)
+        if claims:
+            async with state.state_lock:
+                if not state.borrowers:
+                    state.borrowers_zero.set()
+
+    @asynccontextmanager
+    async def _client_lease(self, tier: str) -> AsyncIterator[_ClientLease]:
+        """Lease the current pooled-client generation for one transport."""
+        client_key = self._client_key(tier)
+        state = self._client_pool_states[client_key]
+        if self._closing:
+            raise RuntimeError(
+                f"BF-665 LLM client is closing; refusing lease for endpoint={client_key}"
+            )
+        async with state.state_lock:
+            if self._closing or state.closing or state.closed:
+                raise RuntimeError(
+                    f"BF-665 LLM client is closing; refusing lease for endpoint={client_key}"
+                )
+            generation = state.generation
+            client = self._clients[client_key]
+            if not state.borrowers:
+                state.borrowers_zero.clear()
+            state.borrowers[generation] = state.borrowers.get(generation, 0) + 1
+            lease = _ClientLease(
+                client_key=client_key,
+                generation=generation,
+                client=client,
+            )
+        try:
+            yield lease
+        finally:
+            release_task = asyncio.create_task(
+                self._release_client_lease(lease, state),
+                name="probos-llm-client-lease-release",
+            )
+            await self._await_cleanup_task(release_task)
+
     def _build_client(self, tier: str) -> httpx.AsyncClient:
         """Construct a fresh httpx client for a tier's base_url|format pool.
 
@@ -280,7 +488,12 @@ class OpenAICompatibleClient(BaseLLMClient):
             timeout=tc["timeout"],
         )
 
-    async def _refresh_client(self, tier: str) -> None:
+    async def _refresh_client(
+        self,
+        tier: str,
+        *,
+        observed_generation: int,
+    ) -> bool:
         """BF-612: recycle a tier's httpx connection pool on a fresh socket.
 
         An HTTP 200 with empty content from the upstream proxy is a transient
@@ -291,22 +504,75 @@ class OpenAICompatibleClient(BaseLLMClient):
         and every call on it returns empty — the symptom a proxy restart
         "fixes" by force-closing all sockets. Closing and rebuilding the
         client achieves the same effect without restarting the proxy or the
-        runtime. Tiers sharing a ``base_url|format`` share one client, so they
-        recover together. Tier-2 log-and-degrade: a close failure is logged
-        and a fresh client is installed regardless. NEVER raises.
+        runtime. Tiers sharing a ``base_url|format`` share one generation, so
+        they recover together. BF-665 installs at most one replacement for the
+        observed generation and retires the old client until its final borrower
+        releases. Tier-2 log-and-degrade: close failures release ownership after
+        logging; the published fresh generation remains current.
         """
         client_key = self._client_key(tier)
-        old = self._clients.get(client_key)
-        if old is not None:
-            try:
-                await old.aclose()
-            except Exception:
-                logger.warning(
-                    "BF-612: aclose of stale LLM client for %s raised; "
-                    "installing a fresh client anyway",
-                    client_key, exc_info=True,
-                )
-        self._clients[client_key] = self._build_client(tier)
+        state = self._client_pool_states[client_key]
+        claims: list[tuple[int, httpx.AsyncClient, asyncio.Event]] = []
+        discard_new: httpx.AsyncClient | None = None
+        installed = False
+
+        async with state.refresh_lock:
+            async with state.state_lock:
+                if (
+                    self._closing
+                    or state.closing
+                    or state.closed
+                    or state.generation != observed_generation
+                ):
+                    return False
+                try:
+                    new_client = self._build_client(tier)
+                except Exception:
+                    logger.warning(
+                        "BF-665: failed to build replacement LLM client for "
+                        "endpoint=%s generation=%d; the current generation remains active",
+                        client_key,
+                        observed_generation,
+                        exc_info=True,
+                    )
+                    return False
+
+                old_client = self._clients[client_key]
+                retired_before = dict(state.retired)
+                retirement_closes_before = dict(state.retirement_closes)
+                try:
+                    self._clients[client_key] = new_client
+                    state.generation = observed_generation + 1
+                    state.retired[observed_generation] = old_client
+                    claims = self._claim_retired_locked(state)
+                    installed = True
+                except Exception:
+                    self._clients[client_key] = old_client
+                    state.generation = observed_generation
+                    state.retired = retired_before
+                    state.retirement_closes = retirement_closes_before
+                    claims = []
+                    discard_new = new_client
+                    logger.warning(
+                        "BF-665: replacement publication rolled back for endpoint=%s "
+                        "generation=%d; the current generation remains active",
+                        client_key,
+                        observed_generation,
+                        exc_info=True,
+                    )
+
+        if discard_new is not None:
+            discard_task = asyncio.create_task(
+                self._close_unpublished_client(
+                    client_key,
+                    observed_generation,
+                    discard_new,
+                ),
+                name="probos-llm-client-unpublished-close",
+            )
+            await self._await_cleanup_task(discard_task)
+        await self._drain_retired_claims(client_key, state, claims)
+        return installed
 
     def _resolve_model_for_tier(self, tier: str) -> str | None:
         """AD-463: consult ModelRouter if wired, else None (existing path).
@@ -439,6 +705,10 @@ class OpenAICompatibleClient(BaseLLMClient):
                 self._last_success[tier] = time.monotonic()
                 if self._consecutive_successes[tier] >= self._min_consecutive_healthy:
                     self._consecutive_failures[tier] = 0
+            else:
+                # BF-665: a false probe is not a completion failure sample,
+                # but it invalidates any partial healthy dwell.
+                self._consecutive_successes[tier] = 0
 
         return results
 
@@ -525,45 +795,78 @@ class OpenAICompatibleClient(BaseLLMClient):
         unreachable cloud endpoints from holding the probe forever.
         """
         tc = self._tier_configs[tier]
-        client = self._clients[self._client_key(tier)]
         api_format = tc.get("api_format", "openai")
         probe_timeout = min(float(tc.get("timeout") or 5.0), 30.0)
+        governance_token = _ENDPOINT_GOVERNED.set(True)
         try:
-            if api_format == "ollama":
-                resp = await client.post(
-                    "api/chat",
-                    json={
-                        "model": tc["model"],
-                        "messages": [{"role": "user", "content": "ping"}],
-                        "stream": False,
-                        "think": False,
-                        "keep_alive": self._ollama_keep_alive,
-                    },
-                    timeout=probe_timeout,
-                )
-            else:
-                resp = await client.post(
-                    "chat/completions",
-                    json={
-                        "model": tc["model"],
-                        "messages": [{"role": "user", "content": "ping"}],
-                        "max_tokens": 1,
-                    },
-                    timeout=probe_timeout,
-                )
+            async with self._endpoint_permit(tier):
+                async with self._client_lease(tier) as lease:
+                    if api_format == "ollama":
+                        resp = await lease.client.post(
+                            "api/chat",
+                            json={
+                                "model": tc["model"],
+                                "messages": [{"role": "user", "content": "ping"}],
+                                "stream": False,
+                                "think": False,
+                                "keep_alive": self._ollama_keep_alive,
+                            },
+                            timeout=probe_timeout,
+                        )
+                    else:
+                        resp = await lease.client.post(
+                            "chat/completions",
+                            json={
+                                "model": tc["model"],
+                                "messages": [{"role": "user", "content": "ping"}],
+                                "max_tokens": 1,
+                            },
+                            timeout=probe_timeout,
+                        )
             reachable = resp.status_code < 500
             if not reachable:
                 logger.warning(
-                    "LLM health check failed: tier=%s, model=%s, status=%d",
+                    "LLM health check failed for tier=%s model=%s with status=%d; "
+                    "the tier remains degraded and the next probe will retry",
                     tier, tc["model"], resp.status_code,
                 )
-            return reachable
+                return False
+            if resp.status_code != 200:
+                return True
+            try:
+                data = resp.json()
+                if api_format == "ollama":
+                    content = data["message"].get("content")
+                else:
+                    message = data["choices"][0]["message"]
+                    content = message.get("content") or message.get("reasoning")
+                if isinstance(content, str) and content.strip():
+                    return True
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                logger.warning(
+                    "LLM health check received malformed HTTP 200 for tier=%s "
+                    "model=%s; the tier remains degraded and the next probe will retry",
+                    tier,
+                    tc["model"],
+                    exc_info=True,
+                )
+                return False
+            logger.warning(
+                "LLM health check received empty HTTP 200 for tier=%s model=%s; "
+                "the tier remains degraded and the next probe will retry",
+                tier,
+                tc["model"],
+            )
+            return False
         except (httpx.ConnectError, httpx.TimeoutException, OSError) as e:
             logger.warning(
-                "LLM health check failed: tier=%s, model=%s, url=%s, error=%s: %s",
+                "LLM health check failed for tier=%s model=%s url=%s with %s: %s; "
+                "the tier remains degraded and the next probe will retry",
                 tier, tc["model"], tc["base_url"], type(e).__name__, e,
             )
             return False
+        finally:
+            _ENDPOINT_GOVERNED.reset(governance_token)
 
     async def complete(self, request: LLMRequest, *, priority: Priority = Priority.NORMAL) -> LLMResponse:
         """Send a completion request with fallback chain.
@@ -652,10 +955,9 @@ class OpenAICompatibleClient(BaseLLMClient):
             fallback_tiers = [tier] + [t for t in _TIER_ORDER if t != tier]
 
         last_error = ""
-        # BF-612: tiers whose connection pool was already recycled this call.
-        # Bounds the empty-content socket-refresh retry to one per tier so a
-        # genuinely empty upstream can't spin.
-        _refreshed_tiers: set[str] = set()
+        # BF-665: one refresh budget per shared endpoint generation. Sibling
+        # tiers cannot rebuild the same observed generation twice.
+        _refreshed_generations: set[tuple[str, int]] = set()
         for attempt_tier in fallback_tiers:
             tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
             # AD-463: ModelRouter override (caller-optional; absent = existing path)
@@ -695,19 +997,21 @@ class OpenAICompatibleClient(BaseLLMClient):
             effective_system_suffix = tc.get("system_prompt_suffix")
 
             async with self._endpoint_permit(attempt_tier):
-                client = self._clients[self._client_key(attempt_tier)]
                 # AD-617: Inner retry loop for 429 backpressure (stays on same tier)
                 _max_429_retries = 5
                 for _429_attempt in range(_max_429_retries):
                     try:
-                        response = await self._call_api(
-                            request, model, client, api_format=api_format,
-                            timeout=tier_timeout,
-                            effective_temp=effective_temp,
-                            effective_top_p=effective_top_p,
-                            effective_max_tokens=effective_max_tokens,
-                            effective_system_suffix=effective_system_suffix,
-                        )
+                        async with self._client_lease(attempt_tier) as lease:
+                            response = await self._call_api(
+                                request, model, lease.client, api_format=api_format,
+                                timeout=tier_timeout,
+                                effective_temp=effective_temp,
+                                effective_top_p=effective_top_p,
+                                effective_max_tokens=effective_max_tokens,
+                                effective_system_suffix=effective_system_suffix,
+                            )
+                            observed_client_key = lease.client_key
+                            observed_generation = lease.generation
                         # BF-612: empty-content 200 → recycle the socket and retry
                         # once on this tier. A degraded keep-alive connection to the
                         # proxy returns HTTP 200 with empty content (no error, so the
@@ -724,38 +1028,74 @@ class OpenAICompatibleClient(BaseLLMClient):
                             and not response.content_blocks
                             and not response.error
                             and api_format != "ollama"
-                            and attempt_tier not in _refreshed_tiers
                         ):
-                            _refreshed_tiers.add(attempt_tier)
+                            refresh_budget = (
+                                observed_client_key,
+                                observed_generation,
+                            )
+                            if refresh_budget not in _refreshed_generations:
+                                _refreshed_generations.add(refresh_budget)
+                                logger.warning(
+                                    "BF-612: empty content from tier=%s (model=%s, "
+                                    "prompt_tokens=%d) — recycling connection pool and "
+                                    "retrying once on a fresh socket",
+                                    attempt_tier, model, response.prompt_tokens,
+                                )
+                                # BF-654: de-sync a synchronized empty-200 herd so
+                                # retries do not hit the proxy in lockstep. E remains
+                                # held, but no client generation is leased here.
+                                if self._endpoint_semaphores:
+                                    await asyncio.sleep(
+                                        random.uniform(
+                                            0.0,
+                                            self._endpoint_failopen_jitter_seconds,
+                                        )
+                                    )
+                                await self._refresh_client(
+                                    attempt_tier,
+                                    observed_generation=observed_generation,
+                                )
+                                async with self._client_lease(attempt_tier) as retry_lease:
+                                    if retry_lease.generation != observed_generation:
+                                        response = await self._call_api(
+                                            request,
+                                            model,
+                                            retry_lease.client,
+                                            api_format=api_format,
+                                            timeout=tier_timeout,
+                                            effective_temp=effective_temp,
+                                            effective_top_p=effective_top_p,
+                                            effective_max_tokens=effective_max_tokens,
+                                            effective_system_suffix=effective_system_suffix,
+                                        )
+                                        if response.content:
+                                            logger.info(
+                                                "BF-612: tier=%s recovered after "
+                                                "connection pool recycle (model=%s)",
+                                                attempt_tier,
+                                                model,
+                                            )
+                        if (
+                            not response.content
+                            and not response.content_blocks
+                            and not response.error
+                            and api_format != "ollama"
+                        ):
+                            last_error = (
+                                "Persistent empty LLM response for "
+                                f"tier={attempt_tier} model={model}"
+                            )
+                            self._consecutive_failures[attempt_tier] += 1
+                            self._consecutive_successes[attempt_tier] = 0
+                            self._last_failure[attempt_tier] = time.monotonic()
                             logger.warning(
-                                "BF-612: empty content from tier=%s (model=%s, "
-                                "prompt_tokens=%d) — recycling connection pool and "
-                                "retrying once on a fresh socket",
-                                attempt_tier, model, response.prompt_tokens,
+                                "%s (consecutive_failures=%d/%d); "
+                                "attempting the existing fallback chain",
+                                last_error,
+                                self._consecutive_failures[attempt_tier],
+                                self._UNREACHABLE_THRESHOLD,
                             )
-                            # BF-654: de-sync a synchronized empty-200 herd so the
-                            # recycled sockets don't all retry the proxy in lockstep.
-                            # No-op when the endpoint cap is disabled (byte-identical).
-                            if self._endpoint_semaphores:
-                                await asyncio.sleep(
-                                    random.uniform(0.0, self._endpoint_failopen_jitter_seconds)
-                                )
-                            await self._refresh_client(attempt_tier)
-                            client = self._clients[self._client_key(attempt_tier)]
-                            response = await self._call_api(
-                                request, model, client, api_format=api_format,
-                                timeout=tier_timeout,
-                                effective_temp=effective_temp,
-                                effective_top_p=effective_top_p,
-                                effective_max_tokens=effective_max_tokens,
-                                effective_system_suffix=effective_system_suffix,
-                            )
-                            if response.content:
-                                logger.info(
-                                    "BF-612: tier=%s recovered after connection "
-                                    "pool recycle (model=%s)",
-                                    attempt_tier, model,
-                                )
+                            break
                         # Cache successful non-empty responses (keyed by original
                         # tier + prompt). BF-272 (2026-05-12): empty content is
                         # never cached — it poisons all future calls with the same
@@ -1320,10 +1660,68 @@ class OpenAICompatibleClient(BaseLLMClient):
         return {"tiers": tiers, "overall": overall}
 
     async def close(self) -> None:
-        """Close all httpx clients and cancel background tasks."""
+        """Drain pooled-client generations and cancel background tasks."""
+        async with self._close_lock:
+            if self._close_task is None:
+                self._close_task = asyncio.create_task(
+                    self._close_owned_clients(),
+                    name="probos-llm-client-close",
+                )
+            close_task = self._close_task
+        await self._await_cleanup_task(close_task)
+
+    async def _close_owned_clients(self) -> None:
+        """Close lease admission, drain borrowers, and release all ownership."""
+        if self._closed:
+            return
         await self.stop_health_probe()
-        for client in self._clients.values():
-            await client.aclose()
+        self._closing = True
+
+        states = list(self._client_pool_states.items())
+        for _, state in states:
+            async with state.state_lock:
+                state.closing = True
+
+        for client_key, state in states:
+            async with state.refresh_lock:
+                async with state.state_lock:
+                    current = self._clients.pop(client_key, None)
+                    if current is not None:
+                        existing = state.retired.get(state.generation)
+                        if existing is not None and existing is not current:
+                            raise RuntimeError(
+                                "BF-665 close found conflicting current and retired "
+                                f"clients for endpoint={client_key} "
+                                f"generation={state.generation}"
+                            )
+                        state.retired[state.generation] = current
+                    immediate_claims = self._claim_retired_locked(state)
+
+            await self._drain_retired_claims(
+                client_key,
+                state,
+                immediate_claims,
+            )
+            await state.borrowers_zero.wait()
+
+            async with state.state_lock:
+                final_claims = self._claim_retired_locked(state)
+                outstanding_closes = list(state.retirement_closes.values())
+            await self._drain_retired_claims(client_key, state, final_claims)
+            for close_event in outstanding_closes:
+                await close_event.wait()
+
+            async with state.state_lock:
+                if state.borrowers or state.retired or state.retirement_closes:
+                    raise RuntimeError(
+                        "BF-665 close retained client ownership for "
+                        f"endpoint={client_key}: borrowers={state.borrowers} "
+                        f"retired={list(state.retired)} "
+                        f"closing={list(state.retirement_closes)}"
+                    )
+                state.closed = True
+
+        self._closed = True
 
 
 class MockLLMClient(BaseLLMClient):
