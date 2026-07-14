@@ -6,7 +6,7 @@ identifier that is not a git object, an agent, a ward-room channel, or in any
 source file / DB. The root mechanism: **no agent verifies that an identifier or
 entity exists before reasoning about it**. This module resolves candidate
 referents against ship ground truth *before* the crew builds an investigation
-on them, and — for the unresolved ones — produces a gap-regex-safe
+on them, and — for strongly asserted unresolved ones — produces a gap-regex-safe
 honest-absence cue.
 
 Layer: COGNITIVE. The module is ``runtime``-free (DIP): the gate depends only on
@@ -30,7 +30,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +42,27 @@ UNRESOLVED = "UNRESOLVED"
 # pathological message cannot fan out into dozens of git subprocesses.
 _MAX_REFERENTS = 20
 
-# --- DD-5 extraction regexes (case-sensitive except `entity`) -----------------
+# --- DD-5/BF-667 extraction regexes -------------------------------------------
 # hex: a git-SHA / node-id shape. The lookahead requires >=1 a-f letter so a
 # plain decimal (e.g. 1234567) is excluded (that is a number, not an id).
 _HEX_RE = re.compile(r"\b(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{7,40}\b")
-# entity: `node <tok>` / `node id <tok>` / `record <tok>` / `entity <tok>`.
-_ENTITY_RE = re.compile(
-    r"\b(?:node(?:\s+id)?|record|entity)\s+([A-Za-z0-9_\-]{2,64})\b",
+# BF-667: source syntax carries assertion strength. Matching ASCII quotes around
+# one token are explicit; `node id <token>` is the existing unquoted explicit
+# marker; bare locator tokens remain worth resolving but are only implicit when
+# alphabetic. Keep these scanners separate so an incomplete `node id` marker
+# cannot fall through to a false token `id`.
+_QUOTED_ENTITY_RE = re.compile(
+    r'''\b(?:node(?:\s+id)?|record|entity)\s+'''
+    r'''(?P<quote>["'])(?P<token>[A-Za-z0-9_\-]{2,64})(?P=quote)'''
+    r'''(?![A-Za-z0-9_\-])''',
+    re.IGNORECASE,
+)
+_EXPLICIT_NODE_ID_RE = re.compile(
+    r"\bnode\s+id\s+([A-Za-z0-9_\-]{2,64})\b",
+    re.IGNORECASE,
+)
+_BARE_ENTITY_RE = re.compile(
+    r"\b(node|record|entity)\s+([A-Za-z0-9_\-]{2,64})\b",
     re.IGNORECASE,
 )
 _ENTITY_GRAMMAR_STOP_WORDS = frozenset(
@@ -98,11 +112,31 @@ _SERVICE_RE = re.compile(
     r"\b([A-Z][A-Za-z0-9]*|[A-Za-z0-9_]*_service)\s+"
     r"(?:service|membership|telemetry|cluster|node)\b"
 )
+_ENTITY_LOCATOR_KEYWORDS = frozenset({"node", "record", "entity"})
+_SERVICE_ROLE_KEYWORDS = frozenset(
+    {"service", "membership", "telemetry", "cluster", "node"}
+)
+
+# BF-667 correction: lower values are stronger source evidence. This private
+# ordering lets later explicit/quoted entity syntax replace an earlier strong
+# but less-actionable service or bare-machine interpretation in place, while an
+# implicit bare name never downgrades strong evidence. Hex remains preferred
+# when its token position overlaps a locator scanner.
+_EVIDENCE_PRIORITY = {
+    "hex": 0,
+    "explicit_entity": 0,
+    "bare_machine_entity": 1,
+    "service": 2,
+    "implicit_entity": 3,
+}
 
 # Code-span strippers: fenced ``` blocks first (non-greedy, DOTALL), then inline
-# `code` spans — so a sha inside a code fence is NOT extracted.
+# `code` spans — so a sha inside a code fence is NOT extracted. Protected spans
+# become same-width non-whitespace barriers: this preserves every source offset
+# while preventing a locator before code from bridging to prose after it.
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 _INLINE_CODE_RE = re.compile(r"`[^`]*`")
+_CODE_SPAN_BARRIER = "\x00"
 
 
 @dataclass(frozen=True)
@@ -110,82 +144,216 @@ class Referent:
     """A candidate referent extracted from a message.
 
     ``token`` is the resolvable identifier; ``kind`` is one of ``hex`` /
-    ``entity`` / ``service`` (a label for logging); ``raw`` is the matched span.
+    ``entity`` / ``service`` (a label for logging); ``raw`` is the matched span;
+    ``claim_confidence`` is source-syntax assertion strength, not resolver
+    confidence.
     """
 
     token: str
     kind: str
     raw: str
+    claim_confidence: Literal["strong", "implicit"] = "strong"
 
 
 @dataclass(frozen=True)
 class GroundingVerdict:
     """The outcome of grounding a message's referents.
 
-    ``results`` maps each referent token to ``RESOLVED`` / ``UNRESOLVED``;
-    ``unresolved`` is the ordered tuple of unresolved tokens; ``cues`` maps each
-    unresolved token to its honest-absence cue.
+    ``results`` is the unchanged resolver result map from each token to
+    ``RESOLVED`` / ``UNRESOLVED``; ``unresolved`` is the ordered tuple of
+    actionable strong unconfirmed tokens; ``cues`` maps each actionable token
+    to its honest-absence cue; ``ambiguous`` holds implicit unconfirmed tokens
+    that receive no cue or action.
     """
 
     results: dict[str, str]
     unresolved: tuple[str, ...]
     cues: dict[str, str]
+    ambiguous: tuple[str, ...] = ()
 
     @property
     def has_unresolved(self) -> bool:
-        """True when at least one referent could not be resolved."""
+        """True when at least one actionable strong referent is unconfirmed."""
         return bool(self.unresolved)
 
 
 def _strip_code_spans(text: str) -> str:
-    """Blank out fenced ``` blocks then inline `code` spans (DD-5)."""
-    text = _FENCE_RE.sub(" ", text)
-    text = _INLINE_CODE_RE.sub(" ", text)
+    """Protect fenced and inline code with same-width scanner barriers."""
+
+    def _barrier(match: re.Match[str]) -> str:
+        return _CODE_SPAN_BARRIER * len(match.group(0))
+
+    text = _FENCE_RE.sub(_barrier, text)
+    text = _INLINE_CODE_RE.sub(_barrier, text)
     return text
 
 
-def _is_entity_identifier(token: str) -> bool:
-    """Return whether a regex-located entity token is identifier-like.
+def _classify_entity_claim(
+    token: str,
+    syntax: Literal["quoted", "explicit", "bare"],
+) -> Literal["strong", "implicit"] | None:
+    """Classify assertion strength from source syntax, never token meaning."""
+    if syntax == "quoted":
+        return "strong"
+    if token.casefold() in _ENTITY_GRAMMAR_STOP_WORDS:
+        return None
+    if syntax == "explicit" or any(
+        char.isdigit() or char in "_-" for char in token
+    ):
+        return "strong"
+    return "implicit"
 
-    Digits, underscores, and hyphens are strong machine-identifier signals.
-    Plain alphabetic identifiers remain valid unless they are common grammar
-    words that occur naturally after ``node`` / ``record`` / ``entity``.
-    """
-    if any(char.isdigit() or char in "_-" for char in token):
-        return True
-    return token.casefold() not in _ENTITY_GRAMMAR_STOP_WORDS
+
+def _is_service_identifier(token: str) -> bool:
+    """Reject only names that are structural grammar roles in existing scans."""
+    folded = token.casefold()
+    return (
+        folded not in _ENTITY_GRAMMAR_STOP_WORDS
+        and folded not in _ENTITY_LOCATOR_KEYWORDS
+        and folded not in _SERVICE_ROLE_KEYWORDS
+    )
 
 
 def extract_referents(text: str) -> list[Referent]:
     """Extract candidate referents from ``text`` (pure, no I/O).
 
-    Strips code spans first (DD-5), matches the three referent kinds, orders by
-    first appearance, dedupes by token (first-seen wins), and caps at
-    ``_MAX_REFERENTS``. Returns ``[]`` for empty / whitespace text.
+    Strips code spans first (DD-5), classifies assertion strength from source
+    syntax, orders by first token appearance and stable syntax priority, and
+    dedupes by exact token. First-seen position wins, but later higher-priority
+    syntax promotes less-actionable metadata in place, including after the
+    unique-token cap is reached. Returns ``[]`` for empty / whitespace text.
     """
     if not text:
         return []
     stripped = _strip_code_spans(text)
-    # (start, token, kind, raw) so we can order by first appearance across kinds.
-    matches: list[tuple[int, str, str, str]] = []
+    # (token_start, syntax_priority, evidence_priority, token, kind, raw,
+    # claim_confidence).
+    # Hex priority preserves the existing interpretation when the same token is
+    # independently matched by `_HEX_RE` and a locator scanner at one position.
+    matches: list[
+        tuple[
+            int,
+            int,
+            int,
+            str,
+            str,
+            str,
+            Literal["strong", "implicit"],
+        ]
+    ] = []
     for m in _HEX_RE.finditer(stripped):
-        matches.append((m.start(), m.group(0), "hex", m.group(0)))
-    for m in _ENTITY_RE.finditer(stripped):
+        matches.append(
+            (
+                m.start(),
+                0,
+                _EVIDENCE_PRIORITY["hex"],
+                m.group(0),
+                "hex",
+                m.group(0),
+                "strong",
+            )
+        )
+    for m in _QUOTED_ENTITY_RE.finditer(stripped):
+        token = m.group("token")
+        matches.append(
+            (
+                m.start("token"),
+                1,
+                _EVIDENCE_PRIORITY["explicit_entity"],
+                token,
+                "entity",
+                m.group(0),
+                "strong",
+            )
+        )
+    for m in _EXPLICIT_NODE_ID_RE.finditer(stripped):
         token = m.group(1)
-        if _is_entity_identifier(token):
-            matches.append((m.start(1), token, "entity", m.group(0)))
-    for m in _SERVICE_RE.finditer(stripped):
-        matches.append((m.start(1), m.group(1), "service", m.group(0)))
-    matches.sort(key=lambda t: t[0])
-    found: list[Referent] = []
-    seen: set[str] = set()
-    for _start, token, kind, raw in matches:
-        if not token or token in seen:
+        confidence = _classify_entity_claim(token, "explicit")
+        if confidence is not None:
+            matches.append(
+                (
+                    m.start(1),
+                    2,
+                    _EVIDENCE_PRIORITY["explicit_entity"],
+                    token,
+                    "entity",
+                    m.group(0),
+                    confidence,
+                )
+            )
+    for m in _BARE_ENTITY_RE.finditer(stripped):
+        locator = m.group(1)
+        token = m.group(2)
+        if locator.casefold() == "node" and token.casefold() == "id":
             continue
-        seen.add(token)
-        found.append(Referent(token=token, kind=kind, raw=raw))
+        confidence = _classify_entity_claim(token, "bare")
+        if confidence is not None:
+            evidence_priority = _EVIDENCE_PRIORITY[
+                "bare_machine_entity"
+                if confidence == "strong"
+                else "implicit_entity"
+            ]
+            matches.append(
+                (
+                    m.start(2),
+                    3,
+                    evidence_priority,
+                    token,
+                    "entity",
+                    m.group(0),
+                    confidence,
+                )
+            )
+    for m in _SERVICE_RE.finditer(stripped):
+        token = m.group(1)
+        if _is_service_identifier(token):
+            matches.append(
+                (
+                    m.start(1),
+                    4,
+                    _EVIDENCE_PRIORITY["service"],
+                    token,
+                    "service",
+                    m.group(0),
+                    "strong",
+                )
+            )
+    matches.sort(key=lambda candidate: (candidate[0], candidate[1]))
+    found: list[Referent] = []
+    positions: dict[str, int] = {}
+    evidence_priorities: dict[str, int] = {}
+    for (
+        _start,
+        _syntax_priority,
+        evidence_priority,
+        token,
+        kind,
+        raw,
+        confidence,
+    ) in matches:
+        existing_index = positions.get(token)
+        if existing_index is not None:
+            if evidence_priority < evidence_priorities[token]:
+                found[existing_index] = Referent(
+                    token=token,
+                    kind=kind,
+                    raw=raw,
+                    claim_confidence=confidence,
+                )
+                evidence_priorities[token] = evidence_priority
+            continue
         if len(found) >= _MAX_REFERENTS:
-            break
+            continue
+        positions[token] = len(found)
+        evidence_priorities[token] = evidence_priority
+        found.append(
+            Referent(
+                token=token,
+                kind=kind,
+                raw=raw,
+                claim_confidence=confidence,
+            )
+        )
     return found
 
 
@@ -406,11 +574,12 @@ class ReferentGroundingGate:
     """Resolve a message's referents against ground truth (DIP: injected resolvers).
 
     Resolution policy (DD-2): for each extracted referent, try ALL resolvers in
-    order; the FIRST True marks it RESOLVED; all-False marks it UNRESOLVED (with
-    an honest-absence cue). ``evaluate`` NEVER raises — a catastrophic failure
-    returns an empty verdict (logged), and each resolver call is individually
-    wrapped so one raising resolver is treated as False and the referent falls
-    through.
+    order; the FIRST True marks it RESOLVED. All-False remains UNRESOLVED in the
+    result map, while source syntax decides actionability: strong claims receive
+    an honest-absence cue and implicit claims enter the non-actionable ambiguous
+    lane. ``evaluate`` NEVER raises — a catastrophic failure returns an empty
+    verdict (logged), and each resolver call is individually wrapped so one
+    raising resolver is treated as False and the referent falls through.
     """
 
     def __init__(self, resolvers: list[ReferentResolver]) -> None:
@@ -430,6 +599,7 @@ class ReferentGroundingGate:
         results: dict[str, str] = {}
         unresolved: list[str] = []
         cues: dict[str, str] = {}
+        ambiguous: list[str] = []
         for ref in referents:
             token = ref.token
             if token in results:
@@ -438,12 +608,16 @@ class ReferentGroundingGate:
                 results[token] = RESOLVED
             else:
                 results[token] = UNRESOLVED
-                unresolved.append(token)
-                cues[token] = self._honest_absence_cue(token)
+                if ref.claim_confidence == "strong":
+                    unresolved.append(token)
+                    cues[token] = self._honest_absence_cue(token)
+                else:
+                    ambiguous.append(token)
         return GroundingVerdict(
             results=results,
             unresolved=tuple(unresolved),
             cues=cues,
+            ambiguous=tuple(ambiguous),
         )
 
     async def _resolve_one(self, token: str) -> bool:

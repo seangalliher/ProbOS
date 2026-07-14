@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -71,6 +72,20 @@ class _RaisingResolver:
 
     async def resolve(self, token: str) -> bool:
         raise RuntimeError("resolver boom")
+
+
+class _StrictResolver:
+    """A strict resolver that records calls and confirms only configured tokens."""
+
+    kind = "strict"
+
+    def __init__(self, resolved: set[str] | None = None) -> None:
+        self._resolved = set(resolved or set())
+        self.calls: list[str] = []
+
+    async def resolve(self, token: str) -> bool:
+        self.calls.append(token)
+        return token in self._resolved
 
 
 class _StrictProcess:
@@ -164,24 +179,315 @@ def test_extract_rejects_ordinary_verb_after_entity_prefix():
         "node has capacity; record does exist; entity will recover; "
         "node this time and record the result; node seems healthy; "
         "node appears stable; record indicates progress; record exists; "
-        "entity may recover; node not found; record of changes; entity to update"
+        "entity may recover; node not found; record of changes; entity to update; "
+        "node id is missing; node id was present; node id shows activity"
     )
     assert extract_referents(text) == []
 
 
 def test_extract_preserves_known_valid_entity_identifiers():
     cases = {
-        "node oracle_probe": [("entity", "oracle_probe")],
-        "node id oracle_probe": [("entity", "oracle_probe")],
-        "node oracle": [("entity", "oracle")],
-        "record alpha": [("entity", "alpha")],
-        "entity atlas": [("entity", "atlas")],
-        "record alpha_1": [("entity", "alpha_1")],
-        "entity alpha-2": [("entity", "alpha-2")],
-        "entity abcdef1": [("hex", "abcdef1")],
+        "node oracle_probe": [("entity", "oracle_probe", "strong")],
+        "node id oracle_probe": [("entity", "oracle_probe", "strong")],
+        "node oracle": [("entity", "oracle", "implicit")],
+        "record alpha": [("entity", "alpha", "implicit")],
+        "entity atlas": [("entity", "atlas", "implicit")],
+        "record alpha_1": [("entity", "alpha_1", "strong")],
+        "entity alpha-2": [("entity", "alpha-2", "strong")],
+        "entity abcdef1": [("hex", "abcdef1", "strong")],
     }
     for text, expected in cases.items():
-        assert [(ref.kind, ref.token) for ref in extract_referents(text)] == expected
+        assert [
+            (ref.kind, ref.token, ref.claim_confidence)
+            for ref in extract_referents(text)
+        ] == expected
+
+
+def test_extract_bare_conceptual_locator_is_implicit():
+    refs = extract_referents("node identity distribution")
+
+    assert [(ref.token, ref.kind, ref.claim_confidence) for ref in refs] == [
+        ("identity", "entity", "implicit")
+    ]
+
+
+def test_extract_conceptual_matrix_is_implicit_without_bogus_service_names():
+    cases = {
+        "node identity distribution": "identity",
+        "node membership review": "membership",
+        "Node provenance analysis.": "provenance",
+        "node cluster topology": "cluster",
+        "node set changes": "set",
+        "node health status": "health",
+        "record retention policy": "retention",
+        "entity relationship model": "relationship",
+        "The node membership distribution": "membership",
+        "Node membership distribution": "membership",
+        "Service node status": "status",
+    }
+
+    for text, token in cases.items():
+        refs = extract_referents(text)
+        assert [(ref.token, ref.kind, ref.claim_confidence) for ref in refs] == [
+            (token, "entity", "implicit")
+        ]
+
+
+def test_extract_strong_assertion_matrix():
+    cases = {
+        "check e77acec7": ("e77acec7", "hex"),
+        "check node e77acec7": ("e77acec7", "hex"),
+        "check node id oracle": ("oracle", "entity"),
+        "check node id oracle_probe": ("oracle_probe", "entity"),
+        "check node oracle_probe": ("oracle_probe", "entity"),
+        "check record alpha_1": ("alpha_1", "entity"),
+        "check entity alpha-2": ("alpha-2", "entity"),
+        "check node alpha2": ("alpha2", "entity"),
+        'check node "oracle"': ("oracle", "entity"),
+        "check node 'atlas'": ("atlas", "entity"),
+        'check node "ORACLE"?': ("ORACLE", "entity"),
+        "check Oracle membership": ("Oracle", "service"),
+        "check oracle_service telemetry": ("oracle_service", "service"),
+    }
+
+    for text, (token, kind) in cases.items():
+        refs = extract_referents(text)
+        assert [(ref.token, ref.kind, ref.claim_confidence) for ref in refs] == [
+            (token, kind, "strong")
+        ]
+
+
+def test_extract_quotes_are_identifiers_but_backticks_remain_code():
+    refs = extract_referents('node "oracle" and record \'atlas\'')
+    assert [(ref.token, ref.claim_confidence) for ref in refs] == [
+        ("oracle", "strong"),
+        ("atlas", "strong"),
+    ]
+    excluded = (
+        "node `oracle`; `node oracle`; ```\nnode oracle\n```; "
+        'node "oracle; record \'atlas; entity "oracle\'; entity "two words"; '
+        "node 'two words'; node id `oracle_probe`"
+    )
+    assert extract_referents(excluded) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "node id `oracle_probe` for review",
+        "node `oracle` for review",
+        "node id ```\noracle_probe\n``` for review",
+        "node ```\noracle\n``` for review",
+    ],
+)
+async def test_extract_code_at_identifier_position_cannot_bridge_to_later_prose(
+    text: str,
+):
+    assert extract_referents(text) == []
+
+    verdict = await ReferentGroundingGate([]).evaluate(text)
+
+    assert verdict.results == {}
+    assert verdict.unresolved == ()
+    assert verdict.ambiguous == ()
+    assert verdict.cues == {}
+
+
+def test_extract_code_barriers_preserve_surrounding_source_order():
+    refs = extract_referents(
+        "record alpha_1 then node id `oracle_probe` for review then entity beta_2"
+    )
+
+    assert [(ref.token, ref.kind) for ref in refs] == [
+        ("alpha_1", "entity"),
+        ("beta_2", "entity"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "node id oracle for review",
+        "node\n\tid\r\n oracle for review",
+    ],
+)
+def test_extract_explicit_identifier_preserves_legitimate_whitespace(text: str):
+    refs = extract_referents(text)
+
+    assert [(ref.token, ref.kind, ref.claim_confidence) for ref in refs] == [
+        ("oracle", "entity", "strong")
+    ]
+
+
+def test_extract_preserves_case_punctuation_and_exact_token_dedupe():
+    refs = extract_referents("NODE ORACLE, then node id ORACLE. then node oracle?")
+
+    assert [(ref.token, ref.claim_confidence) for ref in refs] == [
+        ("ORACLE", "strong"),
+        ("oracle", "implicit"),
+    ]
+    assert refs[0].raw == "node id ORACLE"
+
+
+def test_extract_promotes_in_place_without_downgrade_and_preserves_order():
+    promoted = extract_referents(
+        "node oracle then e77acec7 then node id oracle then node atlas"
+    )
+    assert [(ref.token, ref.kind, ref.claim_confidence) for ref in promoted] == [
+        ("oracle", "entity", "strong"),
+        ("e77acec7", "hex", "strong"),
+        ("atlas", "entity", "implicit"),
+    ]
+    assert promoted[0].raw == "node id oracle"
+
+    not_downgraded = extract_referents("node id oracle then node oracle")
+    assert len(not_downgraded) == 1
+    assert not_downgraded[0].claim_confidence == "strong"
+    assert not_downgraded[0].raw == "node id oracle"
+
+
+def test_extract_cross_kind_priority_promotes_explicit_entity_in_first_position():
+    refs = extract_referents(
+        "Oracle membership then e77acec7 then node id Oracle"
+    )
+
+    assert [(ref.token, ref.kind, ref.claim_confidence) for ref in refs] == [
+        ("Oracle", "entity", "strong"),
+        ("e77acec7", "hex", "strong"),
+    ]
+    assert refs[0].raw == "node id Oracle"
+
+    exact_repro = extract_referents("Oracle membership then node id Oracle")
+    assert len(exact_repro) == 1
+    assert exact_repro[0].kind == "entity"
+    assert exact_repro[0].raw == "node id Oracle"
+
+    quoted = extract_referents('Oracle membership then node "Oracle"')
+    assert len(quoted) == 1
+    assert quoted[0].kind == "entity"
+    assert quoted[0].raw == 'node "Oracle"'
+
+
+def test_extract_priority_never_downgrades_explicit_and_keeps_hex_overlap():
+    service_later = extract_referents("node id Oracle then Oracle membership")
+    assert len(service_later) == 1
+    assert service_later[0].kind == "entity"
+    assert service_later[0].raw == "node id Oracle"
+
+    machine_then_explicit = extract_referents(
+        "node Oracle_1 then node id Oracle_1"
+    )
+    assert len(machine_then_explicit) == 1
+    assert machine_then_explicit[0].raw == "node id Oracle_1"
+
+    hex_overlap = extract_referents("node id e77acec7")
+    assert len(hex_overlap) == 1
+    assert hex_overlap[0].kind == "hex"
+    assert hex_overlap[0].raw == "e77acec7"
+
+
+def test_extract_cap_still_allows_later_promotion_of_admitted_token():
+    tokens = [f"referent{suffix}" for suffix in "abcdefghijklmnopqrst"]
+    text = " ".join(f"node {token}" for token in tokens)
+    text += " node overflow node id referenta"
+
+    refs = extract_referents(text)
+
+    assert [ref.token for ref in refs] == tokens
+    assert len(refs) == 20
+    assert refs[0].claim_confidence == "strong"
+    assert refs[0].raw == "node id referenta"
+
+
+def test_extract_service_role_filter_preserves_genuine_service_forms():
+    assert extract_referents("The node is stable") == []
+    assert [
+        (ref.token, ref.kind, ref.claim_confidence)
+        for ref in extract_referents("Oracle membership and oracle_service telemetry")
+    ] == [
+        ("Oracle", "service", "strong"),
+        ("oracle_service", "service", "strong"),
+    ]
+
+
+async def test_evaluate_unconfirmed_implicit_is_ambiguous_without_action():
+    resolver = _StrictResolver()
+    gate = ReferentGroundingGate([resolver])
+
+    verdict = await gate.evaluate("node identity distribution")
+
+    assert verdict.results == {"identity": "UNRESOLVED"}
+    assert verdict.ambiguous == ("identity",)
+    assert verdict.unresolved == ()
+    assert verdict.cues == {}
+    assert verdict.has_unresolved is False
+    assert resolver.calls == ["identity"]
+
+
+async def test_evaluate_known_implicit_resolves_through_existing_authority():
+    first = _StrictResolver()
+    second = _StrictResolver({"oracle"})
+    gate = ReferentGroundingGate([first, second])
+
+    verdict = await gate.evaluate("node oracle")
+
+    assert verdict.results == {"oracle": "RESOLVED"}
+    assert verdict.ambiguous == ()
+    assert verdict.unresolved == ()
+    assert verdict.cues == {}
+    assert first.calls == ["oracle"]
+    assert second.calls == ["oracle"]
+
+
+async def test_evaluate_known_implicit_resolves_via_real_registry():
+    registry = AgentRegistry()
+    await registry.register(_RealAgent(pool="oracle", agent_id="oracle-agent-01"))
+    gate = ReferentGroundingGate([AgentResolver(registry, None)])
+
+    verdict = await gate.evaluate("node oracle")
+
+    assert verdict.results == {"oracle": "RESOLVED"}
+    assert verdict.ambiguous == ()
+    assert verdict.unresolved == ()
+
+
+@pytest.mark.parametrize(
+    ("text", "token"),
+    [
+        ("node id oracle", "oracle"),
+        ('node "oracle"', "oracle"),
+        ("node oracle_probe", "oracle_probe"),
+        ("check e77acec7", "e77acec7"),
+        ("Oracle membership", "Oracle"),
+    ],
+)
+async def test_evaluate_strong_unknown_is_actionable_and_gap_safe(
+    text: str,
+    token: str,
+):
+    gate = ReferentGroundingGate([_StrictResolver()])
+
+    verdict = await gate.evaluate(text)
+
+    assert verdict.results == {token: "UNRESOLVED"}
+    assert verdict.unresolved == (token,)
+    assert verdict.ambiguous == ()
+    assert token in verdict.cues
+    assert is_capability_gap(verdict.cues[token]) is False
+
+
+async def test_evaluate_genuine_service_resolves_through_existing_pool_authority():
+    registry = AgentRegistry()
+    await registry.register(
+        _RealAgent(pool="Oracle", agent_id="oracle-service-agent")
+    )
+    gate = ReferentGroundingGate([AgentResolver(registry, None)])
+
+    verdict = await gate.evaluate("Oracle membership")
+
+    assert verdict.results == {"Oracle": "RESOLVED"}
+    assert verdict.unresolved == ()
+    assert verdict.ambiguous == ()
 
 
 # ---------------- resolvers (real git + real registry) ----------------
@@ -540,6 +846,68 @@ async def test_observe_on_logs_unresolved(tmp_path, monkeypatch, caplog):
     assert "e77acec7" in observed[0].getMessage()
 
 
+async def test_observe_ambiguous_only_has_no_warning_or_central_selection(
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.setattr(thread_fanout, "build_default_resolvers", lambda **kw: [])
+    selector_calls = {"n": 0}
+
+    async def _select(*args: Any, **kwargs: Any) -> str | None:
+        selector_calls["n"] += 1
+        return "identity"
+
+    monkeypatch.setattr(thread_fanout, "_select_central_referent", _select)
+    cfg = SystemConfig()
+    cfg.grounding.referent_gate_enabled = True
+    runtime = SimpleNamespace(
+        config=cfg,
+        registry=AgentRegistry(),
+        callsign_registry=None,
+        ward_room=None,
+    )
+    with caplog.at_level(logging.WARNING):
+        result = await thread_fanout._observe_referent_grounding(
+            runtime,
+            SimpleNamespace(id="ambiguous-thread"),
+            "node identity distribution",
+        )
+
+    assert result is None
+    assert selector_calls["n"] == 0
+    assert not any("AD-1119[observe]" in r.getMessage() for r in caplog.records)
+
+
+async def test_observe_strong_warning_reports_truthful_disabled_disposition(
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.setattr(thread_fanout, "build_default_resolvers", lambda **kw: [])
+    cfg = SystemConfig()
+    cfg.grounding.referent_gate_enabled = True
+    runtime = SimpleNamespace(
+        config=cfg,
+        registry=AgentRegistry(),
+        callsign_registry=None,
+        ward_room=None,
+    )
+    with caplog.at_level(logging.WARNING):
+        result = await thread_fanout._observe_referent_grounding(
+            runtime,
+            SimpleNamespace(id="strong-thread"),
+            "node id oracle",
+        )
+
+    assert result is None
+    observed = [r.getMessage() for r in caplog.records if "AD-1119[observe]" in r.getMessage()]
+    assert len(observed) == 1
+    assert "oracle" in observed[0]
+    assert "central=False" in observed[0]
+    assert "ground_before_collaborate=False" in observed[0]
+    assert "confab_probe=False" in observed[0]
+    assert "no behavioral change" not in observed[0]
+
+
 async def test_observe_on_all_resolved_emits_nothing(monkeypatch, caplog):
     """Flag-ON but every referent resolves (real registered agent) -> no WARNING."""
     registry = AgentRegistry()
@@ -583,7 +951,13 @@ def test_grounding_config_default_off():
 def test_referent_and_verdict_are_frozen():
     ref = Referent(token="e77acec7", kind="hex", raw="e77acec7")
     verdict = GroundingVerdict(results={}, unresolved=(), cues={})
-    with pytest.raises(Exception):
+    assert ref.claim_confidence == "strong"
+    assert verdict.ambiguous == ()
+    with pytest.raises(FrozenInstanceError):
         ref.token = "x"  # type: ignore[misc]
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
+        ref.claim_confidence = "implicit"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
         verdict.unresolved = ("x",)  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        verdict.ambiguous = ("x",)  # type: ignore[misc]

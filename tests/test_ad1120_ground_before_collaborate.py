@@ -145,25 +145,58 @@ async def test_cue_injected_on_unresolved_hex_central(tmp_path, monkeypatch):
 
 
 async def test_no_cue_for_determiner_service_token():
-    # NOTE: the build prompt's example seed ("The node membership is degraded.")
-    # ALSO co-extracts an `entity` token ("membership") — verified empirically —
-    # which the pinned selection WOULD inject, so it does not isolate the class
-    # the test proves. This seed yields ONLY the DD-5 `service` token "The"
-    # ("The membership" -> service "The"), which selection drops (kind `service`
-    # is not injectable AND "the" is a stop-word) -> None. Faithful to the pinned
-    # _select_central_cue; only the example seed was corrected.
+    # BF-667 source grammar suppresses impossible service-role captures and sends
+    # bare alphabetic locator tokens through the non-actionable ambiguity lane.
     runtime = _make_runtime(referent_gate=True, ground_before_collaborate=True)
     thread = SimpleNamespace(id="det-thread")
     cue = await thread_fanout._observe_referent_grounding(
         runtime, thread, "The membership is degraded."
     )
     assert cue is None
-    # Defense-in-depth (DD-1120-2): an `entity` capture that IS a determiner
-    # ("node the" -> entity "the") is dropped by the stop-word guard -> None.
     cue2 = await thread_fanout._observe_referent_grounding(
         runtime, thread, "check node the now"
     )
     assert cue2 is None
+
+
+async def test_implicit_conceptual_noun_produces_no_cue(monkeypatch):
+    monkeypatch.setattr(thread_fanout, "build_default_resolvers", lambda **kw: [])
+    runtime = _make_runtime(referent_gate=True, ground_before_collaborate=True)
+    thread = SimpleNamespace(id="concept-thread")
+
+    cue = await thread_fanout._observe_referent_grounding(
+        runtime,
+        thread,
+        "node identity distribution",
+    )
+    collision_cue = await thread_fanout._observe_referent_grounding(
+        runtime,
+        thread,
+        "Node membership distribution",
+    )
+
+    assert cue is None
+    assert collision_cue is None
+
+
+@pytest.mark.parametrize("seed", ["node id oracle", 'node "oracle"'])
+async def test_explicit_unknown_alphabetic_emits_gap_safe_cue(
+    seed: str,
+    monkeypatch,
+):
+    monkeypatch.setattr(thread_fanout, "build_default_resolvers", lambda **kw: [])
+    runtime = _make_runtime(referent_gate=True, ground_before_collaborate=True)
+
+    cue = await thread_fanout._observe_referent_grounding(
+        runtime,
+        SimpleNamespace(id="explicit-thread"),
+        seed,
+    )
+
+    assert cue is not None
+    assert "oracle" in cue
+    assert _UNRESOLVABLE in cue
+    assert is_capability_gap(cue) is False
 
 
 # ---------------- 3. no hex cue when git is unavailable ----------------

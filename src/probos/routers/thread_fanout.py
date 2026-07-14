@@ -82,17 +82,10 @@ _BROADCAST_CUE_RE = re.compile(
 )
 
 
-# AD-1120: kinds eligible for cue INJECTION. `service` (AD-1119 DD-5) is excluded
-# — its Capitalized-word match can capture a sentence-initial determiner ("The
-# node" -> "The"), acceptable in an observe log but not as a behavioral cue.
-# Injection changes behavior, so it is restricted to the high-precision kinds.
+# AD-1120: kinds eligible for cue INJECTION. `service` remains excluded as a
+# central-policy constraint; BF-667 source grammar is the sole assertion-strength
+# authority. Injection changes behavior, so it stays restricted to hex/entity.
 _GROUNDING_INJECT_KINDS = frozenset({"hex", "entity"})
-# AD-1120: determiner / stop-word guard (defense-in-depth for an `entity` capture
-# like "node the" -> "the"). Lower-cased comparison.
-_GROUNDING_STOPWORDS = frozenset({
-    "the", "a", "an", "this", "that", "these", "those", "it", "its", "their",
-    "our", "your", "his", "her", "node", "record", "entity", "service",
-})
 
 
 def classify_broadcast(text: str) -> bool:
@@ -981,10 +974,9 @@ async def _observe_referent_grounding(
     returns ``None`` on the first line so the fan-out is byte-identical — NO gate
     is built and NO git subprocess runs (the AD-1119 ``test_observe_off_is_noop``
     contract). When ON, build the gate from the runtime's narrow deps, evaluate
-    the seed, and emit one structured WARNING per unresolved referent (the AD-1119
-    observe log, unchanged).
+    the seed, and emit one structured WARNING per actionable unresolved referent.
 
-    AD-1120 (behavioral half): after the observe log, when
+    AD-1120 (behavioral half): when
     ``grounding.ground_before_collaborate_enabled`` is ALSO True, select the
     CENTRAL unresolved referent (DD-1120-2/3) and RETURN its ``is_capability_gap``
     -clean cue so the fan-out injects it into each dispatched crew agent's
@@ -1012,25 +1004,23 @@ async def _observe_referent_grounding(
             getattr(thread, "id", "?"), exc_info=True,
         )
         return None
+    # AD-1120/AD-1121: compute the central token at most once, only when either
+    # behavioral half is enabled. Reuse it for warning disposition, probe
+    # scheduling, and the cue return.
+    probe_on = getattr(cfg, "confab_probe_enabled", False)
+    b2_on = getattr(cfg, "ground_before_collaborate_enabled", False)
+    central_token = None
+    if probe_on or b2_on:
+        central_token = await _select_central_referent(verdict, seed_text or "")
     for token in verdict.unresolved:
         logger.warning(
             "AD-1119[observe]: unresolved referent thread=%s token=%r cue=%r "
-            "(observe-only, no behavioral change)",
+            "central=%s ground_before_collaborate=%s confab_probe=%s",
             getattr(thread, "id", "?"), token, verdict.cues.get(token, ""),
+            token == central_token, b2_on, probe_on,
         )
-    # AD-1120/AD-1121: behavioral half. Observe-only (return None) unless B2 or
-    # the AD-1121 probe is enabled — this preserves the AD-1119 observe-only
-    # contract (its call-site tests assert None with both flags default-off) AND
-    # avoids computing the central token / a second git-HEAD probe when neither
-    # behavioral half is on.
-    probe_on = getattr(cfg, "confab_probe_enabled", False)
-    b2_on = getattr(cfg, "ground_before_collaborate_enabled", False)
     if not (probe_on or b2_on):
         return None
-    # Compute the central unresolved referent TOKEN exactly ONCE (DD-1121-6) and
-    # reuse it for BOTH the AD-1121 probe and the AD-1120 cue return — one gate,
-    # one git-HEAD availability probe.
-    central_token = await _select_central_referent(verdict, seed_text or "")
     if probe_on and central_token is not None:
         # AD-1121: schedule the context-free divergence probe as a BEST-EFFORT
         # background task (non-blocking) so it never delays the crew reply. The
@@ -1071,10 +1061,10 @@ async def _select_central_referent(verdict: Any, seed_text: str) -> str | None:
     maps the returned token to ``verdict.cues[token]`` (the injected honest-absence
     cue); AD-1121 feeds the token to the context-free divergence probe. Selection
     (DD-1120-2/3): re-extract referents (pure — NOT a re-resolve; the git
-    subprocesses live in ``evaluate``) for their kinds, keep the first unresolved
-    token (seed-appearance order) whose kind is injectable (hex/entity), which is
-    not a determiner/stop-word, and — for a hex — only when git is actually
-    available (DD-1120-3, so a git-less deploy does not falsely flag every hex).
+    subprocesses live in ``evaluate``) for their kinds, keep the first actionable
+    unresolved token (seed-appearance order) whose kind is injectable
+    (hex/entity), and — for a hex — only when git is actually available
+    (DD-1120-3, so a git-less deploy does not falsely flag every hex).
     Returns the token verbatim or ``None`` when nothing qualifies. Tier-2
     honest-degrade: any failure returns ``None``.
     """
@@ -1086,12 +1076,12 @@ async def _select_central_referent(verdict: Any, seed_text: str) -> str | None:
             exc_info=True,
         )
         return None
-    # Candidate tokens in seed order, kind- and stop-word-filtered.
+    # Candidate tokens in seed order, kind-filtered. BF-667 source grammar is the
+    # single assertion authority; no downstream conceptual/stop-word heuristic.
     candidates = [
         t
         for t in verdict.unresolved
         if kinds.get(t) in _GROUNDING_INJECT_KINDS
-        and t.lower() not in _GROUNDING_STOPWORDS
     ]
     if not candidates:
         return None

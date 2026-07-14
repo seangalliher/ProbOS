@@ -13,6 +13,7 @@ referent (``node oracle_probe``) so the probe tests are hermetic.
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -122,6 +123,272 @@ def _pin_empty_resolvers(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _obs_files(tmp_path: Path) -> list[Path]:
     return list((tmp_path / "default").glob("OBS-*.yaml"))
+
+
+# ---------------- BF-667: assertion grammar integration ----------------
+
+
+async def test_all_flags_conceptual_phrase_has_zero_grounding_action(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    _pin_empty_resolvers(monkeypatch)
+    llm = _ScriptedLLM([_resp("NO — no record.")] * 3)
+    collector = _make_collector(tmp_path)
+    notifications = NotificationQueue()
+    runtime = _make_runtime(
+        referent_gate=True,
+        confab_probe=True,
+        ground_before_collaborate=True,
+        llm=llm,
+        collector=collector,
+        notification_queue=notifications,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = await thread_fanout._observe_referent_grounding(
+            runtime,
+            SimpleNamespace(id="concept-thread", title="Concept"),
+            "node identity distribution",
+        )
+
+    assert result is None
+    assert runtime.confab_probe_tasks == set()
+    assert llm.requests == []
+    assert _obs_files(tmp_path) == []
+    assert notifications.snapshot() == []
+    assert not any("AD-1119[observe]" in r.getMessage() for r in caplog.records)
+
+
+async def test_all_flags_conceptual_phrase_selects_central_once_without_action(
+    monkeypatch,
+):
+    _pin_empty_resolvers(monkeypatch)
+    real_select = thread_fanout._select_central_referent
+    selector_calls = {"n": 0}
+
+    async def _select(verdict: Any, seed_text: str) -> str | None:
+        selector_calls["n"] += 1
+        return await real_select(verdict, seed_text)
+
+    monkeypatch.setattr(thread_fanout, "_select_central_referent", _select)
+    runtime = _make_runtime(
+        referent_gate=True,
+        confab_probe=True,
+        ground_before_collaborate=True,
+        llm=_ScriptedLLM([_resp("NO — no record.")] * 3),
+    )
+
+    result = await thread_fanout._observe_referent_grounding(
+        runtime,
+        SimpleNamespace(id="concept-count-thread", title="Concept"),
+        "node identity distribution",
+    )
+
+    assert result is None
+    assert selector_calls["n"] == 1
+    assert runtime.confab_probe_tasks == set()
+    assert runtime.llm_client.requests == []
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [
+        "node id `oracle_probe` for review",
+        "node `oracle` for review",
+        "node id ```\noracle_probe\n``` for review",
+        "node ```\noracle\n``` for review",
+    ],
+)
+async def test_all_flags_code_protected_identifier_has_no_grounding_action(
+    seed,
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    _pin_empty_resolvers(monkeypatch)
+    real_select = thread_fanout._select_central_referent
+    selected: list[str | None] = []
+
+    async def _select(verdict: Any, seed_text: str) -> str | None:
+        token = await real_select(verdict, seed_text)
+        selected.append(token)
+        return token
+
+    monkeypatch.setattr(thread_fanout, "_select_central_referent", _select)
+    llm = _ScriptedLLM([_resp("NO — no record.")] * 3)
+    collector = _make_collector(tmp_path)
+    notifications = NotificationQueue()
+    runtime = _make_runtime(
+        referent_gate=True,
+        confab_probe=True,
+        ground_before_collaborate=True,
+        llm=llm,
+        collector=collector,
+        notification_queue=notifications,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        cue = await thread_fanout._observe_referent_grounding(
+            runtime,
+            SimpleNamespace(id="code-thread", title="Code"),
+            seed,
+        )
+
+    assert cue is None
+    assert selected == [None]
+    assert runtime.confab_probe_tasks == set()
+    assert llm.requests == []
+    assert _obs_files(tmp_path) == []
+    assert notifications.snapshot() == []
+    assert not any("AD-1119[observe]" in r.getMessage() for r in caplog.records)
+
+
+async def test_cross_kind_explicit_promotion_enables_central_cue_and_probe(
+    monkeypatch,
+    caplog,
+):
+    _pin_empty_resolvers(monkeypatch)
+    real_select = thread_fanout._select_central_referent
+    selected: list[str | None] = []
+
+    async def _select(verdict: Any, seed_text: str) -> str | None:
+        token = await real_select(verdict, seed_text)
+        selected.append(token)
+        return token
+
+    monkeypatch.setattr(thread_fanout, "_select_central_referent", _select)
+    runtime = _make_runtime(
+        referent_gate=True,
+        confab_probe=True,
+        ground_before_collaborate=True,
+        llm=_ScriptedLLM(),
+    )
+    scheduled: list[tuple[Any, str]] = []
+
+    def _schedule(probe_factory: Any, *, name: str = "confab-probe") -> None:
+        scheduled.append((probe_factory, name))
+        return None
+
+    runtime.schedule_confab_probe = _schedule
+
+    with caplog.at_level(logging.WARNING):
+        cue = await thread_fanout._observe_referent_grounding(
+            runtime,
+            SimpleNamespace(id="promotion-thread", title="Promotion"),
+            "Oracle membership then node id Oracle",
+        )
+
+    observed = [
+        r.getMessage()
+        for r in caplog.records
+        if "AD-1119[observe]" in r.getMessage()
+    ]
+    assert cue is not None
+    assert "Oracle" in cue
+    assert selected == ["Oracle"]
+    assert len(scheduled) == 1
+    assert scheduled[0][1].endswith(":Oracle")
+    assert len(observed) == 1
+    assert "central=True" in observed[0]
+
+
+async def test_ordinary_explicit_identifier_remains_central_cue_probe_eligible(
+    monkeypatch,
+    caplog,
+):
+    _pin_empty_resolvers(monkeypatch)
+    selected: list[str | None] = []
+    real_select = thread_fanout._select_central_referent
+
+    async def _select(verdict: Any, seed_text: str) -> str | None:
+        token = await real_select(verdict, seed_text)
+        selected.append(token)
+        return token
+
+    monkeypatch.setattr(thread_fanout, "_select_central_referent", _select)
+    runtime = _make_runtime(
+        referent_gate=True,
+        confab_probe=True,
+        ground_before_collaborate=True,
+        llm=_ScriptedLLM(),
+    )
+    scheduled: list[tuple[Any, str]] = []
+
+    def _schedule(probe_factory: Any, *, name: str = "confab-probe") -> None:
+        scheduled.append((probe_factory, name))
+        return None
+
+    runtime.schedule_confab_probe = _schedule
+
+    with caplog.at_level(logging.WARNING):
+        cue = await thread_fanout._observe_referent_grounding(
+            runtime,
+            SimpleNamespace(id="explicit-thread", title="Explicit"),
+            "node id oracle for review",
+        )
+
+    observed = [
+        r.getMessage()
+        for r in caplog.records
+        if "AD-1119[observe]" in r.getMessage()
+    ]
+    assert cue is not None
+    assert "oracle" in cue
+    assert selected == ["oracle"]
+    assert len(scheduled) == 1
+    assert scheduled[0][1].endswith(":oracle")
+    assert len(observed) == 1
+    assert "central=True" in observed[0]
+
+
+async def test_enabled_strong_warning_reports_central_and_flags_once(
+    monkeypatch,
+    caplog,
+):
+    _pin_empty_resolvers(monkeypatch)
+    selector_calls = {"n": 0}
+    real_select = thread_fanout._select_central_referent
+
+    async def _select(verdict: Any, seed_text: str) -> str | None:
+        selector_calls["n"] += 1
+        assert verdict.unresolved == ("e77acec7",)
+        assert seed_text == "e77acec7"
+        return await real_select(verdict, seed_text)
+
+    async def _git_available(self: Any, token: str) -> bool:
+        assert token == "HEAD"
+        return True
+
+    monkeypatch.setattr(thread_fanout, "_select_central_referent", _select)
+    monkeypatch.setattr(thread_fanout.GitObjectResolver, "resolve", _git_available)
+    runtime = _make_runtime(
+        referent_gate=True,
+        confab_probe=True,
+        ground_before_collaborate=True,
+        llm=None,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        cue = await thread_fanout._observe_referent_grounding(
+            runtime,
+            SimpleNamespace(id="strong-thread", title="Strong"),
+            "e77acec7",
+        )
+
+    observed = [r.getMessage() for r in caplog.records if "AD-1119[observe]" in r.getMessage()]
+    assert cue is not None
+    assert selector_calls["n"] == 1
+    assert len(observed) == 1
+    assert "e77acec7" in observed[0]
+    assert "central=True" in observed[0]
+    assert "ground_before_collaborate=True" in observed[0]
+    assert "confab_probe=True" in observed[0]
+    assert "no behavioral change" not in observed[0]
+    assert len(runtime.confab_probe_tasks) == 1
+    await asyncio.gather(*list(runtime.confab_probe_tasks))
+    assert runtime.llm_client is None
 
 
 # ---------------- 1. divergent -> flag + notify (through the seam) ----------------
