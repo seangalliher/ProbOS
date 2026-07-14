@@ -13,11 +13,13 @@ from probos.cognitive.correction_detector import CorrectionSignal
 from probos.cognitive.feedback import FeedbackEngine, FeedbackResult
 from probos.cognitive.episodic import EpisodicMemory
 from probos.cognitive.self_mod import SelfModificationPipeline
+from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.consensus.trust import TrustNetwork
 from probos.mesh.capability import CapabilityRegistry
 from probos.mesh.routing import HebbianRouter
 from probos.substrate.event_log import EventLog
 from probos.substrate.registry import AgentRegistry
+from probos.types import HandlerLatencyClass
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +144,41 @@ class TestFindDesignedRecord:
 
         result = rt.self_mod_manager.find_designed_record("fetch_news")
         assert result is r
+
+
+class TestHotReplacementLatencyMetadata:
+    @pytest.mark.asyncio
+    async def test_patched_cognitive_agent_resubscribes_as_cognitive(self):
+        from probos.self_mod_manager import SelfModManager
+
+        class _PatchedAgent(CognitiveAgent):
+            instructions = "patched"
+            intent_descriptors = []
+
+        class _OldAgent:
+            id = "designed-agent-full-id"
+
+        class _Pool:
+            healthy_agents = [_OldAgent()]
+
+        manager = SelfModManager.__new__(SelfModManager)
+        manager._spawner = MagicMock()
+        manager._spawner._templates = {}
+        manager._pools = {"designed_fetch_news": _Pool()}
+        manager._registry = MagicMock()
+        manager._intent_bus = MagicMock()
+        manager._capability_registry = MagicMock()
+        manager._llm_client = None
+
+        await manager._apply_agent_correction(
+            MagicMock(),
+            _patch_result(agent_class=_PatchedAgent),
+            _FakeRecord(agent_type="fetch_news"),
+        )
+
+        assert manager._intent_bus.subscribe.call_args.kwargs["latency_class"] == (
+            HandlerLatencyClass.COGNITIVE
+        )
 
 
 # ---------------------------------------------------------------------------

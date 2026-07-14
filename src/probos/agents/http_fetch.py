@@ -14,7 +14,13 @@ from typing import Any, ClassVar
 import httpx
 
 from probos.substrate.agent import BaseAgent
-from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
+from probos.types import (
+    CapabilityDescriptor,
+    HandlerLatencyClass,
+    IntentDescriptor,
+    IntentMessage,
+    IntentResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +48,7 @@ class HttpFetchAgent(BaseAgent):
 
     agent_type: str = "http_fetch"
     tier = "core"
+    handler_latency_class: HandlerLatencyClass = HandlerLatencyClass.NETWORK
     default_capabilities = [
         CapabilityDescriptor(
             can="http_fetch",

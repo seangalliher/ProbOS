@@ -31,6 +31,7 @@ from probos.substrate.device_pairing import generate_keypair, sign_challenge
 from probos.substrate.device_service import DEVICE_NODE_SERVICE_ID
 from probos.types import (
     ConsensusOutcome,
+    HandlerLatencyClass,
     IntentMessage,
     IntentResult,
     QuorumPolicy,
@@ -439,6 +440,21 @@ async def test_wire_device_consensus_off_is_noop(tmp_path):
     assert "device_consensus_dispatch" not in rt.intent_bus._subscribers
     for name in ("device.location", "device.camera", "device.screen"):
         assert "device_consensus_dispatch" not in rt.intent_bus._intent_index.get(name, set())
+
+
+@pytest.mark.asyncio
+async def test_wire_device_consensus_subscribes_as_deterministic(tmp_path):
+    cfg = SystemConfig()
+    cfg.device.enabled = True
+    rt = ProbOSRuntime(data_dir=tmp_path / "data", config=cfg)
+
+    wired = await _wire_device_consensus(runtime=rt, config=cfg)
+
+    assert wired is True
+    assert (
+        rt.intent_bus._subscriber_latency_classes["device_consensus_dispatch"]
+        == HandlerLatencyClass.DETERMINISTIC
+    )
 
 
 @pytest.mark.asyncio

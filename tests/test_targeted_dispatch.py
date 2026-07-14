@@ -43,6 +43,9 @@ class TestTargetedDispatch:
         assert got is not None
         assert got.result == "Hello from agent-1"
         handler.assert_awaited_once()
+        metrics = intent_bus.get_metrics()
+        assert metrics["send_count"] == 1
+        assert metrics["handlers"] == []
 
     @pytest.mark.asyncio
     async def test_send_to_unknown_agent(self, intent_bus):

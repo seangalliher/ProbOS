@@ -29,6 +29,7 @@ from probos.perception.working_memory import VisionObservation
 from probos.types import (
     AnchorFrame,
     Episode,
+    HandlerLatencyClass,
     IntentMessage,
     IntentResult,
     LLMRequest,
@@ -249,6 +250,7 @@ class VisionConsumer:
             self.SUBSCRIBER_AGENT_ID,
             self._handle,
             intent_names=[self.INTENT_NAME],
+            latency_class=HandlerLatencyClass.COGNITIVE,
         )
         logger.info("AD-733a: VisionConsumer subscribed to %s", self.INTENT_NAME)
 

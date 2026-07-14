@@ -90,6 +90,7 @@ class TestDispatchAsync:
         # Give the background task time to run
         await asyncio.sleep(0.05)
         assert called.is_set()
+        assert bus.get_metrics()["handlers"] == []
 
     @pytest.mark.asyncio
     async def test_dispatch_async_requires_target_agent_id(self, intent_bus):

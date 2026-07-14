@@ -20,7 +20,7 @@ from probos.cognitive.standing_orders import (
     compose_instructions,
     set_skill_catalog,
 )
-from probos.types import IntentDescriptor, IntentMessage
+from probos.types import HandlerLatencyClass, IntentDescriptor, IntentMessage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -474,6 +474,7 @@ class TestOnboardingWiring:
         agent.id = "agent-001"
         agent.agent_type = "builder"
         agent.intent_descriptors = []
+        agent.handler_latency_class = HandlerLatencyClass.COGNITIVE
         agent.callsign = None
         agent.sovereign_id = None
 
@@ -527,6 +528,7 @@ class TestOnboardingWiring:
         agent.intent_descriptors = [
             IntentDescriptor(name="read_file", description="Read a file"),
         ]
+        agent.handler_latency_class = HandlerLatencyClass.COGNITIVE
         agent.callsign = None
         agent.sovereign_id = None
 
@@ -538,6 +540,10 @@ class TestOnboardingWiring:
         assert "read_file" in intent_names
         assert "skill_intent_a" in intent_names
         assert "skill_intent_b" in intent_names
+        assert (
+            call_args.kwargs["latency_class"]
+            == HandlerLatencyClass.COGNITIVE
+        )
 
     def test_wire_agent_no_catalog_unchanged(self):
         """Without catalog, wire_agent() skips skill wiring."""
@@ -580,6 +586,7 @@ class TestOnboardingWiring:
         agent.id = "agent-001"
         agent.agent_type = "builder"
         agent.intent_descriptors = []
+        agent.handler_latency_class = HandlerLatencyClass.COGNITIVE
         agent.callsign = None
         agent.sovereign_id = None
 

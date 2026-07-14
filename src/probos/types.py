@@ -22,6 +22,14 @@ class AgentState(Enum):
     RECYCLING = "recycling"
 
 
+class HandlerLatencyClass(StrEnum):
+    """Expected execution cost for an intent handler."""
+
+    DETERMINISTIC = "deterministic"
+    NETWORK = "network"
+    COGNITIVE = "cognitive"
+
+
 @dataclass
 class CapabilityDescriptor:
     """Semantic description of what an agent can do."""

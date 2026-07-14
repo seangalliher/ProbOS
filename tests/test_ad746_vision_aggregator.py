@@ -24,7 +24,7 @@ from probos.perception.consumer import (
     reset_working_memories_for_tests,
 )
 from probos.routers.chat import _ATTACHMENT_STORE_CACHE
-from probos.types import IntentMessage, LLMResponse
+from probos.types import HandlerLatencyClass, IntentMessage, LLMResponse
 
 
 def _make_jpeg(color: tuple[int, int, int]) -> bytes:
@@ -61,6 +61,19 @@ def _build_runtime(tmp_path: Path) -> Any:
     )
     runtime.profile_store = None
     return runtime
+
+
+def test_aggregator_subscribes_as_cognitive(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    consumer = VisionConsumer(runtime)
+    aggregator = VisionAggregator(runtime, consumer)
+
+    aggregator.subscribe()
+
+    args, kwargs = runtime.intent_bus.subscribe.call_args
+    assert args[0] == VisionAggregator.SUBSCRIBER_AGENT_ID
+    assert kwargs["intent_names"] == [VisionAggregator.INTENT_NAME]
+    assert kwargs["latency_class"] == HandlerLatencyClass.COGNITIVE
 
 
 @pytest.fixture(autouse=True)

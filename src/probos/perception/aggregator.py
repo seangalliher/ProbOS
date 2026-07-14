@@ -43,7 +43,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from probos.types import IntentMessage, IntentResult
+from probos.types import HandlerLatencyClass, IntentMessage, IntentResult
 
 if TYPE_CHECKING:
     from probos.perception.consumer import VisionConsumer
@@ -87,6 +87,7 @@ class VisionAggregator:
             self.SUBSCRIBER_AGENT_ID,
             self._handle,
             intent_names=[self.INTENT_NAME],
+            latency_class=HandlerLatencyClass.COGNITIVE,
         )
         logger.info(
             "AD-746 Layer 1: VisionAggregator subscribed to %s (window=%dms)",

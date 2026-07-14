@@ -150,6 +150,7 @@ async def _wire_device_consensus(*, runtime: Any, config: "SystemConfig") -> boo
 
     from probos.agents.device_consensus_proposer import DeviceConsensusProposer
     from probos.substrate.device_node import DEVICE_INTENT_DESCRIPTORS
+    from probos.types import HandlerLatencyClass
 
     # The device_actuate voter population (propose-only; never actuates). Sized to
     # the default QuorumPolicy.min_votes so a CONSENSUS-tier actuation reaches quorum.
@@ -169,6 +170,7 @@ async def _wire_device_consensus(*, runtime: Any, config: "SystemConfig") -> boo
         "device_consensus_dispatch",
         runtime._dispatch_device_consensus_intent,
         intent_names=sensitive_intents,
+        latency_class=HandlerLatencyClass.DETERMINISTIC,
     )
     return True
 

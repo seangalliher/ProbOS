@@ -125,6 +125,7 @@ from probos.types import (
     AnchorFrame,
     ConsensusOutcome,
     Episode,
+    HandlerLatencyClass,
     IntentDescriptor,
     IntentMessage,
     IntentResult,
@@ -383,7 +384,18 @@ class ProbOSRuntime:
 
         # --- Mesh ---
         self.signal_manager = SignalManager(reap_interval=1.0)
-        self.intent_bus = IntentBus(self.signal_manager)
+        self.intent_bus = IntentBus(
+            self.signal_manager,
+            handler_latency_thresholds_ms={
+                HandlerLatencyClass.DETERMINISTIC: (
+                    self.config.mesh.handler_latency_deterministic_ms
+                ),
+                HandlerLatencyClass.NETWORK: self.config.mesh.handler_latency_network_ms,
+                HandlerLatencyClass.COGNITIVE: (
+                    self.config.mesh.handler_latency_cognitive_ms
+                ),
+            },
+        )
         self.capability_registry = CapabilityRegistry(
             semantic_matching=self.config.mesh.semantic_matching,
         )
@@ -497,6 +509,7 @@ class ProbOSRuntime:
             GROUP_CHAT_COORDINATOR_ID,
             self.agent_group_chat.handle_intent,
             intent_names=[CREATE_GROUP_CHAT],
+            latency_class=HandlerLatencyClass.DETERMINISTIC,
         )
 
         # AD-797 (Wave 195): artifact metadata store. Bytes live in the
@@ -920,6 +933,7 @@ class ProbOSRuntime:
                 DEVICE_NODE_SERVICE_ID,
                 self.device_node_service.handle_intent,
                 intent_names=["device.notify"],
+                latency_class=HandlerLatencyClass.DETERMINISTIC,
             )
         # AD-480a / AD-480d: inbound servers — None until startup wires them.
         self.federation_mcp_server: "FederationMCPServer | None" = None

@@ -169,7 +169,12 @@ class AgentOnboardingService:
                         if intent_name not in intent_names:
                             intent_names.append(intent_name)
 
-            self._intent_bus.subscribe(agent.id, agent.handle_intent, intent_names=intent_names or None)
+            self._intent_bus.subscribe(
+                agent.id,
+                agent.handle_intent,
+                intent_names=intent_names or None,
+                latency_class=agent.handler_latency_class,
+            )
 
         # AD-596c: Wire skill bridge and cached skill profile onto crew agents
         if self._skill_bridge and hasattr(agent, 'handle_intent'):

@@ -23,7 +23,15 @@ from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.substrate.agent import BaseAgent
-from probos.types import AnchorFrame, IntentMessage, IntentResult, LLMRequest, Priority, Skill
+from probos.types import (
+    AnchorFrame,
+    HandlerLatencyClass,
+    IntentMessage,
+    IntentResult,
+    LLMRequest,
+    Priority,
+    Skill,
+)
 from probos.utils import format_duration
 
 if TYPE_CHECKING:
@@ -309,6 +317,7 @@ class CognitiveAgent(BaseAgent):
     """
 
     tier = "domain"  # Cognitive agents are domain-tier by default
+    handler_latency_class: HandlerLatencyClass = HandlerLatencyClass.COGNITIVE
 
     # Default cache TTL — overridden by _get_cache_ttl() based on instructions
     _cache_ttl_seconds: float = 300.0  # 5 minutes

@@ -4,8 +4,9 @@ import asyncio
 
 import pytest
 
+from probos.config import SystemConfig
 from probos.runtime import ProbOSRuntime
-from probos.types import AgentState
+from probos.types import AgentState, HandlerLatencyClass
 
 
 @pytest.fixture
@@ -71,6 +72,30 @@ class TestRuntimeSubstrate:
 
 
 class TestRuntimeMesh:
+    def test_handler_latency_thresholds_injected_from_config(self, tmp_path):
+        cfg = SystemConfig()
+        cfg.mesh.handler_latency_deterministic_ms = 1.25
+        cfg.mesh.handler_latency_network_ms = 2.5
+        cfg.mesh.handler_latency_cognitive_ms = 3.75
+
+        runtime = ProbOSRuntime(config=cfg, data_dir=tmp_path / "data")
+
+        assert runtime.intent_bus._handler_latency_thresholds_ms == {
+            HandlerLatencyClass.DETERMINISTIC: 1.25,
+            HandlerLatencyClass.NETWORK: 2.5,
+            HandlerLatencyClass.COGNITIVE: 3.75,
+        }
+
+    def test_group_chat_coordinator_subscribes_as_deterministic(self, tmp_path):
+        from probos.threads.agent_group_chat import GROUP_CHAT_COORDINATOR_ID
+
+        runtime = ProbOSRuntime(config=SystemConfig(), data_dir=tmp_path / "data")
+
+        assert (
+            runtime.intent_bus._subscriber_latency_classes[GROUP_CHAT_COORDINATOR_ID]
+            == HandlerLatencyClass.DETERMINISTIC
+        )
+
     @pytest.mark.asyncio
     async def test_file_reader_agents_on_intent_bus(self, runtime):
         assert runtime.intent_bus.subscriber_count >= 3  # 3 file readers

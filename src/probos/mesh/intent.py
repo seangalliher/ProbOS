@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import time
 import logging
-from collections import defaultdict
+import math
+import time
+from collections import OrderedDict, defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Awaitable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
-from probos.types import IntentMessage, IntentResult, Priority
+from probos.types import HandlerLatencyClass, IntentMessage, IntentResult, Priority
 from probos.mesh.signal import SignalManager
 
 if TYPE_CHECKING:
@@ -20,6 +22,60 @@ logger = logging.getLogger(__name__)
 
 # Type for subscriber callbacks
 IntentHandler = Callable[[IntentMessage], Awaitable[IntentResult | None]]
+
+_DETERMINISTIC_HANDLER_LATENCY_MS = 100.0
+_NETWORK_HANDLER_LATENCY_MS = 10_000.0
+_COGNITIVE_HANDLER_LATENCY_MS = 30_000.0
+_MAX_HANDLER_LATENCY_SAMPLES = 200
+_MAX_HANDLER_METRIC_KEYS = 1_000
+
+
+@dataclass
+class _HandlerMetricStats:
+    durations_ms: list[float] = field(default_factory=list)
+    responded_count: int = 0
+    declined_count: int = 0
+    error_count: int = 0
+
+    @property
+    def count(self) -> int:
+        return self.responded_count + self.declined_count + self.error_count
+
+    def record(
+        self,
+        duration_ms: float,
+        outcome: Literal["responded", "declined", "error"],
+    ) -> None:
+        self.durations_ms.append(duration_ms)
+        if len(self.durations_ms) > _MAX_HANDLER_LATENCY_SAMPLES:
+            del self.durations_ms[:-_MAX_HANDLER_LATENCY_SAMPLES]
+        if outcome == "responded":
+            self.responded_count += 1
+        elif outcome == "declined":
+            self.declined_count += 1
+        else:
+            self.error_count += 1
+
+    def to_row(
+        self,
+        agent_id: str,
+        intent_type: str,
+        latency_class: HandlerLatencyClass,
+    ) -> dict[str, Any]:
+        sorted_samples = sorted(self.durations_ms)
+        p95_index = math.ceil(0.95 * len(sorted_samples)) - 1
+        return {
+            "agent_id": agent_id,
+            "intent": intent_type,
+            "latency_class": latency_class.value,
+            "count": self.count,
+            "mean_ms": round(sum(sorted_samples) / len(sorted_samples), 2),
+            "p95_ms": round(sorted_samples[p95_index], 2),
+            "max_ms": round(sorted_samples[-1], 2),
+            "responded_count": self.responded_count,
+            "declined_count": self.declined_count,
+            "error_count": self.error_count,
+        }
 
 
 @dataclass
@@ -31,6 +87,9 @@ class IntentMetrics:
     total_results: int = 0
     type_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     type_durations_ms: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
+    _handler_stats: OrderedDict[
+        tuple[str, str, HandlerLatencyClass], _HandlerMetricStats
+    ] = field(default_factory=OrderedDict, init=False, repr=False)
 
     def record_broadcast(self, intent_type: str, result_count: int, duration_ms: float) -> None:
         """Record a broadcast completion."""
@@ -51,6 +110,32 @@ class IntentMetrics:
         if len(durations) > 200:
             self.type_durations_ms[intent_type] = durations[-200:]
 
+    def record_handler(
+        self,
+        agent_id: str,
+        intent_type: str,
+        latency_class: HandlerLatencyClass,
+        duration_ms: float,
+        outcome: Literal["responded", "declined", "error"],
+    ) -> None:
+        """Record one completed broadcast-handler invocation."""
+        if outcome not in ("responded", "declined", "error"):
+            raise ValueError(f"invalid handler outcome: {outcome}")
+        if not isinstance(latency_class, HandlerLatencyClass):
+            raise TypeError("latency_class must be a HandlerLatencyClass")
+        if not math.isfinite(duration_ms) or duration_ms < 0.0:
+            raise ValueError("handler duration must be finite and non-negative")
+        key = (agent_id, intent_type, latency_class)
+        stats = self._handler_stats.get(key)
+        if stats is None:
+            stats = _HandlerMetricStats()
+            self._handler_stats[key] = stats
+            if len(self._handler_stats) > _MAX_HANDLER_METRIC_KEYS:
+                self._handler_stats.popitem(last=False)
+        else:
+            self._handler_stats.move_to_end(key)
+        stats.record(duration_ms, outcome)
+
     def get_summary(self) -> dict[str, Any]:
         """Return a summary of intent metrics."""
         type_stats: dict[str, dict[str, Any]] = {}
@@ -61,11 +146,23 @@ class IntentMetrics:
                     "mean_ms": round(sum(durations) / len(durations), 2),
                     "max_ms": round(max(durations), 2),
                 }
+        handler_rows = [
+            stats.to_row(agent_id, intent_type, latency_class)
+            for (agent_id, intent_type, latency_class), stats in sorted(
+                self._handler_stats.items(),
+                key=lambda item: (
+                    item[0][0],
+                    item[0][1],
+                    item[0][2].value,
+                ),
+            )
+        ]
         return {
             "broadcast_count": self.broadcast_count,
             "send_count": self.send_count,
             "total_results": self.total_results,
             "types": type_stats,
+            "handlers": handler_rows,
         }
 
 
@@ -78,9 +175,48 @@ class IntentBus:
     a configurable timeout.
     """
 
-    def __init__(self, signal_manager: SignalManager) -> None:
+    def __init__(
+        self,
+        signal_manager: SignalManager,
+        *,
+        handler_latency_thresholds_ms: Mapping[
+            HandlerLatencyClass, float
+        ] | None = None,
+    ) -> None:
         self._signal_manager = signal_manager
+        if handler_latency_thresholds_ms is None:
+            normalized_thresholds = {
+                HandlerLatencyClass.DETERMINISTIC: _DETERMINISTIC_HANDLER_LATENCY_MS,
+                HandlerLatencyClass.NETWORK: _NETWORK_HANDLER_LATENCY_MS,
+                HandlerLatencyClass.COGNITIVE: _COGNITIVE_HANDLER_LATENCY_MS,
+            }
+        else:
+            normalized_thresholds: dict[HandlerLatencyClass, float] = {}
+            for latency_class in HandlerLatencyClass:
+                try:
+                    raw_threshold = handler_latency_thresholds_ms[latency_class]
+                except (KeyError, TypeError) as exc:
+                    raise ValueError(
+                        f"missing handler latency threshold for {latency_class.value}"
+                    ) from exc
+                if isinstance(raw_threshold, bool):
+                    raise ValueError(
+                        "handler latency thresholds must be finite positive numbers"
+                    )
+                try:
+                    threshold = float(raw_threshold)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "handler latency thresholds must be finite positive numbers"
+                    ) from exc
+                if not math.isfinite(threshold) or threshold <= 0.0:
+                    raise ValueError(
+                        "handler latency thresholds must be finite positive numbers"
+                    )
+                normalized_thresholds[latency_class] = threshold
+        self._handler_latency_thresholds_ms = normalized_thresholds
         self._subscribers: dict[str, IntentHandler] = {}  # agent_id -> handler
+        self._subscriber_latency_classes: dict[str, HandlerLatencyClass] = {}
         self._intent_index: dict[str, set[str]] = {}  # intent_name -> set of agent_ids
         self._pending_results: dict[str, list[IntentResult]] = {}  # intent_id -> results
         self._result_events: dict[str, asyncio.Event] = {}
@@ -142,14 +278,24 @@ class IntentBus:
             len(self._agent_queues),
         )
 
-    def subscribe(self, agent_id: str, handler: IntentHandler, intent_names: list[str] | None = None) -> None:
+    def subscribe(
+        self,
+        agent_id: str,
+        handler: IntentHandler,
+        intent_names: list[str] | None = None,
+        *,
+        latency_class: HandlerLatencyClass = HandlerLatencyClass.DETERMINISTIC,
+    ) -> None:
         """Register an agent's intent handler.
 
         If intent_names is provided, the agent is indexed for those intents
         and will only be invoked when a matching intent is broadcast.
         Agents subscribed without intent_names receive all broadcasts (fallback).
         """
+        if not isinstance(latency_class, HandlerLatencyClass):
+            raise TypeError("latency_class must be a HandlerLatencyClass")
         self._subscribers[agent_id] = handler
+        self._subscriber_latency_classes[agent_id] = latency_class
         if intent_names:
             for name in intent_names:
                 if name not in self._intent_index:
@@ -364,6 +510,7 @@ class IntentBus:
     def unsubscribe(self, agent_id: str) -> None:
         """Remove an agent's subscription and intent index entries."""
         self._subscribers.pop(agent_id, None)
+        self._subscriber_latency_classes.pop(agent_id, None)
         self.unregister_queue(agent_id)  # AD-654b: clean up cognitive queue
         for agent_set in self._intent_index.values():
             agent_set.discard(agent_id)
@@ -551,20 +698,33 @@ class IntentBus:
             for agent_set in self._intent_index.values():
                 all_indexed.update(agent_set)
             candidates = {
-                aid: handler
+                aid: (
+                    handler,
+                    self._subscriber_latency_classes.get(
+                        aid, HandlerLatencyClass.DETERMINISTIC
+                    ),
+                )
                 for aid, handler in self._subscribers.items()
                 if aid in indexed_agents or aid not in all_indexed
             }
         else:
             # No index entry: fall back to all subscribers
-            candidates = dict(self._subscribers)
+            candidates = {
+                aid: (
+                    handler,
+                    self._subscriber_latency_classes.get(
+                        aid, HandlerLatencyClass.DETERMINISTIC
+                    ),
+                )
+                for aid, handler in self._subscribers.items()
+            }
 
         # Fan out to selected subscribers concurrently
         tasks = []
-        for agent_id, handler in list(candidates.items()):
+        for agent_id, (handler, latency_class) in list(candidates.items()):
             tasks.append(
                 asyncio.create_task(
-                    self._invoke_handler(intent, agent_id, handler),
+                    self._invoke_handler(intent, agent_id, handler, latency_class),
                     name=f"intent-{intent.id[:8]}-{agent_id[:8]}",
                 )
             )
@@ -793,27 +953,55 @@ class IntentBus:
         intent: IntentMessage,
         agent_id: str,
         handler: IntentHandler,
+        latency_class: HandlerLatencyClass,
     ) -> None:
         """Invoke a single subscriber's handler, catching errors."""
+        t0 = time.monotonic()
         try:
-            t0 = time.monotonic()
             result = await handler(intent)
             elapsed_ms = (time.monotonic() - t0) * 1000
-            if elapsed_ms > 100:
+            outcome: Literal["responded", "declined"] = (
+                "responded" if result is not None else "declined"
+            )
+            self._metrics.record_handler(
+                agent_id,
+                intent.intent,
+                latency_class,
+                elapsed_ms,
+                outcome,
+            )
+            threshold_ms = self._handler_latency_thresholds_ms[latency_class]
+            if elapsed_ms > threshold_ms:
                 logger.warning(
-                    "Slow handler: agent=%s intent=%s elapsed=%.0fms result=%s",
-                    agent_id[:16], intent.intent, elapsed_ms,
-                    "responded" if result else "declined",
+                    "Handler completed over latency budget: agent_id=%s "
+                    "intent=%s latency_class=%s threshold_ms=%.0f "
+                    "elapsed_ms=%.0f outcome=%s dispatch=completed",
+                    agent_id,
+                    intent.intent,
+                    latency_class.value,
+                    threshold_ms,
+                    elapsed_ms,
+                    outcome,
                 )
             if result is not None:
                 # Agent accepted and responded
                 if intent.id in self._pending_results:
                     self._pending_results[intent.id].append(result)
         except Exception as e:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            self._metrics.record_handler(
+                agent_id,
+                intent.intent,
+                latency_class,
+                elapsed_ms,
+                "error",
+            )
             logger.warning(
-                "Handler error for agent %s on intent %s: %s",
-                agent_id[:8],
-                intent.id[:8],
+                "Handler error: agent_id=%s intent=%s intent_id=%s "
+                "reason=%s dispatch=completed",
+                agent_id,
+                intent.intent,
+                intent.id,
                 e,
             )
             # Record the failure as a result

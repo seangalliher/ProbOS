@@ -30,7 +30,7 @@ from probos.substrate.device_node import (
 )
 from probos.substrate.device_pairing import generate_keypair, sign_challenge
 from probos.substrate.device_service import DEVICE_NODE_SERVICE_ID, DeviceNodeService
-from probos.types import IntentMessage, IntentResult
+from probos.types import HandlerLatencyClass, IntentMessage, IntentResult
 
 _CHALLENGE = "device-actuation-challenge"
 
@@ -325,6 +325,10 @@ async def test_handler_subscribed_when_enabled(tmp_path) -> None:
     # The gated subscription fired in __init__.
     assert DEVICE_NODE_SERVICE_ID in rt.intent_bus._subscribers
     assert DEVICE_NODE_SERVICE_ID in rt.intent_bus._intent_index["device.notify"]
+    assert (
+        rt.intent_bus._subscriber_latency_classes[DEVICE_NODE_SERVICE_ID]
+        == HandlerLatencyClass.DETERMINISTIC
+    )
 
     _pair(rt.device_node_registry, "phone-9", frozenset({"device.notify"}))
 

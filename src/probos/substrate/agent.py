@@ -9,7 +9,14 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any
 
-from probos.types import AgentID, AgentMeta, AgentState, CapabilityDescriptor, IntentDescriptor
+from probos.types import (
+    AgentID,
+    AgentMeta,
+    AgentState,
+    CapabilityDescriptor,
+    HandlerLatencyClass,
+    IntentDescriptor,
+)
 from probos.config import format_trust
 
 logger = logging.getLogger(__name__)
@@ -24,6 +31,7 @@ class BaseAgent(ABC):
 
     agent_type: str = "base"
     tier: str = "domain"  # "core", "utility", or "domain"
+    handler_latency_class: HandlerLatencyClass = HandlerLatencyClass.DETERMINISTIC
     instructions: str | None = None  # Optional LLM instructions; CognitiveAgent requires them
     default_capabilities: list[CapabilityDescriptor] = []
     intent_descriptors: list[IntentDescriptor] = []

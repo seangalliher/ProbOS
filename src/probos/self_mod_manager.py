@@ -218,6 +218,7 @@ class SelfModManager:
                     self._intent_bus.subscribe(
                         aid, new_agent.handle_intent,
                         intent_names=[d.name for d in getattr(new_agent, "intent_descriptors", [])] or None,
+                        latency_class=new_agent.handler_latency_class,
                     )
                     if hasattr(new_agent, "capabilities") and new_agent.capabilities:
                         self._capability_registry.register(aid, new_agent.capabilities)

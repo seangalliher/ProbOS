@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import urllib.parse
 from pathlib import Path
@@ -140,6 +141,29 @@ class MeshConfig(BaseModel):
     signal_ttl_seconds: float = 30.0
     capability_broadcast_interval_seconds: float = 5.0
     semantic_matching: bool = True  # Enable semantic matching in CapabilityRegistry
+    handler_latency_deterministic_ms: float = 100.0
+    handler_latency_network_ms: float = 10_000.0
+    handler_latency_cognitive_ms: float = 30_000.0
+
+    @field_validator(
+        "handler_latency_deterministic_ms",
+        "handler_latency_network_ms",
+        "handler_latency_cognitive_ms",
+        mode="before",
+    )
+    @classmethod
+    def _validate_handler_latency_threshold(cls, v: Any) -> float:
+        if isinstance(v, bool):
+            raise ValueError("handler latency thresholds must be finite positive numbers")
+        try:
+            threshold = float(v)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "handler latency thresholds must be finite positive numbers"
+            ) from exc
+        if not math.isfinite(threshold) or threshold <= 0.0:
+            raise ValueError("handler latency thresholds must be finite positive numbers")
+        return threshold
 
 
 class ConsensusConfig(BaseModel):

@@ -25,7 +25,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
-from probos.types import IntentDescriptor, IntentMessage, IntentResult
+from probos.types import (
+    HandlerLatencyClass,
+    IntentDescriptor,
+    IntentMessage,
+    IntentResult,
+)
 
 if TYPE_CHECKING:
     from probos.captain_card.card import CaptainCard
@@ -243,6 +248,7 @@ class YeomanAgent(CognitiveAgent):
                 self._proactive_sub_id,
                 self._handle_proactive_scan,
                 intent_names=["proactive_scan"],
+                latency_class=HandlerLatencyClass.DETERMINISTIC,
             )
             logger.info(
                 "AD-766: YeomanAgent subscribed to proactive_scan (subscriber=%s)",

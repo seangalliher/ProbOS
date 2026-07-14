@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.acm import AgentCapitalService, LifecycleState
+from probos.agents.http_fetch import HttpFetchAgent
 from probos.agent_onboarding import AgentOnboardingService
+from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.config import OnboardingConfig, SystemConfig
 from probos.crew_profile import CallsignRegistry
 from probos.runtime import ProbOSRuntime
@@ -21,7 +23,7 @@ from probos.mesh.intent import IntentBus
 from probos.substrate.agent import BaseAgent
 from probos.substrate.event_log import EventLog
 from probos.substrate.registry import AgentRegistry
-from probos.types import LLMResponse
+from probos.types import HandlerLatencyClass, IntentMessage, IntentResult, LLMResponse
 from probos.ward_room import WardRoomService
 from probos.ward_room_router import WardRoomRouter
 
@@ -38,9 +40,31 @@ def _make_agent(agent_type: str = "diagnostician", callsign: str = "Bones", agen
     agent.state = MagicMock(value="idle")
     agent.confidence = 0.9
     agent.capabilities = []
+    agent.handler_latency_class = HandlerLatencyClass.DETERMINISTIC
     agent.is_alive = True
     agent._llm_client = AsyncMock(spec=BaseLLMClient)
     return agent
+
+
+class _MinimalBaseAgent(BaseAgent):
+    async def perceive(self, intent: dict) -> dict:
+        return intent
+
+    async def decide(self, observation: object) -> object:
+        return observation
+
+    async def act(self, plan: object) -> object:
+        return plan
+
+    async def report(self, result: object) -> dict:
+        return {"result": result}
+
+    async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
+        return None
+
+
+class _MinimalCognitiveAgent(CognitiveAgent):
+    instructions = "minimal cognitive test agent"
 
 
 def _make_runtime(config=None):
@@ -326,6 +350,41 @@ class TestWireAgentIntegration:
         await rt.onboarding.wire_agent(agent)
 
         rt.onboarding.run_naming_ceremony.assert_called_once_with(agent)
+
+    @pytest.mark.asyncio
+    @patch("probos.agent_onboarding.is_crew_agent", return_value=False)
+    async def test_wire_agent_passes_public_latency_metadata(self, mock_is_crew):
+        rt = self._make_wired_runtime()
+        agent = _make_agent()
+        agent.handler_latency_class = HandlerLatencyClass.COGNITIVE
+        agent.handle_intent = AsyncMock(return_value=None)
+        agent.intent_descriptors = []
+
+        await rt.onboarding.wire_agent(agent)
+
+        subscribe = rt.onboarding._intent_bus.subscribe
+        assert subscribe.call_args.kwargs["latency_class"] == HandlerLatencyClass.COGNITIVE
+
+    @pytest.mark.asyncio
+    @patch("probos.agent_onboarding.is_crew_agent", return_value=False)
+    async def test_wire_agent_uses_real_inherited_latency_classes(self, mock_is_crew):
+        rt = self._make_wired_runtime()
+        agents = [
+            (_MinimalBaseAgent(agent_id="base-agent"), HandlerLatencyClass.DETERMINISTIC),
+            (
+                _MinimalCognitiveAgent(agent_id="cognitive-agent"),
+                HandlerLatencyClass.COGNITIVE,
+            ),
+            (HttpFetchAgent(agent_id="http-agent"), HandlerLatencyClass.NETWORK),
+        ]
+
+        for agent, expected in agents:
+            rt.onboarding._intent_bus.subscribe.reset_mock()
+            await rt.onboarding.wire_agent(agent)
+            assert (
+                rt.onboarding._intent_bus.subscribe.call_args.kwargs["latency_class"]
+                == expected
+            )
 
     @pytest.mark.asyncio
     @patch("probos.agent_onboarding.is_crew_agent", return_value=False)

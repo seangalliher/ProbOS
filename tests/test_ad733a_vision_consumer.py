@@ -383,6 +383,8 @@ def test_thread_safety() -> None:
 
 
 def test_consumer_subscribes_to_vision_observation(tmp_path: Path) -> None:
+    from probos.types import HandlerLatencyClass
+
     runtime = _build_runtime(tmp_path)
     consumer = VisionConsumer(runtime)
     consumer.subscribe()
@@ -391,6 +393,7 @@ def test_consumer_subscribes_to_vision_observation(tmp_path: Path) -> None:
     # subscribe(agent_id, handler, intent_names=[...])
     assert args[0] == VisionConsumer.SUBSCRIBER_AGENT_ID
     assert kwargs["intent_names"] == [VisionConsumer.INTENT_NAME]
+    assert kwargs["latency_class"] == HandlerLatencyClass.COGNITIVE
 
 
 @pytest.mark.asyncio

@@ -25,7 +25,7 @@ from probos.security.permission_model import (
     PermissionMode,
     should_auto_approve,
 )
-from probos.types import IntentMessage
+from probos.types import HandlerLatencyClass, IntentMessage
 
 
 # ---------------------------------------------------------------------------
@@ -35,14 +35,18 @@ from probos.types import IntentMessage
 
 class _FakeIntentBus:
     def __init__(self) -> None:
-        self.subscribed: list[tuple[str, Any, list[str] | None]] = []
+        self.subscribed: list[
+            tuple[str, Any, list[str] | None, HandlerLatencyClass]
+        ] = []
         self.broadcasts: list[IntentMessage] = []
 
     def subscribe(
         self, agent_id: str, handler: Any,
         intent_names: list[str] | None = None,
+        *,
+        latency_class: HandlerLatencyClass = HandlerLatencyClass.DETERMINISTIC,
     ) -> None:
-        self.subscribed.append((agent_id, handler, intent_names))
+        self.subscribed.append((agent_id, handler, intent_names, latency_class))
 
     async def broadcast(self, intent: IntentMessage, *args: Any, **kwargs: Any) -> Any:
         self.broadcasts.append(intent)
@@ -98,6 +102,7 @@ class TestRegistration:
         assert YeomanAgent.callsign == "Yeo"
         assert YeomanAgent.tier == "domain"
         assert YeomanAgent.department == "Bridge"
+        assert YeomanAgent.handler_latency_class == HandlerLatencyClass.COGNITIVE
 
     def test_handled_intents_cover_all_five_capabilities(self) -> None:
         expected = {
@@ -201,10 +206,11 @@ class TestProactiveSubscription:
         yeo = _make_yeo(runtime=runtime)
         await yeo.initialize(captain_card=None, duty_schedule=None)
         assert len(runtime.intent_bus.subscribed) == 1
-        sub_id, handler, names = runtime.intent_bus.subscribed[0]
+        sub_id, handler, names, latency_class = runtime.intent_bus.subscribed[0]
         assert sub_id.startswith("yeoman-proactive-")
         assert names == ["proactive_scan"]
         assert handler == yeo._handle_proactive_scan
+        assert latency_class == HandlerLatencyClass.DETERMINISTIC
 
     @pytest.mark.asyncio
     async def test_no_subscription_when_runtime_missing(self) -> None:
