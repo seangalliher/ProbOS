@@ -13,10 +13,11 @@ import pytest
 
 from probos.cognitive.episodic import (
     EpisodicMemory,
+    _is_expected_reflection_replay,
     compute_episode_hash,
     _verify_episode_hash,
 )
-from probos.types import Episode
+from probos.types import AnchorFrame, Episode, MemorySource
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +39,37 @@ def _make_episode(**overrides) -> Episode:
         shapley_values={"agent-uuid-1": 0.8},
         trust_deltas=[{"agent": "agent-uuid-1", "delta": 0.01}],
         source="direct",
+    )
+    defaults.update(overrides)
+    return Episode(**defaults)
+
+
+def _make_ad599_reflection(**overrides) -> Episode:
+    """Create the exact deterministic AD-599 reflection envelope."""
+    import hashlib
+
+    content = overrides.pop("user_input", "[Reflection] stable dream insight")
+    episode_id = overrides.pop(
+        "id", f"reflection-{hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]}"
+    )
+    defaults = dict(
+        id=episode_id,
+        timestamp=100.0,
+        user_input=content,
+        dag_summary={
+            "type": "reflection",
+            "source": "dream_consolidation",
+            "involved_agents": ["yeo", "ezri"],
+        },
+        outcomes=[],
+        reflection=content,
+        agent_ids=["yeo", "ezri"],
+        duration_ms=0.0,
+        shapley_values={},
+        trust_deltas=[],
+        source=MemorySource.REFLECTION,
+        anchors=AnchorFrame(trigger_type="dream_consolidation"),
+        importance=8,
     )
     defaults.update(overrides)
     return Episode(**defaults)
@@ -106,6 +138,103 @@ class TestHashUtility:
         h = compute_episode_hash(_make_episode())
         assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)
+
+
+class TestExpectedReflectionReplay:
+    """BF-669: exact, timestamp-neutral AD-599 replay proof."""
+
+    def test_exact_replay_qualifies_without_mutation(self):
+        existing = _make_ad599_reflection()
+        incoming = dataclasses.replace(existing)
+
+        assert _is_expected_reflection_replay(existing, incoming) is True
+        assert existing == _make_ad599_reflection()
+        assert incoming == existing
+
+    def test_timestamp_only_drift_qualifies_despite_full_hash_change(self):
+        existing = _make_ad599_reflection(timestamp=100.0)
+        incoming = dataclasses.replace(existing, timestamp=200.0)
+
+        assert compute_episode_hash(existing) != compute_episode_hash(incoming)
+        assert _is_expected_reflection_replay(existing, incoming) is True
+
+    def test_retention_and_non_trigger_anchor_drift_qualify(self):
+        existing = _make_ad599_reflection(
+            anchors=AnchorFrame(
+                trigger_type="dream_consolidation",
+                anomaly_window_id="aw-existing",
+                channel="dream-a",
+            ),
+            strength=0.2,
+            stability=999.0,
+            source_type="reflection",
+            confidence=0.2,
+        )
+        incoming = dataclasses.replace(
+            existing,
+            timestamp=200.0,
+            anchors=AnchorFrame(
+                trigger_type="dream_consolidation",
+                anomaly_window_id="aw-incoming",
+                channel="dream-b",
+            ),
+            strength=1.0,
+            stability=1728000.0,
+            source_type="",
+            confidence=1.0,
+        )
+
+        assert _is_expected_reflection_replay(existing, incoming) is True
+
+    @pytest.mark.parametrize(
+        ("label", "mutate"),
+        [
+            ("different_id", lambda ep: dataclasses.replace(ep, id="reflection-0000000000000000")),
+            ("content", lambda ep: dataclasses.replace(ep, user_input="changed content")),
+            ("reflection", lambda ep: dataclasses.replace(ep, reflection="changed reflection")),
+            ("source", lambda ep: dataclasses.replace(ep, source=MemorySource.DIRECT)),
+            ("missing_anchor", lambda ep: dataclasses.replace(ep, anchors=None)),
+            ("trigger", lambda ep: dataclasses.replace(ep, anchors=AnchorFrame(trigger_type="other"))),
+            ("dag_type", lambda ep: dataclasses.replace(ep, dag_summary={**ep.dag_summary, "type": "other"})),
+            ("dag_source", lambda ep: dataclasses.replace(ep, dag_summary={**ep.dag_summary, "source": "other"})),
+            ("dag_agents", lambda ep: dataclasses.replace(ep, dag_summary={**ep.dag_summary, "involved_agents": ["yeo"]})),
+            ("agent_ids", lambda ep: dataclasses.replace(ep, agent_ids=["yeo"])),
+            ("outcomes", lambda ep: dataclasses.replace(ep, outcomes=[{"success": True}])),
+            ("duration", lambda ep: dataclasses.replace(ep, duration_ms=1.0)),
+            ("shapley", lambda ep: dataclasses.replace(ep, shapley_values={"yeo": 1.0})),
+            ("trust", lambda ep: dataclasses.replace(ep, trust_deltas=[{"agent": "yeo"}])),
+        ],
+    )
+    def test_each_stable_mismatch_fails_closed(self, label, mutate):
+        existing = _make_ad599_reflection()
+        incoming = mutate(existing)
+
+        assert _is_expected_reflection_replay(existing, incoming) is False, label
+
+    @pytest.mark.parametrize(
+        ("label", "malformed_id"),
+        [
+            ("non_lowercase", "reflection-ABCDEF0123456789"),
+            ("short", "reflection-deadbeef"),
+            ("non_reflection", "ordinary-id"),
+            ("wrong_hash_suffix", "reflection-0000000000000000"),
+        ],
+    )
+    def test_same_malformed_id_fails_closed(self, label, malformed_id):
+        existing = dataclasses.replace(
+            _make_ad599_reflection(timestamp=100.0),
+            id=malformed_id,
+        )
+        incoming = dataclasses.replace(existing, timestamp=200.0)
+
+        assert existing.id == incoming.id == malformed_id
+        assert _is_expected_reflection_replay(existing, incoming) is False, label
+
+    def test_malformed_values_fail_closed(self):
+        existing = _make_ad599_reflection()
+        malformed = dataclasses.replace(existing, dag_summary=None)  # type: ignore[arg-type]
+
+        assert _is_expected_reflection_replay(existing, malformed) is False
 
 
 # ===========================================================================

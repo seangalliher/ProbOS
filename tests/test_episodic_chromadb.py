@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import time
 
 import pytest
 
-from probos.types import Episode
+from probos.types import Episode, EpisodeStoreOutcome
 
 
 def _make_episode(
@@ -48,6 +49,31 @@ class TestEpisodicMemoryChromaDB:
         results = await mem.recall("configuration", k=5)
         assert len(results) >= 1
         assert results[0].id == "s1"
+
+    @pytest.mark.asyncio
+    async def test_store_outcomes_preserve_first_real_chroma_authority(self, mem):
+        """BF-669: real Chroma reports STORED then DUPLICATE and keeps first."""
+        first = _make_episode("real-authority", "authoritative first content")
+        conflict = dataclasses.replace(
+            first,
+            timestamp=first.timestamp + 1.0,
+            user_input="conflicting replacement content",
+        )
+
+        first_outcome = await mem.store(first)
+        conflict_outcome = await mem.store(conflict)
+        result = mem._collection.get(
+            ids=[first.id], include=["metadatas", "documents"]
+        )
+        stored = mem._metadata_to_episode(
+            result["ids"][0], result["documents"][0], result["metadatas"][0]
+        )
+
+        assert first_outcome is EpisodeStoreOutcome.STORED
+        assert conflict_outcome is EpisodeStoreOutcome.DUPLICATE
+        assert mem._collection.count() == 1
+        assert stored.user_input == first.user_input
+        assert stored.timestamp == pytest.approx(first.timestamp, abs=1e-6)
 
     @pytest.mark.asyncio
     async def test_recall_returns_ranked_results(self, mem):

@@ -14,20 +14,29 @@ BF-287 discipline: a real ``DreamingConfig`` + a real recording episodic stub
 """
 from __future__ import annotations
 
+import dataclasses
+import logging
+import re
 import types as stdlib_types
 
 import pytest
 
 from probos.config import DreamingConfig
-from probos.types import MemorySource
+from probos.types import EpisodeDuplicatePolicy, EpisodeStoreOutcome, MemorySource
 
 
 class _RecordingEpisodic:
     def __init__(self):
         self.stored: list = []
 
-    async def store(self, episode):
+    async def store(
+        self,
+        episode,
+        *,
+        duplicate_policy=EpisodeDuplicatePolicy.UNEXPECTED,
+    ):
         self.stored.append(episode)
+        return EpisodeStoreOutcome.STORED
 
     async def recent(self, *a, **k):
         return []
@@ -140,3 +149,65 @@ async def test_agentless_reflection_stays_ownerless_even_when_on():
 async def test_default_config_is_off():
     # The flag ships OFF (byte-identical default).
     assert DreamingConfig().per_agent_dream_attribution_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_same_reflection_with_changed_attribution_conflicts_without_overwrite(caplog):
+    """BF-669: AD-980b attribution is stable canonical content, not replay drift."""
+    from unittest.mock import MagicMock
+
+    from probos.cognitive.dreaming import DreamingEngine
+    from probos.cognitive.episodic import compute_episode_hash
+    from probos.cognitive.episodic_mock import MockEpisodicMemory
+
+    memory = MockEpisodicMemory()
+    off_engine = DreamingEngine(
+        router=MagicMock(), trust_network=MagicMock(), episodic_memory=memory,
+        config=DreamingConfig(per_agent_dream_attribution_enabled=False),
+    )
+    on_engine = DreamingEngine(
+        router=MagicMock(), trust_network=MagicMock(), episodic_memory=memory,
+        config=DreamingConfig(per_agent_dream_attribution_enabled=True),
+    )
+    conv = {
+        "agents": ["yeo", "ezri"], "departments": ["ops"],
+        "topic": "stable attribution", "coherence": 0.8,
+    }
+    assert await off_engine._step_15_reflection_promotion(
+        episodes=[], clusters=[], convergence_reports=[conv],
+        emergence_capacity=None, coordination_balance=None,
+        notebook_consolidations=0, behavioral_quality_score=None,
+    ) == 1
+
+    with caplog.at_level(logging.WARNING, logger="probos.cognitive.episodic_mock"):
+        created = await on_engine._step_15_reflection_promotion(
+            episodes=[], clusters=[], convergence_reports=[conv],
+            emergence_capacity=None, coordination_balance=None,
+            notebook_consolidations=0, behavioral_quality_score=None,
+        )
+
+    assert created == 0
+    assert len(memory._episodes) == 1
+    existing = memory._episodes[0]
+    incoming = dataclasses.replace(existing, agent_ids=["yeo", "ezri"])
+    assert existing.agent_ids == []
+    warnings = [
+        record.message
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    warning = warnings[0]
+    assert "reason=content_conflict" in warning
+    hash_match = re.search(
+        r"incoming_hash=([0-9a-f]{12}) existing_hash=([0-9a-f]{12});",
+        warning,
+    )
+    assert hash_match is not None
+    assert hash_match.groups() == (
+        compute_episode_hash(incoming)[:12],
+        compute_episode_hash(existing)[:12],
+    )
+    assert "existing write remains authoritative" in warning
+    assert existing.user_input not in warning
+    assert existing.reflection not in warning

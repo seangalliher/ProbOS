@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Sequence, TYPE_CHECKING, Protocol, runtime_checkable
 
-from probos.types import IntentMessage, Priority  # AD-654b: concrete types for queue protocol
+from probos.types import (
+    Episode,
+    EpisodeDuplicatePolicy,
+    EpisodeStoreOutcome,
+    IntentMessage,
+    Priority,
+)
 
 if TYPE_CHECKING:
     from probos.events import BaseEvent, EventType
@@ -34,14 +40,18 @@ if TYPE_CHECKING:
     from probos.cognitive.self_mod import DesignedAgentRecord
     from probos.consensus.trust import TrustRecord
     from probos.ontology import VesselOntologyService
-    from probos.types import Episode
 
 
 @runtime_checkable
 class EpisodicMemoryProtocol(Protocol):
     """What agents and services need from episodic memory."""
 
-    async def store(self, episode: Episode) -> None: ...
+    async def store(
+        self,
+        episode: Episode,
+        *,
+        duplicate_policy: EpisodeDuplicatePolicy = EpisodeDuplicatePolicy.UNEXPECTED,
+    ) -> EpisodeStoreOutcome: ...
     async def recall(self, query: str, k: int = 5) -> list[Episode]: ...
     async def start(self) -> None: ...
     async def stop(self) -> None: ...

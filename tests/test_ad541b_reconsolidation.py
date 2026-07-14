@@ -11,8 +11,16 @@ Tests for:
 from __future__ import annotations
 
 import dataclasses
+import asyncio
+import ast
+import hashlib
+import inspect
 import json
+import logging
+import re
 import time
+import textwrap
+from types import SimpleNamespace
 from dataclasses import FrozenInstanceError
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -36,7 +44,13 @@ from probos.cognitive.procedures import (
     extract_compound_procedure_from_cluster,
     extract_procedure_from_observation,
 )
-from probos.types import Episode
+from probos.types import (
+    AnchorFrame,
+    Episode,
+    EpisodeDuplicatePolicy,
+    EpisodeStoreOutcome,
+    MemorySource,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +94,108 @@ def _make_episode(**overrides) -> Episode:
     }
     defaults.update(overrides)
     return Episode(**defaults)
+
+
+def _make_ad599_episode(**overrides) -> Episode:
+    content = overrides.pop("user_input", "[Reflection] serialized primary authority")
+    defaults = {
+        "id": f"reflection-{hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]}",
+        "timestamp": 100.0,
+        "user_input": content,
+        "dag_summary": {
+            "type": "reflection",
+            "source": "dream_consolidation",
+            "involved_agents": ["yeo"],
+        },
+        "outcomes": [],
+        "reflection": content,
+        "agent_ids": ["yeo"],
+        "duration_ms": 0.0,
+        "shapley_values": {},
+        "trust_deltas": [],
+        "source": MemorySource.REFLECTION,
+        "anchors": AnchorFrame(trigger_type="dream_consolidation"),
+        "importance": 8,
+    }
+    defaults.update(overrides)
+    return Episode(**defaults)
+
+
+def _store_start_barrier(expected: int):
+    started = 0
+    all_started = asyncio.Event()
+
+    async def _run(store_call):
+        nonlocal started
+        started += 1
+        if started == expected:
+            all_started.set()
+        return await store_call
+
+    return _run, all_started
+
+
+class _FirstWinsCollection:
+    """Synchronous Chroma-shaped first-wins collection for lock tests."""
+
+    def __init__(self, *, fail_add_once: bool = False) -> None:
+        self.rows: dict[str, tuple[str, dict]] = {}
+        self.add_calls = 0
+        self.fail_add_once = fail_add_once
+
+    def get(self, *, ids=None, include=None, **_kwargs):
+        if ids:
+            found = [episode_id for episode_id in ids if episode_id in self.rows]
+            result = {"ids": found}
+            if include and "metadatas" in include:
+                result["metadatas"] = [self.rows[episode_id][1] for episode_id in found]
+            if include and "documents" in include:
+                result["documents"] = [self.rows[episode_id][0] for episode_id in found]
+            return result
+        return {"ids": [], "metadatas": [], "documents": []}
+
+    def add(self, *, ids, documents, metadatas):
+        self.add_calls += 1
+        if self.fail_add_once:
+            self.fail_add_once = False
+            raise RuntimeError("injected primary add failure")
+        for episode_id, document, metadata in zip(ids, documents, metadatas):
+            self.rows.setdefault(episode_id, (document, metadata))
+
+    def count(self):
+        return len(self.rows)
+
+
+class _BlockingFts:
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.execute_calls = 0
+        self.commit_calls = 0
+
+    async def execute(self, *_args):
+        self.execute_calls += 1
+        self.entered.set()
+        await self.release.wait()
+
+    async def commit(self):
+        self.commit_calls += 1
+
+
+class _RecordingParticipantIndex:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def record_episode(self, *_args) -> None:
+        self.calls += 1
+
+
+class _RecordingEvolver:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def evolve_on_store(self, _episode) -> None:
+        self.calls += 1
 
 
 def _make_llm_response(content: str) -> MagicMock:
@@ -389,7 +505,8 @@ class TestWriteOnceGuard:
         em._collection = mock_collection
 
         ep = _make_episode()
-        await em.store(ep)
+        outcome = await em.store(ep)
+        assert outcome is EpisodeStoreOutcome.STORED
         mock_collection.add.assert_called_once()
 
     @pytest.mark.asyncio
@@ -399,17 +516,18 @@ class TestWriteOnceGuard:
 
         em = EpisodicMemory("/tmp/test_em")
         mock_collection = MagicMock()
-        # First call for rate limit check, second for duplicate check, third for write-once
-        mock_collection.get.side_effect = [
-            {"metadatas": []},  # rate limit
-            {"ids": [], "metadatas": [], "documents": []},  # dedup
-            {"ids": ["existing-id"]},  # write-once: already exists
-        ]
-        mock_collection.count.return_value = 0
+        ep = _make_episode()
+        metadata = EpisodicMemory._episode_to_metadata(ep)
+        mock_collection.get.return_value = {
+            "ids": [ep.id],
+            "metadatas": [metadata],
+            "documents": [ep.user_input],
+        }
         em._collection = mock_collection
 
-        ep = _make_episode()
-        await em.store(ep)
+        outcome = await em.store(ep)
+
+        assert outcome is EpisodeStoreOutcome.DUPLICATE
         mock_collection.add.assert_not_called()
 
     @pytest.mark.asyncio
@@ -419,17 +537,19 @@ class TestWriteOnceGuard:
 
         em = EpisodicMemory("/tmp/test_em")
         mock_collection = MagicMock()
-        mock_collection.get.side_effect = [
-            {"metadatas": []},  # rate limit
-            {"ids": [], "metadatas": [], "documents": []},  # dedup
-            {"ids": ["existing-id"]},  # write-once
-        ]
-        mock_collection.count.return_value = 0
+        ep = _make_episode()
+        metadata = EpisodicMemory._episode_to_metadata(ep)
+        mock_collection.get.return_value = {
+            "ids": [ep.id],
+            "metadatas": [metadata],
+            "documents": [ep.user_input],
+        }
         em._collection = mock_collection
 
-        ep = _make_episode()
         with patch("probos.cognitive.episodic.logger") as mock_logger:
-            await em.store(ep)
+            outcome = await em.store(ep)
+
+            assert outcome is EpisodeStoreOutcome.DUPLICATE
             mock_logger.warning.assert_called()
             warning_msg = mock_logger.warning.call_args[0][0]
             assert "write-once" in warning_msg
@@ -465,6 +585,579 @@ class TestWriteOnceGuard:
         await em.store(ep)
         mock_collection.add.assert_called_once()
         mock_collection.upsert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_conflicting_duplicate_warning_has_full_id_and_hash_context(
+        self, caplog
+    ):
+        """BF-669: unexpected collisions retain full forensic context."""
+        from probos.cognitive.episodic import EpisodicMemory, compute_episode_hash
+
+        existing = _make_episode(
+            id="same-id-with-distinct-suffix", user_input="authoritative first"
+        )
+        incoming = dataclasses.replace(existing, user_input="conflicting second")
+        metadata = EpisodicMemory._episode_to_metadata(existing)
+        collection = MagicMock()
+
+        def _get(*, ids=None, **_kwargs):
+            if ids:
+                return {
+                    "ids": [existing.id],
+                    "metadatas": [metadata],
+                    "documents": [existing.user_input],
+                }
+            return {"ids": [], "metadatas": [], "documents": []}
+
+        collection.get.side_effect = _get
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+
+        with caplog.at_level(logging.WARNING, logger="probos.cognitive.episodic"):
+            await em.store(incoming)
+
+        warnings = [record.message for record in caplog.records if record.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert existing.id in warnings[0]
+        assert "policy=unexpected" in warnings[0]
+        assert "reason=unexpected_duplicate" in warnings[0]
+        incoming_prefix = compute_episode_hash(incoming)[:12]
+        existing_prefix = compute_episode_hash(existing)[:12]
+        assert len(incoming_prefix) == len(existing_prefix) == 12
+        hash_match = re.search(
+            r"incoming_hash=([0-9a-f]{12}) existing_hash=([0-9a-f]{12});",
+            warnings[0],
+        )
+        assert hash_match is not None
+        assert hash_match.groups() == (incoming_prefix, existing_prefix)
+        assert "existing write remains authoritative" in warnings[0]
+        assert existing.user_input not in warnings[0]
+        assert incoming.user_input not in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_concurrent_same_id_calls_return_stored_and_duplicate(self, caplog):
+        """BF-669: same-instance concurrent calls expose truthful outcomes."""
+        from probos.cognitive.episodic import EpisodicMemory
+
+        collection = _FirstWinsCollection()
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+        first = _make_ad599_episode()
+        replay = dataclasses.replace(first, timestamp=first.timestamp + 1.0)
+        lock = em._get_store_write_lock()
+        await lock.acquire()
+        run_store, all_started = _store_start_barrier(2)
+        first_task = asyncio.create_task(
+            run_store(em.store(
+                first,
+                duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+            ))
+        )
+        replay_task = asyncio.create_task(
+            run_store(em.store(
+                replay,
+                duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+            ))
+        )
+        await all_started.wait()
+        assert not first_task.done()
+        assert not replay_task.done()
+        with caplog.at_level(logging.DEBUG, logger="probos.cognitive.episodic"):
+            lock.release()
+            outcomes = await asyncio.gather(first_task, replay_task)
+
+        assert sorted(outcome.value for outcome in outcomes) == [
+            "duplicate",
+            "stored",
+        ]
+        assert collection.add_calls == 1
+        assert list(collection.rows) == [first.id]
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+    def test_store_primary_lock_window_contains_no_await(self):
+        """BF-669: the serialized primary authority window is synchronous."""
+        from probos.cognitive.episodic import EpisodicMemory
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(EpisodicMemory.store)))
+        async_with = next(node for node in ast.walk(tree) if isinstance(node, ast.AsyncWith))
+
+        assert not any(
+            isinstance(node, ast.Await)
+            for statement in async_with.body
+            for node in ast.walk(statement)
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("invalid_policy", ["unexpected", True, object()])
+    async def test_store_invalid_policy_rejected_before_any_mutation(
+        self, invalid_policy
+    ):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        em = EpisodicMemory("/tmp/test_em")
+        collection = MagicMock()
+        gate = MagicMock()
+        tcm = MagicMock()
+        em._collection = collection
+        em._storage_gate = gate
+        em._tcm = tcm
+
+        with pytest.raises(TypeError, match="EpisodeDuplicatePolicy"):
+            await em.store(
+                _make_episode(), duplicate_policy=invalid_policy  # type: ignore[arg-type]
+            )
+
+        collection.get.assert_not_called()
+        collection.add.assert_not_called()
+        gate.evaluate.assert_not_called()
+        tcm.update.assert_not_called()
+
+    def test_store_lock_accessor_rejects_malformed_existing_attribute(self):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        em = EpisodicMemory.__new__(EpisodicMemory)
+        em._store_write_lock = object()
+
+        with pytest.raises(TypeError, match="asyncio.Lock"):
+            em._get_store_write_lock()
+
+    @pytest.mark.asyncio
+    async def test_store_no_collection_returns_skipped_with_debug(self, caplog):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        em = EpisodicMemory("/tmp/test_em")
+        episode = _make_episode(id="no-collection")
+
+        with caplog.at_level(logging.DEBUG, logger="probos.cognitive.episodic"):
+            outcome = await em.store(episode)
+
+        assert outcome is EpisodeStoreOutcome.SKIPPED
+        assert "primary collection is unavailable" in caplog.text
+        assert episode.id in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_security_rejection_returns_skipped_without_primary_write(self):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        em = EpisodicMemory("/tmp/test_em")
+        collection = _FirstWinsCollection()
+        security_gate = MagicMock()
+        security_gate.evaluate_store.return_value = SimpleNamespace(
+            matched_pattern="injected-pattern",
+            action="REJECT",
+            reason="prompt_injection",
+        )
+        em._collection = collection
+        em._security_gate = security_gate
+
+        outcome = await em.store(_make_episode(agent_ids=[]))
+
+        assert outcome is EpisodeStoreOutcome.SKIPPED
+        assert collection.add_calls == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("skip_kind", ["rate", "content"])
+    async def test_generic_admission_rejection_returns_skipped(self, skip_kind):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        em = EpisodicMemory("/tmp/test_em")
+        collection = _FirstWinsCollection()
+        em._collection = collection
+        em._is_rate_limited = MagicMock(return_value=skip_kind == "rate")
+        em._is_duplicate_content = MagicMock(return_value=skip_kind == "content")
+
+        outcome = await em.store(_make_episode(agent_ids=[]))
+
+        assert outcome is EpisodeStoreOutcome.SKIPPED
+        assert collection.add_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_expected_replay_debug_has_full_context_and_no_warning(
+        self, caplog
+    ):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        collection = _FirstWinsCollection()
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+        first = _make_ad599_episode(timestamp=100.0)
+        replay = dataclasses.replace(first, timestamp=200.0)
+        await em.store(first)
+
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG, logger="probos.cognitive.episodic"):
+            outcome = await em.store(
+                replay,
+                duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+            )
+
+        assert outcome is EpisodeStoreOutcome.DUPLICATE
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert first.id in caplog.text
+        assert "policy=expect_same_reflection" in caplog.text
+        assert "equivalence=timestamp_neutral" in caplog.text
+        assert "incoming_hash=" in caplog.text
+        assert "existing_hash=" in caplog.text
+        assert "existing write remains authoritative" in caplog.text
+        assert first.user_input not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_default_policy_exact_replay_remains_unexpected_warning(
+        self, caplog
+    ):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        collection = _FirstWinsCollection()
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+        first = _make_ad599_episode(timestamp=100.0)
+        await em.store(first)
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="probos.cognitive.episodic"):
+            outcome = await em.store(dataclasses.replace(first, timestamp=200.0))
+
+        assert outcome is EpisodeStoreOutcome.DUPLICATE
+        assert "policy=unexpected" in caplog.text
+        assert "reason=unexpected_duplicate" in caplog.text
+        assert first.id in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_malformed_stored_metadata_expected_policy_warns_conflict(
+        self, caplog
+    ):
+        from probos.cognitive.episodic import EpisodicMemory, compute_episode_hash
+
+        incoming = _make_ad599_episode()
+        collection = _FirstWinsCollection()
+        malformed = EpisodicMemory._episode_to_metadata(incoming)
+        malformed["dag_summary_json"] = "{bad json"
+        collection.rows[incoming.id] = (incoming.user_input, malformed)
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+
+        with caplog.at_level(logging.WARNING, logger="probos.cognitive.episodic"):
+            outcome = await em.store(
+                incoming,
+                duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+            )
+
+        assert outcome is EpisodeStoreOutcome.DUPLICATE
+        assert "policy=expect_same_reflection" in caplog.text
+        assert "reason=content_conflict" in caplog.text
+        assert "existing write remains authoritative" in caplog.text
+        incoming_prefix = compute_episode_hash(incoming)[:12]
+        existing_prefix = malformed["content_hash"][:12]
+        assert len(incoming_prefix) == len(existing_prefix) == 12
+        hash_match = re.search(
+            r"incoming_hash=([0-9a-f]{12}) existing_hash=([0-9a-f]{12});",
+            caplog.text,
+        )
+        assert hash_match is not None
+        assert hash_match.groups() == (incoming_prefix, existing_prefix)
+        assert incoming.user_input not in caplog.text
+        assert incoming.reflection not in caplog.text
+        assert collection.add_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_same_malformed_id_collision_warns_with_exact_hashes_and_first_authority(
+        self, caplog
+    ):
+        """BF-669: a same-ID malformed reflection reaches proof validation."""
+        from probos.cognitive.episodic import EpisodicMemory, compute_episode_hash
+
+        malformed_id = "reflection-0000000000000000"
+        existing = _make_ad599_episode(id=malformed_id, timestamp=100.0)
+        incoming = dataclasses.replace(existing, timestamp=200.0)
+        collection = _FirstWinsCollection()
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+
+        assert await em.store(existing) is EpisodeStoreOutcome.STORED
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="probos.cognitive.episodic"):
+            outcome = await em.store(
+                incoming,
+                duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+            )
+
+        assert outcome is EpisodeStoreOutcome.DUPLICATE
+        warnings = [
+            record.message
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+        ]
+        assert len(warnings) == 1
+        warning = warnings[0]
+        incoming_prefix = compute_episode_hash(incoming)[:12]
+        existing_prefix = compute_episode_hash(existing)[:12]
+        assert len(incoming_prefix) == len(existing_prefix) == 12
+        assert malformed_id in warning
+        assert "policy=expect_same_reflection" in warning
+        assert "reason=content_conflict" in warning
+        hash_match = re.search(
+            r"incoming_hash=([0-9a-f]{12}) existing_hash=([0-9a-f]{12});",
+            warning,
+        )
+        assert hash_match is not None
+        assert hash_match.groups() == (incoming_prefix, existing_prefix)
+        assert "existing write remains authoritative" in warning
+        assert existing.user_input not in warning
+        assert existing.reflection not in warning
+        assert collection.count() == 1
+        stored_document, stored_metadata = collection.rows[malformed_id]
+        stored = EpisodicMemory._metadata_to_episode(
+            malformed_id,
+            stored_document,
+            stored_metadata,
+        )
+        assert stored.id == existing.id
+        assert stored.timestamp == existing.timestamp
+        assert stored.user_input == existing.user_input
+        assert stored.reflection == existing.reflection
+
+    @pytest.mark.asyncio
+    async def test_existing_id_precedes_all_stateful_admission(self):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        existing = _make_episode(id="authoritative-id", user_input="first")
+        collection = _FirstWinsCollection()
+        collection.rows[existing.id] = (
+            EpisodicMemory._prepare_document(existing),
+            EpisodicMemory._episode_to_metadata(existing),
+        )
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+        em._storage_gate = MagicMock()
+        em._security_gate = MagicMock()
+        em._is_rate_limited = MagicMock(return_value=True)
+        em._is_duplicate_content = MagicMock(return_value=True)
+        em._tcm = MagicMock()
+        em._fts_db = MagicMock()
+        em._participant_index = MagicMock()
+        em._reconsolidation_scheduler = MagicMock()
+        em._retroactive_evolver = MagicMock()
+
+        outcome = await em.store(dataclasses.replace(existing, timestamp=200.0))
+
+        assert outcome is EpisodeStoreOutcome.DUPLICATE
+        em._storage_gate.evaluate.assert_not_called()
+        em._security_gate.evaluate_store.assert_not_called()
+        em._is_rate_limited.assert_not_called()
+        em._is_duplicate_content.assert_not_called()
+        em._tcm.update.assert_not_called()
+        em._fts_db.execute.assert_not_called()
+        em._participant_index.record_episode.assert_not_called()
+        em._reconsolidation_scheduler.schedule_review.assert_not_called()
+        em._retroactive_evolver.evolve_on_store.assert_not_called()
+        assert collection.add_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_primary_lock_released_before_secondary_and_side_effects_once(self):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        collection = _FirstWinsCollection()
+        fts = _BlockingFts()
+        participant = _RecordingParticipantIndex()
+        evolver = _RecordingEvolver()
+        tcm = MagicMock()
+        tcm.update.return_value = [0.1, 0.2]
+        gate = MagicMock()
+        gate.evaluate.return_value = SimpleNamespace(action="ACCEPT")
+        scheduler = MagicMock()
+        evictions = {"count": 0}
+
+        async def _record_evict() -> None:
+            evictions["count"] += 1
+
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+        em._fts_db = fts
+        em._participant_index = participant
+        em._retroactive_evolver = evolver
+        em._tcm = tcm
+        em._storage_gate = gate
+        em._reconsolidation_scheduler = scheduler
+        em._evict = _record_evict
+        episode = _make_ad599_episode()
+        first_task = asyncio.create_task(
+            em.store(
+                episode,
+                duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+            )
+        )
+        await fts.entered.wait()
+
+        assert em._get_store_write_lock().locked() is False
+        duplicate = await asyncio.wait_for(
+            em.store(
+                dataclasses.replace(episode, timestamp=200.0),
+                duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+            ),
+            timeout=1.0,
+        )
+        assert duplicate is EpisodeStoreOutcome.DUPLICATE
+        assert not first_task.done()
+        assert collection.add_calls == 1
+        assert tcm.update.call_count == 1
+        assert gate.evaluate.call_count == 1
+        assert participant.calls == 0
+        assert evolver.calls == 0
+        assert scheduler.schedule_review.call_count == 0
+        assert evictions["count"] == 0
+
+        fts.release.set()
+        assert await first_task is EpisodeStoreOutcome.STORED
+        assert fts.execute_calls == 1
+        assert fts.commit_calls == 1
+        assert participant.calls == 1
+        assert evolver.calls == 1
+        assert scheduler.schedule_review.call_count == 1
+        assert evictions["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_conflict_preserves_first_and_warns_once(self, caplog):
+        from probos.cognitive.episodic import EpisodicMemory, compute_episode_hash
+
+        collection = _FirstWinsCollection()
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+        first = _make_ad599_episode()
+        conflict = dataclasses.replace(first, agent_ids=["different-agent"])
+        lock = em._get_store_write_lock()
+        await lock.acquire()
+        run_store, all_started = _store_start_barrier(2)
+        first_task = asyncio.create_task(
+            run_store(em.store(
+                first,
+                duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+            ))
+        )
+        conflict_task = asyncio.create_task(
+            run_store(em.store(
+                conflict,
+                duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+            ))
+        )
+        await all_started.wait()
+
+        with caplog.at_level(logging.WARNING, logger="probos.cognitive.episodic"):
+            lock.release()
+            outcomes = await asyncio.gather(first_task, conflict_task)
+
+        assert sorted(outcome.value for outcome in outcomes) == ["duplicate", "stored"]
+        assert collection.add_calls == 1
+        stored = EpisodicMemory._metadata_to_episode(
+            first.id, collection.rows[first.id][0], collection.rows[first.id][1]
+        )
+        assert stored.agent_ids == first.agent_ids
+        warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        warning = warnings[0].message
+        assert "reason=content_conflict" in warning
+        incoming_prefix = compute_episode_hash(conflict)[:12]
+        existing_prefix = compute_episode_hash(first)[:12]
+        hash_match = re.search(
+            r"incoming_hash=([0-9a-f]{12}) existing_hash=([0-9a-f]{12});",
+            warning,
+        )
+        assert hash_match is not None
+        assert hash_match.groups() == (incoming_prefix, existing_prefix)
+        assert "existing write remains authoritative" in warning
+        assert first.user_input not in warning
+        assert first.reflection not in warning
+
+    @pytest.mark.asyncio
+    async def test_add_failure_releases_lock_and_later_call_stores(self):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        collection = _FirstWinsCollection(fail_add_once=True)
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+        episode = _make_episode(id="retry-after-failure", agent_ids=[])
+
+        with pytest.raises(RuntimeError, match="primary add failure"):
+            await em.store(episode)
+
+        assert em._get_store_write_lock().locked() is False
+        assert await em.store(episode) is EpisodeStoreOutcome.STORED
+        assert collection.add_calls == 2
+        assert list(collection.rows) == [episode.id]
+
+    @pytest.mark.asyncio
+    async def test_primary_read_failure_and_cancellation_propagate_and_unlock(self):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        for failure in (
+            RuntimeError("injected primary read failure"),
+            asyncio.CancelledError(),
+        ):
+            em = EpisodicMemory("/tmp/test_em")
+            collection = MagicMock()
+            collection.get.side_effect = failure
+            em._collection = collection
+
+            with pytest.raises(type(failure)):
+                await em.store(_make_episode())
+
+            assert em._get_store_write_lock().locked() is False
+            collection.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cancellation_while_waiting_for_lock_propagates_without_write(self):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        collection = _FirstWinsCollection()
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+        lock = em._get_store_write_lock()
+        await lock.acquire()
+        run_store, all_started = _store_start_barrier(1)
+        task = asyncio.create_task(
+            run_store(em.store(_make_episode(agent_ids=[])))
+        )
+        await all_started.wait()
+        assert not task.done()
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert lock.locked() is True
+        assert collection.rows == {}
+        lock.release()
+        assert await em.store(_make_episode(id="after-cancel", agent_ids=[])) is EpisodeStoreOutcome.STORED
+
+    @pytest.mark.asyncio
+    async def test_secondary_cancellation_leaves_primary_authoritative(self):
+        from probos.cognitive.episodic import EpisodicMemory
+
+        collection = _FirstWinsCollection()
+        fts = _BlockingFts()
+        em = EpisodicMemory("/tmp/test_em")
+        em._collection = collection
+        em._fts_db = fts
+        episode = _make_ad599_episode()
+        task = asyncio.create_task(
+            em.store(
+                episode,
+                duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+            )
+        )
+        await fts.entered.wait()
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert em._get_store_write_lock().locked() is False
+        assert list(collection.rows) == [episode.id]
+        replay = await em.store(
+            dataclasses.replace(episode, timestamp=200.0),
+            duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+        )
+        assert replay is EpisodeStoreOutcome.DUPLICATE
+        assert collection.add_calls == 1
 
 
 # ===========================================================================

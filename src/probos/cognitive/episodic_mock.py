@@ -7,11 +7,19 @@ No SQLite dependency — keeps the test suite fast and deterministic.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 from collections import Counter
 from typing import Any
 
-from probos.types import Episode
+from probos.cognitive.episodic import (
+    _is_expected_reflection_replay,
+    compute_episode_hash,
+)
+from probos.types import Episode, EpisodeDuplicatePolicy, EpisodeStoreOutcome
+
+logger = logging.getLogger(__name__)
 
 _STOP_WORDS = frozenset(
     "a an the in on at to of is are was were for and or but with from by".split()
@@ -39,6 +47,7 @@ class MockEpisodicMemory:
         self._episodes: list[Episode] = []
         self._activation_tracker: Any = None
         self._participant_index: Any = None
+        self._store_write_lock = asyncio.Lock()
 
     async def start(self) -> None:
         pass
@@ -87,11 +96,71 @@ class MockEpisodicMemory:
                 seeded += 1
         return seeded
 
-    async def store(self, episode: Episode) -> None:
-        self._episodes.append(episode)
-        # Evict oldest beyond budget
-        if len(self._episodes) > self.max_episodes:
-            self._episodes = self._episodes[-self.max_episodes :]
+    def _get_store_write_lock(self) -> asyncio.Lock:
+        """Return the runtime-local mock primary-write lock."""
+        lock = getattr(self, "_store_write_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._store_write_lock = lock
+        if not isinstance(lock, asyncio.Lock):
+            raise TypeError("_store_write_lock must be an asyncio.Lock")
+        return lock
+
+    async def store(
+        self,
+        episode: Episode,
+        *,
+        duplicate_policy: EpisodeDuplicatePolicy = EpisodeDuplicatePolicy.UNEXPECTED,
+    ) -> EpisodeStoreOutcome:
+        if not isinstance(duplicate_policy, EpisodeDuplicatePolicy):
+            raise TypeError("duplicate_policy must be an EpisodeDuplicatePolicy")
+
+        async with self._get_store_write_lock():
+            existing = next(
+                (stored for stored in self._episodes if stored.id == episode.id),
+                None,
+            )
+            if existing is not None:
+                incoming_hash = compute_episode_hash(episode)[:12]
+                existing_hash = compute_episode_hash(existing)[:12]
+                if (
+                    duplicate_policy
+                    is EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION
+                    and _is_expected_reflection_replay(existing, episode)
+                ):
+                    logger.debug(
+                        "Episode duplicate id=%s policy=%s "
+                        "equivalence=timestamp_neutral incoming_hash=%s "
+                        "existing_hash=%s; existing write remains authoritative "
+                        "(write-once)",
+                        episode.id,
+                        duplicate_policy.value,
+                        incoming_hash,
+                        existing_hash,
+                    )
+                else:
+                    reason = (
+                        "unexpected_duplicate"
+                        if duplicate_policy is EpisodeDuplicatePolicy.UNEXPECTED
+                        else "content_conflict"
+                    )
+                    logger.warning(
+                        "Episode duplicate id=%s policy=%s reason=%s "
+                        "incoming_hash=%s existing_hash=%s; existing write "
+                        "remains authoritative (write-once)",
+                        episode.id,
+                        duplicate_policy.value,
+                        reason,
+                        incoming_hash,
+                        existing_hash,
+                    )
+                return EpisodeStoreOutcome.DUPLICATE
+
+            self._episodes.append(episode)
+            # Evict oldest beyond budget
+            if len(self._episodes) > self.max_episodes:
+                self._episodes = self._episodes[-self.max_episodes :]
+            return EpisodeStoreOutcome.STORED
 
     async def recall(self, query: str, k: int = 5) -> list[Episode]:
         query_tokens = _tokenize(query)

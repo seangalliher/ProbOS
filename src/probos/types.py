@@ -363,6 +363,21 @@ class TaskDAG:
 # ------------------------------------------------------------------
 
 
+class EpisodeDuplicatePolicy(StrEnum):
+    """Policy for classifying an authoritative same-ID episode."""
+
+    UNEXPECTED = "unexpected"
+    EXPECT_SAME_REFLECTION = "expect_same_reflection"
+
+
+class EpisodeStoreOutcome(StrEnum):
+    """Result of an episodic primary-store attempt."""
+
+    STORED = "stored"
+    DUPLICATE = "duplicate"
+    SKIPPED = "skipped"
+
+
 class MemorySource(str, Enum):
     """Classification of how an episode entered an agent's memory (AD-541)."""
     DIRECT = "direct"            # Agent personally experienced this

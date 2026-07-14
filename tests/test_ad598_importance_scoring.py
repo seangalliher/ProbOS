@@ -161,6 +161,20 @@ class TestStoreImportance:
         meta = call_args.kwargs.get("metadatas") or call_args[1].get("metadatas")
         assert meta[0]["importance"] == 5
 
+    def test_new_constructed_memory_gets_one_stable_lazy_store_lock(self):
+        """BF-669: bypassed construction lazily attaches one real lock."""
+        import asyncio
+
+        from probos.cognitive.episodic import EpisodicMemory
+
+        em = EpisodicMemory.__new__(EpisodicMemory)
+
+        first = em._get_store_write_lock()
+        second = em._get_store_write_lock()
+
+        assert isinstance(first, asyncio.Lock)
+        assert second is first
+
     @pytest.mark.asyncio
     async def test_roundtrip_preserves_importance(self):
         """Test 10: store() → _metadata_to_episode() roundtrip preserves importance."""

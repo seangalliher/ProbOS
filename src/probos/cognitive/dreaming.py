@@ -46,7 +46,13 @@ from probos.config import (  # AD-537: observation config
 )
 from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — dream consolidation mutates trust
 from probos.mesh.routing import HebbianRouter, REL_INTENT
-from probos.types import DreamReport, Episode, MemorySource
+from probos.types import (
+    DreamReport,
+    Episode,
+    EpisodeDuplicatePolicy,
+    EpisodeStoreOutcome,
+    MemorySource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2941,12 +2947,29 @@ class DreamingEngine:
             )
 
             try:
-                await self.episodic_memory.store(episode)
-                created += 1
+                outcome = await self.episodic_memory.store(
+                    episode,
+                    duplicate_policy=EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION,
+                )
+                if not isinstance(outcome, EpisodeStoreOutcome):
+                    raise TypeError(
+                        "episodic_memory.store returned an invalid EpisodeStoreOutcome"
+                    )
+                if outcome is EpisodeStoreOutcome.STORED:
+                    created += 1
+                elif (
+                    outcome is EpisodeStoreOutcome.DUPLICATE
+                    or outcome is EpisodeStoreOutcome.SKIPPED
+                ):
+                    pass
+                else:
+                    raise TypeError(
+                        "episodic_memory.store returned an invalid EpisodeStoreOutcome"
+                    )
             except Exception:
                 logger.debug(
-                    "AD-599: Failed to store reflection episode %s",
-                    episode_id[:12],
+                    "AD-599: Reflection episode %s was not stored and was not counted; continuing with later candidates",
+                    episode_id,
                     exc_info=True,
                 )
 

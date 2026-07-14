@@ -24,7 +24,15 @@ from probos.cognitive.importance_scorer import compute_importance
 from probos.cognitive.affect_scorer import score_affect
 from probos.cognitive.similarity import jaccard_similarity
 from probos.cognitive.temporal_context import serialize_tcm_vector, deserialize_tcm_vector
-from probos.types import AnchorFrame, Episode, MemorySource, RecallScore, resolve_provenance
+from probos.types import (
+    AnchorFrame,
+    Episode,
+    EpisodeDuplicatePolicy,
+    EpisodeStoreOutcome,
+    MemorySource,
+    RecallScore,
+    resolve_provenance,
+)
 from probos.types import EBBINGHAUS_DEFAULT_STABILITY_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -1038,6 +1046,57 @@ def compute_episode_hash(episode: Episode) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _is_expected_reflection_replay(existing: Episode, incoming: Episode) -> bool:
+    """Return whether two episodes are the same deterministic AD-599 reflection."""
+    try:
+        if existing.id != incoming.id:
+            return False
+        reflection_id = re.fullmatch(r"reflection-[0-9a-f]{16}", existing.id)
+        if reflection_id is None:
+            return False
+
+        for episode in (existing, incoming):
+            expected_suffix = hashlib.sha256(
+                episode.user_input.encode("utf-8")
+            ).hexdigest()[:16]
+            if episode.id != f"reflection-{expected_suffix}":
+                return False
+            if episode.reflection != episode.user_input:
+                return False
+            if episode.source != MemorySource.REFLECTION.value:
+                return False
+            if episode.anchors is None:
+                return False
+            if episode.anchors.trigger_type != "dream_consolidation":
+                return False
+            if episode.dag_summary.get("type") != "reflection":
+                return False
+            if episode.dag_summary.get("source") != "dream_consolidation":
+                return False
+            if episode.outcomes != []:
+                return False
+            if episode.duration_ms != 0.0:
+                return False
+            if episode.shapley_values != {}:
+                return False
+            if episode.trust_deltas != []:
+                return False
+
+        if existing.user_input != incoming.user_input:
+            return False
+        if existing.reflection != incoming.reflection:
+            return False
+        existing_fingerprint = compute_episode_hash(
+            dataclasses.replace(existing, timestamp=0.0)
+        )
+        incoming_fingerprint = compute_episode_hash(
+            dataclasses.replace(incoming, timestamp=0.0)
+        )
+        return existing_fingerprint == incoming_fingerprint
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 _HASH_VERSION = 2  # Current hash normalization version
 
 
@@ -1205,6 +1264,7 @@ class EpisodicMemory:
         self._security_config: Any = None  # AD-607: memory security config (validates recall)
         self._security_gate: Any = None  # AD-607h: store-time prompt-injection gate
         self._security_event_emitter: Any = None  # AD-607: emit hook for security events
+        self._store_write_lock = asyncio.Lock()
 
     def set_activation_tracker(self, tracker: Any) -> None:
         """AD-567d: Wire the activation tracker after construction."""
@@ -1594,148 +1654,228 @@ class EpisodicMemory:
 
     # ---- storage --------------------------------------------------
 
-    async def store(self, episode: Episode) -> None:
-        """Persist an episode. Evicts oldest if over max_episodes."""
+    def _get_store_write_lock(self) -> asyncio.Lock:
+        """Return the runtime-local lock for the normal primary-write decision."""
+        lock = getattr(self, "_store_write_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._store_write_lock = lock
+        if not isinstance(lock, asyncio.Lock):
+            raise TypeError("_store_write_lock must be an asyncio.Lock")
+        return lock
+
+    async def store(
+        self,
+        episode: Episode,
+        *,
+        duplicate_policy: EpisodeDuplicatePolicy = EpisodeDuplicatePolicy.UNEXPECTED,
+    ) -> EpisodeStoreOutcome:
+        """Persist one authoritative episode and report the primary-store outcome."""
+        if not isinstance(duplicate_policy, EpisodeDuplicatePolicy):
+            raise TypeError("duplicate_policy must be an EpisodeDuplicatePolicy")
         if not self._collection:
-            return
-
-        # AD-610: Utility-based storage gating
-        _storage_gate = getattr(self, "_storage_gate", None)
-        if _storage_gate is not None:
-            try:
-                decision = _storage_gate.evaluate(episode)
-                if decision.action == "REJECT":
-                    logger.debug(
-                        "AD-610: Episode %s rejected by storage gate: %s; skipping persistence",
-                        episode.id,
-                        decision.reason,
-                    )
-                    return
-                if decision.action == "MERGE":
-                    logger.debug(
-                        "AD-610: Episode %s merge suggested with %s; merge path is deferred",
-                        episode.id,
-                        decision.duplicate_of,
-                    )
-                    return
-            except Exception:
-                logger.debug(
-                    "AD-610: Storage gate evaluation failed for %s; allowing episode to preserve memory continuity",
-                    episode.id,
-                    exc_info=True,
-                )
-
-        # AD-607h: store-time prompt-injection detection
-        _security_gate = getattr(self, "_security_gate", None)
-        if _security_gate is not None:
-            try:
-                from probos.events import EventType
-                decision = _security_gate.evaluate_store(episode)
-                if decision.matched_pattern:
-                    self._emit_security_event(EventType.MEMORY_INJECTION_SUSPECTED, {
-                        "episode_id": episode.id,
-                        "pattern": decision.matched_pattern,
-                        "reason": decision.reason,
-                    })
-                    if decision.action == "REJECT":
-                        logger.warning(
-                            "AD-607h: Episode %s rejected by memory security gate: %s; skipping persistence",
-                            episode.id,
-                            decision.matched_pattern,
-                        )
-                        return
-            except Exception:
-                logger.debug(
-                    "AD-607h: Memory security gate evaluation failed for %s; allowing episode",
-                    episode.id,
-                    exc_info=True,
-                )
-
-        # BF-039: Per-agent rate limit
-        if self._is_rate_limited(episode):
-            logger.debug("Episode rate-limited for agent %s", episode.agent_ids)
-            return
-
-        # BF-039: Content similarity dedup
-        if self._is_duplicate_content(episode):
-            logger.debug("Episode deduplicated (similar content) for agent %s", episode.agent_ids)
-            return
-
-        # AD-598: Compute importance score at encoding time
-        if episode.importance == 5:  # Only score if not already set (default)
-            _importance = compute_importance(episode)
-            if _importance != 5:
-                # AD-871: Reconstruct frozen Episode via dataclasses.replace so
-                # every carried field (incl. the provenance envelope:
-                # source_type/confidence/verification_count/contradicted_by) is
-                # preserved. A field-by-field copy silently drops new fields.
-                episode = dataclasses.replace(episode, importance=_importance)
-
-        # AD-1037: affect-salience capture at encoding (default-OFF -> byte-identical).
-        # Deterministic, no LLM/network (store() is hot). Respects a caller-set value.
-        # getattr default mirrors store()'s optional-subsystem idiom so __new__-based
-        # tests (which bypass __init__) stay byte-identical without the flag.
-        if getattr(self, "_affect_capture_enabled", False) and episode.affect_salience == 0.0:
-            _affect = score_affect(episode)
-            if _affect > 0.0:
-                episode = dataclasses.replace(episode, affect_salience=_affect)
-
-        anomaly_window_manager = getattr(self, "_anomaly_window_manager", None)
-        if anomaly_window_manager is not None:
-            try:
-                active_window = anomaly_window_manager.get_active_window()
-            except Exception:
-                logger.debug(
-                    "AD-673: Failed to query anomaly window before storing episode %s; storing without stamp",
-                    episode.id,
-                    exc_info=True,
-                )
-                active_window = None
-            if active_window and episode.anchors is not None:
-                new_anchors = dataclasses.replace(
-                    episode.anchors,
-                    anomaly_window_id=active_window,
-                )
-                episode = dataclasses.replace(episode, anchors=new_anchors)
-                anomaly_window_manager.record_episode_stamped()
-
-        metadata = self._episode_to_metadata(episode)
-
-        # AD-541b: Write-once guard — prevent silent episode overwrites
-        existing = self._collection.get(ids=[episode.id])
-        if existing and existing["ids"]:
-            logger.warning(
-                "Episode %s already exists — skipping store (write-once)",
-                episode.id[:12],
+            logger.debug(
+                "Episode %s was not persisted because the primary collection is unavailable",
+                episode.id,
             )
-            return  # Do not overwrite
+            return EpisodeStoreOutcome.SKIPPED
 
-        # AD-601: Capture TCM context vector snapshot at encoding time.
-        # Placed AFTER all admission gates (rate limit, dedup, write-once) so
-        # context only drifts on successful writes. Rejected episodes must not
-        # shift the context sequence.
-        _tcm_vector: list[float] | None = None
-        if getattr(self, '_tcm', None) is not None:
-            try:
-                _tcm_vector = self._tcm.update(
-                    episode.user_input or "",
-                    timestamp=episode.timestamp,
-                )
-            except Exception:
-                logger.debug("AD-601: TCM update failed", exc_info=True)
+        write_lock = self._get_store_write_lock()
+        async with write_lock:
+            # BF-669: same-ID authority precedes every stateful admission gate.
+            existing = self._collection.get(
+                ids=[episode.id], include=["metadatas", "documents"]
+            )
+            if existing and existing.get("ids"):
+                existing_metadata = (
+                    existing.get("metadatas") or [{}]
+                )[0] or {}
+                existing_document = (
+                    existing.get("documents") or [""]
+                )[0] or ""
+                existing_episode: Episode | None = None
+                try:
+                    existing_episode = self._metadata_to_episode(
+                        existing["ids"][0], existing_document, existing_metadata
+                    )
+                except Exception:
+                    existing_episode = None
 
-        # AD-601: Inject TCM vector into metadata after admission gates
-        if _tcm_vector is not None:
-            metadata["tcm_vector_json"] = serialize_tcm_vector(_tcm_vector)
-        else:
-            metadata["tcm_vector_json"] = ""
+                incoming_hash = compute_episode_hash(episode)[:12]
+                if existing_episode is not None:
+                    existing_hash = compute_episode_hash(existing_episode)[:12]
+                else:
+                    stored_hash = existing_metadata.get("content_hash", "")
+                    existing_hash = (
+                        stored_hash[:12]
+                        if isinstance(stored_hash, str) and stored_hash
+                        else "unavailable"
+                    )
 
-        self._collection.add(
-            ids=[episode.id],
-            documents=[self._prepare_document(episode)],
-            metadatas=[metadata],
-        )
+                if (
+                    duplicate_policy
+                    is EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION
+                    and existing_episode is not None
+                    and _is_expected_reflection_replay(existing_episode, episode)
+                ):
+                    logger.debug(
+                        "Episode duplicate id=%s policy=%s "
+                        "equivalence=timestamp_neutral incoming_hash=%s "
+                        "existing_hash=%s; existing write remains authoritative "
+                        "(write-once)",
+                        episode.id,
+                        duplicate_policy.value,
+                        incoming_hash,
+                        existing_hash,
+                    )
+                else:
+                    reason = (
+                        "unexpected_duplicate"
+                        if duplicate_policy is EpisodeDuplicatePolicy.UNEXPECTED
+                        else "content_conflict"
+                    )
+                    logger.warning(
+                        "Episode duplicate id=%s policy=%s reason=%s "
+                        "incoming_hash=%s existing_hash=%s; existing write "
+                        "remains authoritative (write-once)",
+                        episode.id,
+                        duplicate_policy.value,
+                        reason,
+                        incoming_hash,
+                        existing_hash,
+                    )
+                return EpisodeStoreOutcome.DUPLICATE
 
+            # AD-610: Utility-based storage gating
+            _storage_gate = getattr(self, "_storage_gate", None)
+            if _storage_gate is not None:
+                try:
+                    decision = _storage_gate.evaluate(episode)
+                    if decision.action == "REJECT":
+                        logger.debug(
+                            "AD-610: Episode %s rejected by storage gate: %s; skipping persistence",
+                            episode.id,
+                            decision.reason,
+                        )
+                        return EpisodeStoreOutcome.SKIPPED
+                    if decision.action == "MERGE":
+                        logger.debug(
+                            "AD-610: Episode %s merge suggested with %s; merge path is deferred",
+                            episode.id,
+                            decision.duplicate_of,
+                        )
+                        return EpisodeStoreOutcome.SKIPPED
+                except Exception:
+                    logger.debug(
+                        "AD-610: Storage gate evaluation failed for %s; allowing episode to preserve memory continuity",
+                        episode.id,
+                        exc_info=True,
+                    )
+
+            # AD-607h: store-time prompt-injection detection
+            _security_gate = getattr(self, "_security_gate", None)
+            if _security_gate is not None:
+                try:
+                    from probos.events import EventType
+                    decision = _security_gate.evaluate_store(episode)
+                    if decision.matched_pattern:
+                        self._emit_security_event(EventType.MEMORY_INJECTION_SUSPECTED, {
+                            "episode_id": episode.id,
+                            "pattern": decision.matched_pattern,
+                            "reason": decision.reason,
+                        })
+                        if decision.action == "REJECT":
+                            logger.warning(
+                                "AD-607h: Episode %s rejected by memory security gate: %s; skipping persistence",
+                                episode.id,
+                                decision.matched_pattern,
+                            )
+                            return EpisodeStoreOutcome.SKIPPED
+                except Exception:
+                    logger.debug(
+                        "AD-607h: Memory security gate evaluation failed for %s; allowing episode",
+                        episode.id,
+                        exc_info=True,
+                    )
+
+            # BF-039: Per-agent rate limit
+            if self._is_rate_limited(episode):
+                logger.debug("Episode rate-limited for agent %s", episode.agent_ids)
+                return EpisodeStoreOutcome.SKIPPED
+
+            # BF-039: Content similarity dedup
+            if self._is_duplicate_content(episode):
+                logger.debug("Episode deduplicated (similar content) for agent %s", episode.agent_ids)
+                return EpisodeStoreOutcome.SKIPPED
+
+            # AD-598: Compute importance score at encoding time
+            if episode.importance == 5:  # Only score if not already set (default)
+                _importance = compute_importance(episode)
+                if _importance != 5:
+                    # AD-871: Reconstruct frozen Episode via dataclasses.replace so
+                    # every carried field (incl. the provenance envelope:
+                    # source_type/confidence/verification_count/contradicted_by) is
+                    # preserved. A field-by-field copy silently drops new fields.
+                    episode = dataclasses.replace(episode, importance=_importance)
+
+            # AD-1037: affect-salience capture at encoding (default-OFF -> byte-identical).
+            # Deterministic, no LLM/network (store() is hot). Respects a caller-set value.
+            # getattr default mirrors store()'s optional-subsystem idiom so __new__-based
+            # tests (which bypass __init__) stay byte-identical without the flag.
+            if getattr(self, "_affect_capture_enabled", False) and episode.affect_salience == 0.0:
+                _affect = score_affect(episode)
+                if _affect > 0.0:
+                    episode = dataclasses.replace(episode, affect_salience=_affect)
+
+            anomaly_window_manager = getattr(self, "_anomaly_window_manager", None)
+            if anomaly_window_manager is not None:
+                try:
+                    active_window = anomaly_window_manager.get_active_window()
+                except Exception:
+                    logger.debug(
+                        "AD-673: Failed to query anomaly window before storing episode %s; storing without stamp",
+                        episode.id,
+                        exc_info=True,
+                    )
+                    active_window = None
+                if active_window and episode.anchors is not None:
+                    new_anchors = dataclasses.replace(
+                        episode.anchors,
+                        anomaly_window_id=active_window,
+                    )
+                    episode = dataclasses.replace(episode, anchors=new_anchors)
+                    anomaly_window_manager.record_episode_stamped()
+
+            metadata = self._episode_to_metadata(episode)
+            document = self._prepare_document(episode)
+
+            # AD-601: Capture TCM context vector snapshot at encoding time.
+            # Placed AFTER all admission gates so context only drifts on primary
+            # write attempts. Duplicate and skipped episodes never shift it.
+            _tcm_vector: list[float] | None = None
+            if getattr(self, '_tcm', None) is not None:
+                try:
+                    _tcm_vector = self._tcm.update(
+                        episode.user_input or "",
+                        timestamp=episode.timestamp,
+                    )
+                except Exception:
+                    logger.debug("AD-601: TCM update failed", exc_info=True)
+
+            # AD-601: Inject TCM vector into metadata after admission gates
+            if _tcm_vector is not None:
+                metadata["tcm_vector_json"] = serialize_tcm_vector(_tcm_vector)
+            else:
+                metadata["tcm_vector_json"] = ""
+
+            self._collection.add(
+                ids=[episode.id],
+                documents=[document],
+                metadatas=[metadata],
+            )
+
+        # BF-669: the primary lock is released before every secondary await and
+        # before reconsolidation, evolution, and eviction work.
         # AD-567b: FTS5 dual-write
         if self._fts_db is not None:
             try:
@@ -1782,6 +1922,7 @@ class EpisodicMemory:
 
         # Evict oldest beyond budget
         await self._evict()
+        return EpisodeStoreOutcome.STORED
 
     async def get_episode_metadata(
         self,

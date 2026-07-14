@@ -1,8 +1,11 @@
 """Tests for the Dreaming system — DreamingEngine, DreamScheduler, and integration."""
 
 import asyncio
+import logging
 import time
 from io import StringIO
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -10,9 +13,11 @@ pytestmark = pytest.mark.slow
 from rich.console import Console
 
 from probos.cognitive.dreaming import DreamingEngine, DreamScheduler
+from probos.cognitive.agent_working_memory import AgentWorkingMemory
+from probos.cognitive.dream_wm_bridge import DreamWorkingMemoryBridge
 from probos.cognitive.episodic_mock import MockEpisodicMemory
 from probos.cognitive.llm_client import MockLLMClient
-from probos.config import DreamingConfig
+from probos.config import DreamingConfig, DreamWMConfig
 from probos.consensus.trust import TrustNetwork
 from probos.experience import panels
 from probos.experience.shell import ProbOSShell
@@ -276,6 +281,100 @@ class TestDreamingEngine:
 
         assert report.duration_ms >= 0
 
+    @pytest.mark.asyncio
+    async def test_reflection_rerun_report_log_and_wm_count_only_new_rows(
+        self, router, trust, caplog
+    ):
+        """BF-669: full dream first run=1 and exact rerun=0 everywhere."""
+        memory = MockEpisodicMemory(relevance_threshold=0.3)
+        episodes = [
+            Episode(
+                id=f"bf669-source-{index}",
+                timestamp=float(index + 1),
+                user_input=f"source episode {index}",
+                outcomes=[{"intent": "read_file", "success": True}],
+                agent_ids=["agent-a"],
+            )
+            for index in range(5)
+        ]
+        for episode in episodes:
+            await memory.store(episode)
+
+        async def _get_embeddings(episode_ids):
+            return {episode_id: [0.1, 0.2] for episode_id in episode_ids}
+
+        memory.get_embeddings = _get_embeddings
+        cluster = SimpleNamespace(
+            cluster_id="bf669-stable-cluster",
+            episode_ids=[episode.id for episode in episodes],
+            is_success_dominant=True,
+            is_failure_dominant=False,
+            participating_agents=["agent-a"],
+            intent_types=["read_file"],
+            anchor_summary=None,
+        )
+        source_ids = {episode.id for episode in episodes}
+
+        def _cluster_sources(*, episodes, **_kwargs):
+            return [cluster] if any(ep.id in source_ids for ep in episodes) else []
+
+        bridge = DreamWorkingMemoryBridge(DreamWMConfig())
+        wm = AgentWorkingMemory()
+        engine = DreamingEngine(
+            router,
+            trust,
+            memory,
+            DreamingConfig(),
+            agent_id="agent-a",
+            dream_wm_bridge=bridge,
+        )
+        engine.set_agent_wm(wm)
+
+        with (
+            patch("probos.cognitive.dreaming.cluster_episodes", side_effect=_cluster_sources),
+            patch(
+                "probos.cognitive.anchor_provenance.summarize_cluster_anchors",
+                return_value=None,
+            ),
+            caplog.at_level(logging.DEBUG),
+        ):
+            first_report = await engine.dream_cycle()
+            reflection = next(
+                episode for episode in memory._episodes
+                if episode.id.startswith("reflection-")
+            )
+            first_timestamp = reflection.timestamp
+            first_observation_count = len(wm.to_dict()["recent_observations"])
+            first_logs = [record.message for record in caplog.records]
+            caplog.clear()
+
+            second_report = await engine.dream_cycle()
+            second_logs = [record.message for record in caplog.records]
+
+        reflections = [
+            episode for episode in memory._episodes
+            if episode.id.startswith("reflection-")
+        ]
+        assert first_report.reflections_created == 1
+        assert first_report.wm_priming_entries == 1
+        assert sum(
+            "AD-599 Step 15: Created 1 reflection episodes" in message
+            for message in first_logs
+        ) == 1
+        assert second_report.reflections_created == 0
+        assert second_report.wm_priming_entries == 0
+        assert not any("AD-599 Step 15: Created" in message for message in second_logs)
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+        duplicate_logs = [
+            message for message in second_logs if "Episode duplicate id=" in message
+        ]
+        assert len(duplicate_logs) == 1
+        assert "policy=expect_same_reflection" in duplicate_logs[0]
+        assert "equivalence=timestamp_neutral" in duplicate_logs[0]
+        assert len(reflections) == 1
+        assert reflections[0].timestamp == first_timestamp
+        assert len(wm.to_dict()["recent_observations"]) == first_observation_count
+
 
 # ---------------------------------------------------------------------------
 # DreamScheduler tests
@@ -395,6 +494,40 @@ class TestDreamScheduler:
         assert scheduler._task is not None
         await scheduler.stop()
         assert scheduler._task is None
+
+    @pytest.mark.asyncio
+    async def test_full_dream_event_shape_has_no_reflection_outcome_fields(self):
+        report = SimpleNamespace(
+            duration_ms=1.0,
+            episodes_replayed=[],
+            clusters_found=0,
+            notebook_consolidations=0,
+            convergence_reports_generated=0,
+            reflections_created=1,
+        )
+
+        class _Engine:
+            async def dream_cycle(self):
+                return report
+
+        events = []
+        scheduler = DreamScheduler(_Engine())
+        scheduler._emit_event_fn = lambda event_type, data: events.append(
+            (event_type, data)
+        )
+
+        assert await scheduler.force_dream() is report
+
+        assert len(events) == 1
+        assert events[0][0] == "dream_complete"
+        assert set(events[0][1]) == {
+            "dream_type",
+            "duration_ms",
+            "episodes_replayed",
+            "clusters_found",
+            "notebook_consolidations",
+            "convergence_reports_generated",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -861,6 +994,12 @@ class TestDreamingIntegration:
         await rt.start()
 
         try:
+            # This test owns the explicit force_dream() below. Quiesce the
+            # background monitor so its immediate micro-dream tick cannot
+            # advance the same engine cursor while the three NL episodes are
+            # being generated; scheduler cadence is covered separately above.
+            await rt.dream_scheduler.stop()
+
             # Generate several episodes via NL processing
             for i in range(3):
                 f = tmp_path / f"int_{i}.txt"

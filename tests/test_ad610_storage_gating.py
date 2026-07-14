@@ -6,13 +6,14 @@ import logging
 import time
 import uuid
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from probos.cognitive.episodic import EpisodicMemory
 from probos.cognitive.storage_gate import StorageDecision, StorageGate
 from probos.events import EventType
-from probos.types import AnchorFrame, Episode
+from probos.types import AnchorFrame, Episode, EpisodeStoreOutcome
 
 
 class _FakeStorageGateConfig:
@@ -263,9 +264,62 @@ async def test_integration_with_store(tmp_path: Any) -> None:
     memory.set_storage_gate(gate)
     await memory.start()
     try:
-        await memory.store(_make_episode(user_input="", outcomes=[], anchors=None))
+        outcome = await memory.store(
+            _make_episode(user_input="", outcomes=[], anchors=None)
+        )
 
+        assert outcome is EpisodeStoreOutcome.SKIPPED
         stats = await memory.get_stats()
         assert stats["total"] == 0
     finally:
         await memory.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["REJECT", "MERGE"])
+async def test_store_gate_non_storage_actions_return_skipped(action: str, tmp_path: Any) -> None:
+    memory = EpisodicMemory(db_path=tmp_path / "episodes.db")
+    collection = _FakeCollectionForGate()
+    memory._collection = collection
+    memory._tcm = MagicMock()
+    memory._fts_db = AsyncMock()
+    memory._participant_index = AsyncMock()
+    memory._reconsolidation_scheduler = MagicMock()
+    memory._retroactive_evolver = AsyncMock()
+    memory._evict = AsyncMock()
+
+    class _Gate:
+        def evaluate(self, _episode: Episode) -> StorageDecision:
+            return StorageDecision(
+                action=action,
+                reason="test_gate",
+                utility_score=0.0,
+                duplicate_of="existing" if action == "MERGE" else None,
+            )
+
+    memory.set_storage_gate(_Gate())
+
+    outcome = await memory.store(_make_episode(episode_id=f"gate-{action.lower()}"))
+
+    assert outcome is EpisodeStoreOutcome.SKIPPED
+    assert collection.add_calls == 0
+    memory._tcm.update.assert_not_called()
+    memory._fts_db.execute.assert_not_awaited()
+    memory._participant_index.record_episode.assert_not_awaited()
+    memory._reconsolidation_scheduler.schedule_review.assert_not_called()
+    memory._retroactive_evolver.evolve_on_store.assert_not_awaited()
+    memory._evict.assert_not_awaited()
+
+
+class _FakeCollectionForGate:
+    def __init__(self) -> None:
+        self.add_calls = 0
+
+    def get(self, **_kwargs: Any) -> dict[str, list[Any]]:
+        return {"ids": [], "metadatas": [], "documents": []}
+
+    def add(self, **_kwargs: Any) -> None:
+        self.add_calls += 1
+
+    def count(self) -> int:
+        return 0

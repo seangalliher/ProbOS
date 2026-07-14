@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
+import hashlib
+import inspect
+import logging
 import types as stdlib_types
+from typing import get_type_hints
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from probos.config import DreamingConfig
-from probos.types import DreamReport, Episode, MemorySource
+from probos.types import (
+    DreamReport,
+    Episode,
+    EpisodeDuplicatePolicy,
+    EpisodeStoreOutcome,
+    MemorySource,
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -19,7 +31,7 @@ def _make_engine(*, config: DreamingConfig | None = None):
     from probos.cognitive.dreaming import DreamingEngine
 
     mem = AsyncMock()
-    mem.store = AsyncMock()
+    mem.store = AsyncMock(return_value=EpisodeStoreOutcome.STORED)
     mem.recent = AsyncMock(return_value=[])
     mem.get_embeddings = AsyncMock(return_value={})
 
@@ -69,6 +81,69 @@ class TestMemorySourceReflection:
         assert MemorySource.REFLECTION == "reflection"
         assert MemorySource.REFLECTION.value == "reflection"
 
+    def test_episode_store_policy_and_outcome_types_exist(self):
+        """BF-669: shared typed duplicate policy and store outcome exist."""
+        import probos.types as probos_types
+
+        assert hasattr(probos_types, "EpisodeDuplicatePolicy")
+        assert hasattr(probos_types, "EpisodeStoreOutcome")
+
+    def test_episode_store_policy_and_outcome_values_are_exact(self):
+        """BF-669: policy and outcome enums expose only the pinned values."""
+        assert [(item.name, item.value) for item in EpisodeDuplicatePolicy] == [
+            ("UNEXPECTED", "unexpected"),
+            ("EXPECT_SAME_REFLECTION", "expect_same_reflection"),
+        ]
+        assert [(item.name, item.value) for item in EpisodeStoreOutcome] == [
+            ("STORED", "stored"),
+            ("DUPLICATE", "duplicate"),
+            ("SKIPPED", "skipped"),
+        ]
+
+    def test_episodic_memory_protocol_store_signature_is_exact(self):
+        """BF-669: protocol has the additive keyword-only typed contract."""
+        from probos.protocols import EpisodicMemoryProtocol
+
+        signature = inspect.signature(EpisodicMemoryProtocol.store)
+        assert list(signature.parameters) == ["self", "episode", "duplicate_policy"]
+        policy = signature.parameters["duplicate_policy"]
+        assert policy.kind is inspect.Parameter.KEYWORD_ONLY
+        assert policy.default is EpisodeDuplicatePolicy.UNEXPECTED
+        hints = get_type_hints(EpisodicMemoryProtocol.store)
+        assert hints["episode"] is Episode
+        assert hints["duplicate_policy"] is EpisodeDuplicatePolicy
+        assert hints["return"] is EpisodeStoreOutcome
+
+    @pytest.mark.parametrize(
+        "store_owner",
+        [
+            pytest.param("real", id="real"),
+            pytest.param("mock", id="mock"),
+            pytest.param("protocol", id="protocol"),
+        ],
+    )
+    def test_real_mock_and_protocol_store_signatures_match(self, store_owner):
+        """BF-669: all three public contracts have exact signature/type parity."""
+        from probos.cognitive.episodic import EpisodicMemory
+        from probos.cognitive.episodic_mock import MockEpisodicMemory
+        from probos.protocols import EpisodicMemoryProtocol
+
+        owner = {
+            "real": EpisodicMemory,
+            "mock": MockEpisodicMemory,
+            "protocol": EpisodicMemoryProtocol,
+        }[store_owner]
+        signature = inspect.signature(owner.store)
+        policy = signature.parameters["duplicate_policy"]
+        hints = get_type_hints(owner.store)
+
+        assert list(signature.parameters) == ["self", "episode", "duplicate_policy"]
+        assert policy.kind is inspect.Parameter.KEYWORD_ONLY
+        assert policy.default is EpisodeDuplicatePolicy.UNEXPECTED
+        assert hints["episode"] is Episode
+        assert hints["duplicate_policy"] is EpisodeDuplicatePolicy
+        assert hints["return"] is EpisodeStoreOutcome
+
 
 # ===========================================================================
 # 2. DreamReport field (1 test)
@@ -80,6 +155,14 @@ class TestDreamReportField:
         """DreamReport().reflections_created defaults to 0."""
         report = DreamReport()
         assert report.reflections_created == 0
+
+    def test_dream_report_adds_no_duplicate_or_skipped_counter(self):
+        """BF-669: the existing public creation count is corrected in place."""
+        names = {field.name for field in dataclasses.fields(DreamReport)}
+
+        assert "reflections_created" in names
+        assert "reflections_duplicate" not in names
+        assert "reflections_skipped" not in names
 
 
 # ===========================================================================
@@ -133,6 +216,9 @@ class TestConvergenceReflections:
         assert stored.user_input.startswith("[Reflection]")
         assert stored.agent_ids == []
         assert stored.dag_summary["involved_agents"] == ["a1", "a2"]
+        assert engine.episodic_memory.store.call_args.kwargs == {
+            "duplicate_policy": EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION
+        }
 
     @pytest.mark.asyncio
     async def test_step15_convergence_with_independence(self):
@@ -379,6 +465,257 @@ class TestDeduplication:
 
         assert id_1 == id_2
         assert id_1.startswith("reflection-")
+        assert len(id_1) == len("reflection-") + 16
+        stored_text = engine.episodic_memory.store.call_args[0][0].user_input
+        assert id_1 == f"reflection-{hashlib.sha256(stored_text.encode()).hexdigest()[:16]}"
+
+    @pytest.mark.asyncio
+    async def test_step15_real_store_replay_counts_only_first_primary_write(
+        self, tmp_path, caplog
+    ):
+        """BF-669: deterministic real-store replay reports 1 then 0."""
+        from probos.cognitive.episodic import EpisodicMemory
+
+        memory = EpisodicMemory(tmp_path / "bf669-real-replay.db")
+        await memory.start()
+        engine = _make_engine()
+        engine.episodic_memory = memory
+        conv = {
+            "agents": ["a1"],
+            "departments": ["science"],
+            "topic": "idempotent reflection",
+            "coherence": 0.9,
+        }
+        try:
+            first = await engine._step_15_reflection_promotion(
+                episodes=[], clusters=[], convergence_reports=[conv],
+                emergence_capacity=None, coordination_balance=None,
+                notebook_consolidations=0, behavioral_quality_score=None,
+            )
+            stored_once = await memory.recent(k=10)
+            caplog.clear()
+            with caplog.at_level(logging.DEBUG, logger="probos.cognitive.episodic"):
+                second = await engine._step_15_reflection_promotion(
+                    episodes=[], clusters=[], convergence_reports=[conv],
+                    emergence_capacity=None, coordination_balance=None,
+                    notebook_consolidations=0, behavioral_quality_score=None,
+                )
+            stored_twice = await memory.recent(k=10)
+
+            assert (first, second) == (1, 0)
+            assert len(stored_once) == len(stored_twice) == 1
+            assert stored_twice[0] == stored_once[0]
+            assert not [
+                record for record in caplog.records
+                if record.levelno >= logging.WARNING
+            ]
+            duplicate_logs = [
+                record.message for record in caplog.records
+                if "Episode duplicate id=" in record.message
+            ]
+            assert len(duplicate_logs) == 1
+            assert "policy=expect_same_reflection" in duplicate_logs[0]
+            assert "equivalence=timestamp_neutral" in duplicate_logs[0]
+            assert stored_once[0].id in duplicate_logs[0]
+        finally:
+            await memory.stop()
+
+    @pytest.mark.asyncio
+    async def test_step15_mock_replay_counts_only_first_and_preserves_authority(self):
+        from probos.cognitive.episodic_mock import MockEpisodicMemory
+
+        memory = MockEpisodicMemory()
+        engine = _make_engine()
+        engine.episodic_memory = memory
+        conv = {
+            "agents": ["a1"],
+            "departments": ["science"],
+            "topic": "mock replay",
+            "coherence": 0.9,
+        }
+
+        first = await engine._step_15_reflection_promotion(
+            episodes=[], clusters=[], convergence_reports=[conv],
+            emergence_capacity=None, coordination_balance=None,
+            notebook_consolidations=0, behavioral_quality_score=None,
+        )
+        authoritative = memory._episodes[0]
+        second = await engine._step_15_reflection_promotion(
+            episodes=[], clusters=[], convergence_reports=[conv],
+            emergence_capacity=None, coordination_balance=None,
+            notebook_consolidations=0, behavioral_quality_score=None,
+        )
+
+        assert (first, second) == (1, 0)
+        assert memory._episodes == [authoritative]
+
+    @pytest.mark.asyncio
+    async def test_step15_mixed_duplicate_and_new_counts_only_new_row(self):
+        from probos.cognitive.episodic_mock import MockEpisodicMemory
+
+        memory = MockEpisodicMemory()
+        engine = _make_engine()
+        engine.episodic_memory = memory
+        first_conv = {
+            "agents": ["a1"], "departments": ["science"],
+            "topic": "existing", "coherence": 0.9,
+        }
+        new_conv = {
+            "agents": ["a2"], "departments": ["engineering"],
+            "topic": "new", "coherence": 0.8,
+        }
+        assert await engine._step_15_reflection_promotion(
+            episodes=[], clusters=[], convergence_reports=[first_conv],
+            emergence_capacity=None, coordination_balance=None,
+            notebook_consolidations=0, behavioral_quality_score=None,
+        ) == 1
+
+        mixed = await engine._step_15_reflection_promotion(
+            episodes=[], clusters=[], convergence_reports=[first_conv, new_conv],
+            emergence_capacity=None, coordination_balance=None,
+            notebook_consolidations=0, behavioral_quality_score=None,
+        )
+
+        assert mixed == 1
+        assert len(memory._episodes) == 2
+
+
+class TestStoreOutcomeAccounting:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("outcome", "expected"),
+        [
+            (EpisodeStoreOutcome.STORED, 1),
+            (EpisodeStoreOutcome.DUPLICATE, 0),
+            (EpisodeStoreOutcome.SKIPPED, 0),
+        ],
+    )
+    async def test_step15_counts_only_stored(self, outcome, expected):
+        engine = _make_engine()
+        engine.episodic_memory.store.return_value = outcome
+
+        created = await engine._step_15_reflection_promotion(
+            episodes=[], clusters=[], convergence_reports=[{
+                "agents": ["a1"], "departments": ["science"],
+                "topic": "typed outcome", "coherence": 0.9,
+            }],
+            emergence_capacity=None, coordination_balance=None,
+            notebook_consolidations=0, behavioral_quality_score=None,
+        )
+
+        assert created == expected
+        assert engine.episodic_memory.store.call_args.kwargs[
+            "duplicate_policy"
+        ] is EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION
+
+    @pytest.mark.asyncio
+    async def test_step15_passes_expected_policy_for_every_candidate(self):
+        engine = _make_engine()
+        convs = [
+            {"agents": ["a1"], "departments": ["science"], "topic": "one", "coherence": 0.9},
+            {"agents": ["a2"], "departments": ["engineering"], "topic": "two", "coherence": 0.8},
+        ]
+
+        created = await engine._step_15_reflection_promotion(
+            episodes=[], clusters=[], convergence_reports=convs,
+            emergence_capacity=None, coordination_balance=None,
+            notebook_consolidations=0, behavioral_quality_score=None,
+        )
+
+        assert created == 2
+        assert all(
+            call.kwargs["duplicate_policy"]
+            is EpisodeDuplicatePolicy.EXPECT_SAME_REFLECTION
+            for call in engine.episodic_memory.store.await_args_list
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "invalid",
+        [
+            pytest.param("stored", id="raw-stored"),
+            pytest.param("duplicate", id="raw-duplicate"),
+            pytest.param("skipped", id="raw-skipped"),
+            pytest.param(True, id="bool"),
+            pytest.param(None, id="none"),
+            pytest.param(object(), id="object"),
+        ],
+    )
+    async def test_step15_invalid_outcome_not_counted_and_later_candidate_runs(
+        self, invalid, caplog
+    ):
+        engine = _make_engine()
+        engine.episodic_memory.store.side_effect = [
+            invalid,
+            EpisodeStoreOutcome.STORED,
+        ]
+        convs = [
+            {"agents": ["a1"], "departments": ["science"], "topic": "bad", "coherence": 0.9},
+            {"agents": ["a2"], "departments": ["engineering"], "topic": "good", "coherence": 0.8},
+        ]
+
+        with caplog.at_level(logging.DEBUG, logger="probos.cognitive.dreaming"):
+            created = await engine._step_15_reflection_promotion(
+                episodes=[], clusters=[], convergence_reports=convs,
+                emergence_capacity=None, coordination_balance=None,
+                notebook_consolidations=0, behavioral_quality_score=None,
+            )
+
+        assert created == 1
+        assert engine.episodic_memory.store.await_count == 2
+        first_episode = engine.episodic_memory.store.await_args_list[0].args[0]
+        assert first_episode.id in caplog.text
+        assert "was not stored and was not counted" in caplog.text
+        contract_failures = [
+            record
+            for record in caplog.records
+            if "was not stored and was not counted" in record.message
+        ]
+        assert len(contract_failures) == 1
+        assert contract_failures[0].levelno == logging.DEBUG
+        assert contract_failures[0].exc_info is not None
+        contract_error = contract_failures[0].exc_info[1]
+        assert isinstance(contract_error, TypeError)
+        assert str(contract_error) == (
+            "episodic_memory.store returned an invalid EpisodeStoreOutcome"
+        )
+
+    @pytest.mark.asyncio
+    async def test_step15_ordinary_failure_continues_to_later_candidate(self):
+        engine = _make_engine()
+        engine.episodic_memory.store.side_effect = [
+            RuntimeError("transient primary failure"),
+            EpisodeStoreOutcome.STORED,
+        ]
+
+        created = await engine._step_15_reflection_promotion(
+            episodes=[], clusters=[], convergence_reports=[
+                {"agents": ["a1"], "departments": ["science"], "topic": "first", "coherence": 0.9},
+                {"agents": ["a2"], "departments": ["engineering"], "topic": "second", "coherence": 0.8},
+            ],
+            emergence_capacity=None, coordination_balance=None,
+            notebook_consolidations=0, behavioral_quality_score=None,
+        )
+
+        assert created == 1
+        assert engine.episodic_memory.store.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_step15_cancellation_propagates_and_stops_candidates(self):
+        engine = _make_engine()
+        engine.episodic_memory.store.side_effect = asyncio.CancelledError()
+
+        with pytest.raises(asyncio.CancelledError):
+            await engine._step_15_reflection_promotion(
+                episodes=[], clusters=[], convergence_reports=[
+                    {"agents": ["a1"], "departments": ["science"], "topic": "first", "coherence": 0.9},
+                    {"agents": ["a2"], "departments": ["engineering"], "topic": "second", "coherence": 0.8},
+                ],
+                emergence_capacity=None, coordination_balance=None,
+                notebook_consolidations=0, behavioral_quality_score=None,
+            )
+
+        assert engine.episodic_memory.store.await_count == 1
 
 
 # ===========================================================================

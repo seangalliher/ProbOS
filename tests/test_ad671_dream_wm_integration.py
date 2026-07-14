@@ -117,6 +117,30 @@ class TestPostDreamSeed:
         assert seeded == 0
         assert wm.to_dict()["recent_observations"] == []
 
+    def test_post_dream_seed_zero_reflections_adds_no_reflection_insight(self) -> None:
+        bridge = DreamWorkingMemoryBridge(DreamWMConfig())
+        wm = AgentWorkingMemory()
+
+        seeded = bridge.post_dream_seed(
+            wm, DreamReport(reflections_created=0), dream_cycle_id="duplicate-cycle"
+        )
+
+        assert seeded == 0
+        assert wm.to_dict()["recent_observations"] == []
+
+    def test_post_dream_seed_one_new_reflection_reports_exactly_one(self) -> None:
+        bridge = DreamWorkingMemoryBridge(DreamWMConfig())
+        wm = AgentWorkingMemory()
+
+        seeded = bridge.post_dream_seed(
+            wm, DreamReport(reflections_created=1), dream_cycle_id="mixed-cycle"
+        )
+
+        assert seeded == 1
+        observations = wm.to_dict()["recent_observations"]
+        assert len(observations) == 1
+        assert "Created 1 reflection episodes" in observations[0]["content"]
+
     def test_post_dream_seed_knowledge_source_is_procedural(self) -> None:
         bridge = DreamWorkingMemoryBridge(DreamWMConfig())
         wm = AgentWorkingMemory()
