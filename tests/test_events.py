@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import glob
+import json
 import re
 import time
 from unittest.mock import MagicMock
@@ -31,6 +32,7 @@ from probos.events import (
     SelfModRetryCompleteEvent,
     SelfModStartedEvent,
     SelfModSuccessEvent,
+    SensoriumBudgetExceededEvent,
     TrustUpdateEvent,
     WardRoomEndorsementEvent,
     WardRoomPostCreatedEvent,
@@ -220,6 +222,94 @@ class TestSerialization:
         event = BuildProgressEvent(build_id="b1")
         after = time.time()
         assert before <= event.timestamp <= after
+
+    def test_sensorium_budget_event_additive_json_serialization(self):
+        event = SensoriumBudgetExceededEvent(
+            agent_id="agent-1",
+            callsign="Data",
+            total_chars=120,
+            threshold=100,
+            cognitive_state_chars=80,
+            situation_chars=40,
+            estimated_tokens=30,
+            character_threshold=100,
+            reason="sustained",
+            suppressed_count=2,
+            peak_chars=135,
+            top_contributors=[
+                {
+                    "bucket": "cognitive",
+                    "output_key": "_working_memory_context",
+                    "layer": "interoception",
+                    "chars": 80,
+                    "estimated_tokens": 20,
+                }
+            ],
+        )
+
+        data = event.to_dict()
+        encoded = json.dumps(data)
+
+        assert data["type"] == "sensorium_budget_exceeded"
+        assert data["data"]["total_chars"] == 120
+        assert data["data"]["threshold"] == 100
+        assert data["data"]["estimated_tokens"] == 30
+        assert data["data"]["character_threshold"] == 100
+        assert data["data"]["reason"] == "sustained"
+        assert data["data"]["suppressed_count"] == 2
+        assert data["data"]["peak_chars"] == 135
+        assert data["data"]["top_contributors"][0]["layer"] == "interoception"
+        assert '"reason": "sustained"' in encoded
+
+    def test_sensorium_budget_event_old_shape_preserves_fields_and_new_defaults(self):
+        event = SensoriumBudgetExceededEvent(
+            agent_id="legacy-agent",
+            callsign="Legacy",
+            total_chars=101,
+            threshold=100,
+            cognitive_state_chars=61,
+            situation_chars=40,
+        )
+
+        data = event.to_dict()
+        encoded = json.dumps(data)
+
+        assert data["type"] == "sensorium_budget_exceeded"
+        assert data["data"] == {
+            "agent_id": "legacy-agent",
+            "callsign": "Legacy",
+            "total_chars": 101,
+            "threshold": 100,
+            "cognitive_state_chars": 61,
+            "situation_chars": 40,
+            "estimated_tokens": 0,
+            "character_threshold": 0,
+            "reason": "",
+            "suppressed_count": 0,
+            "peak_chars": 0,
+            "top_contributors": [],
+        }
+        assert '"agent_id": "legacy-agent"' in encoded
+
+    def test_sensorium_budget_event_default_contributor_lists_are_independent(self):
+        first = SensoriumBudgetExceededEvent(agent_id="first")
+        second = SensoriumBudgetExceededEvent(agent_id="second")
+
+        first.top_contributors.append(
+            {
+                "bucket": "cognitive",
+                "output_key": "first-only",
+                "layer": None,
+                "chars": 1,
+                "estimated_tokens": 1,
+            }
+        )
+
+        assert len(first.top_contributors) == 1
+        assert second.top_contributors == []
+        assert first.top_contributors is not second.top_contributors
+        json.dumps(first.to_dict())
+        json.dumps(second.to_dict())
 
 
 # ---------------------------------------------------------------------------

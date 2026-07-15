@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 
 # ─── Trust Threshold Constants ─────────────────────────────────────
@@ -3686,10 +3686,71 @@ class SalienceConfig(BaseModel):
 
 
 class SensoriumConfig(BaseModel):
-    """AD-666: Agent Sensorium tracking configuration."""
+    """AD-666/AD-1122: Agent Sensorium tracking configuration."""
 
     enabled: bool = True
-    token_budget_warning: int = 10000
+    warning_chars: int = Field(
+        default=10000,
+        validation_alias=AliasChoices("warning_chars", "token_budget_warning"),
+    )
+    warning_cooldown_seconds: float = 21600.0
+    warning_rearm_ratio: float = 0.90
+    warning_escalation_ratio: float = 1.25
+    top_contributors: int = 5
+
+    @field_validator(
+        "warning_chars",
+        "warning_cooldown_seconds",
+        "warning_rearm_ratio",
+        "warning_escalation_ratio",
+        "top_contributors",
+        mode="before",
+    )
+    @classmethod
+    def _reject_sensorium_bool(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("sensorium numeric settings must not be boolean")
+        return value
+
+    @field_validator("warning_chars")
+    @classmethod
+    def _validate_warning_chars(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("warning_chars must be at least 1")
+        return value
+
+    @field_validator("warning_cooldown_seconds")
+    @classmethod
+    def _validate_warning_cooldown_seconds(cls, value: float) -> float:
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("warning_cooldown_seconds must be finite and non-negative")
+        return value
+
+    @field_validator("warning_rearm_ratio")
+    @classmethod
+    def _validate_warning_rearm_ratio(cls, value: float) -> float:
+        if not math.isfinite(value) or not 0 < value < 1:
+            raise ValueError("warning_rearm_ratio must be finite and between 0 and 1")
+        return value
+
+    @field_validator("warning_escalation_ratio")
+    @classmethod
+    def _validate_warning_escalation_ratio(cls, value: float) -> float:
+        if not math.isfinite(value) or value < 1:
+            raise ValueError("warning_escalation_ratio must be finite and at least 1")
+        return value
+
+    @field_validator("top_contributors")
+    @classmethod
+    def _validate_top_contributors(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("top_contributors must be non-negative")
+        return value
+
+    @property
+    def token_budget_warning(self) -> int:
+        """Read-only compatibility view of the former configuration key."""
+        return self.warning_chars
 
 
 class RuntimeOverridesConfig(BaseModel):

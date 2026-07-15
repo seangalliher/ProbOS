@@ -918,7 +918,7 @@ class KnowledgeTierLoadedEvent(BaseEvent):
 
 @dataclass
 class SensoriumBudgetExceededEvent(BaseEvent):
-    """AD-666: Sensorium injection exceeded char threshold."""
+    """AD-666/AD-1122: Merged chain sensorium exceeded its character threshold."""
     event_type: EventType = field(default=EventType.SENSORIUM_BUDGET_EXCEEDED, init=False)
     agent_id: str = ""
     callsign: str = ""
@@ -926,6 +926,12 @@ class SensoriumBudgetExceededEvent(BaseEvent):
     threshold: int = 0
     cognitive_state_chars: int = 0
     situation_chars: int = 0
+    estimated_tokens: int = 0
+    character_threshold: int = 0
+    reason: str = ""
+    suppressed_count: int = 0
+    peak_chars: int = 0
+    top_contributors: list[dict[str, str | int | None]] = field(default_factory=list)
 
 
 @dataclass

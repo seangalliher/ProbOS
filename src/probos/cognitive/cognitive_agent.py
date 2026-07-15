@@ -7,6 +7,7 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -18,7 +19,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from probos.events import EventType
+from probos.events import EventType, SensoriumBudgetExceededEvent
 from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
@@ -633,6 +634,11 @@ class CognitiveAgent(BaseAgent):
         # AD-672: Per-agent concurrency management
         self._concurrency_manager: ConcurrencyManager | None = None
 
+        # AD-1122: bounded scalar debounce state for merged chain-sensorium
+        # character-footprint telemetry. This state is per agent and never
+        # retains prompt content.
+        self._reset_sensorium_budget_state()
+
         # AD-722: most-recent reply emit timestamp (UNIX seconds).
         # Read via the public property `last_reply_emitted_at`.
         # Stamped by `mark_reply_emitted()` from the chat handler at
@@ -810,6 +816,7 @@ class CognitiveAgent(BaseAgent):
         every composed organ before the base teardown. With the default zero-organ spine
         this is a no-op, so behavior is byte-identical to ``BaseAgent.stop``.
         """
+        self._reset_sensorium_budget_state()
         _spine = getattr(self, "_spine", None)
         if _spine is not None:
             _spine.detach_all()
@@ -4076,7 +4083,7 @@ class CognitiveAgent(BaseAgent):
             _situation = self._build_situation_awareness(_context_parts)
             observation.update(_situation)
 
-        # AD-666: Sensorium budget tracking — observability, never blocks
+        # AD-1122: Merged chain-sensorium character telemetry — observe-only
         self._track_sensorium_budget(_cognitive_state, _situation)
 
         # BF-189: Pre-format memories
@@ -7350,52 +7357,264 @@ class CognitiveAgent(BaseAgent):
         cognitive_state: dict[str, str],
         situation: dict[str, str],
     ) -> int:
-        """AD-666: Measure sensorium injection size and emit a warning event over budget."""
+        """AD-1122: Measure and debounce merged chain-sensorium telemetry."""
+        contributors = self._sensorium_budget_contributors(cognitive_state, situation)
         cognitive_chars = sum(
-            len(value) for value in cognitive_state.values() if isinstance(value, str)
+            int(row["chars"]) for row in contributors if row["bucket"] == "cognitive"
         )
         situation_chars = sum(
-            len(value) for value in situation.values() if isinstance(value, str)
+            int(row["chars"]) for row in contributors if row["bucket"] == "situation"
         )
         total_chars = cognitive_chars + situation_chars
 
         runtime = getattr(self, "_runtime", None)
-        threshold = 10000
         sensorium_config = getattr(getattr(runtime, "config", None), "sensorium", None)
-        if sensorium_config is not None:
-            if not getattr(sensorium_config, "enabled", True):
-                return total_chars
-            configured_threshold = getattr(sensorium_config, "token_budget_warning", threshold)
-            if isinstance(configured_threshold, int):
-                threshold = configured_threshold
+        enabled = getattr(sensorium_config, "enabled", True)
+        if not isinstance(enabled, bool):
+            enabled = True
+        threshold = self._sensorium_budget_int_setting(
+            sensorium_config, "warning_chars", 10_000, minimum=1
+        )
+        cooldown = self._sensorium_budget_float_setting(
+            sensorium_config, "warning_cooldown_seconds", 21_600.0, minimum=0.0
+        )
+        rearm_ratio = self._sensorium_budget_float_setting(
+            sensorium_config,
+            "warning_rearm_ratio",
+            0.90,
+            minimum=0.0,
+            maximum=1.0,
+            strict_minimum=True,
+            strict_maximum=True,
+        )
+        escalation_ratio = self._sensorium_budget_float_setting(
+            sensorium_config,
+            "warning_escalation_ratio",
+            1.25,
+            minimum=1.0,
+        )
+        top_count = self._sensorium_budget_int_setting(
+            sensorium_config, "top_contributors", 5, minimum=0
+        )
 
-        if total_chars > threshold:
-            agent_id = getattr(self, "id", "unknown")
-            callsign = self._resolve_callsign() or agent_id
+        previous_threshold = getattr(self, "_sensorium_budget_last_threshold", None)
+        if previous_threshold is not None and previous_threshold != threshold:
+            self._reset_sensorium_budget_state()
+        self._sensorium_budget_last_threshold = threshold
+
+        if not enabled:
+            self._reset_sensorium_budget_state()
+            return total_chars
+
+        active = getattr(self, "_sensorium_budget_active", False)
+        if active and total_chars < threshold * rearm_ratio:
+            self._reset_sensorium_budget_state()
+            self._sensorium_budget_last_threshold = threshold
+            return total_chars
+        if total_chars <= threshold:
+            return total_chars
+        if not active:
+            reason = "crossed"
+        else:
+            current_peak = max(
+                int(getattr(self, "_sensorium_budget_peak_chars", 0)), total_chars
+            )
+            now = self._sensorium_budget_clock()
+            escalated = not getattr(
+                self, "_sensorium_budget_escalation_consumed", False
+            ) and total_chars >= threshold * escalation_ratio
+            last_emitted_at = getattr(self, "_sensorium_budget_last_emitted_at", None)
+            cooldown_elapsed = (
+                last_emitted_at is None or now - last_emitted_at >= cooldown
+            )
+            if escalated:
+                reason = "escalated"
+            elif cooldown_elapsed:
+                reason = "sustained"
+            else:
+                self._sensorium_budget_suppressed_count += 1
+                self._sensorium_budget_peak_chars = current_peak
+                return total_chars
+
+        now = self._sensorium_budget_clock()
+        prior_suppressed = int(getattr(self, "_sensorium_budget_suppressed_count", 0))
+        peak_chars = max(
+            int(getattr(self, "_sensorium_budget_peak_chars", 0)), total_chars
+        )
+        initial_severe = reason == "crossed" and total_chars >= threshold * escalation_ratio
+
+        # Commit transition state before any warning/event side effect. A sink
+        # failure must not replay the same crossing on the next cycle.
+        self._sensorium_budget_active = True
+        self._sensorium_budget_last_emitted_at = now
+        self._sensorium_budget_suppressed_count = 0
+        self._sensorium_budget_peak_chars = total_chars
+        if reason == "escalated" or initial_severe:
+            self._sensorium_budget_escalation_consumed = True
+
+        agent_id = getattr(self, "id", "unknown")
+        callsign = self._resolve_callsign() or agent_id
+        estimated_tokens = sum(
+            int(row["estimated_tokens"]) for row in contributors
+        )
+        top_rows = sorted(
+            contributors,
+            key=lambda row: (
+                -int(row["chars"]),
+                str(row["output_key"]),
+                str(row["bucket"]),
+            ),
+        )[:top_count]
+        try:
             logger.warning(
-                "AD-666: Sensorium budget exceeded for %s: %d chars (threshold: %d). "
-                "Cognitive state: %d chars, situation: %d chars. "
-                "Context may be crowding out instruction space.",
+                "AD-1122 sensorium budget transition: agent_id=%s callsign=%s "
+                "reason=%s total_chars=%d estimated_tokens=%d character_threshold=%d "
+                "cognitive_state_chars=%d situation_chars=%d suppressed_count=%d "
+                "peak_chars=%d top_contributors=%s; merged chain sensorium character "
+                "footprint; not the full request/model-window measurement.",
+                agent_id,
                 callsign,
+                reason,
                 total_chars,
+                estimated_tokens,
                 threshold,
                 cognitive_chars,
                 situation_chars,
+                prior_suppressed,
+                peak_chars,
+                top_rows,
             )
-            if runtime and hasattr(runtime, "emit_event"):
-                runtime.emit_event(
-                    EventType.SENSORIUM_BUDGET_EXCEEDED,
-                    {
-                        "agent_id": agent_id,
-                        "callsign": callsign,
-                        "total_chars": total_chars,
-                        "threshold": threshold,
-                        "cognitive_state_chars": cognitive_chars,
-                        "situation_chars": situation_chars,
-                    },
-                )
+        except Exception:
+            # Observe-only telemetry must not fail its caller or skip the event sink.
+            pass
+        if runtime is not None:
+            event = SensoriumBudgetExceededEvent(
+                agent_id=agent_id,
+                callsign=callsign,
+                total_chars=total_chars,
+                threshold=threshold,
+                cognitive_state_chars=cognitive_chars,
+                situation_chars=situation_chars,
+                estimated_tokens=estimated_tokens,
+                character_threshold=threshold,
+                reason=reason,
+                suppressed_count=prior_suppressed,
+                peak_chars=peak_chars,
+                top_contributors=top_rows,
+            )
+            try:
+                runtime.emit_event(event)
+            except Exception:
+                try:
+                    logger.warning(
+                        "AD-1122 sensorium_budget_exceeded event emission failed for agent "
+                        "%s (%s); transition state remains committed and telemetry "
+                        "continues with local warnings.",
+                        agent_id,
+                        callsign,
+                        exc_info=True,
+                    )
+                except Exception:
+                    # No recursive diagnostics: both telemetry sinks are non-critical.
+                    pass
 
         return total_chars
+
+    def _reset_sensorium_budget_state(self) -> None:
+        """Reset bounded per-agent sensorium transition state."""
+        self._sensorium_budget_active = False
+        self._sensorium_budget_last_emitted_at: float | None = None
+        self._sensorium_budget_suppressed_count = 0
+        self._sensorium_budget_peak_chars = 0
+        self._sensorium_budget_escalation_consumed = False
+        self._sensorium_budget_last_threshold: int | None = None
+
+    def _sensorium_budget_clock(self) -> float:
+        """Return the monotonic clock used by sensorium debounce policy."""
+        return time.monotonic()
+
+    @staticmethod
+    def _sensorium_budget_int_setting(
+        config: object | None,
+        name: str,
+        default: int,
+        *,
+        minimum: int,
+    ) -> int:
+        """Read one bounded integer policy field with an independent fallback."""
+        value = getattr(config, name, default)
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            return default
+        return value
+
+    @staticmethod
+    def _sensorium_budget_float_setting(
+        config: object | None,
+        name: str,
+        default: float,
+        *,
+        minimum: float,
+        maximum: float | None = None,
+        strict_minimum: bool = False,
+        strict_maximum: bool = False,
+    ) -> float:
+        """Read one finite numeric policy field with an independent fallback."""
+        value = getattr(config, name, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return default
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            return default
+        if numeric < minimum or (strict_minimum and numeric == minimum):
+            return default
+        if maximum is not None and (
+            numeric > maximum or (strict_maximum and numeric == maximum)
+        ):
+            return default
+        return numeric
+
+    @classmethod
+    def _sensorium_budget_layer(
+        cls, output_key: str, bucket: str
+    ) -> str | None:
+        """Resolve a contributor's unique registry layer for its chain bucket."""
+        allowed_paths = (
+            {SensoriumPath.CHAIN_BASELINE, SensoriumPath.CHAIN_EXTENSIONS}
+            if bucket == "cognitive"
+            else {SensoriumPath.CHAIN_SITUATION}
+        )
+        layers = {
+            entry.layer.value
+            for entry in cls.SENSORIUM_REGISTRY.values()
+            if entry.output_key == output_key and allowed_paths.intersection(entry.paths)
+        }
+        return next(iter(layers)) if len(layers) == 1 else None
+
+    @classmethod
+    def _sensorium_budget_contributors(
+        cls,
+        cognitive_state: dict[str, str],
+        situation: dict[str, str],
+    ) -> list[dict[str, str | int | None]]:
+        """Describe final surviving non-empty strings without retaining content."""
+        rows: list[dict[str, str | int | None]] = []
+        for bucket, values in (
+            ("cognitive", cognitive_state),
+            ("situation", situation),
+        ):
+            for output_key, value in values.items():
+                if not isinstance(value, str) or not value:
+                    continue
+                rows.append(
+                    {
+                        "bucket": bucket,
+                        "output_key": output_key,
+                        "layer": cls._sensorium_budget_layer(output_key, bucket),
+                        "chars": len(value),
+                        "estimated_tokens": estimate_tokens(value),
+                    }
+                )
+        return rows
 
     def _build_situation_awareness(self, context_parts: dict) -> dict[str, str]:
         """AD-644 Phase 3: Extract situation awareness data for chain prompts.
