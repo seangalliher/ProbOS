@@ -14,15 +14,35 @@ BF-287 discipline: a real ``DreamingConfig`` + a real recording episodic stub
 """
 from __future__ import annotations
 
-import dataclasses
 import logging
 import re
 import types as stdlib_types
 
 import pytest
 
+from probos.cognitive.episodic_mock import MockEpisodicMemory
 from probos.config import DreamingConfig
-from probos.types import EpisodeDuplicatePolicy, EpisodeStoreOutcome, MemorySource
+from probos.types import (
+    Episode,
+    EpisodeDuplicatePolicy,
+    EpisodeStoreOutcome,
+    MemorySource,
+)
+
+
+class _AttemptRecordingEpisodicMemory(MockEpisodicMemory):
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempted: list[Episode] = []
+
+    async def store(
+        self,
+        episode: Episode,
+        *,
+        duplicate_policy: EpisodeDuplicatePolicy = EpisodeDuplicatePolicy.UNEXPECTED,
+    ) -> EpisodeStoreOutcome:
+        self.attempted.append(episode)
+        return await super().store(episode, duplicate_policy=duplicate_policy)
 
 
 class _RecordingEpisodic:
@@ -158,9 +178,8 @@ async def test_same_reflection_with_changed_attribution_conflicts_without_overwr
 
     from probos.cognitive.dreaming import DreamingEngine
     from probos.cognitive.episodic import compute_episode_hash
-    from probos.cognitive.episodic_mock import MockEpisodicMemory
 
-    memory = MockEpisodicMemory()
+    memory = _AttemptRecordingEpisodicMemory()
     off_engine = DreamingEngine(
         router=MagicMock(), trust_network=MagicMock(), episodic_memory=memory,
         config=DreamingConfig(per_agent_dream_attribution_enabled=False),
@@ -187,10 +206,14 @@ async def test_same_reflection_with_changed_attribution_conflicts_without_overwr
         )
 
     assert created == 0
+    assert len(memory.attempted) == 2
     assert len(memory._episodes) == 1
     existing = memory._episodes[0]
-    incoming = dataclasses.replace(existing, agent_ids=["yeo", "ezri"])
+    incoming = memory.attempted[1]
+    assert existing is memory.attempted[0]
     assert existing.agent_ids == []
+    assert incoming.agent_ids == ["yeo", "ezri"]
+    assert incoming.id == existing.id
     warnings = [
         record.message
         for record in caplog.records
@@ -208,6 +231,6 @@ async def test_same_reflection_with_changed_attribution_conflicts_without_overwr
         compute_episode_hash(incoming)[:12],
         compute_episode_hash(existing)[:12],
     )
-    assert "existing write remains authoritative" in warning
+    assert "existing write remains authoritative (write-once)" in warning
     assert existing.user_input not in warning
     assert existing.reflection not in warning
