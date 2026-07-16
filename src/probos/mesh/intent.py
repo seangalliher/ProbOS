@@ -278,6 +278,10 @@ class IntentBus:
             len(self._agent_queues),
         )
 
+    def _remove_intent_index_memberships(self, agent_id: str) -> None:
+        for agent_ids in self._intent_index.values():
+            agent_ids.discard(agent_id)
+
     def subscribe(
         self,
         agent_id: str,
@@ -296,6 +300,7 @@ class IntentBus:
             raise TypeError("latency_class must be a HandlerLatencyClass")
         self._subscribers[agent_id] = handler
         self._subscriber_latency_classes[agent_id] = latency_class
+        self._remove_intent_index_memberships(agent_id)
         if intent_names:
             for name in intent_names:
                 if name not in self._intent_index:
@@ -512,8 +517,7 @@ class IntentBus:
         self._subscribers.pop(agent_id, None)
         self._subscriber_latency_classes.pop(agent_id, None)
         self.unregister_queue(agent_id)  # AD-654b: clean up cognitive queue
-        for agent_set in self._intent_index.values():
-            agent_set.discard(agent_id)
+        self._remove_intent_index_memberships(agent_id)
         # AD-637z: Clean up NATS subscription via NATSBus lifecycle management
         if self._nats_bus:
             subject = f"intent.{agent_id}"

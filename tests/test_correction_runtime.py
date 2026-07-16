@@ -16,10 +16,17 @@ from probos.cognitive.self_mod import SelfModificationPipeline
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.consensus.trust import TrustNetwork
 from probos.mesh.capability import CapabilityRegistry
+from probos.mesh.intent import IntentBus
 from probos.mesh.routing import HebbianRouter
+from probos.mesh.signal import SignalManager
 from probos.substrate.event_log import EventLog
 from probos.substrate.registry import AgentRegistry
-from probos.types import HandlerLatencyClass
+from probos.types import (
+    HandlerLatencyClass,
+    IntentDescriptor,
+    IntentMessage,
+    IntentResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -148,26 +155,77 @@ class TestFindDesignedRecord:
 
 class TestHotReplacementLatencyMetadata:
     @pytest.mark.asyncio
-    async def test_patched_cognitive_agent_resubscribes_as_cognitive(self):
+    async def test_patched_cognitive_agent_replaces_changed_intent_membership(self):
         from probos.self_mod_manager import SelfModManager
+
+        patched_calls: list[str] = []
 
         class _PatchedAgent(CognitiveAgent):
             instructions = "patched"
-            intent_descriptors = []
+            intent_descriptors = [
+                IntentDescriptor(name="new.intent", description="new descriptor")
+            ]
+
+            async def handle_intent(
+                self,
+                intent: IntentMessage,
+            ) -> IntentResult | None:
+                patched_calls.append(intent.intent)
+                return IntentResult(
+                    intent_id=intent.id,
+                    agent_id="patched-handler",
+                    success=True,
+                )
 
         class _OldAgent:
             id = "designed-agent-full-id"
+            intent_descriptors = [
+                IntentDescriptor(name="old.intent", description="old descriptor")
+            ]
 
         class _Pool:
             healthy_agents = [_OldAgent()]
 
+        class _Spawner:
+            def __init__(self) -> None:
+                self._templates: dict[str, type] = {}
+
+        class _RecordingRegistry:
+            def __init__(self) -> None:
+                self.registered: list[object] = []
+
+            def register(self, agent: object) -> None:
+                self.registered.append(agent)
+
+        class _RecordingCapabilityRegistry:
+            def __init__(self) -> None:
+                self.registrations: list[tuple[str, list[object]]] = []
+
+            def register(self, agent_id: str, capabilities: list[object]) -> None:
+                self.registrations.append((agent_id, capabilities))
+
+        async def old_handler(intent: IntentMessage) -> IntentResult:
+            return IntentResult(
+                intent_id=intent.id,
+                agent_id="old-handler",
+                success=True,
+            )
+
+        bus = IntentBus(SignalManager())
+        bus.subscribe(
+            "designed-agent-full-id",
+            old_handler,
+            ["old.intent"],
+            latency_class=HandlerLatencyClass.COGNITIVE,
+        )
+        registry = _RecordingRegistry()
+
         manager = SelfModManager.__new__(SelfModManager)
-        manager._spawner = MagicMock()
-        manager._spawner._templates = {}
+        manager._spawner = _Spawner()
         manager._pools = {"designed_fetch_news": _Pool()}
-        manager._registry = MagicMock()
-        manager._intent_bus = MagicMock()
-        manager._capability_registry = MagicMock()
+        manager._registry = registry
+        manager._intent_bus = bus
+        manager._capability_registry = _RecordingCapabilityRegistry()
         manager._llm_client = None
 
         await manager._apply_agent_correction(
@@ -176,9 +234,27 @@ class TestHotReplacementLatencyMetadata:
             _FakeRecord(agent_type="fetch_news"),
         )
 
-        assert manager._intent_bus.subscribe.call_args.kwargs["latency_class"] == (
-            HandlerLatencyClass.COGNITIVE
+        old_results = await bus.broadcast(
+            IntentMessage(intent="old.intent"), federated=False
         )
+        new_results = await bus.broadcast(
+            IntentMessage(intent="new.intent"), federated=False
+        )
+
+        assert old_results == []
+        assert [result.agent_id for result in new_results] == ["patched-handler"]
+        assert patched_calls == ["new.intent"]
+        assert bus.get_subscriber_map() == {
+            "old.intent": [],
+            "new.intent": ["designed-agent-full-id"],
+        }
+        assert bus._subscribers["designed-agent-full-id"] is not old_handler
+        assert (
+            bus._subscriber_latency_classes["designed-agent-full-id"]
+            == HandlerLatencyClass.COGNITIVE
+        )
+        assert len(registry.registered) == 1
+        assert isinstance(registry.registered[0], _PatchedAgent)
 
 
 # ---------------------------------------------------------------------------

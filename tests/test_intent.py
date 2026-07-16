@@ -35,6 +35,29 @@ def _install_clock(monkeypatch, *ticks: float) -> _MonotonicClock:
     return clock
 
 
+class _RecordingNATSBus:
+    def __init__(self, *, connected: bool = True) -> None:
+        self.connected = connected
+        self.subscribe_calls: list[str] = []
+        self.remove_calls: list[str] = []
+        self.delete_calls: list[tuple[str, str]] = []
+        self.prefix_callback: object | None = None
+
+    def register_on_prefix_change(self, callback: object) -> None:
+        self.prefix_callback = callback
+
+    async def subscribe(self, subject: str, callback: object) -> object:
+        self.subscribe_calls.append(subject)
+        return object()
+
+    async def remove_tracked_subscription(self, subject: str) -> bool:
+        self.remove_calls.append(subject)
+        return True
+
+    async def delete_consumer(self, stream: str, durable: str) -> None:
+        self.delete_calls.append((stream, durable))
+
+
 @pytest.fixture
 def signal_manager():
     return SignalManager()
@@ -198,11 +221,13 @@ class TestIntentBus:
         intent_bus.subscribe(
             "agent",
             old_handler,
+            ["old.intent"],
             latency_class=HandlerLatencyClass.COGNITIVE,
         )
         intent_bus.subscribe(
             "agent",
             new_handler,
+            ["new.intent"],
             latency_class=HandlerLatencyClass.NETWORK,
         )
 
@@ -211,6 +236,381 @@ class TestIntentBus:
             intent_bus._subscriber_latency_classes["agent"]
             == HandlerLatencyClass.NETWORK
         )
+        assert intent_bus.get_subscriber_map() == {
+            "old.intent": [],
+            "new.intent": ["agent"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_resubscribe_replaces_disjoint_intent_membership(self, intent_bus):
+        calls: list[str] = []
+
+        async def old_handler(intent: IntentMessage) -> IntentResult:
+            return IntentResult(intent_id=intent.id, agent_id="same", success=True)
+
+        async def new_handler(intent: IntentMessage) -> IntentResult:
+            calls.append(intent.intent)
+            return IntentResult(intent_id=intent.id, agent_id="same", success=True)
+
+        intent_bus.subscribe("same", old_handler, ["old.intent"])
+        intent_bus.subscribe("same", new_handler, ["new.intent"])
+
+        old_results = await intent_bus.broadcast(
+            IntentMessage(intent="old.intent"), federated=False
+        )
+        new_results = await intent_bus.broadcast(
+            IntentMessage(intent="new.intent"), federated=False
+        )
+
+        assert old_results == []
+        assert [result.agent_id for result in new_results] == ["same"]
+        assert calls == ["new.intent"]
+        assert intent_bus.get_subscriber_map() == {
+            "old.intent": [],
+            "new.intent": ["same"],
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("old_intents", "new_intents", "expected_map"),
+        [
+            pytest.param(
+                ["a.intent", "b.intent"],
+                ["a.intent"],
+                {"a.intent": ["same"], "b.intent": []},
+                id="subset",
+            ),
+            pytest.param(
+                ["a.intent"],
+                ["a.intent", "b.intent"],
+                {"a.intent": ["same"], "b.intent": ["same"]},
+                id="superset",
+            ),
+            pytest.param(
+                ["a.intent", "b.intent"],
+                ["b.intent", "c.intent"],
+                {
+                    "a.intent": [],
+                    "b.intent": ["same"],
+                    "c.intent": ["same"],
+                },
+                id="overlap",
+            ),
+            pytest.param(
+                ["a.intent", "b.intent"],
+                ["a.intent", "b.intent"],
+                {"a.intent": ["same"], "b.intent": ["same"]},
+                id="repeated-identical",
+            ),
+            pytest.param(
+                ["old.intent"],
+                ["duplicate.intent", "duplicate.intent"],
+                {"old.intent": [], "duplicate.intent": ["same"]},
+                id="duplicate-names",
+            ),
+        ],
+    )
+    async def test_resubscribe_membership_matrix_is_exact(
+        self,
+        intent_bus,
+        old_intents,
+        new_intents,
+        expected_map,
+    ):
+        calls: list[str] = []
+
+        async def old_handler(intent: IntentMessage) -> IntentResult:
+            return IntentResult(intent_id=intent.id, agent_id="old", success=True)
+
+        async def new_handler(intent: IntentMessage) -> IntentResult:
+            calls.append(intent.intent)
+            return IntentResult(intent_id=intent.id, agent_id="same", success=True)
+
+        intent_bus.subscribe("same", old_handler, old_intents)
+        intent_bus.subscribe("same", new_handler, new_intents)
+
+        assert intent_bus.get_subscriber_map() == expected_map
+
+        removed_intents = list(dict.fromkeys(old_intents))
+        for intent_name in new_intents:
+            if intent_name in removed_intents:
+                removed_intents.remove(intent_name)
+        for intent_name in removed_intents:
+            results = await intent_bus.broadcast(
+                IntentMessage(intent=intent_name), federated=False
+            )
+            assert results == []
+
+        expected_calls = list(dict.fromkeys(new_intents))
+        for intent_name in expected_calls:
+            results = await intent_bus.broadcast(
+                IntentMessage(intent=intent_name), federated=False
+            )
+            assert [result.agent_id for result in results] == ["same"]
+
+        assert calls == expected_calls
+
+    @pytest.mark.asyncio
+    async def test_resubscribe_preserves_other_agent_shared_membership(self, intent_bus):
+        calls: list[tuple[str, str]] = []
+
+        def make_handler(agent_id: str):
+            async def handler(intent: IntentMessage) -> IntentResult:
+                calls.append((agent_id, intent.intent))
+                return IntentResult(
+                    intent_id=intent.id,
+                    agent_id=agent_id,
+                    success=True,
+                )
+
+            return handler
+
+        intent_bus.subscribe("same", make_handler("same-old"), ["shared.intent"])
+        intent_bus.subscribe("other", make_handler("other"), ["shared.intent"])
+        intent_bus.subscribe("same", make_handler("same-new"), ["new.intent"])
+
+        shared_results = await intent_bus.broadcast(
+            IntentMessage(intent="shared.intent"), federated=False
+        )
+        new_results = await intent_bus.broadcast(
+            IntentMessage(intent="new.intent"), federated=False
+        )
+
+        assert intent_bus.get_subscriber_map() == {
+            "shared.intent": ["other"],
+            "new.intent": ["same"],
+        }
+        assert [result.agent_id for result in shared_results] == ["other"]
+        assert [result.agent_id for result in new_results] == ["same-new"]
+        assert calls == [("other", "shared.intent"), ("same-new", "new.intent")]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "replacement_intents",
+        [pytest.param(None, id="none"), pytest.param([], id="empty")],
+    )
+    async def test_resubscribe_indexed_to_empty_becomes_fallback(
+        self,
+        intent_bus,
+        replacement_intents,
+    ):
+        calls: list[str] = []
+
+        async def old_handler(intent: IntentMessage) -> IntentResult:
+            return IntentResult(intent_id=intent.id, agent_id="same", success=True)
+
+        async def new_handler(intent: IntentMessage) -> IntentResult:
+            calls.append(intent.intent)
+            return IntentResult(intent_id=intent.id, agent_id="same", success=True)
+
+        intent_bus.subscribe("same", old_handler, ["old.intent"])
+        intent_bus.subscribe("same", new_handler, replacement_intents)
+
+        assert intent_bus.get_subscriber_map() == {
+            "old.intent": [],
+            "__fallback__": ["same"],
+        }
+
+        known_results = await intent_bus.broadcast(
+            IntentMessage(intent="old.intent"), federated=False
+        )
+        unknown_results = await intent_bus.broadcast(
+            IntentMessage(intent="never.indexed"), federated=False
+        )
+
+        assert [result.agent_id for result in known_results] == ["same"]
+        assert [result.agent_id for result in unknown_results] == ["same"]
+        assert calls == ["old.intent", "never.indexed"]
+
+    @pytest.mark.asyncio
+    async def test_resubscribe_fallback_to_indexed_removes_fallback_status(
+        self,
+        intent_bus,
+    ):
+        calls: list[tuple[str, str]] = []
+
+        def make_handler(agent_id: str):
+            async def handler(intent: IntentMessage) -> IntentResult:
+                calls.append((agent_id, intent.intent))
+                return IntentResult(
+                    intent_id=intent.id,
+                    agent_id=agent_id,
+                    success=True,
+                )
+
+            return handler
+
+        intent_bus.subscribe("same", make_handler("same-old"))
+        intent_bus.subscribe("other", make_handler("other"), ["other.intent"])
+        intent_bus.subscribe("same", make_handler("same-new"), ["new.intent"])
+
+        other_results = await intent_bus.broadcast(
+            IntentMessage(intent="other.intent"), federated=False
+        )
+        new_results = await intent_bus.broadcast(
+            IntentMessage(intent="new.intent"), federated=False
+        )
+        unknown_results = await intent_bus.broadcast(
+            IntentMessage(intent="never.indexed"), federated=False
+        )
+
+        assert "__fallback__" not in intent_bus.get_subscriber_map()
+        assert [result.agent_id for result in other_results] == ["other"]
+        assert [result.agent_id for result in new_results] == ["same-new"]
+        assert {result.agent_id for result in unknown_results} == {
+            "same-new",
+            "other",
+        }
+        assert calls == [
+            ("other", "other.intent"),
+            ("same-new", "new.intent"),
+            ("same-new", "never.indexed"),
+            ("other", "never.indexed"),
+        ]
+
+    def test_resubscribe_truthy_empty_name_retains_existing_key_behavior(
+        self,
+        intent_bus,
+    ):
+        async def handler(intent: IntentMessage) -> IntentResult | None:
+            return None
+
+        intent_bus.subscribe("same", handler, [""])
+        intent_bus.subscribe("same", handler, ["", ""])
+
+        assert intent_bus.get_subscriber_map() == {"": ["same"]}
+
+    def test_remove_intent_index_memberships_unknown_and_empty_id_is_idempotent(
+        self,
+        intent_bus,
+    ):
+        intent_bus._intent_index = {
+            "known.intent": {"agent"},
+            "empty.intent": set(),
+            "empty-id.intent": {""},
+        }
+
+        intent_bus._remove_intent_index_memberships("unknown")
+        intent_bus._remove_intent_index_memberships("")
+        intent_bus._remove_intent_index_memberships("")
+
+        assert intent_bus._intent_index == {
+            "known.intent": {"agent"},
+            "empty.intent": set(),
+            "empty-id.intent": set(),
+        }
+
+    def test_invalid_latency_class_preserves_complete_existing_subscription(
+        self,
+        intent_bus,
+    ):
+        async def old_handler(intent: IntentMessage) -> IntentResult | None:
+            return None
+
+        async def new_handler(intent: IntentMessage) -> IntentResult | None:
+            return None
+
+        queue = object()
+        intent_bus.subscribe(
+            "same",
+            old_handler,
+            ["old.intent", "shared.intent"],
+            latency_class=HandlerLatencyClass.COGNITIVE,
+        )
+        intent_bus.register_queue("same", queue)
+        nats = _RecordingNATSBus()
+        intent_bus.set_nats_bus(nats)
+        index_before = {
+            intent_name: set(agent_ids)
+            for intent_name, agent_ids in intent_bus._intent_index.items()
+        }
+        tasks_before = set(intent_bus._pending_sub_tasks)
+
+        with pytest.raises(TypeError, match="HandlerLatencyClass"):
+            intent_bus.subscribe(
+                "same",
+                new_handler,
+                ["new.intent"],
+                latency_class="network",  # type: ignore[arg-type]
+            )
+
+        assert intent_bus._subscribers["same"] is old_handler
+        assert (
+            intent_bus._subscriber_latency_classes["same"]
+            == HandlerLatencyClass.COGNITIVE
+        )
+        assert intent_bus._intent_index == index_before
+        assert intent_bus._get_agent_queue("same") is queue
+        assert intent_bus._pending_sub_tasks == tasks_before
+        assert nats.subscribe_calls == []
+        assert nats.remove_calls == []
+        assert nats.delete_calls == []
+
+    @pytest.mark.asyncio
+    async def test_resubscribe_preserves_queue_and_avoids_transport_teardown(
+        self,
+        intent_bus,
+        monkeypatch,
+    ):
+        async def old_handler(intent: IntentMessage) -> IntentResult | None:
+            return None
+
+        async def new_handler(intent: IntentMessage) -> IntentResult | None:
+            return None
+
+        queue = object()
+        intent_bus.subscribe("same", old_handler, ["old.intent"])
+        intent_bus.register_queue("same", queue)
+        unregister_calls: list[str] = []
+        original_unregister = intent_bus.unregister_queue
+
+        def recording_unregister(agent_id: str) -> None:
+            unregister_calls.append(agent_id)
+            original_unregister(agent_id)
+
+        monkeypatch.setattr(intent_bus, "unregister_queue", recording_unregister)
+        nats = _RecordingNATSBus()
+        intent_bus.set_nats_bus(nats)
+
+        intent_bus.subscribe("same", new_handler, ["new.intent"])
+        tasks = tuple(intent_bus._pending_sub_tasks)
+        if tasks:
+            await asyncio.gather(*tasks)
+
+        assert intent_bus._get_agent_queue("same") is queue
+        assert unregister_calls == []
+        assert nats.subscribe_calls == ["intent.same"]
+        assert nats.remove_calls == []
+        assert nats.delete_calls == []
+
+    @pytest.mark.asyncio
+    async def test_targeted_send_and_broadcast_reach_current_replacement(
+        self,
+        intent_bus,
+    ):
+        calls: list[str] = []
+
+        async def old_handler(intent: IntentMessage) -> IntentResult:
+            return IntentResult(intent_id=intent.id, agent_id="old", success=True)
+
+        async def new_handler(intent: IntentMessage) -> IntentResult:
+            calls.append(intent.intent)
+            return IntentResult(intent_id=intent.id, agent_id="same", success=True)
+
+        intent_bus.subscribe("same", old_handler, ["old.intent"])
+        intent_bus.subscribe("same", new_handler, ["new.intent"])
+
+        send_result = await intent_bus.send(
+            IntentMessage(intent="old.intent", target_agent_id="same")
+        )
+        broadcast_results = await intent_bus.broadcast(
+            IntentMessage(intent="old.intent", target_agent_id="same")
+        )
+
+        assert send_result is not None
+        assert send_result.agent_id == "same"
+        assert [result.agent_id for result in broadcast_results] == ["same"]
+        assert calls == ["old.intent", "old.intent"]
 
     def test_unsubscribe_removes_handler_class_queue_and_index(self, intent_bus):
         async def handler(intent: IntentMessage) -> IntentResult | None:
@@ -220,17 +620,22 @@ class TestIntentBus:
         intent_bus.subscribe(
             "agent",
             handler,
-            ["test"],
+            ["first.intent", "second.intent"],
             latency_class=HandlerLatencyClass.COGNITIVE,
         )
         intent_bus.register_queue("agent", queue)
 
         intent_bus.unsubscribe("agent")
+        intent_bus.unsubscribe("agent")
+        intent_bus.unsubscribe("unknown")
 
         assert "agent" not in intent_bus._subscribers
         assert "agent" not in intent_bus._subscriber_latency_classes
         assert intent_bus._get_agent_queue("agent") is None
-        assert "agent" not in intent_bus._intent_index["test"]
+        assert intent_bus.get_subscriber_map() == {
+            "first.intent": [],
+            "second.intent": [],
+        }
 
     @pytest.mark.asyncio
     async def test_direct_subscriber_injection_defaults_deterministic(self, intent_bus):
@@ -266,25 +671,25 @@ class TestIntentBus:
         intent_bus.subscribe(
             "agent",
             old_handler,
-            ["test"],
+            ["old.intent"],
             latency_class=HandlerLatencyClass.COGNITIVE,
         )
         first = asyncio.create_task(
-            intent_bus.broadcast(IntentMessage(intent="test"), federated=False)
+            intent_bus.broadcast(IntentMessage(intent="old.intent"), federated=False)
         )
         await started.wait()
         intent_bus.subscribe(
             "agent",
             new_handler,
-            ["test"],
+            ["new.intent"],
             latency_class=HandlerLatencyClass.DETERMINISTIC,
         )
         release.set()
-        await first
+        first_results = await first
 
         old_key = (
             "agent",
-            "test",
+            "old.intent",
             HandlerLatencyClass.COGNITIVE.value,
         )
         first_rows = {
@@ -292,15 +697,28 @@ class TestIntentBus:
             for row in intent_bus.get_metrics()["handlers"]
         }
         assert calls == ["old"]
+        assert [result.agent_id for result in first_results] == ["agent"]
         assert set(first_rows) == {old_key}
         assert first_rows[old_key]["responded_count"] == 1
 
-        await intent_bus.broadcast(IntentMessage(intent="test"), federated=False)
+        later_old_results = await intent_bus.broadcast(
+            IntentMessage(intent="old.intent"), federated=False
+        )
+        after_old_rows = intent_bus.get_metrics()["handlers"]
 
+        assert later_old_results == []
+        assert calls == ["old"]
+        assert after_old_rows == list(first_rows.values())
+
+        new_results = await intent_bus.broadcast(
+            IntentMessage(intent="new.intent"), federated=False
+        )
+
+        assert [result.agent_id for result in new_results] == ["agent"]
         assert calls == ["old", "new"]
         new_key = (
             "agent",
-            "test",
+            "new.intent",
             HandlerLatencyClass.DETERMINISTIC.value,
         )
         final_rows = {
