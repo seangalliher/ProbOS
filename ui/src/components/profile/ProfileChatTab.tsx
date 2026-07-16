@@ -383,6 +383,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // AD-949 call-scoped audio flag (default ON, session-scoped). AD-985 gates
   // the meeting open-mic on it (consistent with useMeetingVoice).
   const callAudioEnabled = useStore((s) => s.callAudioEnabled);
+  const setCallAudioEnabled = useStore((s) => s.setCallAudioEnabled);
   const screenActive = useScreenStore((s) => s.active);
   // Per-agent TTS toggle: defaults to global setting; persisted in localStorage.
   const ttsKey = `hxi_chat_tts_${agentId}`;
@@ -390,7 +391,36 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     const stored = localStorage.getItem(ttsKey);
     return stored === null ? globalVoiceEnabled : stored === '1';
   });
+  // BF-671: async speech completions read the current ordinary-chat preference
+  // from this ref. The ordinary composer click updates it synchronously before
+  // React commits, so a reply resolving in the same turn cannot see stale TTS.
+  const ttsEnabledRef = useRef(ttsEnabled);
+  const ttsKeyRef = useRef(ttsKey);
+  const skipTtsPersistRef = useRef(false);
   useEffect(() => {
+    ttsEnabledRef.current = ttsEnabled;
+  }, [ttsEnabled]);
+  useEffect(() => {
+    // AgentProfilePanel can preserve this component while changing agentId.
+    // Hydrate the new agent's independent preference and return before writing,
+    // so the prior agent's state is never copied into the new agent's key.
+    if (ttsKeyRef.current !== ttsKey) {
+      ttsKeyRef.current = ttsKey;
+      const stored = localStorage.getItem(ttsKey);
+      const next = stored === null ? useStore.getState().voiceEnabled : stored === '1';
+      ttsEnabledRef.current = next;
+      if (next !== ttsEnabled) {
+        // Select the target agent's existing preference without copying the
+        // previous agent's state or materializing a missing fallback key.
+        skipTtsPersistRef.current = true;
+        setTtsEnabled(next);
+      }
+      return;
+    }
+    if (skipTtsPersistRef.current) {
+      skipTtsPersistRef.current = false;
+      return;
+    }
     localStorage.setItem(ttsKey, ttsEnabled ? '1' : '0');
   }, [ttsEnabled, ttsKey]);
   const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null);
@@ -565,6 +595,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const activeThreadId = useStore((s) =>
     resolveProfileThreadId(threadId, s.activeProfileThreadId, s.threadIdByAgent, agentId),
   );
+  const outputPolicyAgentIdRef = useRef(agentId);
+  const outputPolicyThreadIdRef = useRef(threadId);
+  outputPolicyAgentIdRef.current = agentId;
+  outputPolicyThreadIdRef.current = threadId;
 
   // AD-938: the displayed transcript. In a thread context (group or warm 1:1)
   // render the thread's real messages (loaded on open below); with no thread (a
@@ -584,6 +618,45 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const meetingActive = useStore((s) =>
     !!(activeThreadId && (s.chatThreads.get(activeThreadId)?.metadata as Record<string, unknown> | undefined)?.meeting_active),
   );
+  // BF-671: one live output policy for every 1:1 speech producer. Agent and
+  // thread identify the output being decided, not whichever profile happens
+  // to be mounted after an async boundary. Only the mounted agent may use the
+  // immediate-click TTS ref; a different target gets a read-only key lookup.
+  const isOutputAudioEnabledNow = useCallback((
+    targetAgentId: string,
+    targetThreadId?: string,
+  ): boolean => {
+    const state = useStore.getState();
+    const mountedAgentId = outputPolicyAgentIdRef.current;
+    const resolvedThreadId = targetThreadId ?? (
+      targetAgentId === mountedAgentId
+        ? resolveProfileThreadId(
+            outputPolicyThreadIdRef.current,
+            state.activeProfileThreadId,
+            state.threadIdByAgent,
+            targetAgentId,
+          )
+        : state.threadIdByAgent.get(targetAgentId)
+    );
+    const liveMeetingActive = !!(
+      resolvedThreadId
+      && (state.chatThreads.get(resolvedThreadId)?.metadata as Record<string, unknown> | undefined)?.meeting_active
+    );
+    if (liveMeetingActive) return state.callAudioEnabled;
+    if (targetAgentId === mountedAgentId) return ttsEnabledRef.current;
+    const stored = localStorage.getItem(`hxi_chat_tts_${targetAgentId}`);
+    return stored === null ? state.voiceEnabled : stored === '1';
+  }, []);
+  const outputAudioEnabled = meetingActive ? callAudioEnabled : ttsEnabled;
+  const toggleOutputAudio = useCallback((): void => {
+    if (meetingActive) {
+      setCallAudioEnabled(!callAudioEnabled);
+      return;
+    }
+    const next = !ttsEnabled;
+    ttsEnabledRef.current = next;
+    setTtsEnabled(next);
+  }, [callAudioEnabled, meetingActive, setCallAudioEnabled, ttsEnabled]);
   // AD-929: workspace-room gate for the right-hand Files rail. Pure function
   // over store data (task_id set OR >=2 crew participants) — no fetch. A 1:1
   // DM shows no rail.
@@ -591,7 +664,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const agentsMap = useStore((s) => s.agents);
   const showWorkspaceFiles = !!activeThreadId && isWorkspaceRoom(workspaceThread, agentsMap);
   // AD-921: sequenced meeting voice. speakReplies self-gates on
-  // meetingActive && voiceEnabled; speakingAgentId is the AD-923 seam and the
+  // meetingActive && callAudioEnabled; speakingAgentId is the AD-923 seam and the
   // AD-922 echo gate (the meeting mic refuses to arm while it is non-null).
   // AD-972: pass the room's crew participant ids so their voice profiles are
   // prewarmed when the meeting opens — the first reply then speaks without a
@@ -626,10 +699,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const greetTokenRef = useRef(0);
   const triggerCallGreeting = useCallback(async (tid: string) => {
     if (!tid || greetedThreadsRef.current.has(tid)) return;
+    const requestAgentId = agentId;
     greetedThreadsRef.current.add(tid);
     const token = greetTokenRef.current;
     try {
-      const res = await fetch(`/api/agent/${agentId}/chat`, {
+      const res = await fetch(`/api/agent/${requestAgentId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: CALL_OPEN_TRIGGER, system_trigger: true, thread_id: tid }),
@@ -643,21 +717,21 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       // Honest-degrade: an empty/error/system reply means the call just opens
       // quietly rather than emitting a placeholder.
       if (!reply || reply.startsWith('(') || data?.system === true) return;
-      useStore.getState().addAgentMessage(agentId, 'agent', reply);
+      useStore.getState().addAgentMessage(requestAgentId, 'agent', reply);
       useStore.getState().appendThreadMessage(tid, {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         role: 'agent',
         text: reply,
         timestamp: Date.now() / 1000,
-        authorId: agentId,
+        authorId: requestAgentId,
       });
-      if (ttsEnabled) {
-        speakResponse(stripMarkdownForSpeech(reply), voiceProfile ?? undefined, agentId);
+      if (isOutputAudioEnabledNow(requestAgentId, tid)) {
+        speakResponse(stripMarkdownForSpeech(reply), voiceProfile ?? undefined, requestAgentId);
       }
     } catch {
       // Honest-degrade: a failed greeting just means the call opens quietly.
     }
-  }, [agentId, ttsEnabled, voiceProfile]);
+  }, [agentId, isOutputAudioEnabledNow, voiceProfile]);
   const handleStartCall = useCallback(async (video: boolean) => {
     if (callBusy) return;
     setCallBusy(true);
@@ -898,6 +972,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // transcript at call-time and bypass the stale-closure race.
   // ``input`` is intentionally NOT in the deps array — it is not read here.
   const sendText = useCallback(async (textArg: string) => {
+    const requestAgentId = agentId;
     const text = textArg.trim();
     if ((!text && pendingAttachments.length === 0) || sending) return;
     setInput('');
@@ -907,7 +982,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     greetTokenRef.current += 1;
 
     // AD-430b: Capture conversation history BEFORE adding current message
-    const conv = useStore.getState().agentConversations.get(agentId);
+    const conv = useStore.getState().agentConversations.get(requestAgentId);
     const history = (conv?.messages || [])
         .slice(-20)  // Last 20 messages (10 exchanges)
         .map(m => ({
@@ -926,7 +1001,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     const displayText = (text || '(attachment)') + attachmentSummary;
 
     // Add user message immediately (after capturing history)
-    useStore.getState().addAgentMessage(agentId, 'user', displayText);
+    useStore.getState().addAgentMessage(requestAgentId, 'user', displayText);
     // AD-938: in a thread context, mirror the optimistic Captain message into
     // the thread-keyed transcript (the displayed source). The per-agent buffer
     // append above stays for the no-thread cold-1:1 path + cross-session seed.
@@ -950,7 +1025,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     // so a group opened via the override routes the send to the group, not the
     // host's 1:1 (the override no longer lives in threadIdByAgent).
     const _groupState = useStore.getState();
-    const groupThreadId = resolveProfileThreadId(threadId, _groupState.activeProfileThreadId, _groupState.threadIdByAgent, agentId);
+    const groupThreadId = resolveProfileThreadId(
+      threadId,
+      _groupState.activeProfileThreadId,
+      _groupState.threadIdByAgent,
+      requestAgentId,
+    );
     if (groupThreadId) {
       const _thread = useStore.getState().chatThreads.get(groupThreadId);
       const _agents = useStore.getState().agents;
@@ -1014,7 +1094,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             const callsign = typeof r?.callsign === 'string' ? r.callsign : undefined;
             // AD-936: thread the real author's agent_id + callsign onto the
             // message so the bubble shows a per-author avatar + name label.
-            useStore.getState().addAgentMessage(agentId, 'agent', replyText, { authorId, callsign });
+            useStore.getState().addAgentMessage(requestAgentId, 'agent', replyText, { authorId, callsign });
             // AD-938: mirror each fan-out reply into the thread transcript with
             // its author identity (avatar + name label); no 'callsign:' text
             // prefix — the AD-936 ChatMessageRow header shows the author.
@@ -1084,7 +1164,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           // AD-962: clear the thinking/typing indicator on the error path so it
           // never sticks after a failed send.
           useStore.getState().setTypingAgent(null);
-          useStore.getState().addAgentMessage(agentId, 'agent', '(communication error)');
+          useStore.getState().addAgentMessage(requestAgentId, 'agent', '(communication error)');
         } finally {
           setSending(false);
         }
@@ -1103,25 +1183,33 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       // AD-937: include the group override in the precedence (prop > override
       // > per-agent 1:1) so a send while viewing a group routes correctly.
       const _knownState = useStore.getState();
-      const knownThreadId = resolveProfileThreadId(threadId, _knownState.activeProfileThreadId, _knownState.threadIdByAgent, agentId);
+      const knownThreadId = resolveProfileThreadId(
+        threadId,
+        _knownState.activeProfileThreadId,
+        _knownState.threadIdByAgent,
+        requestAgentId,
+      );
       const requestBody: Record<string, unknown> = {
         message: text || '(attachment)',
         history: fullHistory,
         attachment_ids: attachmentIds,
       };
       if (knownThreadId) requestBody.thread_id = knownThreadId;
-      const res = await fetch(`/api/agent/${agentId}/chat`, {
+      const res = await fetch(`/api/agent/${requestAgentId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
       });
       const data = await res.json();
+      const responseThreadId = typeof data?.thread_id === 'string' && data.thread_id.length > 0
+        ? data.thread_id
+        : knownThreadId;
       // AD-791a: capture the server-assigned thread_id (whether it's the
       // implicit default created on first turn or the same one echoed
       // back on subsequent turns). Tolerate missing field so older
       // backends keep working.
       if (typeof data?.thread_id === 'string' && data.thread_id.length > 0) {
-        useStore.getState().setThreadForAgent(agentId, data.thread_id);
+        useStore.getState().setThreadForAgent(requestAgentId, data.thread_id);
         // AD-794: when the response carries an updated thread title
         // (first-turn auto-name fired) or any other thread fields,
         // hydrate the local chatThreads map so the future sidebar
@@ -1133,7 +1221,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             : {
                 id: data.thread_id,
                 title: data.title,
-                participants: [agentId],
+                participants: [requestAgentId],
                 created_at: Date.now() / 1000,
                 last_active_at: Date.now() / 1000,
               };
@@ -1145,11 +1233,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       // rather than an agent reply, and skip TTS.
       if (data?.system === true) {
         const _sysReply = data.response || '(personality command)';
-        useStore.getState().addAgentMessage(agentId, 'system', _sysReply);
+        useStore.getState().addAgentMessage(requestAgentId, 'system', _sysReply);
         return;
       }
       const reply = data.response || '(no response)';
-      useStore.getState().addAgentMessage(agentId, 'agent', reply);
+      useStore.getState().addAgentMessage(requestAgentId, 'agent', reply);
       // AD-938: mirror the 1:1 reply into the thread transcript (a warm 1:1 with
       // a server thread). authorId=agentId so ChatMessageRow shows the agent's
       // avatar; the callsign falls back to hostCallsign in the row.
@@ -1159,11 +1247,15 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           role: 'agent',
           text: reply,
           timestamp: Date.now() / 1000,
-          authorId: agentId,
+          authorId: requestAgentId,
         });
       }
       // AD-718: TTS playback for agent reply only (skip system error placeholders).
-      if (ttsEnabled && reply && !reply.startsWith('(')) {
+      if (
+        isOutputAudioEnabledNow(requestAgentId, responseThreadId)
+        && reply
+        && !reply.startsWith('(')
+      ) {
         // AD-738e-1: forward parsed emotion (v1 name) so the TTS endpoint
         // applies per-emotion prosody. ``data.emotion`` may be null on
         // older responses or when divergence detection is OFF — pass
@@ -1171,14 +1263,19 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         const _emotion = typeof data?.emotion === 'string' && data.emotion.length > 0
           ? data.emotion
           : undefined;
-        speakResponse(stripMarkdownForSpeech(reply), voiceProfile ?? undefined, agentId, _emotion);
+        speakResponse(
+          stripMarkdownForSpeech(reply),
+          voiceProfile ?? undefined,
+          requestAgentId,
+          _emotion,
+        );
       }
     } catch {
-      useStore.getState().addAgentMessage(agentId, 'agent', '(communication error)');
+      useStore.getState().addAgentMessage(requestAgentId, 'agent', '(communication error)');
     } finally {
       setSending(false);
     }
-  }, [agentId, threadId, sending, seedMemories, ttsEnabled, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId]);
+  }, [agentId, threadId, sending, seedMemories, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId, isOutputAudioEnabledNow]);
 
   // AD-985: keep the send ref current so the meeting open-mic's
   // ``submitTranscript`` routes through the live group-fan-out path.
@@ -1194,6 +1291,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // renders (React-state ``micMode`` trails ``agentId`` by one commit).
   useEffect(() => {
     const mode = loadMicMode(agentId);
+    const armAgentId = agentId;
     if (mode !== 'conversation') {
       disarmConversationMode();
       return;
@@ -1209,10 +1307,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         return;
       }
       console.info(`AD-985: meeting open-mic armed for thread of agent ${agentId}`);
-      armConversationMode({
-        agentId,
+      const disposeConversation = armConversationMode({
+        agentId: armAgentId,
         historyProvider: () => {
-          const conv = useStore.getState().agentConversations.get(agentId);
+          const conv = useStore.getState().agentConversations.get(armAgentId);
           const msgs = conv?.messages ?? [];
           return msgs.slice(-20).map((m) => ({
             role: m.role === 'user' ? 'user' : 'agent',
@@ -1235,22 +1333,21 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           console.info(`AD-985: meeting conversation state: ${state}`);
         },
       });
-      return () => {
-        disarmConversationMode();
-      };
+      return disposeConversation;
     }
 
     // 1:1 path. BF-623: Conversation mode is ITSELF the voice opt-in — arming
     // the hot mic depends ONLY on the mic-mode selection, not on the global
     // Ship's-Computer ``voiceEnabled`` flag (the bug) and not on the per-agent
     // TTS toggle either. The open mic is an INPUT affordance; whether the
-    // agent's reply is SPOKEN is decided per-reply in ``onAgentReply`` (it reads
-    // the live ``hxi_chat_tts_{agentId}`` pref), so the Captain can talk to an
-    // agent and read text replies without enabling any voice output.
+    // agent's reply is SPOKEN is decided per-reply in ``onAgentReply`` through
+    // the BF-671 live output policy (call audio in an active call, per-agent TTS
+    // otherwise), so the Captain can talk to an agent and read text replies
+    // without enabling any voice output.
     const armOpts: ArmOptions = {
-      agentId,
+      agentId: armAgentId,
       historyProvider: () => {
-        const conv = useStore.getState().agentConversations.get(agentId);
+        const conv = useStore.getState().agentConversations.get(armAgentId);
         const msgs = conv?.messages ?? [];
         return msgs.slice(-20).map((m) => ({
           role: m.role === 'user' ? 'user' : 'agent',
@@ -1268,14 +1365,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       onAgentReply: (replyText: string) => {
         // 1. Append to the per-agent conversation so the operator sees it
         // in the DM thread.
-        useStore.getState().addAgentMessage(agentId, 'agent', replyText);
+        useStore.getState().addAgentMessage(armAgentId, 'agent', replyText);
         // 2. Speak it (when TTS is enabled for this agent) and signal
         // controller completion when the TTS 'end' event fires. When TTS
         // is disabled, signal completion immediately so the controller
         // advances to silence_pending and the silence timer can run.
-        const currentTtsEnabled = localStorage.getItem(ttsKey) === '1'
-          || (localStorage.getItem(ttsKey) === null && useStore.getState().voiceEnabled);
-        if (!currentTtsEnabled) {
+        if (!isOutputAudioEnabledNow(armAgentId)) {
           markAgentReplyComplete();
           return;
         }
@@ -1283,21 +1378,19 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         // We listen for the matching 'end' for this agent_id, then unsubscribe.
         const unsub = onSpeechEvent((event) => {
           if (event.type !== 'end') return;
-          if (event.agent_id && event.agent_id !== agentId) return;
+          if (event.agent_id && event.agent_id !== armAgentId) return;
           try { unsub(); } catch { /* Tier-2 */ }
           markAgentReplyComplete();
         });
-        speakResponse(stripMarkdownForSpeech(replyText), voiceProfile ?? undefined, agentId);
+        speakResponse(stripMarkdownForSpeech(replyText), voiceProfile ?? undefined, armAgentId);
       },
       onStateChange: (state) => {
-        console.info(`AD-747/BF-290: conversation state for ${agentId}: ${state}`);
+        console.info(`AD-747/BF-290: conversation state for ${armAgentId}: ${state}`);
       },
     };
-    console.info(`AD-760: mic mode ${mode} armed for agent ${agentId}`);
-    armConversationMode(armOpts);
-    return () => {
-      disarmConversationMode();
-    };
+    console.info(`AD-760: mic mode ${mode} armed for agent ${armAgentId}`);
+    const disposeConversation = armConversationMode(armOpts);
+    return disposeConversation;
   }, [agentId, micMode, meetingActive, callAudioEnabled, voiceProfile, ttsKey]);
 
   // AD-973: the single mic is the composer mic next to Send (the MicIndicator
@@ -1703,36 +1796,40 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             outline: 'none',
           }}
         />
-        {/* Per-agent speaker toggle: independent of the global voice button. */}
+        {/* BF-671: the sole output-audio control. It projects the persisted
+            per-agent preference outside calls and session call audio inside
+            any active 1:1/group call; the two backing states stay independent. */}
         <button
           type="button"
-          onClick={() => setTtsEnabled(v => !v)}
-          title={ttsEnabled ? 'Mute this agent' : 'Speak this agent\'s replies'}
-          aria-label={ttsEnabled ? 'Mute agent voice' : 'Enable agent voice'}
-          aria-pressed={ttsEnabled}
+          data-testid="output-audio-toggle"
+          onClick={toggleOutputAudio}
+          title={outputAudioEnabled ? 'Mute call audio' : 'Unmute call audio'}
+          aria-label={outputAudioEnabled ? 'Mute call audio' : 'Unmute call audio'}
+          aria-pressed={outputAudioEnabled}
           style={{
-            background: ttsEnabled ? 'rgba(240, 176, 96, 0.15)' : 'transparent',
+            background: outputAudioEnabled ? 'rgba(240, 176, 96, 0.15)' : 'transparent',
             border: 'none',
-            color: ttsEnabled ? '#f0b060' : '#8888aa',
+            color: outputAudioEnabled ? '#f0b060' : '#666680',
             cursor: 'pointer',
             padding: '4px',
             borderRadius: 4,
             flexShrink: 0,
-            filter: ttsEnabled
+            filter: outputAudioEnabled
               ? 'drop-shadow(0 0 4px #f0b060)'
-              : 'drop-shadow(0 0 2px rgba(136, 136, 170, 0.3))',
+              : 'drop-shadow(0 0 2px rgba(102, 102, 128, 0.3))',
           }}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
-               stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+               stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+               strokeLinejoin="round" aria-hidden="true">
             <path d="M2 6v4l3 3h1V3H5L2 6z" />
-            {ttsEnabled ? (
+            {outputAudioEnabled ? (
               <>
                 <path d="M9 5.5c.7.7 1 1.5 1 2.5s-.3 1.8-1 2.5" />
                 <path d="M11 3.5c1.2 1.2 2 2.7 2 4.5s-.8 3.3-2 4.5" />
               </>
             ) : (
-              <path d="M14 5l-5 6" />
+              <path d="M9.5 5L14 11M14 5L9.5 11" />
             )}
           </svg>
         </button>

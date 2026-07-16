@@ -19,11 +19,14 @@ const CALL_OPEN_TRIGGER = '(System: call opened — greet the Captain briefly.)'
 // Faithful mirror of ProfileChatTab.triggerCallGreeting + the once/yield guards.
 // If the production function changes, update this mirror (the source-level suite
 // below will fail-loud if the production invariants disappear).
-function makeGreeter() {
+function makeGreeter(
+  isOutputAudioEnabledNow: (agentId: string, threadId: string) => boolean = () => true,
+) {
   const greeted = new Set<string>();
   const tokenRef = { current: 0 };
   const added: Array<{ role: string; text: string }> = [];
   const appended: Array<{ tid: string; text: string }> = [];
+  const spoken: Array<{ tid: string; text: string }> = [];
 
   async function triggerCallGreeting(agentId: string, tid: string) {
     if (!tid || greeted.has(tid)) return;
@@ -44,6 +47,7 @@ function makeGreeter() {
       if (!reply || reply.startsWith('(') || data?.system === true) return;
       added.push({ role: 'agent', text: reply });
       appended.push({ tid, text: reply });
+      if (isOutputAudioEnabledNow(agentId, tid)) spoken.push({ tid, text: reply });
     } catch {
       // Honest-degrade: a failed greeting just means the call opens quietly.
     }
@@ -54,7 +58,7 @@ function makeGreeter() {
   // End call -> allow a fresh greeting next call (handleEndCall mirror).
   function endCall(tid: string) { greeted.delete(tid); }
 
-  return { triggerCallGreeting, captainSpeaks, endCall, added, appended, greeted };
+  return { triggerCallGreeting, captainSpeaks, endCall, added, appended, spoken, greeted };
 }
 
 describe('AD-1062 call-open greeting (mirror)', () => {
@@ -149,6 +153,25 @@ describe('AD-1062 call-open greeting (mirror)', () => {
     await g4.triggerCallGreeting('a1', 't4');
     expect(g4.added).toHaveLength(0);
   });
+
+  it('decides output audio after the deferred response by calling the injected live reader', async () => {
+    let resolveJson: (v: unknown) => void = () => {};
+    const jsonPromise = new Promise((resolve) => { resolveJson = resolve; });
+    let audible = false;
+    const liveReader = vi.fn((agentId: string, threadId: string) => (
+      agentId === 'a1' && threadId === 't1' && audible
+    ));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => jsonPromise }));
+    const g = makeGreeter(liveReader);
+
+    const pending = g.triggerCallGreeting('a1', 't1');
+    audible = true;
+    resolveJson({ response: 'Current state wins.' });
+    await pending;
+
+    expect(liveReader).toHaveBeenCalledWith('a1', 't1');
+    expect(g.spoken).toEqual([{ tid: 't1', text: 'Current state wins.' }]);
+  });
 });
 
 describe('AD-1062 production wiring (source-level)', () => {
@@ -170,6 +193,11 @@ describe('AD-1062 production wiring (source-level)', () => {
 
   it('sendText bumps the yield token so the Captain speaking drops an in-flight greeting', () => {
     expect(profileChatSource).toMatch(/greetTokenRef\.current\s*\+=\s*1/);
+  });
+
+  it('uses the component live output-policy reader at the post-await greeting boundary', () => {
+    expect(profileChatSource).toMatch(/isOutputAudioEnabledNow/);
+    expect(profileChatSource).toMatch(/if \(isOutputAudioEnabledNow\(requestAgentId, tid\)\)/);
   });
 
   it('the call-open trigger has no capability-gap phrasing', () => {

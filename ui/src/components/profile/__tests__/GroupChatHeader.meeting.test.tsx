@@ -4,7 +4,7 @@
 // BF-287 real-fixture style. Covers start/end toggling, aria-pressed
 // reflection, the no-crew hidden path, and the HXI no-emoji guard.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
 import type { Agent } from '../../../store/types';
 
@@ -20,6 +20,7 @@ vi.mock('../../sidebar/threadApi', () => ({
 
 import { setMeetingActive } from '../../sidebar/threadApi';
 import { GroupChatHeader } from '../GroupChatHeader';
+import groupChatHeaderSource from '../GroupChatHeader.tsx?raw';
 
 function mkAgent(p: { id: string; callsign: string; isCrew?: boolean }): Agent {
   return {
@@ -113,10 +114,12 @@ describe('AD-920 GroupChatHeader meeting toggle', () => {
     expect(screen.getByTestId('meeting-toggle').getAttribute('aria-label')).toBe('Start call');
     expect(screen.getByTestId('meeting-toggle').getAttribute('title')).toBe('Start call');
     // Active -> "End call".
-    useStore.getState().setChatThread(
-      mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], metadata: { meeting_active: true } }),
-    );
-    rerender(<GroupChatHeader threadId="t1" />);
+    act(() => {
+      useStore.getState().setChatThread(
+        mkThread({ id: 't1', participants: ['captain', 'a1', 'a2'], metadata: { meeting_active: true } }),
+      );
+      rerender(<GroupChatHeader threadId="t1" />);
+    });
     expect(screen.getByTestId('meeting-toggle').getAttribute('aria-label')).toBe('End call');
   });
 
@@ -156,36 +159,33 @@ describe('AD-920 GroupChatHeader meeting toggle', () => {
   });
 });
 
-describe('AD-949 GroupChatHeader call-audio toggle', () => {
-  it('call-audio toggle hidden when no meeting is active', () => {
-    seed(mkThread({ id: 't1', participants: ['captain', 'a1'] }), [mkAgent({ id: 'a1', callsign: 'Vex' })]);
+describe('BF-671 GroupChatHeader has no output-audio ownership', () => {
+  it('active call retains its header controls but renders no audio control or label', () => {
+    seed(
+      mkThread({
+        id: 't1',
+        title: 'Bridge room',
+        participants: ['captain', 'a1', 'a2'],
+        metadata: { meeting_active: true },
+      }),
+      [mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Bones' })],
+    );
     render(<GroupChatHeader threadId="t1" />);
+
+    expect(screen.getByTestId('group-chat-title').textContent).toBe('Vex, Bones');
+    expect(screen.getByTestId('participant-strip').children).toHaveLength(2);
+    expect(screen.getByTestId('meeting-toggle').getAttribute('aria-label')).toBe('End call');
+    expect(screen.getByTestId('chat-visibility-toggle')).toBeTruthy();
+    expect(screen.getByTestId('add-participant-button')).toBeTruthy();
     expect(screen.queryByTestId('call-audio-toggle')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Mute call audio' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Unmute call audio' })).toBeNull();
   });
 
-  it('call-audio toggle shown and audible (aria-pressed=true) by default in a meeting', () => {
-    seed(
-      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
-      [mkAgent({ id: 'a1', callsign: 'Vex' })],
-    );
-    useStore.setState({ callAudioEnabled: true });
-    render(<GroupChatHeader threadId="t1" />);
-    const btn = screen.getByTestId('call-audio-toggle');
-    expect(btn).toBeTruthy();
-    expect(btn.getAttribute('aria-pressed')).toBe('true');
-  });
-
-  it('clicking the call-audio toggle mutes the call (callAudioEnabled -> false, aria-pressed -> false)', () => {
-    seed(
-      mkThread({ id: 't1', participants: ['captain', 'a1'], metadata: { meeting_active: true } }),
-      [mkAgent({ id: 'a1', callsign: 'Vex' })],
-    );
-    useStore.setState({ callAudioEnabled: true });
-    render(<GroupChatHeader threadId="t1" />);
-    const btn = screen.getByTestId('call-audio-toggle');
-    fireEvent.click(btn);
-    expect(useStore.getState().callAudioEnabled).toBe(false);
-    expect(btn.getAttribute('aria-pressed')).toBe('false');
+  it('source contains no call-audio selector, setter, testid, label, or speaker path', () => {
+    expect(groupChatHeaderSource).not.toMatch(/callAudioEnabled|setCallAudioEnabled|call-audio-toggle/);
+    expect(groupChatHeaderSource).not.toMatch(/Mute call audio|Unmute call audio/);
+    expect(groupChatHeaderSource).not.toContain('M2.5 6 H5 L8.5 3.5 V12.5 L5 10 H2.5 Z');
   });
 });
 

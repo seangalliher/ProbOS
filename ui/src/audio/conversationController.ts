@@ -123,6 +123,30 @@ let _vadUnsub: (() => void) | null = null;
 let _silenceTimer: ReturnType<typeof setTimeout> | null = null;
 let _opts: ArmOptions | null = null;
 let _bargeInDisarm: (() => void) | null = null;
+let _ownershipGeneration = 0;
+
+type ControllerOwner = Readonly<{
+  generation: number;
+  opts: ArmOptions;
+  agentId: string;
+}>;
+
+type PendingAcquisition = Readonly<{
+  generation: number;
+  opts: ArmOptions;
+  agentId: string;
+  invalidatedGeneration: number;
+}>;
+
+type PendingInactiveNotification = Readonly<{
+  epoch: number;
+  invalidatedGeneration: number;
+  opts: ArmOptions;
+}>;
+
+let _pendingAcquisition: PendingAcquisition | null = null;
+let _inactiveNotificationEpoch = 0;
+let _pendingInactiveNotification: PendingInactiveNotification | null = null;
 const _stateListeners: Set<(s: ConversationState) => void> = new Set();
 
 // Approximate frame cadence used to translate ms tuning knobs into
@@ -131,17 +155,27 @@ const _stateListeners: Set<(s: ConversationState) => void> = new Set();
 // ``voiceActivity.FRAME_SAMPLES``.
 const _FRAME_MS = 30;
 
-function _attachBargeInForAgentSpeaking(): void {
-  if (_bargeInDisarm !== null) return;
-  if (_opts?.bargeInEnabled === false) return;
-  const onset = _opts?.bargeInOnsetConfidence ?? 0.80;
-  const offset = _opts?.bargeInOffsetConfidence ?? 0.40;
-  const debounceMs = _opts?.bargeInDebounceMs ?? 250;
-  const releaseMs = _opts?.bargeInReleaseMs ?? 100;
-  const amplitudeFloorDb = _opts?.bargeInAmplitudeFloorDb ?? -45;
-  const cooldownMs = _opts?.bargeInCooldownMs ?? 500;
+function _owns(owner: ControllerOwner): boolean {
+  return (
+    owner.generation === _ownershipGeneration
+    && owner.opts === _opts
+    && owner.agentId === _agentId
+  );
+}
+
+function _attachBargeInForAgentSpeaking(owner: ControllerOwner): boolean {
+  if (!_owns(owner)) return false;
+  if (_bargeInDisarm !== null) return true;
+  if (owner.opts.bargeInEnabled === false) return true;
+  const onset = owner.opts.bargeInOnsetConfidence ?? 0.80;
+  const offset = owner.opts.bargeInOffsetConfidence ?? 0.40;
+  const debounceMs = owner.opts.bargeInDebounceMs ?? 250;
+  const releaseMs = owner.opts.bargeInReleaseMs ?? 100;
+  const amplitudeFloorDb = owner.opts.bargeInAmplitudeFloorDb ?? -45;
+  const cooldownMs = owner.opts.bargeInCooldownMs ?? 500;
   const debounceFrames = Math.max(1, Math.round(debounceMs / _FRAME_MS));
   const releaseFrames = Math.max(1, Math.round(releaseMs / _FRAME_MS));
+  if (!_owns(owner)) return false;
   _bargeInDisarm = _attachBargeInDetector({
     onsetConfidence: onset,
     offsetConfidence: offset,
@@ -153,9 +187,12 @@ function _attachBargeInForAgentSpeaking(): void {
       // SRP: detector fires the user-spoke event; the controller's
       // existing _onVadSpeechStart branch handles state transition +
       // _stopSpeaking + silence-timer cancel.
-      _onVadSpeechStart();
+      _onVadSpeechStart(owner);
     },
   });
+  if (_owns(owner)) return true;
+  _detachBargeIn();
+  return false;
 }
 
 function _detachBargeIn(): void {
@@ -165,26 +202,32 @@ function _detachBargeIn(): void {
   }
 }
 
-function _setState(next: ConversationState): void {
-  if (_state === next) return;
+function _setState(owner: ControllerOwner, next: ConversationState): boolean {
+  if (!_owns(owner)) return false;
+  if (_state === next) return true;
   const prev = _state;
   _state = next;
   // AD-760: attach/detach Schmitt-trigger barge-in detector on
   // agent_speaking entry/exit. Detector subscribes to the PCM tap and
   // delivers Silero score + RMS-derived dBFS via per-frame onFrame.
   if (next === 'agent_speaking') {
-    _attachBargeInForAgentSpeaking();
+    if (!_attachBargeInForAgentSpeaking(owner)) return false;
   } else if (prev === 'agent_speaking') {
     _detachBargeIn();
   }
-  _opts?.onStateChange?.(next);
-  for (const l of _stateListeners) {
+  if (!_owns(owner)) return false;
+  owner.opts.onStateChange?.(next);
+  if (!_owns(owner)) return false;
+  for (const l of [..._stateListeners]) {
+    if (!_owns(owner)) return false;
     try {
       l(next);
     } catch {
       // Tier-2.
     }
+    if (!_owns(owner)) return false;
   }
+  return true;
 }
 
 export function getConversationState(): ConversationState {
@@ -200,172 +243,231 @@ export function onConversationState(
   };
 }
 
-/** Arm the controller. Idempotent on the same agentId. */
+/** Arm the controller. Every accepted non-empty arm replaces prior ownership. */
 export function armConversationMode(opts: ArmOptions): () => void {
   if (!opts.agentId) {
     // No active agent — no-op. Caller is expected to invoke arm only
     // when a DM thread is active.
     return () => undefined;
   }
-  if (_agentId === opts.agentId && _state !== 'inactive') {
-    // Already armed for this agent.
-    return disarmConversationMode;
-  }
-  // If armed for a different agent, disarm first.
-  if (_state !== 'inactive') {
-    disarmConversationMode();
-  }
+
+  _ownershipGeneration += 1;
+  const generation = _ownershipGeneration;
+  _pendingAcquisition = null;
+  _teardownInvalidatedOwner({
+    releaseLease: true,
+    notifyInactive: _state !== 'inactive',
+    expectedGeneration: generation,
+  });
+  if (_ownershipGeneration !== generation) return () => undefined;
   _opts = opts;
   _agentId = opts.agentId;
+  const owner: ControllerOwner = {
+    generation,
+    opts,
+    agentId: opts.agentId,
+  };
   const lease = _arbiterAcquire({
     holder: 'conversation',
     priority: PRIORITY_CONVERSATION,
-    onAcquired: () => {
-      _wireSubscriptionsAndListen();
+    onAcquired: (grantedLease) => {
+      if (!_owns(owner)) {
+        if (
+          _pendingAcquisition?.generation === owner.generation
+          && _pendingAcquisition.opts === owner.opts
+          && _pendingAcquisition.agentId === owner.agentId
+          && _pendingAcquisition.invalidatedGeneration === _ownershipGeneration
+        ) {
+          _pendingAcquisition = null;
+        }
+        _arbiterRelease(grantedLease);
+        return;
+      }
+      _lease = grantedLease;
+      _wireSubscriptionsAndListen(owner);
     },
     onPreempted: () => {
+      if (!_owns(owner)) return;
       // A higher-priority holder (press-to-talk) grabbed the mic.
-      // Clean teardown; caller's onStateChange sees inactive.
-      _teardownInternal();
+      // The arbiter already invalidated this lease, so do not release it.
+      _ownershipGeneration += 1;
+      const invalidatedGeneration = _ownershipGeneration;
+      _pendingAcquisition = null;
+      _teardownInvalidatedOwner({
+        releaseLease: false,
+        notifyInactive: false,
+        expectedGeneration: invalidatedGeneration,
+      });
+      _enqueuePreemptedInactiveNotification(owner.opts, invalidatedGeneration);
     },
   });
-  if (lease !== null) {
-    _lease = lease;
-    // _grantSync already fired onAcquired which wired things.
-  } else {
-    // Queued — the arbiter has a higher-priority holder. Wait.
-    // (For Wave 180, we treat queueing as a synonym for failure to arm:
-    // the controller stays inactive and the caller can retry.)
+  if (lease === null && _owns(owner)) {
+    // Queued: invalidate the controller activation while preserving only the
+    // exact callback bookkeeping needed to release a later stale grant.
+    _ownershipGeneration += 1;
+    _pendingAcquisition = {
+      generation: owner.generation,
+      opts: owner.opts,
+      agentId: owner.agentId,
+      invalidatedGeneration: _ownershipGeneration,
+    };
     _opts = null;
     _agentId = null;
+    _lease = null;
+    _state = 'inactive';
   }
-  return disarmConversationMode;
+  return () => {
+    if (_owns(owner)) _disarmOwned(owner);
+  };
 }
 
-function _wireSubscriptionsAndListen(): void {
+function _wireSubscriptionsAndListen(owner: ControllerOwner): void {
+  if (!_owns(owner)) return;
   // STT.
   _whisperUnsubArmed = armWhisperStt();
+  if (!_owns(owner)) return;
   _transcriptUnsub = _onWhisperTranscript((text: string) => {
-    void _onTranscript(text);
+    if (!_owns(owner)) return;
+    void _onTranscript(owner, text);
   });
+  if (!_owns(owner)) return;
   // VAD speech_start / speech_end.
   const vadHandler: PcmTapHandler = {
     // The controller doesn't need the raw PCM stream — whisperStt
     // already taps it. We only care about VAD events.
     onFrame: () => undefined,
-    onSpeechStart: () => _onVadSpeechStart(),
+    onSpeechStart: () => _onVadSpeechStart(owner),
     // onSpeechEnd not required — whisperStt's transcription pipeline
     // fires onTranscript when the utterance closes.
   };
   _vadUnsub = _subscribePcm(vadHandler);
-  _setState('listening');
+  if (!_owns(owner)) return;
+  _setState(owner, 'listening');
 }
 
-function _onVadSpeechStart(): void {
+function _onVadSpeechStart(owner: ControllerOwner): void {
+  if (!_owns(owner)) return;
   if (_state === 'agent_speaking') {
     // Barge-in: user spoke over the agent's TTS reply.
-    const bargeOn = _opts?.bargeInEnabled !== false;
+    const bargeOn = owner.opts.bargeInEnabled !== false;
     if (bargeOn) {
+      if (!_owns(owner)) return;
       try {
         _stopSpeaking();
       } catch {
         // Tier-2.
       }
-      _cancelSilenceTimer();
-      _setState('listening');
+      if (!_owns(owner)) return;
+      _cancelSilenceTimer(owner);
+      if (!_owns(owner)) return;
+      _setState(owner, 'listening');
     }
   }
   // In other states VAD speech_start is informational only.
 }
 
-async function _onTranscript(text: string): Promise<void> {
+async function _onTranscript(owner: ControllerOwner, text: string): Promise<void> {
+  if (!_owns(owner)) return;
   const trimmed = (text || '').trim();
   if (!trimmed) return;
-  if (_state === 'inactive') return;
+  if (!_owns(owner) || _state === 'inactive') return;
   // AD-985: meeting-wide echo gate. When a crew member is mid-TTS the mic must
   // not transcribe their speech, so drop the transcript. A dropped echo is
   // ROOM ACTIVITY, so refresh the silence timer to keep the session alive
   // through a long crew turn (otherwise a >30s crew discussion would release
   // the mic mid-meeting). The 1:1 path passes no canListen and is unaffected.
-  if (_opts?.canListen && !_opts.canListen()) {
-    _refreshSilenceTimer();
-    return;
-  }
-  // Cancel any pending silence timer the moment new user speech
-  // arrives — keeps the conversation alive while there's activity.
-  _cancelSilenceTimer();
-  _opts?.onTranscript?.(trimmed);
-  _setState('transcribing');
-  const agentId = _agentId;
-  if (!agentId) {
-    _setState('listening');
-    return;
-  }
-  const history = _opts?.historyProvider?.() ?? [];
-  _setState('submitted');
-  // AD-985: group-meeting path — hand the utterance to the injected submit
-  // (the AD-914 group fan-out via sendText) instead of the 1:1 chat POST. The
-  // crew's replies are spoken by useMeetingVoice, so the controller does not
-  // enter agent_speaking; it goes to silence_pending so the mic stays live
-  // (echo-gated) for the Captain's next turn, with the 30s release.
-  if (_opts?.submitTranscript) {
-    try {
-      await _opts.submitTranscript(trimmed, history);
-    } catch {
-      // Honest-degrade: network/submit error -> back to listening.
-      _setState('listening');
+  if (owner.opts.canListen) {
+    if (!_owns(owner)) return;
+    const canListen = owner.opts.canListen();
+    if (!_owns(owner)) return;
+    if (!canListen) {
+      _refreshSilenceTimer(owner);
       return;
     }
-    _enterSilencePending();
+  }
+  if (!_owns(owner)) return;
+  _cancelSilenceTimer(owner);
+  if (!_owns(owner)) return;
+  owner.opts.onTranscript?.(trimmed);
+  if (!_owns(owner)) return;
+  if (!_setState(owner, 'transcribing')) return;
+  if (!_owns(owner)) return;
+  const history = owner.opts.historyProvider?.() ?? [];
+  if (!_owns(owner)) return;
+  if (!_setState(owner, 'submitted')) return;
+  if (!_owns(owner)) return;
+  if (owner.opts.submitTranscript) {
+    try {
+      await owner.opts.submitTranscript(trimmed, history);
+      if (!_owns(owner)) return;
+    } catch {
+      if (!_owns(owner)) return;
+      _setState(owner, 'listening');
+      return;
+    }
+    if (!_owns(owner)) return;
+    _enterSilencePending(owner);
     return;
   }
   try {
-    const resp = await fetch(`/api/agent/${agentId}/chat`, {
+    const resp = await fetch(`/api/agent/${owner.agentId}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: trimmed, history }),
     });
+    if (!_owns(owner)) return;
     if (!resp.ok) {
-      _setState('listening');
+      _setState(owner, 'listening');
       return;
     }
-    const json = await resp.json().catch(() => ({}));
-    const replyText = String(json?.reply ?? json?.message ?? '');
-    if (replyText) {
-      _opts?.onAgentReply?.(replyText);
+    const json = await resp.json();
+    if (!_owns(owner)) return;
+    const replyText = String(json?.response ?? json?.reply ?? json?.message ?? '');
+    if (!replyText) {
+      _setState(owner, 'listening');
+      return;
     }
-    // Hand off to agent_speaking; the caller's TTS path is expected
+    // Hand off to agent_speaking BEFORE the callback so the caller's muted
+    // path may synchronously invoke markAgentReplyComplete(). That completed
+    // silence_pending state is authoritative and must survive callback return.
+    if (!_setState(owner, 'agent_speaking')) return;
+    if (!_owns(owner)) return;
+    owner.opts.onAgentReply?.(replyText);
+    // The caller's audible TTS path is expected
     // to invoke ``markAgentReplyComplete()`` when the speech finishes
     // (or immediately when TTS is disabled, in which case the
     // controller proceeds straight to silence_pending).
-    _setState('agent_speaking');
   } catch {
+    if (!_owns(owner)) return;
     // Network error — fall back to listening so the operator can
     // try again. Honest-degrade per Tier-2.
-    _setState('listening');
+    _setState(owner, 'listening');
   }
 }
 
 /** Signal that the agent's TTS reply has finished. Starts the
  *  silence-pending timer; expiry disarms the controller. */
 export function markAgentReplyComplete(): void {
-  if (_state !== 'agent_speaking') return;
-  _enterSilencePending();
+  const owner = _currentOwner();
+  if (owner === null || _state !== 'agent_speaking') return;
+  _enterSilencePending(owner);
 }
 
 /** Enter ``silence_pending`` and start the 30s release timer. Shared by the
  *  1:1 reply-complete path (markAgentReplyComplete) and the AD-985 group path
  *  (after a fan-out submit). On expiry the controller disarms; the BF-318
  *  ``onReleased`` then lets wake-word resume. */
-function _enterSilencePending(): void {
-  _setState('silence_pending');
-  _cancelSilenceTimer();
-  const timeoutMs = _opts?.silenceTimeoutMs ?? 30000;
+function _enterSilencePending(owner: ControllerOwner): void {
+  if (!_owns(owner)) return;
+  if (!_setState(owner, 'silence_pending')) return;
+  if (!_owns(owner)) return;
+  _cancelSilenceTimer(owner);
+  if (!_owns(owner)) return;
+  const timeoutMs = owner.opts.silenceTimeoutMs ?? 30000;
   _silenceTimer = setTimeout(() => {
+    if (!_owns(owner)) return;
     _silenceTimer = null;
-    if (_state === 'silence_pending') {
-      disarmConversationMode();
-    }
+    if (_state === 'silence_pending') _disarmOwned(owner);
   }, timeoutMs);
 }
 
@@ -373,12 +475,13 @@ function _enterSilencePending(): void {
  *  activity (a dropped crew-TTS echo) keeps an open meeting mic alive. No-op
  *  when not in ``silence_pending`` (e.g. mid-listen) — there is no timer to
  *  refresh and the controller is already live. */
-function _refreshSilenceTimer(): void {
-  if (_state !== 'silence_pending' || _silenceTimer === null) return;
-  _enterSilencePending();
+function _refreshSilenceTimer(owner: ControllerOwner): void {
+  if (!_owns(owner) || _state !== 'silence_pending' || _silenceTimer === null) return;
+  _enterSilencePending(owner);
 }
 
-function _cancelSilenceTimer(): void {
+function _cancelSilenceTimer(owner?: ControllerOwner): void {
+  if (owner && !_owns(owner)) return;
   if (_silenceTimer !== null) {
     clearTimeout(_silenceTimer);
     _silenceTimer = null;
@@ -386,22 +489,101 @@ function _cancelSilenceTimer(): void {
 }
 
 export function disarmConversationMode(): void {
-  if (_state === 'inactive') return;
-  if (_lease !== null) {
-    const lease = _lease;
-    _lease = null;
-    _arbiterRelease(lease);
+  const owner = _currentOwner();
+  if (owner === null) {
+    if (_pendingAcquisition !== null) _ownershipGeneration += 1;
+    _pendingAcquisition = null;
+    return;
   }
-  _teardownInternal();
+  _disarmOwned(owner);
 }
 
-function _teardownInternal(): void {
+function _currentOwner(): ControllerOwner | null {
+  if (_opts === null || _agentId === null) return null;
+  return { generation: _ownershipGeneration, opts: _opts, agentId: _agentId };
+}
+
+function _disarmOwned(owner: ControllerOwner): void {
+  if (!_owns(owner)) return;
+  _ownershipGeneration += 1;
+  const invalidatedGeneration = _ownershipGeneration;
+  _pendingAcquisition = null;
+  _teardownInvalidatedOwner({
+    releaseLease: true,
+    notifyInactive: true,
+    expectedGeneration: invalidatedGeneration,
+  });
+}
+
+function _notifyInactive(opts: ArmOptions | null, expectedGeneration: number): void {
+  if (_ownershipGeneration !== expectedGeneration) return;
+  opts?.onStateChange?.('inactive');
+  if (_ownershipGeneration !== expectedGeneration) return;
+  for (const listener of [..._stateListeners]) {
+    if (_ownershipGeneration !== expectedGeneration) return;
+    try { listener('inactive'); } catch { /* Tier-2 */ }
+    if (_ownershipGeneration !== expectedGeneration) return;
+  }
+}
+
+function _enqueuePreemptedInactiveNotification(
+  opts: ArmOptions,
+  invalidatedGeneration: number,
+): void {
+  _inactiveNotificationEpoch += 1;
+  const job: PendingInactiveNotification = {
+    epoch: _inactiveNotificationEpoch,
+    invalidatedGeneration,
+    opts,
+  };
+  _pendingInactiveNotification = job;
+  queueMicrotask(() => {
+    if (
+      _pendingInactiveNotification !== job
+      || job.epoch !== _inactiveNotificationEpoch
+    ) return;
+    _pendingInactiveNotification = null;
+    if (job.opts.onStateChange) {
+      job.opts.onStateChange('inactive');
+      if (
+        job.epoch !== _inactiveNotificationEpoch
+        || _ownershipGeneration !== job.invalidatedGeneration
+      ) return;
+    }
+    for (const listener of [..._stateListeners]) {
+      if (
+        job.epoch !== _inactiveNotificationEpoch
+      ) return;
+      try { listener('inactive'); } catch { /* Tier-2 */ }
+      if (_ownershipGeneration !== job.invalidatedGeneration) return;
+    }
+  });
+}
+
+function _teardownInvalidatedOwner(options: {
+  releaseLease: boolean;
+  notifyInactive: boolean;
+  expectedGeneration: number;
+}): void {
+  const oldOpts = _opts;
+  const oldLease = _lease;
+  const shouldNotifyInactive = options.notifyInactive && _state !== 'inactive';
+  const hadControllerResources = (
+    oldOpts !== null
+    || oldLease !== null
+    || _whisperUnsubArmed !== null
+    || _transcriptUnsub !== null
+    || _vadUnsub !== null
+    || _bargeInDisarm !== null
+    || _silenceTimer !== null
+    || _state !== 'inactive'
+  );
   _cancelSilenceTimer();
   _detachBargeIn();
   if (_whisperUnsubArmed) {
     try { _whisperUnsubArmed(); } catch { /* Tier-2 */ }
     _whisperUnsubArmed = null;
-  } else {
+  } else if (hadControllerResources) {
     // Defensive: disarm whisper module-level state in case armWhisperStt
     // was idempotent and returned a no-op disarm.
     try { disarmWhisperStt(); } catch { /* Tier-2 */ }
@@ -417,22 +599,26 @@ function _teardownInternal(): void {
   _opts = null;
   _agentId = null;
   _lease = null;
-  _setState('inactive');
+  _state = 'inactive';
+  if (options.releaseLease && oldLease !== null) {
+    _arbiterRelease(oldLease);
+  }
+  if (shouldNotifyInactive) {
+    _notifyInactive(oldOpts, options.expectedGeneration);
+  }
 }
 
 /** Test seam — full module reset. */
 export function _resetConversationControllerForTests(): void {
-  _cancelSilenceTimer();
-  _detachBargeIn();
-  if (_lease !== null) {
-    try { _arbiterRelease(_lease); } catch { /* Tier-2 */ }
-  }
-  _whisperUnsubArmed = null;
-  _transcriptUnsub = null;
-  _vadUnsub = null;
-  _opts = null;
-  _agentId = null;
-  _lease = null;
-  _state = 'inactive';
+  _ownershipGeneration += 1;
+  _inactiveNotificationEpoch += 1;
+  _pendingInactiveNotification = null;
+  const invalidatedGeneration = _ownershipGeneration;
+  _pendingAcquisition = null;
+  _teardownInvalidatedOwner({
+    releaseLease: true,
+    notifyInactive: false,
+    expectedGeneration: invalidatedGeneration,
+  });
   _stateListeners.clear();
 }

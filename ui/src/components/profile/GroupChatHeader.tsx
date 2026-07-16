@@ -24,10 +24,6 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
   const thread = useStore((s) => s.chatThreads.get(threadId));
   const agents = useStore((s) => s.agents);
   const setChatThread = useStore((s) => s.setChatThread);
-  // AD-949: call-scoped audio mute (default ON). The in-call toggle below flips
-  // it; useMeetingVoice gates group/meeting speech on this flag.
-  const callAudioEnabled = useStore((s) => s.callAudioEnabled);
-  const setCallAudioEnabled = useStore((s) => s.setCallAudioEnabled);
   // AD-984a: meeting-mode chat visibility (default ON). The in-call toggle below
   // hides/shows the transcript so the Captain can make a meeting avatars+voice
   // only; ProfileChatTab gates the message-list on this flag while meetingActive.
@@ -236,8 +232,8 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
 
       {/* AD-920 / AD-954: Start/End Call toggle. Promotes the group chat to a
           live video call (metadata.meeting_active) so ProfileChatTab mounts the
-          AD-947 face-framed avatar gallery + AD-949 call audio — the Teams-style
-          "turn the chat into a call" step. Local inline video glyph (HXI #3 —
+          AD-947 face-framed avatar gallery — the Teams-style "turn the chat
+          into a call" step. Local inline video glyph (HXI #3 —
           no emoji, no Glyphs.tsx export so the Glyphs.test.tsx count is
           untouched). AD-1058: shown for GROUPS (>=2 crew); a 1:1 uses the
           Teams-style CallMenu at the top of ProfileChatTab instead. */}
@@ -260,42 +256,6 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
                strokeLinejoin="round">
             <rect x="1.5" y="4" width="9" height="8" rx="1.5" />
             <path d="M10.5 7 L14.5 5 V11 L10.5 9 Z" />
-          </svg>
-        </button>
-      )}
-
-      {/* AD-949: in-call audio mute/unmute. Group/meeting voice is gated by the
-          call-scoped ``callAudioEnabled`` (decoupled from the Ship's-Computer
-          ``voiceEnabled``); this flips it so the Captain can silence a live call
-          without muting the Ship's Computer. Shown only while a meeting is
-          active. Local inline speaker SVG (HXI #3 — no emoji, no Glyphs.tsx
-          export; amber when audible, dim when muted). */}
-      {meetingActive && (
-        <button
-          type="button"
-          data-testid="call-audio-toggle"
-          aria-label={callAudioEnabled ? 'Mute call audio' : 'Unmute call audio'}
-          aria-pressed={callAudioEnabled}
-          title={callAudioEnabled ? 'Mute call audio' : 'Unmute call audio'}
-          onClick={() => setCallAudioEnabled(!callAudioEnabled)}
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: callAudioEnabled ? '#f0b060' : '#666680',
-            display: 'inline-flex', alignItems: 'center', padding: 2,
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
-               stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-               strokeLinejoin="round">
-            <path d="M2.5 6 H5 L8.5 3.5 V12.5 L5 10 H2.5 Z" />
-            {callAudioEnabled ? (
-              <>
-                <path d="M11 6.2 Q12.2 8 11 9.8" />
-                <path d="M12.8 4.8 Q15 8 12.8 11.2" />
-              </>
-            ) : (
-              <path d="M11.5 6 L14.5 10 M14.5 6 L11.5 10" />
-            )}
           </svg>
         </button>
       )}
