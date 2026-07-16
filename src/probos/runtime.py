@@ -1955,6 +1955,7 @@ class ProbOSRuntime:
             find_consensus_pools_fn=self._find_consensus_pools,
             build_self_model_fn=self._build_self_model,
             validate_remote_result_fn=self._validate_remote_result,
+            attachment_resolver_fn=self._resolve_federated_attachments,
             nats_bus=self.nats_bus,
         )
         self.pool_scaler = org.pool_scaler
@@ -4641,6 +4642,15 @@ class ProbOSRuntime:
     # ------------------------------------------------------------------
     # Federation
     # ------------------------------------------------------------------
+
+    async def _resolve_federated_attachments(
+        self,
+        params: dict[str, Any],
+        source_node: str,
+    ) -> int:
+        from probos.federation.attachment_resolve import resolve_missing_attachments
+
+        return await resolve_missing_attachments(self, params, source_node)
 
     def _build_self_model(self) -> NodeSelfModel:
         """Build this node's self-model (Psi) for gossip broadcast."""

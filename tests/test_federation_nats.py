@@ -327,6 +327,7 @@ class TestNATSFederationTransport:
                 find_consensus_pools_fn=lambda: set(),
                 build_self_model_fn=lambda: {},
                 validate_remote_result_fn=None,
+                attachment_resolver_fn=None,
                 nats_bus=None,  # No NATS — should skip NATS path
             )
 

@@ -14,6 +14,7 @@ Tests cover the nine v1 sub-AD letters:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import socket
 from types import SimpleNamespace
 from typing import Any
@@ -547,88 +548,81 @@ class TestShareDesignedAgent:
         assert sent_messages[0].payload["designed_agent_payload"] == payload
 
     @pytest.mark.asyncio
-    async def test_inbound_valid_payload_registers_and_emits(self):
-        events: list[tuple] = []
-        register = AsyncMock()
-        runtime = SimpleNamespace(
-            agent_designer=SimpleNamespace(
-                register_designed_template_from_payload=register,
-            ),
-            code_validator=SimpleNamespace(validate_text=lambda s: (True, "")),
-            emit_event=lambda et, data: events.append((et, data)),
-        )
-        bridge = _make_single_bridge()
-        bridge.set_runtime_ref(runtime)
-        result = await bridge._reconstruct_designed_agent(
-            {"instructions": "ok", "template_name": "T"}, source_node="node-b",
-        )
-        assert result == "registered"
-        register.assert_awaited_once()
-        assert events and events[0][0] == EventType.FEDERATION_DESIGNED_AGENT_RECEIVED
+    async def test_incoming_designed_payload_remains_dormant_without_runtime_handle(
+        self,
+        tmp_path,
+    ):
+        from probos.identity import AgentIdentityRegistry, generate_ship_did
 
-    @pytest.mark.asyncio
-    async def test_inbound_validator_rejects(self):
-        register = AsyncMock()
-        runtime = SimpleNamespace(
-            agent_designer=SimpleNamespace(
-                register_designed_template_from_payload=register,
-            ),
-            code_validator=SimpleNamespace(validate_text=lambda s: (False, "bad")),
-            emit_event=lambda et, data: None,
+        origin = AgentIdentityRegistry(data_dir=tmp_path / "origin")
+        destination = AgentIdentityRegistry(data_dir=tmp_path / "destination")
+        await origin.start(
+            instance_id="inst-A",
+            vessel_name="USS Origin",
+            version="v1",
         )
-        bridge = _make_single_bridge()
-        bridge.set_runtime_ref(runtime)
-        result = await bridge._reconstruct_designed_agent(
-            {"instructions": "evil", "template_name": "T"}, source_node="node-b",
+        await destination.start(
+            instance_id="inst-B",
+            vessel_name="USS Destination",
+            version="v1",
         )
-        assert result.startswith("validator_rejected:")
-        register.assert_not_called()
+        try:
+            birth = await origin.issue_birth_certificate(
+                agent_type="designed",
+                callsign="Designed",
+                instance_id="inst-A",
+                vessel_name="USS Origin",
+                department="science",
+                post_id="designed-agent",
+                baseline_version="v1",
+            )
+            transfer = await origin.issue_transfer_certificate(
+                birth.agent_uuid,
+                generate_ship_did("inst-B"),
+            )
+            chain = await origin.export_chain()
+            bridge = _make_single_bridge(identity_registry=destination)
+            responses: list[FederationMessage] = []
 
-    @pytest.mark.asyncio
-    async def test_inbound_no_runtime_ref(self):
-        bridge = _make_single_bridge()
-        result = await bridge._reconstruct_designed_agent(
-            {"instructions": "x"}, source_node="node-b",
-        )
-        assert result == "no_runtime_handle"
+            async def _capture(peer_id: str, message: FederationMessage) -> None:
+                responses.append(message)
 
-    @pytest.mark.asyncio
-    async def test_inbound_no_designer(self):
-        runtime = SimpleNamespace()  # no agent_designer / code_validator
-        bridge = _make_single_bridge()
-        bridge.set_runtime_ref(runtime)
-        result = await bridge._reconstruct_designed_agent(
-            {"instructions": "x"}, source_node="node-b",
-        )
-        assert result == "no_designer_or_validator"
+            bridge._transport.send_to_peer = _capture
+            await bridge.handle_inbound(FederationMessage(
+                type="transfer_request",
+                source_node="node-b",
+                message_id="bf672-designed-agent",
+                payload={
+                    "cert_dict": transfer.to_dict(),
+                    "chain_blocks": chain,
+                    "designed_agent_payload": {
+                        "instructions": "operate safely",
+                        "template_name": "DormantTemplate",
+                    },
+                },
+                timestamp=1.0,
+            ))
 
-    @pytest.mark.asyncio
-    async def test_inbound_empty_instructions(self):
-        runtime = SimpleNamespace(
-            agent_designer=SimpleNamespace(register_designed_template_from_payload=AsyncMock()),
-            code_validator=SimpleNamespace(validate_text=lambda s: (True, "")),
-        )
-        bridge = _make_single_bridge()
-        bridge.set_runtime_ref(runtime)
-        result = await bridge._reconstruct_designed_agent(
-            {"instructions": "", "template_name": "T"}, source_node="node-b",
-        )
-        assert result == "empty_instructions"
+            assert len(responses) == 1
+            assert responses[0].payload["accepted"] is True
+            assert destination.get_by_uuid(birth.agent_uuid) is not None
+            assert (
+                "designed_agent_note=no_runtime_handle"
+                in responses[0].payload["message"]
+            )
+        finally:
+            await destination.stop()
+            await origin.stop()
 
-    @pytest.mark.asyncio
-    async def test_inbound_registration_raises(self):
-        runtime = SimpleNamespace(
-            agent_designer=SimpleNamespace(
-                register_designed_template_from_payload=AsyncMock(side_effect=RuntimeError("boom")),
-            ),
-            code_validator=SimpleNamespace(validate_text=lambda s: (True, "")),
-        )
+    def test_dormant_reconstruction_has_no_receive_event_or_registration_dependency(
+        self,
+    ):
         bridge = _make_single_bridge()
-        bridge.set_runtime_ref(runtime)
-        result = await bridge._reconstruct_designed_agent(
-            {"instructions": "ok"}, source_node="node-b",
+        source = inspect.getsource(
+            type(bridge)._reconstruct_designed_agent
         )
-        assert result.startswith("registration_failed:")
+        assert "FEDERATION_DESIGNED_AGENT_RECEIVED" not in source
+        assert "register_designed_template_from_payload" not in source
 
 
 # ══════════════════════════════════════════════════════════════════════

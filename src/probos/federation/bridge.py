@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+AttachmentResolver = Callable[[dict[str, Any], str], Awaitable[int]]
+
 
 class FederationBridge:
     """Connects the local IntentBus to the federation transport layer.
@@ -42,6 +44,7 @@ class FederationBridge:
         identity_registry: "AgentIdentityRegistry | None" = None,
         trust_network: Any | None = None,
         hebbian_map: Any | None = None,
+        attachment_resolver: AttachmentResolver | None = None,
     ) -> None:
         self._node_id = node_id
         self._transport = transport
@@ -56,9 +59,9 @@ class FederationBridge:
         # AD-479b/c: optional trust + Hebbian handles for per-result outcome wiring.
         self._trust_network = trust_network
         self._hebbian_map = hebbian_map
+        self._attachment_resolver = attachment_resolver
         self._gossip_task: asyncio.Task[None] | None = None
         self._stopped = False
-        self._runtime_ref: Any = None
         self._stats = {
             "intents_forwarded": 0,
             "intents_received": 0,
@@ -74,14 +77,6 @@ class FederationBridge:
         self._gossip_task = asyncio.create_task(
             self._gossip_loop(), name="federation-gossip"
         )
-
-    def set_runtime_ref(self, runtime: Any) -> None:
-        """AD-479e: late-bind a runtime handle for designed-agent reconstruction.
-
-        Optional. None disables AD-479e designed-agent payload handling — the
-        chain transfer still completes via the AD-443e wire types.
-        """
-        self._runtime_ref = runtime
 
     async def stop(self) -> None:
         """Stop gossip loop."""
@@ -232,19 +227,21 @@ class FederationBridge:
             ttl_seconds=payload.get("ttl_seconds", 30.0),
         )
 
-        # AD-731a-1c: resolve any referenced attachment bytes this host lacks from
-        # the sender peer, BEFORE local agents consume the refs. Fully guarded +
-        # honest-degrade: never blocks or breaks the broadcast.
-        try:
-            from probos.federation.attachment_resolve import resolve_missing_attachments
-            await resolve_missing_attachments(
-                self._runtime_ref, intent.params, message.source_node
-            )
-        except Exception:
-            logger.warning(
-                "AD-731a-1c: attachment resolution failed; proceeding",
-                exc_info=True,
-            )
+        # AD-731a-1c/BF-672: resolve referenced bytes before local agents
+        # consume them. Ordinary resolver failures degrade to the existing
+        # broadcast path; cancellation remains lifecycle control.
+        attachment_resolver = self._attachment_resolver
+        if attachment_resolver is not None:
+            try:
+                await attachment_resolver(intent.params, message.source_node)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "AD-731a-1c: attachment resolution failed; local broadcast "
+                    "will proceed without prefetched bytes",
+                    exc_info=True,
+                )
 
         # Broadcast locally with federated=False to prevent loop
         local_results = await self._intent_bus.broadcast(intent, federated=False)
@@ -520,64 +517,13 @@ class FederationBridge:
         *,
         source_node: str,
     ) -> str | None:
-        """AD-479e: rehydrate an incoming designed-agent template.
+        """Keep AD-479e designed-agent reconstruction explicitly dormant.
 
-        Pipeline: CodeValidator static-analysis gate → AgentDesigner.
-        register_designed_template_from_payload(...). On validator rejection
-        the chain is rolled back and an event is emitted; otherwise the
-        designed template is registered locally and FEDERATION_DESIGNED_AGENT_
-        RECEIVED fires.
+        BF-672 removes the broad runtime handle because production never wired
+        it. Rehydration requires a future narrow, typed, governance-complete
+        seam; the production-observable result remains ``no_runtime_handle``.
         """
-        runtime = self._runtime_ref
-        if runtime is None:
-            return "no_runtime_handle"
-        designer = getattr(runtime, "agent_designer", None)
-        validator = getattr(runtime, "code_validator", None)
-        if designer is None or validator is None:
-            return "no_designer_or_validator"
-        instructions = str(payload.get("instructions", ""))
-        if not instructions:
-            return "empty_instructions"
-        validate_text = getattr(validator, "validate_text", None)
-        if callable(validate_text):
-            ok, reason = validate_text(instructions)
-        else:
-            errors = validator.validate(instructions)
-            ok = not errors
-            reason = "; ".join(errors) if errors else ""
-        if not ok:
-            logger.warning(
-                "AD-479e: incoming designed agent rejected by CodeValidator from %s: %s",
-                source_node, reason,
-            )
-            return f"validator_rejected:{reason}"
-        try:
-            register = getattr(
-                designer, "register_designed_template_from_payload", None,
-            )
-            if not callable(register):
-                return "no_designer_or_validator"
-            await register(payload)
-        except Exception as exc:
-            logger.warning(
-                "AD-479e: register_designed_template_from_payload failed for %s: %s",
-                source_node, exc,
-            )
-            return f"registration_failed:{exc!s}"
-        emit = getattr(runtime, "emit_event", None)
-        if callable(emit):
-            try:
-                from probos.events import EventType
-                emit(
-                    EventType.FEDERATION_DESIGNED_AGENT_RECEIVED,
-                    {
-                        "source_node": source_node,
-                        "template_name": payload.get("template_name"),
-                    },
-                )
-            except Exception as exc:
-                logger.debug("AD-479e: emit_event raised: %s", exc)
-        return "registered"
+        return "no_runtime_handle"
 
     async def add_peer(self, peer_config: Any) -> bool:
         """AD-479h: register a runtime-discovered peer.

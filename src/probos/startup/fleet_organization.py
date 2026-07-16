@@ -7,7 +7,8 @@ transport/bridge if enabled.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from probos.startup.results import FleetOrganizationResult
 from probos.substrate.pool_group import PoolGroup
@@ -37,6 +38,9 @@ async def organize_fleet(
     find_consensus_pools_fn: Callable[[], set[str]],
     build_self_model_fn: Callable[..., Any],
     validate_remote_result_fn: Callable[..., Any] | None,
+    attachment_resolver_fn: (
+        Callable[[dict[str, Any], str], Awaitable[int]] | None
+    ),
     nats_bus: Any | None = None,
 ) -> FleetOrganizationResult:
     """Register pool groups, start scaler, set up federation."""
@@ -212,6 +216,7 @@ async def organize_fleet(
                 config=config.federation,
                 self_model_fn=build_self_model_fn,
                 validate_fn=validate_fn,
+                attachment_resolver=attachment_resolver_fn,
             )
             await bridge.start()
             # PATCH(AD-517): Wire federation function into intent bus

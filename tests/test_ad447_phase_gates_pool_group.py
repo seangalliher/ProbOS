@@ -108,6 +108,7 @@ async def test_core_is_phase_1() -> None:
         find_consensus_pools_fn=lambda: set(),
         build_self_model_fn=lambda: {},
         validate_remote_result_fn=None,
+        attachment_resolver_fn=None,
         nats_bus=None,
     )
 
