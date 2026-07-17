@@ -11,7 +11,8 @@ These tests cover:
   passthrough of non-ref blocks).
 - Bus serialization size invariants (small refs survive NATS).
 - End-to-end PNG round-trip through a real FilesystemAttachmentStore.
-- Federation strip forward-marker still pins v1 behavior (AD-731a).
+- Federation bridge forwards validated references and rejects inline forms
+    (AD-731a-1d).
 """
 from __future__ import annotations
 
@@ -25,8 +26,17 @@ import pytest
 from probos.attachments.filesystem_store import FilesystemAttachmentStore
 from probos.cognitive.llm_client import OpenAICompatibleClient
 from probos.cognitive.vision_dispatch import build_multimodal_messages
+from probos.config import FederationConfig
+from probos.federation.bridge import FederationBridge
+from probos.federation.router import FederationRouter
 from probos.mesh.intent import IntentBus
-from probos.types import IntentMessage, LLMRequest
+from probos.mesh.signal import SignalManager
+from probos.types import (
+    FederationMessage,
+    IntentMessage,
+    LLMRequest,
+    NodeSelfModel,
+)
 
 
 # Minimal 1x1 PNG (transparent), real bytes.
@@ -422,31 +432,58 @@ async def test_end_to_end_vision_dm_with_real_store(tmp_path):
 
 
 # ------------------------------------------------------------------
-# Federation strip — AD-731a forward marker (pinned v1)
+# Federation send — AD-731a-1d reference-only contract
 # ------------------------------------------------------------------
 
 
-def test_federation_bridge_still_strips_vision_messages_v1():
-    """Federation transport still strips vision_messages because the receiving
-    mesh does not (yet) have a shared AttachmentStore. AD-731a-1 (HTTP fetch)
-    or AD-731a-2 (NATS Object Store) will retire the strip. This pin is the
-    regression target the future AD will flip.
-    """
-    intent = _make_ref_intent(image_count=1)
-    _stripped_keys = ("vision_messages",)
-    if any(k in intent.params for k in _stripped_keys):
-        params_for_transport = {
-            k: v
-            for k, v in intent.params.items()
-            if k not in _stripped_keys
-        }
-        params_for_transport["_transport_stripped"] = [
-            k for k in _stripped_keys if k in intent.params
-        ]
-    else:
-        params_for_transport = intent.params
+@pytest.mark.asyncio
+async def test_federation_bridge_forwards_reference_only_vision_messages_v1():
+    """AD-731a-1d forwards normalized refs and preserves the original."""
+    class _CaptureTransport:
+        def __init__(self) -> None:
+            self.sent: list[FederationMessage] = []
 
-    assert "vision_messages" not in params_for_transport
+        @property
+        def connected_peers(self) -> list[str]:
+            return ["node-b"]
+
+        async def send_to_peer(
+            self, peer_node_id: str, message: FederationMessage
+        ) -> None:
+            self.sent.append(message)
+
+        async def receive_with_timeout(
+            self, peer_node_id: str, timeout_ms: int
+        ) -> FederationMessage | None:
+            return None
+
+    intent = _make_ref_intent(image_count=1)
+    baseline = copy.deepcopy(intent.params)
+    transport = _CaptureTransport()
+    bridge = FederationBridge(
+        node_id="node-a",
+        transport=transport,
+        router=FederationRouter(),
+        intent_bus=IntentBus(SignalManager()),
+        config=FederationConfig(forward_timeout_ms=1),
+        self_model_fn=lambda: NodeSelfModel(node_id="node-a"),
+    )
+
+    await bridge.forward_intent(intent)
+
+    assert len(transport.sent) == 1
+    params_for_transport = transport.sent[0].payload["params"]
+    assert params_for_transport["vision_messages"] == [{
+        "role": "user",
+        "content": [{
+            "type": "image",
+            "source": {
+                "type": "attachment_ref",
+                "sha256": "0" * 64,
+                "media_type": "image/png",
+            },
+        }],
+    }]
+    assert params_for_transport["has_image_attachment"] is True
     assert params_for_transport["_transport_stripped"] == ["vision_messages"]
-    # Original IntentMessage is untouched.
-    assert "vision_messages" in intent.params
+    assert intent.params == baseline

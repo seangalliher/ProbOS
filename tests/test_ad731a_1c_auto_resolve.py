@@ -942,7 +942,7 @@ def test_resolve_sender_peer_matching_and_misses():
 # ---------------------------------------------------------------------------
 
 def test_extract_attachment_shas_shapes_dedup_and_validation():
-    """Bare ref; vision_messages source.sha256; dedup; drop non-64-hex."""
+    """Singular, plural, and vision refs dedup; malformed values drop."""
     # Bare ref shape.
     assert extract_attachment_shas({"attachment_ref": _PNG_SHA}) == [_PNG_SHA]
     # Vision-block shape.
@@ -955,9 +955,16 @@ def test_extract_attachment_shas_shapes_dedup_and_validation():
         ]
     }
     assert extract_attachment_shas(vision) == [_OTHER_SHA]
-    # Dedup across both shapes, first-seen order preserved.
+    # Dedup across all shapes, first-seen order preserved.
     both = {
         "attachment_ref": _PNG_SHA,
+        "attachment_refs": [
+            _PNG_SHA,
+            _OTHER_SHA,
+            "not-a-hash",
+            12345,
+            _OTHER_SHA,
+        ],
         "vision_messages": [
             {"content": [
                 {"type": "image", "source": {"sha256": _PNG_SHA}},
@@ -970,6 +977,8 @@ def test_extract_attachment_shas_shapes_dedup_and_validation():
     assert extract_attachment_shas({"attachment_ref": "not-a-hash"}) == []
     assert extract_attachment_shas({"attachment_ref": "a" * 63}) == []
     assert extract_attachment_shas({"attachment_ref": 12345}) == []
+    assert extract_attachment_shas({"attachment_refs": "not-a-list"}) == []
+    assert extract_attachment_shas({"attachment_refs": ["bad", b"raw"]}) == []
     assert extract_attachment_shas({}) == []
     assert extract_attachment_shas({"vision_messages": "garbage"}) == []
 

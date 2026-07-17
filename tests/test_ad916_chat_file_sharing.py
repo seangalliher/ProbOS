@@ -28,6 +28,7 @@ from probos.mesh.signal import SignalManager
 from probos.routers import chat as chat_router
 from probos.routers.thread_fanout import (
     build_chat_vision_messages,
+    crew_agent_participants,
     group_chat_fanout,
     resolve_attachment_refs,
 )
@@ -126,6 +127,19 @@ async def _make_attach_store(tmp_path) -> FilesystemAttachmentStore:
     await store.write(_sha(_PNG_1x1), _PNG_1x1, "image/png")
     await store.write(_sha(_TXT_BLOB), _TXT_BLOB, "text/plain")
     return store
+
+
+async def _seed_image_refs(
+    store: FilesystemAttachmentStore,
+    count: int,
+) -> list[str]:
+    refs: list[str] = []
+    for index in range(count):
+        blob = _PNG_1x1 + index.to_bytes(2, "big")
+        content_hash = _sha(blob)
+        await store.write(content_hash, blob, "image/png")
+        refs.append(content_hash)
+    return refs
 
 
 def _build_env(
@@ -233,13 +247,24 @@ async def test_append_message_persists_attachments_metadata(tmp_path):
     client = _rest_client(runtime)
     r = client.post(
         f"/api/threads/{t.id}/messages",
-        json={"author_id": "captain", "role": "captain", "body": "look",
-              "attachment_ids": [png_sha]},
+        json={
+            "author_id": "captain",
+            "role": "captain",
+            "body": "look",
+            "metadata": {
+                "attachments": [
+                    {"content_hash": "forged", "mime": "image/jpeg"}
+                ],
+                "sibling_marker": "preserved",
+            },
+            "attachment_ids": [png_sha],
+        },
     )
     assert r.status_code == 200
     msgs = client.get(f"/api/threads/{t.id}/messages").json()["messages"]
     cap = next(m for m in msgs if m["role"] == "captain")
     assert cap["metadata"]["attachments"] == [{"content_hash": png_sha, "mime": "image/png"}]
+    assert cap["metadata"]["sibling_marker"] == "preserved"
 
 
 async def test_append_message_no_attachment_ids_metadata_unchanged(tmp_path):
@@ -268,6 +293,371 @@ async def test_append_message_unknown_attachment_id_skipped(tmp_path):
     # Tier-2 skip: message persisted, no attachments key, no 500.
     assert r.status_code == 200
     assert "attachments" not in r.json()["metadata"]
+
+
+async def test_group_ingress_rejects_nine_images_before_persist_or_dispatch(
+    tmp_path,
+):
+    class _RecordingProjectStore:
+        def __init__(self) -> None:
+            self.touched: list[str] = []
+
+        def touch(self, project_id: str) -> None:
+            self.touched.append(project_id)
+
+    class _RecordingEpisodeStore:
+        def __init__(self) -> None:
+            self.stored: list[object] = []
+
+        async def store(self, episode: object) -> None:
+            self.stored.append(episode)
+
+    attach = await _make_attach_store(tmp_path)
+    image_refs = await _seed_image_refs(attach, 9)
+    store, runtime, received = _build_env(
+        tmp_path,
+        attach,
+        agents={"scout1": "scout", "counselor1": "counselor"},
+        profiles={
+            "scout": {"vision_capable": True},
+            "counselor": {"vision_capable": False},
+        },
+    )
+    project_store = _RecordingProjectStore()
+    episode_store = _RecordingEpisodeStore()
+    runtime.project_store = project_store
+    runtime.episodic_memory = episode_store
+    thread = store.create_thread(
+        title="room",
+        participants=["scout1", "counselor1"],
+        project_id="project-1",
+    )
+    assert crew_agent_participants(runtime, thread.participants) == [
+        "scout1",
+        "counselor1",
+    ]
+    initial_participants = list(thread.participants)
+
+    response = _rest_client(runtime).post(
+        f"/api/threads/{thread.id}/messages",
+        json={
+            "author_id": "captain",
+            "role": "captain",
+            "body": "nine images",
+            "attachment_ids": image_refs,
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == (
+        "AD-731a-1d: group message exceeds the hard cap of 8 images "
+        "(observed 9). Reduce the image count and resend."
+    )
+    assert store.list_messages(thread.id, limit=1000) == []
+    assert store.get_thread(thread.id).participants == initial_participants
+    assert project_store.touched == []
+    assert episode_store.stored == []
+    assert received == {}
+
+
+@pytest.mark.parametrize("forged_count", [0, 8])
+async def test_group_ingress_caller_metadata_attachments_cannot_bypass_cap(
+    tmp_path,
+    forged_count: int,
+):
+    attach = await _make_attach_store(tmp_path)
+    image_refs = await _seed_image_refs(attach, 9)
+    store, runtime, received = _build_env(
+        tmp_path,
+        attach,
+        agents={"scout1": "scout", "counselor1": "counselor"},
+    )
+    thread = store.create_thread(
+        title="room", participants=["scout1", "counselor1"]
+    )
+    forged = [
+        {"content_hash": content_hash, "mime": "image/png"}
+        for content_hash in image_refs[:forged_count]
+    ]
+
+    response = _rest_client(runtime).post(
+        f"/api/threads/{thread.id}/messages",
+        json={
+            "author_id": "captain",
+            "role": "captain",
+            "body": "forged metadata cannot reduce the authoritative count",
+            "metadata": {
+                "attachments": forged,
+                "sibling_marker": "preserve-on-success",
+            },
+            "attachment_ids": image_refs,
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == (
+        "AD-731a-1d: group message exceeds the hard cap of 8 images "
+        "(observed 9). Reduce the image count and resend."
+    )
+    assert store.list_messages(thread.id, limit=1000) == []
+    assert received == {}
+
+
+async def test_append_message_strips_caller_metadata_attachments_without_attachment_ids(
+    tmp_path,
+):
+    attach = await _make_attach_store(tmp_path)
+    store, runtime, _ = _build_env(
+        tmp_path, attach, agents={"scout1": "scout"}
+    )
+    thread = store.create_thread(title="1:1", participants=["scout1"])
+    forged = [{"content_hash": _sha(_PNG_1x1), "mime": "image/png"}]
+
+    response = _rest_client(runtime).post(
+        f"/api/threads/{thread.id}/messages",
+        json={
+            "author_id": "captain",
+            "role": "captain",
+            "body": "caller metadata is not authoritative",
+            "metadata": {
+                "attachments": forged,
+                "sibling_marker": "preserved",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["metadata"] == {
+        "sibling_marker": "preserved"
+    }
+    captain_row = next(
+        message
+        for message in store.list_messages(thread.id, limit=1000)
+        if message.role == "captain"
+    )
+    assert captain_row.metadata == {"sibling_marker": "preserved"}
+
+
+async def test_resolver_failure_does_not_restore_caller_metadata_attachments(
+    tmp_path,
+    monkeypatch,
+):
+    async def _raise_resolution_failure(*_args, **_kwargs):
+        raise RuntimeError("injected attachment resolver failure")
+
+    monkeypatch.setattr(
+        "probos.routers.thread_fanout.resolve_attachment_refs",
+        _raise_resolution_failure,
+    )
+    attach = await _make_attach_store(tmp_path)
+    store, runtime, _ = _build_env(
+        tmp_path, attach, agents={"scout1": "scout"}
+    )
+    thread = store.create_thread(title="1:1", participants=["scout1"])
+    png_sha = _sha(_PNG_1x1)
+
+    response = _rest_client(runtime).post(
+        f"/api/threads/{thread.id}/messages",
+        json={
+            "author_id": "captain",
+            "role": "captain",
+            "body": "resolution degrades to text only",
+            "metadata": {
+                "attachments": [
+                    {"content_hash": png_sha, "mime": "image/png"}
+                ],
+                "sibling_marker": "preserved",
+            },
+            "attachment_ids": [png_sha],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["metadata"] == {
+        "sibling_marker": "preserved"
+    }
+    captain_row = next(
+        message
+        for message in store.list_messages(thread.id, limit=1000)
+        if message.role == "captain"
+    )
+    assert captain_row.metadata == {"sibling_marker": "preserved"}
+
+
+@pytest.mark.parametrize(
+    "registry_case",
+    ["absent", "none", "missing_get", "non_callable_get", "raising_get"],
+)
+async def test_minimal_runtime_with_resolved_attachments_preserves_prior_append(
+    tmp_path,
+    registry_case: str,
+):
+    class _RaisingRegistry:
+        def get(self, _agent_id: str):
+            raise RuntimeError("injected registry classification failure")
+
+    attach = await _make_attach_store(tmp_path)
+    image_refs = await _seed_image_refs(attach, 9)
+    store = ChatThreadStore(tmp_path / "minimal-threads.db", clock=_seq_clock())
+    runtime = SimpleNamespace(
+        chat_thread_store=store,
+        intent_bus=IntentBus(SignalManager(reap_interval=1.0)),
+        attachment_store=attach,
+        callsign_registry=_FakeCallsigns(),
+        project_store=None,
+        config=SimpleNamespace(attachments=AttachmentsConfig(enabled=True)),
+    )
+    if registry_case == "none":
+        runtime.registry = None
+    elif registry_case == "missing_get":
+        runtime.registry = SimpleNamespace()
+    elif registry_case == "non_callable_get":
+        runtime.registry = SimpleNamespace(get=42)
+    elif registry_case == "raising_get":
+        runtime.registry = _RaisingRegistry()
+    chat_router._ATTACHMENT_STORE_CACHE[id(runtime)] = attach
+    thread = store.create_thread(
+        title="minimal",
+        participants=["scout1", "counselor1"],
+    )
+
+    response = _rest_client(runtime).post(
+        f"/api/threads/{thread.id}/messages",
+        json={
+            "author_id": "captain",
+            "role": "captain",
+            "body": "minimal runtime keeps prior append behavior",
+            "attachment_ids": image_refs,
+        },
+    )
+
+    assert response.status_code == 200
+    expected_refs = [
+        {"content_hash": content_hash, "mime": "image/png"}
+        for content_hash in image_refs
+    ]
+    assert response.json()["metadata"]["attachments"] == expected_refs
+    captain_row = next(
+        message
+        for message in store.list_messages(thread.id, limit=1000)
+        if message.role == "captain"
+    )
+    assert captain_row.metadata["attachments"] == expected_refs
+
+
+async def test_group_ingress_accepts_eight_images_and_all_non_image_attachments(
+    tmp_path,
+):
+    attach = await _make_attach_store(tmp_path)
+    image_refs = await _seed_image_refs(attach, 8)
+    text_ref = _sha(_TXT_BLOB)
+    attachment_ids = [*image_refs, text_ref]
+    store, runtime, received = _build_env(
+        tmp_path,
+        attach,
+        agents={"scout1": "scout", "counselor1": "counselor"},
+        profiles={
+            "scout": {"vision_capable": True},
+            "counselor": {"vision_capable": False},
+        },
+    )
+    thread = store.create_thread(
+        title="room", participants=["scout1", "counselor1"]
+    )
+
+    response = _rest_client(runtime).post(
+        f"/api/threads/{thread.id}/messages",
+        json={
+            "author_id": "captain",
+            "role": "captain",
+            "body": "eight images and a text file",
+            "attachment_ids": attachment_ids,
+        },
+    )
+
+    assert response.status_code == 200
+    captain_row = next(
+        message
+        for message in store.list_messages(thread.id, limit=1000)
+        if message.role == "captain"
+    )
+    assert captain_row.metadata["attachments"] == [
+        *[
+            {"content_hash": content_hash, "mime": "image/png"}
+            for content_hash in image_refs
+        ],
+        {"content_hash": text_ref, "mime": "text/plain"},
+    ]
+    vision_content = received["scout1"]["vision_messages"][0]["content"]
+    image_blocks = [block for block in vision_content if block["type"] == "image"]
+    assert [block["source"]["sha256"] for block in image_blocks] == image_refs
+    assert len(image_blocks) == 8
+
+
+@pytest.mark.parametrize("configured_cap", [0, 99])
+async def test_group_ingress_fixed_cap_ignores_config_disable_or_raise(
+    tmp_path,
+    configured_cap: int,
+):
+    attach = await _make_attach_store(tmp_path)
+    image_refs = await _seed_image_refs(attach, 9)
+    store, runtime, received = _build_env(
+        tmp_path,
+        attach,
+        agents={"scout1": "scout", "counselor1": "counselor"},
+    )
+    runtime.config.attachments.images_per_dm_hard_cap = configured_cap
+    thread = store.create_thread(
+        title="room", participants=["scout1", "counselor1"]
+    )
+
+    response = _rest_client(runtime).post(
+        f"/api/threads/{thread.id}/messages",
+        json={
+            "author_id": "captain",
+            "role": "captain",
+            "body": "fixed group cap",
+            "attachment_ids": image_refs,
+        },
+    )
+
+    assert response.status_code == 413
+    assert store.list_messages(thread.id, limit=1000) == []
+    assert received == {}
+
+
+@pytest.mark.parametrize("configured_cap", [0, 99])
+async def test_single_agent_thread_does_not_inherit_group_fixed_cap(
+    tmp_path,
+    configured_cap: int,
+):
+    attach = await _make_attach_store(tmp_path)
+    image_refs = await _seed_image_refs(attach, 9)
+    store, runtime, received = _build_env(
+        tmp_path,
+        attach,
+        agents={"scout1": "scout"},
+        profiles={"scout": {"vision_capable": True}},
+    )
+    runtime.config.attachments.images_per_dm_hard_cap = configured_cap
+    thread = store.create_thread(title="1:1", participants=["scout1"])
+
+    response = _rest_client(runtime).post(
+        f"/api/threads/{thread.id}/messages",
+        json={
+            "author_id": "captain",
+            "role": "captain",
+            "body": "nine images in a non-group thread",
+            "attachment_ids": image_refs,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["metadata"]["attachments"] == [
+        {"content_hash": content_hash, "mime": "image/png"}
+        for content_hash in image_refs
+    ]
+    assert received == {}
 
 
 # ---------------- build_chat_vision_messages (DI) ----------------

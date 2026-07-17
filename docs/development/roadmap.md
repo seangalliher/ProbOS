@@ -693,10 +693,12 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD-730 | Vision pipe-through for per-agent DMs — **SHIPPED Wave 151**, partial regression resolved by AD-731 (Wave 152) | [#630](https://github.com/seangalliher/ProbOS/issues/630) | 2 |
 | AD-731 | Content-addressable vision payloads (refs not bytes on the bus; receiver dereferences from AttachmentStore just before HTTP POST) — **SHIPPED Wave 152** (12 new tests + BF-265/BF-266/AD-730 fixture assertions inverted; +13 net) | [#637](https://github.com/seangalliher/ProbOS/issues/637) | 1 |
 | AD-637z2 | Remove BF-265 transport strip after AD-731 lands — **CLOSED-AS-PART-OF-AD-731 (Wave 152)** | [#639](https://github.com/seangalliher/ProbOS/issues/639) | 1 |
-| AD-731a | Cross-host attachment distribution (parent forward marker; single-host store assumption deferred from AD-731) | [#638](https://github.com/seangalliher/ProbOS/issues/638) | 3 |
-| AD-731a-1 | HTTP fetch for cross-host single-tenant attachment retrieval | (sub-marker under AD-731a) | 3 |
-| AD-731a-2 | NATS Object Store integration for cross-mesh attachment distribution; retires federation/bridge.py vision_messages strip | (sub-marker under AD-731a) | 3 |
-| AD-731a-3 | Mime-only fast path in sender (skip blob read for image attachments) | (sub-marker under AD-731a, optional) | 4 |
+| AD-731a | Cross-host attachment distribution — **SHIPPED/CLOSED via Option B** (AD-731a-1 serve/verify + AD-731a-1c receive resolution + BF-672 prefetch-before-local-broadcast + AD-731a-1d validated reference-only send) | [#638](https://github.com/seangalliher/ProbOS/issues/638) | 3 |
+| AD-731a-1 | Authenticated HTTP attachment serve/fetch with MIME, size, and SHA verification before store — **SHIPPED** | (subdecision under AD-731a) | 3 |
+| AD-731a-1c + BF-672 | Receive-side missing-attachment resolution and runtime-wired prefetch before local broadcast — **SHIPPED** | (subdecision + BF under AD-731a) | 3 |
+| AD-731a-1d | Validated reference-only federation send, plural-ref extraction, and fixed group eight-image ingress ceiling — **SHIPPED** | (subdecision under AD-731a) | 3 |
+| AD-731a-2 | Optional NATS Object Store/replication availability follow-up; **no longer needed to retire the federation bridge strip** because AD-731a-1d replaced it with validated reference-only send | (optional sub-marker under AD-731a) | 4 |
+| AD-731a-3 | Optional MIME-only sender fast path (skip blob read for image attachments); not required for #638 closeout | (optional sub-marker under AD-731a) | 4 |
 | AD-732 | Dedicated vision LLM tier + honest degrade (`vision` is the fourth peer of `fast`/`standard`/`deep`; `AttachmentsConfig.vision_tier` default flips to `"vision"`; unconfigured OR unhealthy returns `VISION_UNCONFIGURED_MESSAGE`/`VISION_UNHEALTHY_MESSAGE`) — **SHIPPED Wave 153** (15 new tests; +15 net) | [#640](https://github.com/seangalliher/ProbOS/issues/640) | 1 |
 | AD-732a | Per-agent vision tier override (`agent.vision_tier` config — different model for an Imaging Officer than the rest of the crew) | (forward marker) | 4 |
 | AD-732b | Vision tier autodetect on startup (probe localhost:11434 and auto-uncomment qwen3.6:27b if available — zero-config OSS magic) | (forward marker) | 4 |

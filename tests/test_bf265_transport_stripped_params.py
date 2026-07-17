@@ -17,16 +17,22 @@ These tests now assert the AD-731 contract:
 4. **Regression sentinel for the original mistake**: if someone re-introduces
    inline base64 in ``vision_messages`` content blocks (the AD-730 shape that
    caused #636), the size-bound sentinel test fires loudly.
-5. Federation bridge strip is preserved as a deliberate AD-731a forward
-   marker (cross-mesh attachment distribution unsolved; AD-731a-1 / AD-731a-2
-   will retire it).
+5. Federation bridge keeps validated refs while rejecting inline siblings via
+    the AD-731a-1d reference-only boundary.
 """
 from __future__ import annotations
 
+import copy
 import json
 
+import pytest
+
+from probos.config import FederationConfig
+from probos.federation.bridge import FederationBridge
+from probos.federation.router import FederationRouter
 from probos.mesh.intent import IntentBus
-from probos.types import IntentMessage
+from probos.mesh.signal import SignalManager
+from probos.types import FederationMessage, IntentMessage, NodeSelfModel
 
 
 def _make_intent_with_vision_refs() -> IntentMessage:
@@ -214,37 +220,71 @@ def test_inline_base64_in_vision_messages_balloons_serialization():
 
 
 # ------------------------------------------------------------------
-# Federation bridge — AD-731a forward marker
+# Federation bridge — AD-731a-1d reference-only boundary
 # ------------------------------------------------------------------
 
 
-def test_federation_bridge_still_strips_vision_messages_v1():
-    """AD-731a forward marker (#638): cross-mesh attachment distribution is
-    unsolved. The federation bridge still strips vision_messages from
-    cross-mesh transport because the receiving mesh may not have the local
-    AttachmentStore. AD-731a-1 (HTTP fetch) or AD-731a-2 (NATS Object Store)
-    will retire this strip when shipped. Pin the v1 behavior so the future
-    AD has a regression target to flip.
-    """
-    intent = _make_intent_with_vision_refs()
-    _stripped_keys = ("vision_messages",)
-    if any(k in intent.params for k in _stripped_keys):
-        params_for_transport = {
-            k: v
-            for k, v in intent.params.items()
-            if k not in _stripped_keys
-        }
-        params_for_transport["_transport_stripped"] = [
-            k for k in _stripped_keys if k in intent.params
-        ]
-    else:
-        params_for_transport = intent.params
+@pytest.mark.asyncio
+async def test_federation_bridge_forwards_refs_and_rejects_inline_v1():
+    """AD-731a-1d: safe refs cross; unsafe inline siblings do not."""
+    class _CaptureTransport:
+        def __init__(self) -> None:
+            self.sent: list[FederationMessage] = []
 
-    assert "vision_messages" not in params_for_transport
+        @property
+        def connected_peers(self) -> list[str]:
+            return ["node-b"]
+
+        async def send_to_peer(
+            self, peer_node_id: str, message: FederationMessage
+        ) -> None:
+            self.sent.append(message)
+
+        async def receive_with_timeout(
+            self, peer_node_id: str, timeout_ms: int
+        ) -> FederationMessage | None:
+            return None
+
+    intent = _make_intent_with_vision_refs()
+    inline_sentinel = "A" * 100_000
+    intent.params["vision_messages"][0]["content"].append({
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": inline_sentinel,
+        },
+    })
+    baseline = copy.deepcopy(intent.params)
+    transport = _CaptureTransport()
+    bridge = FederationBridge(
+        node_id="node-a",
+        transport=transport,
+        router=FederationRouter(),
+        intent_bus=IntentBus(SignalManager()),
+        config=FederationConfig(forward_timeout_ms=1),
+        self_model_fn=lambda: NodeSelfModel(node_id="node-a"),
+    )
+
+    await bridge.forward_intent(intent)
+
+    assert len(transport.sent) == 1
+    params_for_transport = transport.sent[0].payload["params"]
+    assert params_for_transport["vision_messages"] == [{
+        "role": "user",
+        "content": [{
+            "type": "image",
+            "source": {
+                "type": "attachment_ref",
+                "sha256": "a" * 64,
+                "media_type": "image/png",
+            },
+        }],
+    }]
+    assert inline_sentinel not in json.dumps(params_for_transport)
     assert params_for_transport["_transport_stripped"] == ["vision_messages"]
     assert params_for_transport["text"] == intent.params["text"]
-    # Original untouched.
-    assert "vision_messages" in intent.params
+    assert intent.params == baseline
 
 
 # ------------------------------------------------------------------

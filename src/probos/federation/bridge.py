@@ -23,6 +23,198 @@ logger = logging.getLogger(__name__)
 
 AttachmentResolver = Callable[[dict[str, Any], str], Awaitable[int]]
 
+_FEDERATED_ATTACHMENT_REF_LIMIT = 8
+_FEDERATED_ATTACHMENT_CANDIDATE_SCAN_LIMIT = 64
+_FEDERATED_VISION_SCAN_LIMIT = 64
+_FEDERATED_IMAGE_MIME_TYPES = frozenset({
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+})
+_FEDERATED_VISION_MESSAGE_KEYS = frozenset({"content"})
+_FEDERATED_VISION_BLOCK_KEYS = frozenset({"type", "source"})
+_FEDERATED_VISION_SOURCE_KEYS = frozenset({
+    "type",
+    "sha256",
+    "media_type",
+})
+
+
+def _preflight_exact_dict_fields(
+    mapping: Any,
+    approved_keys: frozenset[str],
+) -> tuple[bool, dict[str, Any]]:
+    """Validate exact-string keys and return approved fields only."""
+    if type(mapping) is not dict:
+        return False, {}
+
+    key_safe_items: list[tuple[str, Any]] = []
+    for key, value in dict.items(mapping):
+        if type(key) is not str:
+            return False, {}
+        key_safe_items.append((key, value))
+
+    fields: dict[str, Any] = {}
+    for key, value in key_safe_items:
+        if key in approved_keys:
+            fields[key] = value
+    return True, fields
+
+
+def _sanitize_attachment_params_for_federation(
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Return a reference-only copy of federation attachment params.
+
+    Attachment-candidate traversal is bounded, but the exact top-level key
+    pass remains O(n) in the existing open generic-params contract. Unrelated
+    values are preserved shallowly and are never traversed here.
+    """
+    if type(params) is not dict:
+        return {}, ["params"]
+
+    top_level_items: list[tuple[str, Any]] = []
+    for key, value in dict.items(params):
+        if type(key) is not str:
+            return {}, ["params"]
+        top_level_items.append((key, value))
+
+    attachment_keys = (
+        "attachment_ref",
+        "attachment_refs",
+        "vision_messages",
+        "has_image_attachment",
+    )
+    params_by_key = dict(top_level_items)
+    present_attachment_keys = {
+        key for key, _value in top_level_items if key in attachment_keys
+    }
+    if not present_attachment_keys:
+        return params_by_key, []
+
+    sanitized = {
+        key: value
+        for key, value in top_level_items
+        if key not in attachment_keys and key != "_transport_stripped"
+    }
+    processed_keys: list[str] = []
+    admitted_shas: set[str] = set()
+
+    def _is_sha(value: Any) -> bool:
+        return (
+            type(value) is str
+            and len(value) == 64
+            and all(char in "0123456789abcdef" for char in value)
+        )
+
+    def _is_string(value: Any, expected: str) -> bool:
+        return type(value) is str and value == expected
+
+    def _admit(value: Any) -> bool:
+        if not _is_sha(value):
+            return False
+        if value in admitted_shas:
+            return True
+        if len(admitted_shas) >= _FEDERATED_ATTACHMENT_REF_LIMIT:
+            return False
+        admitted_shas.add(value)
+        return True
+
+    if "attachment_ref" in present_attachment_keys:
+        processed_keys.append("attachment_ref")
+        attachment_ref = params_by_key["attachment_ref"]
+        if _admit(attachment_ref):
+            sanitized["attachment_ref"] = attachment_ref
+
+    if "attachment_refs" in present_attachment_keys:
+        processed_keys.append("attachment_refs")
+        attachment_refs = params_by_key["attachment_refs"]
+        retained_refs: list[str] = []
+        seen_refs: set[str] = set()
+        if type(attachment_refs) is list or type(attachment_refs) is tuple:
+            for value in attachment_refs[
+                :_FEDERATED_ATTACHMENT_CANDIDATE_SCAN_LIMIT
+            ]:
+                if not _is_sha(value) or value in seen_refs:
+                    continue
+                seen_refs.add(value)
+                if _admit(value):
+                    retained_refs.append(value)
+        if retained_refs:
+            sanitized["attachment_refs"] = retained_refs
+
+    safe_vision_blocks: list[dict[str, Any]] = []
+    if "vision_messages" in present_attachment_keys:
+        processed_keys.append("vision_messages")
+        vision_messages = params_by_key["vision_messages"]
+        seen_vision_refs: set[str] = set()
+        if type(vision_messages) is list and vision_messages:
+            first_message = vision_messages[0]
+            message_safe, message_fields = _preflight_exact_dict_fields(
+                first_message,
+                _FEDERATED_VISION_MESSAGE_KEYS,
+            )
+            if message_safe:
+                content = message_fields.get("content")
+                if type(content) is list:
+                    for block in content[:_FEDERATED_VISION_SCAN_LIMIT]:
+                        block_safe, block_fields = _preflight_exact_dict_fields(
+                            block,
+                            _FEDERATED_VISION_BLOCK_KEYS,
+                        )
+                        if not block_safe or not _is_string(
+                            block_fields.get("type"), "image"
+                        ):
+                            continue
+                        source = block_fields.get("source")
+                        source_safe, source_fields = (
+                            _preflight_exact_dict_fields(
+                                source,
+                                _FEDERATED_VISION_SOURCE_KEYS,
+                            )
+                        )
+                        if not source_safe:
+                            continue
+                        sha = source_fields.get("sha256")
+                        media_type = source_fields.get("media_type")
+                        if (
+                            not _is_string(
+                                source_fields.get("type"), "attachment_ref"
+                            )
+                            or not _is_sha(sha)
+                            or type(media_type) is not str
+                            or media_type not in _FEDERATED_IMAGE_MIME_TYPES
+                            or sha in seen_vision_refs
+                        ):
+                            continue
+                        seen_vision_refs.add(sha)
+                        if not _admit(sha):
+                            continue
+                        safe_vision_blocks.append({
+                            "type": "image",
+                            "source": {
+                                "type": "attachment_ref",
+                                "sha256": sha,
+                                "media_type": media_type,
+                            },
+                        })
+        if safe_vision_blocks:
+            sanitized["vision_messages"] = [{
+                "role": "user",
+                "content": safe_vision_blocks,
+            }]
+
+    if "has_image_attachment" in present_attachment_keys:
+        has_safe_vision = bool(safe_vision_blocks)
+        has_image_attachment = params_by_key["has_image_attachment"]
+        if has_safe_vision and type(has_image_attachment) is bool and has_image_attachment:
+            sanitized["has_image_attachment"] = True
+        else:
+            processed_keys.append("has_image_attachment")
+
+    return sanitized, processed_keys
+
 
 class FederationBridge:
     """Connects the local IntentBus to the federation transport layer.
@@ -100,28 +292,11 @@ class FederationBridge:
         if not peers:
             return []
 
-        # BF-265: strip transport-unsafe params (e.g. vision_messages with
-        # base64 image bytes from AD-730). See mesh/intent.py _serialize_intent
-        # for the canonical pattern. Local receivers consume from the live
-        # IntentMessage; federation receivers don't have that path so they
-        # get the marker only.
-        # AD-731a forward marker (#638): cross-mesh attachment distribution unsolved.
-        # Receiving meshes may not have the local AttachmentStore, so strip
-        # vision_messages from federation transport until AD-731a-1 (HTTP fetch) or
-        # AD-731a-2 (NATS Object Store) ships. In-mesh delivery uses attachment_ref
-        # shape (AD-731) which is small enough to cross NATS safely.
-        _stripped_keys = ("vision_messages",)
-        if any(k in intent.params for k in _stripped_keys):
-            params_for_transport = {
-                k: v
-                for k, v in intent.params.items()
-                if k not in _stripped_keys
-            }
-            params_for_transport["_transport_stripped"] = [
-                k for k in _stripped_keys if k in intent.params
-            ]
-        else:
-            params_for_transport = intent.params
+        params_for_transport, processed_attachment_keys = (
+            _sanitize_attachment_params_for_federation(intent.params)
+        )
+        if processed_attachment_keys:
+            params_for_transport["_transport_stripped"] = processed_attachment_keys
 
         msg = FederationMessage(
             type="intent_request",

@@ -9,9 +9,8 @@ matches. Reuses :func:`probos.federation.attachment_fetch.fetch_remote_attachmen
 as-is (content-verifying, honest-degrade). Fully guarded: NEVER raises, NEVER
 blocks the broadcast.
 
-Caveat C-A: today only the bare ``params['attachment_ref']`` SHA crosses the
-wire (BF-265 strips ``vision_messages`` on send). The vision-block extraction
-here is forward-safe for the deferred send-side complement (AD-731a-1d).
+Caveat C-A: AD-731a-1d permits validated singular, plural, and vision-block
+references across federation. Inline attachment bytes remain transport-unsafe.
 Caveat C-B: auto-resolution fires only for an A2A-configured sender peer with a
 matching ``node_id`` — there is no resolver from an arbitrary ``source_node`` to
 a fetchable URL otherwise.
@@ -39,10 +38,9 @@ def _is_64_hex(value: Any) -> bool:
 def extract_attachment_shas(params: dict) -> list[str]:
     """Collect the 64-hex attachment SHAs referenced by an inbound message.
 
-    Handles the bare ``params['attachment_ref']`` shape (a single SHA string —
-    the only shape that crosses the wire today) AND, defensively, the AD-731
-    block shape ``params['vision_messages'][].content[].source.sha256``
-    (forward-safe for the AD-731a-1d send-side complement). Dedups preserving
+    Handles singular ``params['attachment_ref']``, plural
+    ``params['attachment_refs']``, and AD-731 vision blocks at
+    ``params['vision_messages'][].content[].source.sha256``. Dedups preserving
     first-seen order; drops any value that is not a 64-char lowercase-hex
     string. Pure (no I/O) and never raises — ``params`` may have any shape.
     """
@@ -57,10 +55,16 @@ def extract_attachment_shas(params: dict) -> list[str]:
     if not isinstance(params, dict):
         return shas
 
-    # Bare ref shape (perception/__init__.py) — the only shape that crosses today.
+    # Bare primary alias (perception/__init__.py).
     _add(params.get("attachment_ref"))
 
-    # AD-731 vision-block shape (stripped on send today per BF-265; forward-safe).
+    # AD-746 fused-perception plural refs (AD-731a-1d).
+    attachment_refs = params.get("attachment_refs")
+    if isinstance(attachment_refs, (list, tuple)):
+        for value in attachment_refs:
+            _add(value)
+
+    # AD-731 vision-block shape (validated on federation send by AD-731a-1d).
     vision_messages = params.get("vision_messages")
     if isinstance(vision_messages, list):
         for msg in vision_messages:

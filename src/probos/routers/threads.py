@@ -350,6 +350,8 @@ async def append_message(
     # attachments-disabled is a no-op, and any failure degrades to the plain
     # message (the bytes were already stored once by the upload endpoint).
     _meta = dict(body.metadata or {})
+    _meta.pop("attachments", None)
+    _resolved_attachment_refs: list[dict[str, str]] | None = None
     if body.attachment_ids:
         try:
             cfg_attach = getattr(runtime.config, "attachments", None)
@@ -359,6 +361,7 @@ async def append_message(
                 refs = await resolve_attachment_refs(
                     _get_attachment_store(runtime), body.attachment_ids
                 )
+                _resolved_attachment_refs = refs
                 if refs:
                     _meta["attachments"] = refs
         except Exception:
@@ -367,6 +370,50 @@ async def append_message(
                 "persisting message without attachment refs",
                 thread_id, exc_info=True,
             )
+    # AD-731a-1d: group fan-out has a fixed transport-safe ceiling of eight
+    # resolved images. Enforce it at the observable API ingress after MIME
+    # resolution and before the Captain row or any related side effect exists.
+    # Unknown refs retain AD-916 skip behavior; resolver failure retains the
+    # existing text-only honest-degrade path above. Non-image refs are never
+    # sliced and remain in their original resolved order.
+    if body.role == "captain" and _resolved_attachment_refs is not None:
+        from probos.routers.thread_fanout import crew_agent_participants
+
+        positively_identified_group = False
+        try:
+            target_thread = store.get_thread(thread_id)
+            registry = getattr(runtime, "registry", None)
+            registry_get = (
+                getattr(registry, "get", None)
+                if registry is not None
+                else None
+            )
+            if target_thread is not None and callable(registry_get):
+                positively_identified_group = (
+                    len(
+                        crew_agent_participants(
+                            runtime, target_thread.participants
+                        )
+                    ) >= 2
+                )
+        except Exception:
+            positively_identified_group = False
+
+        if positively_identified_group:
+            image_count = sum(
+                1
+                for ref in _resolved_attachment_refs
+                if ref.get("mime", "").startswith("image/")
+            )
+            if image_count > 8:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        "AD-731a-1d: group message exceeds the hard cap of "
+                        f"8 images (observed {image_count}). Reduce the image "
+                        "count and resend."
+                    ),
+                )
     msg = store.append_message(
         thread_id,
         author_id=body.author_id,
