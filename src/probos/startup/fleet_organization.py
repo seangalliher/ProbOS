@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from probos.config import SystemConfig
     from probos.consensus.escalation import EscalationManager
     from probos.consensus.trust import TrustNetwork
+    from probos.federation.relay import FederationRelayTopic
     from probos.mesh.intent import IntentBus
     from probos.substrate.pool import ResourcePool
     from probos.substrate.pool_group import PoolGroupRegistry
@@ -41,6 +42,7 @@ async def organize_fleet(
     attachment_resolver_fn: (
         Callable[[dict[str, Any], str], Awaitable[int]] | None
     ),
+    relay_topics: tuple["FederationRelayTopic", ...] = (),
     nats_bus: Any | None = None,
 ) -> FleetOrganizationResult:
     """Register pool groups, start scaler, set up federation."""
@@ -217,6 +219,7 @@ async def organize_fleet(
                 self_model_fn=build_self_model_fn,
                 validate_fn=validate_fn,
                 attachment_resolver=attachment_resolver_fn,
+                relay_topics=relay_topics,
             )
             await bridge.start()
             # PATCH(AD-517): Wire federation function into intent bus

@@ -9,10 +9,21 @@ import math
 import re
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable, Awaitable
 from typing import Any, TYPE_CHECKING
 
 from probos.config import FederationConfig
+from probos.federation.relay import (
+    RELAY_RATE_LIMIT_PER_SECOND,
+    FederationRelayTopic,
+    build_relay_topic_registry,
+    extract_relay_wire_payload,
+    finalize_relay_wire_payload,
+    is_canonical_relay_topic,
+    is_safe_relay_node_id,
+    is_valid_relay_timestamp,
+)
 from probos.federation.router import FederationRouter
 from probos.types import FederationMessage, IntentMessage, IntentResult, NodeSelfModel
 
@@ -881,6 +892,7 @@ class FederationBridge:
         trust_network: Any | None = None,
         hebbian_map: Any | None = None,
         attachment_resolver: AttachmentResolver | None = None,
+        relay_topics: tuple[FederationRelayTopic, ...] = (),
     ) -> None:
         self._node_id = node_id
         self._transport = transport
@@ -899,6 +911,9 @@ class FederationBridge:
         self._gossip_task: asyncio.Task[None] | None = None
         self._stopped = False
         self._directed_admission_open = True
+        self._relay_topics = build_relay_topic_registry(relay_topics)
+        self._relay_admission_open = True
+        self._relay_rate: dict[tuple[str, str], deque[float]] = {}
         self._stats = {
             "intents_forwarded": 0,
             "intents_received": 0,
@@ -910,16 +925,21 @@ class FederationBridge:
     async def start(self) -> None:
         """Start the bridge: register as transport inbound handler, start gossip loop."""
         self._directed_admission_open = False
+        self._relay_admission_open = False
+        self._relay_rate.clear()
         self._stopped = False
         self._transport._inbound_handler = self.handle_inbound
         self._gossip_task = asyncio.create_task(
             self._gossip_loop(), name="federation-gossip"
         )
         self._directed_admission_open = True
+        self._relay_admission_open = True
 
     async def stop(self) -> None:
         """Stop gossip loop."""
         self._directed_admission_open = False
+        self._relay_admission_open = False
+        self._relay_rate.clear()
         self._stopped = True
         if self._gossip_task is not None:
             self._gossip_task.cancel()
@@ -928,6 +948,99 @@ class FederationBridge:
             except asyncio.CancelledError:
                 pass
             self._gossip_task = None
+
+    async def relay_one_way(
+        self,
+        target_node_id: str,
+        topic: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        """Best-effort send one bounded relay datagram to one peer."""
+        if not self._relay_admission_open:
+            return False
+        if not is_safe_relay_node_id(self._node_id):
+            return False
+        if (
+            not is_safe_relay_node_id(target_node_id)
+            or target_node_id == self._node_id
+        ):
+            return False
+        if (
+            target_node_id not in {peer.node_id for peer in self._config.peers}
+            or target_node_id not in self._transport.connected_peers
+        ):
+            return False
+        if not is_canonical_relay_topic(topic):
+            return False
+        contract = self._relay_topics.get(topic)
+        if contract is None:
+            return False
+        message = FederationMessage(
+            type="relay_one_way",
+            source_node=self._node_id,
+            payload={
+                "relay_version": 1,
+                "target_node_id": target_node_id,
+                "topic": topic,
+                "payload": payload,
+                "hop_count": 0,
+            },
+            timestamp=time.monotonic(),
+        )
+        if not _is_safe_correlation_id(message.message_id):
+            return False
+        finalized = finalize_relay_wire_payload(
+            source_node=message.source_node,
+            message_id=message.message_id,
+            relay_payload=message.payload,
+            timestamp=message.timestamp,
+        )
+        if finalized is None:
+            logger.debug(
+                "One-way federation relay rejected target=%s topic=%s "
+                "reason=payload_invalid action=drop",
+                target_node_id,
+                topic,
+            )
+            return False
+        validation_copy = finalize_relay_wire_payload(
+            source_node=message.source_node,
+            message_id=message.message_id,
+            relay_payload=finalized,
+            timestamp=message.timestamp,
+        )
+        if validation_copy is None:
+            return False
+        try:
+            valid = contract.validate_payload(
+                dict.__getitem__(validation_copy, "payload")
+            )
+        except Exception as exc:
+            logger.warning(
+                "One-way federation relay validator failed target=%s topic=%s "
+                "reason=validator_exception action=drop exception_type=%s",
+                target_node_id,
+                topic,
+                type(exc).__name__,
+            )
+            return False
+        if valid is not True:
+            return False
+        message.payload = finalized
+        try:
+            await self._transport.send_to_peer(target_node_id, message)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "One-way federation relay send failed target=%s topic=%s "
+                "reason=transport_exception action=drop exception_type=%s",
+                target_node_id,
+                topic,
+                type(exc).__name__,
+            )
+            return False
+        return True
 
     async def forward_intent(self, intent: IntentMessage) -> list[IntentResult]:
         """Forward an intent to selected peers and collect results.
@@ -1214,6 +1327,9 @@ class FederationBridge:
         """
         if message.type == "intent_request":
             await self._handle_intent_request(message)
+        elif message.type == "relay_one_way":
+            await self._handle_relay_one_way(message)
+            return
         elif message.type == "intent_response":
             # Route to pending request by delivering to transport's response queue
             await self._transport.deliver_response(message.source_node, message)
@@ -1235,6 +1351,131 @@ class FederationBridge:
             await self._handle_transfer_request(message)
         elif message.type == "transfer_response":
             await self._transport.deliver_response(message.source_node, message)
+
+    async def _handle_relay_one_way(
+        self,
+        message: FederationMessage,
+    ) -> None:
+        if not self._relay_admission_open:
+            return
+        if (
+            type(message) is not FederationMessage
+            or type(message.type) is not str
+            or message.type != "relay_one_way"
+        ):
+            return
+        if not is_safe_relay_node_id(self._node_id):
+            return
+        if (
+            not is_safe_relay_node_id(message.source_node)
+            or message.source_node == self._node_id
+        ):
+            return
+        if message.source_node not in {
+            peer.node_id for peer in self._config.peers
+        }:
+            return
+        if (
+            not _is_safe_correlation_id(message.message_id)
+            or not is_valid_relay_timestamp(message.timestamp)
+        ):
+            return
+        exact = extract_relay_wire_payload(message.payload)
+        if exact is None:
+            return
+        relay_version = dict.__getitem__(exact, "relay_version")
+        hop_count = dict.__getitem__(exact, "hop_count")
+        target_node_id = dict.__getitem__(exact, "target_node_id")
+        topic = dict.__getitem__(exact, "topic")
+        if type(relay_version) is not int or relay_version != 1:
+            return
+        if type(hop_count) is not int or hop_count != 0:
+            return
+        if (
+            not is_safe_relay_node_id(target_node_id)
+            or target_node_id != self._node_id
+        ):
+            return
+        if not is_canonical_relay_topic(topic):
+            return
+        contract = self._relay_topics.get(topic)
+        if contract is None:
+            return
+
+        now = time.monotonic()
+        rate_key = (message.source_node, topic)
+        window = self._relay_rate.get(rate_key)
+        if window is not None:
+            cutoff = now - 1.0
+            while window and window[0] <= cutoff:
+                window.popleft()
+            if not window:
+                self._relay_rate.pop(rate_key, None)
+                window = None
+            elif len(window) >= RELAY_RATE_LIMIT_PER_SECOND:
+                return
+
+        finalized = finalize_relay_wire_payload(
+            source_node=message.source_node,
+            message_id=message.message_id,
+            relay_payload=exact,
+            timestamp=message.timestamp,
+        )
+        if finalized is None:
+            return
+        validation_copy = finalize_relay_wire_payload(
+            source_node=message.source_node,
+            message_id=message.message_id,
+            relay_payload=finalized,
+            timestamp=message.timestamp,
+        )
+        if validation_copy is None:
+            return
+        try:
+            valid = contract.validate_payload(
+                dict.__getitem__(validation_copy, "payload")
+            )
+        except Exception as exc:
+            logger.warning(
+                "Inbound one-way federation relay validator failed source=%s "
+                "topic=%s reason=validator_exception action=drop "
+                "exception_type=%s",
+                message.source_node,
+                topic,
+                type(exc).__name__,
+            )
+            return
+        if valid is not True:
+            return
+
+        if window is None:
+            window = deque()
+            self._relay_rate[rate_key] = window
+        window.append(now)
+        try:
+            await contract.sink(
+                message.source_node,
+                dict.__getitem__(finalized, "payload"),
+            )
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling() > 0:
+                raise
+            logger.warning(
+                "Inbound one-way federation relay sink failed source=%s "
+                "topic=%s reason=plugin_cancelled_error action=drop "
+                "exception_type=CancelledError",
+                message.source_node,
+                topic,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Inbound one-way federation relay sink failed source=%s "
+                "topic=%s reason=sink_exception action=drop exception_type=%s",
+                message.source_node,
+                topic,
+                type(exc).__name__,
+            )
 
     async def _handle_intent_request(self, message: FederationMessage) -> None:
         """Handle an inbound intent request from a peer."""

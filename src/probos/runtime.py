@@ -1956,6 +1956,7 @@ class ProbOSRuntime:
             build_self_model_fn=self._build_self_model,
             validate_remote_result_fn=self._validate_remote_result,
             attachment_resolver_fn=self._resolve_federated_attachments,
+            relay_topics=(),
             nats_bus=self.nats_bus,
         )
         self.pool_scaler = org.pool_scaler
