@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-722b-5a (2026-07-17) — federation avatar telemetry relay (#659)
+
+**Context.** AD-722b-5 shipped only local subscription/rate/callback plumbing, and AD-1123 supplied the bounded one-way federation primitive needed to complete #659. AD-722b-5a is a pre-existing reserved subdecision, not a new top-level AD; **AD-1123 remains the top-level ceiling and BF-672 remains the BF ceiling**.
+
+**Decision.** Export avatar telemetry only through explicit default-empty per-peer local-agent lists and one closed `avatar.telemetry.v1` contract. Run bounded, referenced event/timer producers without requiring a browser, with per-agent sequence authority shared across copies of one frame and strict snapshot/diff ordering at the receiver. Terminate inbound state in a runtime-owned 256-entry volatile LRU cache keyed by validated source and agent; do not relay it onward or persist it. Configured-peer admission is a deployment ACL, **not cryptographic authentication**. Add no UI, API, remote-agent registration, trust, Hebbian, episodic, consensus, or learning path. AD-722b-5b remains a separate HXI/API projection and `origin_mesh_id` badge decision.
+
+**Tests + gates.** The new module contains **205 cases**. Focused validation passed **219** with no warnings; Gates 1–4 passed **429 + 671 + 77 + 581**, with no warnings in Gates 1–2, only five known BF-326 warnings in Gate 3, and only two pinned dependency deprecations in Gate 4. The full parallel suite passed **19,581 / 33 skipped** with **458 provenance-only pre-existing warnings and zero changed-path warnings**. Final Architect review: **APPROVED**. The exact commit closes #659 only when pushed; no AD-1124 is minted.
+
 ### AD-1123 (2026-07-17) — bounded federation one-way relay (#1040)
 
 **Context.** AD-722b-5 shipped local avatar-telemetry subscription/rate/callback plumbing, but #659 remained blocked because federation offered only untargeted intent request/response and AD-730-4 directed DM request/response. Neither protocol is appropriate for bounded high-rate one-way state. Highest landed top-level was **AD-1122**; **AD-1123 is the new top-level**, while **BF-672 remains the BF ceiling**.

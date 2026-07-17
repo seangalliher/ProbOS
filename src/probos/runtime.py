@@ -288,6 +288,8 @@ class ProbOSRuntime:
     identity_registry: AgentIdentityRegistry | None
     pool_scaler: PoolScaler | None
     federation_bridge: FederationBridge | None
+    federation_telemetry_relay: "FederationTelemetryRelay | None"
+    remote_avatar_telemetry_cache: "RemoteAvatarTelemetryCache"
     federation_peer_registry: "FederationPeerRegistry"
     federation_mcp_server: "FederationMCPServer | None"
     federation_a2a_server: "FederationA2AServer | None"
@@ -896,6 +898,14 @@ class ProbOSRuntime:
         # --- Federation ---
         self.federation_bridge: FederationBridge | None = None
         self._federation_transport: FederationTransport | None = None
+        from probos.federation.telemetry_relay import (
+            FederationTelemetryRelay,
+            RemoteAvatarTelemetryCache,
+        )
+        self.federation_telemetry_relay: FederationTelemetryRelay | None = None
+        self.remote_avatar_telemetry_cache = RemoteAvatarTelemetryCache(
+            max_entries=256,
+        )
         # AD-480f: cross-protocol peer registry — initialized eagerly so
         # ZeroMQ peers can be auto-registered via the existing gossip path.
         from probos.federation.peer import FederationPeerRegistry
@@ -1942,6 +1952,19 @@ class ProbOSRuntime:
 
         # Phase 3: Fleet Organization (AD-517)
         from probos.startup.fleet_organization import organize_fleet
+        from probos.startup.federation_telemetry import (
+            build_federation_avatar_relay_topics,
+        )
+
+        federation_avatar_telemetry_enabled = (
+            self.config.federation.enabled
+            and self.config.avatars.enabled
+            and self.config.avatar_telemetry.enabled
+        )
+        relay_topics = build_federation_avatar_relay_topics(
+            enabled=federation_avatar_telemetry_enabled,
+            cache=self.remote_avatar_telemetry_cache,
+        )
 
         org = await organize_fleet(
             config=self.config,
@@ -1956,7 +1979,7 @@ class ProbOSRuntime:
             build_self_model_fn=self._build_self_model,
             validate_remote_result_fn=self._validate_remote_result,
             attachment_resolver_fn=self._resolve_federated_attachments,
-            relay_topics=(),
+            relay_topics=relay_topics,
             nats_bus=self.nats_bus,
         )
         self.pool_scaler = org.pool_scaler
@@ -2528,6 +2551,43 @@ class ProbOSRuntime:
         self.ward_room_router = fin.ward_room_router
         self.self_mod_manager = fin.self_mod_manager
         self.dream_adapter = fin.dream_adapter
+
+        from probos.avatars.telemetry import build_telemetry_snapshot
+        from probos.startup.federation_telemetry import (
+            start_federation_avatar_telemetry,
+        )
+
+        async def _build_federation_avatar_snapshot(
+            agent_id: str,
+        ) -> "AvatarTelemetrySnapshot":
+            return await build_telemetry_snapshot(agent_id, self)
+
+        try:
+            self.federation_telemetry_relay = (
+                await start_federation_avatar_telemetry(
+                    bridge=(
+                        self.federation_bridge
+                        if federation_avatar_telemetry_enabled else None
+                    ),
+                    peers=self.config.federation.peers,
+                    registry=self.registry,
+                    event_bus=self.avatar_event_bus,
+                    sampling_state=self.avatar_sampling_state,
+                    snapshot_builder=_build_federation_avatar_snapshot,
+                    diff_enabled=self.config.avatar_telemetry.ws_diff_enabled,
+                    diff_threshold=self.config.avatar_telemetry.ws_diff_threshold,
+                    full_every_n=(
+                        self.config.avatar_telemetry.ws_full_snapshot_every_n
+                    ),
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "Federation avatar telemetry startup failed reason=%s; "
+                "telemetry disabled; startup continues",
+                exc,
+            )
+            self.federation_telemetry_relay = None
         # AD-521: BuildPipeline Ship's Computer service.
         self.build_pipeline = BuildPipeline(runtime=self)
 
@@ -4515,6 +4575,18 @@ class ProbOSRuntime:
         )
 
         return removed
+
+    def get_remote_avatar_telemetry(
+        self,
+        source_node: str,
+        agent_id: str,
+    ) -> dict[str, Any] | None:
+        """Return one detached remote avatar telemetry cache record."""
+        return self.remote_avatar_telemetry_cache.get(source_node, agent_id)
+
+    def list_remote_avatar_telemetry(self) -> list[dict[str, Any]]:
+        """Return all detached remote avatar records in deterministic order."""
+        return self.remote_avatar_telemetry_cache.list()
 
     def status(self) -> dict[str, Any]:
         """Return a snapshot of the full system state."""

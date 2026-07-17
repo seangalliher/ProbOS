@@ -1885,11 +1885,6 @@ async def test_real_fleet_composition_with_explicit_empty_registry_is_inert() ->
         await _stop_organized(result)
         await shared_bus.stop()
 
-    runtime_source = inspect.getsource(
-        __import__("probos.runtime", fromlist=["ProbOSRuntime"]).ProbOSRuntime.start
-    )
-    assert "relay_topics=()," in runtime_source
-
 
 def test_relay_public_signatures_contract_and_registry_shape_are_exact() -> None:
     assert str(inspect.signature(FederationBridge.relay_one_way)) == (
@@ -1986,20 +1981,20 @@ def test_source_guards_forbid_dispatch_learning_queue_task_and_allow_all_shapes(
     }
 
 
-def test_authorized_scope_has_no_transport_telemetry_event_config_or_shutdown_diff() -> None:
+def test_authorized_scope_has_no_generic_relay_protocol_transport_or_fleet_diff() -> None:
     root = Path(__file__).resolve().parents[1]
     forbidden = (
+        "src/probos/federation/bridge.py",
+        "src/probos/federation/relay.py",
         "src/probos/federation/nats_transport.py",
         "src/probos/federation/transport.py",
         "src/probos/federation/mock_transport.py",
-        "src/probos/federation/telemetry_relay.py",
         "src/probos/types.py",
         "src/probos/events.py",
         "src/probos/protocols.py",
+        "src/probos/mesh/intent.py",
         "src/probos/mesh/nats_bus.py",
-        "src/probos/routers/agents.py",
-        "src/probos/startup/shutdown.py",
-        "src/probos/config.py",
+        "src/probos/startup/fleet_organization.py",
     )
     result = subprocess.run(
         ["git", "diff", "--name-only"],

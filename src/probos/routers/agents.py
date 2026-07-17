@@ -1953,6 +1953,10 @@ async def agent_avatar_telemetry_stream(
     tick_count = 0
     try:
         from probos.avatars.telemetry import build_telemetry_snapshot
+        from probos.avatars.telemetry_frames import (
+            avatar_telemetry_frame_to_ws,
+            select_avatar_telemetry_frame,
+        )
 
         # Send an initial snapshot immediately on connect (UI populates fast).
         # AD-722b-2: also write to agent._last_self_avatar_snap so the agent's
@@ -1960,9 +1964,19 @@ async def agent_avatar_telemetry_stream(
         try:
             initial = await build_telemetry_snapshot(agent_id, runtime)
             agent._last_self_avatar_snap = initial
-            initial_dict = initial.to_dict()
-            await websocket.send_json({"type": "snapshot", **initial_dict})
-            last_sent_snap_dict = initial_dict
+            initial_frame, last_sent_snap_dict = select_avatar_telemetry_frame(
+                initial,
+                previous_snapshot=None,
+                tick_count=0,
+                diff_enabled=telemetry_cfg.ws_diff_enabled,
+                diff_threshold=telemetry_cfg.ws_diff_threshold,
+                full_every_n=telemetry_cfg.ws_full_snapshot_every_n,
+                force_full=True,
+            )
+            if initial_frame is not None:
+                await websocket.send_json(
+                    avatar_telemetry_frame_to_ws(initial_frame),
+                )
             # AD-722c: best-effort persistence. Never blocks the publish.
             _hist = getattr(runtime, "avatar_telemetry_history", None)
             if _hist is not None:
@@ -2012,49 +2026,27 @@ async def agent_avatar_telemetry_stream(
                 # AD-722b-2: same side-effect as initial — keep agent cache fresh.
                 snap = await build_telemetry_snapshot(agent_id, runtime)
                 agent._last_self_avatar_snap = snap
-                snap_dict = snap.to_dict()
                 tick_count += 1
                 cfg_t = getattr(runtime.config, "avatar_telemetry", None)
-                send_full = (
-                    cfg_t is None
-                    or not cfg_t.ws_diff_enabled
-                    or (tick_count % cfg_t.ws_full_snapshot_every_n) == 0
+                frame, last_sent_snap_dict = select_avatar_telemetry_frame(
+                    snap,
+                    previous_snapshot=last_sent_snap_dict,
+                    tick_count=tick_count,
+                    diff_enabled=(
+                        cfg_t is not None and cfg_t.ws_diff_enabled
+                    ),
+                    diff_threshold=(
+                        cfg_t.ws_diff_threshold if cfg_t is not None else 0.05
+                    ),
+                    full_every_n=(
+                        cfg_t.ws_full_snapshot_every_n
+                        if cfg_t is not None else 1
+                    ),
                 )
-                if send_full:
-                    await websocket.send_json({"type": "snapshot", **snap_dict})
-                    last_sent_snap_dict = snap_dict
-                else:
-                    try:
-                        from probos.avatars.snapshot_diff import compute_diff
-                        diff = compute_diff(
-                            last_sent_snap_dict,
-                            snap_dict,
-                            threshold=cfg_t.ws_diff_threshold,
-                        )
-                    except Exception:
-                        logger.warning(
-                            "AD-722b-3: compute_diff raised; falling back to full snapshot",
-                            exc_info=True,
-                        )
-                        await websocket.send_json({"type": "snapshot", **snap_dict})
-                        last_sent_snap_dict = snap_dict
-                        diff = None
-                    if diff is not None:
-                        if not diff:
-                            # No significant change — skip the send entirely.
-                            # Still run the AD-722c/AD-722d side-effects below
-                            # so persistence + significance classification
-                            # never drop frames.
-                            pass
-                        else:
-                            await websocket.send_json({
-                                "type": "diff",
-                                "agent_id": snap.agent_id,
-                                "changed": diff,
-                            })
-                            last_sent_snap_dict = {
-                                **(last_sent_snap_dict or {}), **diff,
-                            }
+                if frame is not None:
+                    await websocket.send_json(
+                        avatar_telemetry_frame_to_ws(frame),
+                    )
                 # AD-722c: best-effort persistence. Never blocks the publish.
                 _hist = getattr(runtime, "avatar_telemetry_history", None)
                 if _hist is not None:
@@ -2211,6 +2203,10 @@ async def fleet_avatar_telemetry_stream(websocket: WebSocket) -> None:
     tick_counts: dict[str, int] = {}
 
     from probos.avatars.telemetry import build_telemetry_snapshot
+    from probos.avatars.telemetry_frames import (
+        avatar_telemetry_frame_to_ws,
+        select_avatar_telemetry_frame,
+    )
 
     for agent_id, _agent in crew_agents:
         sampling_state.enter_popout(agent_id)
@@ -2226,11 +2222,21 @@ async def fleet_avatar_telemetry_stream(websocket: WebSocket) -> None:
             try:
                 initial = await build_telemetry_snapshot(agent_id, runtime)
                 agent._last_self_avatar_snap = initial
-                initial_dict = initial.to_dict()
-                await websocket.send_json(
-                    {"type": "snapshot", "agent_id": agent_id, **initial_dict},
+                initial_frame, last_sent[agent_id] = (
+                    select_avatar_telemetry_frame(
+                        initial,
+                        previous_snapshot=None,
+                        tick_count=0,
+                        diff_enabled=telemetry_cfg.ws_diff_enabled,
+                        diff_threshold=telemetry_cfg.ws_diff_threshold,
+                        full_every_n=telemetry_cfg.ws_full_snapshot_every_n,
+                        force_full=True,
+                    )
                 )
-                last_sent[agent_id] = initial_dict
+                if initial_frame is not None:
+                    await websocket.send_json(
+                        avatar_telemetry_frame_to_ws(initial_frame),
+                    )
                 _hist = getattr(runtime, "avatar_telemetry_history", None)
                 if _hist is not None:
                     try:
@@ -2275,46 +2281,28 @@ async def fleet_avatar_telemetry_stream(websocket: WebSocket) -> None:
                             t.cancel()
                 snap = await build_telemetry_snapshot(agent_id, runtime)
                 agent._last_self_avatar_snap = snap
-                snap_dict = snap.to_dict()
                 tick_counts[agent_id] += 1
                 cfg_t = getattr(runtime.config, "avatar_telemetry", None)
-                send_full = (
-                    cfg_t is None
-                    or not getattr(cfg_t, "ws_diff_enabled", False)
-                    or (tick_counts[agent_id] % cfg_t.ws_full_snapshot_every_n) == 0
+                frame, last_sent[agent_id] = select_avatar_telemetry_frame(
+                    snap,
+                    previous_snapshot=last_sent[agent_id],
+                    tick_count=tick_counts[agent_id],
+                    diff_enabled=(
+                        cfg_t is not None
+                        and getattr(cfg_t, "ws_diff_enabled", False)
+                    ),
+                    diff_threshold=(
+                        cfg_t.ws_diff_threshold if cfg_t is not None else 0.05
+                    ),
+                    full_every_n=(
+                        cfg_t.ws_full_snapshot_every_n
+                        if cfg_t is not None else 1
+                    ),
                 )
-                if send_full:
+                if frame is not None:
                     await websocket.send_json(
-                        {"type": "snapshot", "agent_id": agent_id, **snap_dict},
+                        avatar_telemetry_frame_to_ws(frame),
                     )
-                    last_sent[agent_id] = snap_dict
-                else:
-                    diff: dict[str, Any] | None = None
-                    try:
-                        from probos.avatars.snapshot_diff import compute_diff
-                        diff = compute_diff(
-                            last_sent[agent_id],
-                            snap_dict,
-                            threshold=cfg_t.ws_diff_threshold,
-                        )
-                    except Exception:
-                        logger.warning(
-                            "AD-722b-4: compute_diff raised; falling back to full snapshot for %s",
-                            agent_id, exc_info=True,
-                        )
-                        await websocket.send_json(
-                            {"type": "snapshot", "agent_id": agent_id, **snap_dict},
-                        )
-                        last_sent[agent_id] = snap_dict
-                    if diff:
-                        await websocket.send_json({
-                            "type": "diff",
-                            "agent_id": agent_id,
-                            "changed": diff,
-                        })
-                        last_sent[agent_id] = {
-                            **(last_sent[agent_id] or {}), **diff,
-                        }
                 _hist = getattr(runtime, "avatar_telemetry_history", None)
                 if _hist is not None:
                     try:

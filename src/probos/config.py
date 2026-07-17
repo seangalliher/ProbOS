@@ -1390,6 +1390,32 @@ class PeerConfig(BaseModel):
 
     node_id: str
     address: str  # e.g. "tcp://127.0.0.1:5556"
+    avatar_telemetry_agent_ids: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+
+    @field_validator("avatar_telemetry_agent_ids", mode="before")
+    @classmethod
+    def _validate_avatar_telemetry_agent_ids(cls, value: Any) -> list[str]:
+        if type(value) is not list:
+            raise ValueError("avatar_telemetry_agent_ids must be a list")
+        if list.__len__(value) > 32:
+            raise ValueError(
+                "avatar_telemetry_agent_ids must contain at most 32 agent IDs"
+            )
+
+        from probos.avatars.telemetry_frames import is_safe_avatar_agent_id
+
+        seen: set[str] = set()
+        for index in range(list.__len__(value)):
+            agent_id = list.__getitem__(value, index)
+            if not is_safe_avatar_agent_id(agent_id) or agent_id in seen:
+                raise ValueError(
+                    "avatar_telemetry_agent_ids must contain unique safe agent IDs"
+                )
+            seen.add(agent_id)
+        return value
 
 
 class FederationMCPServerConfig(BaseModel):
@@ -2189,6 +2215,14 @@ class SamplingRatesConfig(BaseModel):
         if v < 250:
             raise ValueError(
                 f"sampling-rate field must be >= 250 to prevent UI hammering, got {v}"
+            )
+        from probos.avatars.telemetry_frames import MAX_AVATAR_SAMPLING_RATE_MS
+
+        if v > MAX_AVATAR_SAMPLING_RATE_MS:
+            raise ValueError(
+                "sampling-rate field must be <= "
+                f"{MAX_AVATAR_SAMPLING_RATE_MS} for federation wire "
+                f"representation, got {v}"
             )
         return v
 

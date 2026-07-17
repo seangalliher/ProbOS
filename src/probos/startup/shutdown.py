@@ -910,9 +910,24 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         runtime.pool_scaler = None
 
     # Stop federation
+    federation_telemetry_relay = getattr(
+        runtime,
+        "federation_telemetry_relay",
+        None,
+    )
+    if federation_telemetry_relay:
+        await federation_telemetry_relay.stop()
+        runtime.federation_telemetry_relay = None
     if runtime.federation_bridge:
         await runtime.federation_bridge.stop()
         runtime.federation_bridge = None
+    remote_avatar_telemetry_cache = getattr(
+        runtime,
+        "remote_avatar_telemetry_cache",
+        None,
+    )
+    if remote_avatar_telemetry_cache:
+        remote_avatar_telemetry_cache.clear()
     if runtime._federation_transport:
         await runtime._federation_transport.stop()
         runtime._federation_transport = None
