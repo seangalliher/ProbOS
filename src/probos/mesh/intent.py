@@ -555,6 +555,10 @@ class IntentBus:
     def subscriber_count(self) -> int:
         return len(self._subscribers)
 
+    def has_subscriber(self, agent_id: str) -> bool:
+        """Return whether an exact local subscriber is registered for agent_id."""
+        return agent_id in self._subscribers
+
     async def send(self, intent: IntentMessage) -> IntentResult | None:
         """Deliver an intent to a specific agent (targeted dispatch, AD-397).
 

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import math
+import re
 import time
 import uuid
 from collections.abc import Callable, Awaitable
@@ -39,6 +42,54 @@ _FEDERATED_VISION_SOURCE_KEYS = frozenset({
     "sha256",
     "media_type",
 })
+_DIRECTED_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_DIRECTED_AGENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
+_DIRECTED_INTENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
+_DIRECTED_CORRELATION_ID_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+)
+_DIRECTED_DM_MODE = "targeted_dm"
+_DIRECTED_TEXT_LIMIT = 65_536
+_DIRECTED_REQUEST_KEYS = frozenset({
+    "delivery_mode",
+    "target_node_id",
+    "target_agent_id",
+    "intent",
+    "params",
+    "id",
+    "ttl_seconds",
+})
+_DIRECTED_RESPONSE_KEYS = frozenset({"delivery_mode", "results"})
+_DIRECTED_RESULT_KEYS = frozenset({
+    "intent_id",
+    "agent_id",
+    "success",
+    "result",
+    "error",
+    "confidence",
+})
+_DIRECTED_PARAM_KEYS = frozenset({
+    "text",
+    "attachment_ref",
+    "attachment_refs",
+    "vision_messages",
+    "has_image_attachment",
+    "_transport_stripped",
+})
+_DIRECTED_TRANSPORT_STRIPPED_ORDER = (
+    "attachment_ref",
+    "attachment_refs",
+    "vision_messages",
+    "has_image_attachment",
+)
+_DIRECTED_RESULT_MAX_DEPTH = 16
+_DIRECTED_RESULT_MAX_NODES = 4_096
+_DIRECTED_RESULT_MAX_STRING_CHARS = 65_536
+_DIRECTED_RESULT_MAX_UTF8_BYTES = 262_144
+_DIRECTED_RESPONSE_MAX_JSON_BYTES = 262_144
+_DIRECTED_ERROR_MAX_CHARS = 4_096
+_SIGNED_INT64_MIN = -(2**63)
+_SIGNED_INT64_MAX = 2**63 - 1
 
 
 def _preflight_exact_dict_fields(
@@ -216,6 +267,599 @@ def _sanitize_attachment_params_for_federation(
     return sanitized, processed_keys
 
 
+def _is_safe_node_id(value: Any) -> bool:
+    return type(value) is str and _DIRECTED_NODE_ID_RE.fullmatch(value) is not None
+
+
+def _is_safe_agent_id(value: Any) -> bool:
+    return type(value) is str and _DIRECTED_AGENT_ID_RE.fullmatch(value) is not None
+
+
+def _is_safe_intent_id(value: Any) -> bool:
+    return type(value) is str and _DIRECTED_INTENT_ID_RE.fullmatch(value) is not None
+
+
+def _is_safe_correlation_id(value: Any) -> bool:
+    return (
+        type(value) is str
+        and _DIRECTED_CORRELATION_ID_RE.fullmatch(value) is not None
+    )
+
+
+def _strict_json_detach(value: Any) -> Any:
+    return json.loads(json.dumps(value, allow_nan=False))
+
+
+def _extract_exact_directed_request_payload(
+    payload: Any,
+) -> dict[str, Any] | None:
+    if type(payload) is not dict or dict.__len__(payload) != 7:
+        return None
+    seen: set[str] = set()
+    for key in dict.keys(payload):
+        if type(key) is not str or key not in _DIRECTED_REQUEST_KEYS:
+            return None
+        seen.add(key)
+    if seen != _DIRECTED_REQUEST_KEYS:
+        return None
+    return payload
+
+
+def _extract_exact_directed_response_payload(
+    payload: Any,
+) -> list[Any] | None:
+    if type(payload) is not dict or dict.__len__(payload) != 2:
+        return None
+    seen: set[str] = set()
+    for key in dict.keys(payload):
+        if type(key) is not str or key not in _DIRECTED_RESPONSE_KEYS:
+            return None
+        seen.add(key)
+    if seen != _DIRECTED_RESPONSE_KEYS:
+        return None
+    if type(dict.__getitem__(payload, "delivery_mode")) is not str:
+        return None
+    if dict.__getitem__(payload, "delivery_mode") != _DIRECTED_DM_MODE:
+        return None
+    results = dict.__getitem__(payload, "results")
+    if type(results) is not list or list.__len__(results) != 1:
+        return None
+    return results
+
+
+def _validate_transport_stripped_marker(marker: Any) -> bool:
+    if type(marker) is not list:
+        return False
+    marker_length = list.__len__(marker)
+    if marker_length < 1 or marker_length > len(
+        _DIRECTED_TRANSPORT_STRIPPED_ORDER
+    ):
+        return False
+    prior_index = -1
+    for position in range(marker_length):
+        item = list.__getitem__(marker, position)
+        if type(item) is not str:
+            return False
+        try:
+            item_index = _DIRECTED_TRANSPORT_STRIPPED_ORDER.index(item)
+        except ValueError:
+            return False
+        if item_index <= prior_index:
+            return False
+        prior_index = item_index
+    return True
+
+
+def _is_canonical_attachment_sha(value: Any) -> bool:
+    return (
+        type(value) is str
+        and str.__len__(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
+def _has_exact_dict_keys(value: Any, expected: frozenset[str]) -> bool:
+    if type(value) is not dict or dict.__len__(value) != len(expected):
+        return False
+    seen: set[str] = set()
+    for key in dict.keys(value):
+        if type(key) is not str or key not in expected:
+            return False
+        seen.add(key)
+    return seen == expected
+
+
+def _validate_canonical_directed_attachments(params: dict[str, Any]) -> bool:
+    admitted_shas: set[str] = set()
+
+    if dict.__contains__(params, "attachment_ref"):
+        attachment_ref = dict.__getitem__(params, "attachment_ref")
+        if not _is_canonical_attachment_sha(attachment_ref):
+            return False
+        admitted_shas.add(attachment_ref)
+
+    if dict.__contains__(params, "attachment_refs"):
+        attachment_refs = dict.__getitem__(params, "attachment_refs")
+        if type(attachment_refs) is not list:
+            return False
+        ref_count = list.__len__(attachment_refs)
+        if ref_count < 1 or ref_count > _FEDERATED_ATTACHMENT_REF_LIMIT:
+            return False
+        seen_refs: set[str] = set()
+        for index in range(ref_count):
+            ref = list.__getitem__(attachment_refs, index)
+            if not _is_canonical_attachment_sha(ref) or ref in seen_refs:
+                return False
+            seen_refs.add(ref)
+            admitted_shas.add(ref)
+
+    has_vision = False
+    if dict.__contains__(params, "vision_messages"):
+        vision_messages = dict.__getitem__(params, "vision_messages")
+        if type(vision_messages) is not list or list.__len__(vision_messages) != 1:
+            return False
+        message = list.__getitem__(vision_messages, 0)
+        if not _has_exact_dict_keys(
+            message, frozenset({"role", "content"})
+        ):
+            return False
+        if (
+            type(dict.__getitem__(message, "role")) is not str
+            or dict.__getitem__(message, "role") != "user"
+        ):
+            return False
+        content = dict.__getitem__(message, "content")
+        if type(content) is not list:
+            return False
+        content_count = list.__len__(content)
+        if content_count < 1 or content_count > _FEDERATED_ATTACHMENT_REF_LIMIT:
+            return False
+        seen_vision_refs: set[str] = set()
+        for index in range(content_count):
+            block = list.__getitem__(content, index)
+            if not _has_exact_dict_keys(
+                block, _FEDERATED_VISION_BLOCK_KEYS
+            ):
+                return False
+            if (
+                type(dict.__getitem__(block, "type")) is not str
+                or dict.__getitem__(block, "type") != "image"
+            ):
+                return False
+            source = dict.__getitem__(block, "source")
+            if not _has_exact_dict_keys(
+                source, _FEDERATED_VISION_SOURCE_KEYS
+            ):
+                return False
+            if (
+                type(dict.__getitem__(source, "type")) is not str
+                or dict.__getitem__(source, "type") != "attachment_ref"
+            ):
+                return False
+            sha = dict.__getitem__(source, "sha256")
+            media_type = dict.__getitem__(source, "media_type")
+            if (
+                not _is_canonical_attachment_sha(sha)
+                or sha in seen_vision_refs
+                or type(media_type) is not str
+                or media_type not in _FEDERATED_IMAGE_MIME_TYPES
+            ):
+                return False
+            seen_vision_refs.add(sha)
+            admitted_shas.add(sha)
+        has_vision = True
+
+    if len(admitted_shas) > _FEDERATED_ATTACHMENT_REF_LIMIT:
+        return False
+    if dict.__contains__(params, "has_image_attachment"):
+        has_image_attachment = dict.__getitem__(
+            params, "has_image_attachment"
+        )
+        if type(has_image_attachment) is not bool or not has_image_attachment:
+            return False
+        if not has_vision:
+            return False
+    return True
+
+
+def _is_forbidden_result_data_url(value: str) -> bool:
+    length = str.__len__(value)
+    offset = 0
+    ascii_whitespace = " \t\n\r\v\f"
+    while offset < length and str.__getitem__(value, offset) in ascii_whitespace:
+        offset += 1
+    expected = "data:image/"
+    if length - offset < str.__len__(expected):
+        return False
+    for index in range(str.__len__(expected)):
+        candidate = str.__getitem__(value, offset + index)
+        codepoint = ord(candidate)
+        if 65 <= codepoint <= 90:
+            candidate = chr(codepoint + 32)
+        if candidate != str.__getitem__(expected, index):
+            return False
+    return True
+
+
+def _is_forbidden_result_dict_shape(value: dict[Any, Any]) -> bool:
+    value_type = (
+        dict.__getitem__(value, "type")
+        if dict.__contains__(value, "type")
+        else None
+    )
+    if type(value_type) is str and value_type == "image_url":
+        return True
+    if dict.__contains__(value, "image_url"):
+        return True
+    if (
+        type(value_type) is str
+        and value_type in {"base64", "image"}
+        and dict.__contains__(value, "data")
+    ):
+        return True
+    source = (
+        dict.__getitem__(value, "source")
+        if dict.__contains__(value, "source")
+        else None
+    )
+    if type(source) is dict:
+        source_type = (
+            dict.__getitem__(source, "type")
+            if dict.__contains__(source, "type")
+            else None
+        )
+        if (
+            type(source_type) is str and source_type == "base64"
+        ) or dict.__contains__(source, "data"):
+            return True
+    return False
+
+
+def _detach_directed_result_value(
+    value: Any,
+    *,
+    _string_budget: list[int] | None = None,
+) -> Any:
+    """Return an exact-built-in detached result under fixed work bounds."""
+    root: list[Any] = [None]
+    active_container_ids: set[int] = set()
+    node_count = 0
+    string_budget = [0] if _string_budget is None else _string_budget
+    stack: list[tuple[Any, ...]] = [("visit", value, 0, root, 0)]
+
+    def _assign(parent: list[Any] | dict[str, Any], slot: Any, item: Any) -> None:
+        if type(parent) is list:
+            list.__setitem__(parent, slot, item)
+        else:
+            dict.__setitem__(parent, slot, item)
+
+    def _account_string(item: str) -> None:
+        if str.__len__(item) > _DIRECTED_RESULT_MAX_STRING_CHARS:
+            raise ValueError("federation_result_not_serializable")
+        string_budget[0] += len(str.encode(item, "utf-8"))
+        if string_budget[0] > _DIRECTED_RESULT_MAX_UTF8_BYTES:
+            raise ValueError("federation_result_not_serializable")
+
+    while stack:
+        frame = stack.pop()
+        operation = frame[0]
+        if operation == "exit":
+            active_container_ids.remove(frame[1])
+            continue
+        if operation == "dict_exit":
+            container_id, detached = frame[1:]
+            if _is_forbidden_result_dict_shape(detached):
+                raise ValueError("federation_result_not_serializable")
+            active_container_ids.remove(container_id)
+            continue
+        if operation == "list_next":
+            source, index, depth, detached = frame[1:]
+            if index >= list.__len__(source):
+                continue
+            list.append(detached, None)
+            stack.append(("list_next", source, index + 1, depth, detached))
+            stack.append((
+                "visit",
+                list.__getitem__(source, index),
+                depth + 1,
+                detached,
+                index,
+            ))
+            continue
+        if operation == "dict_next":
+            iterator, depth, detached = frame[1:]
+            try:
+                key, item = next(iterator)
+            except StopIteration:
+                continue
+            node_count += 1
+            if node_count > _DIRECTED_RESULT_MAX_NODES:
+                raise ValueError("federation_result_not_serializable")
+            if depth + 1 > _DIRECTED_RESULT_MAX_DEPTH or type(key) is not str:
+                raise ValueError("federation_result_not_serializable")
+            _account_string(key)
+            if _is_forbidden_result_data_url(key):
+                raise ValueError("federation_result_not_serializable")
+            stack.append(("dict_next", iterator, depth, detached))
+            stack.append(("visit", item, depth + 1, detached, key))
+            continue
+
+        item, depth, parent, slot = frame[1:]
+        node_count += 1
+        if (
+            node_count > _DIRECTED_RESULT_MAX_NODES
+            or depth > _DIRECTED_RESULT_MAX_DEPTH
+        ):
+            raise ValueError("federation_result_not_serializable")
+        item_type = type(item)
+        if item is None or item_type is bool:
+            _assign(parent, slot, item)
+        elif item_type is int:
+            if item < _SIGNED_INT64_MIN or item > _SIGNED_INT64_MAX:
+                raise ValueError("federation_result_not_serializable")
+            _assign(parent, slot, item)
+        elif item_type is float:
+            if not math.isfinite(item):
+                raise ValueError("federation_result_not_serializable")
+            _assign(parent, slot, item)
+        elif item_type is str:
+            _account_string(item)
+            if _is_forbidden_result_data_url(item):
+                raise ValueError("federation_result_not_serializable")
+            _assign(parent, slot, item)
+        elif item_type is list:
+            container_id = id(item)
+            if container_id in active_container_ids:
+                raise ValueError("federation_result_not_serializable")
+            detached_list: list[Any] = []
+            _assign(parent, slot, detached_list)
+            active_container_ids.add(container_id)
+            stack.append(("exit", container_id))
+            stack.append(("list_next", item, 0, depth, detached_list))
+        elif item_type is dict:
+            container_id = id(item)
+            if container_id in active_container_ids:
+                raise ValueError("federation_result_not_serializable")
+            detached_dict: dict[str, Any] = {}
+            _assign(parent, slot, detached_dict)
+            active_container_ids.add(container_id)
+            stack.append(("dict_exit", container_id, detached_dict))
+            stack.append((
+                "dict_next",
+                iter(dict.items(item)),
+                depth,
+                detached_dict,
+            ))
+        elif item_type in (bytes, bytearray, memoryview):
+            raise ValueError("federation_result_not_serializable")
+        else:
+            raise ValueError("federation_result_not_serializable")
+
+    return list.__getitem__(root, 0)
+
+
+def _detach_serialized_directed_result(
+    raw_result: Any,
+    *,
+    malformed_error: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if not _has_exact_dict_keys(raw_result, _DIRECTED_RESULT_KEYS):
+        return None, malformed_error
+    intent_id = dict.__getitem__(raw_result, "intent_id")
+    agent_id = dict.__getitem__(raw_result, "agent_id")
+    success = dict.__getitem__(raw_result, "success")
+    error = dict.__getitem__(raw_result, "error")
+    confidence = dict.__getitem__(raw_result, "confidence")
+    if not _is_safe_intent_id(intent_id) or not _is_safe_agent_id(agent_id):
+        return None, malformed_error
+    if type(success) is not bool:
+        return None, malformed_error
+    if error is not None and (
+        type(error) is not str
+        or str.__len__(error) > _DIRECTED_ERROR_MAX_CHARS
+    ):
+        return None, malformed_error
+    if type(confidence) not in (int, float):
+        return None, malformed_error
+    try:
+        normalized_confidence = float(confidence)
+    except (OverflowError, TypeError, ValueError):
+        return None, malformed_error
+    if not math.isfinite(normalized_confidence):
+        return None, malformed_error
+    string_budget = [0]
+    if error is not None:
+        try:
+            string_budget[0] = len(str.encode(error, "utf-8"))
+        except UnicodeEncodeError:
+            return None, "federation_result_not_serializable"
+        if (
+            string_budget[0] > _DIRECTED_RESULT_MAX_UTF8_BYTES
+            or _is_forbidden_result_data_url(error)
+        ):
+            return None, "federation_result_not_serializable"
+    try:
+        detached_value = _detach_directed_result_value(
+            dict.__getitem__(raw_result, "result"),
+            _string_budget=string_budget,
+        )
+    except ValueError:
+        return None, "federation_result_not_serializable"
+    return {
+        "intent_id": intent_id,
+        "agent_id": agent_id,
+        "success": success,
+        "result": detached_value,
+        "error": error,
+        "confidence": normalized_confidence,
+    }, None
+
+
+def _compact_detach_directed_response(
+    serialized_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    payload = {
+        "delivery_mode": _DIRECTED_DM_MODE,
+        "results": [serialized_result],
+    }
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if len(encoded) > _DIRECTED_RESPONSE_MAX_JSON_BYTES:
+        return None
+    detached = json.loads(encoded.decode("utf-8"))
+    return detached if type(detached) is dict else None
+
+
+def _finalize_directed_result_for_origin(
+    serialized_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    payload = _compact_detach_directed_response(serialized_result)
+    if payload is None:
+        return None
+    results = dict.__getitem__(payload, "results")
+    return list.__getitem__(results, 0)
+
+
+def _normalize_origin_ttl(value: Any) -> float | None:
+    if type(value) not in (int, float):
+        return None
+    try:
+        normalized = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if not math.isfinite(normalized) or normalized <= 0.0:
+        return None
+    return min(normalized, 60.0)
+
+
+def _normalize_wire_ttl(value: Any) -> float | None:
+    if type(value) not in (int, float):
+        return None
+    try:
+        normalized = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if (
+        not math.isfinite(normalized)
+        or normalized <= 0.0
+        or normalized > 60.0
+    ):
+        return None
+    return normalized
+
+
+def _has_directed_attachment(params: dict[str, Any]) -> bool:
+    if type(params.get("attachment_ref")) is str:
+        return True
+    refs = params.get("attachment_refs")
+    if type(refs) is list and bool(refs):
+        return True
+    vision_messages = params.get("vision_messages")
+    if type(vision_messages) is list and bool(vision_messages):
+        return True
+    return False
+
+
+def _directed_dm_params(
+    params: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    sanitized, processed_attachment_keys = (
+        _sanitize_attachment_params_for_federation(params)
+    )
+    directed: dict[str, Any] = {}
+    text = sanitized.get("text")
+    if type(text) is str and len(text) <= _DIRECTED_TEXT_LIMIT:
+        directed["text"] = text
+    for key in (
+        "attachment_ref",
+        "attachment_refs",
+        "vision_messages",
+        "has_image_attachment",
+    ):
+        if key in sanitized:
+            directed[key] = sanitized[key]
+    if processed_attachment_keys:
+        directed["_transport_stripped"] = processed_attachment_keys
+    if not directed.get("text") and not _has_directed_attachment(directed):
+        return None, "federation_payload_invalid"
+    try:
+        detached = _strict_json_detach(directed)
+    except (TypeError, ValueError, OverflowError):
+        return None, "federation_payload_not_serializable"
+    if type(detached) is not dict:
+        return None, "federation_payload_invalid"
+    return detached, None
+
+
+def _validate_directed_wire_params(
+    params: Any,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if type(params) is not dict or dict.__len__(params) > len(
+        _DIRECTED_PARAM_KEYS
+    ):
+        return None, "federation_payload_invalid"
+    for key in dict.keys(params):
+        if type(key) is not str or key not in _DIRECTED_PARAM_KEYS:
+            return None, "federation_payload_invalid"
+    text = (
+        dict.__getitem__(params, "text")
+        if dict.__contains__(params, "text")
+        else None
+    )
+    if dict.__contains__(params, "text") and (
+        type(text) is not str or len(text) > _DIRECTED_TEXT_LIMIT
+    ):
+        return None, "federation_payload_invalid"
+    if not _validate_canonical_directed_attachments(params):
+        return None, "federation_payload_invalid"
+    if dict.__contains__(params, "_transport_stripped"):
+        marker = dict.__getitem__(params, "_transport_stripped")
+        if not _validate_transport_stripped_marker(marker):
+            return None, "federation_payload_invalid"
+    if not text and not _has_directed_attachment(params):
+        return None, "federation_payload_invalid"
+    try:
+        detached = _strict_json_detach(params)
+    except (TypeError, ValueError, OverflowError):
+        return None, "federation_payload_not_serializable"
+    if type(detached) is not dict:
+        return None, "federation_payload_invalid"
+    return detached, None
+
+
+def _serialize_directed_result(result: IntentResult) -> dict[str, Any]:
+    return {
+        "intent_id": result.intent_id,
+        "agent_id": result.agent_id,
+        "success": result.success,
+        "result": result.result,
+        "error": result.error,
+        "confidence": result.confidence,
+    }
+
+
+def _detach_local_directed_result(
+    result: Any,
+) -> dict[str, Any] | None:
+    if type(result) is not IntentResult:
+        return None
+    serialized = _serialize_directed_result(result)
+    detached, error = _detach_serialized_directed_result(
+        serialized,
+        malformed_error="federation_result_not_serializable",
+    )
+    if error is not None:
+        return None
+    return detached
+
+
 class FederationBridge:
     """Connects the local IntentBus to the federation transport layer.
 
@@ -254,6 +898,7 @@ class FederationBridge:
         self._attachment_resolver = attachment_resolver
         self._gossip_task: asyncio.Task[None] | None = None
         self._stopped = False
+        self._directed_admission_open = True
         self._stats = {
             "intents_forwarded": 0,
             "intents_received": 0,
@@ -264,14 +909,17 @@ class FederationBridge:
 
     async def start(self) -> None:
         """Start the bridge: register as transport inbound handler, start gossip loop."""
+        self._directed_admission_open = False
         self._stopped = False
         self._transport._inbound_handler = self.handle_inbound
         self._gossip_task = asyncio.create_task(
             self._gossip_loop(), name="federation-gossip"
         )
+        self._directed_admission_open = True
 
     async def stop(self) -> None:
         """Stop gossip loop."""
+        self._directed_admission_open = False
         self._stopped = True
         if self._gossip_task is not None:
             self._gossip_task.cancel()
@@ -355,6 +1003,206 @@ class FederationBridge:
 
         return results
 
+    def _directed_error(
+        self,
+        intent: IntentMessage | None,
+        error: str,
+        *,
+        intent_id: Any = "",
+        agent_id: Any = "",
+    ) -> IntentResult:
+        resolved_intent_id = (
+            intent.id
+            if intent is not None and _is_safe_intent_id(intent.id)
+            else intent_id if _is_safe_intent_id(intent_id) else ""
+        )
+        resolved_agent_id = (
+            intent.target_agent_id
+            if intent is not None and _is_safe_agent_id(intent.target_agent_id)
+            else agent_id if _is_safe_agent_id(agent_id) else ""
+        )
+        return IntentResult(
+            intent_id=resolved_intent_id,
+            agent_id=resolved_agent_id,
+            success=False,
+            result=None,
+            error=error,
+            confidence=0.0,
+        )
+
+    async def forward_direct_message(
+        self,
+        target_node_id: str,
+        intent: IntentMessage,
+    ) -> IntentResult:
+        """Forward one direct_message to one configured node and agent."""
+        if not self._directed_admission_open:
+            return self._directed_error(
+                intent, "federation_target_node_unavailable"
+            )
+        if not _is_safe_node_id(target_node_id) or target_node_id == self._node_id:
+            return self._directed_error(
+                intent, "federation_target_node_invalid"
+            )
+        configured_peers = {
+            peer.node_id for peer in self._config.peers
+        }
+        if (
+            target_node_id not in configured_peers
+            or target_node_id not in self._transport.connected_peers
+        ):
+            return self._directed_error(
+                intent, "federation_target_node_unavailable"
+            )
+        if intent.intent != "direct_message":
+            return self._directed_error(
+                intent, "federation_directed_intent_not_allowed"
+            )
+        if not _is_safe_agent_id(intent.target_agent_id):
+            return self._directed_error(
+                intent, "federation_target_agent_invalid"
+            )
+        if not _is_safe_intent_id(intent.id):
+            return self._directed_error(
+                intent, "federation_payload_invalid"
+            )
+        if type(intent.params) is not dict:
+            return self._directed_error(
+                intent, "federation_payload_invalid"
+            )
+        ttl_seconds = _normalize_origin_ttl(intent.ttl_seconds)
+        if ttl_seconds is None:
+            return self._directed_error(
+                intent, "federation_payload_invalid"
+            )
+        directed_params, params_error = _directed_dm_params(intent.params)
+        if params_error is not None or directed_params is None:
+            return self._directed_error(intent, params_error or "federation_payload_invalid")
+        try:
+            payload = _strict_json_detach({
+                "delivery_mode": _DIRECTED_DM_MODE,
+                "target_node_id": target_node_id,
+                "target_agent_id": intent.target_agent_id,
+                "intent": "direct_message",
+                "params": directed_params,
+                "id": intent.id,
+                "ttl_seconds": ttl_seconds,
+            })
+        except (TypeError, ValueError, OverflowError):
+            return self._directed_error(
+                intent, "federation_payload_not_serializable"
+            )
+        message = FederationMessage(
+            type="intent_request",
+            source_node=self._node_id,
+            payload=payload,
+            timestamp=time.monotonic(),
+        )
+        if not _is_safe_correlation_id(message.message_id):
+            return self._directed_error(
+                intent, "federation_target_delivery_failed"
+            )
+        timeout_ms = max(1, math.ceil(ttl_seconds * 1000.0))
+        try:
+            response = await self._transport.request_peer(
+                target_node_id,
+                message,
+                timeout_ms,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            error_code = (
+                "federation_target_node_unavailable"
+                if type(exc) is RuntimeError
+                and exc.args == ("federation_transport_closed",)
+                else "federation_target_delivery_failed"
+            )
+            logger.warning(
+                "Directed federation request failed peer=%s intent_id=%s "
+                "action=%s exception_type=%s",
+                target_node_id,
+                intent.id,
+                error_code,
+                type(exc).__name__,
+            )
+            return self._directed_error(intent, error_code)
+        if response is None:
+            return self._directed_error(intent, "federation_peer_timeout")
+        if (
+            type(response) is not FederationMessage
+            or type(response.type) is not str
+            or response.type != "intent_response"
+            or type(response.source_node) is not str
+            or response.source_node != target_node_id
+            or not _is_safe_correlation_id(response.message_id)
+            or response.message_id != message.message_id
+        ):
+            return self._directed_error(
+                intent, "federation_response_invalid"
+            )
+        remote_results = _extract_exact_directed_response_payload(
+            response.payload
+        )
+        if remote_results is None:
+            return self._directed_error(
+                intent, "federation_response_invalid"
+            )
+        raw_result = list.__getitem__(remote_results, 0)
+        detached_result, result_error = _detach_serialized_directed_result(
+            raw_result,
+            malformed_error="federation_response_invalid",
+        )
+        if result_error is not None or detached_result is None:
+            return self._directed_error(intent, result_error or "federation_response_invalid")
+        finalized_result = _finalize_directed_result_for_origin(
+            detached_result
+        )
+        if finalized_result is None:
+            return self._directed_error(
+                intent, "federation_result_not_serializable"
+            )
+        detached_result = finalized_result
+        if dict.__getitem__(detached_result, "intent_id") != intent.id:
+            return self._directed_error(
+                intent, "federation_result_correlation_mismatch"
+            )
+        if dict.__getitem__(detached_result, "agent_id") != intent.target_agent_id:
+            return self._directed_error(
+                intent, "federation_result_target_mismatch"
+            )
+        remote_result = IntentResult(
+            intent_id=dict.__getitem__(detached_result, "intent_id"),
+            agent_id=dict.__getitem__(detached_result, "agent_id"),
+            success=dict.__getitem__(detached_result, "success"),
+            result=dict.__getitem__(detached_result, "result"),
+            error=dict.__getitem__(detached_result, "error"),
+            confidence=dict.__getitem__(detached_result, "confidence"),
+        )
+        if self._validate_fn:
+            try:
+                valid = await self._validate_fn(remote_result)
+                if not valid:
+                    return self._directed_error(
+                        intent, "federation_result_validation_failed"
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Directed federation result validator failed peer=%s "
+                    "intent_id=%s target=%s "
+                    "action=validator_passed_without_validation "
+                    "exception_type=%s",
+                    target_node_id,
+                    intent.id,
+                    intent.target_agent_id,
+                    type(exc).__name__,
+                )
+        self._stats["intents_forwarded"] += 1
+        self._stats["results_collected"] += 1
+        return remote_result
+
     async def handle_inbound(self, message: FederationMessage) -> None:
         """Handle a message received from a peer.
 
@@ -391,6 +1239,29 @@ class FederationBridge:
     async def _handle_intent_request(self, message: FederationMessage) -> None:
         """Handle an inbound intent request from a peer."""
         self._stats["intents_received"] += 1
+
+        if type(message.payload) is dict and dict.__contains__(
+            message.payload, "delivery_mode"
+        ):
+            if not _is_safe_correlation_id(message.message_id):
+                return
+            delivery_mode = dict.__getitem__(
+                message.payload, "delivery_mode"
+            )
+            if type(delivery_mode) is str and delivery_mode == _DIRECTED_DM_MODE:
+                await self._handle_direct_message_request(message)
+                return
+            if self._configured_directed_source(message.source_node):
+                await self._send_directed_response(
+                    message,
+                    self._directed_error(
+                        None,
+                        "federation_delivery_mode_invalid",
+                        intent_id=message.payload.get("id"),
+                        agent_id=message.payload.get("target_agent_id"),
+                    ),
+                )
+            return
 
         payload = message.payload
         intent = IntentMessage(
@@ -441,6 +1312,278 @@ class FederationBridge:
             timestamp=time.monotonic(),
         )
         await self._transport.send_to_peer(message.source_node, response)
+
+    def _configured_directed_source(self, source_node: Any) -> bool:
+        if not _is_safe_node_id(source_node) or source_node == self._node_id:
+            return False
+        return source_node in {peer.node_id for peer in self._config.peers}
+
+    async def _send_directed_response(
+        self,
+        request: FederationMessage,
+        result: IntentResult,
+    ) -> None:
+        serialized_result = _detach_local_directed_result(result)
+        payload = (
+            _compact_detach_directed_response(serialized_result)
+            if serialized_result is not None
+            else None
+        )
+        if payload is None:
+            request_payload = request.payload
+            request_intent_id = (
+                dict.__getitem__(request_payload, "id")
+                if type(request_payload) is dict
+                and dict.__contains__(request_payload, "id")
+                else ""
+            )
+            request_agent_id = (
+                dict.__getitem__(request_payload, "target_agent_id")
+                if type(request_payload) is dict
+                and dict.__contains__(request_payload, "target_agent_id")
+                else ""
+            )
+            synthetic = self._directed_error(
+                None,
+                "federation_result_not_serializable",
+                intent_id=request_intent_id,
+                agent_id=request_agent_id,
+            )
+            detached_synthetic = _detach_local_directed_result(synthetic)
+            if detached_synthetic is None:
+                return
+            payload = _compact_detach_directed_response(detached_synthetic)
+            if payload is None:
+                return
+        response = FederationMessage(
+            type="intent_response",
+            source_node=self._node_id,
+            message_id=request.message_id,
+            payload=payload,
+            timestamp=time.monotonic(),
+        )
+        await self._transport.send_to_peer(request.source_node, response)
+
+    async def _handle_direct_message_request(
+        self,
+        message: FederationMessage,
+    ) -> None:
+        if (
+            type(message) is not FederationMessage
+            or type(message.type) is not str
+            or message.type != "intent_request"
+            or not self._configured_directed_source(message.source_node)
+            or not _is_safe_correlation_id(message.message_id)
+        ):
+            return
+        payload = _extract_exact_directed_request_payload(message.payload)
+        if payload is None:
+            raw_payload = message.payload
+            raw_intent_id = (
+                dict.__getitem__(raw_payload, "id")
+                if type(raw_payload) is dict
+                and dict.__contains__(raw_payload, "id")
+                else ""
+            )
+            raw_agent_id = (
+                dict.__getitem__(raw_payload, "target_agent_id")
+                if type(raw_payload) is dict
+                and dict.__contains__(raw_payload, "target_agent_id")
+                else ""
+            )
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    "federation_payload_invalid",
+                    intent_id=raw_intent_id,
+                    agent_id=raw_agent_id,
+                ),
+            )
+            return
+        intent_id = dict.__getitem__(payload, "id")
+        target_agent_id = dict.__getitem__(payload, "target_agent_id")
+        target_node_id = dict.__getitem__(payload, "target_node_id")
+        directed_intent = dict.__getitem__(payload, "intent")
+        delivery_mode = dict.__getitem__(payload, "delivery_mode")
+        if type(delivery_mode) is not str or delivery_mode != _DIRECTED_DM_MODE:
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    "federation_payload_invalid",
+                    intent_id=intent_id,
+                    agent_id=target_agent_id,
+                ),
+            )
+            return
+        if type(target_node_id) is not str or target_node_id != self._node_id:
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    "federation_target_node_mismatch",
+                    intent_id=intent_id,
+                    agent_id=target_agent_id,
+                ),
+            )
+            return
+        if type(directed_intent) is not str or directed_intent != "direct_message":
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    "federation_directed_intent_not_allowed",
+                    intent_id=intent_id,
+                    agent_id=target_agent_id,
+                ),
+            )
+            return
+        if not _is_safe_agent_id(target_agent_id):
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    "federation_target_agent_invalid",
+                    intent_id=intent_id,
+                    agent_id=target_agent_id,
+                ),
+            )
+            return
+        if not _is_safe_intent_id(intent_id):
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    "federation_payload_invalid",
+                    intent_id=intent_id,
+                    agent_id=target_agent_id,
+                ),
+            )
+            return
+        ttl_seconds = _normalize_wire_ttl(
+            dict.__getitem__(payload, "ttl_seconds")
+        )
+        if ttl_seconds is None:
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    "federation_payload_invalid",
+                    intent_id=intent_id,
+                    agent_id=target_agent_id,
+                ),
+            )
+            return
+        raw_params = dict.__getitem__(payload, "params")
+        if type(raw_params) is not dict:
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    "federation_payload_invalid",
+                    intent_id=intent_id,
+                    agent_id=target_agent_id,
+                ),
+            )
+            return
+        params, params_error = _validate_directed_wire_params(raw_params)
+        if params_error is not None or params is None:
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    params_error or "federation_payload_invalid",
+                    intent_id=intent_id,
+                    agent_id=target_agent_id,
+                ),
+            )
+            return
+        if not self._intent_bus.has_subscriber(target_agent_id):
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    "federation_target_not_found",
+                    intent_id=intent_id,
+                    agent_id=target_agent_id,
+                ),
+            )
+            return
+        params["from"] = f"federation:{message.source_node}"
+        params["federation_source_node"] = message.source_node
+        params["federation_message_id"] = message.message_id
+        params["session"] = False
+        params["session_history"] = []
+        try:
+            params = _strict_json_detach(params)
+        except (TypeError, ValueError, OverflowError):
+            await self._send_directed_response(
+                message,
+                self._directed_error(
+                    None,
+                    "federation_payload_not_serializable",
+                    intent_id=intent_id,
+                    agent_id=target_agent_id,
+                ),
+            )
+            return
+        intent = IntentMessage(
+            intent="direct_message",
+            params=params,
+            urgency=0.5,
+            context=f"federation:{message.source_node}",
+            id=intent_id,
+            ttl_seconds=ttl_seconds,
+            target_agent_id=target_agent_id,
+        )
+        attachment_resolver = self._attachment_resolver
+        if attachment_resolver is not None:
+            try:
+                await attachment_resolver(intent.params, message.source_node)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Directed federation attachment resolution failed "
+                    "source=%s message_id=%s target=%s "
+                    "action=deliver_to_exact_target_without_prefetch "
+                    "exception_type=%s",
+                    message.source_node,
+                    message.message_id,
+                    target_agent_id,
+                    type(exc).__name__,
+                )
+        try:
+            local_result = await self._intent_bus.send(intent)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Directed federation target delivery failed source=%s "
+                "message_id=%s intent_id=%s target=%s "
+                "action=federation_target_delivery_failed "
+                "exception_type=%s",
+                message.source_node,
+                message.message_id,
+                intent_id,
+                target_agent_id,
+                type(exc).__name__,
+            )
+            local_result = self._directed_error(
+                None,
+                "federation_target_delivery_failed",
+                intent_id=intent_id,
+                agent_id=target_agent_id,
+            )
+        if local_result is None:
+            local_result = self._directed_error(
+                None,
+                "federation_target_declined",
+                intent_id=intent_id,
+                agent_id=target_agent_id,
+            )
+        await self._send_directed_response(message, local_result)
 
     def _handle_gossip(self, message: FederationMessage) -> None:
         """Handle an inbound gossip self-model message."""

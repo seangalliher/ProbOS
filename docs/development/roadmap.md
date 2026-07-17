@@ -691,6 +691,7 @@ Prior-art scan (issue [#545](https://github.com/seangalliher/ProbOS/issues/545))
 | AD | Title | Issue | Priority |
 |----|-------|-------|----------|
 | AD-730 | Vision pipe-through for per-agent DMs — **SHIPPED Wave 151**, partial regression resolved by AD-731 (Wave 152) | [#630](https://github.com/seangalliher/ProbOS/issues/630) | 2 |
+| AD-730-4 | Directed federated vision DMs — **SHIPPED/CLOSED** via exact DM-only `(node_id, agent_id)` addressing, AD-731a Option-B reference transport, and BF-672 prefetch before one target; no broadcast/fallback | [#634](https://github.com/seangalliher/ProbOS/issues/634) | 2 |
 | AD-731 | Content-addressable vision payloads (refs not bytes on the bus; receiver dereferences from AttachmentStore just before HTTP POST) — **SHIPPED Wave 152** (12 new tests + BF-265/BF-266/AD-730 fixture assertions inverted; +13 net) | [#637](https://github.com/seangalliher/ProbOS/issues/637) | 1 |
 | AD-637z2 | Remove BF-265 transport strip after AD-731 lands — **CLOSED-AS-PART-OF-AD-731 (Wave 152)** | [#639](https://github.com/seangalliher/ProbOS/issues/639) | 1 |
 | AD-731a | Cross-host attachment distribution — **SHIPPED/CLOSED via Option B** (AD-731a-1 serve/verify + AD-731a-1c receive resolution + BF-672 prefetch-before-local-broadcast + AD-731a-1d validated reference-only send) | [#638](https://github.com/seangalliher/ProbOS/issues/638) | 3 |
