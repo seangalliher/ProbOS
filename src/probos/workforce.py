@@ -15,6 +15,7 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import re
@@ -241,6 +242,33 @@ BUILTIN_WORK_TYPES: dict[str, WorkTypeDefinition] = {
         ],
         default_priority=1,
         required_fields=["title"],
+    ),
+    "crew_session": WorkTypeDefinition(
+        type_id="crew_session",
+        display_name="Crew Session",
+        description="Durable multi-agent collaboration bound to a task-linked room.",
+        initial_status="draft",
+        terminal_statuses=frozenset({"done", "failed"}),
+        valid_transitions=[
+            WorkTypeTransition("draft", "open", requires_assignment=True),
+            WorkTypeTransition("open", "in_progress", requires_assignment=True),
+            WorkTypeTransition("open", "blocked"),
+            WorkTypeTransition("open", "failed"),
+            WorkTypeTransition("in_progress", "review"),
+            WorkTypeTransition("in_progress", "blocked"),
+            WorkTypeTransition("in_progress", "failed"),
+            WorkTypeTransition("review", "done"),
+            WorkTypeTransition("review", "blocked"),
+            WorkTypeTransition("review", "failed"),
+            WorkTypeTransition("blocked", "open"),
+            WorkTypeTransition("blocked", "in_progress", requires_assignment=True),
+            WorkTypeTransition("blocked", "failed"),
+        ],
+        required_fields=["title"],
+        supports_children=True,
+        auto_assign_eligible=False,
+        verification_required=True,
+        default_priority=2,
     ),
 }
 
@@ -924,6 +952,35 @@ _JSON_FIELDS = frozenset({
 # Immutable fields that cannot be updated
 _IMMUTABLE_FIELDS = frozenset({"id", "created_at", "created_by"})
 
+_MAX_WORK_ITEM_METADATA_BYTES = 1_048_576
+_MISSING_METADATA_VALUE = object()
+
+
+def _json_values_exactly_equal(current: Any, expected: Any) -> bool:
+    if type(current) is not type(expected):
+        return False
+    if type(current) is dict:
+        if (
+            any(type(key) is not str for key in current)
+            or any(type(key) is not str for key in expected)
+            or current.keys() != expected.keys()
+        ):
+            return False
+        return all(
+            _json_values_exactly_equal(current[key], expected[key])
+            for key in current
+        )
+    if type(current) is list:
+        return len(current) == len(expected) and all(
+            _json_values_exactly_equal(current_value, expected_value)
+            for current_value, expected_value in zip(current, expected)
+        )
+    if current is None:
+        return True
+    if type(current) in (bool, int, float, str):
+        return current == expected
+    return False
+
 # AD-1080: room-Todo checklist step state machine. A step is a dict
 # {label, status, assigned_to?, submitted_by?, confirmed_by?, note?}. The loop:
 # an agent works a step (in_progress), self-reports it done (submitted), and a
@@ -993,6 +1050,7 @@ class WorkItemStore(EventEmitterMixin):
         self._calendars: dict[str, AgentCalendar] = {}
         # Snapshot cache for sync-safe access
         self._snapshot_cache: dict[str, Any] = {"work_items": [], "bookings": []}
+        self._work_item_row_write_lock = asyncio.Lock()
         # AD-498: Work Type Registry + Template Store
         self.work_type_registry = WorkTypeRegistry()
         self.template_store = TemplateStore()
@@ -1170,29 +1228,30 @@ class WorkItemStore(EventEmitterMixin):
         """Update work item fields. Sets updated_at. Emits 'work_item_updated'."""
         if not self._db:
             return None
-        item = await self.get_work_item(work_item_id)
-        if not item:
-            return None
-        set_clauses: list[str] = []
-        params: list[Any] = []
-        for key, value in updates.items():
-            if key in _IMMUTABLE_FIELDS:
-                continue
-            if key in _JSON_FIELDS and not isinstance(value, str):
-                value = json.dumps(value)
-            set_clauses.append(f"{key} = ?")
-            params.append(value)
-        if not set_clauses:
-            return item
-        set_clauses.append("updated_at = ?")
-        params.append(time.time())
-        params.append(work_item_id)
-        await self._db.execute(
-            f"UPDATE work_items SET {', '.join(set_clauses)} WHERE id = ?",
-            params,
-        )
-        await self._db.commit()
-        updated = await self.get_work_item(work_item_id)
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(work_item_id)
+            if not item:
+                return None
+            set_clauses: list[str] = []
+            params: list[Any] = []
+            for key, value in updates.items():
+                if key in _IMMUTABLE_FIELDS:
+                    continue
+                if key in _JSON_FIELDS and not isinstance(value, str):
+                    value = json.dumps(value)
+                set_clauses.append(f"{key} = ?")
+                params.append(value)
+            if not set_clauses:
+                return item
+            set_clauses.append("updated_at = ?")
+            params.append(time.time())
+            params.append(work_item_id)
+            await self._db.execute(
+                f"UPDATE work_items SET {', '.join(set_clauses)} WHERE id = ?",
+                params,
+            )
+            await self._db.commit()
+            updated = await self.get_work_item(work_item_id)
         await self._refresh_snapshot_cache()
         self._emit(EventType.WORK_ITEM_UPDATED, {"work_item": updated.to_dict() if updated else {}})
         return updated
@@ -1273,30 +1332,9 @@ class WorkItemStore(EventEmitterMixin):
             step["note"] = note
         return await self.update_work_item(work_item_id, steps=steps)
 
-    async def transition_work_item(
-        self, work_item_id: str, new_status: str, source: str = "system",
-    ) -> WorkItem | None:
-        """Transition work item status with validation."""
-        if not self._db:
-            return None
-        item = await self.get_work_item(work_item_id)
-        if not item:
-            return None
-        # BF-606: A same-status transition is an idempotent no-op, not a state
-        # machine violation. ``work_item_dispatched`` is delivered at-least-once
-        # (broadcast fan-out to every crew agent, AD-855 capability-gap resume
-        # which sets in_progress *then* re-dispatches, and bus redelivery), so an
-        # already-in_progress item is repeatedly re-dispatched. Treating
-        # ``in_progress -> in_progress`` as invalid spammed "Invalid transition"
-        # warnings dozens of times for a single stuck item (observed: work item
-        # 1e0ffcdb7b57) and returned None, which callers read as failure. Return
-        # the item unchanged: no DB write, no STATUS_CHANGED event, no warning.
-        if new_status == item.status:
-            return item
-        # AD-1080: senior-validation completion gate. A work item whose room
-        # Todos gate completion cannot be marked 'done' until EVERY step is
-        # senior-confirmed (nothing complete until validated). Un-gated items
-        # (no flag — the default) are byte-identical to AD-498.
+    def _validate_work_item_status_transition(
+        self, item: WorkItem, new_status: str,
+    ) -> bool:
         if (
             new_status == "done"
             and (item.metadata or {}).get("steps_gate_completion")
@@ -1304,31 +1342,17 @@ class WorkItemStore(EventEmitterMixin):
         ):
             logger.info(
                 "AD-1080: refusing 'done' for %s — %d/%d steps confirmed",
-                work_item_id,
-                sum(1 for s in item.steps if str(s.get("status")) == "done"),
+                item.id,
+                sum(1 for step in item.steps if str(step.get("status")) == "done"),
                 len(item.steps),
             )
-            return None
-        # AD-498: Validate against work type state machine
+            return False
         valid, reason = self.work_type_registry.validate_transition(
             item.work_type, item.status, new_status,
         )
         if not valid:
-            logger.warning("Invalid transition for %s: %s", work_item_id, reason)
-            return None
-        # BF-608: Enforce AD-498's ``requires_assignment`` flag. The flag was
-        # defined on transitions like ``task`` ``open → in_progress`` but
-        # ``validate_transition`` never read it, so an *unassigned* item could
-        # enter ``in_progress`` and surface on the board as the contradictory
-        # "in_progress / Unassigned" state (observed: work item 1e0ffcdb7b57,
-        # which BF-606/BF-607 only partially addressed — BF-607 claims the item
-        # on the *direct*-dispatch path, but a broadcast/AD-855 capability-gap
-        # resume reached ``in_progress`` without ever assigning an owner). This
-        # is the single store-boundary chokepoint with access to ``assigned_to``:
-        # a transition that requires assignment is refused while the item is
-        # unassigned, so the item stays in its prior (dispatchable) status until
-        # an agent claims it. Crew children (crew_executor) and the BF-607
-        # dispatch handler assign *before* transitioning, so they are unaffected.
+            logger.warning("Invalid transition for %s: %s", item.id, reason)
+            return False
         if item.assigned_to is None and self.work_type_registry.transition_requires_assignment(
             item.work_type, item.status, new_status,
         ):
@@ -1336,17 +1360,143 @@ class WorkItemStore(EventEmitterMixin):
                 "BF-608: refusing %s transition '%s' → '%s' for work item %s: "
                 "this transition requires assignment but the item is unassigned; "
                 "it remains '%s' and dispatchable until an agent claims it",
-                item.work_type, item.status, new_status, work_item_id, item.status,
+                item.work_type, item.status, new_status, item.id, item.status,
             )
+            return False
+        return True
+
+    async def merge_work_item_metadata(
+        self,
+        work_item_id: str,
+        patch: dict[str, Any],
+        *,
+        expected: dict[str, Any] | None = None,
+        expected_work_type: str | None = None,
+        expected_status: str | None = None,
+        expected_assigned_to: str | None = None,
+        new_status: str | None = None,
+        source: str = "system",
+    ) -> WorkItem | None:
+        """Atomically shallow-merge top-level metadata for this store instance."""
+        if not self._db:
             return None
-        old_status = item.status
-        now = time.time()
-        await self._db.execute(
-            "UPDATE work_items SET status = ?, updated_at = ? WHERE id = ?",
-            (new_status, now, work_item_id),
+        if type(patch) is not dict or any(type(key) is not str for key in patch):
+            raise ValueError("work_item_metadata_patch_invalid")
+        if expected is not None and (
+            type(expected) is not dict
+            or any(type(key) is not str for key in expected)
+        ):
+            raise ValueError("work_item_metadata_expected_invalid")
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(work_item_id)
+            if item is None:
+                return None
+            if (
+                (expected_work_type is not None and item.work_type != expected_work_type)
+                or (expected_status is not None and item.status != expected_status)
+                or (
+                    expected_assigned_to is not None
+                    and item.assigned_to != expected_assigned_to
+                )
+            ):
+                raise ValueError("work_item_state_conflict")
+            current = dict(item.metadata or {})
+            if expected is not None:
+                for key, value in expected.items():
+                    current_value = current.get(key, _MISSING_METADATA_VALUE)
+                    if current_value is _MISSING_METADATA_VALUE:
+                        if value is not None:
+                            raise ValueError("work_item_metadata_conflict")
+                    elif not _json_values_exactly_equal(current_value, value):
+                        raise ValueError("work_item_metadata_conflict")
+
+            merged = dict(current)
+            merged.update(patch)
+            status_changed = new_status is not None and new_status != item.status
+            if status_changed and not self._validate_work_item_status_transition(
+                dataclasses.replace(item, metadata=merged), new_status,
+            ):
+                return None
+            if merged == current and not status_changed:
+                return item
+
+            serialized = json.dumps(
+                merged,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            if len(serialized.encode("utf-8")) > _MAX_WORK_ITEM_METADATA_BYTES:
+                raise ValueError("work_item_metadata_too_large")
+
+            old_status = item.status
+            now = time.time()
+            try:
+                if status_changed:
+                    await self._db.execute(
+                        "UPDATE work_items SET metadata = ?, status = ?, updated_at = ? "
+                        "WHERE id = ?",
+                        (serialized, new_status, now, work_item_id),
+                    )
+                else:
+                    await self._db.execute(
+                        "UPDATE work_items SET metadata = ?, updated_at = ? WHERE id = ?",
+                        (serialized, now, work_item_id),
+                    )
+                await self._db.commit()
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+
+            updated = await self.get_work_item(work_item_id)
+        await self._refresh_snapshot_cache()
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": updated.to_dict() if updated else {}},
         )
-        await self._db.commit()
-        updated = await self.get_work_item(work_item_id)
+        if status_changed:
+            self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
+                "work_item": updated.to_dict() if updated else {},
+                "old_status": old_status,
+                "new_status": new_status,
+                "source": source,
+            })
+        return updated
+
+    async def transition_work_item(
+        self, work_item_id: str, new_status: str, source: str = "system",
+    ) -> WorkItem | None:
+        """Transition work item status with validation."""
+        if not self._db:
+            return None
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(work_item_id)
+            if not item:
+                return None
+            # BF-606: A same-status transition is an idempotent no-op, not a state
+            # machine violation. ``work_item_dispatched`` is delivered at-least-once
+            # (broadcast fan-out to every crew agent, AD-855 capability-gap resume
+            # which sets in_progress *then* re-dispatches, and bus redelivery), so an
+            # already-in_progress item is repeatedly re-dispatched. Treating
+            # ``in_progress -> in_progress`` as invalid spammed "Invalid transition"
+            # warnings dozens of times for a single stuck item (observed: work item
+            # 1e0ffcdb7b57) and returned None, which callers read as failure. Return
+            # the item unchanged: no DB write, no STATUS_CHANGED event, no warning.
+            if new_status == item.status:
+                return item
+            if not self._validate_work_item_status_transition(item, new_status):
+                return None
+            old_status = item.status
+            now = time.time()
+            await self._db.execute(
+                "UPDATE work_items SET status = ?, updated_at = ? WHERE id = ?",
+                (new_status, now, work_item_id),
+            )
+            await self._db.commit()
+            updated = await self.get_work_item(work_item_id)
         await self._refresh_snapshot_cache()
         self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
             "work_item": updated.to_dict() if updated else {},
@@ -1405,59 +1555,61 @@ class WorkItemStore(EventEmitterMixin):
         source: str = "captain",
     ) -> Booking | None:
         """Push assignment: Captain assigns work directly to an agent."""
-        item = await self.get_work_item(work_item_id)
-        if not item:
-            return None
         resource = self.get_resource(resource_id)
         if not resource:
             return None
-        if not self._check_eligibility(resource, item):
-            return None
-        now = time.time()
-        booking = Booking(
-            resource_id=resource_id,
-            work_item_id=work_item_id,
-            status="scheduled",
-            start_time=now,
-        )
-        # Find requirement to mark fulfilled
-        req_id = None
-        if self._db:
-            cursor = await self._db.execute(
-                "SELECT id FROM resource_requirements WHERE work_item_id = ? AND fulfilled = 0 LIMIT 1",
-                (work_item_id,),
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(work_item_id)
+            if not item:
+                return None
+            if not self._check_eligibility(resource, item):
+                return None
+            now = time.time()
+            booking = Booking(
+                resource_id=resource_id,
+                work_item_id=work_item_id,
+                status="scheduled",
+                start_time=now,
             )
-            req_row = await cursor.fetchone()
-            if req_row:
-                req_id = req_row["id"]
-                await self._db.execute(
-                    "UPDATE resource_requirements SET fulfilled = 1 WHERE id = ?",
-                    (req_id,),
+            # Find requirement to mark fulfilled
+            req_id = None
+            if self._db:
+                cursor = await self._db.execute(
+                    "SELECT id FROM resource_requirements WHERE work_item_id = ? AND fulfilled = 0 LIMIT 1",
+                    (work_item_id,),
                 )
-            booking.requirement_id = req_id
-            await self._db.execute(
-                """INSERT INTO bookings (
-                    id, resource_id, work_item_id, requirement_id, status,
-                    start_time, end_time, actual_start, actual_end, total_tokens_consumed
-                ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    booking.id, booking.resource_id, booking.work_item_id,
-                    booking.requirement_id, booking.status, booking.start_time,
-                    booking.end_time, booking.actual_start, booking.actual_end,
-                    booking.total_tokens_consumed,
-                ),
-            )
-            # Record timestamp
-            await self._record_timestamp(booking.id, "scheduled", source)
-            # Update work item
-            await self._db.execute(
-                "UPDATE work_items SET assigned_to = ?, status = ?, updated_at = ? WHERE id = ?",
-                (resource_id, "scheduled", now, work_item_id),
-            )
-            await self._db.commit()
+                req_row = await cursor.fetchone()
+                if req_row:
+                    req_id = req_row["id"]
+                    await self._db.execute(
+                        "UPDATE resource_requirements SET fulfilled = 1 WHERE id = ?",
+                        (req_id,),
+                    )
+                booking.requirement_id = req_id
+                await self._db.execute(
+                    """INSERT INTO bookings (
+                        id, resource_id, work_item_id, requirement_id, status,
+                        start_time, end_time, actual_start, actual_end, total_tokens_consumed
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        booking.id, booking.resource_id, booking.work_item_id,
+                        booking.requirement_id, booking.status, booking.start_time,
+                        booking.end_time, booking.actual_start, booking.actual_end,
+                        booking.total_tokens_consumed,
+                    ),
+                )
+                # Record timestamp
+                await self._record_timestamp(booking.id, "scheduled", source)
+                # Update work item
+                await self._db.execute(
+                    "UPDATE work_items SET assigned_to = ?, status = ?, updated_at = ? WHERE id = ?",
+                    (resource_id, "scheduled", now, work_item_id),
+                )
+                await self._db.commit()
+            updated_item = await self.get_work_item(work_item_id) or item
         await self._refresh_snapshot_cache()
         self._emit(EventType.WORK_ITEM_ASSIGNED, {
-            "work_item": (await self.get_work_item(work_item_id) or item).to_dict(),
+            "work_item": updated_item.to_dict(),
             "booking": booking.to_dict(),
             "resource": resource.to_dict(),
         })
@@ -1543,11 +1695,15 @@ class WorkItemStore(EventEmitterMixin):
         for row in booking_rows:
             await self.cancel_booking(row["id"])
         # Reset assignment
-        await self._db.execute(
-            "UPDATE work_items SET assigned_to = NULL, status = 'open', updated_at = ? WHERE id = ?",
-            (time.time(), work_item_id),
-        )
-        await self._db.commit()
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(work_item_id)
+            if not item or not item.assigned_to:
+                return False
+            await self._db.execute(
+                "UPDATE work_items SET assigned_to = NULL, status = 'open', updated_at = ? WHERE id = ?",
+                (time.time(), work_item_id),
+            )
+            await self._db.commit()
         await self._refresh_snapshot_cache()
         return True
 
@@ -1570,11 +1726,14 @@ class WorkItemStore(EventEmitterMixin):
         await self._record_timestamp(booking_id, "active", "system")
         await self._db.commit()
         # Update work item status
-        await self._db.execute(
-            "UPDATE work_items SET status = 'in_progress', updated_at = ? WHERE id = ?",
-            (now, booking.work_item_id),
-        )
-        await self._db.commit()
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(booking.work_item_id)
+            if item is not None:
+                await self._db.execute(
+                    "UPDATE work_items SET status = 'in_progress', updated_at = ? WHERE id = ?",
+                    (now, booking.work_item_id),
+                )
+                await self._db.commit()
         await self._refresh_snapshot_cache()
         updated = await self.get_booking(booking_id)
         self._emit(EventType.BOOKING_STARTED, {"booking": updated.to_dict() if updated else {}})

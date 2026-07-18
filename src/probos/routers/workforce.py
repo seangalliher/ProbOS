@@ -329,8 +329,8 @@ async def attach_work_item_inputs(
 
     Honest-degrade per file: a rejected file (oversize / mime mismatch /
     disallowed) is collected into ``skipped`` rather than failing the request.
-    A single read-merge-write per request (all files stored first, then one
-    metadata merge) preserves every other ``metadata`` key plus any existing
+    A single owned-key merge per request (all files stored first, then one
+    store-owned metadata merge) preserves every other ``metadata`` key plus any existing
     inputs and dedupes by ``content_hash``.
     """
     if not runtime.work_item_store:
@@ -364,12 +364,12 @@ async def attach_work_item_inputs(
             "filename": f.filename,
         })
 
-    # Single read-merge-write: preserve all other metadata keys + existing
-    # inputs; dedupe by content_hash (idempotent re-upload). update_work_item
-    # replaces the metadata column wholesale, so the merge MUST happen here.
+    # Single owned-key merge: preserve every unrelated top-level metadata key
+    # while appending inputs and deduping by content_hash.
     if new_refs:
-        meta = dict(getattr(wi, "metadata", {}) or {})
-        existing = list(meta.get("input_attachments", []) or [])
+        existing = list(
+            (getattr(wi, "metadata", {}) or {}).get("input_attachments", []) or []
+        )
         seen = {
             r.get("content_hash")
             for r in existing
@@ -379,9 +379,8 @@ async def attach_work_item_inputs(
             if ref["content_hash"] not in seen:
                 existing.append(ref)
                 seen.add(ref["content_hash"])
-        meta["input_attachments"] = existing
-        updated = await runtime.work_item_store.update_work_item(
-            work_item_id, metadata=meta,
+        updated = await runtime.work_item_store.merge_work_item_metadata(
+            work_item_id, {"input_attachments": existing},
         )
         wi = updated or wi
         broadcast({

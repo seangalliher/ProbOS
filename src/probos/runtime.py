@@ -181,6 +181,7 @@ if TYPE_CHECKING:
     from probos.cognitive.skill_catalog import CognitiveSkillCatalog
     from probos.cognitive.skill_grants import SkillGrantStore
     from probos.cognitive.intent_grants import IntentGrantStore
+    from probos.cognitive.crew_session import CrewSessionService
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.skill_request import SkillRequestStore  # AD-906
     from probos.mesh.nats_bus import NATSBus
@@ -277,6 +278,7 @@ class ProbOSRuntime:
     task_scheduler: TaskScheduler | None
     persistent_task_store: PersistentTaskStore | None
     work_item_store: WorkItemStore | None
+    crew_session_service: "CrewSessionService | None"
     cognitive_journal: CognitiveJournal | None
     skill_registry: SkillRegistry | None
     skill_service: AgentSkillService | None
@@ -819,6 +821,9 @@ class ProbOSRuntime:
 
         # --- Workforce Scheduling Engine (AD-496) ---
         self.work_item_store: WorkItemStore | None = None
+
+        # --- Durable Crew Sessions (AD-1124) ---
+        self.crew_session_service: "CrewSessionService | None" = None
 
         # --- Cognitive Journal (AD-431) ---
         self.cognitive_journal: CognitiveJournal | None = None

@@ -19,7 +19,7 @@ Three things happen, in order, all honest-degrading:
    provenance (which sub-tasks + which verifiers contributed) is stored as a
    content-addressable ref via :meth:`AttachmentStore.write` (AD-731 — never
    inline in the work-item metadata), and only the ref + a small attribution
-   summary are written back with ``update_work_item(metadata=...)``.
+    summary are written back with ``merge_work_item_metadata(...)``.
 3. **Attribution + learning.** One producer :class:`Vote` per accepted outcome
    plus one verifier Vote per outcome with a non-empty ``verifier_agent_id``
    (reusing :meth:`SubtaskVerifier.verdict_to_vote`) feed
@@ -300,21 +300,19 @@ class CrewSynthesizer:
         # Provenance metadata is written regardless of the status outcome so the
         # contribution record survives even an honest-degraded completion.
         try:
-            await self._store.update_work_item(
+            await self._store.merge_work_item_metadata(
                 parent_id,
-                metadata={
-                    "crew_synth": {
-                        "provenance_ref": provenance_ref,
-                        "completed": completed,
-                        "accepted_count": len(accepted),
-                        "total_count": len(outcomes),
-                        "caveat": (
-                            ""
-                            if len(accepted) == len(outcomes)
-                            else "partial: synthesised from accepted sub-tasks only"
-                        ),
-                    },
-                },
+                {"crew_synth": {
+                    "provenance_ref": provenance_ref,
+                    "completed": completed,
+                    "accepted_count": len(accepted),
+                    "total_count": len(outcomes),
+                    "caveat": (
+                        ""
+                        if len(accepted) == len(outcomes)
+                        else "partial: synthesised from accepted sub-tasks only"
+                    ),
+                }},
             )
         except Exception:
             logger.warning(

@@ -1713,6 +1713,45 @@ def _wire_consultation_dispatch(*, runtime: Any, config: "SystemConfig") -> bool
     return True
 
 
+def _wire_crew_session_service(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-1124: attach the durable session contract service behind the crew gate."""
+    cfg = getattr(config, "agentic_dispatch", None)
+    if not cfg or not getattr(cfg, "orchestrator_enabled", False):
+        return False
+
+    work_item_store = getattr(runtime, "work_item_store", None)
+    chat_thread_store = getattr(runtime, "chat_thread_store", None)
+    missing = [
+        name
+        for name, dependency in (
+            ("work_item_store", work_item_store),
+            ("chat_thread_store", chat_thread_store),
+        )
+        if dependency is None
+    ]
+    if missing:
+        logger.warning(
+            "AD-1124: CrewSessionService unavailable because enabled runtime "
+            "dependencies are missing: %s; no CrewSessionService was attached",
+            ", ".join(missing),
+        )
+        return False
+
+    from probos.cognitive.crew_session import CrewSessionService
+
+    existing = getattr(runtime, "crew_session_service", None)
+    if isinstance(existing, CrewSessionService):
+        return True
+    runtime.crew_session_service = CrewSessionService(
+        work_item_store=work_item_store,
+        chat_thread_store=chat_thread_store,
+    )
+    logger.info(
+        "AD-1124: CrewSessionService initialized; durable sessions remain inert until explicitly bound"
+    )
+    return True
+
+
 def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-867: wire :class:`CrewOrchestrator` behind ``runtime.crew_orchestrator``.
 
@@ -2766,6 +2805,9 @@ async def finalize_startup(
 
     if _wire_consultation_dispatch(runtime=runtime, config=config):
         logger.info("AD-594c: ParallelDispatcher v1 wired during finalization")
+
+    if _wire_crew_session_service(runtime=runtime, config=config):
+        logger.info("AD-1124: CrewSessionService wired during finalization")
 
     if _wire_crew_orchestrator(runtime=runtime, config=config):
         logger.info("AD-867: CrewOrchestrator wired during finalization")

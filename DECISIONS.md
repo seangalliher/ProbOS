@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1124 (2026-07-17) - durable CrewSession contract (#1043)
+
+**Context.** The AD-858–862 crew-collaboration spine had no durable, bounded session contract tying one parent WorkItem to its collaboration room. Generic workforce consumers depend on the established `draft/open/in_progress/review/blocked/done/failed` vocabulary, so storing session-specific fine states in `WorkItem.status` would break compatibility. Existing whole-column metadata writers also risked clobbering sibling keys, and Python equality is not exact JSON equality because booleans alias integers. Highest landed top-level was **AD-1123**; **AD-1124 is the new top-level ceiling**, while **BF-673 remains the BF ceiling**.
+
+**Decision.** Add one built-in `crew_session` WorkType that starts in `draft`, plus one strict versioned `CrewSessionContract` at `WorkItem.metadata["crew_session"]`. Fine state is authoritative in metadata (`discussing`, `executing`, `verifying`, `blocked_needs_captain`, `done`, `failed`); `WorkItem.status` remains the exact coarse projection (`open`, `in_progress`, `review`, `blocked`, `done`, `failed`). `CrewSessionService` initializes, reads, and transitions only an existing parent bound to exactly one existing `ChatThread` whose `task_id` is the parent id; zero, duplicate, wrong-task, and wrong-thread rooms fail closed. `WorkItemStore.merge_work_item_metadata()` performs shallow top-level merge, JSON-type-exact nested expected-value CAS, and expected work-type/status/assignee checks under one shared runtime-local row-write lock held through commit; metadata and an optional validated coarse status update atomically. The input-attachment and crew-synthesis parent writers use the same primitive. Composition remains behind the existing default-off orchestrator gate. Add no database schema or migration, config/YAML, API/UI, parent/room provisioning, execution, verifier, lifecycle runner, trust, learning, or notification path.
+
+**Tests.** The AD-1124 module contains **57 cases**. Fresh serial/offline Gates 0–2 passed **57 + 221 + 161** with no warnings. The full parallel suite passed **19,643 / 33 skipped / 0 failed** with **455 provenance-only pre-existing warnings and zero changed-path warnings**. Legacy `work_items` columns remained unchanged, frozen excluded paths had no diff, and final review was **APPROVED**. Issue #1043 closes only when this commit is pushed; parent #1041 remains open.
+
 ### AD-722b-5a (2026-07-17) — federation avatar telemetry relay (#659)
 
 **Context.** AD-722b-5 shipped only local subscription/rate/callback plumbing, and AD-1123 supplied the bounded one-way federation primitive needed to complete #659. AD-722b-5a is a pre-existing reserved subdecision, not a new top-level AD; **AD-1123 remains the top-level ceiling and BF-672 remains the BF ceiling**.
