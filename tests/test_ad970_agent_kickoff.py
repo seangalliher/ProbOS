@@ -28,6 +28,7 @@ from typing import Any
 
 import pytest
 
+from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.config import CommunicationsConfig, GroupChatConfig, SystemConfig
 from probos.mesh.intent import IntentBus
 from probos.mesh.signal import SignalManager
@@ -57,6 +58,14 @@ class _FakeCallsigns:
 
     def get_callsign(self, agent_type):
         return self._m.get(agent_type, "")
+
+
+class _RecordingEpisodicMemory:
+    def __init__(self) -> None:
+        self.episodes: list[Any] = []
+
+    async def store(self, episode: Any) -> None:
+        self.episodes.append(episode)
 
 
 def _seq_clock():
@@ -136,21 +145,76 @@ async def test_opener_excluded_from_round0(tmp_path):
 async def test_no_opener_id_fans_to_all(tmp_path):
     # Without opener_id (a Captain turn) both crew are dispatched — byte-identical
     # to AD-914.
-    store, runtime, captured, _intents = _build_env(
+    store, runtime, captured, intents = _build_env(
         tmp_path, gc=GroupChatConfig(agent_reactivity_enabled=False, max_speakers_per_turn=0),
     )
     t = store.create_thread(title="room", participants=["scout1", "bones1"])
     cap = store.append_message(t.id, author_id="captain", role="captain", body="status?")
     await group_chat_fanout(runtime, t.id, captain_body="status?", captain_msg=cap)
     assert set(captured) == {"scout1", "bones1"}
+    assert all(intent.params["trigger_speaker"] == "Captain" for intent in intents)
 
 
-# ======================= 2. the gated kickoff trigger =======================
+@pytest.mark.asyncio
+async def test_opener_callsign_missing_falls_back_to_stable_id(tmp_path):
+    store, runtime, captured, intents = _build_env(
+        tmp_path, gc=GroupChatConfig(agent_reactivity_enabled=False, max_speakers_per_turn=0),
+    )
+    runtime.callsign_registry = _FakeCallsigns({"diagnostician": "Bones"})
+    t = store.create_thread(title="room", participants=["scout1", "bones1"])
+    opening = store.append_message(
+        t.id, author_id="scout1", role="agent", body="Bones, status?",
+    )
+
+    await group_chat_fanout(
+        runtime,
+        t.id,
+        captain_body="Bones, status?",
+        captain_msg=opening,
+        opener_id="scout1",
+    )
+
+    assert captured == ["bones1"]
+    assert len(intents) == 1
+    assert intents[0].params["trigger_speaker"] == "scout1"
+
+
+# ======================= 2. direct-message trigger formatting =======================
+
+
+def test_format_direct_message_trigger_group_opener_uses_speaker():
+    assert CognitiveAgent._format_direct_message_trigger({
+        "is_group_chat": True,
+        "trigger_speaker": "Scout",
+        "text": "Status?",
+    }) == "Scout says: Status?"
+
+
+def test_format_direct_message_trigger_group_without_speaker_uses_room_context():
+    body = "Scout: first\nBones: second"
+    for params in (
+        {"is_group_chat": True, "text": body},
+        {"is_group_chat": True, "trigger_speaker": "", "text": body},
+        {"is_group_chat": True, "trigger_speaker": 42, "text": body},
+    ):
+        rendered = CognitiveAgent._format_direct_message_trigger(params)
+        assert rendered == f"Room conversation:\n{body}"
+        assert "Captain says:" not in rendered
+
+
+def test_format_direct_message_trigger_one_to_one_ignores_speaker():
+    assert CognitiveAgent._format_direct_message_trigger({
+        "trigger_speaker": "Scout",
+        "text": "Status?",
+    }) == "Captain says: Status?"
+
+
+# ======================= 3. the gated kickoff trigger =======================
 
 
 @pytest.mark.asyncio
 async def test_kickoff_fires_when_enabled(tmp_path):
-    store, runtime, captured, _intents = _build_env(
+    store, runtime, captured, intents = _build_env(
         tmp_path,
         gc=GroupChatConfig(
             agent_initiated_kickoff_enabled=True,
@@ -166,6 +230,36 @@ async def test_kickoff_fires_when_enabled(tmp_path):
     # The OTHER participant (bones1) was dispatched; the opener (scout1) was not.
     assert "bones1" in captured
     assert "scout1" not in captured
+    assert len(intents) == 1
+    assert intents[0].params["trigger_speaker"] == "Scout"
+
+
+@pytest.mark.asyncio
+async def test_kickoff_enriched_episode_uses_opener_callsign(tmp_path):
+    cfg = SystemConfig()
+    cfg.group_chat.agent_initiated_kickoff_enabled = True
+    cfg.group_chat.agent_reactivity_enabled = False
+    cfg.group_chat.max_speakers_per_turn = 0
+    cfg.memory.group_episode_enrichment_enabled = True
+    store, runtime, captured, _intents = _build_env(
+        tmp_path,
+        gc=cfg.group_chat,
+        config=cfg,
+    )
+    episodic = _RecordingEpisodicMemory()
+    runtime.episodic_memory = episodic
+    t = store.create_thread(title="room", participants=["scout1", "bones1"])
+    store.append_message(t.id, author_id="scout1", role="agent", body="Bones, status?")
+    loop = ProactiveCognitiveLoop(interval=60)
+    loop.set_runtime(runtime)
+
+    await loop._kickoff_group_chat(t.id, "scout1", "Bones, status?")
+
+    assert captured == ["bones1"]
+    assert len(episodic.episodes) == 1
+    episode = episodic.episodes[0]
+    assert episode.anchors.trigger_agent == "Scout"
+    assert episode.user_input.startswith("[group chat] Scout:")
 
 
 @pytest.mark.asyncio

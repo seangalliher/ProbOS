@@ -7985,6 +7985,18 @@ class CognitiveAgent(BaseAgent):
         _max = scored[0][0] if scored else 0.0
         return _ordered, _max
 
+    @staticmethod
+    def _format_direct_message_trigger(params: dict[str, Any]) -> str:
+        text = str(params.get("text", ""))
+        if not params.get("is_group_chat"):
+            return f"Captain says: {text}"
+        trigger_speaker = params.get("trigger_speaker")
+        if isinstance(trigger_speaker, str):
+            speaker = trigger_speaker.strip()
+            if speaker:
+                return f"{speaker} says: {text}"
+        return f"Room conversation:\n{text}"
+
     def _salience_score_wm_bid(self, goal_vec: list[float]) -> float | None:
         """AD-1030: max linear salience over working-memory entries (relevance +
         recency, NO importance — WM entries carry no importance signal).
@@ -8297,7 +8309,7 @@ class CognitiveAgent(BaseAgent):
             if active_game_ctx:
                 _emit("active_game", [active_game_ctx, ""])
 
-            _emit("captain_message", [f"Captain says: {params.get('text', '')}"])
+            _emit("captain_message", [self._format_direct_message_trigger(params)])
 
             # AD-1031: camera/visual scene as a salience-gated bid. When the
             # camera-scene-bid is ON (default-OFF), the router did NOT prepend

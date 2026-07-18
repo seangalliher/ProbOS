@@ -552,6 +552,7 @@ async def _fan_one_round(
             # AD-935: teach the [NO_RESPONSE] decline option (group-only — the
             # cognitive_agent hook gates the teaching string on this param).
             "is_group_chat": True,
+            "trigger_speaker": trigger_speaker,
             "room_outputs": room_outputs,  # BF-651
         }
         # AD-978: prepend THIS agent's visual context (camera/screen) so the
@@ -1320,9 +1321,14 @@ async def group_chat_fanout(
                 thread_id, len(agent_ids), exc_info=True,
             )
             _speakers_override = None
+    round0_trigger_speaker = "Captain"
+    if opener_id:
+        round0_trigger_speaker = _roster_callsigns.get(opener_id) or opener_id
     round0 = await _fan_one_round(
         runtime, store, thread_id,
-        trigger_body=captain_body, trigger_speaker="Captain", candidate_ids=agent_ids,
+        trigger_body=captain_body,
+        trigger_speaker=round0_trigger_speaker,
+        candidate_ids=agent_ids,
         exclude_ids=({opener_id} if opener_id else set()),
         vision_messages=vision_messages, sanity_gate=sanity_gate, t_start=t_start,
         before=captain_msg.created_at,
