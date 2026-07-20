@@ -62,7 +62,7 @@ class _FakeAgenticExecutor:
         *,
         fail_agents: set[str] | None = None,
         delay: float = 0.0,
-        trace_ref: str | None = "sha256:deadbeef",
+        trace_ref: str | None = "d" * 64,
     ) -> None:
         self._fail_agents = fail_agents or set()
         self._delay = delay
@@ -80,6 +80,8 @@ class _FakeAgenticExecutor:
         runtime: Any,
         department: str = "",
         rank: str = "ensign",
+        thread_id: str = "",
+        extra_context: dict[str, Any] | None = None,
     ) -> WorkItemAgenticOutcome:
         self.active += 1
         self.max_active = max(self.max_active, self.active)
@@ -219,7 +221,7 @@ async def test_child_waits_for_depends_on_to_complete_first(store):
 async def test_subtask_result_carries_persistent_agent_id_and_trace_ref(store):
     parent = await store.create_work_item(title="parent", work_type="work_order")
     registry = _FakeRegistry({"persistent-agent": _FakeAgent("persistent-agent")})
-    agentic = _FakeAgenticExecutor(trace_ref="sha256:cafe")
+    agentic = _FakeAgenticExecutor(trace_ref="c" * 64)
     await _make_child(
         store, parent_id=parent.id, title="c1",
         assigned_to="persistent-agent", spec_id="s1",
@@ -231,7 +233,7 @@ async def test_subtask_result_carries_persistent_agent_id_and_trace_ref(store):
     assert len(results) == 1
     r = results[0]
     assert r.agent_id == "persistent-agent"  # durable provenance
-    assert r.tool_trace_ref == "sha256:cafe"  # a ref...
+    assert r.tool_trace_ref == "c" * 64  # a ref...
     assert isinstance(r.tool_trace_ref, str)  # ...not inline bytes
     assert r.output == "done: please do c1"
 
@@ -254,9 +256,9 @@ async def test_failed_child_surfaces_status_without_unblocking_dependents(store)
     results = await executor.run(parent.id)
 
     by_spec = {r.spec_id: r for r in results}
-    # A failed (not "done"); the dependent B never ran; the sibling C still ran.
+    # A failed; dependent B is durably blocked; sibling C still ran.
     assert by_spec["sA"].status != "done"
-    assert "sB" not in by_spec  # dependent stayed blocked
+    assert by_spec["sB"].status == "blocked"
     assert by_spec["sC"].status == "done"
     # The failed child was NOT silently marked done in the store.
     stored_a = await store.get_work_item(a.id)
@@ -326,6 +328,6 @@ async def test_unresolvable_agent_marks_child_failed(store):
     results = await executor.run(parent.id)
 
     assert len(results) == 1
-    assert results[0].status == "failed"
+    assert results[0].status == "blocked"
     assert results[0].agent_id == "ghost"
     assert agentic.calls == []  # executor never ran for an unresolved agent

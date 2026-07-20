@@ -953,7 +953,15 @@ _JSON_FIELDS = frozenset({
 _IMMUTABLE_FIELDS = frozenset({"id", "created_at", "created_by"})
 
 _MAX_WORK_ITEM_METADATA_BYTES = 1_048_576
+_MAX_WORK_ITEM_ACTUAL_TOKENS = 9_223_372_036_854_775_807
 _MISSING_METADATA_VALUE = object()
+
+
+class _OmittedWorkItemExpectation:
+    __slots__ = ()
+
+
+_OMITTED_WORK_ITEM_EXPECTATION = _OmittedWorkItemExpectation()
 
 
 def _json_values_exactly_equal(current: Any, expected: Any) -> bool:
@@ -1119,53 +1127,62 @@ class WorkItemStore(EventEmitterMixin):
             kwargs["status"] = self.work_type_registry.get_initial_status(work_type)
         item = WorkItem(**kwargs)
         if self._db:
-            await self._db.execute(
-                """INSERT INTO work_items (
-                    id, title, description, work_type, status, priority,
-                    parent_id, depends_on, assigned_to, created_by,
-                    created_at, updated_at, due_at, estimated_tokens,
-                    actual_tokens, trust_requirement, required_capabilities,
-                    tags, metadata, steps, verification, schedule,
-                    ttl_seconds, template_id
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    item.id, item.title, item.description, item.work_type,
-                    item.status, item.priority, item.parent_id,
-                    json.dumps(item.depends_on), item.assigned_to,
-                    item.created_by, item.created_at, item.updated_at,
-                    item.due_at, item.estimated_tokens, item.actual_tokens,
-                    item.trust_requirement,
-                    json.dumps(item.required_capabilities),
-                    json.dumps(item.tags), json.dumps(item.metadata),
-                    json.dumps(item.steps), json.dumps(item.verification),
-                    json.dumps(item.schedule), item.ttl_seconds, item.template_id,
-                ),
-            )
-            # Auto-generate ResourceRequirement
-            req = ResourceRequirement(
-                work_item_id=item.id,
-                min_trust=item.trust_requirement,
-                priority=item.priority,
-                required_characteristics=[
-                    {"skill": c, "min_proficiency": 0.5}
-                    for c in item.required_capabilities
-                ],
-            )
-            await self._db.execute(
-                """INSERT INTO resource_requirements (
-                    id, work_item_id, duration_estimate_seconds, from_date,
-                    to_date, required_characteristics, min_trust,
-                    department_constraint, priority, resource_preference, fulfilled
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    req.id, req.work_item_id, req.duration_estimate_seconds,
-                    req.from_date, req.to_date,
-                    json.dumps(req.required_characteristics),
-                    req.min_trust, req.department_constraint, req.priority,
-                    json.dumps(req.resource_preference), 0,
-                ),
-            )
-            await self._db.commit()
+            async with self._work_item_row_write_lock:
+                try:
+                    await self._db.execute(
+                        """INSERT INTO work_items (
+                            id, title, description, work_type, status, priority,
+                            parent_id, depends_on, assigned_to, created_by,
+                            created_at, updated_at, due_at, estimated_tokens,
+                            actual_tokens, trust_requirement, required_capabilities,
+                            tags, metadata, steps, verification, schedule,
+                            ttl_seconds, template_id
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            item.id, item.title, item.description, item.work_type,
+                            item.status, item.priority, item.parent_id,
+                            json.dumps(item.depends_on), item.assigned_to,
+                            item.created_by, item.created_at, item.updated_at,
+                            item.due_at, item.estimated_tokens, item.actual_tokens,
+                            item.trust_requirement,
+                            json.dumps(item.required_capabilities),
+                            json.dumps(item.tags), json.dumps(item.metadata),
+                            json.dumps(item.steps), json.dumps(item.verification),
+                            json.dumps(item.schedule), item.ttl_seconds,
+                            item.template_id,
+                        ),
+                    )
+                    req = ResourceRequirement(
+                        work_item_id=item.id,
+                        min_trust=item.trust_requirement,
+                        priority=item.priority,
+                        required_characteristics=[
+                            {"skill": c, "min_proficiency": 0.5}
+                            for c in item.required_capabilities
+                        ],
+                    )
+                    await self._db.execute(
+                        """INSERT INTO resource_requirements (
+                            id, work_item_id, duration_estimate_seconds, from_date,
+                            to_date, required_characteristics, min_trust,
+                            department_constraint, priority, resource_preference, fulfilled
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            req.id, req.work_item_id,
+                            req.duration_estimate_seconds, req.from_date,
+                            req.to_date,
+                            json.dumps(req.required_characteristics),
+                            req.min_trust, req.department_constraint,
+                            req.priority, json.dumps(req.resource_preference), 0,
+                        ),
+                    )
+                    await self._db.commit()
+                except BaseException:
+                    try:
+                        await self._db.execute("ROLLBACK")
+                    except Exception:
+                        pass
+                    raise
         await self._refresh_snapshot_cache()
         self._emit(EventType.WORK_ITEM_CREATED, {"work_item": item.to_dict()})
         return item
@@ -1374,7 +1391,20 @@ class WorkItemStore(EventEmitterMixin):
         expected_work_type: str | None = None,
         expected_status: str | None = None,
         expected_assigned_to: str | None = None,
+        expected_assigned_to_exact: (
+            str | None | _OmittedWorkItemExpectation
+        ) = _OMITTED_WORK_ITEM_EXPECTATION,
+        expected_parent_id: (
+            str | None | _OmittedWorkItemExpectation
+        ) = _OMITTED_WORK_ITEM_EXPECTATION,
+        expected_depends_on: (
+            list[str] | _OmittedWorkItemExpectation
+        ) = _OMITTED_WORK_ITEM_EXPECTATION,
+        expected_unresolved_dependency_ids: (
+            list[str] | _OmittedWorkItemExpectation
+        ) = _OMITTED_WORK_ITEM_EXPECTATION,
         new_status: str | None = None,
+        actual_tokens_delta: int = 0,
         source: str = "system",
     ) -> WorkItem | None:
         """Atomically shallow-merge top-level metadata for this store instance."""
@@ -1387,10 +1417,54 @@ class WorkItemStore(EventEmitterMixin):
             or any(type(key) is not str for key in expected)
         ):
             raise ValueError("work_item_metadata_expected_invalid")
+        if (
+            type(actual_tokens_delta) is not int
+            or not 0 <= actual_tokens_delta <= _MAX_WORK_ITEM_ACTUAL_TOKENS
+        ):
+            raise ValueError("work_item_actual_tokens_delta_invalid")
+        if (
+            expected_assigned_to_exact is not _OMITTED_WORK_ITEM_EXPECTATION
+            and expected_assigned_to_exact is not None
+            and type(expected_assigned_to_exact) is not str
+        ):
+            raise ValueError("work_item_expected_state_invalid")
+        if (
+            expected_parent_id is not _OMITTED_WORK_ITEM_EXPECTATION
+            and expected_parent_id is not None
+            and type(expected_parent_id) is not str
+        ):
+            raise ValueError("work_item_expected_state_invalid")
+        if (
+            expected_depends_on is not _OMITTED_WORK_ITEM_EXPECTATION
+            and (
+                type(expected_depends_on) is not list
+                or any(type(value) is not str for value in expected_depends_on)
+            )
+        ):
+            raise ValueError("work_item_expected_state_invalid")
+        if (
+            expected_unresolved_dependency_ids
+            is not _OMITTED_WORK_ITEM_EXPECTATION
+            and (
+                type(expected_unresolved_dependency_ids) is not list
+                or any(
+                    type(value) is not str
+                    for value in expected_unresolved_dependency_ids
+                )
+            )
+        ):
+            raise ValueError("work_item_expected_state_invalid")
         async with self._work_item_row_write_lock:
             item = await self.get_work_item(work_item_id)
             if item is None:
                 return None
+            if (
+                type(item.actual_tokens) is not int
+                or not 0 <= item.actual_tokens <= _MAX_WORK_ITEM_ACTUAL_TOKENS
+            ):
+                raise ValueError("work_item_actual_tokens_current_invalid")
+            if item.actual_tokens > _MAX_WORK_ITEM_ACTUAL_TOKENS - actual_tokens_delta:
+                raise ValueError("work_item_actual_tokens_overflow")
             if (
                 (expected_work_type is not None and item.work_type != expected_work_type)
                 or (expected_status is not None and item.status != expected_status)
@@ -1398,8 +1472,53 @@ class WorkItemStore(EventEmitterMixin):
                     expected_assigned_to is not None
                     and item.assigned_to != expected_assigned_to
                 )
+                or (
+                    expected_assigned_to_exact
+                    is not _OMITTED_WORK_ITEM_EXPECTATION
+                    and not _json_values_exactly_equal(
+                        item.assigned_to,
+                        expected_assigned_to_exact,
+                    )
+                )
+                or (
+                    expected_parent_id is not _OMITTED_WORK_ITEM_EXPECTATION
+                    and not _json_values_exactly_equal(
+                        item.parent_id,
+                        expected_parent_id,
+                    )
+                )
+                or (
+                    expected_depends_on is not _OMITTED_WORK_ITEM_EXPECTATION
+                    and not _json_values_exactly_equal(
+                        item.depends_on,
+                        expected_depends_on,
+                    )
+                )
             ):
                 raise ValueError("work_item_state_conflict")
+            if (
+                expected_unresolved_dependency_ids
+                is not _OMITTED_WORK_ITEM_EXPECTATION
+            ):
+                if type(item.depends_on) is not list:
+                    raise ValueError("work_item_dependency_state_conflict")
+                live_unresolved: list[str] = []
+                for dependency_id in item.depends_on:
+                    cursor = await self._db.execute(
+                        "SELECT status FROM work_items WHERE id = ?",
+                        (dependency_id,),
+                    )
+                    dependency_row = await cursor.fetchone()
+                    if (
+                        dependency_row is None
+                        or dependency_row["status"] != "done"
+                    ):
+                        live_unresolved.append(dependency_id)
+                if not _json_values_exactly_equal(
+                    live_unresolved,
+                    expected_unresolved_dependency_ids,
+                ):
+                    raise ValueError("work_item_dependency_state_conflict")
             current = dict(item.metadata or {})
             if expected is not None:
                 for key, value in expected.items():
@@ -1417,7 +1536,7 @@ class WorkItemStore(EventEmitterMixin):
                 dataclasses.replace(item, metadata=merged), new_status,
             ):
                 return None
-            if merged == current and not status_changed:
+            if merged == current and not status_changed and actual_tokens_delta == 0:
                 return item
 
             serialized = json.dumps(
@@ -1433,16 +1552,37 @@ class WorkItemStore(EventEmitterMixin):
             now = time.time()
             try:
                 if status_changed:
-                    await self._db.execute(
-                        "UPDATE work_items SET metadata = ?, status = ?, updated_at = ? "
-                        "WHERE id = ?",
-                        (serialized, new_status, now, work_item_id),
-                    )
+                    if actual_tokens_delta:
+                        await self._db.execute(
+                            "UPDATE work_items SET metadata = ?, status = ?, "
+                            "actual_tokens = actual_tokens + ?, updated_at = ? "
+                            "WHERE id = ?",
+                            (
+                                serialized,
+                                new_status,
+                                actual_tokens_delta,
+                                now,
+                                work_item_id,
+                            ),
+                        )
+                    else:
+                        await self._db.execute(
+                            "UPDATE work_items SET metadata = ?, status = ?, updated_at = ? "
+                            "WHERE id = ?",
+                            (serialized, new_status, now, work_item_id),
+                        )
                 else:
-                    await self._db.execute(
-                        "UPDATE work_items SET metadata = ?, updated_at = ? WHERE id = ?",
-                        (serialized, now, work_item_id),
-                    )
+                    if actual_tokens_delta:
+                        await self._db.execute(
+                            "UPDATE work_items SET metadata = ?, "
+                            "actual_tokens = actual_tokens + ?, updated_at = ? WHERE id = ?",
+                            (serialized, actual_tokens_delta, now, work_item_id),
+                        )
+                    else:
+                        await self._db.execute(
+                            "UPDATE work_items SET metadata = ?, updated_at = ? WHERE id = ?",
+                            (serialized, now, work_item_id),
+                        )
                 await self._db.commit()
             except BaseException:
                 try:
@@ -1509,26 +1649,45 @@ class WorkItemStore(EventEmitterMixin):
         """Delete a work item and its associated bookings/requirements. Returns True if found."""
         if not self._db:
             return False
-        item = await self.get_work_item(work_item_id)
-        if not item:
-            return False
-        # Get booking IDs for cascade
-        cursor = await self._db.execute(
-            "SELECT id FROM bookings WHERE work_item_id = ?", (work_item_id,),
-        )
-        booking_rows = await cursor.fetchall()
-        booking_ids = [r["id"] for r in booking_rows]
-        # Cascade delete booking timestamps and journals
-        for bid in booking_ids:
-            await self._db.execute("DELETE FROM booking_timestamps WHERE booking_id = ?", (bid,))
-            await self._db.execute("DELETE FROM booking_journals WHERE booking_id = ?", (bid,))
-        # Delete bookings
-        await self._db.execute("DELETE FROM bookings WHERE work_item_id = ?", (work_item_id,))
-        # Delete requirements
-        await self._db.execute("DELETE FROM resource_requirements WHERE work_item_id = ?", (work_item_id,))
-        # Delete work item
-        await self._db.execute("DELETE FROM work_items WHERE id = ?", (work_item_id,))
-        await self._db.commit()
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(work_item_id)
+            if not item:
+                return False
+            try:
+                cursor = await self._db.execute(
+                    "SELECT id FROM bookings WHERE work_item_id = ?",
+                    (work_item_id,),
+                )
+                booking_rows = await cursor.fetchall()
+                booking_ids = [row["id"] for row in booking_rows]
+                for booking_id in booking_ids:
+                    await self._db.execute(
+                        "DELETE FROM booking_timestamps WHERE booking_id = ?",
+                        (booking_id,),
+                    )
+                    await self._db.execute(
+                        "DELETE FROM booking_journals WHERE booking_id = ?",
+                        (booking_id,),
+                    )
+                await self._db.execute(
+                    "DELETE FROM bookings WHERE work_item_id = ?",
+                    (work_item_id,),
+                )
+                await self._db.execute(
+                    "DELETE FROM resource_requirements WHERE work_item_id = ?",
+                    (work_item_id,),
+                )
+                await self._db.execute(
+                    "DELETE FROM work_items WHERE id = ?",
+                    (work_item_id,),
+                )
+                await self._db.commit()
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
         await self._refresh_snapshot_cache()
         return True
 
@@ -1771,25 +1930,55 @@ class WorkItemStore(EventEmitterMixin):
         """Transition booking: active → completed. Generates journal entries."""
         if not self._db:
             return None
-        booking = await self.get_booking(booking_id)
-        if not booking or booking.status not in ("active", "scheduled"):
-            return None
-        now = time.time()
-        await self._db.execute(
-            "UPDATE bookings SET status = 'completed', actual_end = ?, total_tokens_consumed = ? WHERE id = ?",
-            (now, tokens_consumed, booking_id),
-        )
-        await self._record_timestamp(booking_id, "completed", "system")
-        await self._db.commit()
-        # Generate journal entries
-        journal = await self.generate_journal(booking_id)
-        # Update work item actual_tokens
-        if booking.work_item_id:
-            await self._db.execute(
-                "UPDATE work_items SET actual_tokens = actual_tokens + ?, updated_at = ? WHERE id = ?",
-                (tokens_consumed, now, booking.work_item_id),
+        if (
+            type(tokens_consumed) is not int
+            or not 0 <= tokens_consumed <= _MAX_WORK_ITEM_ACTUAL_TOKENS
+        ):
+            raise ValueError("work_item_actual_tokens_delta_invalid")
+        async with self._work_item_row_write_lock:
+            booking = await self.get_booking(booking_id)
+            if not booking or booking.status not in ("active", "scheduled"):
+                return None
+            item = (
+                await self.get_work_item(booking.work_item_id)
+                if booking.work_item_id
+                else None
             )
-            await self._db.commit()
+            if item is not None:
+                if (
+                    type(item.actual_tokens) is not int
+                    or not 0
+                    <= item.actual_tokens
+                    <= _MAX_WORK_ITEM_ACTUAL_TOKENS
+                ):
+                    raise ValueError("work_item_actual_tokens_current_invalid")
+                if (
+                    item.actual_tokens
+                    > _MAX_WORK_ITEM_ACTUAL_TOKENS - tokens_consumed
+                ):
+                    raise ValueError("work_item_actual_tokens_overflow")
+            now = time.time()
+            try:
+                await self._db.execute(
+                    "UPDATE bookings SET status = 'completed', actual_end = ?, "
+                    "total_tokens_consumed = ? WHERE id = ?",
+                    (now, tokens_consumed, booking_id),
+                )
+                await self._record_timestamp(booking_id, "completed", "system")
+                if item is not None and tokens_consumed:
+                    await self._db.execute(
+                        "UPDATE work_items SET actual_tokens = actual_tokens + ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (tokens_consumed, now, item.id),
+                    )
+                await self._db.commit()
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+        journal = await self.generate_journal(booking_id)
         await self._refresh_snapshot_cache()
         updated = await self.get_booking(booking_id)
         self._emit(EventType.BOOKING_COMPLETED, {

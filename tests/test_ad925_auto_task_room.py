@@ -81,6 +81,8 @@ class _FakeAgenticExecutor:
         runtime: Any,
         department: str = "",
         rank: str = "ensign",
+        thread_id: str = "",
+        extra_context: dict[str, Any] | None = None,
     ) -> WorkItemAgenticOutcome:
         self.calls.append(agent_id)
         return WorkItemAgenticOutcome(

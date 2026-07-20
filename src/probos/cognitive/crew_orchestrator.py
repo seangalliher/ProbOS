@@ -18,10 +18,11 @@ originating path that *creates* the parent + its ``parent_id``-linked children
 is AD-868 (``originate_crew_task``); this AD ships the orchestrator + trigger
 gate it will call.
 
-**Honest-degrade.** Every stage is wrapped log-and-degrade (Tier 2): a failed
-stage logs *what* failed, *why* it matters, and *what happens next*, then the
-pipeline continues with a partial result. ``run_crew_task`` never raises — a
-total failure surfaces a partial :class:`SynthesisResult` (``completed=False``).
+**Honest-degrade.** Legacy task stages are wrapped log-and-degrade (Tier 2): a
+failed stage logs *what* failed, *why* it matters, and *what happens next*, then
+the pipeline continues with a partial result. Once a parent is authoritatively
+classified as a durable crew session, room/service integrity failures propagate
+instead of being converted into a valid-looking partial result.
 
 **Parent state glue (AD-867 deviation).** :meth:`CrewSynthesizer._complete_parent`
 transitions the parent ``in_progress -> done``; an ``open`` task cannot go
@@ -310,10 +311,31 @@ class CrewOrchestrator:
 
     async def run_crew_task(self, parent_id: str) -> SynthesisResult:
         """Thread resolve -> delegate -> fan-out -> verify -> synthesize for one
-        parent task. Honest-degrades every stage and never raises."""
-        # Stage 0: move the parent open -> in_progress so the synthesizer's
-        # in_progress -> done completion is valid (AD-867 glue, honest-degrade).
-        await self._promote_parent(parent_id)
+        parent task, propagating durable-session integrity failures."""
+        try:
+            parent = await self._work_item_store.get_work_item(parent_id)
+        except Exception:
+            logger.warning(
+                "AD-1125: parent classification failed for %s; no generic "
+                "promotion or crew work will run because session-state ownership "
+                "cannot be determined safely",
+                parent_id,
+                exc_info=True,
+            )
+            return SynthesisResult(
+                parent_id=parent_id,
+                final_output="",
+                completed=False,
+                accepted_count=0,
+                total_count=0,
+            )
+        is_crew_session = bool(
+            parent is not None and parent.work_type == "crew_session"
+        )
+        if not is_crew_session:
+            # Legacy AD-867 glue: move open -> in_progress so the synthesizer's
+            # in_progress -> done completion remains valid.
+            await self._promote_parent(parent_id)
 
         children = await self._load_children(parent_id)
         self._emit(EventType.CREW_ORCHESTRATION_STARTED, {
@@ -325,8 +347,22 @@ class CrewOrchestrator:
         for child in children:
             await self._assign_child(child)
 
-        # Stage 2: fan-out execution (existing AD-859 executor).
-        results = await self._execute(parent_id)
+        # Stage 2: fan-out execution (existing AD-859 executor). A confirmed
+        # durable session must preserve room/service integrity errors; legacy
+        # parents retain the AD-867 honest-degrade boundary.
+        if is_crew_session:
+            results = await self._crew_executor.run(parent_id)
+        else:
+            results = await self._execute(parent_id)
+
+        if is_crew_session:
+            return SynthesisResult(
+                parent_id=parent_id,
+                final_output="",
+                completed=False,
+                accepted_count=0,
+                total_count=len(results),
+            )
 
         # Stage 3: independent verification of each successful subtask.
         outcomes = await self._verify(results)

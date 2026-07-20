@@ -22,6 +22,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -39,6 +40,103 @@ if TYPE_CHECKING:
     from probos.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+_ARTIFACT_REF_KEYS = frozenset(
+    {
+        "artifact_id",
+        "content_hash",
+        "thread_id",
+        "name",
+        "mime",
+        "size_bytes",
+        "version",
+    }
+)
+_ARTIFACT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_ARTIFACT_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+_MAX_ARTIFACT_CANDIDATES_PER_RESULT = 64
+_MAX_ARTIFACT_REFS = 32
+_MAX_ARTIFACT_SIZE_BYTES = 26_214_400
+_MAX_ARTIFACT_VERSION = 2_147_483_647
+
+
+def _extract_artifact_refs(
+    observations: list[tuple[Any, Any]],
+    *,
+    thread_id: str,
+) -> tuple[list[dict[str, Any]], int]:
+    refs: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    ignored = 0
+    for tool_id, result in observations:
+        if tool_id != "run_python":
+            continue
+        if type(result) is not ToolResult or result.error is not None:
+            continue
+        output = result.output
+        if type(output) is not dict:
+            ignored += 1
+            continue
+        candidates = output.get("artifact_details")
+        if type(candidates) is not list:
+            ignored += 1
+            continue
+        if len(candidates) > _MAX_ARTIFACT_CANDIDATES_PER_RESULT:
+            ignored += len(candidates) - _MAX_ARTIFACT_CANDIDATES_PER_RESULT
+        for candidate in candidates[:_MAX_ARTIFACT_CANDIDATES_PER_RESULT]:
+            if type(candidate) is not dict:
+                ignored += 1
+                continue
+            if (
+                len(candidate) != len(_ARTIFACT_REF_KEYS)
+                or any(type(key) is not str for key in candidate)
+                or set(candidate) != _ARTIFACT_REF_KEYS
+            ):
+                ignored += 1
+                continue
+            artifact_id = candidate["artifact_id"]
+            content_hash = candidate["content_hash"]
+            candidate_thread_id = candidate["thread_id"]
+            name = candidate["name"]
+            mime = candidate["mime"]
+            size_bytes = candidate["size_bytes"]
+            version = candidate["version"]
+            valid = (
+                type(artifact_id) is str
+                and _ARTIFACT_ID_RE.fullmatch(artifact_id) is not None
+                and type(content_hash) is str
+                and _ARTIFACT_SHA_RE.fullmatch(content_hash) is not None
+                and type(candidate_thread_id) is str
+                and bool(candidate_thread_id)
+                and candidate_thread_id == thread_id
+                and type(name) is str
+                and 1 <= len(name) <= 255
+                and "/" not in name
+                and "\\" not in name
+                and "\x00" not in name
+                and type(mime) is str
+                and 1 <= len(mime) <= 255
+                and type(size_bytes) is int
+                and 1 <= size_bytes <= _MAX_ARTIFACT_SIZE_BYTES
+                and type(version) is int
+                and 1 <= version <= _MAX_ARTIFACT_VERSION
+            )
+            if not valid or artifact_id in seen_ids or len(refs) >= _MAX_ARTIFACT_REFS:
+                ignored += 1
+                continue
+            seen_ids.add(artifact_id)
+            refs.append(
+                {
+                    "artifact_id": artifact_id,
+                    "content_hash": content_hash,
+                    "thread_id": candidate_thread_id,
+                    "name": name,
+                    "mime": mime,
+                    "size_bytes": size_bytes,
+                    "version": version,
+                }
+            )
+    return refs, ignored
 
 
 class DispatchToolExecutor(ToolExecutor):
@@ -438,6 +536,8 @@ class WorkItemAgenticOutcome:
     stopped_reason: str = ""
     denied_tools: list[str] = field(default_factory=list)
     tool_trace_ref: str | None = None
+    total_tokens: int = 0
+    artifact_refs: list[dict[str, Any]] = field(default_factory=list)
 
 
 class WorkItemAgenticExecutor:
@@ -488,6 +588,14 @@ class WorkItemAgenticExecutor:
         intent_bus = getattr(runtime, "intent_bus", None)
 
         executor = DispatchToolExecutor(registry=registry)
+        observed_tool_results: list[tuple[Any, Any]] = []
+
+        def _record_tool_result(context: dict[str, Any], result: ToolResult) -> None:
+            tool_id = context.get("tool_id") if type(context) is dict else None
+            if tool_id == "run_python":
+                observed_tool_results.append((tool_id, result))
+
+        executor.add_post_hook(_record_tool_result)
 
         mesh_ids: list[str] = []
         if intent_bus is not None and registry is not None:
@@ -726,12 +834,40 @@ class WorkItemAgenticExecutor:
         tool_trace_ref = await self._persist_tool_trace(
             agentic_result, runtime, agent_id
         )
+        artifact_refs, ignored_artifact_entries = _extract_artifact_refs(
+            observed_tool_results,
+            thread_id=thread_id,
+        )
+        if ignored_artifact_entries:
+            logger.warning(
+                "AD-1125: dropped %d malformed, duplicate, cross-thread, or "
+                "over-limit artifact evidence entries for agent %s in thread %s; "
+                "continuing with %d validated refs",
+                ignored_artifact_entries,
+                agent_id,
+                thread_id or "<none>",
+                len(artifact_refs),
+            )
+        raw_total_tokens = getattr(agentic_result, "total_tokens", 0)
+        total_tokens = (
+            raw_total_tokens
+            if type(raw_total_tokens) is int and raw_total_tokens >= 0
+            else 0
+        )
+        if total_tokens != raw_total_tokens:
+            logger.warning(
+                "AD-1125: agentic result for agent %s carried an invalid token "
+                "total; recording zero so downstream evidence remains bounded",
+                agent_id,
+            )
 
         return WorkItemAgenticOutcome(
             final_text=agentic_result.final_text or "",
             stopped_reason=agentic_result.stopped_reason,
             denied_tools=list(executor.denied_tools),
             tool_trace_ref=tool_trace_ref,
+            total_tokens=total_tokens,
+            artifact_refs=artifact_refs,
         )
 
     async def _persist_tool_trace(

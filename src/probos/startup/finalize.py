@@ -1771,6 +1771,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
     ontology = getattr(runtime, "ontology", None)
     trust_network = getattr(runtime, "trust_network", None)
     llm_client = getattr(runtime, "llm_client", None)
+    crew_session_service = getattr(runtime, "crew_session_service", None)
     missing = [
         name
         for name, dep in (
@@ -1832,6 +1833,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         runtime=runtime,
         max_parallel_subtasks=max_parallel,
         emit_fn=emit_fn,
+        crew_session_service=crew_session_service,
     )
     verifier = SubtaskVerifier(
         llm_client=llm_client,

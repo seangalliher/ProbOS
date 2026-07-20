@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1125 (2026-07-18) - room-bound agentic execution (#1044)
+
+**Context.** AD-925 discarded the collaboration room id before child execution, so tool outputs and artifacts could not be tied to the durable session room. Child evidence, failure state, and cumulative tokens were not durable, while direct parent promotion and legacy synthesis conflicted with the AD-1124 CrewSession authority. Highest landed top-level was **AD-1124**; **AD-1125 is the new top-level ceiling**, while **BF-673 remains the BF ceiling**.
+
+**Decision.** Resolve exactly one existing task-linked room before fan-out, transition the parent through `CrewSessionService`, and give every child the same bounded room/task context. Run each child through the governed AgenticLoop so real tool observations reach a subsequent reasoning turn; persist `run_python` outputs as authoritative ArtifactStore identities. Commit exact bounded child evidence, cumulative tokens, and validated terminal status through one store-owned row-locked operation with exact assignment, parent, ordered-dependency, live-dependency, overflow, rollback, and cancellation protections. Durable sessions stop in `executing` for AD-1126 finalization; legacy parents retain their verifier and synthesizer path. Add no finalization, lifecycle runner, config/YAML, schema, API/UI, trust, EventLog, notification, or ingress work.
+
+**Tests.** The AD-1125 module contains **88 cases**. Gates 0–3 passed **88 + 215 + 72 (1 skipped) + 437** with no warnings. The fresh full parallel suite passed **19,731 / 33 skipped / 0 failed** with **431 provenance-only pre-existing warnings and zero changed-path warnings**. Room identity, post-tool reasoning, artifact provenance, all terminal mappings, adversarial CAS races, transaction rollback/cancellation, duplicate dependencies, and signed-64 token bounds are covered. Final review was **APPROVED**; #1044 closes only when this commit is pushed, while parent #1041 remains open.
+
 ### AD-1124 (2026-07-17) - durable CrewSession contract (#1043)
 
 **Context.** The AD-858–862 crew-collaboration spine had no durable, bounded session contract tying one parent WorkItem to its collaboration room. Generic workforce consumers depend on the established `draft/open/in_progress/review/blocked/done/failed` vocabulary, so storing session-specific fine states in `WorkItem.status` would break compatibility. Existing whole-column metadata writers also risked clobbering sibling keys, and Python equality is not exact JSON equality because booleans alias integers. Highest landed top-level was **AD-1123**; **AD-1124 is the new top-level ceiling**, while **BF-673 remains the BF ceiling**.

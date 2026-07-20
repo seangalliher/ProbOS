@@ -346,10 +346,13 @@ class CodeExecutionTool:
                 )
                 out.append(
                     {
-                        "name": name,
-                        "mime": mime,
-                        "size_bytes": len(blob),
-                        "version": getattr(art, "version", 1),
+                        "artifact_id": art.id,
+                        "content_hash": art.content_hash,
+                        "thread_id": art.thread_id,
+                        "name": art.name,
+                        "mime": art.mime,
+                        "size_bytes": art.size_bytes,
+                        "version": art.version,
                     }
                 )
             except Exception:
