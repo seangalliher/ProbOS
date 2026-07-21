@@ -61,7 +61,30 @@ _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _MAX_TIMESTAMP = 253_402_300_799.0
 _MAX_BLOCKED_SECONDS = 315_576_000.0
 _MAX_CONTRACT_BYTES = 32_768
+_MAX_SYNTHESIS_METADATA_BYTES = 32_768
+_MAX_SESSION_TOKEN_TOTAL = 9_223_372_036_854_775_807
 _MISSING = object()
+
+
+def _json_values_exactly_equal(current: Any, expected: Any) -> bool:
+    try:
+        current_bytes = json.dumps(
+            current,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        expected_bytes = json.dumps(
+            expected,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        return False
+    return current_bytes == expected_bytes
 
 
 def is_valid_crew_session_transition(old: str, new: str) -> bool:
@@ -112,6 +135,110 @@ def _normalize_timestamp(value: Any) -> float:
     if not math.isfinite(normalized) or not 0.0 <= normalized <= _MAX_TIMESTAMP:
         raise ValueError("crew_session_timestamp_invalid")
     return normalized
+
+
+class CrewSynthesisMetadata(BaseModel):
+    """Strict bounded summary committed with a verified session result."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    version: Literal[1]
+    completed: Literal[True]
+    producer_agent_id: str
+    final_verifier_agent_id: str
+    final_confidence: float
+    final_critique: str
+    accepted_count: int
+    total_count: int
+    convergence_rounds: int
+    correction_tokens: int
+    verification_tokens: int
+    synthesis_tokens: int
+    result_artifact_id: str
+    result_content_hash: str
+    provenance_ref: str
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def _validate_synthesis_version(cls, value: Any) -> int:
+        if type(value) is not int or value != 1:
+            raise ValueError("crew_synthesis_version_invalid")
+        return value
+
+    @field_validator("completed", mode="before")
+    @classmethod
+    def _validate_synthesis_completed(cls, value: Any) -> bool:
+        if value is not True:
+            raise ValueError("crew_synthesis_completed_invalid")
+        return value
+
+    @field_validator(
+        "producer_agent_id",
+        "final_verifier_agent_id",
+        "result_artifact_id",
+        mode="before",
+    )
+    @classmethod
+    def _validate_synthesis_id(cls, value: Any) -> str:
+        return _normalize_id(value)
+
+    @field_validator("result_content_hash", "provenance_ref", mode="before")
+    @classmethod
+    def _validate_synthesis_ref(cls, value: Any) -> str:
+        return _normalize_sha(value)
+
+    @field_validator("final_confidence", mode="before")
+    @classmethod
+    def _validate_synthesis_confidence(cls, value: Any) -> float:
+        if type(value) not in (int, float):
+            raise ValueError("crew_synthesis_confidence_invalid")
+        normalized = float(value)
+        if not math.isfinite(normalized) or not 0.0 <= normalized <= 1.0:
+            raise ValueError("crew_synthesis_confidence_invalid")
+        return normalized
+
+    @field_validator("final_critique", mode="before")
+    @classmethod
+    def _validate_synthesis_critique(cls, value: Any) -> str:
+        normalized = _normalize_text(value, maximum=2_048, allow_empty=False)
+        if len(normalized.encode("utf-8")) > 8_192:
+            raise ValueError("crew_synthesis_critique_invalid")
+        return normalized
+
+    @field_validator(
+        "accepted_count",
+        "total_count",
+        "convergence_rounds",
+        "correction_tokens",
+        "verification_tokens",
+        "synthesis_tokens",
+        mode="before",
+    )
+    @classmethod
+    def _validate_synthesis_integer(cls, value: Any) -> int:
+        if type(value) is not int or not 0 <= value <= _MAX_SESSION_TOKEN_TOTAL:
+            raise ValueError("crew_synthesis_integer_invalid")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_synthesis_consistency(self) -> Self:
+        if (
+            self.accepted_count == 0
+            or self.accepted_count != self.total_count
+            or self.total_count > 1_000
+            or self.convergence_rounds > self.total_count * 8
+        ):
+            raise ValueError("crew_synthesis_counts_invalid")
+        compact = json.dumps(
+            self.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        if len(compact) > _MAX_SYNTHESIS_METADATA_BYTES:
+            raise ValueError("crew_synthesis_metadata_too_large")
+        return self
 
 
 class CrewSessionContract(BaseModel):
@@ -289,6 +416,10 @@ class CrewSessionContract(BaseModel):
             self.verified_at is None or self.completed_at is None
         ):
             raise ValueError("crew_session_done_timestamps_required")
+        if self.state == "done" and (
+            self.result_artifact_id is None or self.result_ref is None
+        ):
+            raise ValueError("crew_session_done_result_refs_required")
         if self.state == "failed" and self.completed_at is None:
             raise ValueError("crew_session_failed_timestamp_required")
         if bool(self.last_result_summary) != (self.first_result_at is not None):
@@ -352,11 +483,29 @@ class _WorkItemStoreProtocol(Protocol):
         patch: dict[str, Any],
         *,
         expected: dict[str, Any] | None = None,
+        expected_absent_keys: frozenset[str] = frozenset(),
+        expected_present_keys: frozenset[str] = frozenset(),
         expected_work_type: str | None = None,
         expected_status: str | None = None,
         expected_assigned_to: str | None = None,
         new_status: str | None = None,
         source: str = "system",
+    ) -> WorkItem | None: ...
+
+    async def publish_work_item_metadata_with_child_barrier(
+        self,
+        work_item_id: str,
+        patch: dict[str, Any],
+        *,
+        expected: dict[str, Any],
+        expected_absent_keys: frozenset[str],
+        expected_present_keys: frozenset[str],
+        expected_work_type: str,
+        expected_status: str,
+        expected_assigned_to: str,
+        expected_direct_children: tuple[dict[str, Any], ...],
+        new_status: str,
+        source: str = "crew_session_verified_result",
     ) -> WorkItem | None: ...
 
 
@@ -609,6 +758,7 @@ class CrewSessionService:
             expected={"crew_session": raw},
             expected_work_type="crew_session",
             expected_status=_STATUS_PROJECTION[current.state],
+            expected_assigned_to=current.facilitator_id,
             new_status=_STATUS_PROJECTION[target],
             source="crew_session_transition",
         )
@@ -622,6 +772,187 @@ class CrewSessionService:
             _STATUS_PROJECTION[target],
         )
         return self._parse_contract(updated.metadata.get("crew_session"))
+
+    async def publish_verified_result(
+        self,
+        parent_id: str,
+        *,
+        expected_revision: int,
+        expected_direct_children: tuple[dict[str, Any], ...],
+        crew_synth: CrewSynthesisMetadata,
+        last_result_summary: str,
+        provenance_ref: str,
+        result_artifact_id: str,
+    ) -> CrewSessionContract:
+        """Atomically publish both verified refs and transition to ``done``."""
+        parent_key = _normalize_id(parent_id)
+        if type(expected_revision) is not int:
+            raise ValueError("crew_session_revision_invalid")
+        try:
+            synthesis = CrewSynthesisMetadata.model_validate(crew_synth)
+        except ValidationError as exc:
+            raise ValueError("crew_synthesis_metadata_invalid") from exc
+        summary = _normalize_text(
+            last_result_summary,
+            maximum=4_096,
+            allow_empty=False,
+        )
+        provenance_sha = _normalize_sha(provenance_ref)
+        artifact_id = _normalize_id(result_artifact_id)
+        if (
+            synthesis.provenance_ref != provenance_sha
+            or synthesis.result_artifact_id != artifact_id
+        ):
+            raise ValueError("crew_session_publication_ref_mismatch")
+
+        parent = await self._work_items.get_work_item(parent_key)
+        if parent is None:
+            raise ValueError("crew_session_parent_not_found")
+        raw = (parent.metadata or {}).get("crew_session", _MISSING)
+        if raw is _MISSING:
+            raise ValueError("crew_session_not_initialized")
+        if "crew_synth" in (parent.metadata or {}):
+            raise ValueError("crew_session_publication_conflict")
+        current = self._parse_contract(raw)
+        await self._validate_loaded(parent, current)
+        if current.state != "verifying":
+            raise ValueError("crew_session_publication_state_invalid")
+        if current.revision != expected_revision:
+            raise ValueError("crew_session_revision_conflict")
+        if synthesis.producer_agent_id != current.facilitator_id:
+            raise ValueError("crew_session_publication_producer_mismatch")
+
+        now = self._server_time(
+            current.created_at,
+            current.transitioned_at,
+            current.started_at,
+            current.first_result_at,
+        )
+        evidence_refs = list(current.evidence_refs)
+        if provenance_sha not in evidence_refs:
+            evidence_refs.append(provenance_sha)
+        if len(evidence_refs) > 32:
+            raise ValueError("crew_session_evidence_refs_invalid")
+        values = current.model_dump(mode="json")
+        values.update({
+            "state": "done",
+            "previous_state": current.state,
+            "revision": current.revision + 1,
+            "transitioned_at": now,
+            "verified_at": now,
+            "completed_at": now,
+            "last_result_summary": summary,
+            "evidence_refs": evidence_refs,
+            "result_artifact_id": artifact_id,
+            "result_ref": provenance_sha,
+        })
+        if current.first_result_at is None:
+            values["first_result_at"] = now
+        contract = self._validate_contract(values)
+        contract_json = contract.model_dump(mode="json")
+        synthesis_json = synthesis.model_dump(mode="json")
+        sibling_keys = frozenset(
+            key
+            for key in (parent.metadata or {})
+            if key not in {"crew_session", "crew_synth"}
+        )
+        publish_error: BaseException | None = None
+        try:
+            await self._work_items.publish_work_item_metadata_with_child_barrier(
+                parent.id,
+                {
+                    "crew_session": contract_json,
+                    "crew_synth": synthesis_json,
+                },
+                expected={"crew_session": raw},
+                expected_absent_keys=frozenset({"crew_synth"}),
+                expected_present_keys=sibling_keys,
+                expected_work_type="crew_session",
+                expected_status=_STATUS_PROJECTION[current.state],
+                expected_assigned_to=current.facilitator_id,
+                expected_direct_children=expected_direct_children,
+                new_status="done",
+                source="crew_session_verified_result",
+            )
+        except asyncio.CancelledError as exc:
+            publish_error = exc
+        except Exception as exc:
+            publish_error = exc
+        try:
+            authoritative_contract = await self._authoritative_publication(
+                parent_id=parent.id,
+                facilitator_id=current.facilitator_id,
+                contract_json=contract_json,
+                synthesis_json=synthesis_json,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if publish_error is not None:
+                raise publish_error
+            raise
+        if authoritative_contract is not None:
+            if publish_error is not None:
+                logger.warning(
+                    "Crew session parent=%s publication raised after the exact "
+                    "done contract committed; returning the authoritative result "
+                    "without rewriting unrelated metadata siblings",
+                    parent.id,
+                )
+            else:
+                logger.info(
+                    "Crew session parent=%s published verified result revision=%d; "
+                    "artifact and provenance refs committed atomically",
+                    parent.id,
+                    contract.revision,
+                )
+            return authoritative_contract
+        if publish_error is not None:
+            raise publish_error
+        raise ValueError("crew_session_publication_failed")
+
+    async def _authoritative_publication(
+        self,
+        *,
+        parent_id: str,
+        facilitator_id: str,
+        contract_json: dict[str, Any],
+        synthesis_json: dict[str, Any],
+    ) -> CrewSessionContract | None:
+        authoritative = await self._work_items.get_work_item(parent_id)
+        if (
+            authoritative is None
+            or authoritative.id != parent_id
+            or authoritative.work_type != "crew_session"
+            or authoritative.status != "done"
+            or authoritative.assigned_to != facilitator_id
+            or type(authoritative.metadata) is not dict
+        ):
+            return None
+        metadata = authoritative.metadata
+        if not _json_values_exactly_equal(
+            metadata.get("crew_session", _MISSING),
+            contract_json,
+        ) or not _json_values_exactly_equal(
+            metadata.get("crew_synth", _MISSING),
+            synthesis_json,
+        ):
+            return None
+        try:
+            authoritative_contract = self._parse_contract(metadata["crew_session"])
+            authoritative_synthesis = CrewSynthesisMetadata.model_validate(
+                metadata["crew_synth"],
+            )
+        except (KeyError, ValidationError, ValueError):
+            return None
+        if (
+            authoritative_contract.result_artifact_id
+            != authoritative_synthesis.result_artifact_id
+            or authoritative_contract.result_ref
+            != authoritative_synthesis.provenance_ref
+        ):
+            return None
+        return authoritative_contract
 
     @staticmethod
     def _state(value: Any) -> CrewSessionState:
@@ -728,6 +1059,8 @@ class CrewSessionService:
             raise ValueError("crew_session_task_mismatch")
         if contract.created_at != parent.created_at:
             raise ValueError("crew_session_created_at_mismatch")
+        if parent.assigned_to != contract.facilitator_id:
+            raise ValueError("crew_session_facilitator_assignment_mismatch")
         projected = _STATUS_PROJECTION[contract.state]
         if parent.status != projected:
             raise ValueError("crew_session_projection_mismatch")

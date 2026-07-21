@@ -37,9 +37,11 @@ concretions, and is trivially testable with fakes.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -53,12 +55,21 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from probos.attachments.store import AttachmentStore
-    from probos.cognitive.crew_verifier import ConvergenceOutcome
+    from probos.cognitive.crew_verifier import (
+        ConvergenceOutcome,
+        SessionConvergenceOutcome,
+    )
     from probos.cognitive.episodic import EpisodicMemory
     from probos.consensus.trust import TrustNetwork
     from probos.workforce import WorkItemStore
 
 logger = logging.getLogger(__name__)
+
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_MAX_SESSION_SYNTHESIS_INPUT_BYTES = 1_048_576
+_MAX_SESSION_SYNTHESIS_OUTPUT_BYTES = 262_144
+_MAX_SESSION_RESULT_BYTES = 65_536
+_MAX_SESSION_TOKENS = 9_223_372_036_854_775_807
 
 
 @dataclass
@@ -84,6 +95,13 @@ class SynthesisResult:
     total_count: int = 0
 
 
+@dataclass(frozen=True)
+class SessionSynthesisDraft:
+    producer_agent_id: str
+    final_text: str
+    tokens_used: int
+
+
 class CrewSynthesizer:
     """Fold verified crew :class:`ConvergenceOutcome`s into parent completion.
 
@@ -98,6 +116,12 @@ class CrewSynthesizer:
         "parent task. Do not invent content beyond what the sub-task outputs "
         "support. Respond with the final answer only — no preamble, no meta "
         "commentary."
+    )
+    _SESSION_SYSTEM_PROMPT = (
+        "You are the server-selected facilitator producing the final human-visible "
+        "result for a durable crew session. Synthesize only from the accepted "
+        "child outputs and the exact parent contract. Do not claim unsupported "
+        "artifacts or invent evidence. Return only the final result."
     )
 
     def __init__(
@@ -166,7 +190,139 @@ class CrewSynthesizer:
             total_count=len(outcomes),
         )
 
+    async def synthesize_for_session(
+        self,
+        *,
+        parent_id: str,
+        producer_agent_id: str,
+        producer_instructions: str,
+        goal: str,
+        success_criteria: tuple[str, ...],
+        expected_deliverable: str,
+        outcomes: tuple["SessionConvergenceOutcome", ...],
+    ) -> SessionSynthesisDraft:
+        """Produce one bounded session draft without completion or learning writes."""
+        parent_key = self._session_id(parent_id)
+        producer_key = self._session_id(producer_agent_id)
+        instructions = self._session_text(
+            producer_instructions,
+            maximum_bytes=32_768,
+            error="session_synthesis_producer_invalid",
+        )
+        normalized_goal = self._session_text(
+            goal,
+            maximum_bytes=16_384,
+            error="session_synthesis_input_invalid",
+        )
+        deliverable = self._session_text(
+            expected_deliverable,
+            maximum_bytes=8_192,
+            error="session_synthesis_input_invalid",
+        )
+        if (
+            type(success_criteria) is not tuple
+            or not 1 <= len(success_criteria) <= 16
+            or type(outcomes) is not tuple
+            or not 1 <= len(outcomes) <= 1_000
+        ):
+            raise ValueError("session_synthesis_input_invalid")
+        criteria = tuple(
+            self._session_text(
+                criterion,
+                maximum_bytes=2_048,
+                error="session_synthesis_input_invalid",
+            )
+            for criterion in success_criteria
+        )
+        if len(set(criteria)) != len(criteria):
+            raise ValueError("session_synthesis_input_invalid")
+
+        chunks = [
+            f"PARENT SESSION: {parent_key}\n",
+            f"GOAL:\n{normalized_goal}\n\n",
+            "SUCCESS CRITERIA:\n",
+        ]
+        prompt_bytes = sum(len(chunk.encode("utf-8")) for chunk in chunks)
+        for index, criterion in enumerate(criteria, start=1):
+            chunk = f"{index}. {criterion}\n"
+            prompt_bytes += len(chunk.encode("utf-8"))
+            if prompt_bytes > _MAX_SESSION_SYNTHESIS_INPUT_BYTES:
+                raise ValueError("session_synthesis_input_too_large")
+            chunks.append(chunk)
+        tail = [
+            f"\nEXPECTED DELIVERABLE:\n{deliverable}\n\n",
+            "ACCEPTED CHILD OUTPUTS:\n",
+        ]
+        prompt_bytes += sum(len(chunk.encode("utf-8")) for chunk in tail)
+        if prompt_bytes > _MAX_SESSION_SYNTHESIS_INPUT_BYTES:
+            raise ValueError("session_synthesis_input_too_large")
+        chunks.extend(tail)
+        for index, outcome in enumerate(outcomes, start=1):
+            if (
+                getattr(outcome, "accepted", None) is not True
+                or getattr(outcome, "status", None) != "converged"
+            ):
+                raise ValueError("session_synthesis_outcome_invalid")
+            result = getattr(outcome, "result", None)
+            child_id = self._session_id(getattr(result, "work_item_id", None))
+            child_producer = self._session_id(getattr(result, "agent_id", None))
+            output = self._session_text(
+                getattr(result, "output", None),
+                maximum_bytes=_MAX_SESSION_RESULT_BYTES,
+                error="session_synthesis_outcome_invalid",
+            )
+            chunk = (
+                f"--- CHILD {index} id={child_id} producer={child_producer} ---\n"
+                f"{output}\n"
+            )
+            prompt_bytes += len(chunk.encode("utf-8"))
+            if prompt_bytes > _MAX_SESSION_SYNTHESIS_INPUT_BYTES:
+                raise ValueError("session_synthesis_input_too_large")
+            chunks.append(chunk)
+        prompt = "".join(chunks)
+        if len(prompt.encode("utf-8")) > _MAX_SESSION_SYNTHESIS_INPUT_BYTES:
+            raise ValueError("session_synthesis_input_too_large")
+        system_prompt = f"{self._SESSION_SYSTEM_PROMPT}\n\nFACILITATOR INSTRUCTIONS:\n{instructions}"
+        try:
+            response = await self._llm.complete(LLMRequest(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                tier="standard",
+            ))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise ValueError("session_synthesis_failed") from exc
+        final_text = self._session_text(
+            getattr(response, "content", None),
+            maximum_bytes=_MAX_SESSION_SYNTHESIS_OUTPUT_BYTES,
+            error="session_synthesis_failed",
+        )
+        tokens = getattr(response, "tokens_used", None)
+        if type(tokens) is not int or not 0 <= tokens <= _MAX_SESSION_TOKENS:
+            raise ValueError("session_synthesis_failed")
+        return SessionSynthesisDraft(
+            producer_agent_id=producer_key,
+            final_text=final_text,
+            tokens_used=tokens,
+        )
+
     # ------------------------------------------------------------------ internals
+
+    @staticmethod
+    def _session_id(value: Any) -> str:
+        if type(value) is not str or _SESSION_ID_RE.fullmatch(value) is None:
+            raise ValueError("session_synthesis_id_invalid")
+        return value
+
+    @staticmethod
+    def _session_text(value: Any, *, maximum_bytes: int, error: str) -> str:
+        if type(value) is not str or "\x00" in value:
+            raise ValueError(error)
+        normalized = value.strip()
+        if not normalized or len(normalized.encode("utf-8")) > maximum_bytes:
+            raise ValueError(error)
+        return normalized
 
     async def _synthesize_output(
         self, parent_id: str, accepted: list["ConvergenceOutcome"],

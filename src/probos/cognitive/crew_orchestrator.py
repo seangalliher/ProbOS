@@ -47,6 +47,7 @@ if TYPE_CHECKING:  # pragma: no cover - type-only imports
     from probos.cognitive.crew_assignment import CrewAssignmentResolver
     from probos.cognitive.crew_delegation import CrewDelegator
     from probos.cognitive.crew_executor import CrewTaskExecutor, SubtaskResult
+    from probos.cognitive.crew_finalizer import CrewSessionFinalizer
     from probos.cognitive.crew_synth import CrewSynthesizer
     from probos.cognitive.crew_verifier import SubtaskVerifier
     from probos.workforce import WorkItem, WorkItemStore
@@ -76,6 +77,7 @@ class CrewOrchestrator:
         emit_fn: Any = None,
         config: Any = None,
         decomposer: Any = None,
+        crew_session_finalizer: "CrewSessionFinalizer | None" = None,
     ) -> None:
         self._assignment_resolver = assignment_resolver
         self._delegator = delegator
@@ -90,6 +92,7 @@ class CrewOrchestrator:
         # (tests) takes precedence; otherwise one is built lazily from
         # ``runtime.llm_client`` on first use (see :meth:`_get_decomposer`).
         self._decomposer = decomposer
+        self._crew_session_finalizer = crew_session_finalizer
         # Held references for fire-and-forget protection (async-hygiene rule).
         self._tasks: set[asyncio.Task[SynthesisResult]] = set()
 
@@ -356,6 +359,24 @@ class CrewOrchestrator:
             results = await self._execute(parent_id)
 
         if is_crew_session:
+            if self._crew_session_finalizer is not None:
+                finalized = await self._crew_session_finalizer.finalize(
+                    parent_id,
+                    results,
+                )
+                return SynthesisResult(
+                    parent_id=parent_id,
+                    final_output=(
+                        finalized.final_output if finalized.completed else ""
+                    ),
+                    completed=finalized.completed,
+                    shapley_values={},
+                    provenance_ref=(
+                        finalized.provenance_ref if finalized.completed else None
+                    ),
+                    accepted_count=finalized.accepted_count,
+                    total_count=finalized.total_count,
+                )
             return SynthesisResult(
                 parent_id=parent_id,
                 final_output="",

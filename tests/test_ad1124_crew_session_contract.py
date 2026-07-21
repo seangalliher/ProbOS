@@ -938,7 +938,7 @@ async def test_transition_session_generic_status_interleaving_conflicts_without_
     assert barrier.last_merge_options == {
         "expected_work_type": "crew_session",
         "expected_status": "open",
-        "expected_assigned_to": None,
+        "expected_assigned_to": "facilitator-1",
     }
 
 
@@ -1759,13 +1759,22 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         name for name, value in inspect.getmembers(CrewSessionService, inspect.isfunction)
         if not name.startswith("_")
     }
-    assert public == {"initialize_session", "get_session", "transition_session"}
+    assert public == {
+        "initialize_session",
+        "get_session",
+        "publish_verified_result",
+        "transition_session",
+    }
     expected_parameters = {
         "initialize_session": {
             "self", "parent_id", "thread_id", "goal", "origin", "originator_id",
             "facilitator_id", "owner_ids", "success_criteria", "expected_deliverable",
         },
         "get_session": {"self", "parent_id"},
+        "publish_verified_result": {
+            "self", "parent_id", "expected_revision", "expected_direct_children", "crew_synth",
+            "last_result_summary", "provenance_ref", "result_artifact_id",
+        },
         "transition_session": {
             "self", "parent_id", "new_state", "expected_revision",
             "last_result_summary", "blocked_reason", "evidence_refs",

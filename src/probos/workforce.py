@@ -18,6 +18,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import math
 import re
 import time
 import uuid
@@ -953,8 +954,47 @@ _JSON_FIELDS = frozenset({
 _IMMUTABLE_FIELDS = frozenset({"id", "created_at", "created_by"})
 
 _MAX_WORK_ITEM_METADATA_BYTES = 1_048_576
+_MAX_WORK_ITEM_VERIFICATION_BYTES = 262_144
 _MAX_WORK_ITEM_ACTUAL_TOKENS = 9_223_372_036_854_775_807
+_MAX_WORK_ITEM_METADATA_EXPECTED_KEYS = 1_024
+_MAX_WORK_ITEM_METADATA_KEY_CODEPOINTS = 256
+_MAX_WORK_ITEM_METADATA_KEY_BYTES = 1_024
+_MAX_WORK_ITEM_CHILD_SNAPSHOT_BYTES = 1_572_864
+_MAX_WORK_ITEM_CHILD_SNAPSHOTS_BYTES = 33_554_432
+_MAX_WORK_ITEM_DIRECT_CHILDREN = 1_000
+_MAX_WORK_ITEM_CHILD_SNAPSHOT_DEPTH = 64
+_MAX_WORK_ITEM_CHILD_SNAPSHOT_NODES = 65_536
+_MAX_WORK_ITEM_CHILD_SNAPSHOT_CONTAINER_ENTRIES = 16_384
+_MAX_WORK_ITEM_CHILD_SNAPSHOT_STRING_BYTES = 1_048_576
 _MISSING_METADATA_VALUE = object()
+_WORK_ITEM_CHILD_SNAPSHOT_KEYS = frozenset({
+    "id",
+    "title",
+    "description",
+    "work_type",
+    "status",
+    "priority",
+    "parent_id",
+    "depends_on",
+    "assigned_to",
+    "created_by",
+    "created_at",
+    "due_at",
+    "estimated_tokens",
+    "actual_tokens",
+    "trust_requirement",
+    "required_capabilities",
+    "tags",
+    "metadata",
+    "steps",
+    "verification",
+    "schedule",
+    "ttl_seconds",
+    "template_id",
+})
+_WORK_ITEM_PUBLICATION_ID_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+)
 
 
 class _OmittedWorkItemExpectation:
@@ -962,6 +1002,20 @@ class _OmittedWorkItemExpectation:
 
 
 _OMITTED_WORK_ITEM_EXPECTATION = _OmittedWorkItemExpectation()
+
+
+def _valid_work_item_metadata_expectation_key(value: Any) -> bool:
+    if (
+        type(value) is not str
+        or not value
+        or "\x00" in value
+        or len(value) > _MAX_WORK_ITEM_METADATA_KEY_CODEPOINTS
+    ):
+        return False
+    try:
+        return len(value.encode("utf-8")) <= _MAX_WORK_ITEM_METADATA_KEY_BYTES
+    except UnicodeEncodeError:
+        return False
 
 
 def _json_values_exactly_equal(current: Any, expected: Any) -> bool:
@@ -988,6 +1042,251 @@ def _json_values_exactly_equal(current: Any, expected: Any) -> bool:
     if type(current) in (bool, int, float, str):
         return current == expected
     return False
+
+
+def _compact_exact_json_bytes(value: Any, *, error: str) -> bytes:
+    def _validate(current: Any) -> None:
+        if current is None or type(current) in (bool, int, str):
+            return
+        if type(current) is float:
+            if not math.isfinite(current):
+                raise ValueError(error)
+            return
+        if type(current) is list:
+            for item in current:
+                _validate(item)
+            return
+        if type(current) is dict:
+            if any(type(key) is not str for key in current):
+                raise ValueError(error)
+            for item in current.values():
+                _validate(item)
+            return
+        raise ValueError(error)
+
+    try:
+        _validate(value)
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+        raise ValueError(error) from exc
+
+
+def _bounded_child_snapshot_bytes(
+    value: dict[str, Any],
+    *,
+    error: str,
+    seen_containers: set[int],
+) -> bytes:
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    nodes = 0
+    container_entries = 0
+    string_bytes = 0
+    exact_bytes = 0
+
+    def _add_string(current: str) -> int:
+        nonlocal string_bytes
+        encoded = current.encode("utf-8", errors="strict")
+        string_bytes += len(encoded)
+        if string_bytes > _MAX_WORK_ITEM_CHILD_SNAPSHOT_STRING_BYTES:
+            raise ValueError(error)
+        return len(json.dumps(
+            current,
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8", errors="strict"))
+
+    try:
+        while stack:
+            current, depth = stack.pop()
+            nodes += 1
+            if (
+                nodes > _MAX_WORK_ITEM_CHILD_SNAPSHOT_NODES
+                or depth > _MAX_WORK_ITEM_CHILD_SNAPSHOT_DEPTH
+            ):
+                raise ValueError(error)
+            if current is None or type(current) in (bool, int):
+                exact_bytes += len(json.dumps(
+                    current,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8"))
+            elif type(current) is float:
+                if not math.isfinite(current):
+                    raise ValueError(error)
+                exact_bytes += len(json.dumps(
+                    current,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8"))
+            elif type(current) is str:
+                exact_bytes += _add_string(current)
+            elif type(current) is list:
+                identity = id(current)
+                if identity in seen_containers:
+                    raise ValueError(error)
+                seen_containers.add(identity)
+                container_entries += len(current)
+                if (
+                    container_entries
+                    > _MAX_WORK_ITEM_CHILD_SNAPSHOT_CONTAINER_ENTRIES
+                ):
+                    raise ValueError(error)
+                exact_bytes += 2 + max(0, len(current) - 1)
+                for item in reversed(current):
+                    stack.append((item, depth + 1))
+            elif type(current) is dict:
+                identity = id(current)
+                if identity in seen_containers:
+                    raise ValueError(error)
+                seen_containers.add(identity)
+                container_entries += len(current)
+                if (
+                    container_entries
+                    > _MAX_WORK_ITEM_CHILD_SNAPSHOT_CONTAINER_ENTRIES
+                ):
+                    raise ValueError(error)
+                exact_bytes += 2 + max(0, len(current) - 1) + len(current)
+                for key, item in current.items():
+                    if type(key) is not str:
+                        raise ValueError(error)
+                    nodes += 1
+                    if nodes > _MAX_WORK_ITEM_CHILD_SNAPSHOT_NODES:
+                        raise ValueError(error)
+                    exact_bytes += _add_string(key)
+                    stack.append((item, depth + 1))
+            else:
+                raise ValueError(error)
+            if exact_bytes > _MAX_WORK_ITEM_CHILD_SNAPSHOT_BYTES:
+                raise ValueError(error)
+
+        serialized = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8", errors="strict")
+    except (TypeError, ValueError, OverflowError, RecursionError, UnicodeError) as exc:
+        raise ValueError(error) from exc
+    if len(serialized) != exact_bytes or len(serialized) > _MAX_WORK_ITEM_CHILD_SNAPSHOT_BYTES:
+        raise ValueError(error)
+    return serialized
+
+
+def _detach_direct_child_snapshots(
+    work_item_id: str,
+    value: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    error = "work_item_child_barrier_invalid"
+    if (
+        type(work_item_id) is not str
+        or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(work_item_id) is None
+        or type(value) is not tuple
+        or not 1 <= len(value) <= _MAX_WORK_ITEM_DIRECT_CHILDREN
+    ):
+        raise ValueError(error)
+    detached: list[dict[str, Any]] = []
+    previous_id = ""
+    aggregate_bytes = 0
+    seen_containers: set[int] = set()
+    for raw in value:
+        if type(raw) is not dict or set(raw) != _WORK_ITEM_CHILD_SNAPSHOT_KEYS:
+            raise ValueError(error)
+        child_id = raw["id"]
+        parent_id = raw["parent_id"]
+        assigned_to = raw["assigned_to"]
+        if (
+            type(child_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(child_id) is None
+            or child_id <= previous_id
+            or type(parent_id) is not str
+            or parent_id != work_item_id
+            or type(assigned_to) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(assigned_to) is None
+            or raw["status"] != "done"
+            or type(raw["status"]) is not str
+            or any(
+                type(raw[key]) is not str
+                for key in ("title", "description", "work_type", "created_by")
+            )
+            or type(raw["priority"]) is not int
+            or type(raw["actual_tokens"]) is not int
+            or raw["actual_tokens"] < 0
+            or type(raw["depends_on"]) is not list
+            or type(raw["required_capabilities"]) is not list
+            or type(raw["tags"]) is not list
+            or type(raw["steps"]) is not list
+            or type(raw["metadata"]) is not dict
+            or type(raw["verification"]) is not dict
+            or type(raw["schedule"]) is not dict
+            or (
+                raw["estimated_tokens"] is not None
+                and type(raw["estimated_tokens"]) is not int
+            )
+            or (
+                raw["ttl_seconds"] is not None
+                and type(raw["ttl_seconds"]) is not int
+            )
+            or (
+                raw["template_id"] is not None
+                and type(raw["template_id"]) is not str
+            )
+        ):
+            raise ValueError(error)
+        for key in ("created_at", "trust_requirement"):
+            numeric = raw[key]
+            if type(numeric) not in (int, float) or not math.isfinite(float(numeric)):
+                raise ValueError(error)
+        due_at = raw["due_at"]
+        if due_at is not None and (
+            type(due_at) not in (int, float) or not math.isfinite(float(due_at))
+        ):
+            raise ValueError(error)
+        serialized = _bounded_child_snapshot_bytes(
+            raw,
+            error=error,
+            seen_containers=seen_containers,
+        )
+        aggregate_bytes += len(serialized)
+        if aggregate_bytes > _MAX_WORK_ITEM_CHILD_SNAPSHOTS_BYTES:
+            raise ValueError(error)
+        detached.append(json.loads(serialized.decode("utf-8")))
+        previous_id = child_id
+    return tuple(detached)
+
+
+def _work_item_child_snapshot(item: WorkItem) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "title": item.title,
+        "description": item.description,
+        "work_type": item.work_type,
+        "status": item.status,
+        "priority": item.priority,
+        "parent_id": item.parent_id,
+        "depends_on": item.depends_on,
+        "assigned_to": item.assigned_to,
+        "created_by": item.created_by,
+        "created_at": item.created_at,
+        "due_at": item.due_at,
+        "estimated_tokens": item.estimated_tokens,
+        "actual_tokens": item.actual_tokens,
+        "trust_requirement": item.trust_requirement,
+        "required_capabilities": item.required_capabilities,
+        "tags": item.tags,
+        "metadata": item.metadata,
+        "steps": item.steps,
+        "verification": item.verification,
+        "schedule": item.schedule,
+        "ttl_seconds": item.ttl_seconds,
+        "template_id": item.template_id,
+    }
 
 # AD-1080: room-Todo checklist step state machine. A step is a dict
 # {label, status, assigned_to?, submitted_by?, confirmed_by?, note?}. The loop:
@@ -1388,6 +1687,8 @@ class WorkItemStore(EventEmitterMixin):
         patch: dict[str, Any],
         *,
         expected: dict[str, Any] | None = None,
+        expected_absent_keys: frozenset[str] = frozenset(),
+        expected_present_keys: frozenset[str] = frozenset(),
         expected_work_type: str | None = None,
         expected_status: str | None = None,
         expected_assigned_to: str | None = None,
@@ -1416,6 +1717,20 @@ class WorkItemStore(EventEmitterMixin):
             type(expected) is not dict
             or any(type(key) is not str for key in expected)
         ):
+            raise ValueError("work_item_metadata_expected_invalid")
+        key_expectations = (expected_absent_keys, expected_present_keys)
+        if any(
+            type(keys) is not frozenset
+            or len(keys) > _MAX_WORK_ITEM_METADATA_EXPECTED_KEYS
+            or any(
+                not _valid_work_item_metadata_expectation_key(key)
+                for key in keys
+            )
+            for keys in key_expectations
+        ) or (
+            expected is not None
+            and not expected_absent_keys.isdisjoint(expected)
+        ) or not expected_absent_keys.isdisjoint(expected_present_keys):
             raise ValueError("work_item_metadata_expected_invalid")
         if (
             type(actual_tokens_delta) is not int
@@ -1528,6 +1843,10 @@ class WorkItemStore(EventEmitterMixin):
                             raise ValueError("work_item_metadata_conflict")
                     elif not _json_values_exactly_equal(current_value, value):
                         raise ValueError("work_item_metadata_conflict")
+            if any(key in current for key in expected_absent_keys):
+                raise ValueError("work_item_metadata_conflict")
+            if any(key not in current for key in expected_present_keys):
+                raise ValueError("work_item_metadata_conflict")
 
             merged = dict(current)
             merged.update(patch)
@@ -1592,6 +1911,302 @@ class WorkItemStore(EventEmitterMixin):
                 raise
 
             updated = await self.get_work_item(work_item_id)
+        await self._refresh_snapshot_cache()
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": updated.to_dict() if updated else {}},
+        )
+        if status_changed:
+            self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
+                "work_item": updated.to_dict() if updated else {},
+                "old_status": old_status,
+                "new_status": new_status,
+                "source": source,
+            })
+        return updated
+
+    async def compare_and_set_work_item_verification(
+        self,
+        work_item_id: str,
+        verification: dict[str, Any],
+        *,
+        expected_verification: dict[str, Any],
+        expected_work_type: str,
+        expected_status: str,
+        expected_assigned_to: str,
+        expected_parent_id: str,
+        expected_title: str,
+        expected_description: str,
+        expected_depends_on: list[str],
+        expected_metadata: dict[str, Any],
+        expected_actual_tokens: int,
+        actual_tokens_delta: int = 0,
+        source: str = "crew_session_finalizer",
+    ) -> WorkItem | None:
+        """Commit one exact child verification record and correction-token delta."""
+        if type(work_item_id) is not str or not work_item_id:
+            raise ValueError("work_item_verification_invalid")
+        if type(verification) is not dict or type(expected_verification) is not dict:
+            raise ValueError("work_item_verification_invalid")
+        if type(expected_metadata) is not dict:
+            raise ValueError("work_item_verification_invalid")
+        if (
+            type(expected_depends_on) is not list
+            or any(type(value) is not str for value in expected_depends_on)
+            or any(
+                type(value) is not str
+                for value in (
+                    expected_work_type,
+                    expected_status,
+                    expected_assigned_to,
+                    expected_parent_id,
+                    expected_title,
+                    expected_description,
+                    source,
+                )
+            )
+        ):
+            raise ValueError("work_item_verification_invalid")
+        if (
+            type(expected_actual_tokens) is not int
+            or not 0 <= expected_actual_tokens <= _MAX_WORK_ITEM_ACTUAL_TOKENS
+            or type(actual_tokens_delta) is not int
+            or not 0 <= actual_tokens_delta <= _MAX_WORK_ITEM_ACTUAL_TOKENS
+        ):
+            raise ValueError("work_item_actual_tokens_delta_invalid")
+        serialized = _compact_exact_json_bytes(
+            verification,
+            error="work_item_verification_invalid",
+        )
+        if len(serialized) > _MAX_WORK_ITEM_VERIFICATION_BYTES:
+            raise ValueError("work_item_verification_too_large")
+        expected_verification_bytes = _compact_exact_json_bytes(
+            expected_verification,
+            error="work_item_verification_invalid",
+        )
+        if len(expected_verification_bytes) > _MAX_WORK_ITEM_VERIFICATION_BYTES:
+            raise ValueError("work_item_verification_invalid")
+        expected_metadata_bytes = _compact_exact_json_bytes(
+            expected_metadata,
+            error="work_item_verification_invalid",
+        )
+        if len(expected_metadata_bytes) > _MAX_WORK_ITEM_METADATA_BYTES:
+            raise ValueError("work_item_verification_invalid")
+        detached_expected_verification = json.loads(expected_verification_bytes)
+        detached_expected_metadata = json.loads(expected_metadata_bytes)
+        detached_expected_depends_on = list(expected_depends_on)
+        if not self._db:
+            return None
+
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(work_item_id)
+            if item is None:
+                return None
+            if (
+                item.work_type != expected_work_type
+                or item.status != expected_status
+                or item.assigned_to != expected_assigned_to
+                or item.parent_id != expected_parent_id
+                or item.title != expected_title
+                or item.description != expected_description
+                or not _json_values_exactly_equal(
+                    item.depends_on,
+                    detached_expected_depends_on,
+                )
+                or not _json_values_exactly_equal(
+                    item.metadata,
+                    detached_expected_metadata,
+                )
+                or not _json_values_exactly_equal(
+                    item.verification,
+                    detached_expected_verification,
+                )
+                or type(item.actual_tokens) is not int
+                or item.actual_tokens != expected_actual_tokens
+            ):
+                raise ValueError("work_item_verification_conflict")
+            if item.actual_tokens > _MAX_WORK_ITEM_ACTUAL_TOKENS - actual_tokens_delta:
+                raise ValueError("work_item_actual_tokens_overflow")
+            now = time.time()
+            try:
+                await self._db.execute(
+                    "UPDATE work_items SET verification = ?, "
+                    "actual_tokens = actual_tokens + ?, updated_at = ? WHERE id = ?",
+                    (
+                        serialized.decode("utf-8"),
+                        actual_tokens_delta,
+                        now,
+                        work_item_id,
+                    ),
+                )
+                await self._db.commit()
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+            updated = await self.get_work_item(work_item_id)
+
+        await self._refresh_snapshot_cache()
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": updated.to_dict() if updated else {}},
+        )
+        return updated
+
+    async def publish_work_item_metadata_with_child_barrier(
+        self,
+        work_item_id: str,
+        patch: dict[str, Any],
+        *,
+        expected: dict[str, Any],
+        expected_absent_keys: frozenset[str],
+        expected_present_keys: frozenset[str],
+        expected_work_type: str,
+        expected_status: str,
+        expected_assigned_to: str,
+        expected_direct_children: tuple[dict[str, Any], ...],
+        new_status: str,
+        source: str = "crew_session_verified_result",
+    ) -> WorkItem | None:
+        """Publish parent metadata/status after one exact direct-child proof."""
+        if (
+            type(patch) is not dict
+            or any(type(key) is not str for key in patch)
+            or type(expected) is not dict
+            or any(type(key) is not str for key in expected)
+            or any(
+                type(value) is not str or not value
+                for value in (
+                    expected_work_type,
+                    expected_status,
+                    expected_assigned_to,
+                    new_status,
+                    source,
+                )
+            )
+        ):
+            raise ValueError("work_item_metadata_expected_invalid")
+        key_expectations = (expected_absent_keys, expected_present_keys)
+        if any(
+            type(keys) is not frozenset
+            or len(keys) > _MAX_WORK_ITEM_METADATA_EXPECTED_KEYS
+            or any(
+                not _valid_work_item_metadata_expectation_key(key)
+                for key in keys
+            )
+            for keys in key_expectations
+        ) or not expected_absent_keys.isdisjoint(expected) or not (
+            expected_absent_keys.isdisjoint(expected_present_keys)
+        ):
+            raise ValueError("work_item_metadata_expected_invalid")
+        patch_bytes = _compact_exact_json_bytes(
+            patch,
+            error="work_item_metadata_patch_invalid",
+        )
+        expected_bytes = _compact_exact_json_bytes(
+            expected,
+            error="work_item_metadata_expected_invalid",
+        )
+        if (
+            len(patch_bytes) > _MAX_WORK_ITEM_METADATA_BYTES
+            or len(expected_bytes) > _MAX_WORK_ITEM_METADATA_BYTES
+        ):
+            raise ValueError("work_item_metadata_too_large")
+        detached_patch = json.loads(patch_bytes.decode("utf-8"))
+        detached_expected = json.loads(expected_bytes.decode("utf-8"))
+        detached_children = _detach_direct_child_snapshots(
+            work_item_id,
+            expected_direct_children,
+        )
+        if not self._db:
+            return None
+
+        status_changed = False
+        old_status = expected_status
+        updated: WorkItem | None = None
+        async with self._work_item_row_write_lock:
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                item = await self.get_work_item(work_item_id)
+                if item is None:
+                    await self._db.execute("ROLLBACK")
+                    return None
+                if (
+                    item.work_type != expected_work_type
+                    or item.status != expected_status
+                    or item.assigned_to != expected_assigned_to
+                ):
+                    raise ValueError("work_item_state_conflict")
+                current = dict(item.metadata or {})
+                for key, value in detached_expected.items():
+                    current_value = current.get(key, _MISSING_METADATA_VALUE)
+                    if current_value is _MISSING_METADATA_VALUE:
+                        if value is not None:
+                            raise ValueError("work_item_metadata_conflict")
+                    elif not _json_values_exactly_equal(current_value, value):
+                        raise ValueError("work_item_metadata_conflict")
+                if any(key in current for key in expected_absent_keys):
+                    raise ValueError("work_item_metadata_conflict")
+                if any(key not in current for key in expected_present_keys):
+                    raise ValueError("work_item_metadata_conflict")
+
+                cursor = await self._db.execute(
+                    "SELECT * FROM work_items WHERE parent_id = ? "
+                    "ORDER BY id ASC LIMIT ?",
+                    (work_item_id, _MAX_WORK_ITEM_DIRECT_CHILDREN + 1),
+                )
+                rows = await cursor.fetchall()
+                if (
+                    not rows
+                    or len(rows) > _MAX_WORK_ITEM_DIRECT_CHILDREN
+                    or len(rows) != len(detached_children)
+                ):
+                    raise ValueError("work_item_child_barrier_conflict")
+                live_children = tuple(self._row_to_work_item(row) for row in rows)
+                for live, expected_child in zip(live_children, detached_children):
+                    if not _json_values_exactly_equal(
+                        _work_item_child_snapshot(live),
+                        expected_child,
+                    ):
+                        raise ValueError("work_item_child_barrier_conflict")
+
+                merged = dict(current)
+                merged.update(detached_patch)
+                status_changed = new_status != item.status
+                if status_changed and not self._validate_work_item_status_transition(
+                    dataclasses.replace(item, metadata=merged),
+                    new_status,
+                ):
+                    await self._db.execute("ROLLBACK")
+                    return None
+                serialized = _compact_exact_json_bytes(
+                    merged,
+                    error="work_item_metadata_invalid",
+                )
+                if len(serialized) > _MAX_WORK_ITEM_METADATA_BYTES:
+                    raise ValueError("work_item_metadata_too_large")
+                now = time.time()
+                await self._db.execute(
+                    "UPDATE work_items SET metadata = ?, status = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (
+                        serialized.decode("utf-8"),
+                        new_status,
+                        now,
+                        work_item_id,
+                    ),
+                )
+                await self._db.commit()
+                updated = await self.get_work_item(work_item_id)
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,

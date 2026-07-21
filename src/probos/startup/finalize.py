@@ -1772,6 +1772,8 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
     trust_network = getattr(runtime, "trust_network", None)
     llm_client = getattr(runtime, "llm_client", None)
     crew_session_service = getattr(runtime, "crew_session_service", None)
+    chat_thread_store = getattr(runtime, "chat_thread_store", None)
+    artifact_store = getattr(runtime, "artifact_store", None)
     missing = [
         name
         for name, dep in (
@@ -1795,6 +1797,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
     from probos.cognitive.crew_assignment import CrewAssignmentResolver
     from probos.cognitive.crew_delegation import CrewDelegator
     from probos.cognitive.crew_executor import CrewTaskExecutor
+    from probos.cognitive.crew_finalizer import CrewSessionFinalizer
     from probos.cognitive.crew_orchestrator import CrewOrchestrator
     from probos.cognitive.crew_synth import CrewSynthesizer
     from probos.cognitive.crew_verifier import SubtaskVerifier
@@ -1854,6 +1857,35 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         runtime=runtime,
         emit_fn=emit_fn,
     )
+    finalizer = None
+    missing_finalizer_dependencies = [
+        name
+        for name, dependency in (
+            ("crew_session_service", crew_session_service),
+            ("chat_thread_store", chat_thread_store),
+            ("artifact_store", artifact_store),
+            ("attachment_store", attachment_store),
+        )
+        if dependency is None
+    ]
+    if missing_finalizer_dependencies:
+        logger.warning(
+            "AD-1126: CrewSessionFinalizer unavailable because enabled runtime "
+            "dependencies are missing: %s; ordinary crew tasks remain available "
+            "and durable sessions retain the non-completing AD-1125 stop",
+            ", ".join(missing_finalizer_dependencies),
+        )
+    else:
+        finalizer = CrewSessionFinalizer(
+            work_item_store=work_item_store,
+            crew_session_service=crew_session_service,
+            chat_thread_store=chat_thread_store,
+            artifact_store=artifact_store,
+            attachment_store=attachment_store,
+            agent_registry=registry,
+            verifier=verifier,
+            synthesizer=synthesizer,
+        )
     runtime.crew_orchestrator = CrewOrchestrator(  # public attr (Wave 5 conv #1)
         assignment_resolver=assignment_resolver,
         delegator=delegator,
@@ -1864,6 +1896,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         runtime=runtime,
         emit_fn=emit_fn,
         config=config,
+        crew_session_finalizer=finalizer,
     )
     logger.info(
         "AD-867: CrewOrchestrator initialized (max_parallel=%d, max_rounds=%d)",
