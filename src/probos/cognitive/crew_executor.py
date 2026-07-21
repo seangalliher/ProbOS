@@ -21,6 +21,7 @@ Boundaries (Safety Budget / Minimal Authority):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -33,6 +34,7 @@ from probos.crew_utils import is_crew_agent
 from probos.events import EventType
 
 if TYPE_CHECKING:
+    from probos.attachments.store import AttachmentStore
     from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
     from probos.cognitive.crew_session import CrewSessionService
     from probos.substrate.registry import AgentRegistry
@@ -75,6 +77,7 @@ _MAX_ACTUAL_TOKENS = 9_223_372_036_854_775_807
 _MAX_EVIDENCE_BYTES = 32_768
 _MAX_OUTPUT_SUMMARY_CHARS = 4_096
 _MAX_DEPENDENCY_IDS = 64
+_MAX_OUTPUT_BYTES = 1_048_576
 _SUMMARY_TRUNCATION_MARKER = "...[truncated]"
 
 
@@ -86,6 +89,16 @@ def _compact_json_bytes(value: dict[str, Any]) -> bytes:
         ensure_ascii=False,
         allow_nan=False,
     ).encode("utf-8")
+
+
+def _json_dicts_exactly_equal(
+    current: dict[str, Any],
+    expected: dict[str, Any],
+) -> bool:
+    try:
+        return _compact_json_bytes(current) == _compact_json_bytes(expected)
+    except (TypeError, ValueError, OverflowError, RecursionError, UnicodeError):
+        return False
 
 
 def _bounded_id(value: Any) -> str:
@@ -332,6 +345,7 @@ class CrewTaskExecutor:
         max_parallel_subtasks: int = 3,
         emit_fn: Callable[[EventType, dict[str, Any]], None] | None = None,
         crew_session_service: CrewSessionService | None = None,
+        attachment_store: AttachmentStore | None = None,
     ) -> None:
         self._store = work_item_store
         self._registry = agent_registry
@@ -342,9 +356,11 @@ class CrewTaskExecutor:
         # just cannot publish lifecycle events.
         self._emit_fn = emit_fn
         self._crew_session_service = crew_session_service
-        # Async-hygiene: hold strong references to every spawned child task so a
-        # fire-and-forget GC cannot drop one mid-flight.
-        self._tasks: set[asyncio.Task[SubtaskResult]] = set()
+        self._attachment_store = (
+            attachment_store
+            if attachment_store is not None
+            else getattr(runtime, "attachment_store", None)
+        )
 
     async def run(self, parent_id: str) -> list[SubtaskResult]:
         """Run all child sub-tasks of ``parent_id`` and return their results.
@@ -382,12 +398,89 @@ class CrewTaskExecutor:
         if not children:
             return []
 
-        by_id: dict[str, WorkItem] = {c.id: c for c in children}
-        results: dict[str, SubtaskResult] = {}
+        return await self._run_children(
+            parent_key,
+            children,
+            thread_id,
+            seed_results={},
+            seed_done_ids=set(),
+        )
+
+    async def resume(self, parent_id: str) -> list[SubtaskResult]:
+        """Resume one authoritative executing CrewSession without rerunning terminals."""
+        parent_key = _bounded_id(parent_id)
+        parent = await self._store.get_work_item(parent_key)
+        if parent is None or parent.work_type != "crew_session":
+            raise ValueError("crew_session_parent_not_found")
+        service = self._crew_session_service
+        if service is None:
+            raise ValueError("crew_session_service_unavailable")
+        session = await service.get_session(parent_key)
+        recovery = await service.get_recovery(parent_key)
+        if (
+            session is None
+            or session.state != "executing"
+            or recovery is None
+            or recovery.phase != "executing"
+            or recovery.plan is None
+        ):
+            raise ValueError("crew_session_recovery_not_executable")
+        children = await self._store.list_work_items(
+            parent_id=parent_key,
+            limit=1001,
+        )
+        if len(children) != len(recovery.plan.children) or len(children) > 1000:
+            raise ValueError("crew_session_recovery_plan_conflict")
+        by_id = {child.id: child for child in children}
+        if len(by_id) != len(children):
+            raise ValueError("crew_session_recovery_plan_conflict")
+        try:
+            ordered = [by_id[item.child_id] for item in recovery.plan.children]
+        except KeyError as exc:
+            raise ValueError("crew_session_recovery_plan_conflict") from exc
+        room = await self._resolve_task_room(parent, ordered)
+        if room is None or room.id != session.thread_id:
+            raise ValueError("crew_session_thread_mismatch")
+
+        reconstructed: dict[str, SubtaskResult] = {}
         done_ids: set[str] = set()
-        started: set[str] = set()
-        pending: set[str] = set(by_id)
+        for child in ordered:
+            result = await self._resume_child(
+                parent_key,
+                child,
+                session.thread_id,
+            )
+            if result is None:
+                continue
+            reconstructed[child.id] = result
+            if result.status == "done":
+                done_ids.add(child.id)
+        return await self._run_children(
+            parent_key,
+            ordered,
+            session.thread_id,
+            seed_results=reconstructed,
+            seed_done_ids=done_ids,
+        )
+
+    async def _run_children(
+        self,
+        parent_id: str,
+        children: list[WorkItem],
+        thread_id: str,
+        *,
+        seed_results: dict[str, SubtaskResult],
+        seed_done_ids: set[str],
+    ) -> list[SubtaskResult]:
+        """Run one parent's remaining children with an invocation-local task set."""
+
+        by_id: dict[str, WorkItem] = {c.id: c for c in children}
+        results = dict(seed_results)
+        done_ids = set(seed_done_ids)
+        started: set[str] = set(results)
+        pending: set[str] = set(by_id).difference(results)
         sem = asyncio.Semaphore(self._max_parallel)
+        tasks: set[asyncio.Task[SubtaskResult]] = set()
 
         for child in children:
             try:
@@ -402,7 +495,7 @@ class CrewTaskExecutor:
                 )
                 started_at = time.time()
                 result = await self._persist_terminal_result(
-                    parent_id=parent_key,
+                    parent_id=parent_id,
                     child=child,
                     thread_id=thread_id,
                     status="blocked",
@@ -419,14 +512,14 @@ class CrewTaskExecutor:
                 )
                 results[child.id] = result
                 pending.discard(child.id)
-                self._emit_subtask_completed(parent_key, result)
+                self._emit_subtask_completed(parent_id, result)
 
         async def _guarded(child: WorkItem) -> SubtaskResult:
             async with sem:
-                return await self._run_child(parent_key, child, thread_id)
+                return await self._run_child(parent_id, child, thread_id)
 
         try:
-            while pending or self._tasks:
+            while pending or tasks:
                 runnable = [
                     cid
                     for cid in pending
@@ -437,9 +530,9 @@ class CrewTaskExecutor:
                     task: asyncio.Task[SubtaskResult] = asyncio.create_task(
                         _guarded(by_id[cid])
                     )
-                    self._tasks.add(task)
+                    tasks.add(task)
 
-                if not self._tasks:
+                if not tasks:
                     blocked_children = [
                         child for child in children if child.id in pending
                     ]
@@ -447,7 +540,7 @@ class CrewTaskExecutor:
                         unresolved = self._unresolved_dependency_ids(child, done_ids)
                         started_at = time.time()
                         result = await self._persist_terminal_result(
-                            parent_id=parent_key,
+                            parent_id=parent_id,
                             child=child,
                             thread_id=thread_id,
                             status="blocked",
@@ -463,29 +556,186 @@ class CrewTaskExecutor:
                         )
                         results[child.id] = result
                         pending.discard(child.id)
-                        self._emit_subtask_completed(parent_key, result)
+                        self._emit_subtask_completed(parent_id, result)
                     break
 
                 completed, _ = await asyncio.wait(
-                    self._tasks, return_when=asyncio.FIRST_COMPLETED
+                    tasks, return_when=asyncio.FIRST_COMPLETED
                 )
                 for task in completed:
-                    self._tasks.discard(task)
+                    tasks.discard(task)
                     result = task.result()
                     results[result.work_item_id] = result
                     pending.discard(result.work_item_id)
                     if result.status == "done":
                         done_ids.add(result.work_item_id)
-                    self._emit_subtask_completed(parent_key, result)
+                    self._emit_subtask_completed(parent_id, result)
         finally:
-            held = tuple(self._tasks)
+            held = tuple(tasks)
             for task in held:
                 task.cancel()
             if held:
                 await asyncio.gather(*held, return_exceptions=True)
-            self._tasks.clear()
+            tasks.clear()
 
         return list(results.values())
+
+    async def _resume_child(
+        self,
+        parent_id: str,
+        child: WorkItem,
+        thread_id: str,
+    ) -> SubtaskResult | None:
+        metadata = child.metadata if type(child.metadata) is dict else {}
+        execution = metadata.get("crew_execution")
+        output_ref = metadata.get("crew_execution_output")
+        initial_status = self._store.work_type_registry.get_initial_status(
+            child.work_type,
+        )
+        if (
+            child.status == initial_status
+            and execution is None
+            and output_ref is None
+            and child.verification == {}
+        ):
+            return None
+        if child.status == "in_progress":
+            return self._interrupted_result(child, "child_execution_interrupted")
+        if child.status not in {"done", "failed", "blocked"}:
+            return self._interrupted_result(child, "child_execution_integrity")
+        try:
+            return await self._reconstruct_terminal_result(
+                parent_id,
+                child,
+                thread_id,
+            )
+        except (UnicodeError, ValueError, FileNotFoundError):
+            return self._interrupted_result(child, "child_execution_integrity")
+
+    async def _reconstruct_terminal_result(
+        self,
+        parent_id: str,
+        child: WorkItem,
+        thread_id: str,
+    ) -> SubtaskResult:
+        metadata = child.metadata
+        execution = metadata.get("crew_execution")
+        if type(execution) is not dict or set(execution) != {
+            "version",
+            "parent_id",
+            "work_item_id",
+            "thread_id",
+            "assigned_to",
+            "status",
+            "stopped_reason",
+            "output_summary",
+            "tool_trace_ref",
+            "artifact_refs",
+            "tokens_used",
+            "started_at",
+            "finished_at",
+            "blocked_dependency_ids",
+        }:
+            raise ValueError("crew_execution_evidence_invalid")
+        if (
+            type(execution["version"]) is not int
+            or execution["version"] != 1
+            or execution["parent_id"] != parent_id
+            or execution["work_item_id"] != child.id
+            or execution["thread_id"] != thread_id
+            or execution["assigned_to"] != child.assigned_to
+            or execution["status"] != child.status
+            or type(execution["stopped_reason"]) is not str
+            or type(execution["output_summary"]) is not str
+            or type(execution["tokens_used"]) is not int
+            or execution["tokens_used"] != child.actual_tokens
+            or type(execution["started_at"]) is not float
+            or type(execution["finished_at"]) is not float
+            or not math.isfinite(execution["started_at"])
+            or not math.isfinite(execution["finished_at"])
+            or execution["started_at"] > execution["finished_at"]
+            or type(execution["blocked_dependency_ids"]) is not list
+        ):
+            raise ValueError("crew_execution_evidence_invalid")
+        trace_ref = _normalize_trace_ref(execution["tool_trace_ref"], child.id)
+        if trace_ref != execution["tool_trace_ref"]:
+            raise ValueError("crew_execution_evidence_invalid")
+        artifacts = _normalize_artifact_refs(
+            execution["artifact_refs"],
+            thread_id=thread_id,
+            child_id=child.id,
+        )
+        if artifacts != execution["artifact_refs"]:
+            raise ValueError("crew_execution_evidence_invalid")
+        blocked_dependencies = _exact_dependency_ids(
+            execution["blocked_dependency_ids"],
+        )
+        output = ""
+        output_record = metadata.get("crew_execution_output")
+        if child.status == "done":
+            if (
+                type(output_record) is not dict
+                or set(output_record)
+                != {"version", "content_hash", "mime", "size_bytes"}
+                or type(output_record["version"]) is not int
+                or output_record["version"] != 1
+                or output_record["mime"] != "text/plain"
+                or type(output_record["size_bytes"]) is not int
+                or not 1 <= output_record["size_bytes"] <= _MAX_OUTPUT_BYTES
+                or self._attachment_store is None
+            ):
+                raise ValueError("crew_execution_output_invalid")
+            content_hash = output_record["content_hash"]
+            if type(content_hash) is not str or _SHA_RE.fullmatch(content_hash) is None:
+                raise ValueError("crew_execution_output_invalid")
+            blob = await self._attachment_store.read(content_hash)
+            if (
+                len(blob) != output_record["size_bytes"]
+                or hashlib.sha256(blob).hexdigest() != content_hash
+            ):
+                raise ValueError("crew_execution_output_invalid")
+            output = blob.decode("utf-8", errors="strict")
+            if (
+                execution["stopped_reason"] != "complete"
+                or execution["output_summary"] != _output_summary(output)
+                or blocked_dependencies
+            ):
+                raise ValueError("crew_execution_output_invalid")
+        elif output_record is not None:
+            raise ValueError("crew_execution_output_invalid")
+        spec_id = metadata.get("spec_id")
+        if type(spec_id) is not str or not spec_id:
+            raise ValueError("crew_execution_evidence_invalid")
+        return SubtaskResult(
+            work_item_id=child.id,
+            spec_id=spec_id,
+            agent_id=child.assigned_to or "",
+            output=output,
+            status=child.status,
+            tool_trace_ref=trace_ref,
+            started_at=execution["started_at"],
+            finished_at=execution["finished_at"],
+            stopped_reason=execution["stopped_reason"],
+            actual_tokens=execution["tokens_used"],
+            artifact_refs=artifacts,
+            blocked_dependency_ids=blocked_dependencies,
+        )
+
+    @staticmethod
+    def _interrupted_result(child: WorkItem, reason: str) -> SubtaskResult:
+        spec_id = (
+            child.metadata.get("spec_id", child.id)
+            if type(child.metadata) is dict
+            else child.id
+        )
+        return SubtaskResult(
+            work_item_id=child.id,
+            spec_id=str(spec_id),
+            agent_id=child.assigned_to or "",
+            output="",
+            status="blocked",
+            stopped_reason=reason,
+        )
 
     def _deps_met(self, child: WorkItem, done_ids: set[str]) -> bool:
         """True when every ``depends_on`` id of ``child`` has reached ``done``."""
@@ -677,7 +927,7 @@ class CrewTaskExecutor:
                 else "error"
             )
 
-        return await self._persist_terminal_result(
+        checkpoint = asyncio.create_task(self._persist_terminal_result(
             parent_id=parent_id,
             child=active_child,
             thread_id=thread_id,
@@ -691,7 +941,17 @@ class CrewTaskExecutor:
             finished_at=max(started_at, time.time()),
             blocked_dependency_ids=[],
             expected_status="in_progress",
-        )
+        ))
+        try:
+            return await asyncio.shield(checkpoint)
+        except asyncio.CancelledError:
+            while not checkpoint.done():
+                try:
+                    await asyncio.shield(checkpoint)
+                except asyncio.CancelledError:
+                    continue
+            checkpoint.result()
+            raise
 
     def _is_crew_assignee(self, agent_id: str) -> bool:
         """True iff ``agent_id`` resolves to a live crew agent.
@@ -797,6 +1057,21 @@ class CrewTaskExecutor:
             raise ValueError("crew_session_thread_mismatch")
         if contract.state not in {"discussing", "executing"}:
             raise ValueError("crew_session_state_not_executable")
+        if contract.state == "executing":
+            return
+        recovery = await service.get_recovery(parent.id)
+        if recovery is not None:
+            values = recovery.model_dump(mode="json")
+            values["phase"] = "executing"
+            next_recovery = type(recovery).model_validate(values)
+            await service.transition_session(
+                parent.id,
+                "executing",
+                expected_revision=contract.revision,
+                expected_recovery=recovery,
+                recovery=next_recovery,
+            )
+            return
         await service.transition_session(
             parent.id,
             "executing",
@@ -834,6 +1109,7 @@ class CrewTaskExecutor:
         persisted = False
         state_preconditions: dict[str, Any] | None = None
         evidence_normalized = False
+        deferred_cancellation: asyncio.CancelledError | None = None
         try:
             child_id = _bounded_id(child.id)
             parent_key = _bounded_id(parent_id)
@@ -881,21 +1157,75 @@ class CrewTaskExecutor:
                 finished_at=finished_at,
                 blocked_dependency_ids=blocked_dependency_ids,
             )
+            metadata_patch: dict[str, Any] = {"crew_execution": evidence}
+            if status == "done":
+                parent = await self._store.get_work_item(parent_key)
+                if parent is not None and parent.work_type == "crew_session":
+                    if self._attachment_store is None or type(output) is not str:
+                        raise ValueError("crew_execution_output_invalid")
+                    output_bytes = output.encode("utf-8", errors="strict")
+                    if not 1 <= len(output_bytes) <= _MAX_OUTPUT_BYTES:
+                        raise ValueError("crew_execution_output_invalid")
+                    content_hash = hashlib.sha256(output_bytes).hexdigest()
+                    await self._attachment_store.write(
+                        content_hash,
+                        output_bytes,
+                        "text/plain",
+                        origin="agent_artifact",
+                    )
+                    readback = await self._attachment_store.read(content_hash)
+                    if (
+                        readback != output_bytes
+                        or hashlib.sha256(readback).hexdigest() != content_hash
+                    ):
+                        raise ValueError("crew_execution_output_invalid")
+                    metadata_patch["crew_execution_output"] = {
+                        "version": 1,
+                        "content_hash": content_hash,
+                        "mime": "text/plain",
+                        "size_bytes": len(output_bytes),
+                    }
             refs = [dict(ref) for ref in evidence["artifact_refs"]]
             result_blocked_dependency_ids = list(
                 evidence["blocked_dependency_ids"]
             )
             evidence_normalized = True
-            updated = await self._store.merge_work_item_metadata(
-                child_id,
-                {"crew_execution": evidence},
-                expected_work_type=child.work_type,
-                expected_status=expected_status,
-                new_status=status,
-                actual_tokens_delta=tokens,
-                source="crew_executor",
-                **state_preconditions,
-            )
+            commit_error: BaseException | None = None
+            try:
+                updated = await self._store.merge_work_item_metadata(
+                    child_id,
+                    metadata_patch,
+                    expected_work_type=child.work_type,
+                    expected_status=expected_status,
+                    new_status=status,
+                    actual_tokens_delta=tokens,
+                    source="crew_executor",
+                    **state_preconditions,
+                )
+            except asyncio.CancelledError as exc:
+                commit_error = exc
+            except Exception as exc:
+                commit_error = exc
+            if commit_error is not None:
+                updated, reconciliation_cancellation = (
+                    await self._reconcile_terminal_commit(
+                        child=child,
+                        expected_status=status,
+                        metadata_patch=metadata_patch,
+                        actual_tokens_delta=tokens,
+                        initial_cancellation=(
+                            commit_error
+                            if isinstance(commit_error, asyncio.CancelledError)
+                            else None
+                        ),
+                    )
+                )
+                if reconciliation_cancellation is not None:
+                    deferred_cancellation = reconciliation_cancellation
+                if updated is None:
+                    if deferred_cancellation is None:
+                        raise commit_error
+                    raise ValueError("crew_execution_persistence_cancelled")
             if updated is None:
                 raise ValueError("crew_execution_persistence_failed")
             persisted = True
@@ -975,6 +1305,8 @@ class CrewTaskExecutor:
                             child.id,
                             exc_info=True,
                         )
+        if deferred_cancellation is not None:
+            raise deferred_cancellation
         result_status = status if persisted else "failed"
         return SubtaskResult(
             work_item_id=child.id,
@@ -990,6 +1322,68 @@ class CrewTaskExecutor:
             artifact_refs=refs,
             blocked_dependency_ids=result_blocked_dependency_ids,
         )
+
+    async def _reconcile_terminal_commit(
+        self,
+        *,
+        child: WorkItem,
+        expected_status: str,
+        metadata_patch: dict[str, Any],
+        actual_tokens_delta: int,
+        initial_cancellation: asyncio.CancelledError | None,
+    ) -> tuple[WorkItem | None, asyncio.CancelledError | None]:
+        current_task = asyncio.current_task()
+        if initial_cancellation is not None and current_task is not None:
+            current_task.uncancel()
+        expected_metadata = dict(child.metadata)
+        expected_metadata.update(metadata_patch)
+        expected_actual_tokens = child.actual_tokens + actual_tokens_delta
+
+        async def _load_and_prove() -> WorkItem | None:
+            authoritative = await self._store.get_work_item(child.id)
+            if (
+                authoritative is None
+                or authoritative.id != child.id
+                or authoritative.work_type != child.work_type
+                or authoritative.status != expected_status
+                or authoritative.assigned_to != child.assigned_to
+                or authoritative.parent_id != child.parent_id
+                or authoritative.depends_on != child.depends_on
+                or authoritative.actual_tokens != expected_actual_tokens
+                or type(authoritative.metadata) is not dict
+                or not _json_dicts_exactly_equal(
+                    authoritative.metadata,
+                    expected_metadata,
+                )
+            ):
+                return None
+            return authoritative
+
+        reconciliation = asyncio.create_task(
+            _load_and_prove(),
+            name=f"crew-terminal-reconcile:{child.id}",
+        )
+        first_cancellation = initial_cancellation
+        while not reconciliation.done():
+            try:
+                await asyncio.shield(reconciliation)
+            except asyncio.CancelledError as exc:
+                if first_cancellation is None:
+                    first_cancellation = exc
+                current_task = asyncio.current_task()
+                if current_task is not None:
+                    current_task.uncancel()
+        try:
+            authoritative = reconciliation.result()
+        except Exception:
+            logger.exception(
+                "Crew child %s terminal reconciliation could not inspect exact "
+                "post-commit authority; the original persistence disposition "
+                "continues to its cancellation or fallback path",
+                child.id,
+            )
+            authoritative = None
+        return authoritative, first_cancellation
 
     def _unresolved_dependency_ids(
         self,

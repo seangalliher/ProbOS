@@ -155,6 +155,20 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         return
     runtime._shutdown_started = True
 
+    crew_orchestrator = getattr(runtime, "crew_orchestrator", None)
+    crew_close = (
+        getattr(crew_orchestrator, "close_scheduling", None)
+        if crew_orchestrator is not None
+        else None
+    )
+    crew_stop = (
+        getattr(crew_orchestrator, "stop", None)
+        if crew_orchestrator is not None
+        else None
+    )
+    if callable(crew_close):
+        crew_close()
+
     # BF-663: close the public probe-scheduling gate synchronously at shutdown
     # entry, before the first await. This makes the later registry snapshot a
     # stable shutdown barrier instead of a point-in-time view that fan-out can
@@ -185,6 +199,9 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         session_path.write_text(json.dumps(session_record, indent=2))
     except Exception as e:
         logger.debug("AD-502: Session record persistence failed: %s", e)
+
+    if crew_stop is not None and asyncio.iscoroutinefunction(crew_stop):
+        await crew_stop()
 
     if not runtime._started:
         return

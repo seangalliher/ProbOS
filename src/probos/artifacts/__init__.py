@@ -173,6 +173,76 @@ class ArtifactStore:
             supersedes=supersedes,
         )
 
+    def reconcile_exact_version(
+        self,
+        *,
+        thread_id: str,
+        name: str,
+        content_hash: str,
+        mime: str,
+        size_bytes: int,
+        created_by: str,
+    ) -> Artifact:
+        """Create v1 for an empty chain or reuse its one exact row."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM artifacts WHERE thread_id = ? AND name = ? "
+                    "ORDER BY version ASC",
+                    (thread_id, name),
+                ).fetchall()
+                if len(rows) > 1:
+                    raise ValueError("artifact_exact_match_ambiguous")
+                if len(rows) == 1:
+                    artifact = _row(rows[0])
+                    if (
+                        artifact.content_hash != content_hash
+                        or artifact.mime != mime
+                        or artifact.size_bytes != size_bytes
+                        or artifact.created_by != created_by
+                    ):
+                        raise ValueError("artifact_exact_match_conflict")
+                    conn.execute("COMMIT")
+                    return artifact
+
+                artifact = Artifact(
+                    id=self._id_factory(),
+                    thread_id=thread_id,
+                    name=name,
+                    version=1,
+                    content_hash=content_hash,
+                    mime=mime,
+                    size_bytes=size_bytes,
+                    created_by=created_by,
+                    created_at=self._clock(),
+                )
+                conn.execute(
+                    "INSERT INTO artifacts (id, thread_id, name, version, "
+                    "content_hash, mime, size_bytes, created_by, created_at, "
+                    "supersedes) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        artifact.id,
+                        artifact.thread_id,
+                        artifact.name,
+                        artifact.version,
+                        artifact.content_hash,
+                        artifact.mime,
+                        artifact.size_bytes,
+                        artifact.created_by,
+                        artifact.created_at,
+                        artifact.supersedes,
+                    ),
+                )
+                conn.execute("COMMIT")
+                return artifact
+            except BaseException:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
+
     def get(self, artifact_id: str) -> Artifact | None:
         with self._connect() as conn:
             row = conn.execute(

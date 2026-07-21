@@ -9,7 +9,8 @@ import logging
 import math
 import re
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal
+from collections.abc import Awaitable
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
     from probos.workforce import WorkItem, WorkItemStore
 
 logger = logging.getLogger(__name__)
+
+_CheckpointValue = TypeVar("_CheckpointValue")
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -661,6 +664,20 @@ class CrewSessionFinalizer:
         current = await self._sessions.get_session(parent_key)
         if current is None:
             raise ValueError("crew_session_not_initialized")
+        recovery_getter = getattr(self._sessions, "get_recovery", None)
+        recovery = (
+            await recovery_getter(parent_key)
+            if callable(recovery_getter)
+            else None
+        )
+        if recovery is not None:
+            if current.state in {"executing", "verifying"}:
+                await self._load_resume_children(
+                    parent_key,
+                    current,
+                    results,
+                )
+            return await self.resume(parent_key)
         if current.state == "verifying":
             raise ValueError("crew_session_finalization_in_progress")
         if current.state != "executing":
@@ -740,6 +757,1082 @@ class CrewSessionFinalizer:
             if self._active_claims.get(parent_key) is claim_attempt:
                 self._active_claims.pop(parent_key, None)
         return await self._finalize_claimed(parent_key, claimed, results)
+
+    async def resume(self, parent_id: str) -> CrewSessionFinalizationResult:
+        """Resume one durable CrewSession from its exact persisted checkpoint."""
+        parent_key = _id(parent_id)
+        session = await self._sessions.get_session(parent_key)
+        if session is None:
+            raise ValueError("crew_session_not_initialized")
+        if session.state in {"done", "failed", "blocked_needs_captain"}:
+            return self._observation(session, reason="session_terminal")
+        recovery = await self._sessions.get_recovery(parent_key)
+        if recovery is None or recovery.plan is None:
+            raise ValueError("crew_recovery_not_initialized")
+        if session.state == "executing":
+            results = await self._reconstruct_execution_results(
+                parent_key,
+                session.thread_id,
+                recovery.plan.children,
+            )
+            recovery_values = recovery.model_dump(mode="json")
+            recovery_values.update({
+                "phase": "verifying_children",
+                "retry_count": 0,
+                "next_attempt_at": None,
+                "last_error_code": None,
+                "interrupted_child_ids": [],
+            })
+            next_recovery = type(recovery).model_validate(recovery_values)
+            session = await self._sessions.transition_session(
+                parent_key,
+                "verifying",
+                expected_revision=session.revision,
+                expected_recovery=recovery,
+                recovery=next_recovery,
+            )
+            recovery = next_recovery
+        elif session.state == "verifying":
+            results = await self._reconstruct_execution_results(
+                parent_key,
+                session.thread_id,
+                recovery.plan.children,
+            )
+        else:
+            return self._observation(session, reason="session_not_resumable")
+        return await self._resume_checkpoints(
+            session=session,
+            recovery=recovery,
+            results=results,
+        )
+
+    async def _resume_checkpoints(
+        self,
+        *,
+        session: CrewSessionContract,
+        recovery: Any,
+        results: list[SubtaskResult],
+    ) -> CrewSessionFinalizationResult:
+        children, matched_results = await self._load_resume_children(
+            session.task_id,
+            session,
+            results,
+        )
+        publications: list[_ChildPublication] = []
+        convergence_refs: list[dict[str, str]] = []
+        for child in children:
+            publication, convergence_ref = await self._resume_child_convergence(
+                session=session,
+                child=child,
+                result=matched_results[child.id],
+            )
+            publications.append(publication)
+            convergence_refs.append({
+                "work_item_id": child.id,
+                "convergence_ref": convergence_ref,
+            })
+        convergence_refs.sort(key=lambda item: item["work_item_id"])
+        if any(not item.outcome.accepted for item in publications):
+            reason, blocked = self._outcome_failure(
+                next(item.outcome for item in publications if not item.outcome.accepted),
+            )
+            return await self._fail_recovery(
+                session,
+                recovery,
+                reason=reason,
+                accepted_count=self._accepted_count(publications),
+                total_count=len(publications),
+                blocked=blocked,
+            )
+        if recovery.phase == "verifying_children":
+            recovery = await self._advance_recovery(
+                session,
+                recovery,
+                phase="children_verified",
+            )
+
+        draft, recovery = await self._resume_synthesis(
+            session=session,
+            recovery=recovery,
+            publications=publications,
+            convergence_refs=convergence_refs,
+        )
+        result_bytes = draft.final_text.encode("utf-8")
+        if not result_bytes or len(result_bytes) > _MAX_FINAL_BYTES:
+            raise ValueError("crew_finalization_result_invalid")
+        result_hash = hashlib.sha256(result_bytes).hexdigest()
+        candidate = {
+            "thread_id": session.thread_id,
+            "name": "crew-result.md",
+            "mime": "text/markdown",
+            "size_bytes": len(result_bytes),
+            "content_hash": result_hash,
+            "created_by": session.facilitator_id,
+        }
+        final_verdict, recovery = await self._resume_final_verdict(
+            session=session,
+            recovery=recovery,
+            publications=publications,
+            draft=draft,
+            candidate=candidate,
+            result_hash=result_hash,
+        )
+        if not final_verdict.accepted:
+            if final_verdict.status == "unavailable":
+                reason = "independent_verifier_unavailable"
+                blocked = True
+            elif final_verdict.status == "refuted":
+                reason = "final_verification_refuted"
+                blocked = False
+            else:
+                reason = "verification_defect"
+                blocked = False
+            return await self._fail_recovery(
+                session,
+                recovery,
+                reason=reason,
+                accepted_count=self._accepted_count(publications),
+                total_count=len(publications),
+                blocked=blocked,
+            )
+        artifact, recovery = await self._defer_checkpoint(self._resume_result_artifact(
+            session=session,
+            recovery=recovery,
+            result_bytes=result_bytes,
+            result_hash=result_hash,
+        ))
+        artifact_ref = self._validate_result_artifact(
+            artifact,
+            session=session,
+            result_hash=result_hash,
+            size_bytes=len(result_bytes),
+        )
+        provenance_ref, recovery = await self._defer_checkpoint(self._resume_provenance(
+            session=session,
+            recovery=recovery,
+            publications=publications,
+            draft=draft,
+            final_verdict=final_verdict,
+            artifact_ref=artifact_ref,
+        ))
+        synthesis = self._synthesis_metadata(
+            publications=publications,
+            draft=draft,
+            final_verdict=final_verdict,
+            artifact_ref=artifact_ref,
+            result_hash=result_hash,
+            provenance_ref=provenance_ref,
+        )
+        completed = await self._sessions.publish_verified_result(
+            session.task_id,
+            expected_revision=session.revision,
+            expected_recovery=recovery,
+            expected_direct_children=tuple(
+                item.child_snapshot
+                for item in sorted(publications, key=lambda value: value.child.id)
+            ),
+            crew_synth=synthesis,
+            last_result_summary=draft.final_text[:4_096],
+            provenance_ref=provenance_ref,
+            result_artifact_id=artifact.id,
+        )
+        return CrewSessionFinalizationResult(
+            parent_id=session.task_id,
+            claimed=True,
+            state=completed.state,
+            completed=True,
+            final_output=draft.final_text,
+            accepted_count=self._accepted_count(publications),
+            total_count=len(publications),
+            result_artifact_id=artifact.id,
+            provenance_ref=provenance_ref,
+            reason="completed",
+        )
+
+    async def _load_resume_children(
+        self,
+        parent_id: str,
+        session: CrewSessionContract,
+        results: list[SubtaskResult],
+    ) -> tuple[list[WorkItem], dict[str, SubtaskResult]]:
+        children = await self._work_items.list_work_items(
+            parent_id=parent_id,
+            limit=_MAX_CHILDREN + 1,
+        )
+        if not 1 <= len(children) <= _MAX_CHILDREN:
+            raise ValueError("child_result_invalid")
+        children.sort(key=lambda child: child.id)
+        matched = {result.work_item_id: result for result in results}
+        if len(matched) != len(results) or set(matched) != {child.id for child in children}:
+            raise ValueError("child_result_invalid")
+        for child in children:
+            self._validate_resume_execution_result(
+                parent_id,
+                session.thread_id,
+                child,
+                matched[child.id],
+            )
+        return children, matched
+
+    def _validate_resume_execution_result(
+        self,
+        parent_id: str,
+        thread_id: str,
+        child: WorkItem,
+        result: SubtaskResult,
+    ) -> None:
+        execution = (child.metadata or {}).get("crew_execution")
+        output_ref = (child.metadata or {}).get("crew_execution_output")
+        if (
+            result.work_item_id != child.id
+            or result.spec_id != (child.metadata or {}).get("spec_id")
+            or result.agent_id != child.assigned_to
+            or result.status != "done"
+            or result.stopped_reason != "complete"
+            or child.parent_id != parent_id
+            or child.status != "done"
+            or type(execution) is not dict
+            or set(execution) != _EXECUTION_KEYS
+            or execution["parent_id"] != parent_id
+            or execution["work_item_id"] != child.id
+            or execution["thread_id"] != thread_id
+            or execution["assigned_to"] != child.assigned_to
+            or execution["status"] != "done"
+            or execution["stopped_reason"] != "complete"
+            or execution["output_summary"] != _execution_summary(result.output)
+            or execution["tool_trace_ref"] != result.tool_trace_ref
+            or not _json_exactly_equal(execution["artifact_refs"], result.artifact_refs)
+            or execution["tokens_used"] > child.actual_tokens
+            or type(output_ref) is not dict
+            or set(output_ref) != {"version", "content_hash", "mime", "size_bytes"}
+            or output_ref["version"] != 1
+            or output_ref["mime"] != "text/plain"
+            or output_ref["size_bytes"] != len(result.output.encode("utf-8"))
+            or hashlib.sha256(result.output.encode("utf-8")).hexdigest()
+            != output_ref["content_hash"]
+        ):
+            raise ValueError("child_result_invalid")
+
+    async def _reconstruct_execution_results(
+        self,
+        parent_id: str,
+        thread_id: str,
+        commitments: Any,
+    ) -> list[SubtaskResult]:
+        from probos.cognitive.crew_executor import SubtaskResult
+
+        children = await self._work_items.list_work_items(
+            parent_id=parent_id,
+            limit=_MAX_CHILDREN + 1,
+        )
+        by_id = {child.id: child for child in children}
+        if len(by_id) != len(children) or len(children) != len(commitments):
+            raise ValueError("child_result_invalid")
+        results: list[SubtaskResult] = []
+        for commitment in commitments:
+            child = by_id.get(commitment.child_id)
+            if child is None:
+                raise ValueError("child_result_invalid")
+            execution = (child.metadata or {}).get("crew_execution")
+            output_ref = (child.metadata or {}).get("crew_execution_output")
+            if (
+                child.status != "done"
+                or type(execution) is not dict
+                or set(execution) != _EXECUTION_KEYS
+                or type(output_ref) is not dict
+                or set(output_ref) != {"version", "content_hash", "mime", "size_bytes"}
+                or output_ref["mime"] != "text/plain"
+            ):
+                raise ValueError("child_result_invalid")
+            blob = await self._attachments.read(_sha(output_ref["content_hash"]))
+            if (
+                type(output_ref["size_bytes"]) is not int
+                or len(blob) != output_ref["size_bytes"]
+                or hashlib.sha256(blob).hexdigest() != output_ref["content_hash"]
+            ):
+                raise ValueError("child_result_invalid")
+            output = blob.decode("utf-8", errors="strict")
+            result = SubtaskResult(
+                work_item_id=child.id,
+                spec_id=str((child.metadata or {}).get("spec_id", "")),
+                agent_id=child.assigned_to or "",
+                output=output,
+                status="done",
+                tool_trace_ref=execution["tool_trace_ref"],
+                started_at=execution["started_at"],
+                finished_at=execution["finished_at"],
+                stopped_reason="complete",
+                actual_tokens=execution["tokens_used"],
+                artifact_refs=[dict(ref) for ref in execution["artifact_refs"]],
+                blocked_dependency_ids=[],
+            )
+            self._validate_resume_execution_result(
+                parent_id,
+                thread_id,
+                child,
+                result,
+            )
+            results.append(result)
+        return results
+
+    async def _resume_child_convergence(
+        self,
+        *,
+        session: CrewSessionContract,
+        child: WorkItem,
+        result: SubtaskResult,
+    ) -> tuple[_ChildPublication, str]:
+        recovery_record = (child.metadata or {}).get("crew_verification_recovery")
+        if child.verification:
+            if (
+                type(recovery_record) is not dict
+                or set(recovery_record) != {"version", "convergence_ref"}
+                or recovery_record["version"] != 1
+            ):
+                raise ValueError(
+                    "crew_finalization_legacy_verification_nonreconstructable"
+                )
+            convergence_ref = _sha(recovery_record["convergence_ref"])
+            document = await self._read_json_checkpoint(
+                convergence_ref,
+                maximum=1_048_576,
+            )
+            outcome = self._convergence_from_checkpoint(
+                document,
+                session=session,
+                child=child,
+                initial=result,
+            )
+            verification = self._verification_document(
+                parent_id=session.task_id,
+                thread_id=session.thread_id,
+                producer_agent_id=result.agent_id,
+                outcome=outcome,
+            )
+            if not _json_exactly_equal(verification, child.verification):
+                raise ValueError("crew_finalization_recovery_invalid")
+            return _ChildPublication(
+                child=child,
+                outcome=outcome,
+                verification=_detached(child.verification),
+                child_snapshot=self._publication_child_snapshot(child),
+            ), convergence_ref
+
+        producer = self._live_agent(result.agent_id)
+        if producer is None:
+            raise ValueError("child_producer_unavailable")
+        instructions = _text(
+            getattr(producer, "instructions", None),
+            maximum_codepoints=32_768,
+            maximum_bytes=_MAX_INSTRUCTIONS_BYTES,
+        )
+        task_text = _text(
+            child.description or child.title,
+            maximum_codepoints=32_768,
+            maximum_bytes=_MAX_INSTRUCTIONS_BYTES,
+        )
+        snapshot = self._snapshot_child(child)
+        initial_binding = self._initial_result_binding(
+            result,
+            thread_id=session.thread_id,
+        )
+        outcome = await self._verifier.converge_for_session(
+            result,
+            instructions=instructions,
+            task_text=task_text,
+            expected_output=self._expected_output(child),
+            parent_id=session.task_id,
+            thread_id=session.thread_id,
+            department=str(getattr(producer, "department", "") or ""),
+            rank=str(getattr(producer, "rank", "ensign") or "ensign"),
+        )
+        return await self._defer_checkpoint(self._checkpoint_child_convergence(
+            session=session,
+            child=child,
+            result=result,
+            snapshot=snapshot,
+            initial_binding=initial_binding,
+            outcome=outcome,
+        ))
+
+    async def _checkpoint_child_convergence(
+        self,
+        *,
+        session: CrewSessionContract,
+        child: WorkItem,
+        result: SubtaskResult,
+        snapshot: dict[str, Any],
+        initial_binding: _InitialResultBinding,
+        outcome: SessionConvergenceOutcome,
+    ) -> tuple[_ChildPublication, str]:
+        self._validate_convergence_binding(
+            child=child,
+            initial=initial_binding,
+            outcome=outcome,
+            thread_id=session.thread_id,
+        )
+        self._validate_outcome_verifiers(
+            outcome,
+            excluded_agent_ids=frozenset({result.agent_id}),
+        )
+        verification = self._verification_document(
+            parent_id=session.task_id,
+            thread_id=session.thread_id,
+            producer_agent_id=result.agent_id,
+            outcome=outcome,
+        )
+        convergence_document = self._convergence_checkpoint(
+            session=session,
+            child=child,
+            outcome=outcome,
+        )
+        convergence_ref = await self._write_json_checkpoint(
+            convergence_document,
+            maximum=1_048_576,
+        )
+        correction_tokens = self._correction_tokens(outcome)
+        persisted = await self._work_items.compare_and_set_work_item_verification(
+            child.id,
+            verification,
+            expected_verification=snapshot["verification"],
+            expected_work_type=snapshot["work_type"],
+            expected_status=snapshot["status"],
+            expected_assigned_to=snapshot["assigned_to"],
+            expected_parent_id=snapshot["parent_id"],
+            expected_title=snapshot["title"],
+            expected_description=snapshot["description"],
+            expected_depends_on=snapshot["depends_on"],
+            expected_metadata=snapshot["metadata"],
+            expected_actual_tokens=snapshot["actual_tokens"],
+            metadata_patch={
+                "crew_verification_recovery": {
+                    "version": 1,
+                    "convergence_ref": convergence_ref,
+                }
+            },
+            actual_tokens_delta=correction_tokens,
+        )
+        if persisted is None:
+            raise ValueError("work_item_verification_conflict")
+        return _ChildPublication(
+            child=persisted,
+            outcome=outcome,
+            verification=_detached(persisted.verification),
+            child_snapshot=self._publication_child_snapshot(persisted),
+        ), convergence_ref
+
+    async def _resume_synthesis(
+        self,
+        *,
+        session: CrewSessionContract,
+        recovery: Any,
+        publications: list[_ChildPublication],
+        convergence_refs: list[dict[str, str]],
+    ) -> tuple[SessionSynthesisDraft, Any]:
+        from probos.cognitive.crew_synth import SessionSynthesisDraft
+
+        if recovery.synthesis_ref is not None:
+            document = await self._read_json_checkpoint(
+                recovery.synthesis_ref,
+                maximum=_MAX_FINAL_BYTES,
+            )
+            expected_keys = {
+                "version", "parent_id", "thread_id", "producer_agent_id",
+                "final_text", "tokens_used", "child_convergence_refs",
+            }
+            if (
+                type(document) is not dict
+                or set(document) != expected_keys
+                or document["version"] != 1
+                or document["parent_id"] != session.task_id
+                or document["thread_id"] != session.thread_id
+                or document["producer_agent_id"] != session.facilitator_id
+                or not _json_exactly_equal(
+                    document["child_convergence_refs"],
+                    convergence_refs,
+                )
+                or type(document["tokens_used"]) is not int
+                or not 0 <= document["tokens_used"] <= _MAX_TOKEN_TOTAL
+            ):
+                raise ValueError("crew_finalization_synthesis_recovery_invalid")
+            final_text = _text(
+                document["final_text"],
+                maximum_codepoints=_MAX_FINAL_BYTES,
+                maximum_bytes=_MAX_FINAL_BYTES,
+            )
+            return SessionSynthesisDraft(
+                producer_agent_id=session.facilitator_id,
+                final_text=final_text,
+                tokens_used=document["tokens_used"],
+            ), recovery
+        facilitator = self._live_agent(session.facilitator_id)
+        if facilitator is None:
+            raise ValueError("synthesis_producer_unavailable")
+        instructions = _text(
+            getattr(facilitator, "instructions", None),
+            maximum_codepoints=32_768,
+            maximum_bytes=_MAX_INSTRUCTIONS_BYTES,
+        )
+        draft = await self._synthesizer.synthesize_for_session(
+            parent_id=session.task_id,
+            producer_agent_id=session.facilitator_id,
+            producer_instructions=instructions,
+            goal=session.goal,
+            success_criteria=session.success_criteria,
+            expected_deliverable=session.expected_deliverable,
+            outcomes=tuple(item.outcome for item in publications),
+        )
+        recovery = await self._defer_checkpoint(self._checkpoint_synthesis(
+            session=session,
+            recovery=recovery,
+            draft=draft,
+            convergence_refs=convergence_refs,
+        ))
+        return draft, recovery
+
+    async def _checkpoint_synthesis(
+        self,
+        *,
+        session: CrewSessionContract,
+        recovery: Any,
+        draft: SessionSynthesisDraft,
+        convergence_refs: list[dict[str, str]],
+    ) -> Any:
+        document = {
+            "version": 1,
+            "parent_id": session.task_id,
+            "thread_id": session.thread_id,
+            "producer_agent_id": session.facilitator_id,
+            "final_text": draft.final_text,
+            "tokens_used": draft.tokens_used,
+            "child_convergence_refs": convergence_refs,
+        }
+        synthesis_ref = await self._write_json_checkpoint(
+            document,
+            maximum=_MAX_FINAL_BYTES,
+        )
+        recovery = await self._advance_recovery(
+            session,
+            recovery,
+            phase="synthesized",
+            synthesis_ref=synthesis_ref,
+        )
+        return recovery
+
+    async def _resume_final_verdict(
+        self,
+        *,
+        session: CrewSessionContract,
+        recovery: Any,
+        publications: list[_ChildPublication],
+        draft: SessionSynthesisDraft,
+        candidate: dict[str, Any],
+        result_hash: str,
+    ) -> tuple[SessionVerificationPass, Any]:
+        if recovery.final_verification_ref is not None:
+            document = await self._read_json_checkpoint(
+                recovery.final_verification_ref,
+                maximum=_MAX_VERIFICATION_BYTES,
+            )
+            expected_keys = {
+                "version", "parent_id", "thread_id", "synthesis_ref",
+                "result_content_hash", "candidate", "verdict",
+            }
+            if (
+                type(document) is not dict
+                or set(document) != expected_keys
+                or document["version"] != 1
+                or document["parent_id"] != session.task_id
+                or document["thread_id"] != session.thread_id
+                or document["synthesis_ref"] != recovery.synthesis_ref
+                or document["result_content_hash"] != result_hash
+                or not _json_exactly_equal(document["candidate"], candidate)
+            ):
+                raise ValueError("crew_finalization_verdict_recovery_invalid")
+            verdict_record = _VerdictRecord.model_validate(document["verdict"])
+            verdict = SessionVerificationPass(**verdict_record.model_dump(mode="json"))
+            self._validate_verifier_identity(
+                verdict,
+                excluded_agent_ids=frozenset({
+                    session.facilitator_id,
+                    *(item.outcome.result.agent_id for item in publications),
+                }),
+            )
+            return verdict, recovery
+        expected_output = await self._final_expected_output(
+            session=session,
+            publications=publications,
+            candidate=candidate,
+        )
+        producer_ids = {item.outcome.result.agent_id for item in publications}
+        verdict = await self._verifier.verify_for_session(
+            self._final_result(session.task_id, session.facilitator_id, draft.final_text),
+            expected_output=expected_output,
+            excluded_agent_ids=frozenset({session.facilitator_id, *producer_ids}),
+        )
+        recovery = await self._defer_checkpoint(self._checkpoint_final_verdict(
+            session=session,
+            recovery=recovery,
+            publications=publications,
+            verdict=verdict,
+            candidate=candidate,
+            result_hash=result_hash,
+        ))
+        return verdict, recovery
+
+    async def _checkpoint_final_verdict(
+        self,
+        *,
+        session: CrewSessionContract,
+        recovery: Any,
+        publications: list[_ChildPublication],
+        verdict: SessionVerificationPass,
+        candidate: dict[str, Any],
+        result_hash: str,
+    ) -> Any:
+        producer_ids = {item.outcome.result.agent_id for item in publications}
+        self._validate_verifier_identity(
+            verdict,
+            excluded_agent_ids=frozenset({session.facilitator_id, *producer_ids}),
+        )
+        verdict_document = self._verdict_document(verdict)
+        document = {
+            "version": 1,
+            "parent_id": session.task_id,
+            "thread_id": session.thread_id,
+            "synthesis_ref": recovery.synthesis_ref,
+            "result_content_hash": result_hash,
+            "candidate": _detached(candidate),
+            "verdict": verdict_document,
+        }
+        verification_ref = await self._write_json_checkpoint(
+            document,
+            maximum=_MAX_VERIFICATION_BYTES,
+        )
+        recovery = await self._advance_recovery(
+            session,
+            recovery,
+            phase="final_verified",
+            final_verification_ref=verification_ref,
+        )
+        return recovery
+
+    async def _resume_result_artifact(
+        self,
+        *,
+        session: CrewSessionContract,
+        recovery: Any,
+        result_bytes: bytes,
+        result_hash: str,
+    ) -> tuple[Artifact, Any]:
+        if recovery.result_artifact_id is not None:
+            readback = await self._attachments.read(result_hash)
+            if (
+                readback != result_bytes
+                or hashlib.sha256(readback).hexdigest() != result_hash
+            ):
+                raise ValueError("crew_finalization_artifact_recovery_invalid")
+            versions = await asyncio.to_thread(
+                self._artifacts.list_versions,
+                thread_id=session.thread_id,
+                name="crew-result.md",
+            )
+            if (
+                len(versions) != 1
+                or versions[0].id != recovery.result_artifact_id
+            ):
+                raise ValueError("crew_finalization_artifact_recovery_invalid")
+            artifact = versions[0]
+            self._validate_result_artifact(
+                artifact,
+                session=session,
+                result_hash=result_hash,
+                size_bytes=len(result_bytes),
+            )
+            return artifact, recovery
+
+        await self._attachments.write(
+            result_hash,
+            result_bytes,
+            "text/markdown",
+            origin="agent_artifact",
+        )
+        readback = await self._attachments.read(result_hash)
+        if readback != result_bytes or hashlib.sha256(readback).hexdigest() != result_hash:
+            raise ValueError("crew_finalization_result_readback_failed")
+        artifact = await asyncio.to_thread(
+            self._artifacts.reconcile_exact_version,
+            thread_id=session.thread_id,
+            name="crew-result.md",
+            content_hash=result_hash,
+            mime="text/markdown",
+            size_bytes=len(result_bytes),
+            created_by=session.facilitator_id,
+        )
+        self._validate_result_artifact(
+            artifact,
+            session=session,
+            result_hash=result_hash,
+            size_bytes=len(result_bytes),
+        )
+        recovery = await self._advance_recovery(
+            session,
+            recovery,
+            phase="artifact_bound",
+            result_artifact_id=artifact.id,
+        )
+        return artifact, recovery
+
+    async def _resume_provenance(
+        self,
+        *,
+        session: CrewSessionContract,
+        recovery: Any,
+        publications: list[_ChildPublication],
+        draft: SessionSynthesisDraft,
+        final_verdict: SessionVerificationPass,
+        artifact_ref: dict[str, Any],
+    ) -> tuple[str, Any]:
+        provenance = self._provenance_document(
+            session=session,
+            publications=publications,
+            draft=draft,
+            final_verdict=final_verdict,
+            artifact_ref=artifact_ref,
+        )
+        provenance_bytes = _compact_bytes(
+            provenance,
+            maximum=_MAX_PROVENANCE_BYTES,
+            error="crew_finalization_provenance_too_large",
+        )
+        provenance_ref = hashlib.sha256(provenance_bytes).hexdigest()
+        if recovery.provenance_ref is not None:
+            if recovery.provenance_ref != provenance_ref:
+                raise ValueError("crew_finalization_provenance_recovery_invalid")
+            readback = await self._attachments.read(provenance_ref)
+            if (
+                readback != provenance_bytes
+                or hashlib.sha256(readback).hexdigest() != provenance_ref
+            ):
+                raise ValueError("crew_finalization_provenance_recovery_invalid")
+            return provenance_ref, recovery
+
+        await self._attachments.write(
+            provenance_ref,
+            provenance_bytes,
+            "application/json",
+            origin="chat_attachment",
+        )
+        readback = await self._attachments.read(provenance_ref)
+        if (
+            readback != provenance_bytes
+            or hashlib.sha256(readback).hexdigest() != provenance_ref
+        ):
+            raise ValueError("crew_finalization_provenance_readback_failed")
+        recovery = await self._advance_recovery(
+            session,
+            recovery,
+            phase="provenance_bound",
+            provenance_ref=provenance_ref,
+        )
+        return provenance_ref, recovery
+
+    async def _advance_recovery(
+        self,
+        session: CrewSessionContract,
+        recovery: Any,
+        *,
+        phase: str,
+        **updates: Any,
+    ) -> Any:
+        values = recovery.model_dump(mode="json")
+        values.update(updates)
+        values.update({
+            "phase": phase,
+            "retry_count": 0,
+            "next_attempt_at": None,
+            "last_error_code": None,
+            "interrupted_child_ids": [],
+        })
+        candidate = type(recovery).model_validate(values)
+        return await self._sessions.compare_and_set_recovery(
+            session.task_id,
+            candidate,
+            expected_session=session,
+            expected_recovery=recovery,
+        )
+
+    @staticmethod
+    async def _defer_checkpoint(
+        operation: Awaitable[_CheckpointValue],
+    ) -> _CheckpointValue:
+        task = asyncio.create_task(operation)
+        cancellation: asyncio.CancelledError | None = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                if cancellation is None:
+                    cancellation = exc
+                current = asyncio.current_task()
+                if current is not None:
+                    current.uncancel()
+                continue
+        result = task.result()
+        if cancellation is not None:
+            raise cancellation
+        return result
+
+    async def _write_json_checkpoint(
+        self,
+        document: dict[str, Any],
+        *,
+        maximum: int,
+    ) -> str:
+        payload = _compact_bytes(
+            document,
+            maximum=maximum,
+            error="crew_finalization_checkpoint_too_large",
+        )
+        content_hash = hashlib.sha256(payload).hexdigest()
+        await self._attachments.write(
+            content_hash,
+            payload,
+            "application/json",
+            origin="chat_attachment",
+        )
+        readback = await self._attachments.read(content_hash)
+        if readback != payload or hashlib.sha256(readback).hexdigest() != content_hash:
+            raise ValueError("crew_finalization_checkpoint_readback_failed")
+        return content_hash
+
+    async def _read_json_checkpoint(
+        self,
+        content_hash: str,
+        *,
+        maximum: int,
+    ) -> dict[str, Any]:
+        ref = _sha(content_hash)
+        payload = await self._attachments.read(ref)
+        if len(payload) > maximum or hashlib.sha256(payload).hexdigest() != ref:
+            raise ValueError("crew_finalization_checkpoint_invalid")
+        try:
+            document = json.loads(payload.decode("utf-8", errors="strict"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError("crew_finalization_checkpoint_invalid") from exc
+        if type(document) is not dict or _compact_bytes(
+            document,
+            maximum=maximum,
+            error="crew_finalization_checkpoint_invalid",
+        ) != payload:
+            raise ValueError("crew_finalization_checkpoint_invalid")
+        return document
+
+    def _convergence_checkpoint(
+        self,
+        *,
+        session: CrewSessionContract,
+        child: WorkItem,
+        outcome: SessionConvergenceOutcome,
+    ) -> dict[str, Any]:
+        output_ref = (child.metadata or {}).get("crew_execution_output")
+        if type(output_ref) is not dict:
+            raise ValueError("crew_finalization_recovery_invalid")
+        return {
+            "version": 1,
+            "parent_id": session.task_id,
+            "work_item_id": child.id,
+            "thread_id": session.thread_id,
+            "producer_agent_id": outcome.result.agent_id,
+            "execution_output_ref": _sha(output_ref.get("content_hash")),
+            "outcome": {
+                "result": {
+                    "work_item_id": outcome.result.work_item_id,
+                    "spec_id": outcome.result.spec_id,
+                    "agent_id": outcome.result.agent_id,
+                    "output": outcome.result.output,
+                    "status": outcome.result.status,
+                    "tool_trace_ref": outcome.result.tool_trace_ref,
+                    "started_at": outcome.result.started_at,
+                    "finished_at": outcome.result.finished_at,
+                    "stopped_reason": outcome.result.stopped_reason,
+                    "actual_tokens": outcome.result.actual_tokens,
+                    "artifact_refs": [dict(ref) for ref in outcome.result.artifact_refs],
+                    "blocked_dependency_ids": list(outcome.result.blocked_dependency_ids),
+                },
+                "accepted": outcome.accepted,
+                "status": outcome.status,
+                "rounds_used": outcome.rounds_used,
+                "failure_code": outcome.failure_code,
+                "history": [
+                    {
+                        **self._round_document(item),
+                        "result_text": item.result_text,
+                    }
+                    for item in outcome.history
+                ],
+                "terminal_attempt": (
+                    {
+                        **self._terminal_document(outcome.terminal_attempt),
+                        "result_text": outcome.terminal_attempt.result_text,
+                    }
+                    if outcome.terminal_attempt is not None
+                    else None
+                ),
+            },
+        }
+
+    def _convergence_from_checkpoint(
+        self,
+        document: dict[str, Any],
+        *,
+        session: CrewSessionContract,
+        child: WorkItem,
+        initial: SubtaskResult,
+    ) -> SessionConvergenceOutcome:
+        expected_keys = {
+            "version", "parent_id", "work_item_id", "thread_id",
+            "producer_agent_id", "execution_output_ref", "outcome",
+        }
+        output_ref = (child.metadata or {}).get("crew_execution_output")
+        if (
+            set(document) != expected_keys
+            or document["version"] != 1
+            or document["parent_id"] != session.task_id
+            or document["work_item_id"] != child.id
+            or document["thread_id"] != session.thread_id
+            or document["producer_agent_id"] != initial.agent_id
+            or type(output_ref) is not dict
+            or document["execution_output_ref"] != output_ref.get("content_hash")
+            or type(document["outcome"]) is not dict
+        ):
+            raise ValueError("crew_finalization_recovery_invalid")
+        raw = document["outcome"]
+        if set(raw) != {
+            "result", "accepted", "status", "rounds_used", "failure_code",
+            "history", "terminal_attempt",
+        } or type(raw["result"]) is not dict or type(raw["history"]) is not list:
+            raise ValueError("crew_finalization_recovery_invalid")
+        from probos.cognitive.crew_executor import SubtaskResult
+
+        result_values = raw["result"]
+        if set(result_values) != {
+            "work_item_id", "spec_id", "agent_id", "output", "status",
+            "tool_trace_ref", "started_at", "finished_at", "stopped_reason",
+            "actual_tokens", "artifact_refs", "blocked_dependency_ids",
+        }:
+            raise ValueError("crew_finalization_recovery_invalid")
+        result = SubtaskResult(**result_values)
+        history: list[SessionVerificationRound] = []
+        for item in raw["history"]:
+            if type(item) is not dict or "result_text" not in item:
+                raise ValueError("crew_finalization_recovery_invalid")
+            values = dict(item)
+            result_text = values.pop("result_text")
+            verdict = _VerdictRecord.model_validate(values.pop("verdict"))
+            round_record = _RoundRecord.model_validate({
+                **values,
+                "verdict": verdict.model_dump(mode="json"),
+            })
+            history.append(SessionVerificationRound(
+                round_index=round_record.round_index,
+                result_revision=round_record.result_revision,
+                result_text=_text(
+                    result_text,
+                    maximum_codepoints=_MAX_RESULT_BYTES,
+                    maximum_bytes=_MAX_RESULT_BYTES,
+                ),
+                result_sha256=round_record.result_sha256,
+                result_summary=round_record.result_summary,
+                stopped_reason=round_record.stopped_reason,
+                correction_tokens=round_record.correction_tokens,
+                verifier_tokens=round_record.verifier_tokens,
+                tool_trace_ref=round_record.tool_trace_ref,
+                artifact_refs=tuple(
+                    value.model_dump(mode="json")
+                    for value in round_record.artifact_refs
+                ),
+                verdict=SessionVerificationPass(**verdict.model_dump(mode="json")),
+            ))
+        terminal = None
+        if raw["terminal_attempt"] is not None:
+            values = dict(raw["terminal_attempt"])
+            result_text = values.pop("result_text")
+            terminal_record = _TerminalAttemptRecord.model_validate(values)
+            terminal = SessionCorrectionTerminalAttempt(
+                attempt_index=terminal_record.attempt_index,
+                attempted_revision=terminal_record.attempted_revision,
+                stopped_reason=terminal_record.stopped_reason,
+                result_text=result_text,
+                result_sha256=terminal_record.result_sha256,
+                result_summary=terminal_record.result_summary,
+                correction_tokens=terminal_record.correction_tokens,
+                tool_trace_ref=terminal_record.tool_trace_ref,
+                artifact_refs=tuple(
+                    value.model_dump(mode="json")
+                    for value in terminal_record.artifact_refs
+                ),
+                denied_tools=terminal_record.denied_tools,
+                failure_code=terminal_record.failure_code,
+            )
+        if type(raw["accepted"]) is not bool or type(raw["rounds_used"]) is not int:
+            raise ValueError("crew_finalization_recovery_invalid")
+        outcome = SessionConvergenceOutcome(
+            result=result,
+            accepted=raw["accepted"],
+            status=raw["status"],
+            rounds_used=raw["rounds_used"],
+            failure_code=raw["failure_code"],
+            history=tuple(history),
+            terminal_attempt=terminal,
+        )
+        self._validate_convergence_binding(
+            child=child,
+            initial=self._initial_result_binding(
+                initial,
+                thread_id=session.thread_id,
+            ),
+            outcome=outcome,
+            thread_id=session.thread_id,
+        )
+        self._validate_outcome_verifiers(
+            outcome,
+            excluded_agent_ids=frozenset({initial.agent_id}),
+        )
+        return outcome
+
+    async def _fail_recovery(
+        self,
+        session: CrewSessionContract,
+        recovery: Any,
+        *,
+        reason: str,
+        accepted_count: int,
+        total_count: int,
+        blocked: bool,
+    ) -> CrewSessionFinalizationResult:
+        target = "blocked_needs_captain" if blocked else "failed"
+        transitioned = await self._sessions.transition_session(
+            session.task_id,
+            target,
+            expected_revision=session.revision,
+            blocked_reason=reason if blocked else None,
+            last_result_summary=reason,
+            expected_recovery=recovery,
+            recovery=recovery,
+        )
+        return CrewSessionFinalizationResult(
+            parent_id=session.task_id,
+            claimed=True,
+            state=transitioned.state,
+            completed=False,
+            final_output="",
+            accepted_count=accepted_count,
+            total_count=total_count,
+            result_artifact_id=None,
+            provenance_ref=None,
+            reason=reason,
+        )
 
     async def _finalize_claimed(
         self,
@@ -1746,6 +2839,7 @@ class CrewSessionFinalizer:
             completed = await self._sessions.publish_verified_result(
                 session.task_id,
                 expected_revision=session.revision,
+                expected_recovery=None,
                 expected_direct_children=tuple(
                     publication.child_snapshot
                     for publication in sorted(

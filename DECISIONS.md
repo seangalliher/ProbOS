@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1127 (2026-07-21) - CrewSession lifecycle recovery (#1046)
+
+**Context.** AD-1126 made verified finalization durable but left CrewSession scheduling, restart recovery, bounded retry, and shutdown ownership dependent on in-process invocation. Highest landed top-level was **AD-1126**; **AD-1127 is the new top-level ceiling**, while **BF-673 remains the BF ceiling**.
+
+**Decision.** Make `CrewOrchestrator` the sole lifecycle owner with one parent-keyed strong task map, independent parent and child concurrency bounds, one globally bounded startup scan, synchronous admission close, bounded typed retry, and cancellation-deferred drain before dependency shutdown. Recover discussing, executing, and verifying sessions from strict phase checkpoints; use deterministic two-stage plan identity, exact child-plan adoption/install transactions, content-addressed execution and finalization records, and exact Artifact reconciliation. Checkpoint graceful cancellation and re-raise the first exact cancellation; never replay ambiguous in-progress child work. Keep the feature default-off and exclude AD-1128+ ingress, authorized retry, EventLog, trust, delivery, API/UI, WebSocket, schema, YAML, and dependency work.
+
+**Tests.** The AD-1127 module contains **108 cases**, with one additional expanded AD-1124 compatibility case. AD-1124–1127 compatibility passed **446** and caller/shutdown blast passed **82**; compile, editor, scope, frozen-hash, cancellation, lifecycle-ordering, and prohibited-surface audits were clean. The corrected frozen full parallel suite passed **20,032 / 33 skipped / 0 failed** in **979.09s** with **198 provenance-only pre-existing warnings and zero changed-hunk warnings**. Coverage includes plan installation/adoption races, every recovery phase and publication crash window, duplicate scheduling, bounded retry, failed startup cleanup, cancellation identity, two-parent isolation, and production shutdown ordering. PRE-GATE Architect review and the tests-only delta freeze were **APPROVED**. Issue #1046 closes only when this commit is pushed; parent #1041 remains open.
+
 ### AD-1126 (2026-07-20) - verified CrewSession finalization (#1045)
 
 **Context.** AD-1125 intentionally stopped durable sessions in `executing`, leaving independent convergence, stale-child-safe final verification, and durable result publication unresolved. Reusing the legacy verifier and synthesizer would also introduce trust, attribution, episode, and completion-event side effects reserved for later decisions. Highest landed top-level was **AD-1125**; **AD-1126 is the new top-level ceiling**, while **BF-673 remains the BF ceiling**.

@@ -3100,12 +3100,16 @@ async def test_cancellation_propagates_and_reaps_held_child_tasks(
     await _child(stores, parent_id=parent.id)
     entered = asyncio.Event()
     release = asyncio.Event()
+    reaped = asyncio.Event()
 
     class _BlockingExecutor:
         async def run(self, **_kwargs: Any) -> WorkItemAgenticOutcome:
             entered.set()
-            await release.wait()
-            return WorkItemAgenticOutcome(stopped_reason="complete")
+            try:
+                await release.wait()
+                return WorkItemAgenticOutcome(stopped_reason="complete")
+            finally:
+                reaped.set()
 
     crew = _crew_executor(
         stores=stores,
@@ -3120,7 +3124,7 @@ async def test_cancellation_propagates_and_reaps_held_child_tasks(
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert crew._tasks == set()
+    assert reaped.is_set()
 
 
 async def test_legacy_orchestrator_still_verifies_and_synthesizes(

@@ -26,6 +26,7 @@ from probos.cognitive.agentic_dispatch import (
 from probos.cognitive.crew_executor import CrewTaskExecutor, SubtaskResult
 from probos.cognitive.crew_orchestrator import CrewOrchestrator
 from probos.cognitive.crew_session import (
+    CrewRecoveryContract,
     CrewSessionContract,
     CrewSessionService,
     CrewSynthesisMetadata,
@@ -2531,6 +2532,7 @@ class _ServiceFailure:
         parent_id: str,
         *,
         expected_revision: int,
+        expected_recovery: CrewRecoveryContract | None,
         expected_direct_children: tuple[dict[str, Any], ...],
         crew_synth: CrewSynthesisMetadata,
         last_result_summary: str,
@@ -2542,6 +2544,7 @@ class _ServiceFailure:
         return await self.delegate.publish_verified_result(
             parent_id,
             expected_revision=expected_revision,
+            expected_recovery=expected_recovery,
             expected_direct_children=expected_direct_children,
             crew_synth=crew_synth,
             last_result_summary=last_result_summary,
@@ -3193,6 +3196,7 @@ async def test_publish_verified_result_commit_then_cancel_returns_authoritative_
     published = await service.publish_verified_result(
         parent.id,
         expected_revision=verifying.revision,
+        expected_recovery=None,
         expected_direct_children=(_work_item_semantic_snapshot(persisted),),
         crew_synth=synthesis,
         last_result_summary="authoritative result",
@@ -3227,6 +3231,7 @@ async def test_publish_verified_result_commit_then_exception_returns_authoritati
     published = await service.publish_verified_result(
         parent.id,
         expected_revision=verifying.revision,
+        expected_recovery=None,
         expected_direct_children=(_work_item_semantic_snapshot(persisted),),
         crew_synth=_crew_synthesis_metadata(),
         last_result_summary="authoritative result",
@@ -3259,6 +3264,7 @@ async def test_publish_verified_result_commit_then_none_returns_authoritative_do
     published = await service.publish_verified_result(
         parent.id,
         expected_revision=verifying.revision,
+        expected_recovery=None,
         expected_direct_children=(_work_item_semantic_snapshot(persisted),),
         crew_synth=_crew_synthesis_metadata(),
         last_result_summary="authoritative result",
@@ -3294,6 +3300,7 @@ async def test_publish_verified_result_rejects_forged_returned_work_item(
         await service.publish_verified_result(
             parent.id,
             expected_revision=verifying.revision,
+            expected_recovery=None,
             expected_direct_children=(_work_item_semantic_snapshot(persisted),),
             crew_synth=_crew_synthesis_metadata(),
             last_result_summary="authoritative result",
@@ -3327,6 +3334,7 @@ async def test_publish_verified_result_reconciles_legal_sibling_mutation(
     published = await service.publish_verified_result(
         parent.id,
         expected_revision=verifying.revision,
+        expected_recovery=None,
         expected_direct_children=(_work_item_semantic_snapshot(persisted),),
         crew_synth=_crew_synthesis_metadata(),
         last_result_summary="authoritative result",
@@ -3369,6 +3377,7 @@ async def _assert_publication_reread_cancellation(
     task = asyncio.create_task(publication_service.publish_verified_result(
         parent.id,
         expected_revision=verifying.revision,
+        expected_recovery=None,
         expected_direct_children=(_work_item_semantic_snapshot(persisted),),
         crew_synth=_crew_synthesis_metadata(),
         last_result_summary="authoritative result",
@@ -4925,6 +4934,7 @@ async def test_final_publication_real_cas_races_never_overwrite_authority(
         await racing_service.publish_verified_result(
             parent.id,
             expected_revision=verifying.revision,
+            expected_recovery=None,
             expected_direct_children=(_work_item_semantic_snapshot(persisted),),
             crew_synth=synthesis,
             last_result_summary="candidate",
@@ -4961,6 +4971,7 @@ async def test_final_publication_sibling_deletion_conflicts_before_done(
         await racing_service.publish_verified_result(
             parent.id,
             expected_revision=verifying.revision,
+            expected_recovery=None,
             expected_direct_children=(_work_item_semantic_snapshot(persisted),),
             crew_synth=_crew_synthesis_metadata(),
             last_result_summary="candidate",
@@ -5427,20 +5438,12 @@ async def test_failure_classification_noop_reassignment_and_startup_matrix(
             order_manager=None,
             episodic_memory=None,
         )
-        caplog.clear()
-        with caplog.at_level("WARNING", logger="probos.startup.finalize"):
-            assert _wire_crew_orchestrator(runtime=degraded, config=config) is True
-        degraded_parent, _degraded_thread, _degraded_service, _degraded_contract = (
-            await _new_session(startup_stores, facilitator_id="facilitator-1")
-        )
-        degraded_result = await degraded.crew_orchestrator.run_crew_task(
-            degraded_parent.id,
-        )
-        degraded_current = await startup_service.get_session(degraded_parent.id)
-        assert degraded_result.completed is False
-        assert degraded_current is not None and degraded_current.state == "executing"
-        assert "artifact_store" in caplog.text
-        assert "non-completing AD-1125 stop" in caplog.text
+        with pytest.raises(
+            RuntimeError,
+            match="^crew_orchestrator_dependency_missing:artifact_store$",
+        ):
+            _wire_crew_orchestrator(runtime=degraded, config=config)
+        assert not hasattr(degraded, "crew_orchestrator")
     finally:
         await startup_work.stop()
 
@@ -5454,8 +5457,12 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
         if not name.startswith("_")
     }
     assert service_public == {
+        "adopt_recovery_plan",
+        "compare_and_set_recovery",
+        "get_recovery",
         "get_session",
         "initialize_session",
+        "install_recovery_plan",
         "publish_verified_result",
         "transition_session",
     }
@@ -5465,6 +5472,7 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
         (SubtaskVerifier, "converge_for_session"),
         (CrewSynthesizer, "synthesize_for_session"),
         (CrewSessionFinalizer, "finalize"),
+        (CrewSessionFinalizer, "resume"),
         (WorkItemStore, "compare_and_set_work_item_verification"),
     ):
         signature = inspect.signature(getattr(owner, method_name))
@@ -5480,13 +5488,14 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
                 "self",
                 "parent_id",
                 "expected_revision",
+                "expected_recovery",
                 "expected_direct_children",
                 "crew_synth",
                 "last_result_summary",
                 "provenance_ref",
                 "result_artifact_id",
             ),
-            {"expected_revision", "expected_direct_children", "crew_synth", "last_result_summary", "provenance_ref", "result_artifact_id"},
+            {"expected_revision", "expected_recovery", "expected_direct_children", "crew_synth", "last_result_summary", "provenance_ref", "result_artifact_id"},
             {},
         ),
         WorkItemStore.publish_work_item_metadata_with_child_barrier: (
@@ -5798,6 +5807,7 @@ class _ClaimGateService:
         parent_id: str,
         *,
         expected_revision: int,
+        expected_recovery: CrewRecoveryContract | None,
         expected_direct_children: tuple[dict[str, Any], ...],
         crew_synth: CrewSynthesisMetadata,
         last_result_summary: str,
@@ -5807,6 +5817,7 @@ class _ClaimGateService:
         return await self.delegate.publish_verified_result(
             parent_id,
             expected_revision=expected_revision,
+            expected_recovery=expected_recovery,
             expected_direct_children=expected_direct_children,
             crew_synth=crew_synth,
             last_result_summary=last_result_summary,
@@ -5903,6 +5914,7 @@ async def test_final_publication_rejects_changed_direct_child_set_after_verifica
             await service.publish_verified_result(
                 parent.id,
                 expected_revision=verifying.revision,
+                expected_recovery=None,
                 expected_direct_children=expected_children,
                 crew_synth=_crew_synthesis_metadata(),
                 last_result_summary="candidate",
@@ -5974,6 +5986,7 @@ async def test_final_publication_rejects_post_cas_child_row_drift(
             await service.publish_verified_result(
                 parent.id,
                 expected_revision=verifying.revision,
+                expected_recovery=None,
                 expected_direct_children=expected_children,
                 crew_synth=_crew_synthesis_metadata(),
                 last_result_summary="candidate",
@@ -6023,6 +6036,7 @@ async def test_final_publication_child_barrier_is_atomic_with_parent_done(
         publication = asyncio.create_task(service.publish_verified_result(
             parent.id,
             expected_revision=verifying.revision,
+            expected_recovery=None,
             expected_direct_children=expected_children,
             crew_synth=_crew_synthesis_metadata(),
             last_result_summary="atomic candidate",
@@ -6544,6 +6558,7 @@ async def test_publish_verified_result_postcommit_sibling_deletion_returns_done(
     published = await service.publish_verified_result(
         parent.id,
         expected_revision=verifying.revision,
+        expected_recovery=None,
         expected_direct_children=(_work_item_semantic_snapshot(persisted),),
         crew_synth=_crew_synthesis_metadata(),
         last_result_summary="authoritative result",
@@ -6686,6 +6701,7 @@ class _ClaimFailureGateService:
         parent_id: str,
         *,
         expected_revision: int,
+        expected_recovery: CrewRecoveryContract | None,
         expected_direct_children: tuple[dict[str, Any], ...],
         crew_synth: CrewSynthesisMetadata,
         last_result_summary: str,
@@ -6695,6 +6711,7 @@ class _ClaimFailureGateService:
         return await self.delegate.publish_verified_result(
             parent_id,
             expected_revision=expected_revision,
+            expected_recovery=expected_recovery,
             expected_direct_children=expected_direct_children,
             crew_synth=crew_synth,
             last_result_summary=last_result_summary,
@@ -7533,6 +7550,7 @@ async def test_final_publication_child_snapshot_validation_is_bounded_before_ser
         await service.publish_verified_result(
             parent.id,
             expected_revision=verifying.revision,
+            expected_recovery=None,
             expected_direct_children=(snapshot,),
             crew_synth=_crew_synthesis_metadata(),
             last_result_summary="candidate",

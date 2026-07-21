@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import builtins
 import hashlib
@@ -1726,15 +1727,27 @@ def test_default_off_wirer_reads_no_store_imports_nothing_and_attaches_nothing(
     assert "probos.cognitive.crew_session" not in imports.names
 
 
-def test_enabled_wirer_missing_dependencies_warns_and_does_not_attach(caplog: Any) -> None:
+@pytest.mark.parametrize("missing_dependency", ["work_item_store", "chat_thread_store"])
+def test_enabled_wirer_missing_dependencies_fail_and_do_not_attach(
+    missing_dependency: str,
+) -> None:
     config = SystemConfig()
     config.agentic_dispatch.orchestrator_enabled = True
-    runtime = SimpleNamespace(work_item_store=None, chat_thread_store=None)
-    with caplog.at_level("WARNING", logger="probos.startup.finalize"):
-        assert _wire_crew_session_service(runtime=runtime, config=config) is False
+    dependencies = {
+        "work_item_store": object(),
+        "chat_thread_store": object(),
+    }
+    dependencies[missing_dependency] = None
+    runtime = SimpleNamespace(**dependencies)
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "^crew_session_service_dependency_missing:"
+            f"{missing_dependency}$"
+        ),
+    ):
+        _wire_crew_session_service(runtime=runtime, config=config)
     assert not hasattr(runtime, "crew_session_service")
-    assert "work_item_store" in caplog.text and "chat_thread_store" in caplog.text
-    assert "no CrewSessionService" in caplog.text
 
 
 def test_enabled_wirer_real_stores_attaches_once_preserving_identity(
@@ -1760,25 +1773,43 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         if not name.startswith("_")
     }
     assert public == {
+        "adopt_recovery_plan",
+        "compare_and_set_recovery",
+        "get_recovery",
         "initialize_session",
         "get_session",
+        "install_recovery_plan",
         "publish_verified_result",
         "transition_session",
     }
     expected_parameters = {
+        "adopt_recovery_plan": {
+            "self", "parent_id", "expected_session", "expected_recovery",
+            "plan", "expected_children",
+        },
+        "compare_and_set_recovery": {
+            "self", "parent_id", "recovery", "expected_session",
+            "expected_recovery",
+        },
+        "get_recovery": {"self", "parent_id"},
         "initialize_session": {
             "self", "parent_id", "thread_id", "goal", "origin", "originator_id",
             "facilitator_id", "owner_ids", "success_criteria", "expected_deliverable",
         },
         "get_session": {"self", "parent_id"},
+        "install_recovery_plan": {
+            "self", "parent_id", "expected_session", "expected_recovery",
+            "plan", "children",
+        },
         "publish_verified_result": {
-            "self", "parent_id", "expected_revision", "expected_direct_children", "crew_synth",
-            "last_result_summary", "provenance_ref", "result_artifact_id",
+            "self", "parent_id", "expected_revision", "expected_recovery",
+            "expected_direct_children", "crew_synth", "last_result_summary",
+            "provenance_ref", "result_artifact_id",
         },
         "transition_session": {
             "self", "parent_id", "new_state", "expected_revision",
             "last_result_summary", "blocked_reason", "evidence_refs",
-            "result_artifact_id", "result_ref",
+            "result_artifact_id", "result_ref", "expected_recovery", "recovery",
         },
     }
     for method_name, parameter_names in expected_parameters.items():
@@ -1802,7 +1833,6 @@ def test_source_has_to_thread_and_no_raw_sqlite_schema_or_lifecycle_path() -> No
         "CREATE TABLE",
         "ALTER TABLE",
         "CREATE INDEX",
-        "create_task",
         "ensure_future",
         "open_or_resume",
         "async def start",
@@ -1810,3 +1840,76 @@ def test_source_has_to_thread_and_no_raw_sqlite_schema_or_lifecycle_path() -> No
     ):
         assert forbidden not in service_source
         assert forbidden not in merge_source
+
+    service_tree = ast.parse(service_source)
+    create_task_calls = [
+        node
+        for node in ast.walk(service_tree)
+        if isinstance(node, ast.Call)
+        and (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "create_task"
+            or isinstance(node.func, ast.Attribute)
+            and node.func.attr == "create_task"
+        )
+    ]
+    assert len(create_task_calls) == 1
+
+    reconciliation_helpers = [
+        node
+        for node in ast.walk(service_tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_reconcile_cancelled_plan_commit"
+    ]
+    assert len(reconciliation_helpers) == 1
+    reconciliation_helper = reconciliation_helpers[0]
+    reconciliation_call = create_task_calls[0]
+    assert reconciliation_call in ast.walk(reconciliation_helper)
+    assert len(reconciliation_call.args) == 1
+    reconciled_call = reconciliation_call.args[0]
+    assert isinstance(reconciled_call, ast.Call)
+    assert isinstance(reconciled_call.func, ast.Attribute)
+    assert isinstance(reconciled_call.func.value, ast.Name)
+    assert reconciled_call.func.value.id == "self"
+    assert reconciled_call.func.attr == "_reconcile_plan_commit"
+
+    assert [keyword.arg for keyword in reconciliation_call.keywords] == ["name"]
+    task_name = reconciliation_call.keywords[0].value
+    assert isinstance(task_name, ast.JoinedStr)
+    assert len(task_name.values) == 4
+    prefix, policy_value, separator, parent_value = task_name.values
+    assert isinstance(prefix, ast.Constant)
+    assert prefix.value == "crew-plan-reconcile:"
+    assert isinstance(policy_value, ast.FormattedValue)
+    assert isinstance(policy_value.value, ast.Name)
+    assert policy_value.value.id == "expected_policy"
+    assert isinstance(separator, ast.Constant)
+    assert separator.value == ":"
+    assert isinstance(parent_value, ast.FormattedValue)
+    assert isinstance(parent_value.value, ast.Name)
+    assert parent_value.value.id == "parent_id"
+
+    assignments = [
+        node
+        for node in ast.walk(reconciliation_helper)
+        if isinstance(node, ast.Assign) and node.value is reconciliation_call
+    ]
+    assert len(assignments) == 1
+    assert len(assignments[0].targets) == 1
+    assert isinstance(assignments[0].targets[0], ast.Name)
+    assert assignments[0].targets[0].id == "reconciliation"
+
+    shield_calls = [
+        node
+        for node in ast.walk(reconciliation_helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "asyncio"
+        and node.func.attr == "shield"
+    ]
+    assert len(shield_calls) == 1
+    assert len(shield_calls[0].args) == 1
+    assert isinstance(shield_calls[0].args[0], ast.Name)
+    assert shield_calls[0].args[0].id == "reconciliation"
+    assert "create_task" not in merge_source

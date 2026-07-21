@@ -672,6 +672,84 @@ class WorkItem:
         }
 
 
+@dataclass(frozen=True)
+class WorkItemPlanInsert:
+    """Validated generic WorkItem fields for one atomic child-plan insert."""
+
+    id: str
+    title: str
+    description: str
+    work_type: str
+    priority: int
+    depends_on: tuple[str, ...]
+    assigned_to: str | None
+    created_by: str
+    trust_requirement: float
+    required_capabilities: tuple[str, ...]
+    metadata: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        identifier_values = (self.id, self.created_by)
+        if self.assigned_to is not None:
+            identifier_values += (self.assigned_to,)
+        if any(
+            type(value) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(value) is None
+            for value in identifier_values
+        ):
+            raise ValueError("work_item_plan_insert_invalid")
+        if (
+            type(self.title) is not str
+            or not self.title.strip()
+            or "\x00" in self.title
+            or len(self.title) > 4_096
+            or type(self.description) is not str
+            or "\x00" in self.description
+            or len(self.description) > 32_768
+            or type(self.work_type) is not str
+            or not self.work_type
+            or "\x00" in self.work_type
+            or len(self.work_type) > 128
+            or type(self.priority) is not int
+            or not 1 <= self.priority <= 5
+            or type(self.depends_on) is not tuple
+            or len(self.depends_on) > 64
+            or any(
+                type(value) is not str
+                or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(value) is None
+                for value in self.depends_on
+            )
+            or len(set(self.depends_on)) != len(self.depends_on)
+            or type(self.required_capabilities) is not tuple
+            or len(self.required_capabilities) > 64
+            or any(
+                type(value) is not str
+                or not value
+                or "\x00" in value
+                or len(value) > 256
+                for value in self.required_capabilities
+            )
+            or type(self.trust_requirement) not in (int, float)
+            or not math.isfinite(float(self.trust_requirement))
+            or not 0.0 <= float(self.trust_requirement) <= 1.0
+            or type(self.metadata) is not dict
+        ):
+            raise ValueError("work_item_plan_insert_invalid")
+        metadata_bytes = _compact_exact_json_bytes(
+            self.metadata,
+            error="work_item_plan_insert_invalid",
+        )
+        if len(metadata_bytes) > _MAX_WORK_ITEM_METADATA_BYTES:
+            raise ValueError("work_item_plan_insert_invalid")
+        object.__setattr__(self, "title", self.title.strip())
+        object.__setattr__(self, "trust_requirement", float(self.trust_requirement))
+        object.__setattr__(
+            self,
+            "metadata",
+            json.loads(metadata_bytes.decode("utf-8")),
+        )
+
+
 # (2) BookableResource
 
 @dataclass
@@ -992,6 +1070,9 @@ _WORK_ITEM_CHILD_SNAPSHOT_KEYS = frozenset({
     "ttl_seconds",
     "template_id",
 })
+_WORK_ITEM_PLAN_ADOPTION_SNAPSHOT_KEYS = (
+    _WORK_ITEM_CHILD_SNAPSHOT_KEYS | {"updated_at"}
+)
 _WORK_ITEM_PUBLICATION_ID_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
 )
@@ -1288,6 +1369,46 @@ def _work_item_child_snapshot(item: WorkItem) -> dict[str, Any]:
         "template_id": item.template_id,
     }
 
+
+def _detach_plan_adoption_children(
+    parent_id: str,
+    children: tuple[WorkItem, ...],
+) -> tuple[dict[str, Any], ...]:
+    error = "work_item_plan_adoption_invalid"
+    if (
+        type(parent_id) is not str
+        or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(parent_id) is None
+        or type(children) is not tuple
+        or not 1 <= len(children) <= _MAX_WORK_ITEM_DIRECT_CHILDREN
+        or any(type(child) is not WorkItem for child in children)
+    ):
+        raise ValueError(error)
+    child_ids = tuple(child.id for child in children)
+    if child_ids != tuple(sorted(child_ids)) or len(set(child_ids)) != len(child_ids):
+        raise ValueError(error)
+    detached: list[dict[str, Any]] = []
+    aggregate_bytes = 0
+    for child in children:
+        snapshot = child.to_dict()
+        if (
+            type(snapshot) is not dict
+            or set(snapshot) != _WORK_ITEM_PLAN_ADOPTION_SNAPSHOT_KEYS
+            or child.parent_id != parent_id
+            or type(child.id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(child.id) is None
+        ):
+            raise ValueError(error)
+        serialized = _bounded_child_snapshot_bytes(
+            snapshot,
+            error=error,
+            seen_containers=set(),
+        )
+        aggregate_bytes += len(serialized)
+        if aggregate_bytes > _MAX_WORK_ITEM_CHILD_SNAPSHOTS_BYTES:
+            raise ValueError(error)
+        detached.append(json.loads(serialized.decode("utf-8")))
+    return tuple(detached)
+
 # AD-1080: room-Todo checklist step state machine. A step is a dict
 # {label, status, assigned_to?, submitted_by?, confirmed_by?, note?}. The loop:
 # an agent works a step (in_progress), self-reports it done (submitted), and a
@@ -1539,6 +1660,464 @@ class WorkItemStore(EventEmitterMixin):
             tag_set = set(tags)
             items = [i for i in items if tag_set.intersection(i.tags)]
         return items
+
+    async def list_crew_session_recovery_candidates(
+        self,
+        *,
+        limit: int,
+    ) -> list[WorkItem]:
+        """Return one globally bounded oldest-first CrewSession recovery scan."""
+        if type(limit) is not int or not 1 <= limit <= 1_000:
+            raise ValueError("crew_session_recovery_scan_limit_invalid")
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM work_items WHERE work_type = ? "
+            "AND status IN (?, ?, ?) ORDER BY created_at ASC, id ASC LIMIT ?",
+            ("crew_session", "open", "in_progress", "review", limit),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_work_item(row) for row in rows]
+
+    async def install_child_plan_with_parent_metadata(
+        self,
+        parent_id: str,
+        *,
+        expected_parent_metadata: dict[str, Any],
+        expected_status: str,
+        expected_assigned_to: str,
+        parent_patch: dict[str, Any],
+        children: tuple[WorkItemPlanInsert, ...],
+        source: str = "crew_session_plan_install",
+    ) -> tuple[WorkItem, tuple[WorkItem, ...]]:
+        """Atomically install a zero-child parent patch and its complete plan."""
+        if (
+            type(parent_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(parent_id) is None
+            or type(expected_parent_metadata) is not dict
+            or type(expected_status) is not str
+            or not expected_status
+            or type(expected_assigned_to) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(expected_assigned_to) is None
+            or type(parent_patch) is not dict
+            or any(type(key) is not str for key in parent_patch)
+            or type(children) is not tuple
+            or not 1 <= len(children) <= _MAX_WORK_ITEM_DIRECT_CHILDREN
+            or any(type(child) is not WorkItemPlanInsert for child in children)
+            or type(source) is not str
+            or not source
+        ):
+            raise ValueError("work_item_plan_install_invalid")
+        expected_bytes = _compact_exact_json_bytes(
+            expected_parent_metadata,
+            error="work_item_plan_install_invalid",
+        )
+        patch_bytes = _compact_exact_json_bytes(
+            parent_patch,
+            error="work_item_plan_install_invalid",
+        )
+        if (
+            len(expected_bytes) > _MAX_WORK_ITEM_METADATA_BYTES
+            or len(patch_bytes) > _MAX_WORK_ITEM_METADATA_BYTES
+        ):
+            raise ValueError("work_item_plan_install_invalid")
+        child_ids = tuple(child.id for child in children)
+        if len(set(child_ids)) != len(child_ids):
+            raise ValueError("work_item_plan_install_invalid")
+        child_id_set = set(child_ids)
+        remaining_dependencies = {
+            child.id: set(child.depends_on)
+            for child in children
+        }
+        if any(
+            child.id in dependencies
+            or not dependencies.issubset(child_id_set)
+            for child, dependencies in (
+                (child, remaining_dependencies[child.id]) for child in children
+            )
+        ):
+            raise ValueError("work_item_plan_install_invalid")
+        completed: set[str] = set()
+        while len(completed) < len(children):
+            ready = {
+                child_id
+                for child_id, dependencies in remaining_dependencies.items()
+                if child_id not in completed and dependencies.issubset(completed)
+            }
+            if not ready:
+                raise ValueError("work_item_plan_install_invalid")
+            completed.update(ready)
+        if not self._db:
+            raise ValueError("work_item_plan_install_unavailable")
+
+        detached_expected = json.loads(expected_bytes.decode("utf-8"))
+        detached_patch = json.loads(patch_bytes.decode("utf-8"))
+        created: list[WorkItem] = []
+        updated_parent: WorkItem | None = None
+        async with self._work_item_row_write_lock:
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                parent = await self.get_work_item(parent_id)
+                if parent is None:
+                    raise ValueError("work_item_plan_parent_not_found")
+                if (
+                    parent.work_type != "crew_session"
+                    or parent.status != expected_status
+                    or parent.assigned_to != expected_assigned_to
+                    or not _json_values_exactly_equal(
+                        parent.metadata,
+                        detached_expected,
+                    )
+                ):
+                    raise ValueError("work_item_plan_parent_conflict")
+                cursor = await self._db.execute(
+                    "SELECT id FROM work_items WHERE parent_id = ? LIMIT ?",
+                    (parent_id, _MAX_WORK_ITEM_DIRECT_CHILDREN + 1),
+                )
+                if await cursor.fetchone() is not None:
+                    raise ValueError("work_item_plan_children_conflict")
+                for child_id in child_ids:
+                    cursor = await self._db.execute(
+                        "SELECT id FROM work_items WHERE id = ?",
+                        (child_id,),
+                    )
+                    if await cursor.fetchone() is not None:
+                        raise ValueError("work_item_plan_child_id_conflict")
+
+                merged_metadata = dict(parent.metadata)
+                merged_metadata.update(detached_patch)
+                merged_bytes = _compact_exact_json_bytes(
+                    merged_metadata,
+                    error="work_item_plan_install_invalid",
+                )
+                if len(merged_bytes) > _MAX_WORK_ITEM_METADATA_BYTES:
+                    raise ValueError("work_item_metadata_too_large")
+                now = time.time()
+                for child_insert in children:
+                    child = WorkItem(
+                        id=child_insert.id,
+                        title=child_insert.title,
+                        description=child_insert.description,
+                        work_type=child_insert.work_type,
+                        status=self.work_type_registry.get_initial_status(
+                            child_insert.work_type,
+                        ),
+                        priority=child_insert.priority,
+                        parent_id=parent_id,
+                        depends_on=list(child_insert.depends_on),
+                        assigned_to=child_insert.assigned_to,
+                        created_by=child_insert.created_by,
+                        created_at=now,
+                        updated_at=now,
+                        trust_requirement=child_insert.trust_requirement,
+                        required_capabilities=list(
+                            child_insert.required_capabilities,
+                        ),
+                        metadata=dict(child_insert.metadata),
+                    )
+                    await self._db.execute(
+                        """INSERT INTO work_items (
+                            id, title, description, work_type, status, priority,
+                            parent_id, depends_on, assigned_to, created_by,
+                            created_at, updated_at, due_at, estimated_tokens,
+                            actual_tokens, trust_requirement, required_capabilities,
+                            tags, metadata, steps, verification, schedule,
+                            ttl_seconds, template_id
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            child.id, child.title, child.description,
+                            child.work_type, child.status, child.priority,
+                            child.parent_id, json.dumps(child.depends_on),
+                            child.assigned_to, child.created_by, child.created_at,
+                            child.updated_at, child.due_at, child.estimated_tokens,
+                            child.actual_tokens, child.trust_requirement,
+                            json.dumps(child.required_capabilities),
+                            json.dumps(child.tags), json.dumps(child.metadata),
+                            json.dumps(child.steps), json.dumps(child.verification),
+                            json.dumps(child.schedule), child.ttl_seconds,
+                            child.template_id,
+                        ),
+                    )
+                    requirement = ResourceRequirement(
+                        work_item_id=child.id,
+                        min_trust=child.trust_requirement,
+                        priority=child.priority,
+                        required_characteristics=[
+                            {"skill": capability, "min_proficiency": 0.5}
+                            for capability in child.required_capabilities
+                        ],
+                    )
+                    await self._db.execute(
+                        """INSERT INTO resource_requirements (
+                            id, work_item_id, duration_estimate_seconds, from_date,
+                            to_date, required_characteristics, min_trust,
+                            department_constraint, priority, resource_preference,
+                            fulfilled
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            requirement.id, requirement.work_item_id,
+                            requirement.duration_estimate_seconds,
+                            requirement.from_date, requirement.to_date,
+                            json.dumps(requirement.required_characteristics),
+                            requirement.min_trust,
+                            requirement.department_constraint,
+                            requirement.priority,
+                            json.dumps(requirement.resource_preference),
+                            0,
+                        ),
+                    )
+                    created.append(child)
+                await self._db.execute(
+                    "UPDATE work_items SET metadata = ?, updated_at = ? WHERE id = ?",
+                    (merged_bytes.decode("utf-8"), now, parent_id),
+                )
+                await self._db.commit()
+                updated_parent = await self.get_work_item(parent_id)
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+        if updated_parent is None:
+            raise ValueError("work_item_plan_install_failed")
+        await self._refresh_snapshot_cache()
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": updated_parent.to_dict()},
+        )
+        for child in created:
+            self._emit(EventType.WORK_ITEM_CREATED, {"work_item": child.to_dict()})
+        return updated_parent, tuple(created)
+
+    async def adopt_child_plan_with_parent_metadata(
+        self,
+        parent_id: str,
+        *,
+        expected_parent_metadata: dict[str, Any],
+        expected_status: str,
+        expected_assigned_to: str,
+        parent_patch: dict[str, Any],
+        expected_children: tuple[WorkItem, ...],
+        source: str = "crew_session_plan_adoption",
+    ) -> WorkItem:
+        """Patch one parent only after an exact lock-held child snapshot proof."""
+        if (
+            type(parent_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(parent_id) is None
+            or type(expected_parent_metadata) is not dict
+            or type(expected_status) is not str
+            or not expected_status
+            or type(expected_assigned_to) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(expected_assigned_to) is None
+            or type(parent_patch) is not dict
+            or any(type(key) is not str for key in parent_patch)
+            or type(source) is not str
+            or not source
+        ):
+            raise ValueError("work_item_plan_adoption_invalid")
+        expected_bytes = _compact_exact_json_bytes(
+            expected_parent_metadata,
+            error="work_item_plan_adoption_invalid",
+        )
+        patch_bytes = _compact_exact_json_bytes(
+            parent_patch,
+            error="work_item_plan_adoption_invalid",
+        )
+        if (
+            len(expected_bytes) > _MAX_WORK_ITEM_METADATA_BYTES
+            or len(patch_bytes) > _MAX_WORK_ITEM_METADATA_BYTES
+        ):
+            raise ValueError("work_item_plan_adoption_invalid")
+        detached_expected = json.loads(expected_bytes.decode("utf-8"))
+        detached_patch = json.loads(patch_bytes.decode("utf-8"))
+        detached_children = _detach_plan_adoption_children(
+            parent_id,
+            expected_children,
+        )
+        if not self._db:
+            raise ValueError("work_item_plan_adoption_unavailable")
+
+        updated_parent: WorkItem | None = None
+        async with self._work_item_row_write_lock:
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                parent = await self.get_work_item(parent_id)
+                if parent is None:
+                    raise ValueError("work_item_plan_parent_not_found")
+                if (
+                    parent.work_type != "crew_session"
+                    or parent.status != expected_status
+                    or parent.assigned_to != expected_assigned_to
+                    or not _json_values_exactly_equal(
+                        parent.metadata,
+                        detached_expected,
+                    )
+                ):
+                    raise ValueError("work_item_plan_parent_conflict")
+                cursor = await self._db.execute(
+                    "SELECT * FROM work_items WHERE parent_id = ? "
+                    "ORDER BY id ASC LIMIT ?",
+                    (parent_id, _MAX_WORK_ITEM_DIRECT_CHILDREN + 1),
+                )
+                rows = await cursor.fetchall()
+                if (
+                    len(rows) != len(detached_children)
+                    or len(rows) > _MAX_WORK_ITEM_DIRECT_CHILDREN
+                ):
+                    raise ValueError("work_item_plan_children_conflict")
+                live_children = tuple(self._row_to_work_item(row) for row in rows)
+                for live, expected_child in zip(live_children, detached_children):
+                    if not _json_values_exactly_equal(
+                        live.to_dict(),
+                        expected_child,
+                    ):
+                        raise ValueError("work_item_plan_children_conflict")
+                merged_metadata = dict(parent.metadata)
+                merged_metadata.update(detached_patch)
+                merged_bytes = _compact_exact_json_bytes(
+                    merged_metadata,
+                    error="work_item_plan_adoption_invalid",
+                )
+                if len(merged_bytes) > _MAX_WORK_ITEM_METADATA_BYTES:
+                    raise ValueError("work_item_metadata_too_large")
+                await self._db.execute(
+                    "UPDATE work_items SET metadata = ?, updated_at = ? WHERE id = ?",
+                    (merged_bytes.decode("utf-8"), time.time(), parent_id),
+                )
+                await self._db.commit()
+                updated_parent = await self.get_work_item(parent_id)
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+        if updated_parent is None:
+            raise ValueError("work_item_plan_adoption_failed")
+        await self._refresh_snapshot_cache()
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": updated_parent.to_dict(), "source": source},
+        )
+        return updated_parent
+
+    async def compare_and_set_work_item_assignment(
+        self,
+        work_item_id: str,
+        *,
+        expected_parent_id: str,
+        expected_status: str,
+        expected_assigned_to: str | None,
+        expected_depends_on: list[str],
+        expected_metadata: dict[str, Any],
+        new_assigned_to: str,
+        metadata: dict[str, Any],
+        source: str = "crew_session_assignment",
+    ) -> WorkItem | None:
+        """Atomically assign one exact untouched planned child."""
+        if (
+            any(
+                type(value) is not str
+                or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(value) is None
+                for value in (
+                    work_item_id,
+                    expected_parent_id,
+                    new_assigned_to,
+                )
+            )
+            or type(expected_status) is not str
+            or not expected_status
+            or (
+                expected_assigned_to is not None
+                and (
+                    type(expected_assigned_to) is not str
+                    or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(
+                        expected_assigned_to,
+                    ) is None
+                )
+            )
+            or type(expected_depends_on) is not list
+            or any(type(value) is not str for value in expected_depends_on)
+            or type(expected_metadata) is not dict
+            or type(metadata) is not dict
+            or type(source) is not str
+            or not source
+        ):
+            raise ValueError("work_item_assignment_invalid")
+        expected_metadata_bytes = _compact_exact_json_bytes(
+            expected_metadata,
+            error="work_item_assignment_invalid",
+        )
+        metadata_bytes = _compact_exact_json_bytes(
+            metadata,
+            error="work_item_assignment_invalid",
+        )
+        if (
+            len(expected_metadata_bytes) > _MAX_WORK_ITEM_METADATA_BYTES
+            or len(metadata_bytes) > _MAX_WORK_ITEM_METADATA_BYTES
+        ):
+            raise ValueError("work_item_assignment_invalid")
+        if not self._db:
+            return None
+        detached_expected_metadata = json.loads(
+            expected_metadata_bytes.decode("utf-8"),
+        )
+        updated: WorkItem | None = None
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(work_item_id)
+            if item is None:
+                return None
+            if (
+                item.parent_id != expected_parent_id
+                or item.status != expected_status
+                or not _json_values_exactly_equal(
+                    item.assigned_to,
+                    expected_assigned_to,
+                )
+                or not _json_values_exactly_equal(
+                    item.depends_on,
+                    expected_depends_on,
+                )
+                or not _json_values_exactly_equal(
+                    item.metadata,
+                    detached_expected_metadata,
+                )
+            ):
+                raise ValueError("work_item_assignment_conflict")
+            now = time.time()
+            try:
+                await self._db.execute(
+                    "UPDATE work_items SET assigned_to = ?, metadata = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (
+                        new_assigned_to,
+                        metadata_bytes.decode("utf-8"),
+                        now,
+                        work_item_id,
+                    ),
+                )
+                await self._db.commit()
+                updated = await self.get_work_item(work_item_id)
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+        await self._refresh_snapshot_cache()
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": updated.to_dict() if updated else {}},
+        )
+        self._emit(
+            EventType.WORK_ITEM_ASSIGNED,
+            {
+                "work_item": updated.to_dict() if updated else {},
+                "source": source,
+            },
+        )
+        return updated
 
     async def update_work_item(self, work_item_id: str, **updates: Any) -> WorkItem | None:
         """Update work item fields. Sets updated_at. Emits 'work_item_updated'."""
@@ -1940,6 +2519,7 @@ class WorkItemStore(EventEmitterMixin):
         expected_depends_on: list[str],
         expected_metadata: dict[str, Any],
         expected_actual_tokens: int,
+        metadata_patch: dict[str, Any] | None = None,
         actual_tokens_delta: int = 0,
         source: str = "crew_session_finalizer",
     ) -> WorkItem | None:
@@ -1948,7 +2528,9 @@ class WorkItemStore(EventEmitterMixin):
             raise ValueError("work_item_verification_invalid")
         if type(verification) is not dict or type(expected_verification) is not dict:
             raise ValueError("work_item_verification_invalid")
-        if type(expected_metadata) is not dict:
+        if type(expected_metadata) is not dict or (
+            metadata_patch is not None and type(metadata_patch) is not dict
+        ):
             raise ValueError("work_item_verification_invalid")
         if (
             type(expected_depends_on) is not list
@@ -1994,6 +2576,13 @@ class WorkItemStore(EventEmitterMixin):
             raise ValueError("work_item_verification_invalid")
         detached_expected_verification = json.loads(expected_verification_bytes)
         detached_expected_metadata = json.loads(expected_metadata_bytes)
+        metadata_patch_bytes = _compact_exact_json_bytes(
+            metadata_patch or {},
+            error="work_item_verification_invalid",
+        )
+        if len(metadata_patch_bytes) > _MAX_WORK_ITEM_METADATA_BYTES:
+            raise ValueError("work_item_verification_invalid")
+        detached_metadata_patch = json.loads(metadata_patch_bytes)
         detached_expected_depends_on = list(expected_depends_on)
         if not self._db:
             return None
@@ -2027,13 +2616,22 @@ class WorkItemStore(EventEmitterMixin):
                 raise ValueError("work_item_verification_conflict")
             if item.actual_tokens > _MAX_WORK_ITEM_ACTUAL_TOKENS - actual_tokens_delta:
                 raise ValueError("work_item_actual_tokens_overflow")
+            merged_metadata = dict(item.metadata)
+            merged_metadata.update(detached_metadata_patch)
+            merged_metadata_bytes = _compact_exact_json_bytes(
+                merged_metadata,
+                error="work_item_verification_invalid",
+            )
+            if len(merged_metadata_bytes) > _MAX_WORK_ITEM_METADATA_BYTES:
+                raise ValueError("work_item_verification_invalid")
             now = time.time()
             try:
                 await self._db.execute(
-                    "UPDATE work_items SET verification = ?, "
+                    "UPDATE work_items SET verification = ?, metadata = ?, "
                     "actual_tokens = actual_tokens + ?, updated_at = ? WHERE id = ?",
                     (
                         serialized.decode("utf-8"),
+                        merged_metadata_bytes.decode("utf-8"),
                         actual_tokens_delta,
                         now,
                         work_item_id,

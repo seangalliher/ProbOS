@@ -6098,7 +6098,7 @@ class AgenticDispatchConfig(BaseModel):
     # AD-859: bound the crew fan-out so a wide parent (many child subtasks)
     # cannot exhaust the LLM tier. Conservative default per Safety Budget —
     # keeps concurrent subtask runs small until the operator widens it.
-    max_parallel_subtasks: int = 3
+    max_parallel_subtasks: int = Field(default=3, ge=1, le=64)
 
     # AD-860: cap the adversarial verify -> re-run -> re-verify convergence
     # loop. Conservative default per Safety Budget — at most two correction
@@ -6111,6 +6111,32 @@ class AgenticDispatchConfig(BaseModel):
     # per convention #14 — the orchestrator trigger stays OFF so a multi-spec
     # dispatch keeps the existing single-agent path until the operator opts in.
     orchestrator_enabled: bool = False
+
+    max_active_crew_sessions: int = Field(default=2, ge=1, le=32)
+    crew_resume_scan_limit: int = Field(default=100, ge=1, le=1_000)
+    crew_recovery_max_retries: int = Field(default=3, ge=0, le=10)
+    crew_recovery_initial_backoff_seconds: float = Field(
+        default=5.0,
+        ge=0.0,
+        le=3_600.0,
+    )
+    crew_recovery_max_backoff_seconds: float = Field(
+        default=300.0,
+        ge=0.0,
+        le=86_400.0,
+    )
+
+    @model_validator(mode="after")
+    def _validate_crew_recovery_backoff(self) -> "AgenticDispatchConfig":
+        if (
+            self.crew_recovery_max_backoff_seconds
+            < self.crew_recovery_initial_backoff_seconds
+        ):
+            raise ValueError(
+                "crew_recovery_max_backoff_seconds must be greater than or equal "
+                "to crew_recovery_initial_backoff_seconds"
+            )
+        return self
 
 
 class DeviceConfig(BaseModel):

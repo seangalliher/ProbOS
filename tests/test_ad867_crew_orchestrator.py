@@ -431,7 +431,7 @@ async def test_orchestrator_disabled_no_ops(store):
     task = await orch.maybe_dispatch_crew(parent.id)
 
     assert task is None
-    assert orch._tasks == set()
+    assert orch._tasks_by_parent == {}
 
 
 @pytest.mark.asyncio
@@ -453,17 +453,18 @@ async def test_maybe_dispatch_holds_task_reference(store):
         store=store, config=_config(enabled=True),
         executor=_FakeExecutor(results), synthesizer=synth,
     )
+    await orch.start()
 
     task = await orch.maybe_dispatch_crew(parent.id)
 
     # Held reference (no fire-and-forget): the task is tracked while pending.
     assert isinstance(task, asyncio.Task)
-    assert task in orch._tasks
+    assert orch._tasks_by_parent[parent.id] is task
     out = await task
     assert isinstance(out, SynthesisResult)
     # The done-callback discards the completed task from the held set.
     await asyncio.sleep(0)
-    assert task not in orch._tasks
+    assert parent.id not in orch._tasks_by_parent
 
 
 # ------------------------------------------------------------------ events
@@ -508,17 +509,22 @@ async def test_emit_failure_does_not_break_pipeline(store):
 # ------------------------------------------------------------------ wirer
 
 
-def test_wirer_attaches_orchestrator_when_enabled():
+def test_wirer_attaches_orchestrator_when_enabled(tmp_path):
     from probos.startup.finalize import _wire_crew_orchestrator
 
     cfg = _config(enabled=True)
+    cfg.attachments.attachments_dir = str(tmp_path / "attachments")
     runtime = SimpleNamespace(
+        config=cfg,
         work_item_store=MagicMock(),
         registry=MagicMock(),
         capability_registry=MagicMock(),
         ontology=MagicMock(),
         trust_network=MagicMock(),
         llm_client=MagicMock(),
+        crew_session_service=MagicMock(),
+        chat_thread_store=MagicMock(),
+        artifact_store=MagicMock(),
         order_manager=MagicMock(),
         episodic_memory=MagicMock(),
         emit_event=lambda *a, **k: None,
@@ -549,7 +555,7 @@ def test_wirer_skips_when_flag_off():
     assert not hasattr(runtime, "crew_orchestrator")
 
 
-def test_wirer_skips_when_dependency_missing(caplog):
+def test_wirer_fails_when_enabled_dependency_missing():
     from probos.startup.finalize import _wire_crew_orchestrator
 
     cfg = _config(enabled=True)
@@ -562,9 +568,9 @@ def test_wirer_skips_when_dependency_missing(caplog):
         llm_client=MagicMock(),
     )
 
-    with caplog.at_level("INFO"):
-        ok = _wire_crew_orchestrator(runtime=runtime, config=cfg)
-
-    assert ok is False
+    with pytest.raises(
+        RuntimeError,
+        match="^crew_orchestrator_dependency_missing:work_item_store$",
+    ):
+        _wire_crew_orchestrator(runtime=runtime, config=cfg)
     assert not hasattr(runtime, "crew_orchestrator")
-    assert any("missing dependencies" in r.message for r in caplog.records)

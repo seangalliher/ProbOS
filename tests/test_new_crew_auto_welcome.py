@@ -17,7 +17,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.agent_onboarding import AgentOnboardingService
-from probos.config import DiscoveryLearningConfig, MCPConfig, WorkstationsConfig
+from probos.config import (
+    AgenticDispatchConfig,
+    DiscoveryLearningConfig,
+    MCPConfig,
+    WorkstationsConfig,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -209,6 +214,7 @@ class TestAutoWelcome:
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
+        config.agentic_dispatch = AgenticDispatchConfig(orchestrator_enabled=False)
         config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
         config.mcp = MCPConfig(enabled=False)  # skip MCP wiring (AD-1015 store opens sqlite; unrelated to auto-welcome)
         config.workstations = WorkstationsConfig(enabled=False)  # AD-1022 wirer opt-out
@@ -281,6 +287,7 @@ class TestAutoWelcome:
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
+        config.agentic_dispatch = AgenticDispatchConfig(orchestrator_enabled=False)
         config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
         config.mcp = MCPConfig(enabled=False)  # skip MCP wiring (AD-1015 store opens sqlite; unrelated to auto-welcome)
         config.workstations = WorkstationsConfig(enabled=False)  # AD-1022 wirer opt-out
@@ -343,6 +350,7 @@ class TestAutoWelcome:
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
+        config.agentic_dispatch = AgenticDispatchConfig(orchestrator_enabled=False)
         config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
         config.mcp = MCPConfig(enabled=False)  # skip MCP wiring (AD-1015 store opens sqlite; unrelated to auto-welcome)
         config.workstations = WorkstationsConfig(enabled=False)  # AD-1022 wirer opt-out
@@ -404,6 +412,7 @@ class TestAutoWelcome:
 
         config = MagicMock()
         config.proactive_cognitive.enabled = False
+        config.agentic_dispatch = AgenticDispatchConfig(orchestrator_enabled=False)
         config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
         config.mcp = MCPConfig(enabled=False)  # skip MCP wiring (AD-1015 store opens sqlite; unrelated to auto-welcome)
         config.workstations = WorkstationsConfig(enabled=False)  # AD-1022 wirer opt-out
