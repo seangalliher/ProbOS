@@ -192,20 +192,20 @@ async def test_query_old_shape_preserved(event_log):
         assert key in r, f"Missing key: {key}"
 
 
-# --- Engineering capability ---
+# --- Engineering phantom retirement ---
 
-def test_engineering_agent_has_diagnostic_capability():
+def test_engineering_agent_has_no_phantom_diagnostic_capability():
     from probos.cognitive.engineering_officer import EngineeringAgent
     caps = [c.can for c in EngineeringAgent.default_capabilities]
-    assert "eventlog_diagnostic_query" in caps
+    assert "eventlog_diagnostic_query" not in caps
 
 
-def test_engineering_agent_has_diagnostic_intent():
+def test_engineering_agent_has_no_phantom_diagnostic_intent():
     from probos.cognitive.engineering_officer import EngineeringAgent
     intents = [i.name for i in EngineeringAgent.intent_descriptors]
-    assert "eventlog_diagnostic_query" in intents
+    assert "eventlog_diagnostic_query" not in intents
 
 
-def test_engineering_agent_handled_intents():
+def test_engineering_agent_does_not_handle_phantom_diagnostic_intent():
     from probos.cognitive.engineering_officer import EngineeringAgent
-    assert "eventlog_diagnostic_query" in EngineeringAgent._handled_intents
+    assert "eventlog_diagnostic_query" not in EngineeringAgent._handled_intents

@@ -6,7 +6,19 @@ enabling decomposition of ProbOSRuntime into focused modules.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Sequence, TYPE_CHECKING, Protocol, runtime_checkable
+from dataclasses import dataclass
+from datetime import datetime
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Literal,
+    Protocol,
+    Sequence,
+    TYPE_CHECKING,
+    TypeAlias,
+    runtime_checkable,
+)
 
 from probos.types import (
     Episode,
@@ -80,11 +92,115 @@ class TrustNetworkProtocol(Protocol):
     def chain_path(self, observer: str, target: str) -> list[str]: ...
 
 
+EventLogOrder = Literal["newest_first", "oldest_first"]
+EventLogAggregateKind = Literal["none", "cooperation_signature"]
+EventLogAuditOutcome = Literal["success", "denied", "invalid", "failed"]
+EventLogJsonValue: TypeAlias = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | tuple["EventLogJsonValue", ...]
+    | dict[str, "EventLogJsonValue"]
+)
+
+
+@dataclass(frozen=True)
+class EventLogQuerySpec:
+    start_time: datetime
+    end_time: datetime
+    category: str | None
+    event: str | None
+    correlation_id: str | None
+    agent_id: str | None
+    limit: int
+    order: EventLogOrder
+    aggregate: EventLogAggregateKind
+
+
+@dataclass(frozen=True)
+class EventLogQueryRow:
+    id: int
+    timestamp: datetime
+    category: str
+    event: str
+    agent_id: str | None
+    agent_type: str | None
+    pool: str | None
+    detail: str | None
+    correlation_id: str | None
+    parent_event_id: int | None
+    data: EventLogJsonValue
+
+
+@dataclass(frozen=True)
+class CooperationSignatureGroup:
+    intents: tuple[str, ...]
+    avg_weight: float
+    count: int
+
+
+@dataclass(frozen=True)
+class CooperationSignatureAggregate:
+    kind: Literal["cooperation_signature"]
+    total_rows: int
+    valid_signature_rows: int
+    groups: tuple[CooperationSignatureGroup, ...]
+    truncated: bool
+
+
+@dataclass(frozen=True)
+class EventLogQueryBatch:
+    available: bool
+    rows: tuple[EventLogQueryRow, ...]
+    matched_count: int
+    scanned_count: int
+    truncated: bool
+    aggregate: CooperationSignatureAggregate | None
+
+
+@dataclass(frozen=True)
+class EventLogQueryAudit:
+    actor_id: str
+    department: str
+    rank: str
+    outcome: EventLogAuditOutcome
+    parameter_names: tuple[str, ...]
+    window_seconds: int | None
+    aggregate: EventLogAggregateKind
+    matched_count: int
+    returned_count: int
+    truncated: bool
+
+
+@runtime_checkable
+class EventLogReaderProtocol(Protocol):
+    async def query_governed(self, spec: EventLogQuerySpec) -> EventLogQueryBatch: ...
+
+
+@runtime_checkable
+class EventLogQueryAuditSink(Protocol):
+    async def audit_governed_query(self, audit: EventLogQueryAudit) -> bool: ...
+
+
 @runtime_checkable
 class EventLogProtocol(Protocol):
     """What services need from event logging."""
 
-    async def log(self, category: str, agent_id: str, data: dict[str, Any] | None = None) -> None: ...
+    async def log(
+        self,
+        category: str,
+        event: str,
+        agent_id: str | None = None,
+        agent_type: str | None = None,
+        pool: str | None = None,
+        detail: str | None = None,
+        *,
+        correlation_id: str | None = None,
+        parent_event_id: int | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> int | None: ...
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
 

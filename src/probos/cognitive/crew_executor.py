@@ -885,8 +885,6 @@ class CrewTaskExecutor:
                 instructions=str(getattr(agent, "instructions", "") or ""),
                 task_text=task_text,
                 runtime=self._runtime,
-                department=str(getattr(agent, "department", "") or ""),
-                rank=str(getattr(agent, "rank", "ensign") or "ensign"),
                 thread_id=thread_id,
                 extra_context={
                     "_crew_session_id": parent_id,

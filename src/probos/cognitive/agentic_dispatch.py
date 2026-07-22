@@ -31,7 +31,7 @@ from probos.integrations.mcp_bridge.risk import (
     resolve_tool_risk,
 )
 from probos.tools.executor import ToolExecutor
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolPermissionDenied
 from probos.types import IntentMessage
 
@@ -58,6 +58,78 @@ _MAX_ARTIFACT_CANDIDATES_PER_RESULT = 64
 _MAX_ARTIFACT_REFS = 32
 _MAX_ARTIFACT_SIZE_BYTES = 26_214_400
 _MAX_ARTIFACT_VERSION = 2_147_483_647
+_AGENTIC_EXTRA_CONTEXT_KEYS = frozenset(
+    {
+        "agent_id",
+        "department",
+        "rank",
+        "thread_id",
+        "_delegation_depth",
+        "_crew_session_id",
+        "_crew_work_item_id",
+    }
+)
+_AGENTIC_RANKS = frozenset(
+    {"ensign", "lieutenant", "commander", "senior_officer"}
+)
+
+
+def _resolve_agentic_identity(
+    *,
+    runtime: Any,
+    tool_registry: Any,
+    agent_id: str,
+    fallback_department: str,
+    fallback_rank: str,
+) -> tuple[str, str]:
+    try:
+        agent_registry = getattr(runtime, "registry", None)
+        ontology = getattr(runtime, "ontology", None)
+        trust_network = getattr(runtime, "trust_network", None)
+        services = (agent_registry, ontology, trust_network)
+
+        if all(service is None for service in services):
+            event_log_registered = (
+                tool_registry is not None
+                and tool_registry.get("event_log_query") is not None
+            )
+            if event_log_registered:
+                raise ValueError("governed tool requires authoritative identity")
+            return fallback_department, fallback_rank
+
+        if any(service is None for service in services):
+            raise ValueError("partial authoritative identity")
+
+        agent = agent_registry.get(agent_id)
+        registered_id = getattr(agent, "id", None)
+        agent_type = getattr(agent, "agent_type", None)
+        if (
+            type(agent_id) is not str
+            or type(registered_id) is not str
+            or registered_id != agent_id
+            or type(agent_type) is not str
+            or not agent_type
+        ):
+            raise ValueError("registered identity mismatch")
+
+        resolved_department = ontology.get_agent_department(agent_type)
+        if resolved_department is None or resolved_department == "":
+            from probos.cognitive.standing_orders import get_department
+
+            resolved_department = get_department(agent_type)
+        if type(resolved_department) is not str or not resolved_department:
+            raise ValueError("department unresolved")
+
+        from probos.crew_profile import Rank
+
+        resolved_rank = Rank.from_trust(
+            trust_network.get_score(registered_id)
+        ).value
+        if type(resolved_rank) is not str or resolved_rank not in _AGENTIC_RANKS:
+            raise ValueError("rank unresolved")
+        return resolved_department, resolved_rank
+    except Exception:
+        raise RuntimeError("agentic_identity_unresolved") from None
 
 
 def _extract_artifact_refs(
@@ -564,6 +636,7 @@ class WorkItemAgenticExecutor:
         instructions: str,
         task_text: str,
         runtime: Any,
+        # Deprecated compatibility fallback for event-neutral synthetic runtimes.
         department: str = "",
         rank: str = "ensign",
         thread_id: str = "",
@@ -586,6 +659,28 @@ class WorkItemAgenticExecutor:
         registry = getattr(runtime, "tool_registry", None)
         perm_store = getattr(runtime, "tool_permission_store", None)
         intent_bus = getattr(runtime, "intent_bus", None)
+
+        if extra_context is None:
+            _context: dict[str, Any] = {}
+        elif (
+            type(extra_context) is not dict
+            or len(extra_context) > len(_AGENTIC_EXTRA_CONTEXT_KEYS)
+            or any(
+                type(key) is not str or key not in _AGENTIC_EXTRA_CONTEXT_KEYS
+                for key in extra_context
+            )
+        ):
+            raise ValueError("agentic_context_invalid")
+        else:
+            _context = dict(extra_context)
+
+        department, rank = _resolve_agentic_identity(
+            runtime=runtime,
+            tool_registry=registry,
+            agent_id=agent_id,
+            fallback_department=department,
+            fallback_rank=rank,
+        )
 
         executor = DispatchToolExecutor(registry=registry)
         observed_tool_results: list[tuple[Any, Any]] = []
@@ -626,7 +721,11 @@ class WorkItemAgenticExecutor:
         granted_ids: list[str] = []
         if perm_store is not None:
             grants = perm_store.get_active_grants_sync(agent_id)
-            granted_ids = [g.tool_id for g in grants if not g.is_restriction]
+            granted_ids = [
+                g.tool_id
+                for g in grants
+                if not g.is_restriction and g.tool_id != "event_log_query"
+            ]
 
         # AD-1019c: contribute the agent's authorized MCP workbench tools — the
         # find_mcp_tool search tool plus any currently-warm authorized adapters.
@@ -781,10 +880,21 @@ class WorkItemAgenticExecutor:
                 )
                 delegate_ids = []
 
+        event_log_ids: list[str] = []
+        if registry is not None and registry.get("event_log_query") is not None:
+            if registry.check_permission(
+                agent_id,
+                "event_log_query",
+                ToolPermission.READ,
+                agent_department=department,
+                agent_rank=rank,
+            ):
+                event_log_ids = ["event_log_query"]
+
         tool_ids = list(
             dict.fromkeys([
                 *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
-                *search_ids, *delegate_ids,
+                *search_ids, *delegate_ids, *event_log_ids,
             ])
         )
 
@@ -811,19 +921,16 @@ class WorkItemAgenticExecutor:
             event_emit_fn=getattr(runtime, "emit_event", None),
             **_loop_kwargs,
         )
-        # AD-1072: the 4 core keys are always present; an additive
-        # ``extra_context`` (default None → byte-identical) threads loop-internal
-        # state such as ``_delegation_depth`` for the delegation tool. The
-        # ``_``-prefixed keys never collide with the four core keys, so the
-        # update-merge order is safe.
-        _context: dict[str, Any] = {
-            "agent_id": agent_id,
-            "department": department,
-            "rank": rank,
-            "thread_id": thread_id,
-        }
-        if extra_context:
-            _context.update(extra_context)
+        # AD-1129: accepted compatibility extras are copied first; the run's
+        # authoritative identity and explicit thread provenance always win.
+        _context.update(
+            {
+                "agent_id": agent_id,
+                "department": department,
+                "rank": rank,
+                "thread_id": thread_id,
+            }
+        )
         agentic_result = await loop.run(
             system_prompt=instructions or "",
             user_message=task_text,

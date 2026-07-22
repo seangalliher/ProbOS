@@ -1501,8 +1501,6 @@ class CognitiveAgent(BaseAgent):
             instructions=getattr(self, "instructions", "") or "",
             task_text=task_text,
             runtime=runtime,
-            department=getattr(self, "department", "") or "",
-            rank=getattr(self, "rank", "ensign") or "ensign",
         )
 
         for denied_tool in outcome.denied_tools:
@@ -3521,8 +3519,6 @@ class CognitiveAgent(BaseAgent):
                 instructions=system_prompt,
                 task_text=user_message,
                 runtime=runtime,
-                department=getattr(self, "department", "") or "",
-                rank=str(getattr(self, "rank", "ensign") or "ensign"),
                 thread_id=str(observation.get("thread_id", "") or ""),
                 max_iterations=getattr(cfg, "max_iterations", 5),
                 tier=getattr(cfg, "tier", "standard"),

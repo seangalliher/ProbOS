@@ -16,6 +16,7 @@ from typing import Any, Callable
 from probos.tools.protocol import (
     Tool,
     ToolAccessGrant,
+    ToolDenialAuditor,
     ToolPermission,
     ToolRegistration,
     ToolResult,
@@ -25,6 +26,22 @@ from probos.tools.protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+_KNOWN_AGENT_RANKS = frozenset(
+    {"ensign", "lieutenant", "commander", "senior_officer"}
+)
+
+
+def _bounded_parameter_names(params: object) -> tuple[str, ...]:
+    if type(params) is not dict:
+        return ()
+    names: list[str] = []
+    for index, key in enumerate(params):
+        if index >= 10:
+            break
+        if type(key) is str:
+            names.append(key[:64])
+    return tuple(sorted(names))
 
 
 class ToolPermissionDenied(Exception):
@@ -95,6 +112,7 @@ class ToolRegistry:
         *,
         domain: str = "*",
         department: str | None = None,
+        allowed_departments: tuple[str, ...] | None = None,
         tags: list[str] | None = None,
         provider: str = "",
         enabled: bool = True,
@@ -116,6 +134,7 @@ class ToolRegistry:
             tool=tool,
             domain=domain,
             department=department,
+            allowed_departments=allowed_departments,
             tags=tags or [],
             provider=provider,
             enabled=enabled,
@@ -170,7 +189,15 @@ class ToolRegistry:
         if domain is not None:
             results = [r for r in results if r.domain in (domain, "*")]
         if department is not None:
-            results = [r for r in results if r.department is None or r.department == department]
+            results = [
+                r
+                for r in results
+                if (r.department is None or r.department == department)
+                and (
+                    r.allowed_departments is None
+                    or department in r.allowed_departments
+                )
+            ]
         if tag is not None:
             tag_lower = tag.lower()
             results = [r for r in results if any(tag_lower in t.lower() for t in r.tags)]
@@ -214,6 +241,14 @@ class ToolRegistry:
         # Layer 1: Scope — department match
         if reg.department is not None and agent_department != reg.department:
             return ToolPermission.NONE
+        if reg.allowed_departments is not None:
+            if (
+                type(agent_department) is not str
+                or agent_department not in reg.allowed_departments
+                or type(agent_rank) is not str
+                or agent_rank not in _KNOWN_AGENT_RANKS
+            ):
+                return ToolPermission.NONE
 
         # Layer 2: Restriction — agent allowlist
         if reg.restricted_to is not None:
@@ -292,6 +327,23 @@ class ToolRegistry:
             agent_types=agent_types,
         )
         if not permission_includes(held, required):
+            reg = self._tools.get(tool_id)
+            if reg is not None and isinstance(reg.tool, ToolDenialAuditor):
+                try:
+                    await reg.tool.audit_denied_invocation(
+                        actor_id=agent_id,
+                        department=agent_department or "",
+                        rank=agent_rank,
+                        required=required,
+                        held=held,
+                        parameter_names=_bounded_parameter_names(params),
+                    )
+                except Exception:
+                    logger.warning(
+                        "Governance audit failed for denied tool=%s; permission "
+                        "denial remains enforced and no invocation data is logged",
+                        tool_id,
+                    )
             if self._emit_event:
                 self._emit_event("TOOL_PERMISSION_DENIED", {
                     "agent_id": agent_id, "tool_id": tool_id,
@@ -316,7 +368,10 @@ class ToolRegistry:
             return ToolResult(error=f"Tool '{tool_id}' not found")
 
         ctx = dict(context or {})
-        ctx.setdefault("agent_id", agent_id)
+        ctx["agent_id"] = agent_id
+        ctx["agent_department"] = agent_department or ""
+        ctx["agent_rank"] = agent_rank
+        ctx["agent_types"] = list(agent_types or [])
         ctx["permission"] = held.value
         return await tool.invoke(params, ctx)
 

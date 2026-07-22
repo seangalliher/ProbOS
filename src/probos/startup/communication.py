@@ -21,7 +21,9 @@ if TYPE_CHECKING:
     from probos.config import SystemConfig
     from probos.identity import AgentIdentityRegistry
     from probos.mesh.intent import IntentBus
+    from probos.protocols import EventLogQueryAuditSink, EventLogReaderProtocol
     from probos.substrate.registry import AgentRegistry
+    from probos.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,44 @@ async def _noop_handler(**kwargs: Any) -> None:
     onboarding when ToolContext is established.
     """
     return None
+
+
+def _register_event_log_query_tool(
+    *,
+    tool_registry: "ToolRegistry",
+    enabled: bool,
+    event_log_reader: "EventLogReaderProtocol | None",
+    event_log_audit_sink: "EventLogQueryAuditSink | None",
+) -> None:
+    if (
+        not enabled
+        or event_log_reader is None
+        or event_log_audit_sink is None
+        or tool_registry.get("event_log_query") is not None
+    ):
+        return
+    from probos.tools.event_log_query_tool import EventLogQueryTool
+
+    tool_registry.register(
+        EventLogQueryTool(
+            reader=event_log_reader,
+            audit_sink=event_log_audit_sink,
+        ),
+        provider="event_log",
+        tags=[
+            "event_log_query",
+            "event_log",
+            "diagnostics",
+            "read_only",
+        ],
+        allowed_departments=("engineering", "science", "security"),
+        default_permissions={
+            "ensign": "none",
+            "lieutenant": "read",
+            "commander": "read",
+            "senior_officer": "read",
+        },
+    )
 
 
 async def init_communication(
@@ -48,6 +88,8 @@ async def init_communication(
     process_natural_language_fn: Callable[..., Any],
     register_workforce_resources_fn: Callable[..., Any],
     journal_prune_loop_fn: Callable[[], Any],
+    event_log_reader: "EventLogReaderProtocol | None",
+    event_log_audit_sink: "EventLogQueryAuditSink | None",
     background_register: Callable[[asyncio.Task], None] | None = None,
     nats_bus: Any = None,  # AD-637c: NATS event bus for JetStream ward room dispatch
 ) -> CommunicationResult:
@@ -484,6 +526,13 @@ async def init_communication(
     await tool_permission_store.start()
     tool_registry.set_permission_store(tool_permission_store)
     tool_registry.set_event_callback(emit_event_fn)
+
+    _register_event_log_query_tool(
+        tool_registry=tool_registry,
+        enabled=config.agentic_dispatch.orchestrator_enabled,
+        event_log_reader=event_log_reader,
+        event_log_audit_sink=event_log_audit_sink,
+    )
     logger.info("tool-permission-store started")
 
     logger.info("tool-registry started (%d tools)", tool_registry.count())

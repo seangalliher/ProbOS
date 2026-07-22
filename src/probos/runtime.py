@@ -2303,6 +2303,8 @@ class ProbOSRuntime:
             process_natural_language_fn=self.process_natural_language,
             register_workforce_resources_fn=self._register_workforce_resources,
             journal_prune_loop_fn=self._journal_prune_loop,
+            event_log_reader=self.event_log,
+            event_log_audit_sink=self.event_log,
             background_register=self._background_tasks.add,
             nats_bus=self.nats_bus,  # AD-637c: NATS JetStream for Ward Room events
         )

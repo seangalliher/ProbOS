@@ -170,15 +170,10 @@ class DelegateTaskTool:
                     duration_ms=(time.monotonic() - t0) * 1000.0,
                 )
 
-            # 4. Derive the target's run args off the agent object, exactly as
-            #    the existing WorkItemAgenticExecutor.run callsites do
-            #    (cognitive_agent.py:1483, :3424).
+            # 4. Supply only non-authoritative run inputs. The executor resolves
+            #    department and rank from the registered target at the boundary.
             instructions = getattr(target, "instructions", "") or ""
             agent_id = target.id
-            department = (
-                getattr(target, "department", "") or resolved.get("department", "") or ""
-            )
-            rank = str(getattr(target, "rank", "ensign") or "ensign")
 
             # 5. Run a nested governed executor with the parent's LLM client. The
             #    extra_context threads the incremented depth so the delegate is
@@ -191,8 +186,6 @@ class DelegateTaskTool:
                 instructions=instructions,
                 task_text=task,
                 runtime=self._runtime,
-                department=department,
-                rank=rank,
                 thread_id=str(ctx.get("thread_id", "") or ""),
                 max_iterations=self._max_iterations,
                 tier=self._tier,

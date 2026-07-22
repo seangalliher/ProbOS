@@ -274,8 +274,15 @@ class TestNewAgentInstantiation:
         assert agent.agent_type == "engineering_officer"
         assert agent.tier == "domain"
         assert agent.instructions  # non-empty
-        assert len(agent.intent_descriptors) == 3
-        assert agent._handled_intents == {"engineering_analyze", "engineering_optimize", "eventlog_diagnostic_query"}
+        assert {descriptor.name for descriptor in agent.intent_descriptors} == {
+            "engineering_analyze",
+            "engineering_optimize",
+        }
+        assert agent._handled_intents == {
+            "engineering_analyze",
+            "engineering_optimize",
+        }
+        assert "eventlog_diagnostic_query" not in agent._handled_intents
 
 
 # ---------------------------------------------------------------------------

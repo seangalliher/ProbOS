@@ -18,6 +18,7 @@ from probos.artifacts import ArtifactStore
 from probos.config import AgenticToolsConfig, ExecutionConfig
 from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 from probos.cognitive.skill_catalog import CognitiveSkillCatalog
+from probos.consensus.trust import TrustNetwork
 from probos.crew_profile import CallsignRegistry
 from probos.tools.delegate_task_tool import DelegateTaskTool
 from probos.tools.permissions import ToolPermissionStore
@@ -267,28 +268,44 @@ class _Agent:
 
     def __init__(
         self, agent_id: str, pool: str, *, is_alive: bool = True,
-        instructions: str = "", department: str = "", rank: str = "ensign",
+        instructions: str = "", agent_type: str = "", department: str = "",
+        rank: str = "ensign",
     ) -> None:
         self.id = agent_id
         self.pool = pool
         self.is_alive = is_alive
         self.instructions = instructions
+        self.agent_type = agent_type
         self.department = department
         self.rank = rank
 
 
 class _AgentRegistry:
-    """Real small stub with the real get_by_pool / all surface (BF-287:
+    """Real small stub with the real get / get_by_pool / all surface (BF-287:
     surfaces an attribute typo where MagicMock would auto-fake it)."""
 
     def __init__(self, agents) -> None:
         self._agents = list(agents)
+
+    def get(self, agent_id: str) -> _Agent | None:
+        return next((agent for agent in self._agents if agent.id == agent_id), None)
 
     def get_by_pool(self, pool_name: str) -> list:
         return [a for a in self._agents if a.pool == pool_name]
 
     def all(self) -> list:
         return list(self._agents)
+
+
+class _Ontology:
+    def __init__(self) -> None:
+        self._departments = {
+            "diagnostician": "medical",
+            "counselor": "bridge",
+        }
+
+    def get_agent_department(self, agent_type: str) -> str | None:
+        return self._departments.get(agent_type)
 
 
 def _callsign_registry(tmp_path, agents):
@@ -317,6 +334,8 @@ def _delegation_runtime(tmp_path, *, cs, agent_registry, extra_tools=(), agentic
     return SimpleNamespace(
         callsign_registry=cs,
         registry=agent_registry,
+        ontology=_Ontology(),
+        trust_network=TrustNetwork(),
         tool_registry=reg,
         tool_permission_store=ToolPermissionStore(),
         intent_bus=None,
@@ -371,7 +390,7 @@ async def test_delegate_happy_path_returns_result_and_increments_depth(tmp_path)
     cs, areg = _callsign_registry(
         tmp_path,
         [_Agent("bashir-1", "bashir", instructions="You are Dr. Bashir.",
-                department="medical", rank="lieutenant")],
+                agent_type="diagnostician", department="medical", rank="lieutenant")],
     )
     probe = _ProbeTool()
     runtime = _delegation_runtime(tmp_path, cs=cs, agent_registry=areg, extra_tools=[probe])
@@ -402,7 +421,8 @@ async def test_delegate_resting_agent_still_resolves(tmp_path) -> None:
     resolve(), but the tool's get_by_pool fallback still finds the agent object."""
     cs, areg = _callsign_registry(
         tmp_path,
-        [_Agent("bashir-1", "bashir", is_alive=False, instructions="You are Dr. Bashir.")],
+        [_Agent("bashir-1", "bashir", is_alive=False, instructions="You are Dr. Bashir.",
+            agent_type="diagnostician")],
     )
     probe = _ProbeTool()
     runtime = _delegation_runtime(tmp_path, cs=cs, agent_registry=areg, extra_tools=[probe])
@@ -573,8 +593,12 @@ async def test_loop_delegate_task_runs_nested_executor_and_returns_into_transcri
     its result returns into the parent transcript."""
     cs, areg = _callsign_registry(
         tmp_path,
-        [_Agent("bashir-1", "bashir", instructions="You are Dr. Bashir.",
-                department="medical", rank="lieutenant")],
+        [
+            _Agent("ezri-1", "ezri", instructions="You are Ezri.",
+                   agent_type="counselor", department="bridge", rank="lieutenant"),
+            _Agent("bashir-1", "bashir", instructions="You are Dr. Bashir.",
+                   agent_type="diagnostician", department="medical", rank="lieutenant"),
+        ],
     )
     probe = _ProbeTool()
     runtime = _delegation_runtime(

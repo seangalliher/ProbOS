@@ -136,6 +136,22 @@ class Tool(Protocol):
         ...
 
 
+@runtime_checkable
+class ToolDenialAuditor(Protocol):
+    """Optional hook for content-free governance audits of denied calls."""
+
+    async def audit_denied_invocation(
+        self,
+        *,
+        actor_id: str,
+        department: str,
+        rank: str,
+        required: ToolPermission,
+        held: ToolPermission,
+        parameter_names: tuple[str, ...],
+    ) -> None: ...
+
+
 @dataclass
 class ToolRegistration:
     """Metadata record for a registered tool.
@@ -147,6 +163,7 @@ class ToolRegistration:
     tool: Tool
     domain: str = "*"  # "security", "engineering", "medical", "*" (universal)
     department: str | None = None  # Restricts to a department (None = ship-wide)
+    allowed_departments: tuple[str, ...] | None = None
     tags: list[str] = field(default_factory=list)  # Capability tags for discovery
     provider: str = ""  # "ship_computer", "ward_room", "dreaming_engine", etc.
     enabled: bool = True
@@ -174,7 +191,7 @@ class ToolRegistration:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for API responses."""
-        return {
+        serialized = {
             "tool_id": self.tool.tool_id,
             "name": self.tool.name,
             "tool_type": self.tool.tool_type.value,
@@ -191,6 +208,9 @@ class ToolRegistration:
             "concurrency": self.concurrency,
             "lock_timeout_seconds": self.lock_timeout_seconds,
         }
+        if self.allowed_departments is not None:
+            serialized["allowed_departments"] = list(self.allowed_departments)
+        return serialized
 
 
 @dataclass
