@@ -2,9 +2,28 @@
 
 import time
 import unittest
+from dataclasses import replace
 from unittest.mock import MagicMock
 
+import pytest
+
+from probos.crew_session_delivery import CrewSessionDeliveryRecord
 from probos.notifications import AgentNotification, NotificationQueue
+
+
+def _delivery_record() -> CrewSessionDeliveryRecord:
+    return CrewSessionDeliveryRecord.create(
+        session_id="session-1",
+        session_revision=3,
+        outcome="done",
+        thread_id="thread-1",
+        origin="captain",
+        originator_id="captain",
+        author_id="facilitator-1",
+        ownership="captain",
+        occurred_at=1_000.0,
+        elapsed_seconds=900.0,
+    )
 
 
 class TestAgentNotification(unittest.TestCase):
@@ -181,6 +200,41 @@ class TestNotificationQueue(unittest.TestCase):
         self.queue.acknowledge(n.id)
         assert len(self.events) == 1
         assert self.events[0][0] == "notification_ack"
+
+    def test_notify_once_exact_duplicate_preserves_acknowledgement(self) -> None:
+        record = _delivery_record()
+        first = self.queue.notify_once(record)
+        assert self.queue.acknowledge(first.id) is True
+        event_count = len(self.events)
+
+        duplicate = self.queue.notify_once(record)
+
+        assert duplicate is first
+        assert duplicate.acknowledged is True
+        assert len(self.queue.snapshot()) == 1
+        assert len(self.events) == event_count
+
+    def test_notify_once_same_id_different_payload_conflicts(self) -> None:
+        record = _delivery_record()
+        first = self.queue.notify_once(record)
+        first.title = "Changed title"
+
+        with pytest.raises(ValueError, match="crew_delivery_identity_conflict"):
+            self.queue.notify_once(record)
+
+    def test_notify_once_bool_int_alias_conflicts(self) -> None:
+        record = _delivery_record()
+        first = self.queue.notify_once(record)
+        first.created_at = True
+
+        with pytest.raises(ValueError, match="crew_delivery_identity_conflict"):
+            self.queue.notify_once(record)
+
+    def test_notify_once_record_identity_is_revalidated(self) -> None:
+        record = _delivery_record()
+
+        with pytest.raises(ValueError, match="crew_delivery_identity_conflict"):
+            self.queue.notify_once(replace(record, delivery_id="0" * 64))
 
 
 class TestAD501Migration(unittest.TestCase):

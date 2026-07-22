@@ -2597,6 +2597,16 @@ class _PublicationOutcomeStore:
     async def get_work_item(self, work_item_id: str) -> WorkItem | None:
         return await self.delegate.get_work_item(work_item_id)
 
+    async def has_exact_crew_session_delivery(
+        self,
+        record: Any,
+        **kwargs: Any,
+    ) -> bool:
+        return await self.delegate.has_exact_crew_session_delivery(
+            record,
+            **kwargs,
+        )
+
     async def merge_work_item_metadata(
         self,
         work_item_id: str,
@@ -2609,6 +2619,7 @@ class _PublicationOutcomeStore:
         expected_status: str | None = None,
         expected_assigned_to: str | None = None,
         new_status: str | None = None,
+        crew_session_delivery: Any | None = None,
         source: str = "system",
     ) -> WorkItem | None:
         if (
@@ -2650,6 +2661,7 @@ class _PublicationOutcomeStore:
             expected_status=expected_status,
             expected_assigned_to=expected_assigned_to,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
         if source != "crew_session_verified_result":
@@ -2673,6 +2685,7 @@ class _PublicationOutcomeStore:
         expected_assigned_to: str,
         expected_direct_children: tuple[dict[str, Any], ...],
         new_status: str,
+        crew_session_delivery: Any | None = None,
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None:
         if self.outcome == "sibling_then_none_after_commit":
@@ -2711,6 +2724,7 @@ class _PublicationOutcomeStore:
             expected_assigned_to=expected_assigned_to,
             expected_direct_children=expected_direct_children,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
         if self.outcome in {"sibling_then_none_after_commit", "none_after_commit"}:
@@ -2751,6 +2765,7 @@ class _CoordinatedClaimStore:
         expected_status: str | None = None,
         expected_assigned_to: str | None = None,
         new_status: str | None = None,
+        crew_session_delivery: Any | None = None,
         source: str = "system",
     ) -> WorkItem | None:
         contract = patch.get("crew_session") if type(patch) is dict else None
@@ -2770,6 +2785,7 @@ class _CoordinatedClaimStore:
                 expected_status=expected_status,
                 expected_assigned_to=expected_assigned_to,
                 new_status=new_status,
+                crew_session_delivery=crew_session_delivery,
                 source=source,
             )
         if self.winner:
@@ -2785,6 +2801,7 @@ class _CoordinatedClaimStore:
                     expected_status=expected_status,
                     expected_assigned_to=expected_assigned_to,
                     new_status=new_status,
+                    crew_session_delivery=crew_session_delivery,
                     source=source,
                 )
             finally:
@@ -2801,6 +2818,7 @@ class _CoordinatedClaimStore:
             expected_status=expected_status,
             expected_assigned_to=expected_assigned_to,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
 
@@ -2817,6 +2835,7 @@ class _CoordinatedClaimStore:
         expected_assigned_to: str,
         expected_direct_children: tuple[dict[str, Any], ...],
         new_status: str,
+        crew_session_delivery: Any | None = None,
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None:
         return await self.delegate.publish_work_item_metadata_with_child_barrier(
@@ -2830,6 +2849,7 @@ class _CoordinatedClaimStore:
             expected_assigned_to=expected_assigned_to,
             expected_direct_children=expected_direct_children,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
 
@@ -2904,6 +2924,7 @@ class _RealMergeRaceStore:
         expected_status: str | None = None,
         expected_assigned_to: str | None = None,
         new_status: str | None = None,
+        crew_session_delivery: Any | None = None,
         source: str = "system",
     ) -> WorkItem | None:
         if not self.mutated and source in {
@@ -2922,6 +2943,7 @@ class _RealMergeRaceStore:
             expected_status=expected_status,
             expected_assigned_to=expected_assigned_to,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
 
@@ -2938,6 +2960,7 @@ class _RealMergeRaceStore:
         expected_assigned_to: str,
         expected_direct_children: tuple[dict[str, Any], ...],
         new_status: str,
+        crew_session_delivery: Any | None = None,
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None:
         if not self.mutated:
@@ -2954,6 +2977,7 @@ class _RealMergeRaceStore:
             expected_assigned_to=expected_assigned_to,
             expected_direct_children=expected_direct_children,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
 
@@ -2995,6 +3019,7 @@ class _SiblingDeletionRaceStore:
         expected_status: str | None = None,
         expected_assigned_to: str | None = None,
         new_status: str | None = None,
+        crew_session_delivery: Any | None = None,
         source: str = "system",
     ) -> WorkItem | None:
         if source == "crew_session_verified_result":
@@ -3010,6 +3035,7 @@ class _SiblingDeletionRaceStore:
                 expected_status=expected_status,
                 expected_assigned_to=expected_assigned_to,
                 new_status=new_status,
+                crew_session_delivery=crew_session_delivery,
                 source=source,
             )
         return await self.delegate.merge_work_item_metadata(
@@ -3021,6 +3047,7 @@ class _SiblingDeletionRaceStore:
             expected_status=expected_status,
             expected_assigned_to=expected_assigned_to,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
 
@@ -3037,6 +3064,7 @@ class _SiblingDeletionRaceStore:
         expected_assigned_to: str,
         expected_direct_children: tuple[dict[str, Any], ...],
         new_status: str,
+        crew_session_delivery: Any | None = None,
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None:
         await self._update_sibling(work_item_id)
@@ -3051,6 +3079,7 @@ class _SiblingDeletionRaceStore:
             expected_assigned_to=expected_assigned_to,
             expected_direct_children=expected_direct_children,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
 
@@ -3081,6 +3110,7 @@ class _AuthoritativeReadBarrierStore:
         expected_status: str | None = None,
         expected_assigned_to: str | None = None,
         new_status: str | None = None,
+        crew_session_delivery: Any | None = None,
         source: str = "system",
     ) -> WorkItem | None:
         return await self.delegate.merge_work_item_metadata(
@@ -3093,6 +3123,7 @@ class _AuthoritativeReadBarrierStore:
             expected_status=expected_status,
             expected_assigned_to=expected_assigned_to,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
 
@@ -3109,6 +3140,7 @@ class _AuthoritativeReadBarrierStore:
         expected_assigned_to: str,
         expected_direct_children: tuple[dict[str, Any], ...],
         new_status: str,
+        crew_session_delivery: Any | None = None,
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None:
         return await self.delegate.publish_work_item_metadata_with_child_barrier(
@@ -3122,6 +3154,7 @@ class _AuthoritativeReadBarrierStore:
             expected_assigned_to=expected_assigned_to,
             expected_direct_children=expected_direct_children,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
 
@@ -5585,12 +5618,14 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
         "get_session",
         "initialize_session",
         "install_recovery_plan",
+        "metrics",
         "open_or_resume",
         "publish_verified_result",
         "repair_provisioning",
         "transition_session",
     }
     for owner, method_name in (
+        (CrewSessionService, "metrics"),
         (CrewSessionService, "publish_verified_result"),
         (SubtaskVerifier, "verify_for_session"),
         (SubtaskVerifier, "converge_for_session"),
@@ -5607,6 +5642,11 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
             if name != "self"
         )
     expected_signatures = {
+        CrewSessionService.metrics: (
+            ("self", "days", "limit"),
+            {"days", "limit"},
+            {"days": 30, "limit": 1000},
+        ),
         CrewSessionService.publish_verified_result: (
             (
                 "self",
@@ -5637,10 +5677,11 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
                 "expected_direct_children",
                 "new_status",
                 "crew_trust_effects",
+                "crew_session_delivery",
                 "source",
             ),
-            {"expected", "expected_absent_keys", "expected_present_keys", "expected_work_type", "expected_status", "expected_assigned_to", "expected_direct_children", "new_status", "crew_trust_effects", "source"},
-            {"crew_trust_effects": (), "source": "crew_session_verified_result"},
+            {"expected", "expected_absent_keys", "expected_present_keys", "expected_work_type", "expected_status", "expected_assigned_to", "expected_direct_children", "new_status", "crew_trust_effects", "crew_session_delivery", "source"},
+            {"crew_trust_effects": (), "crew_session_delivery": None, "source": "crew_session_verified_result"},
         ),
     }
     for method, (names, keyword_only, defaults) in expected_signatures.items():
@@ -5959,6 +6000,16 @@ class _PostCommitSiblingDeletionStore:
     async def get_work_item(self, work_item_id: str) -> WorkItem | None:
         return await self.delegate.get_work_item(work_item_id)
 
+    async def has_exact_crew_session_delivery(
+        self,
+        record: Any,
+        **kwargs: Any,
+    ) -> bool:
+        return await self.delegate.has_exact_crew_session_delivery(
+            record,
+            **kwargs,
+        )
+
     async def merge_work_item_metadata(
         self,
         work_item_id: str,
@@ -5984,6 +6035,7 @@ class _PostCommitSiblingDeletionStore:
         expected_assigned_to: str,
         expected_direct_children: tuple[dict[str, Any], ...],
         new_status: str,
+        crew_session_delivery: Any | None = None,
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None:
         updated = await self.delegate.publish_work_item_metadata_with_child_barrier(
@@ -5997,6 +6049,7 @@ class _PostCommitSiblingDeletionStore:
             expected_assigned_to=expected_assigned_to,
             expected_direct_children=expected_direct_children,
             new_status=new_status,
+            crew_session_delivery=crew_session_delivery,
             source=source,
         )
         current = await self.delegate.get_work_item(work_item_id)

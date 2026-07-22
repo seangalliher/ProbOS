@@ -7,12 +7,16 @@ form; only the import path has moved.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from probos.events import EventType
+
+if TYPE_CHECKING:
+    from probos.crew_session_delivery import CrewSessionDeliveryRecord
 
 
 @dataclass
@@ -89,6 +93,47 @@ class NotificationQueue:
         self._notifications[n.id] = n
         self._emit(EventType.NOTIFICATION, n)
         return n
+
+    def notify_once(
+        self,
+        record: CrewSessionDeliveryRecord,
+    ) -> AgentNotification:
+        """Insert one exact CrewSession delivery notification idempotently."""
+        from probos.crew_session_delivery import CrewSessionDeliveryRecord
+
+        if type(record) is not CrewSessionDeliveryRecord:
+            raise ValueError("crew_delivery_record_invalid")
+        validated = CrewSessionDeliveryRecord.from_payload(record.to_payload())
+        notification = validated.to_notification()
+        existing = self._notifications.get(notification.id)
+        if existing is not None:
+            try:
+                existing_payload = existing.to_dict()
+                notification_payload = notification.to_dict()
+                existing_payload.pop("acknowledged", None)
+                notification_payload.pop("acknowledged", None)
+                existing_bytes = json.dumps(
+                    existing_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8", errors="strict")
+                notification_bytes = json.dumps(
+                    notification_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8", errors="strict")
+            except (TypeError, ValueError, OverflowError, UnicodeError) as exc:
+                raise ValueError("crew_delivery_identity_conflict") from exc
+            if existing_bytes != notification_bytes:
+                raise ValueError("crew_delivery_identity_conflict")
+            return existing
+        self._notifications[notification.id] = notification
+        self._emit(EventType.NOTIFICATION, notification)
+        return notification
 
     def get(self, notification_id: str) -> AgentNotification | None:
         """Return a notification by id, or None if not present (AD-1053)."""

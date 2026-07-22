@@ -182,6 +182,7 @@ if TYPE_CHECKING:
     from probos.cognitive.skill_grants import SkillGrantStore
     from probos.cognitive.intent_grants import IntentGrantStore
     from probos.cognitive.crew_session import CrewSessionService
+    from probos.crew_session_delivery import CrewSessionDeliveryService
     from probos.skill_framework import AgentSkillService, SkillRegistry
     from probos.skill_request import SkillRequestStore  # AD-906
     from probos.mesh.nats_bus import NATSBus
@@ -279,6 +280,8 @@ class ProbOSRuntime:
     persistent_task_store: PersistentTaskStore | None
     work_item_store: WorkItemStore | None
     crew_session_service: "CrewSessionService | None"
+    crew_session_delivery_service: "CrewSessionDeliveryService | None"
+    crew_session_delivery_listener: Callable[..., Any] | None
     cognitive_journal: CognitiveJournal | None
     skill_registry: SkillRegistry | None
     skill_service: AgentSkillService | None
@@ -824,6 +827,8 @@ class ProbOSRuntime:
 
         # --- Durable Crew Sessions (AD-1124) ---
         self.crew_session_service: "CrewSessionService | None" = None
+        self.crew_session_delivery_service: "CrewSessionDeliveryService | None" = None
+        self.crew_session_delivery_listener: Callable[..., Any] | None = None
 
         # --- Cognitive Journal (AD-431) ---
         self.cognitive_journal: CognitiveJournal | None = None

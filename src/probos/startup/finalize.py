@@ -1932,6 +1932,119 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_crew_session_delivery(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-1131: wire one durable CrewSession outcome delivery listener."""
+    cfg = getattr(config, "agentic_dispatch", None)
+    if not cfg or not getattr(cfg, "orchestrator_enabled", False):
+        return False
+
+    work_item_store = getattr(runtime, "work_item_store", None)
+    chat_thread_store = getattr(runtime, "chat_thread_store", None)
+    notification_queue = getattr(runtime, "notification_queue", None)
+    add_listener = getattr(runtime, "add_event_listener", None)
+    missing = [
+        name
+        for name, dependency in (
+            ("work_item_store", work_item_store),
+            ("chat_thread_store", chat_thread_store),
+            ("notification_queue", notification_queue),
+            ("add_event_listener", add_listener),
+        )
+        if dependency is None
+    ]
+    if missing:
+        logger.error(
+            "AD-1131: enabled CrewSession delivery startup is missing mandatory "
+            "dependency=%s; startup will fail before recovery admission opens",
+            missing[0],
+        )
+        raise RuntimeError(
+            f"crew_session_delivery_dependency_missing:{missing[0]}"
+        )
+
+    from probos.crew_session_delivery import CrewSessionDeliveryService
+
+    existing_service = getattr(runtime, "crew_session_delivery_service", None)
+    existing_listener = getattr(runtime, "crew_session_delivery_listener", None)
+    if (
+        isinstance(existing_service, CrewSessionDeliveryService)
+        and callable(existing_listener)
+    ):
+        return True
+    if callable(existing_listener):
+        remove_listener = getattr(runtime, "remove_event_listener", None)
+        if not callable(remove_listener):
+            logger.warning(
+                "AD-1131: prior CrewSession delivery listener cannot be removed; "
+                "the existing listener remains authoritative and duplicate wiring "
+                "is skipped"
+            )
+            return False
+        remove_listener(existing_listener)
+
+    service = CrewSessionDeliveryService(
+        outbox=work_item_store,
+        thread_store=chat_thread_store,
+        notification_queue=notification_queue,
+    )
+
+    def _on_status_changed(event: Any) -> None:
+        service.admit_status_changed(event)
+
+    try:
+        add_listener(
+            _on_status_changed,
+            event_types=["work_item_status_changed"],
+        )
+    except Exception:
+        logger.warning(
+            "AD-1131: CrewSession delivery listener registration failed; "
+            "durable rows remain pending for the next bounded startup drain",
+            exc_info=True,
+        )
+        return False
+    runtime.crew_session_delivery_service = service
+    runtime.crew_session_delivery_listener = _on_status_changed
+    logger.info(
+        "AD-1131: CrewSession delivery listener wired with bounded startup replay"
+    )
+    return True
+
+
+async def _drain_crew_session_outboxes(runtime: Any) -> None:
+    """Await the trust and notification outboxes independently before recovery."""
+    trust_recorder = getattr(runtime, "crew_session_trust_recorder", None)
+    trust_drain = getattr(trust_recorder, "drain_pending", None)
+    trust_error: BaseException | None = None
+    if callable(trust_drain):
+        try:
+            await trust_drain()
+        except asyncio.CancelledError as exc:
+            trust_error = exc
+        except Exception as exc:
+            trust_error = exc
+    delivery_service = getattr(runtime, "crew_session_delivery_service", None)
+    delivery_drain = getattr(delivery_service, "drain_pending", None)
+    delivery_error: BaseException | None = None
+    if callable(delivery_drain):
+        try:
+            await delivery_drain()
+        except asyncio.CancelledError as exc:
+            delivery_error = exc
+        except Exception as exc:
+            delivery_error = exc
+    errors = tuple(
+        error
+        for error in (trust_error, delivery_error)
+        if error is not None
+    )
+    for error in errors:
+        if isinstance(error, asyncio.CancelledError):
+            raise error
+    if errors:
+        raise errors[0]
+
+
 def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-482 v1: wire the self-improvement pipeline.
 
@@ -2873,6 +2986,9 @@ async def finalize_startup(
 
     if _wire_crew_orchestrator(runtime=runtime, config=config):
         logger.info("AD-867: CrewOrchestrator wired during finalization")
+
+    if _wire_crew_session_delivery(runtime=runtime, config=config):
+        logger.info("AD-1131: CrewSession delivery wired during finalization")
 
     if _wire_workspace_ontology(runtime=runtime, config=config):
         logger.info("AD-478: WorkspaceOntologyRegistry v1 wired during finalization")
@@ -4862,10 +4978,7 @@ async def finalize_startup(
         else None
     )
     if crew_start is not None and asyncio.iscoroutinefunction(crew_start):
-        trust_recorder = getattr(runtime, "crew_session_trust_recorder", None)
-        trust_drain = getattr(trust_recorder, "drain_pending", None)
-        if callable(trust_drain):
-            await trust_drain()
+        await _drain_crew_session_outboxes(runtime)
         await crew_start()
 
     runtime._started = True

@@ -20,6 +20,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _close_crew_session_delivery(runtime: Any) -> None:
+    listener = getattr(runtime, "crew_session_delivery_listener", None)
+    remove_listener = getattr(runtime, "remove_event_listener", None)
+    if callable(listener) and callable(remove_listener):
+        try:
+            remove_listener(listener)
+        except Exception:
+            logger.warning(
+                "AD-1131: CrewSession delivery listener removal failed; the "
+                "service admission gate will still close before workforce "
+                "storage shutdown",
+                exc_info=True,
+            )
+    runtime.crew_session_delivery_listener = None
+
+    service = getattr(runtime, "crew_session_delivery_service", None)
+    close = getattr(service, "close", None) if service is not None else None
+    try:
+        if callable(close):
+            await close()
+    finally:
+        runtime.crew_session_delivery_service = None
+
+
 def _memory_field(runtime: Any, name: str, default: float) -> float:
     """BF-291: defensively read a MemoryConfig field with a fallback.
 
@@ -784,6 +808,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
 
     # Stop Workforce Scheduling Engine (AD-496)
     if runtime.work_item_store:
+        await _close_crew_session_delivery(runtime)
         await runtime.work_item_store.stop()
         runtime.work_item_store = None
 

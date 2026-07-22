@@ -26,13 +26,20 @@ from collections import defaultdict
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 import aiosqlite
 
 from probos.events import EventType
 from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
 from probos.types import Priority
+
+if TYPE_CHECKING:
+    from probos.crew_session_delivery import (
+        CrewSessionDeliveryOutboxEntry,
+        CrewSessionDeliveryOutcome,
+        CrewSessionDeliveryRecord,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -1097,6 +1104,19 @@ CREATE TABLE IF NOT EXISTS crew_trust_outbox (
     delivered_at     REAL
 );
 
+CREATE TABLE IF NOT EXISTS crew_delivery_outbox (
+    delivery_id      TEXT PRIMARY KEY,
+    session_id       TEXT NOT NULL,
+    session_revision INTEGER NOT NULL,
+    outcome          TEXT NOT NULL,
+    occurred_at      REAL NOT NULL,
+    payload_json     TEXT NOT NULL,
+    delivered        INTEGER NOT NULL DEFAULT 0,
+    created_at       REAL NOT NULL,
+    delivered_at     REAL,
+    UNIQUE (session_id, session_revision, outcome)
+);
+
 CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status);
 CREATE INDEX IF NOT EXISTS idx_work_items_assigned_to ON work_items(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_work_items_work_type ON work_items(work_type);
@@ -1107,6 +1127,10 @@ CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
 CREATE INDEX IF NOT EXISTS idx_booking_timestamps_booking_id ON booking_timestamps(booking_id);
 CREATE INDEX IF NOT EXISTS idx_crew_trust_outbox_pending
     ON crew_trust_outbox(delivered, created_at, outcome_id);
+CREATE INDEX IF NOT EXISTS idx_crew_delivery_outbox_pending
+    ON crew_delivery_outbox(delivered, created_at, delivery_id);
+CREATE INDEX IF NOT EXISTS idx_work_items_crew_session_metrics
+    ON work_items(work_type, created_at DESC, id DESC);
 """
 
 # Fields that are JSON-serialized in SQLite
@@ -1131,6 +1155,9 @@ _MAX_WORK_ITEM_TIMESTAMP = 253_402_300_799.0
 _MAX_WORK_ITEM_DIRECT_CHILDREN = 1_000
 _MAX_CREW_TRUST_EFFECTS = (_MAX_WORK_ITEM_DIRECT_CHILDREN * 10) + 2
 _MAX_CREW_TRUST_EFFECT_BYTES = 8_192
+_MAX_CREW_DELIVERY_RECORD_BYTES = 8_192
+_MAX_CREW_DELIVERY_PENDING_ROWS = 1_001
+_MAX_CREW_SESSION_METRIC_ROWS = 10_001
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_DEPTH = 64
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_NODES = 65_536
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_CONTAINER_ENTRIES = 16_384
@@ -1335,6 +1362,139 @@ async def _insert_crew_trust_effects(
                 time.time(),
             ),
         )
+
+
+def _detach_crew_session_delivery(
+    record: CrewSessionDeliveryRecord | None,
+    *,
+    session_id: str,
+    contract_payload: Any,
+) -> dict[str, Any] | None:
+    from probos.crew_session_delivery import (
+        CrewSessionDeliveryRecord,
+        build_crew_session_delivery_record_from_payload,
+    )
+
+    if record is None:
+        return None
+    if (
+        type(record) is not CrewSessionDeliveryRecord
+        or type(session_id) is not str
+        or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(session_id) is None
+        or type(contract_payload) is not dict
+    ):
+        raise ValueError("crew_delivery_outbox_invalid")
+    validated = CrewSessionDeliveryRecord.from_payload(record.to_payload())
+    expected = build_crew_session_delivery_record_from_payload(contract_payload)
+    if (
+        validated.session_id != session_id
+        or validated.canonical_bytes() != expected.canonical_bytes()
+    ):
+        raise ValueError("crew_delivery_identity_conflict")
+    encoded = validated.canonical_bytes()
+    if len(encoded) > _MAX_CREW_DELIVERY_RECORD_BYTES:
+        raise ValueError("crew_delivery_outbox_invalid")
+    return json.loads(encoded.decode("utf-8"))
+
+
+async def _insert_crew_session_delivery(
+    db: DatabaseConnection,
+    payload: dict[str, Any] | None,
+) -> None:
+    if payload is None:
+        return
+    encoded = _compact_exact_json_bytes(
+        payload,
+        error="crew_delivery_outbox_invalid",
+    )
+    if len(encoded) > _MAX_CREW_DELIVERY_RECORD_BYTES:
+        raise ValueError("crew_delivery_outbox_invalid")
+    payload_json = encoded.decode("utf-8")
+    cursor = await db.execute(
+        "SELECT session_id, session_revision, outcome, occurred_at, payload_json "
+        "FROM crew_delivery_outbox WHERE delivery_id = ?",
+        (payload["delivery_id"],),
+    )
+    row = await cursor.fetchone()
+    if row is not None:
+        if (
+            type(row[0]) is not str
+            or row[0] != payload["session_id"]
+            or type(row[1]) is not int
+            or row[1] != payload["session_revision"]
+            or type(row[2]) is not str
+            or row[2] != payload["outcome"]
+            or type(row[3]) is not float
+            or row[3] != payload["occurred_at"]
+            or type(row[4]) is not str
+            or row[4] != payload_json
+        ):
+            raise ValueError("crew_delivery_identity_conflict")
+        return
+    cursor = await db.execute(
+        "SELECT delivery_id FROM crew_delivery_outbox WHERE session_id = ? "
+        "AND session_revision = ? AND outcome = ?",
+        (
+            payload["session_id"],
+            payload["session_revision"],
+            payload["outcome"],
+        ),
+    )
+    if await cursor.fetchone() is not None:
+        raise ValueError("crew_delivery_identity_conflict")
+    await db.execute(
+        "INSERT INTO crew_delivery_outbox "
+        "(delivery_id, session_id, session_revision, outcome, occurred_at, "
+        "payload_json, delivered, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+        (
+            payload["delivery_id"],
+            payload["session_id"],
+            payload["session_revision"],
+            payload["outcome"],
+            payload["occurred_at"],
+            payload_json,
+            time.time(),
+        ),
+    )
+
+
+def _crew_delivery_entry_from_row(row: Any) -> CrewSessionDeliveryOutboxEntry:
+    from probos.crew_session_delivery import (
+        CrewSessionDeliveryOutboxEntry,
+        CrewSessionDeliveryRecord,
+    )
+
+    try:
+        payload = json.loads(row[5])
+        record = CrewSessionDeliveryRecord.from_payload(payload)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("crew_delivery_outbox_corrupt") from exc
+    if (
+        type(row[0]) is not str
+        or row[0] != record.delivery_id
+        or type(row[1]) is not str
+        or row[1] != record.session_id
+        or type(row[2]) is not int
+        or row[2] != record.session_revision
+        or type(row[3]) is not str
+        or row[3] != record.outcome
+        or type(row[4]) is not float
+        or row[4] != record.occurred_at
+        or type(row[5]) is not str
+        or row[5] != record.canonical_bytes().decode("utf-8")
+        or type(row[6]) is not int
+        or row[6] not in (0, 1)
+        or type(row[7]) is not float
+        or (row[8] is not None and type(row[8]) is not float)
+    ):
+        raise ValueError("crew_delivery_outbox_corrupt")
+    return CrewSessionDeliveryOutboxEntry(
+        record=record,
+        delivered=bool(row[6]),
+        created_at=row[7],
+        delivered_at=row[8],
+    )
 
 
 def _build_crew_session_parent(
@@ -1881,6 +2041,18 @@ class WorkItemStore(EventEmitterMixin):
     # WorkItem CRUD
     # ======================================================================
 
+    @staticmethod
+    def _event_work_item_projection(item: WorkItem | None) -> dict[str, Any]:
+        if item is None:
+            return {}
+        if item.work_type == "crew_session":
+            return {
+                "id": item.id,
+                "work_type": item.work_type,
+                "status": item.status,
+            }
+        return item.to_dict()
+
     async def create_work_item(self, **kwargs: Any) -> WorkItem:
         """Create and persist a new work item."""
         if kwargs.get("work_type", "task") == "crew_session":
@@ -1954,7 +2126,10 @@ class WorkItemStore(EventEmitterMixin):
                         pass
                     raise
         await self._refresh_snapshot_cache()
-        self._emit(EventType.WORK_ITEM_CREATED, {"work_item": item.to_dict()})
+        self._emit(
+            EventType.WORK_ITEM_CREATED,
+            {"work_item": self._event_work_item_projection(item)},
+        )
         return item
 
     async def get_work_item(self, work_item_id: str) -> WorkItem | None:
@@ -2154,7 +2329,7 @@ class WorkItemStore(EventEmitterMixin):
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,
-            {"work_item": updated.to_dict() if updated else {}},
+            {"work_item": self._event_work_item_projection(updated)},
         )
         return updated
 
@@ -2329,7 +2504,7 @@ class WorkItemStore(EventEmitterMixin):
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,
-            {"work_item": updated.to_dict() if updated else {}},
+            {"work_item": self._event_work_item_projection(updated)},
         )
         return updated
 
@@ -2538,10 +2713,13 @@ class WorkItemStore(EventEmitterMixin):
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,
-            {"work_item": updated_parent.to_dict()},
+            {"work_item": self._event_work_item_projection(updated_parent)},
         )
         for child in created:
-            self._emit(EventType.WORK_ITEM_CREATED, {"work_item": child.to_dict()})
+            self._emit(
+                EventType.WORK_ITEM_CREATED,
+                {"work_item": self._event_work_item_projection(child)},
+            )
         return updated_parent, tuple(created)
 
     async def adopt_child_plan_with_parent_metadata(
@@ -2652,7 +2830,10 @@ class WorkItemStore(EventEmitterMixin):
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,
-            {"work_item": updated_parent.to_dict(), "source": source},
+            {
+                "work_item": self._event_work_item_projection(updated_parent),
+                "source": source,
+            },
         )
         return updated_parent
 
@@ -2762,7 +2943,7 @@ class WorkItemStore(EventEmitterMixin):
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,
-            {"work_item": updated.to_dict() if updated else {}},
+            {"work_item": self._event_work_item_projection(updated)},
         )
         self._emit(
             EventType.WORK_ITEM_ASSIGNED,
@@ -2806,7 +2987,10 @@ class WorkItemStore(EventEmitterMixin):
             await self._db.commit()
             updated = await self.get_work_item(work_item_id)
         await self._refresh_snapshot_cache()
-        self._emit(EventType.WORK_ITEM_UPDATED, {"work_item": updated.to_dict() if updated else {}})
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": self._event_work_item_projection(updated)},
+        )
         return updated
 
     async def set_steps(
@@ -2943,6 +3127,7 @@ class WorkItemStore(EventEmitterMixin):
         ) = _OMITTED_WORK_ITEM_EXPECTATION,
         new_status: str | None = None,
         actual_tokens_delta: int = 0,
+        crew_session_delivery: CrewSessionDeliveryRecord | None = None,
         source: str = "system",
     ) -> WorkItem | None:
         """Atomically shallow-merge top-level metadata for this store instance."""
@@ -3092,6 +3277,11 @@ class WorkItemStore(EventEmitterMixin):
                 dataclasses.replace(item, metadata=merged), new_status,
             ):
                 return None
+            delivery_payload = _detach_crew_session_delivery(
+                crew_session_delivery,
+                session_id=work_item_id,
+                contract_payload=merged.get("crew_session"),
+            )
             if merged == current and not status_changed and actual_tokens_delta == 0:
                 return item
 
@@ -3139,6 +3329,7 @@ class WorkItemStore(EventEmitterMixin):
                             "UPDATE work_items SET metadata = ?, updated_at = ? WHERE id = ?",
                             (serialized, now, work_item_id),
                         )
+                await _insert_crew_session_delivery(self._db, delivery_payload)
                 await self._db.commit()
             except BaseException:
                 try:
@@ -3151,11 +3342,11 @@ class WorkItemStore(EventEmitterMixin):
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,
-            {"work_item": updated.to_dict() if updated else {}},
+            {"work_item": self._event_work_item_projection(updated)},
         )
         if status_changed:
             self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
-                "work_item": updated.to_dict() if updated else {},
+                "work_item": self._event_work_item_projection(updated),
                 "old_status": old_status,
                 "new_status": new_status,
                 "source": source,
@@ -3307,7 +3498,7 @@ class WorkItemStore(EventEmitterMixin):
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,
-            {"work_item": updated.to_dict() if updated else {}},
+            {"work_item": self._event_work_item_projection(updated)},
         )
         return updated
 
@@ -3325,6 +3516,7 @@ class WorkItemStore(EventEmitterMixin):
         expected_direct_children: tuple[dict[str, Any], ...],
         new_status: str,
         crew_trust_effects: tuple[Any, ...] = (),
+        crew_session_delivery: CrewSessionDeliveryRecord | None = None,
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None:
         """Publish parent metadata/status after one exact direct-child proof."""
@@ -3384,6 +3576,11 @@ class WorkItemStore(EventEmitterMixin):
             crew_trust_effects,
             session_id=work_item_id,
             session_revision=contract_payload.get("revision"),
+        )
+        delivery_payload = _detach_crew_session_delivery(
+            crew_session_delivery,
+            session_id=work_item_id,
+            contract_payload=contract_payload,
         )
         if not self._db:
             return None
@@ -3464,6 +3661,7 @@ class WorkItemStore(EventEmitterMixin):
                     ),
                 )
                 await _insert_crew_trust_effects(self._db, effects)
+                await _insert_crew_session_delivery(self._db, delivery_payload)
                 await self._db.commit()
                 updated = await self.get_work_item(work_item_id)
             except BaseException:
@@ -3476,11 +3674,11 @@ class WorkItemStore(EventEmitterMixin):
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,
-            {"work_item": updated.to_dict() if updated else {}},
+            {"work_item": self._event_work_item_projection(updated)},
         )
         if status_changed:
             self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
-                "work_item": updated.to_dict() if updated else {},
+                "work_item": self._event_work_item_projection(updated),
                 "old_status": old_status,
                 "new_status": new_status,
                 "source": source,
@@ -3497,6 +3695,7 @@ class WorkItemStore(EventEmitterMixin):
         expected_assigned_to: str,
         new_status: str,
         crew_trust_effects: tuple[Any, ...],
+        crew_session_delivery: CrewSessionDeliveryRecord,
         source: str = "crew_session_verified_failure",
     ) -> WorkItem | None:
         """Commit one failed CrewSession contract and its trust outbox together."""
@@ -3540,6 +3739,11 @@ class WorkItemStore(EventEmitterMixin):
             crew_trust_effects,
             session_id=work_item_id,
             session_revision=contract_payload.get("revision"),
+        )
+        delivery_payload = _detach_crew_session_delivery(
+            crew_session_delivery,
+            session_id=work_item_id,
+            contract_payload=contract_payload,
         )
         if not effects or not self._db:
             return None
@@ -3587,6 +3791,7 @@ class WorkItemStore(EventEmitterMixin):
                     ),
                 )
                 await _insert_crew_trust_effects(self._db, effects)
+                await _insert_crew_session_delivery(self._db, delivery_payload)
                 await self._db.commit()
                 updated = await self.get_work_item(work_item_id)
             except BaseException:
@@ -3599,10 +3804,10 @@ class WorkItemStore(EventEmitterMixin):
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,
-            {"work_item": updated.to_dict() if updated else {}},
+            {"work_item": self._event_work_item_projection(updated)},
         )
         self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
-            "work_item": updated.to_dict() if updated else {},
+            "work_item": self._event_work_item_projection(updated),
             "old_status": expected_status,
             "new_status": new_status,
             "source": source,
@@ -3686,6 +3891,222 @@ class WorkItemStore(EventEmitterMixin):
             ):
                 return False
         return True
+
+    async def list_pending_crew_session_deliveries(
+        self,
+        *,
+        limit: int,
+        session_id: str | None = None,
+        session_revision: int | None = None,
+    ) -> tuple[CrewSessionDeliveryOutboxEntry, ...]:
+        """Return a bounded deterministic batch of validated delivery rows."""
+        if (
+            type(limit) is not int
+            or not 1 <= limit <= _MAX_CREW_DELIVERY_PENDING_ROWS
+            or (session_id is None and session_revision is not None)
+            or (
+                session_id is not None
+                and (
+                    type(session_id) is not str
+                    or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(session_id) is None
+                )
+            )
+            or (
+                session_revision is not None
+                and (
+                    type(session_revision) is not int
+                    or not 1 <= session_revision <= 2_147_483_647
+                )
+            )
+        ):
+            raise ValueError("crew_delivery_outbox_limit_invalid")
+        if not self._db:
+            return ()
+        query = (
+            "SELECT delivery_id, session_id, session_revision, outcome, "
+            "occurred_at, payload_json, delivered, created_at, delivered_at "
+            "FROM crew_delivery_outbox WHERE delivered = 0"
+        )
+        params: list[Any] = []
+        if session_id is not None:
+            query += " AND session_id = ?"
+            params.append(session_id)
+            if session_revision is not None:
+                query += " AND session_revision = ?"
+                params.append(session_revision)
+        query += " ORDER BY created_at ASC, delivery_id ASC LIMIT ?"
+        params.append(limit)
+        async with self._work_item_row_write_lock:
+            cursor = await self._db.execute(query, tuple(params))
+            rows = await cursor.fetchall()
+        return tuple(_crew_delivery_entry_from_row(row) for row in rows)
+
+    async def has_exact_crew_session_delivery(
+        self,
+        record: CrewSessionDeliveryRecord,
+        *,
+        session_id: str,
+        session_revision: int,
+        outcome: CrewSessionDeliveryOutcome,
+    ) -> bool:
+        """Return whether one exact outcome revision owns this delivery row."""
+        return await self.get_exact_crew_session_delivery(
+            record,
+            session_id=session_id,
+            session_revision=session_revision,
+            outcome=outcome,
+        ) is not None
+
+    async def get_exact_crew_session_delivery(
+        self,
+        record: CrewSessionDeliveryRecord,
+        *,
+        session_id: str,
+        session_revision: int,
+        outcome: CrewSessionDeliveryOutcome,
+    ) -> CrewSessionDeliveryOutboxEntry | None:
+        """Read and validate one exact delivery row under the store lock."""
+        from probos.crew_session_delivery import CrewSessionDeliveryRecord
+
+        if (
+            type(record) is not CrewSessionDeliveryRecord
+            or type(session_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(session_id) is None
+            or type(session_revision) is not int
+            or not 1 <= session_revision <= 2_147_483_647
+            or type(outcome) is not str
+            or outcome not in {"done", "failed", "blocked_needs_captain"}
+        ):
+            raise ValueError("crew_delivery_outbox_identity_invalid")
+        validated = type(record).from_payload(record.to_payload())
+        if not self._db:
+            return None
+        if (
+            validated.session_id != session_id
+            or validated.session_revision != session_revision
+            or validated.outcome != outcome
+        ):
+            raise ValueError("crew_delivery_identity_conflict")
+        async with self._work_item_row_write_lock:
+            cursor = await self._db.execute(
+                "SELECT delivery_id, session_id, session_revision, outcome, "
+                "occurred_at, payload_json, delivered, created_at, delivered_at "
+                "FROM crew_delivery_outbox WHERE delivery_id = ?",
+                (record.delivery_id,),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        entry = _crew_delivery_entry_from_row(row)
+        if entry.record.canonical_bytes() != validated.canonical_bytes():
+            raise ValueError("crew_delivery_identity_conflict")
+        return entry
+
+    async def mark_crew_session_delivery_delivered(
+        self,
+        delivery_id: str,
+        *,
+        session_id: str,
+        session_revision: int,
+        outcome: CrewSessionDeliveryOutcome,
+    ) -> bool:
+        """Mark one exact pending delivery row acknowledged."""
+        if (
+            type(delivery_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", delivery_id) is None
+            or type(session_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(session_id) is None
+            or type(session_revision) is not int
+            or not 1 <= session_revision <= 2_147_483_647
+            or type(outcome) is not str
+            or outcome not in {"done", "failed", "blocked_needs_captain"}
+        ):
+            raise ValueError("crew_delivery_outbox_identity_invalid")
+        if not self._db:
+            return False
+        async with self._work_item_row_write_lock:
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                cursor = await self._db.execute(
+                    "SELECT delivery_id, session_id, session_revision, outcome, "
+                    "occurred_at, payload_json, delivered, created_at, delivered_at "
+                    "FROM crew_delivery_outbox WHERE delivery_id = ?",
+                    (delivery_id,),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    await self._db.execute("ROLLBACK")
+                    return False
+                entry = _crew_delivery_entry_from_row(row)
+                if (
+                    entry.record.session_id != session_id
+                    or entry.record.session_revision != session_revision
+                    or entry.record.outcome != outcome
+                ):
+                    await self._db.execute("ROLLBACK")
+                    return False
+                if entry.delivered:
+                    await self._db.execute("ROLLBACK")
+                    return True
+                cursor = await self._db.execute(
+                    "UPDATE crew_delivery_outbox SET delivered = 1, "
+                    "delivered_at = ? WHERE delivery_id = ? AND session_id = ? "
+                    "AND session_revision = ? AND outcome = ? AND delivered = 0",
+                    (
+                        time.time(),
+                        delivery_id,
+                        session_id,
+                        session_revision,
+                        outcome,
+                    ),
+                )
+                changed = cursor.rowcount == 1
+                if changed:
+                    await self._db.commit()
+                else:
+                    await self._db.execute("ROLLBACK")
+                return changed
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+
+    async def list_crew_session_metric_work_items(
+        self,
+        *,
+        window_start: float,
+        window_end: float,
+        limit: int,
+    ) -> tuple[WorkItem, ...]:
+        """Return a bounded CrewSession window newest first."""
+        if (
+            type(window_start) is not float
+            or not math.isfinite(window_start)
+            or window_start < -(365 * 86_400.0)
+            or type(window_end) is not float
+            or not math.isfinite(window_end)
+            or window_end < window_start
+            or window_end > _MAX_WORK_ITEM_TIMESTAMP
+            or type(limit) is not int
+            or not 1 <= limit <= _MAX_CREW_SESSION_METRIC_ROWS
+        ):
+            raise ValueError("crew_session_metrics_query_invalid")
+        if not self._db:
+            return ()
+        async with self._work_item_row_write_lock:
+            cursor = await self._db.execute(
+                "SELECT * FROM work_items WHERE work_type = 'crew_session' "
+                "AND created_at >= ? AND created_at <= ? "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (window_start, window_end, limit),
+            )
+            rows = await cursor.fetchall()
+        try:
+            return tuple(self._row_to_work_item(row) for row in rows)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("crew_session_metrics_row_invalid") from exc
 
     async def mark_crew_trust_outcome_delivered(
         self,
@@ -3784,7 +4205,7 @@ class WorkItemStore(EventEmitterMixin):
             updated = await self.get_work_item(work_item_id)
         await self._refresh_snapshot_cache()
         self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
-            "work_item": updated.to_dict() if updated else {},
+            "work_item": self._event_work_item_projection(updated),
             "old_status": old_status,
             "new_status": new_status,
         })

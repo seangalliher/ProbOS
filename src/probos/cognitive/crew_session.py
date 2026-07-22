@@ -17,6 +17,12 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
+from probos.crew_session_delivery import (
+    CrewSessionDeliveryOutcome,
+    CrewSessionDeliveryRecord,
+    build_crew_session_delivery_record,
+)
+
 if TYPE_CHECKING:
     from probos.cognitive.crew_synth import SynthesisResult
     from probos.threads import ChatThread
@@ -2011,6 +2017,28 @@ class CrewSessionContract(BaseModel):
         return self
 
 
+@dataclass(frozen=True, slots=True)
+class CrewSessionMetrics:
+    days: int
+    limit: int
+    window_start: float
+    window_end: float
+    sessions_started: int
+    truncated: bool
+    done_count: int
+    failed_count: int
+    artifact_count: int
+    verified_count: int
+    done_rate: float
+    failed_rate: float
+    artifact_rate: float
+    verified_rate: float
+    duplicate_resume_count: int
+    time_to_first_result_p50_seconds: float
+    time_to_first_result_p95_seconds: float
+    blocked_duration_seconds: float
+
+
 def _validate_session_recovery_invariant(
     session: CrewSessionContract,
     recovery: CrewRecoveryContract | None,
@@ -2066,6 +2094,14 @@ class _WorkItemStoreProtocol(Protocol):
         limit: int,
     ) -> list[WorkItem]: ...
 
+    async def list_crew_session_metric_work_items(
+        self,
+        *,
+        window_start: float,
+        window_end: float,
+        limit: int,
+    ) -> tuple[WorkItem, ...]: ...
+
     async def clear_crew_session_provisioning(
         self,
         parent_id: str,
@@ -2103,6 +2139,7 @@ class _WorkItemStoreProtocol(Protocol):
         expected_status: str | None = None,
         expected_assigned_to: str | None = None,
         new_status: str | None = None,
+        crew_session_delivery: CrewSessionDeliveryRecord | None = None,
         source: str = "system",
     ) -> WorkItem | None: ...
 
@@ -2120,6 +2157,7 @@ class _WorkItemStoreProtocol(Protocol):
         expected_direct_children: tuple[dict[str, Any], ...],
         new_status: str,
         crew_trust_effects: tuple[Any, ...] = (),
+        crew_session_delivery: CrewSessionDeliveryRecord | None = None,
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None: ...
 
@@ -2133,6 +2171,7 @@ class _WorkItemStoreProtocol(Protocol):
         expected_assigned_to: str,
         new_status: str,
         crew_trust_effects: tuple[Any, ...],
+        crew_session_delivery: CrewSessionDeliveryRecord,
         source: str = "crew_session_verified_failure",
     ) -> WorkItem | None: ...
 
@@ -2142,6 +2181,15 @@ class _WorkItemStoreProtocol(Protocol):
         *,
         session_id: str,
         session_revision: int,
+    ) -> bool: ...
+
+    async def has_exact_crew_session_delivery(
+        self,
+        record: CrewSessionDeliveryRecord,
+        *,
+        session_id: str,
+        session_revision: int,
+        outcome: CrewSessionDeliveryOutcome,
     ) -> bool: ...
 
     async def install_child_plan_with_parent_metadata(
@@ -3800,6 +3848,154 @@ class CrewSessionService:
         await self._validate_loaded(parent, contract)
         return contract
 
+    async def metrics(
+        self,
+        *,
+        days: int = 30,
+        limit: int = 1000,
+    ) -> CrewSessionMetrics:
+        if type(days) is not int or not 1 <= days <= 365:
+            raise ValueError("crew_session_metrics_days_invalid")
+        if type(limit) is not int or not 1 <= limit <= 10_000:
+            raise ValueError("crew_session_metrics_limit_invalid")
+        captured_now = self._clock()
+        if (
+            type(captured_now) is not float
+            or not math.isfinite(captured_now)
+            or not 0.0 <= captured_now <= _MAX_TIMESTAMP
+        ):
+            raise ValueError("crew_session_metrics_clock_invalid")
+        window_start = captured_now - (days * 86_400.0)
+        rows = await self._work_items.list_crew_session_metric_work_items(
+            window_start=window_start,
+            window_end=captured_now,
+            limit=limit + 1,
+        )
+        if type(rows) is not tuple or len(rows) > limit + 1:
+            raise ValueError("crew_session_metrics_query_invalid")
+        truncated = len(rows) > limit
+        contracts: list[CrewSessionContract] = []
+        previous_key: tuple[float, str] | None = None
+        from probos.workforce import WorkItem
+
+        for index, parent in enumerate(rows):
+            if (
+                type(parent) is not WorkItem
+                or type(parent.id) is not str
+                or _ID_RE.fullmatch(parent.id) is None
+                or type(parent.work_type) is not str
+                or parent.work_type != "crew_session"
+                or type(parent.created_at) is not float
+                or not math.isfinite(parent.created_at)
+                or not window_start <= parent.created_at <= captured_now
+                or type(parent.metadata) is not dict
+            ):
+                raise ValueError("crew_session_metrics_row_invalid")
+            row_key = (parent.created_at, parent.id)
+            if previous_key is not None and row_key >= previous_key:
+                raise ValueError("crew_session_metrics_order_invalid")
+            previous_key = row_key
+            raw = parent.metadata.get("crew_session", _MISSING)
+            try:
+                contract = self._parse_contract(raw)
+                _validate_crew_session_provenance(
+                    origin=contract.origin,
+                    originator_id=contract.originator_id,
+                    created_by=parent.created_by,
+                )
+            except (TypeError, ValueError, ValidationError) as exc:
+                raise ValueError("crew_session_metrics_contract_invalid") from exc
+            if (
+                contract.task_id != parent.id
+                or contract.created_at != parent.created_at
+                or parent.assigned_to != contract.facilitator_id
+                or parent.status != _STATUS_PROJECTION[contract.state]
+            ):
+                raise ValueError("crew_session_metrics_projection_invalid")
+            if (
+                contract.state == "blocked_needs_captain"
+                and (
+                    contract.blocked_since is None
+                    or captured_now < contract.blocked_since
+                )
+            ):
+                raise ValueError("crew_session_metrics_clock_regression")
+            if index < limit:
+                contracts.append(contract)
+
+        sessions_started = len(contracts)
+        done_count = sum(contract.state == "done" for contract in contracts)
+        failed_count = sum(contract.state == "failed" for contract in contracts)
+        artifact_count = sum(
+            contract.result_artifact_id is not None for contract in contracts
+        )
+        verified_count = sum(
+            contract.verified_at is not None for contract in contracts
+        )
+        duplicate_resume_count = sum(
+            contract.duplicate_resume_count for contract in contracts
+        )
+        first_result_seconds: list[float] = []
+        blocked_duration = 0.0
+        for contract in contracts:
+            if contract.first_result_at is not None:
+                elapsed = contract.first_result_at - contract.created_at
+                if not math.isfinite(elapsed) or elapsed < 0.0:
+                    raise ValueError("crew_session_metrics_first_result_invalid")
+                first_result_seconds.append(elapsed)
+            contribution = contract.blocked_duration_seconds
+            if contract.state == "blocked_needs_captain":
+                if (
+                    contract.blocked_since is None
+                    or captured_now < contract.blocked_since
+                ):
+                    raise ValueError("crew_session_metrics_clock_regression")
+                contribution += captured_now - contract.blocked_since
+            if not math.isfinite(contribution) or contribution < 0.0:
+                raise ValueError("crew_session_metrics_blocked_duration_invalid")
+            blocked_duration += contribution
+        if not math.isfinite(blocked_duration):
+            raise ValueError("crew_session_metrics_blocked_duration_invalid")
+        first_result_seconds.sort()
+
+        def _rate(count: int) -> float:
+            if sessions_started == 0:
+                return 0.0
+            return round(count / sessions_started, 6)
+
+        def _percentile(values: list[float], percentile: float) -> float:
+            if not values:
+                return 0.0
+            index = max(0, math.ceil(percentile * len(values)) - 1)
+            return round(values[index], 3)
+
+        return CrewSessionMetrics(
+            days=days,
+            limit=limit,
+            window_start=window_start,
+            window_end=captured_now,
+            sessions_started=sessions_started,
+            truncated=truncated,
+            done_count=done_count,
+            failed_count=failed_count,
+            artifact_count=artifact_count,
+            verified_count=verified_count,
+            done_rate=_rate(done_count),
+            failed_rate=_rate(failed_count),
+            artifact_rate=_rate(artifact_count),
+            verified_rate=_rate(verified_count),
+            duplicate_resume_count=duplicate_resume_count,
+            time_to_first_result_p50_seconds=_percentile(
+                first_result_seconds,
+                0.50,
+            ),
+            time_to_first_result_p95_seconds=_percentile(
+                first_result_seconds,
+                0.95,
+            ),
+            blocked_duration_seconds=round(blocked_duration, 3),
+        )
+
     async def get_recovery(self, parent_id: str) -> CrewRecoveryContract | None:
         """Return the exact recovery sibling after validating session authority."""
         parent_key = _normalize_id(parent_id)
@@ -4307,18 +4503,83 @@ class CrewSessionService:
         if expected_checkpoint is not None and next_checkpoint is not None:
             expected_metadata["crew_recovery"] = current_recovery_raw
             patch["crew_recovery"] = next_checkpoint.model_dump(mode="json")
-        updated = await self._work_items.merge_work_item_metadata(
-            parent.id,
-            patch,
-            expected=expected_metadata,
-            expected_work_type="crew_session",
-            expected_status=_STATUS_PROJECTION[current.state],
-            expected_assigned_to=current.facilitator_id,
-            new_status=_STATUS_PROJECTION[target],
-            source="crew_session_transition",
+        delivery_record = (
+            build_crew_session_delivery_record(contract)
+            if state_changed
+            and target in {"done", "failed", "blocked_needs_captain"}
+            else None
         )
-        if updated is None:
-            raise ValueError("crew_session_transition_failed")
+        transition_error: BaseException | None = None
+        updated: WorkItem | None = None
+        merge_kwargs: dict[str, Any] = {
+            "expected": expected_metadata,
+            "expected_work_type": "crew_session",
+            "expected_status": _STATUS_PROJECTION[current.state],
+            "expected_assigned_to": current.facilitator_id,
+            "new_status": _STATUS_PROJECTION[target],
+            "source": "crew_session_transition",
+        }
+        if delivery_record is not None:
+            merge_kwargs["crew_session_delivery"] = delivery_record
+        try:
+            updated = await self._work_items.merge_work_item_metadata(
+                parent.id,
+                patch,
+                **merge_kwargs,
+            )
+        except asyncio.CancelledError as exc:
+            transition_error = exc
+        except BaseException as exc:
+            transition_error = exc
+        if transition_error is not None or updated is None:
+            authoritative = await self._work_items.get_work_item(parent.id)
+            exact_transition = (
+                authoritative is not None
+                and authoritative.work_type == "crew_session"
+                and authoritative.status == _STATUS_PROJECTION[target]
+                and authoritative.assigned_to == current.facilitator_id
+                and _json_values_exactly_equal(
+                    (authoritative.metadata or {}).get("crew_session", _MISSING),
+                    contract.model_dump(mode="json"),
+                )
+            )
+            exact_delivery = delivery_record is None
+            if exact_transition and delivery_record is not None:
+                exact_delivery = await self._work_items.has_exact_crew_session_delivery(
+                    delivery_record,
+                    session_id=parent.id,
+                    session_revision=contract.revision,
+                    outcome=target,
+                )
+            if not exact_transition or not exact_delivery:
+                if transition_error is not None:
+                    raise transition_error
+                raise ValueError("crew_session_transition_failed")
+            updated = authoritative
+            if isinstance(transition_error, asyncio.CancelledError):
+                raise transition_error
+            if transition_error is not None and not isinstance(
+                transition_error,
+                Exception,
+            ):
+                raise transition_error
+            if transition_error is not None:
+                if delivery_record is None:
+                    logger.warning(
+                        "Crew session parent=%s nonterminal transition to %s "
+                        "raised after the exact contract committed; returning "
+                        "the authoritative transition without a delivery row",
+                        parent.id,
+                        target,
+                    )
+                else:
+                    logger.warning(
+                        "Crew session parent=%s transition raised after the exact "
+                        "%s contract and delivery row committed; returning the "
+                        "authoritative outcome for bounded notification replay",
+                        parent.id,
+                        target,
+                    )
         logger.info(
             "Crew session parent=%s transitioned state=%s revision=%d; projected status=%s",
             parent.id,
@@ -4460,6 +4721,7 @@ class CrewSessionService:
         if current.first_result_at is None:
             values["first_result_at"] = now
         contract = self._validate_contract(values)
+        delivery_record = build_crew_session_delivery_record(contract)
         _validate_session_recovery_invariant(contract, published_recovery)
         contract_json = contract.model_dump(mode="json")
         synthesis_json = synthesis.model_dump(mode="json")
@@ -4479,13 +4741,14 @@ class CrewSessionService:
             if key not in {"crew_session", "crew_synth"}
         )
         publish_error: BaseException | None = None
+        published: WorkItem | None = None
         try:
             trust_kwargs = (
                 {"crew_trust_effects": crew_trust_effects}
                 if crew_trust_effects
                 else {}
             )
-            await self._work_items.publish_work_item_metadata_with_child_barrier(
+            published = await self._work_items.publish_work_item_metadata_with_child_barrier(
                 parent.id,
                 publication_patch,
                 expected=expected_metadata,
@@ -4496,6 +4759,7 @@ class CrewSessionService:
                 expected_assigned_to=current.facilitator_id,
                 expected_direct_children=expected_direct_children,
                 new_status="done",
+                crew_session_delivery=delivery_record,
                 source="crew_session_verified_result",
                 **trust_kwargs,
             )
@@ -4522,9 +4786,19 @@ class CrewSessionService:
                 raise publish_error
             raise
         if authoritative_contract is not None:
-            if crew_trust_effects and publish_error is not None:
+            if publish_error is not None or published is None:
                 try:
-                    outbox_matches = (
+                    delivery_matches = (
+                        await self._work_items.has_exact_crew_session_delivery(
+                            delivery_record,
+                            session_id=parent.id,
+                            session_revision=contract.revision,
+                            outcome="done",
+                        )
+                    )
+                    trust_matches = (
+                        not crew_trust_effects
+                        or
                         await self._work_items.has_exact_crew_trust_outcomes(
                             crew_trust_effects,
                             session_id=parent.id,
@@ -4537,7 +4811,7 @@ class CrewSessionService:
                     if publish_error is not None:
                         raise publish_error
                     raise
-                if not outbox_matches:
+                if not delivery_matches or not trust_matches:
                     if publish_error is not None:
                         raise publish_error
                     raise ValueError("crew_session_publication_failed")
@@ -4695,6 +4969,7 @@ class CrewSessionService:
         if current.first_result_at is None:
             values["first_result_at"] = now
         contract = self._validate_contract(values)
+        delivery_record = build_crew_session_delivery_record(contract)
         _validate_session_recovery_invariant(contract, expected_recovery)
         patch = {"crew_session": contract.model_dump(mode="json")}
         commit_error: BaseException | None = None
@@ -4708,6 +4983,7 @@ class CrewSessionService:
                 expected_assigned_to=current.facilitator_id,
                 new_status="failed",
                 crew_trust_effects=crew_trust_effects,
+                crew_session_delivery=delivery_record,
             )
         except asyncio.CancelledError as exc:
             commit_error = exc
@@ -4723,6 +4999,12 @@ class CrewSessionService:
                 and _json_values_exactly_equal(
                     (authoritative.metadata or {}).get("crew_session", _MISSING),
                     contract.model_dump(mode="json"),
+                )
+                and await self._work_items.has_exact_crew_session_delivery(
+                    delivery_record,
+                    session_id=parent.id,
+                    session_revision=contract.revision,
+                    outcome="failed",
                 )
                 and await self._work_items.has_exact_crew_trust_outcomes(
                     crew_trust_effects,

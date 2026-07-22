@@ -36,7 +36,10 @@ def _should_notify(work_item: dict[str, Any], new_status: str) -> bool:
     Only ``done``/``failed`` transitions on an item carrying both
     ``metadata.dispatchable`` (truthy) and the ``yeo-delegated`` tag pass.
     """
-    if new_status not in _TERMINAL_STATUSES:
+    if (
+        new_status not in _TERMINAL_STATUSES
+        or work_item.get("work_type") == "crew_session"
+    ):
         return False
     metadata = work_item.get("metadata") or {}
     if not metadata.get("dispatchable"):
@@ -84,7 +87,12 @@ async def notify_captain_of_task_completion(runtime: Any, event: Any) -> None:
     DM channel for Yeo, then create a thread carrying a one-line outcome
     notice. Honest-degrade throughout — never raises.
     """
-    payload = getattr(event, "data", None) or getattr(event, "payload", None) or {}
+    if type(event) is dict:
+        candidate = event.get("data")
+        payload = candidate if type(candidate) is dict else {}
+    else:
+        candidate = getattr(event, "data", None) or getattr(event, "payload", None)
+        payload = candidate if type(candidate) is dict else {}
     work_item = payload.get("work_item") or {}
     new_status = str(payload.get("new_status") or work_item.get("status") or "")
     if not _should_notify(work_item, new_status):

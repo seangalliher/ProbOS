@@ -186,6 +186,15 @@ async def _outbox_rows(store: WorkItemStore) -> list[Any]:
     return list(await cursor.fetchall())
 
 
+async def _delivery_outbox_rows(store: WorkItemStore) -> list[Any]:
+    assert store._db is not None
+    cursor = await store._db.execute(
+        "SELECT delivery_id, outcome, delivered FROM crew_delivery_outbox "
+        "ORDER BY delivery_id",
+    )
+    return list(await cursor.fetchall())
+
+
 def _arm_postcommit_ambiguity(network: TrustNetwork) -> dict[str, Any]:
     assert network._db is not None
     database = network._db
@@ -1049,6 +1058,9 @@ async def test_finalizer_accepted_applies_producer_facilitator_and_verifiers(
     assert await stores.work.list_pending_crew_trust_outcomes(limit=20) == ()
     rows = await _outbox_rows(stores.work)
     assert len(rows) == 4 and all(row[1] == 1 for row in rows)
+    delivery_rows = await _delivery_outbox_rows(stores.work)
+    assert len(delivery_rows) == 1
+    assert delivery_rows[0][1] == "done" and delivery_rows[0][2] == 0
     before = trust_network.raw_scores()
     event_count = len(trust_network.get_recent_events())
     duplicate = await finalizer.finalize(parent.id, results)
@@ -1113,6 +1125,9 @@ async def test_finalizer_convergence_exhausted_producer_beta_verifier_alpha(
     assert "facilitator-1" not in raw
     rows = await _outbox_rows(stores.work)
     assert len(rows) == 4 and all(row[1] == 1 for row in rows)
+    delivery_rows = await _delivery_outbox_rows(stores.work)
+    assert len(delivery_rows) == 1
+    assert delivery_rows[0][1] == "failed" and delivery_rows[0][2] == 0
 
 
 async def test_finalizer_final_refutation_facilitator_beta_verifier_alpha(
@@ -1142,6 +1157,9 @@ async def test_finalizer_final_refutation_facilitator_beta_verifier_alpha(
     assert "producer-1" not in raw
     rows = await _outbox_rows(stores.work)
     assert len(rows) == 2 and all(row[1] == 1 for row in rows)
+    delivery_rows = await _delivery_outbox_rows(stores.work)
+    assert len(delivery_rows) == 1
+    assert delivery_rows[0][1] == "failed" and delivery_rows[0][2] == 0
 
 
 @pytest.mark.parametrize(
@@ -1198,6 +1216,10 @@ async def test_neutral_terminal_paths_create_no_effect(
     assert result.reason == reason
     assert trust_network.raw_scores() == {}
     assert await stores.work.list_pending_crew_trust_outcomes(limit=20) == ()
+    delivery_rows = await _delivery_outbox_rows(stores.work)
+    assert len(delivery_rows) == 1
+    assert delivery_rows[0][1] in {"failed", "blocked_needs_captain"}
+    assert delivery_rows[0][2] == 0
 
 
 async def test_no_attempt_invalid_child_creates_no_effect(
@@ -1304,6 +1326,12 @@ async def test_postcommit_cancellation_leaves_committed_outbox_for_retry(
     assert session is not None and session.state == "done"
     pending = await stores.work.list_pending_crew_trust_outcomes(limit=20)
     assert len(pending) == 4
+    delivery_pending = await stores.work.list_pending_crew_session_deliveries(
+        limit=20,
+        session_id=parent.id,
+    )
+    assert len(delivery_pending) == 1
+    assert delivery_pending[0].record.outcome == "done"
     assert trust_network.raw_scores() == {}
 
     recorder = CrewSessionTrustRecorder(outbox=stores.work, trust_network=trust_network)
@@ -1384,6 +1412,88 @@ async def test_failure_terminal_outbox_failure_rolls_back_parent_and_effects(
     session = await service.get_session(parent.id)
     assert session is not None and session.state == "verifying"
     assert await _outbox_rows(stores.work) == []
+    assert await _delivery_outbox_rows(stores.work) == []
+    assert trust_network.raw_scores() == {}
+
+
+async def test_verified_done_delivery_insert_failure_rolls_back_done_and_trust(
+    stores: Any,
+    tmp_path: Path,
+    trust_network: TrustNetwork,
+) -> None:
+    parent, _thread, service, _contract, children, results = await _executing_case(stores)
+    finalizer = await _recorder_finalizer(
+        stores,
+        tmp_path,
+        service=service,
+        children=children,
+        judge=_ScriptedLLM([_verdict(True), _verdict(True)]),
+        synth=_ScriptedLLM([_text("Candidate")]),
+        executor=_StaticAgenticExecutor(),
+        trust=trust_network,
+    )
+    original = stores.connection.execute
+    failed_once = False
+
+    async def fail_first_delivery(sql: str, parameters: Any = ()) -> Any:
+        nonlocal failed_once
+        if "INSERT INTO crew_delivery_outbox" in sql and not failed_once:
+            failed_once = True
+            raise OSError("delivery outbox insert failed")
+        return await original(sql, parameters)
+
+    stores.connection.execute = fail_first_delivery
+    try:
+        result = await finalizer.finalize(parent.id, results)
+    finally:
+        stores.connection.execute = original
+    assert result.reason == "result_publication_failed"
+    row = await stores.work.get_work_item(parent.id)
+    assert row is not None and row.status == "failed"
+    assert "crew_synth" not in row.metadata
+    assert await _outbox_rows(stores.work) == []
+    delivery_rows = await _delivery_outbox_rows(stores.work)
+    assert len(delivery_rows) == 1 and delivery_rows[0][1] == "failed"
+    assert trust_network.raw_scores() == {}
+
+
+async def test_verified_failed_delivery_insert_failure_rolls_back_all_outboxes(
+    stores: Any,
+    tmp_path: Path,
+    trust_network: TrustNetwork,
+) -> None:
+    parent, _thread, service, _contract, children, results = await _executing_case(stores)
+    finalizer = await _recorder_finalizer(
+        stores,
+        tmp_path,
+        service=service,
+        children=children,
+        judge=_ScriptedLLM([
+            _verdict(False),
+            _verdict(False),
+            _verdict(False),
+        ]),
+        synth=_ScriptedLLM([]),
+        executor=_StaticAgenticExecutor(final_text="Still incomplete"),
+        trust=trust_network,
+    )
+    original = stores.connection.execute
+
+    async def fail_delivery(sql: str, parameters: Any = ()) -> Any:
+        if "INSERT INTO crew_delivery_outbox" in sql:
+            raise OSError("delivery outbox insert failed")
+        return await original(sql, parameters)
+
+    stores.connection.execute = fail_delivery
+    try:
+        with pytest.raises(OSError, match="delivery outbox insert failed"):
+            await finalizer.finalize(parent.id, results)
+    finally:
+        stores.connection.execute = original
+    session = await service.get_session(parent.id)
+    assert session is not None and session.state == "verifying"
+    assert await _outbox_rows(stores.work) == []
+    assert await _delivery_outbox_rows(stores.work) == []
     assert trust_network.raw_scores() == {}
 
 
