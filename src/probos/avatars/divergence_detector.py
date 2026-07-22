@@ -593,21 +593,31 @@ def apply_divergence_check(
         pos_threshold = float(getattr(t_cfg, "divergence_positive_threshold", 0.5))
         neg_weight = float(getattr(t_cfg, "divergence_negative_weight", 0.4))
         pos_weight = float(getattr(t_cfg, "divergence_positive_weight", 0.1))
-        if result.magnitude > neg_threshold and result.signed_divergence < 0:
-            trust.record_outcome(
-                agent_id=agent_id,
-                success=False,
-                weight=result.magnitude * neg_weight,
-                intent_type="avatar_divergence",
-                source="avatar_divergence",
-            )
-        elif result.magnitude > pos_threshold and result.signed_divergence > 0:
-            trust.record_outcome(
-                agent_id=agent_id,
-                success=True,
-                weight=result.magnitude * pos_weight,
-                intent_type="avatar_divergence",
-                source="avatar_divergence",
+        try:
+            if result.magnitude > neg_threshold and result.signed_divergence < 0:
+                trust.record_outcome(
+                    agent_id=agent_id,
+                    success=False,
+                    weight=result.magnitude * neg_weight,
+                    intent_type="avatar_divergence",
+                    source="avatar_divergence",
+                )
+            elif result.magnitude > pos_threshold and result.signed_divergence > 0:
+                trust.record_outcome(
+                    agent_id=agent_id,
+                    success=True,
+                    weight=result.magnitude * pos_weight,
+                    intent_type="avatar_divergence",
+                    source="avatar_divergence",
+                )
+        except RuntimeError as exc:
+            if str(exc) != "trust_write_in_progress":
+                raise
+            logger.warning(
+                "AD-1130: Avatar divergence trust observation skipped for "
+                "agent=%s because a durable trust write is in progress; "
+                "divergence history and Hebbian processing continue",
+                agent_id,
             )
 
     # Hebbian update -- match strengthens, non-match weakens.

@@ -274,6 +274,136 @@ class TestApplyExecutionEdgeCases:
         # Trust called once per unique agent
         trust.record_outcome.assert_called_once_with("agent-1", success=True)
 
+    @pytest.mark.asyncio
+    async def test_busy_trust_preserves_hebbian_episode_and_omits_trust_event(self):
+        trust = _make_trust()
+        trust.record_outcome.side_effect = RuntimeError("trust_write_in_progress")
+        hebbian = _make_hebbian()
+        episodic = _make_episodic()
+        event_log = _make_event_log()
+        dag = _make_dag([_make_node("read_file", "agent-1")])
+        eng = _engine(
+            trust=trust,
+            hebbian=hebbian,
+            episodic=episodic,
+            event_log=event_log,
+        )
+
+        result = await eng.apply_execution_feedback(
+            dag,
+            positive=True,
+            original_text="read x",
+        )
+
+        assert result.agents_updated == ["agent-1"]
+        assert result.episode_stored is True
+        hebbian.record_interaction.assert_called_once()
+        episodic.store.assert_awaited_once()
+        event_names = [
+            call_obj.kwargs.get("event") or call_obj.args[1]
+            for call_obj in event_log.log.call_args_list
+        ]
+        assert "feedback_hebbian_update" in event_names
+        assert "feedback_positive" in event_names
+        assert "feedback_trust_update" not in event_names
+
+    @pytest.mark.asyncio
+    async def test_partially_busy_trust_event_names_only_successful_agents(self):
+        trust = _make_trust()
+        trust.record_outcome.side_effect = [
+            0.5,
+            RuntimeError("trust_write_in_progress"),
+        ]
+        event_log = _make_event_log()
+        dag = _make_dag([
+            _make_node("read_file", "agent-1", node_id="n1"),
+            _make_node("write_file", "agent-2", node_id="n2"),
+        ])
+
+        await _engine(trust=trust, event_log=event_log).apply_execution_feedback(
+            dag,
+            positive=True,
+            original_text="read and write",
+        )
+
+        trust_events = [
+            call_obj
+            for call_obj in event_log.log.call_args_list
+            if (call_obj.kwargs.get("event") or call_obj.args[1])
+            == "feedback_trust_update"
+        ]
+        assert len(trust_events) == 1
+        assert json.loads(trust_events[0].kwargs["detail"])["agents"] == [
+            "agent-1",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_other_trust_runtime_error_propagates(self):
+        trust = _make_trust()
+        trust.record_outcome.side_effect = RuntimeError("trust store defect")
+        dag = _make_dag([_make_node("read_file", "agent-1")])
+
+        with pytest.raises(RuntimeError, match="^trust store defect$"):
+            await _engine(trust=trust).apply_execution_feedback(
+                dag,
+                positive=True,
+                original_text="read x",
+            )
+
+    @pytest.mark.asyncio
+    async def test_correction_busy_trust_preserves_hebbian_episode_and_event(self):
+        trust = _make_trust()
+        trust.record_outcome.side_effect = RuntimeError("trust_write_in_progress")
+        hebbian = _make_hebbian()
+        episodic = _make_episodic()
+        event_log = _make_event_log()
+        correction = MagicMock(
+            target_agent_type="agent-1",
+            correction_type="parameter_fix",
+            corrected_values={"path": "fixed"},
+            target_intent="read_file",
+        )
+        patch_result = MagicMock(changes_description="fixed path")
+
+        result = await _engine(
+            trust=trust,
+            hebbian=hebbian,
+            episodic=episodic,
+            event_log=event_log,
+        ).apply_correction_feedback(
+            "read the file",
+            correction,
+            patch_result,
+            retry_success=True,
+        )
+
+        assert result.agents_updated == ["agent-1"]
+        assert result.episode_stored is True
+        hebbian.record_interaction.assert_called_once()
+        episodic.store.assert_awaited_once()
+        event_names = [
+            call_obj.kwargs.get("event") or call_obj.args[1]
+            for call_obj in event_log.log.call_args_list
+        ]
+        assert "feedback_correction_applied" in event_names
+
+    @pytest.mark.asyncio
+    async def test_correction_other_trust_runtime_error_propagates(self):
+        trust = _make_trust()
+        trust.record_outcome.side_effect = RuntimeError("trust store defect")
+        correction = MagicMock(
+            target_agent_type="agent-1",
+            target_intent="read_file",
+        )
+
+        with pytest.raises(RuntimeError, match="^trust store defect$"):
+            await _engine(trust=trust).apply_correction_feedback(
+                "read the file",
+                correction,
+                MagicMock(changes_description="fixed path"),
+                retry_success=True,
+            )
+
 
 # ---------------------------------------------------------------------------
 # TestRejectionFeedback

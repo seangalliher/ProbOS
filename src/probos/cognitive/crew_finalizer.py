@@ -15,6 +15,14 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from probos.cognitive.crew_session import CrewSynthesisMetadata
+from probos.cognitive.crew_trust import (
+    MAX_CREW_TRUST_EFFECTS,
+    CrewSessionTrustRecorder,
+    CrewTrustEffect,
+    derive_completed_crew_trust_effects,
+    derive_convergence_exhausted_effects,
+    derive_final_refutation_effects,
+)
 from probos.cognitive.crew_verifier import (
     SessionConvergenceOutcome,
     SessionCorrectionTerminalAttempt,
@@ -643,7 +651,17 @@ class CrewSessionFinalizer:
         agent_registry: AgentRegistry,
         verifier: SubtaskVerifier,
         synthesizer: CrewSynthesizer,
+        trust_recorder: CrewSessionTrustRecorder | None = None,
+        approval_threshold: float = 0.6,
+        use_confidence_weights: bool = True,
     ) -> None:
+        if (
+            type(approval_threshold) not in (int, float)
+            or not math.isfinite(float(approval_threshold))
+            or not 0.0 <= float(approval_threshold) <= 1.0
+            or type(use_confidence_weights) is not bool
+        ):
+            raise ValueError("crew_trust_policy_invalid")
         self._work_items = work_item_store
         self._sessions = crew_session_service
         self._threads = chat_thread_store
@@ -652,7 +670,116 @@ class CrewSessionFinalizer:
         self._registry = agent_registry
         self._verifier = verifier
         self._synthesizer = synthesizer
+        self._trust_recorder = trust_recorder
+        self._approval_threshold = float(approval_threshold)
+        self._use_confidence_weights = use_confidence_weights
         self._active_claims: dict[str, _ClaimAttempt] = {}
+
+    async def drain_pending_trust(
+        self,
+        *,
+        limit: int = MAX_CREW_TRUST_EFFECTS,
+    ) -> int:
+        """Run one bounded awaited CrewSession trust outbox pass."""
+        if self._trust_recorder is None:
+            return 0
+        try:
+            return await self._trust_recorder.drain_pending(limit=limit)
+        except asyncio.CancelledError:
+            raise
+        except ValueError:
+            raise
+        except Exception:
+            logger.warning(
+                "Crew trust pending-outbox scan failed; terminal session state "
+                "remains authoritative and the next startup or finalization "
+                "will retry the bounded drain",
+                exc_info=True,
+            )
+            return 0
+
+    def _completed_trust_effects(
+        self,
+        *,
+        session: CrewSessionContract,
+        publications: list[_ChildPublication],
+        final_verdict: SessionVerificationPass,
+        final_evidence_sha256: str,
+    ) -> tuple[CrewTrustEffect, ...]:
+        if self._trust_recorder is None:
+            return ()
+        return derive_completed_crew_trust_effects(
+            session_id=session.task_id,
+            session_revision=session.revision + 1,
+            child_verifications=tuple(
+                item.verification
+                for item in sorted(publications, key=lambda value: value.child.id)
+            ),
+            facilitator_id=session.facilitator_id,
+            final_verifier_id=final_verdict.verifier_agent_id,
+            final_confidence=final_verdict.confidence,
+            final_evidence_sha256=final_evidence_sha256,
+            approval_threshold=self._approval_threshold,
+            use_confidence_weights=self._use_confidence_weights,
+        )
+
+    def _convergence_failure_trust_effects(
+        self,
+        *,
+        session: CrewSessionContract,
+        publications: list[_ChildPublication],
+    ) -> tuple[CrewTrustEffect, ...]:
+        if self._trust_recorder is None:
+            return ()
+        eligible = tuple(
+            item.verification
+            for item in sorted(publications, key=lambda value: value.child.id)
+            if item.outcome.failure_code in {None, "convergence_exhausted"}
+        )
+        if not any(
+            item.outcome.failure_code == "convergence_exhausted"
+            for item in publications
+        ):
+            return ()
+        return derive_convergence_exhausted_effects(
+            session_id=session.task_id,
+            session_revision=session.revision + 1,
+            child_verifications=eligible,
+        )
+
+    def _final_refutation_trust_effects(
+        self,
+        *,
+        session: CrewSessionContract,
+        publications: list[_ChildPublication],
+        final_verdict: SessionVerificationPass,
+        final_evidence_sha256: str,
+    ) -> tuple[CrewTrustEffect, ...]:
+        if self._trust_recorder is None:
+            return ()
+        if final_verdict.status != "refuted" or final_verdict.accepted:
+            raise ValueError("crew_trust_evidence_invalid")
+        return derive_final_refutation_effects(
+            session_id=session.task_id,
+            session_revision=session.revision + 1,
+            facilitator_id=session.facilitator_id,
+            final_verifier_id=final_verdict.verifier_agent_id,
+            final_evidence_sha256=final_evidence_sha256,
+            child_verifications=tuple(
+                item.verification
+                for item in sorted(publications, key=lambda value: value.child.id)
+            ),
+        )
+
+    @staticmethod
+    def _effect_evidence_refs(
+        effects: tuple[CrewTrustEffect, ...],
+    ) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(
+            effect.evidence_sha256
+            for effect in effects
+            if effect.role in {"facilitator", "final_verifier"}
+        ))
 
     async def finalize(
         self,
@@ -681,6 +808,8 @@ class CrewSessionFinalizer:
         if current.state == "verifying":
             raise ValueError("crew_session_finalization_in_progress")
         if current.state != "executing":
+            if current.state in {"done", "failed"}:
+                await self.drain_pending_trust()
             return self._observation(current, reason="session_not_executing")
         existing_claim = self._active_claims.get(parent_key)
         if existing_claim is not None:
@@ -710,6 +839,8 @@ class CrewSessionFinalizer:
                     authoritative,
                     reason="claim_failed",
                 )
+            if authoritative.state in {"done", "failed"}:
+                await self.drain_pending_trust()
             return self._observation(
                 authoritative,
                 reason="finalization_in_progress",
@@ -765,6 +896,8 @@ class CrewSessionFinalizer:
         if session is None:
             raise ValueError("crew_session_not_initialized")
         if session.state in {"done", "failed", "blocked_needs_captain"}:
+            if session.state in {"done", "failed"}:
+                await self.drain_pending_trust()
             return self._observation(session, reason="session_terminal")
         recovery = await self._sessions.get_recovery(parent_key)
         if recovery is None or recovery.plan is None:
@@ -836,6 +969,23 @@ class CrewSessionFinalizer:
             reason, blocked = self._outcome_failure(
                 next(item.outcome for item in publications if not item.outcome.accepted),
             )
+            effects = (
+                self._convergence_failure_trust_effects(
+                    session=session,
+                    publications=publications,
+                )
+                if not blocked
+                else ()
+            )
+            if effects:
+                return await self._fail_verified(
+                    session,
+                    reason=reason,
+                    accepted_count=self._accepted_count(publications),
+                    total_count=len(publications),
+                    effects=effects,
+                    recovery=recovery,
+                )
             return await self._fail_recovery(
                 session,
                 recovery,
@@ -887,6 +1037,33 @@ class CrewSessionFinalizer:
             else:
                 reason = "verification_defect"
                 blocked = False
+            if reason == "final_verification_refuted":
+                if self._trust_recorder is None:
+                    return await self._fail_recovery(
+                        session,
+                        recovery,
+                        reason=reason,
+                        accepted_count=self._accepted_count(publications),
+                        total_count=len(publications),
+                        blocked=False,
+                    )
+                verification_ref = recovery.final_verification_ref
+                if verification_ref is None:
+                    raise ValueError("crew_finalization_verdict_recovery_invalid")
+                effects = self._final_refutation_trust_effects(
+                    session=session,
+                    publications=publications,
+                    final_verdict=final_verdict,
+                    final_evidence_sha256=verification_ref,
+                )
+                return await self._fail_verified(
+                    session,
+                    reason=reason,
+                    accepted_count=self._accepted_count(publications),
+                    total_count=len(publications),
+                    effects=effects,
+                    recovery=recovery,
+                )
             return await self._fail_recovery(
                 session,
                 recovery,
@@ -923,6 +1100,17 @@ class CrewSessionFinalizer:
             result_hash=result_hash,
             provenance_ref=provenance_ref,
         )
+        trust_effects = self._completed_trust_effects(
+            session=session,
+            publications=publications,
+            final_verdict=final_verdict,
+            final_evidence_sha256=provenance_ref,
+        )
+        trust_kwargs = (
+            {"crew_trust_effects": trust_effects}
+            if trust_effects
+            else {}
+        )
         completed = await self._sessions.publish_verified_result(
             session.task_id,
             expected_revision=session.revision,
@@ -935,7 +1123,9 @@ class CrewSessionFinalizer:
             last_result_summary=draft.final_text[:4_096],
             provenance_ref=provenance_ref,
             result_artifact_id=artifact.id,
+            **trust_kwargs,
         )
+        await self.drain_pending_trust()
         return CrewSessionFinalizationResult(
             parent_id=session.task_id,
             claimed=True,
@@ -1996,6 +2186,23 @@ class CrewSessionFinalizer:
 
         if first_failure is not None:
             reason, blocked = first_failure
+            effects = (
+                self._convergence_failure_trust_effects(
+                    session=session,
+                    publications=publications,
+                )
+                if not blocked
+                else ()
+            )
+            if effects:
+                return await self._fail_verified(
+                    session,
+                    reason=reason,
+                    accepted_count=self._accepted_count(publications),
+                    total_count=len(children),
+                    effects=effects,
+                    recovery=None,
+                )
             return await self._fail(
                 session,
                 reason=reason,
@@ -2117,11 +2324,45 @@ class CrewSessionFinalizer:
                 total_count=len(children),
             )
         if not final_verdict.accepted:
-            return await self._fail(
+            if self._trust_recorder is None:
+                return await self._fail(
+                    session,
+                    reason="final_verification_refuted",
+                    accepted_count=self._accepted_count(publications),
+                    total_count=len(children),
+                )
+            try:
+                verdict_ref = await self._write_json_checkpoint(
+                    {
+                        "version": 1,
+                        "parent_id": session.task_id,
+                        "thread_id": session.thread_id,
+                        "verdict": self._verdict_document(final_verdict),
+                    },
+                    maximum=_MAX_VERIFICATION_BYTES,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return await self._fail(
+                    session,
+                    reason="verification_defect",
+                    accepted_count=self._accepted_count(publications),
+                    total_count=len(children),
+                )
+            effects = self._final_refutation_trust_effects(
+                session=session,
+                publications=publications,
+                final_verdict=final_verdict,
+                final_evidence_sha256=verdict_ref,
+            )
+            return await self._fail_verified(
                 session,
                 reason="final_verification_refuted",
                 accepted_count=self._accepted_count(publications),
                 total_count=len(children),
+                effects=effects,
+                recovery=None,
             )
         return await self._publish(
             session=session,
@@ -2836,6 +3077,17 @@ class CrewSessionFinalizer:
                 result_hash=result_hash,
                 provenance_ref=provenance_ref,
             )
+            trust_effects = self._completed_trust_effects(
+                session=session,
+                publications=publications,
+                final_verdict=final_verdict,
+                final_evidence_sha256=provenance_ref,
+            )
+            trust_kwargs = (
+                {"crew_trust_effects": trust_effects}
+                if trust_effects
+                else {}
+            )
             completed = await self._sessions.publish_verified_result(
                 session.task_id,
                 expected_revision=session.revision,
@@ -2851,6 +3103,7 @@ class CrewSessionFinalizer:
                 last_result_summary=draft.final_text[:4_096],
                 provenance_ref=provenance_ref,
                 result_artifact_id=artifact.id,
+                **trust_kwargs,
             )
         except asyncio.CancelledError:
             logger.warning(
@@ -2882,6 +3135,7 @@ class CrewSessionFinalizer:
                 accepted_count=self._accepted_count(publications),
                 total_count=len(publications),
             )
+        await self.drain_pending_trust()
         return CrewSessionFinalizationResult(
             parent_id=session.task_id,
             claimed=True,
@@ -2893,6 +3147,40 @@ class CrewSessionFinalizer:
             result_artifact_id=artifact.id,
             provenance_ref=provenance_ref,
             reason="completed",
+        )
+
+    async def _fail_verified(
+        self,
+        session: CrewSessionContract,
+        *,
+        reason: str,
+        accepted_count: int,
+        total_count: int,
+        effects: tuple[CrewTrustEffect, ...],
+        recovery: Any | None,
+    ) -> CrewSessionFinalizationResult:
+        if not effects:
+            raise ValueError("crew_trust_evidence_invalid")
+        transitioned = await self._sessions.fail_verified_outcome(
+            session.task_id,
+            expected_revision=session.revision,
+            reason=reason,
+            expected_recovery=recovery,
+            crew_trust_effects=effects,
+            evidence_refs=self._effect_evidence_refs(effects),
+        )
+        await self.drain_pending_trust()
+        return CrewSessionFinalizationResult(
+            parent_id=session.task_id,
+            claimed=True,
+            state=transitioned.state,
+            completed=False,
+            final_output="",
+            accepted_count=accepted_count,
+            total_count=total_count,
+            result_artifact_id=None,
+            provenance_ref=None,
+            reason=reason,
         )
 
     @staticmethod

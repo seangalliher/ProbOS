@@ -408,6 +408,38 @@ class TestCounselorFeedback:
         assert "trust rating has been adjusted" in msg
 
     @pytest.mark.asyncio
+    async def test_second_offense_busy_trust_still_sends_honest_dm(self, counselor):
+        data = {
+            "agent_id": "agent-x",
+            "callsign": "Wesley",
+            "rejection_reason": "fabricated_hex_ids",
+            "trust_score": 0.3,
+        }
+        await counselor._on_confabulation_suppressed(data)
+        counselor._send_therapeutic_dm.reset_mock()
+        counselor._trust_network.record_outcome.side_effect = RuntimeError(
+            "trust_write_in_progress",
+        )
+
+        await counselor._on_confabulation_suppressed(data)
+
+        message = counselor._send_therapeutic_dm.await_args.args[2]
+        assert "trust adjustment was skipped" in message
+        assert "trust rating has been adjusted" not in message
+        assert counselor._cognitive_profiles["agent-x"].confabulation_count == 2
+
+    @pytest.mark.asyncio
+    async def test_second_offense_other_trust_runtime_error_propagates(self, counselor):
+        data = {"agent_id": "agent-x", "callsign": "W", "trust_score": 0.3}
+        await counselor._on_confabulation_suppressed(data)
+        counselor._trust_network.record_outcome.side_effect = RuntimeError(
+            "trust store defect",
+        )
+
+        with pytest.raises(RuntimeError, match="^trust store defect$"):
+            await counselor._on_confabulation_suppressed(data)
+
+    @pytest.mark.asyncio
     async def test_trust_penalty_weight(self, counselor):
         """Trust penalty uses weight=0.5 and source='confabulation'."""
         data = {"agent_id": "agent-x", "callsign": "W", "trust_score": 0.3}

@@ -2119,8 +2119,30 @@ class _WorkItemStoreProtocol(Protocol):
         expected_assigned_to: str,
         expected_direct_children: tuple[dict[str, Any], ...],
         new_status: str,
+        crew_trust_effects: tuple[Any, ...] = (),
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None: ...
+
+    async def transition_crew_session_terminal_with_trust(
+        self,
+        work_item_id: str,
+        patch: dict[str, Any],
+        *,
+        expected_metadata: dict[str, Any],
+        expected_status: str,
+        expected_assigned_to: str,
+        new_status: str,
+        crew_trust_effects: tuple[Any, ...],
+        source: str = "crew_session_verified_failure",
+    ) -> WorkItem | None: ...
+
+    async def has_exact_crew_trust_outcomes(
+        self,
+        effects: tuple[Any, ...],
+        *,
+        session_id: str,
+        session_revision: int,
+    ) -> bool: ...
 
     async def install_child_plan_with_parent_metadata(
         self,
@@ -4321,11 +4343,33 @@ class CrewSessionService:
         last_result_summary: str,
         provenance_ref: str,
         result_artifact_id: str,
+        crew_trust_effects: tuple[Any, ...] = (),
     ) -> CrewSessionContract:
         """Atomically publish both verified refs and transition to ``done``."""
         parent_key = _normalize_id(parent_id)
         if type(expected_revision) is not int:
             raise ValueError("crew_session_revision_invalid")
+        if crew_trust_effects:
+            from probos.cognitive.crew_trust import CrewTrustEffect
+
+            if (
+                type(crew_trust_effects) is not tuple
+                or any(
+                    type(effect) is not CrewTrustEffect
+                    or not effect.success
+                    or effect.session_id != parent_key
+                    for effect in crew_trust_effects
+                )
+                or sum(
+                    effect.role == "facilitator"
+                    for effect in crew_trust_effects
+                ) != 1
+                or sum(
+                    effect.role == "final_verifier"
+                    for effect in crew_trust_effects
+                ) != 1
+            ):
+                raise ValueError("crew_trust_evidence_invalid")
         try:
             synthesis = CrewSynthesisMetadata.model_validate(crew_synth)
         except ValidationError as exc:
@@ -4436,6 +4480,11 @@ class CrewSessionService:
         )
         publish_error: BaseException | None = None
         try:
+            trust_kwargs = (
+                {"crew_trust_effects": crew_trust_effects}
+                if crew_trust_effects
+                else {}
+            )
             await self._work_items.publish_work_item_metadata_with_child_barrier(
                 parent.id,
                 publication_patch,
@@ -4448,10 +4497,11 @@ class CrewSessionService:
                 expected_direct_children=expected_direct_children,
                 new_status="done",
                 source="crew_session_verified_result",
+                **trust_kwargs,
             )
         except asyncio.CancelledError as exc:
             publish_error = exc
-        except Exception as exc:
+        except BaseException as exc:
             publish_error = exc
         try:
             authoritative_contract = await self._authoritative_publication(
@@ -4472,6 +4522,38 @@ class CrewSessionService:
                 raise publish_error
             raise
         if authoritative_contract is not None:
+            if crew_trust_effects and publish_error is not None:
+                try:
+                    outbox_matches = (
+                        await self._work_items.has_exact_crew_trust_outcomes(
+                            crew_trust_effects,
+                            session_id=parent.id,
+                            session_revision=contract.revision,
+                        )
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    if publish_error is not None:
+                        raise publish_error
+                    raise
+                if not outbox_matches:
+                    if publish_error is not None:
+                        raise publish_error
+                    raise ValueError("crew_session_publication_failed")
+            if isinstance(publish_error, asyncio.CancelledError):
+                logger.warning(
+                    "Crew session parent=%s publication cancellation arrived "
+                    "after the exact done contract committed; cancellation "
+                    "propagates and the pending trust outbox will replay on restart",
+                    parent.id,
+                )
+                raise publish_error
+            if publish_error is not None and not isinstance(
+                publish_error,
+                Exception,
+            ):
+                raise publish_error
             if publish_error is not None:
                 logger.warning(
                     "Crew session parent=%s publication raised after the exact "
@@ -4490,6 +4572,188 @@ class CrewSessionService:
         if publish_error is not None:
             raise publish_error
         raise ValueError("crew_session_publication_failed")
+
+    async def fail_verified_outcome(
+        self,
+        parent_id: str,
+        *,
+        expected_revision: int,
+        reason: str,
+        expected_recovery: CrewRecoveryContract | None,
+        crew_trust_effects: tuple[Any, ...],
+        evidence_refs: tuple[str, ...] = (),
+    ) -> CrewSessionContract:
+        """Atomically fail one verified outcome and enqueue its trust effects."""
+        parent_key = _normalize_id(parent_id)
+        if type(expected_revision) is not int:
+            raise ValueError("crew_session_revision_invalid")
+        summary = _normalize_text(reason, maximum=4_096, allow_empty=False)
+        from probos.cognitive.crew_trust import CrewTrustEffect
+
+        if (
+            type(crew_trust_effects) is not tuple
+            or not crew_trust_effects
+            or any(
+                type(effect) is not CrewTrustEffect
+                or effect.session_id != parent_key
+                for effect in crew_trust_effects
+            )
+        ):
+            raise ValueError("crew_trust_evidence_invalid")
+        roles = tuple(effect.role for effect in crew_trust_effects)
+        has_final_effects = any(
+            role in {"facilitator", "final_verifier"}
+            for role in roles
+        )
+        if not has_final_effects:
+            if (
+                any(role not in {"child_producer", "child_verifier"} for role in roles)
+                or not any(
+                    effect.role == "child_producer" and not effect.success
+                    for effect in crew_trust_effects
+                )
+                or any(
+                    effect.role == "child_producer" and effect.success
+                    for effect in crew_trust_effects
+                )
+                or any(
+                    effect.role == "child_verifier" and not effect.success
+                    for effect in crew_trust_effects
+                )
+            ):
+                raise ValueError("crew_trust_evidence_invalid")
+        elif (
+            reason != "final_verification_refuted"
+            or
+            sum(
+                effect.role == "facilitator" and not effect.success
+                for effect in crew_trust_effects
+            ) != 1
+            or sum(
+                effect.role == "final_verifier" and effect.success
+                for effect in crew_trust_effects
+            ) != 1
+            or any(
+                effect.role == "child_producer"
+                or (effect.role == "child_verifier" and not effect.success)
+                for effect in crew_trust_effects
+            )
+        ):
+            raise ValueError("crew_trust_evidence_invalid")
+        if type(evidence_refs) is not tuple:
+            raise ValueError("crew_session_evidence_refs_invalid")
+        supplied_refs = self._evidence_input(list(evidence_refs))
+        parent = await self._work_items.get_work_item(parent_key)
+        if parent is None:
+            raise ValueError("crew_session_parent_not_found")
+        metadata = parent.metadata or {}
+        raw = metadata.get("crew_session", _MISSING)
+        if raw is _MISSING:
+            raise ValueError("crew_session_not_initialized")
+        current = self._parse_contract(raw)
+        await self._validate_loaded(parent, current)
+        if current.state != "verifying" or current.revision != expected_revision:
+            raise ValueError("crew_session_revision_conflict")
+        recovery_raw = metadata.get("crew_recovery", _MISSING)
+        if expected_recovery is None:
+            if recovery_raw is not _MISSING:
+                raise ValueError("crew_recovery_pair_required")
+        else:
+            checkpoint = self._validate_recovery(expected_recovery)
+            if recovery_raw is _MISSING:
+                raise ValueError("crew_recovery_conflict")
+            current_recovery = self._parse_recovery(recovery_raw)
+            await self._validate_recovery_context(parent.id, current_recovery)
+            if not _json_values_exactly_equal(
+                current_recovery.model_dump(mode="json"),
+                checkpoint.model_dump(mode="json"),
+            ):
+                raise ValueError("crew_recovery_conflict")
+
+        now = self._server_time(
+            current.created_at,
+            current.transitioned_at,
+            current.started_at,
+            current.first_result_at,
+        )
+        values = current.model_dump(mode="json")
+        values.update({
+            "state": "failed",
+            "previous_state": current.state,
+            "revision": current.revision + 1,
+            "transitioned_at": now,
+            "completed_at": now,
+            "last_result_summary": summary,
+        })
+        next_refs = list(current.evidence_refs)
+        for ref in supplied_refs:
+            if ref not in next_refs:
+                next_refs.append(ref)
+        if len(next_refs) > 32:
+            raise ValueError("crew_session_evidence_refs_invalid")
+        values["evidence_refs"] = next_refs
+        if current.first_result_at is None:
+            values["first_result_at"] = now
+        contract = self._validate_contract(values)
+        _validate_session_recovery_invariant(contract, expected_recovery)
+        patch = {"crew_session": contract.model_dump(mode="json")}
+        commit_error: BaseException | None = None
+        updated: WorkItem | None = None
+        try:
+            updated = await self._work_items.transition_crew_session_terminal_with_trust(
+                parent.id,
+                patch,
+                expected_metadata=dict(metadata),
+                expected_status=_STATUS_PROJECTION[current.state],
+                expected_assigned_to=current.facilitator_id,
+                new_status="failed",
+                crew_trust_effects=crew_trust_effects,
+            )
+        except asyncio.CancelledError as exc:
+            commit_error = exc
+        except BaseException as exc:
+            commit_error = exc
+        if commit_error is not None or updated is None:
+            authoritative = await self._work_items.get_work_item(parent.id)
+            exact_terminal = (
+                authoritative is not None
+                and authoritative.work_type == "crew_session"
+                and authoritative.status == "failed"
+                and authoritative.assigned_to == current.facilitator_id
+                and _json_values_exactly_equal(
+                    (authoritative.metadata or {}).get("crew_session", _MISSING),
+                    contract.model_dump(mode="json"),
+                )
+                and await self._work_items.has_exact_crew_trust_outcomes(
+                    crew_trust_effects,
+                    session_id=parent.id,
+                    session_revision=contract.revision,
+                )
+            )
+            if not exact_terminal:
+                if commit_error is not None:
+                    raise commit_error
+                raise ValueError("crew_session_transition_failed")
+            updated = authoritative
+            if isinstance(commit_error, asyncio.CancelledError):
+                raise commit_error
+            if commit_error is not None and not isinstance(
+                commit_error,
+                Exception,
+            ):
+                raise commit_error
+            if commit_error is not None:
+                logger.warning(
+                    "Crew session parent=%s verified-failure transition raised "
+                    "after the exact failed contract and trust outbox committed; "
+                    "returning authoritative state for bounded delivery",
+                    parent.id,
+                )
+        authoritative = self._parse_contract(
+            updated.metadata.get("crew_session"),
+        )
+        await self._validate_loaded(updated, authoritative)
+        return authoritative
 
     async def _authoritative_publication(
         self,

@@ -340,6 +340,49 @@ def test_apply_divergence_positive_rewards_trust(tmp_path):
     assert new_score > prior_score
 
 
+def test_apply_divergence_busy_trust_preserves_history_and_hebbian(tmp_path):
+    runtime = _make_runtime_with_real_trust_hebb(tmp_path)
+    runtime.trust_network.record_outcome = MagicMock(
+        side_effect=RuntimeError("trust_write_in_progress"),
+    )
+    agent = _make_agent_with_modulation("agent-007", ("low_trust_pitch",))
+
+    stripped = apply_divergence_check(
+        runtime=runtime,
+        agent_id="agent-007",
+        agent=agent,
+        response_text="Reply.\n<intent emotion=warm>",
+        t_cfg=_make_t_cfg(),
+    )
+
+    assert stripped == "Reply."
+    assert runtime.divergence_results["agent-007"].signed_divergence < 0
+    hebbian_key = (
+        "agent-007",
+        "avatar:emotion:warm",
+        REL_AVATAR_INTENT,
+    )
+    assert hebbian_key in runtime.hebbian_router._weights
+    assert runtime.hebbian_router.get_weight(*hebbian_key) == 0.0
+
+
+def test_apply_divergence_other_trust_runtime_error_propagates(tmp_path):
+    runtime = _make_runtime_with_real_trust_hebb(tmp_path)
+    runtime.trust_network.record_outcome = MagicMock(
+        side_effect=RuntimeError("trust store defect"),
+    )
+    agent = _make_agent_with_modulation("agent-007", ("low_trust_pitch",))
+
+    with pytest.raises(RuntimeError, match="^trust store defect$"):
+        apply_divergence_check(
+            runtime=runtime,
+            agent_id="agent-007",
+            agent=agent,
+            response_text="Reply.\n<intent emotion=warm>",
+            t_cfg=_make_t_cfg(),
+        )
+
+
 def test_apply_divergence_below_negative_threshold_no_trust_update(tmp_path):
     runtime = _make_runtime_with_real_trust_hebb(tmp_path)
     # Match -- magnitude == 0 (intent_warm fired + intent=warm).

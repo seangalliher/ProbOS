@@ -592,6 +592,64 @@ class TestTrustIntegration:
         await rt.stop()
 
     @pytest.mark.asyncio
+    async def test_busy_trust_preserves_qa_report_episode_and_policy(self, tmp_path):
+        from probos.runtime import ProbOSRuntime
+        from probos.cognitive.episodic_mock import MockEpisodicMemory
+        from probos.cognitive.llm_client import MockLLMClient
+
+        memory = MockEpisodicMemory()
+        rt = ProbOSRuntime(
+            data_dir=tmp_path / "data",
+            llm_client=MockLLMClient(),
+            episodic_memory=memory,
+        )
+        await rt.start()
+        agent = PassingMockAgent(agent_id="busy-qa")
+        rt.pools["designed_count_words"] = MockPool([agent])
+        rt._system_qa = SystemQAAgent(agent_id="qa-busy")
+        rt._qa_reports = {}
+        original = rt.trust_network.record_outcome
+        rt.trust_network.record_outcome = lambda *args, **kwargs: (
+            (_ for _ in ()).throw(RuntimeError("trust_write_in_progress"))
+        )
+        try:
+            report = await rt._run_qa_for_designed_agent(_make_record())
+        finally:
+            rt.trust_network.record_outcome = original
+
+        assert report is not None and report.verdict == "passed"
+        assert rt._qa_reports["count_words"] is report
+        episodes = await memory.recent(k=10)
+        assert any("[SystemQA]" in episode.user_input for episode in episodes)
+        await rt.stop()
+
+    @pytest.mark.asyncio
+    async def test_other_trust_runtime_error_uses_qa_boundary(self, tmp_path):
+        from probos.runtime import ProbOSRuntime
+        from probos.cognitive.llm_client import MockLLMClient
+
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
+        await rt.start()
+        agent = PassingMockAgent(agent_id="defect-qa")
+        rt.pools["designed_count_words"] = MockPool([agent])
+        rt._system_qa = SystemQAAgent(agent_id="qa-defect")
+        rt._qa_reports = {}
+        original = rt.trust_network.record_outcome
+        rt.trust_network.record_outcome = lambda *args, **kwargs: (
+            (_ for _ in ()).throw(RuntimeError("trust store defect"))
+        )
+        try:
+            result = await rt._run_qa_for_designed_agent(_make_record())
+        finally:
+            rt.trust_network.record_outcome = original
+
+        assert result is None
+        assert "count_words" in rt._qa_reports
+        events = await rt.event_log.query(category="qa")
+        assert any(event["event"] == "qa_error" for event in events)
+        await rt.stop()
+
+    @pytest.mark.asyncio
     async def test_trust_weight_asymmetry(self, tmp_path):
         """Penalty weight (2.0) causes greater trust change than reward weight (1.0)."""
         from probos.runtime import ProbOSRuntime

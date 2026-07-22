@@ -121,6 +121,61 @@ class TestRuntimeConsensus:
         assert "quorum_evaluated" in event_types
         assert "verification_complete" in event_types
 
+    @pytest.mark.asyncio
+    async def test_busy_trust_preserves_verification_hebbian_and_event(
+        self,
+        runtime,
+        tmp_path,
+    ):
+        test_file = tmp_path / "busy_trust.txt"
+        test_file.write_text("trust content")
+        original = runtime.trust_network.record_outcome
+        runtime.trust_network.record_outcome = lambda *args, **kwargs: (
+            (_ for _ in ()).throw(RuntimeError("trust_write_in_progress"))
+        )
+        try:
+            result = await runtime.submit_intent_with_consensus(
+                "read_file",
+                params={"path": str(test_file)},
+                timeout=5.0,
+            )
+        finally:
+            runtime.trust_network.record_outcome = original
+
+        assert result["verifications"]
+        from probos.mesh.routing import REL_AGENT
+        assert any(
+            key[2] == REL_AGENT
+            for key in runtime.hebbian_router.all_weights_typed()
+        )
+        events = await runtime.event_log.query(category="consensus")
+        assert any(event["event"] == "verification_complete" for event in events)
+
+    @pytest.mark.asyncio
+    async def test_other_trust_runtime_error_uses_verification_boundary(
+        self,
+        runtime,
+        tmp_path,
+        caplog,
+    ):
+        test_file = tmp_path / "defective_trust.txt"
+        test_file.write_text("trust content")
+        original = runtime.trust_network.record_outcome
+        runtime.trust_network.record_outcome = lambda *args, **kwargs: (
+            (_ for _ in ()).throw(RuntimeError("trust store defect"))
+        )
+        try:
+            with caplog.at_level("WARNING", logger="probos.runtime"):
+                await runtime.submit_intent_with_consensus(
+                    "read_file",
+                    params={"path": str(test_file)},
+                    timeout=5.0,
+                )
+        finally:
+            runtime.trust_network.record_outcome = original
+
+        assert "Verification error" in caplog.text
+
 
 class TestCorruptedAgentDetection:
     @pytest.mark.asyncio

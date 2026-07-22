@@ -108,17 +108,29 @@ class FeedbackEngine:
             )
 
         # 2. Trust updates — one observation per agent
+        trust_updated_agent_ids: list[str] = []
         for agent_id in agent_ids:
-            self._trust.record_outcome(agent_id, success=positive)
+            try:
+                self._trust.record_outcome(agent_id, success=positive)
+                trust_updated_agent_ids.append(agent_id)
+            except RuntimeError as exc:
+                if str(exc) != "trust_write_in_progress":
+                    raise
+                logger.warning(
+                    "AD-1130: Feedback trust observation skipped for agent=%s "
+                    "because a durable trust write is in progress; Hebbian and "
+                    "episodic feedback processing continue",
+                    agent_id,
+                )
 
         # Event: Trust update (AD-222)
-        if self._event_log and agent_ids:
+        if self._event_log and trust_updated_agent_ids:
             await self._safe_log_event(
                 self._event_log,
                 category="cognitive",
                 event="feedback_trust_update",
                 detail=json.dumps({
-                    "agents": agent_ids,
+                    "agents": trust_updated_agent_ids,
                     "positive": positive,
                 }),
             )
@@ -189,7 +201,17 @@ class FeedbackEngine:
 
         # 2. Trust — small positive if retry succeeded
         if retry_success and agent_type:
-            self._trust.record_outcome(agent_type, success=True)
+            try:
+                self._trust.record_outcome(agent_type, success=True)
+            except RuntimeError as exc:
+                if str(exc) != "trust_write_in_progress":
+                    raise
+                logger.warning(
+                    "AD-1130: Correction trust observation skipped for agent=%s "
+                    "because a durable trust write is in progress; Hebbian and "
+                    "episodic correction processing continue",
+                    agent_type,
+                )
 
         # 3. Episodic memory — correction-tagged episode
         episode_stored = False

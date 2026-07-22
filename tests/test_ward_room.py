@@ -1419,6 +1419,83 @@ class TestEndorsementActivation:
 
         assert trust.get_or_create("troi").score > initial_score
 
+    @pytest.mark.asyncio
+    async def test_process_endorsements_busy_trust_preserves_endorsement(
+        self,
+        ward_room,
+    ):
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+
+        channels = await ward_room.list_channels()
+        thread = await ward_room.create_thread(
+            channel_id=channels[0].id,
+            author_id="troi",
+            title="Test",
+            body="Content",
+            author_callsign="Troi",
+        )
+        post = await ward_room.create_post(
+            thread_id=thread.id,
+            author_id="troi",
+            body="Solid analysis",
+            author_callsign="Troi",
+        )
+        trust = MagicMock()
+        trust.record_outcome.side_effect = RuntimeError(
+            "trust_write_in_progress",
+        )
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        rt.ward_room = ward_room
+        rt.trust_network = trust
+        self._attach_router(rt, ward_room=ward_room, trust_network=trust)
+
+        await rt.ward_room_router.process_endorsements(
+            [{"post_id": post.id, "direction": "up"}],
+            agent_id="worf",
+        )
+
+        assert (await ward_room.get_post(post.id))["net_score"] == 1
+
+    @pytest.mark.asyncio
+    async def test_process_endorsements_other_runtime_error_uses_outer_boundary(
+        self,
+        ward_room,
+        caplog,
+    ):
+        from unittest.mock import MagicMock
+        from probos.runtime import ProbOSRuntime
+
+        channels = await ward_room.list_channels()
+        thread = await ward_room.create_thread(
+            channel_id=channels[0].id,
+            author_id="troi",
+            title="Test",
+            body="Content",
+            author_callsign="Troi",
+        )
+        post = await ward_room.create_post(
+            thread_id=thread.id,
+            author_id="troi",
+            body="Solid analysis",
+            author_callsign="Troi",
+        )
+        trust = MagicMock()
+        trust.record_outcome.side_effect = RuntimeError("trust store defect")
+        rt = ProbOSRuntime.__new__(ProbOSRuntime)
+        rt.ward_room = ward_room
+        rt.trust_network = trust
+        self._attach_router(rt, ward_room=ward_room, trust_network=trust)
+
+        with caplog.at_level("DEBUG", logger="probos.ward_room_router"):
+            await rt.ward_room_router.process_endorsements(
+                [{"post_id": post.id, "direction": "up"}],
+                agent_id="worf",
+            )
+
+        assert (await ward_room.get_post(post.id))["net_score"] == 1
+        assert "Endorsement failed" in caplog.text
+
     # ------ Test 7: _process_endorsements skips self-endorsement gracefully ------
     @pytest.mark.asyncio
     async def test_process_endorsements_self_endorse_skipped(self, ward_room):

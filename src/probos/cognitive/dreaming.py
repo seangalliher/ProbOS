@@ -2532,24 +2532,44 @@ class DreamingEngine:
         # Boost agents with consistent success (threshold: >1 successful episode)
         for agent_id, count in agent_successes.items():
             if count > 1:
-                self.trust_network.record_outcome(
-                    agent_id,
-                    success=True,
-                    weight=self.config.trust_boost,
-                    source="dream_consolidation",
-                )
-                adjustments += 1
+                try:
+                    self.trust_network.record_outcome(
+                        agent_id,
+                        success=True,
+                        weight=self.config.trust_boost,
+                        source="dream_consolidation",
+                    )
+                    adjustments += 1
+                except RuntimeError as exc:
+                    if str(exc) != "trust_write_in_progress":
+                        raise
+                    logger.warning(
+                        "AD-1130: Dream trust boost skipped for agent=%s because "
+                        "a durable trust write is in progress; consolidation "
+                        "continues without counting an adjustment",
+                        agent_id,
+                    )
 
         # Penalize agents appearing in multiple failed episodes
         for agent_id, count in agent_failures.items():
             if count > 1:
-                self.trust_network.record_outcome(
-                    agent_id,
-                    success=False,
-                    weight=self.config.trust_penalty,
-                    source="dream_consolidation",
-                )
-                adjustments += 1
+                try:
+                    self.trust_network.record_outcome(
+                        agent_id,
+                        success=False,
+                        weight=self.config.trust_penalty,
+                        source="dream_consolidation",
+                    )
+                    adjustments += 1
+                except RuntimeError as exc:
+                    if str(exc) != "trust_write_in_progress":
+                        raise
+                    logger.warning(
+                        "AD-1130: Dream trust penalty skipped for agent=%s because "
+                        "a durable trust write is in progress; consolidation "
+                        "continues without counting an adjustment",
+                        agent_id,
+                    )
 
         return adjustments
 

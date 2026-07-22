@@ -1035,6 +1035,73 @@ class TestProactiveTrustSignal:
         )
 
     @pytest.mark.asyncio
+    async def test_no_response_busy_trust_preserves_duty_and_episode(self):
+        loop, rt = self._make_loop_with_config(trust_no_response_weight=0.05)
+        agent = self._make_agent("[NO_RESPONSE]")
+        duty = MagicMock()
+        duty.duty_id = "scout_report"
+        duty.description = "Perform scout report"
+        loop._duty_tracker = MagicMock()
+        loop._duty_tracker.get_due_duties.return_value = [duty]
+        loop._check_duty_qualification = AsyncMock(return_value=True)
+        rt.episodic_memory = AsyncMock(spec=EpisodicMemory)
+        rt.trust_network.record_outcome.side_effect = RuntimeError(
+            "trust_write_in_progress",
+        )
+
+        with patch(
+            "probos.cognitive.episodic.EpisodicMemory.should_store",
+            return_value=True,
+        ):
+            await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+
+        loop._duty_tracker.record_execution.assert_called_once_with(
+            "scout",
+            "scout_report",
+        )
+        rt.episodic_memory.store.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_successful_post_busy_trust_preserves_post_and_duty(self):
+        loop, rt = self._make_loop_with_config(trust_reward_weight=0.1)
+        agent = self._make_agent("Scout report: All systems nominal.")
+        duty = MagicMock()
+        duty.duty_id = "scout_report"
+        duty.description = "Perform scout report"
+        loop._duty_tracker = MagicMock()
+        loop._duty_tracker.get_due_duties.return_value = [duty]
+        loop._check_duty_qualification = AsyncMock(return_value=True)
+        loop._post_to_ward_room = AsyncMock()
+        rt.trust_network.record_outcome.side_effect = RuntimeError(
+            "trust_write_in_progress",
+        )
+
+        await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+
+        loop._post_to_ward_room.assert_awaited_once_with(
+            agent,
+            "Scout report: All systems nominal.",
+        )
+        loop._duty_tracker.record_execution.assert_called_once_with(
+            "scout",
+            "scout_report",
+        )
+        assert agent.id in loop._last_proactive
+
+    @pytest.mark.asyncio
+    async def test_successful_post_other_trust_runtime_error_propagates(self):
+        loop, rt = self._make_loop_with_config(trust_reward_weight=0.1)
+        agent = self._make_agent("EPS conduits nominal.")
+        loop._post_to_ward_room = AsyncMock()
+        rt.trust_network.record_outcome.side_effect = RuntimeError(
+            "trust store defect",
+        )
+
+        with pytest.raises(RuntimeError, match="^trust store defect$"):
+            await loop._think_for_agent(agent, Rank.LIEUTENANT, 0.7)
+        loop._post_to_ward_room.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_failed_think_no_negative_trust(self):
         """Failed handle_intent does not emit any trust signal."""
         loop, rt = self._make_loop_with_config()

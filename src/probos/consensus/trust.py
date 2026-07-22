@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import math
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from probos.config import format_trust
 from probos.protocols import ConnectionFactory, DatabaseConnection
 from probos.types import AgentID
+
+if TYPE_CHECKING:
+    from probos.cognitive.crew_trust import CrewTrustEffect
 
 # AD-702: Diplomatic Relations — discounted trust transitivity tunables.
 # Per Nooplex §4.3.4: T(A→C) = T(A→B) × T(B→C) × δ, with safety-critical
@@ -32,6 +36,19 @@ CREATE TABLE IF NOT EXISTS trust_scores (
     alpha    REAL NOT NULL DEFAULT 2.0,
     beta     REAL NOT NULL DEFAULT 2.0,
     updated  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trust_outcome_receipts (
+    outcome_id       TEXT PRIMARY KEY,
+    payload_json     TEXT NOT NULL,
+    payload_sha256   TEXT NOT NULL,
+    agent_id         TEXT NOT NULL,
+    session_id       TEXT NOT NULL,
+    session_revision INTEGER NOT NULL,
+    evidence_sha256  TEXT NOT NULL,
+    result_alpha     REAL NOT NULL,
+    result_beta      REAL NOT NULL,
+    created_at       TEXT NOT NULL
 );
 """
 
@@ -87,6 +104,27 @@ class TrustEvent:
     floor_hit: bool = False  # AD-558: True if update was absorbed by hard floor
 
 
+@dataclass(frozen=True, slots=True)
+class TrustOutcomeWriteResult:
+    """Durable outcome disposition and resulting raw Beta parameters."""
+
+    disposition: Literal["applied", "duplicate"]
+    alpha: float
+    beta: float
+
+    def __post_init__(self) -> None:
+        if (
+            self.disposition not in {"applied", "duplicate"}
+            or type(self.alpha) is not float
+            or type(self.beta) is not float
+            or not math.isfinite(self.alpha)
+            or not math.isfinite(self.beta)
+            or self.alpha <= 0.0
+            or self.beta <= 0.0
+        ):
+            raise ValueError("trust_outcome_result_invalid")
+
+
 # ---------------------------------------------------------------------------
 # AD-558: Dampening state tracking
 # ---------------------------------------------------------------------------
@@ -107,6 +145,48 @@ class _CascadeState:
     tripped: bool = False
     tripped_at: float = 0.0
     cooldown_until: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class _OutcomePlan:
+    agent_id: str
+    alpha: float
+    beta: float
+    skipped: bool
+    dampening: _DampeningState | None
+    cascade_before_detection: _CascadeState
+    cascade: _CascadeState
+    event: TrustEvent | None
+    emissions: tuple[tuple[str, dict[str, Any]], ...]
+    floor_hit_delta: int
+    cascade_reset: bool
+    cascade_tripped: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _TrustOutcomeInput:
+    agent_id: AgentID
+    success: bool
+    weight: float
+    intent_type: str
+    episode_id: str
+    verifier_id: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class _OutcomeSnapshot:
+    receipt_result: tuple[float, float]
+    current_raw: tuple[float, float] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _OutcomeReconciliation:
+    effect: CrewTrustEffect
+    payload_json: str
+    payload_sha256: str
+    plan: _OutcomePlan
+    write_error: BaseException
 
 
 class TrustNetwork:
@@ -136,6 +216,8 @@ class TrustNetwork:
         self._db: DatabaseConnection | None = None
         self._event_log: deque[TrustEvent] = deque(maxlen=500)
         self._lock = asyncio.Lock()  # BF-099: concurrency protection
+        self._outcome_transaction_inflight = False
+        self._outcome_reconciliation: _OutcomeReconciliation | None = None
         self._connection_factory = connection_factory
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
@@ -175,7 +257,8 @@ class TrustNetwork:
             await self._db.execute("PRAGMA journal_mode=WAL")
             await self._db.execute("PRAGMA busy_timeout=5000")
             await self._db.execute("PRAGMA foreign_keys = ON")
-            await self._db.execute(_SCHEMA)
+            await self._db.executescript(_SCHEMA)
+            await self._migrate_outcome_receipt_results()
             await self._db.commit()
             await self._load_from_db()
             logger.info(
@@ -187,12 +270,17 @@ class TrustNetwork:
     async def stop(self) -> None:
         """Persist trust scores and close DB."""
         if self._db:
-            await self._save_to_db()
-            await self._db.close()
-            self._db = None
+            database = self._db
+            try:
+                await self._save_to_db()
+            finally:
+                await database.close()
+                if self._db is database:
+                    self._db = None
 
     def get_or_create(self, agent_id: AgentID) -> TrustRecord:
         """Get an agent's trust record, creating with priors if new."""
+        self._require_sync_mutation_available()
         if agent_id not in self._records:
             self._records[agent_id] = TrustRecord(
                 agent_id=agent_id,
@@ -207,6 +295,7 @@ class TrustNetwork:
         Used for probationary agents (e.g., self-created with alpha=1, beta=3).
         If the agent already has a trust record, this is a no-op.
         """
+        self._require_sync_mutation_available()
         if agent_id not in self._records:
             self._records[agent_id] = TrustRecord(
                 agent_id=agent_id,
@@ -230,178 +319,636 @@ class TrustNetwork:
         The weight parameter scales the update (partial trust/distrust).
         AD-558: Applies progressive dampening, hard floor, and cascade dampening.
         """
-        cfg = self._dampening_config
+        self._require_sync_mutation_available()
+        outcome = _TrustOutcomeInput(
+            agent_id=agent_id,
+            success=success,
+            weight=weight,
+            intent_type=intent_type,
+            episode_id=episode_id,
+            verifier_id=verifier_id,
+            source=source,
+        )
+        return self._record_outcome_now(outcome)
+
+    def _require_sync_mutation_available(self) -> None:
+        if (
+            self._outcome_transaction_inflight
+            or self._outcome_reconciliation is not None
+        ):
+            raise RuntimeError("trust_write_in_progress")
+
+    def _record_outcome_now(self, outcome: _TrustOutcomeInput) -> float:
+        plan = self._plan_outcome(outcome)
+        self._publish_outcome_plan(plan)
+        return plan.alpha / (plan.alpha + plan.beta)
+
+    def _plan_outcome(self, outcome: _TrustOutcomeInput) -> _OutcomePlan:
+        agent_id = outcome.agent_id
+        existing = self._records.get(agent_id)
+        alpha = existing.alpha if existing is not None else self.prior_alpha
+        beta = existing.beta if existing is not None else self.prior_beta
         if self._tier_registry:
             from probos.substrate.agent_tier import AgentTier
             if self._tier_registry.get_tier(agent_id) == AgentTier.CORE_INFRASTRUCTURE:
-                return self.get_score(agent_id)
+                return _OutcomePlan(
+                    agent_id=agent_id,
+                    alpha=float(alpha),
+                    beta=float(beta),
+                    skipped=True,
+                    dampening=None,
+                    cascade_before_detection=self._copy_cascade(),
+                    cascade=self._copy_cascade(),
+                    event=None,
+                    emissions=(),
+                    floor_hit_delta=0,
+                    cascade_reset=False,
+                    cascade_tripped=False,
+                )
 
-        record = self.get_or_create(agent_id)
-        old_score = record.score
+        cfg = self._dampening_config
+        old_score = alpha / (alpha + beta)
         now = time.monotonic()
-
-        # --- AD-558 Part 1: Progressive dampening ---
-        direction = "positive" if success else "negative"
-        state = self._dampening.get(agent_id)
-        if state is None:
-            state = _DampeningState()
-            self._dampening[agent_id] = state
-
-        if state.direction == direction and (now - state.first_timestamp) < cfg.dampening_window_seconds:
+        current_state = self._dampening.get(agent_id)
+        state = _DampeningState(
+            consecutive_count=(current_state.consecutive_count if current_state else 0),
+            direction=(current_state.direction if current_state else ""),
+            first_timestamp=(current_state.first_timestamp if current_state else 0.0),
+            last_timestamp=(current_state.last_timestamp if current_state else 0.0),
+        )
+        direction = "positive" if outcome.success else "negative"
+        if (
+            state.direction == direction
+            and (now - state.first_timestamp) < cfg.dampening_window_seconds
+        ):
             state.consecutive_count += 1
         else:
             state.consecutive_count = 1
             state.direction = direction
             state.first_timestamp = now
         state.last_timestamp = now
-
         factors = cfg.dampening_geometric_factors
-        dampening_factor = factors[min(state.consecutive_count - 1, len(factors) - 1)]
+        dampening_factor = factors[
+            min(state.consecutive_count - 1, len(factors) - 1)
+        ]
+        if (alpha + beta) < cfg.cold_start_observation_threshold:
+            dampening_factor = max(
+                dampening_factor,
+                cfg.cold_start_dampening_floor,
+            )
 
-        # Cold-start scaling: more aggressive dampening when few observations
-        if (record.alpha + record.beta) < cfg.cold_start_observation_threshold:
-            dampening_factor = max(dampening_factor, cfg.cold_start_dampening_floor)
-
-        # --- AD-558 Part 3: Global cascade dampening multiplier ---
-        if self._cascade.tripped:
-            if now < self._cascade.cooldown_until:
+        cascade = self._copy_cascade()
+        cascade_reset = False
+        if cascade.tripped:
+            if now < cascade.cooldown_until:
                 dampening_factor *= cfg.cascade_global_dampening
             else:
-                # Cooldown expired — reset breaker
-                self._cascade.tripped = False
-                self._cascade.recent_anomalies.clear()
-                logger.info("AD-558: Trust cascade breaker reset after cooldown")
+                cascade.tripped = False
+                cascade.recent_anomalies.clear()
+                cascade_reset = True
+        cascade_before_detection = self._clone_cascade(cascade)
 
-        effective_weight = weight * dampening_factor
-
-        # --- AD-558 Part 2: Hard trust floor ---
-        floor_hit = False
-        current_score = record.score
-        if not success and current_score <= cfg.hard_trust_floor:
-            floor_hit = True
-            self._floor_hit_count += 1
-            logger.info(
-                "AD-558: Hard floor hit for agent=%s score=%.3f — negative update absorbed",
-                agent_id[:8], current_score,
-            )
-            # Record event but do NOT apply weight
-            self._event_log.append(TrustEvent(
+        emissions: list[tuple[str, dict[str, Any]]] = []
+        if not outcome.success and old_score <= cfg.hard_trust_floor:
+            event = TrustEvent(
                 timestamp=now,
                 agent_id=agent_id,
-                success=success,
+                success=outcome.success,
                 old_score=old_score,
-                new_score=current_score,
-                weight=weight,
-                intent_type=intent_type,
-                episode_id=episode_id,
-                verifier_id=verifier_id,
+                new_score=old_score,
+                weight=outcome.weight,
+                intent_type=outcome.intent_type,
+                episode_id=outcome.episode_id,
+                verifier_id=outcome.verifier_id,
                 dampening_factor=dampening_factor,
                 floor_hit=True,
-            ))
-            # Emit event even for floor hits
-            if self._emit_event:
-                self._emit_event("trust_update", {
-                    "agent_id": agent_id,
-                    "old_score": old_score,
-                    "new_score": current_score,
-                    "success": success,
-                    "dampening_factor": dampening_factor,
-                    "floor_hit": True,
-                })
-            return current_score
-
-        # Apply effective weight
-        if success:
-            record.alpha += effective_weight
-        else:
-            record.beta += effective_weight
-
-        new_score = record.score
-
-        # Append causal event to the ring buffer
-        self._event_log.append(TrustEvent(
-            timestamp=now,
-            agent_id=agent_id,
-            success=success,
-            old_score=old_score,
-            new_score=new_score,
-            weight=weight,
-            intent_type=intent_type,
-            episode_id=episode_id,
-            verifier_id=verifier_id,
-            dampening_factor=dampening_factor,
-            floor_hit=False,
-        ))
-
-        logger.debug(
-            "Trust updated: agent=%s success=%s alpha=%.2f beta=%.2f score=%.3f dampening=%.2f",
-            agent_id[:8],
-            success,
-            record.alpha,
-            record.beta,
-            record.score,
-            dampening_factor,
-        )
-
-        # --- AD-558 Part 4: Event emission ---
-        if self._emit_event:
-            self._emit_event("trust_update", {
+            )
+            emissions.append(("trust_update", {
                 "agent_id": agent_id,
                 "old_score": old_score,
-                "new_score": new_score,
-                "success": success,
+                "new_score": old_score,
+                "success": outcome.success,
                 "dampening_factor": dampening_factor,
-                "floor_hit": False,
-            })
+                "floor_hit": True,
+            }))
+            return _OutcomePlan(
+                agent_id=agent_id,
+                alpha=float(alpha),
+                beta=float(beta),
+                skipped=False,
+                dampening=state,
+                cascade_before_detection=cascade_before_detection,
+                cascade=cascade,
+                event=event,
+                emissions=tuple(emissions),
+                floor_hit_delta=1,
+                cascade_reset=cascade_reset,
+                cascade_tripped=False,
+            )
 
-        # --- AD-558 Part 3: Cascade detection ---
+        effective_weight = outcome.weight * dampening_factor
+        if outcome.success:
+            alpha += effective_weight
+        else:
+            beta += effective_weight
+        new_score = alpha / (alpha + beta)
+        event = TrustEvent(
+            timestamp=now,
+            agent_id=agent_id,
+            success=outcome.success,
+            old_score=old_score,
+            new_score=new_score,
+            weight=outcome.weight,
+            intent_type=outcome.intent_type,
+            episode_id=outcome.episode_id,
+            verifier_id=outcome.verifier_id,
+            dampening_factor=dampening_factor,
+            floor_hit=False,
+        )
+        emissions.append(("trust_update", {
+            "agent_id": agent_id,
+            "old_score": old_score,
+            "new_score": new_score,
+            "success": outcome.success,
+            "dampening_factor": dampening_factor,
+            "floor_hit": False,
+        }))
+
+        cascade_tripped = False
         delta = abs(new_score - old_score)
         if delta > cfg.cascade_delta_threshold:
-            dept = None
+            department = None
             if self._get_department:
                 try:
-                    dept = self._get_department(agent_id)
+                    department = self._get_department(agent_id)
                 except Exception:
                     pass
-            self._cascade.recent_anomalies.append((now, agent_id, dept, delta))
-            # Prune anomalies outside window
+            cascade.recent_anomalies.append((now, agent_id, department, delta))
             cutoff = now - cfg.cascade_window_seconds
-            self._cascade.recent_anomalies = [
-                a for a in self._cascade.recent_anomalies if a[0] >= cutoff
+            cascade.recent_anomalies = [
+                anomaly
+                for anomaly in cascade.recent_anomalies
+                if anomaly[0] >= cutoff
             ]
-            # Check trip conditions
-            if not self._cascade.tripped:
-                unique_agents = {a[1] for a in self._cascade.recent_anomalies}
+            if not cascade.tripped:
+                unique_agents = {
+                    anomaly[1] for anomaly in cascade.recent_anomalies
+                }
                 if self._tier_registry:
-                    unique_agents = {a for a in unique_agents if self._tier_registry.is_crew(a)}
-                unique_depts = {a[2] for a in self._cascade.recent_anomalies if a[2] is not None}
-                agent_count_met = len(unique_agents) >= cfg.cascade_agent_threshold
-                # If no department lookup, skip department check
-                dept_count_met = (
-                    len(unique_depts) >= cfg.cascade_department_threshold
-                    if self._get_department
-                    else True
-                )
-                if agent_count_met and dept_count_met:
-                    self._cascade.tripped = True
-                    self._cascade.tripped_at = now
-                    self._cascade.cooldown_until = now + cfg.cascade_cooldown_seconds
-                    logger.warning(
-                        "AD-558: Trust cascade breaker TRIPPED — %d agents across %d departments, "
-                        "global dampening=%.2f for %.0fs",
-                        len(unique_agents), len(unique_depts),
-                        cfg.cascade_global_dampening, cfg.cascade_cooldown_seconds,
+                    unique_agents = {
+                        candidate
+                        for candidate in unique_agents
+                        if self._tier_registry.is_crew(candidate)
+                    }
+                unique_departments = {
+                    anomaly[2]
+                    for anomaly in cascade.recent_anomalies
+                    if anomaly[2] is not None
+                }
+                if (
+                    len(unique_agents) >= cfg.cascade_agent_threshold
+                    and (
+                        len(unique_departments) >= cfg.cascade_department_threshold
+                        if self._get_department
+                        else True
                     )
-                    # Emit cascade warning event
-                    if self._emit_event:
-                        self._emit_event("trust_cascade_warning", {
-                            "anomalous_agents": list(unique_agents),
-                            "departments_affected": list(unique_depts),
-                            "global_dampening_factor": cfg.cascade_global_dampening,
-                            "cooldown_seconds": cfg.cascade_cooldown_seconds,
-                        })
+                ):
+                    cascade.tripped = True
+                    cascade.tripped_at = now
+                    cascade.cooldown_until = now + cfg.cascade_cooldown_seconds
+                    cascade_tripped = True
+                    emissions.append(("trust_cascade_warning", {
+                        "anomalous_agents": list(unique_agents),
+                        "departments_affected": list(unique_departments),
+                        "global_dampening_factor": cfg.cascade_global_dampening,
+                        "cooldown_seconds": cfg.cascade_cooldown_seconds,
+                    }))
+        return _OutcomePlan(
+            agent_id=agent_id,
+            alpha=float(alpha),
+            beta=float(beta),
+            skipped=False,
+            dampening=state,
+            cascade_before_detection=cascade_before_detection,
+            cascade=cascade,
+            event=event,
+            emissions=tuple(emissions),
+            floor_hit_delta=0,
+            cascade_reset=cascade_reset,
+            cascade_tripped=cascade_tripped,
+        )
 
-        return record.score
+    def _copy_cascade(self) -> _CascadeState:
+        return self._clone_cascade(self._cascade)
+
+    @staticmethod
+    def _clone_cascade(state: _CascadeState) -> _CascadeState:
+        return _CascadeState(
+            recent_anomalies=list(state.recent_anomalies),
+            tripped=state.tripped,
+            tripped_at=state.tripped_at,
+            cooldown_until=state.cooldown_until,
+        )
+
+    def _publish_outcome_plan(
+        self,
+        plan: _OutcomePlan,
+        *,
+        publish_raw: bool = True,
+    ) -> None:
+        if plan.skipped:
+            return
+        if publish_raw:
+            record = self._records.get(plan.agent_id)
+            if record is None:
+                record = TrustRecord(agent_id=plan.agent_id)
+                self._records[plan.agent_id] = record
+            record.alpha = plan.alpha
+            record.beta = plan.beta
+        if plan.dampening is not None:
+            self._dampening[plan.agent_id] = plan.dampening
+        self._cascade = plan.cascade_before_detection
+        self._floor_hit_count += plan.floor_hit_delta
+        if plan.event is not None:
+            self._event_log.append(plan.event)
+            if plan.event.floor_hit:
+                logger.info(
+                    "AD-558: Hard floor hit for agent=%s score=%.3f — negative update absorbed",
+                    plan.agent_id[:8],
+                    plan.event.new_score,
+                )
+            else:
+                logger.debug(
+                    "Trust updated: agent=%s success=%s alpha=%.2f beta=%.2f "
+                    "score=%.3f dampening=%.2f",
+                    plan.agent_id[:8],
+                    plan.event.success,
+                    plan.alpha,
+                    plan.beta,
+                    plan.event.new_score,
+                    plan.event.dampening_factor,
+                )
+        if plan.cascade_reset:
+            logger.info("AD-558: Trust cascade breaker reset after cooldown")
+        if self._emit_event and plan.emissions:
+            event_type, payload = plan.emissions[0]
+            self._emit_event(event_type, payload)
+        self._cascade = plan.cascade
+        if plan.cascade_tripped:
+            logger.warning(
+                "AD-558: Trust cascade breaker TRIPPED — %d agents across %d "
+                "departments, global dampening=%.2f for %.0fs",
+                len({item[1] for item in plan.cascade.recent_anomalies}),
+                len({
+                    item[2]
+                    for item in plan.cascade.recent_anomalies
+                    if item[2] is not None
+                }),
+                self._dampening_config.cascade_global_dampening,
+                self._dampening_config.cascade_cooldown_seconds,
+            )
+        if self._emit_event:
+            for event_type, payload in plan.emissions[1:]:
+                self._emit_event(event_type, payload)
+
+    async def record_outcome_once(
+        self,
+        effect: CrewTrustEffect,
+    ) -> TrustOutcomeWriteResult:
+        """Atomically apply one exact durable CrewSession outcome once."""
+        from probos.cognitive.crew_trust import CrewTrustEffect
+
+        if type(effect) is not CrewTrustEffect:
+            raise ValueError("crew_trust_effect_invalid")
+        canonical = effect.canonical_bytes()
+        payload_json = canonical.decode("utf-8")
+        payload_sha = hashlib.sha256(canonical).hexdigest()
+        if self._db is None:
+            raise RuntimeError("trust_outcome_store_not_started")
+
+        async with self._lock:
+            self._outcome_transaction_inflight = True
+            try:
+                reservation = self._outcome_reconciliation
+                if reservation is not None:
+                    if not self._reservation_matches(
+                        reservation,
+                        effect=effect,
+                        payload_json=payload_json,
+                        payload_sha=payload_sha,
+                    ):
+                        raise RuntimeError(
+                            "trust_outcome_reconciliation_required",
+                        )
+                    return await self._reconcile_reserved_outcome(reservation)
+                return await self._record_outcome_once_locked(
+                    effect=effect,
+                    payload_json=payload_json,
+                    payload_sha=payload_sha,
+                )
+            finally:
+                self._outcome_transaction_inflight = False
+
+    async def _record_outcome_once_locked(
+        self,
+        *,
+        effect: CrewTrustEffect,
+        payload_json: str,
+        payload_sha: str,
+    ) -> TrustOutcomeWriteResult:
+        if self._db is None:
+            raise RuntimeError("trust_outcome_store_not_started")
+        plan: _OutcomePlan | None = None
+        try:
+            await self._db.execute("BEGIN IMMEDIATE")
+            row = await self._fetch_outcome_snapshot_row(effect.outcome_id)
+            if row is not None:
+                snapshot = self._validate_outcome_snapshot(
+                    row,
+                    effect=effect,
+                    payload_json=payload_json,
+                    payload_sha=payload_sha,
+                )
+                await self._db.execute("ROLLBACK")
+                self._reconcile_raw_record(effect.agent_id, snapshot.current_raw)
+                return TrustOutcomeWriteResult(
+                    disposition="duplicate",
+                    alpha=snapshot.receipt_result[0],
+                    beta=snapshot.receipt_result[1],
+                )
+
+            plan = self._plan_outcome(_TrustOutcomeInput(
+                agent_id=effect.agent_id,
+                success=effect.success,
+                weight=effect.weight,
+                intent_type=effect.intent_type,
+                episode_id=effect.outcome_id,
+                verifier_id=effect.verifier_id,
+                source=effect.source,
+            ))
+            if not plan.skipped:
+                await self._db.execute(
+                    "INSERT INTO trust_scores (agent_id, alpha, beta, updated) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT(agent_id) DO UPDATE SET "
+                    "alpha = excluded.alpha, beta = excluded.beta, "
+                    "updated = excluded.updated",
+                    (
+                        effect.agent_id,
+                        plan.alpha,
+                        plan.beta,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+            await self._db.execute(
+                "INSERT INTO trust_outcome_receipts "
+                "(outcome_id, payload_json, payload_sha256, agent_id, "
+                "session_id, session_revision, evidence_sha256, result_alpha, "
+                "result_beta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    effect.outcome_id,
+                    payload_json,
+                    payload_sha,
+                    effect.agent_id,
+                    effect.session_id,
+                    effect.session_revision,
+                    effect.evidence_sha256,
+                    plan.alpha,
+                    plan.beta,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            await self._db.commit()
+        except BaseException as write_error:
+            try:
+                await self._db.execute("ROLLBACK")
+            except Exception:
+                pass
+            if plan is None:
+                raise
+            try:
+                snapshot = await self._read_outcome_snapshot(
+                    effect=effect,
+                    payload_json=payload_json,
+                    payload_sha=payload_sha,
+                )
+            except BaseException:
+                self._outcome_reconciliation = _OutcomeReconciliation(
+                    effect=effect,
+                    payload_json=payload_json,
+                    payload_sha256=payload_sha,
+                    plan=plan,
+                    write_error=write_error,
+                )
+                raise write_error
+            if snapshot is None:
+                raise write_error
+            self._reconcile_raw_record(effect.agent_id, snapshot.current_raw)
+            self._publish_outcome_plan(plan, publish_raw=False)
+            if isinstance(write_error, asyncio.CancelledError):
+                raise write_error
+            return TrustOutcomeWriteResult(
+                disposition="applied",
+                alpha=snapshot.receipt_result[0],
+                beta=snapshot.receipt_result[1],
+            )
+
+        if plan is None:
+            raise RuntimeError("trust_outcome_plan_missing")
+        self._publish_outcome_plan(plan)
+        return TrustOutcomeWriteResult(
+            disposition="applied",
+            alpha=plan.alpha,
+            beta=plan.beta,
+        )
+
+    async def _reconcile_reserved_outcome(
+        self,
+        reservation: _OutcomeReconciliation,
+    ) -> TrustOutcomeWriteResult:
+        try:
+            snapshot = await self._read_outcome_snapshot(
+                effect=reservation.effect,
+                payload_json=reservation.payload_json,
+                payload_sha=reservation.payload_sha256,
+            )
+        except BaseException:
+            raise reservation.write_error
+        if snapshot is None:
+            self._outcome_reconciliation = None
+            return await self._record_outcome_once_locked(
+                effect=reservation.effect,
+                payload_json=reservation.payload_json,
+                payload_sha=reservation.payload_sha256,
+            )
+        self._reconcile_raw_record(
+            reservation.effect.agent_id,
+            snapshot.current_raw,
+        )
+        self._outcome_reconciliation = None
+        self._publish_outcome_plan(reservation.plan, publish_raw=False)
+        return TrustOutcomeWriteResult(
+            disposition="applied",
+            alpha=snapshot.receipt_result[0],
+            beta=snapshot.receipt_result[1],
+        )
+
+    @staticmethod
+    def _receipt_matches(
+        row: Any,
+        *,
+        effect: CrewTrustEffect,
+        payload_json: str,
+        payload_sha: str,
+    ) -> bool:
+        return (
+            row is not None
+            and len(row) >= 6
+            and type(row[0]) is str
+            and row[0] == payload_json
+            and type(row[1]) is str
+            and row[1] == payload_sha
+            and type(row[2]) is str
+            and row[2] == effect.agent_id
+            and type(row[3]) is str
+            and row[3] == effect.session_id
+            and type(row[4]) is int
+            and row[4] == effect.session_revision
+            and type(row[5]) is str
+            and row[5] == effect.evidence_sha256
+        )
+
+    @staticmethod
+    def _reservation_matches(
+        reservation: _OutcomeReconciliation,
+        *,
+        effect: CrewTrustEffect,
+        payload_json: str,
+        payload_sha: str,
+    ) -> bool:
+        return (
+            reservation.effect.outcome_id == effect.outcome_id
+            and reservation.payload_json == payload_json
+            and reservation.payload_sha256 == payload_sha
+        )
+
+    async def _fetch_outcome_snapshot_row(self, outcome_id: str) -> Any | None:
+        if self._db is None:
+            raise RuntimeError("trust_outcome_store_not_started")
+        cursor = await self._db.execute(
+            "SELECT r.payload_json, r.payload_sha256, r.agent_id, r.session_id, "
+            "r.session_revision, r.evidence_sha256, r.result_alpha, r.result_beta, "
+            "s.agent_id, s.alpha, s.beta FROM trust_outcome_receipts AS r "
+            "LEFT JOIN trust_scores AS s ON s.agent_id = r.agent_id "
+            "WHERE r.outcome_id = ?",
+            (outcome_id,),
+        )
+        return await cursor.fetchone()
+
+    async def _read_outcome_snapshot(
+        self,
+        *,
+        effect: CrewTrustEffect,
+        payload_json: str,
+        payload_sha: str,
+    ) -> _OutcomeSnapshot | None:
+        if self._db is None:
+            raise RuntimeError("trust_outcome_store_not_started")
+        await self._db.execute("BEGIN")
+        try:
+            row = await self._fetch_outcome_snapshot_row(effect.outcome_id)
+            snapshot = (
+                None
+                if row is None
+                else self._validate_outcome_snapshot(
+                    row,
+                    effect=effect,
+                    payload_json=payload_json,
+                    payload_sha=payload_sha,
+                )
+            )
+            await self._db.execute("ROLLBACK")
+            return snapshot
+        except BaseException:
+            try:
+                await self._db.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+
+    def _validate_outcome_snapshot(
+        self,
+        row: Any,
+        *,
+        effect: CrewTrustEffect,
+        payload_json: str,
+        payload_sha: str,
+    ) -> _OutcomeSnapshot:
+        if (
+            row is None
+            or len(row) != 11
+            or not self._receipt_matches(
+                row,
+                effect=effect,
+                payload_json=payload_json,
+                payload_sha=payload_sha,
+            )
+        ):
+            raise ValueError("trust_outcome_identity_conflict")
+        if row[6] is None or row[7] is None:
+            raise ValueError("trust_outcome_receipt_result_missing")
+        receipt_result = self._validated_raw_pair(
+            row[6],
+            row[7],
+            error="trust_outcome_receipt_result_invalid",
+        )
+        if row[8] is None:
+            if row[9] is not None or row[10] is not None:
+                raise ValueError("trust_outcome_current_state_invalid")
+            current_raw = None
+        else:
+            if type(row[8]) is not str or row[8] != effect.agent_id:
+                raise ValueError("trust_outcome_current_state_invalid")
+            current_raw = self._validated_raw_pair(
+                row[9],
+                row[10],
+                error="trust_outcome_current_state_invalid",
+            )
+        return _OutcomeSnapshot(
+            receipt_result=receipt_result,
+            current_raw=current_raw,
+        )
+
+    @staticmethod
+    def _validated_raw_pair(
+        alpha: Any,
+        beta: Any,
+        *,
+        error: str,
+    ) -> tuple[float, float]:
+        if (
+            type(alpha) not in (int, float)
+            or type(beta) not in (int, float)
+            or not math.isfinite(float(alpha))
+            or not math.isfinite(float(beta))
+            or float(alpha) <= 0.0
+            or float(beta) <= 0.0
+        ):
+            raise ValueError(error)
+        return (float(alpha), float(beta))
+
+    def _reconcile_raw_record(
+        self,
+        agent_id: str,
+        current_raw: tuple[float, float] | None,
+    ) -> None:
+        if current_raw is None:
+            self._records.pop(agent_id, None)
+            return
+        self._records[agent_id] = TrustRecord(
+            agent_id=agent_id,
+            alpha=current_raw[0],
+            beta=current_raw[1],
+        )
 
     def get_score(self, agent_id: AgentID) -> float:
         """Get an agent's current trust score."""
@@ -433,6 +980,7 @@ class TrustNetwork:
 
         This allows agents to recover trust over time if they stop failing.
         """
+        self._require_sync_mutation_available()
         for record in self._records.values():
             # Decay toward priors
             record.alpha = self.prior_alpha + (record.alpha - self.prior_alpha) * self.decay_rate
@@ -444,12 +992,14 @@ class TrustNetwork:
 
     def remove_agent(self, agent_id: AgentID) -> None:
         """Remove an agent's trust record. Public API for AD-514."""
+        self._require_sync_mutation_available()
         if agent_id in self._records:
             del self._records[agent_id]
             logger.info("Trust record removed for agent %s", agent_id)
 
     def reconcile(self, active_agent_ids: set[str]) -> int:
         """Remove trust records for agents not in the active set. Returns count removed."""
+        self._require_sync_mutation_available()
         stale = [aid for aid in self._records if aid not in active_agent_ids]
         for aid in stale:
             del self._records[aid]
@@ -529,11 +1079,28 @@ class TrustNetwork:
 
     def reset_floor_hit_count(self) -> None:
         """Reset the floor hit counter (called after dream cycles)."""
+        self._require_sync_mutation_available()
         self._floor_hit_count = 0
 
     # ------------------------------------------------------------------
     # SQLite persistence
     # ------------------------------------------------------------------
+
+    async def _migrate_outcome_receipt_results(self) -> None:
+        if not self._db:
+            return
+        cursor = await self._db.execute(
+            "PRAGMA table_info(trust_outcome_receipts)",
+        )
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "result_alpha" not in columns:
+            await self._db.execute(
+                "ALTER TABLE trust_outcome_receipts ADD COLUMN result_alpha REAL",
+            )
+        if "result_beta" not in columns:
+            await self._db.execute(
+                "ALTER TABLE trust_outcome_receipts ADD COLUMN result_beta REAL",
+            )
 
     async def _load_from_db(self) -> None:
         if not self._db:
@@ -550,10 +1117,14 @@ class TrustNetwork:
                     )
 
     async def _save_to_db(self) -> None:
+        if self._outcome_reconciliation is not None:
+            raise RuntimeError("trust_outcome_reconciliation_required")
         if not self._db:
             return
         now = datetime.now(timezone.utc).isoformat()
         async with self._lock:
+            if self._outcome_reconciliation is not None:
+                raise RuntimeError("trust_outcome_reconciliation_required")
             await self._db.execute("BEGIN IMMEDIATE")
             try:
                 await self._db.execute("DELETE FROM trust_scores")

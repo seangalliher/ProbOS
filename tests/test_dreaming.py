@@ -227,6 +227,29 @@ class TestDreamingEngine:
         final_record = trust.get_record("flaky_agent")
         assert final_record.beta > initial_beta
 
+    def test_trust_consolidation_busy_write_is_not_counted(self, engine, trust):
+        trust.record_outcome = lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("trust_write_in_progress"),
+        )
+        episodes = [
+            _make_episode(["read_file"], ["agent-a"], success=True),
+            _make_episode(["read_file"], ["agent-a"], success=True),
+        ]
+
+        assert engine._consolidate_trust(episodes) == 0
+
+    def test_trust_consolidation_other_runtime_error_propagates(self, engine, trust):
+        trust.record_outcome = lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("trust store defect"),
+        )
+        episodes = [
+            _make_episode(["read_file"], ["agent-a"], success=True),
+            _make_episode(["read_file"], ["agent-a"], success=True),
+        ]
+
+        with pytest.raises(RuntimeError, match="^trust store defect$"):
+            engine._consolidate_trust(episodes)
+
     @pytest.mark.asyncio
     async def test_pre_warm_identifies_temporal_sequences(self, engine, memory):
         """Pre-warm identifies frequently occurring intent transitions."""

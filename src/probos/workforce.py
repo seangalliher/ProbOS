@@ -1086,6 +1086,17 @@ CREATE TABLE IF NOT EXISTS resource_requirements (
     FOREIGN KEY (work_item_id) REFERENCES work_items(id)
 );
 
+CREATE TABLE IF NOT EXISTS crew_trust_outbox (
+    outcome_id       TEXT PRIMARY KEY,
+    session_id       TEXT NOT NULL,
+    session_revision INTEGER NOT NULL,
+    evidence_sha256  TEXT NOT NULL,
+    payload_json     TEXT NOT NULL,
+    delivered        INTEGER NOT NULL DEFAULT 0,
+    created_at       REAL NOT NULL,
+    delivered_at     REAL
+);
+
 CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status);
 CREATE INDEX IF NOT EXISTS idx_work_items_assigned_to ON work_items(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_work_items_work_type ON work_items(work_type);
@@ -1094,6 +1105,8 @@ CREATE INDEX IF NOT EXISTS idx_bookings_resource_id ON bookings(resource_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_work_item_id ON bookings(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
 CREATE INDEX IF NOT EXISTS idx_booking_timestamps_booking_id ON booking_timestamps(booking_id);
+CREATE INDEX IF NOT EXISTS idx_crew_trust_outbox_pending
+    ON crew_trust_outbox(delivered, created_at, outcome_id);
 """
 
 # Fields that are JSON-serialized in SQLite
@@ -1116,6 +1129,8 @@ _MAX_WORK_ITEM_CHILD_SNAPSHOT_BYTES = 1_572_864
 _MAX_WORK_ITEM_CHILD_SNAPSHOTS_BYTES = 33_554_432
 _MAX_WORK_ITEM_TIMESTAMP = 253_402_300_799.0
 _MAX_WORK_ITEM_DIRECT_CHILDREN = 1_000
+_MAX_CREW_TRUST_EFFECTS = (_MAX_WORK_ITEM_DIRECT_CHILDREN * 10) + 2
+_MAX_CREW_TRUST_EFFECT_BYTES = 8_192
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_DEPTH = 64
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_NODES = 65_536
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_CONTAINER_ENTRIES = 16_384
@@ -1233,6 +1248,93 @@ def _compact_exact_json_bytes(value: Any, *, error: str) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError, OverflowError, RecursionError) as exc:
         raise ValueError(error) from exc
+
+
+def _detach_crew_trust_effects(
+    effects: tuple[Any, ...],
+    *,
+    session_id: str,
+    session_revision: int,
+) -> tuple[dict[str, Any], ...]:
+    from probos.cognitive.crew_trust import CrewTrustEffect
+
+    if (
+        type(effects) is not tuple
+        or len(effects) > _MAX_CREW_TRUST_EFFECTS
+        or type(session_id) is not str
+        or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(session_id) is None
+        or type(session_revision) is not int
+        or not 1 <= session_revision <= 2_147_483_647
+    ):
+        raise ValueError("crew_trust_outbox_invalid")
+    validated_effects: list[Any] = []
+    for effect in effects:
+        if type(effect) is not CrewTrustEffect:
+            raise ValueError("crew_trust_outbox_invalid")
+        validated = CrewTrustEffect.from_payload(effect.to_payload())
+        if (
+            validated.session_id != session_id
+            or validated.session_revision != session_revision
+        ):
+            raise ValueError("crew_trust_outbox_invalid")
+        validated_effects.append(validated)
+    validated_effects.sort(key=lambda item: item.outcome_id)
+    if len({item.outcome_id for item in validated_effects}) != len(validated_effects):
+        raise ValueError("crew_trust_outbox_invalid")
+    detached: list[dict[str, Any]] = []
+    for validated in validated_effects:
+        payload = validated.to_payload()
+        encoded = _compact_exact_json_bytes(
+            payload,
+            error="crew_trust_outbox_invalid",
+        )
+        if len(encoded) > _MAX_CREW_TRUST_EFFECT_BYTES:
+            raise ValueError("crew_trust_outbox_invalid")
+        detached.append(json.loads(encoded.decode("utf-8")))
+    return tuple(detached)
+
+
+async def _insert_crew_trust_effects(
+    db: DatabaseConnection,
+    effects: tuple[dict[str, Any], ...],
+) -> None:
+    for payload in effects:
+        encoded = _compact_exact_json_bytes(
+            payload,
+            error="crew_trust_outbox_invalid",
+        ).decode("utf-8")
+        cursor = await db.execute(
+            "SELECT session_id, session_revision, evidence_sha256, payload_json "
+            "FROM crew_trust_outbox WHERE outcome_id = ?",
+            (payload["outcome_id"],),
+        )
+        row = await cursor.fetchone()
+        if row is not None:
+            if (
+                type(row[0]) is not str
+                or row[0] != payload["session_id"]
+                or type(row[1]) is not int
+                or row[1] != payload["session_revision"]
+                or type(row[2]) is not str
+                or row[2] != payload["evidence_sha256"]
+                or type(row[3]) is not str
+                or row[3] != encoded
+            ):
+                raise ValueError("trust_outcome_identity_conflict")
+            continue
+        await db.execute(
+            "INSERT INTO crew_trust_outbox "
+            "(outcome_id, session_id, session_revision, evidence_sha256, "
+            "payload_json, delivered, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
+            (
+                payload["outcome_id"],
+                payload["session_id"],
+                payload["session_revision"],
+                payload["evidence_sha256"],
+                encoded,
+                time.time(),
+            ),
+        )
 
 
 def _build_crew_session_parent(
@@ -3222,6 +3324,7 @@ class WorkItemStore(EventEmitterMixin):
         expected_assigned_to: str,
         expected_direct_children: tuple[dict[str, Any], ...],
         new_status: str,
+        crew_trust_effects: tuple[Any, ...] = (),
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None:
         """Publish parent metadata/status after one exact direct-child proof."""
@@ -3273,6 +3376,14 @@ class WorkItemStore(EventEmitterMixin):
         detached_children = _detach_direct_child_snapshots(
             work_item_id,
             expected_direct_children,
+        )
+        contract_payload = detached_patch.get("crew_session")
+        if type(contract_payload) is not dict:
+            raise ValueError("crew_trust_outbox_invalid")
+        effects = _detach_crew_trust_effects(
+            crew_trust_effects,
+            session_id=work_item_id,
+            session_revision=contract_payload.get("revision"),
         )
         if not self._db:
             return None
@@ -3352,6 +3463,7 @@ class WorkItemStore(EventEmitterMixin):
                         work_item_id,
                     ),
                 )
+                await _insert_crew_trust_effects(self._db, effects)
                 await self._db.commit()
                 updated = await self.get_work_item(work_item_id)
             except BaseException:
@@ -3374,6 +3486,268 @@ class WorkItemStore(EventEmitterMixin):
                 "source": source,
             })
         return updated
+
+    async def transition_crew_session_terminal_with_trust(
+        self,
+        work_item_id: str,
+        patch: dict[str, Any],
+        *,
+        expected_metadata: dict[str, Any],
+        expected_status: str,
+        expected_assigned_to: str,
+        new_status: str,
+        crew_trust_effects: tuple[Any, ...],
+        source: str = "crew_session_verified_failure",
+    ) -> WorkItem | None:
+        """Commit one failed CrewSession contract and its trust outbox together."""
+        if (
+            type(patch) is not dict
+            or type(expected_metadata) is not dict
+            or new_status != "failed"
+            or any(
+                type(value) is not str or not value
+                for value in (
+                    work_item_id,
+                    expected_status,
+                    expected_assigned_to,
+                    source,
+                )
+            )
+        ):
+            raise ValueError("crew_trust_terminal_invalid")
+        patch_bytes = _compact_exact_json_bytes(
+            patch,
+            error="crew_trust_terminal_invalid",
+        )
+        expected_bytes = _compact_exact_json_bytes(
+            expected_metadata,
+            error="crew_trust_terminal_invalid",
+        )
+        if (
+            len(patch_bytes) > _MAX_WORK_ITEM_METADATA_BYTES
+            or len(expected_bytes) > _MAX_WORK_ITEM_METADATA_BYTES
+        ):
+            raise ValueError("crew_trust_terminal_invalid")
+        detached_patch = json.loads(patch_bytes.decode("utf-8"))
+        detached_expected = json.loads(expected_bytes.decode("utf-8"))
+        contract_payload = detached_patch.get("crew_session")
+        if (
+            type(contract_payload) is not dict
+            or contract_payload.get("state") != "failed"
+        ):
+            raise ValueError("crew_trust_terminal_invalid")
+        effects = _detach_crew_trust_effects(
+            crew_trust_effects,
+            session_id=work_item_id,
+            session_revision=contract_payload.get("revision"),
+        )
+        if not effects or not self._db:
+            return None
+
+        updated: WorkItem | None = None
+        async with self._work_item_row_write_lock:
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                item = await self.get_work_item(work_item_id)
+                if item is None:
+                    await self._db.execute("ROLLBACK")
+                    return None
+                if (
+                    item.work_type != "crew_session"
+                    or item.status != expected_status
+                    or item.assigned_to != expected_assigned_to
+                    or not _json_values_exactly_equal(
+                        item.metadata,
+                        detached_expected,
+                    )
+                ):
+                    raise ValueError("crew_trust_terminal_conflict")
+                merged = dict(item.metadata)
+                merged.update(detached_patch)
+                if not self._validate_work_item_status_transition(
+                    dataclasses.replace(item, metadata=merged),
+                    new_status,
+                ):
+                    await self._db.execute("ROLLBACK")
+                    return None
+                serialized = _compact_exact_json_bytes(
+                    merged,
+                    error="crew_trust_terminal_invalid",
+                )
+                if len(serialized) > _MAX_WORK_ITEM_METADATA_BYTES:
+                    raise ValueError("crew_trust_terminal_invalid")
+                await self._db.execute(
+                    "UPDATE work_items SET metadata = ?, status = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (
+                        serialized.decode("utf-8"),
+                        new_status,
+                        time.time(),
+                        work_item_id,
+                    ),
+                )
+                await _insert_crew_trust_effects(self._db, effects)
+                await self._db.commit()
+                updated = await self.get_work_item(work_item_id)
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+
+        await self._refresh_snapshot_cache()
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": updated.to_dict() if updated else {}},
+        )
+        self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
+            "work_item": updated.to_dict() if updated else {},
+            "old_status": expected_status,
+            "new_status": new_status,
+            "source": source,
+        })
+        return updated
+
+    async def list_pending_crew_trust_outcomes(
+        self,
+        *,
+        limit: int,
+    ) -> tuple[dict[str, Any], ...]:
+        """Return a bounded deterministic batch of validated pending effects."""
+        from probos.cognitive.crew_trust import CrewTrustEffect
+
+        if type(limit) is not int or not 1 <= limit <= _MAX_CREW_TRUST_EFFECTS:
+            raise ValueError("crew_trust_outbox_limit_invalid")
+        if not self._db:
+            return ()
+        async with self._work_item_row_write_lock:
+            cursor = await self._db.execute(
+                "SELECT outcome_id, session_id, session_revision, evidence_sha256, "
+                "payload_json FROM crew_trust_outbox WHERE delivered = 0 "
+                "ORDER BY created_at ASC, outcome_id ASC LIMIT ?",
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+        effects: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row[4])
+                effect = CrewTrustEffect.from_payload(payload)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError("crew_trust_outbox_corrupt") from exc
+            if (
+                effect.outcome_id != row[0]
+                or effect.session_id != row[1]
+                or effect.session_revision != row[2]
+                or effect.evidence_sha256 != row[3]
+            ):
+                raise ValueError("crew_trust_outbox_corrupt")
+            effects.append(effect.to_payload())
+        return tuple(effects)
+
+    async def has_exact_crew_trust_outcomes(
+        self,
+        effects: tuple[Any, ...],
+        *,
+        session_id: str,
+        session_revision: int,
+    ) -> bool:
+        """Return whether one terminal revision owns exactly these outbox rows."""
+        expected = _detach_crew_trust_effects(
+            effects,
+            session_id=session_id,
+            session_revision=session_revision,
+        )
+        if not expected or not self._db:
+            return False
+        async with self._work_item_row_write_lock:
+            cursor = await self._db.execute(
+                "SELECT outcome_id, evidence_sha256, payload_json "
+                "FROM crew_trust_outbox WHERE session_id = ? "
+                "AND session_revision = ? ORDER BY outcome_id ASC",
+                (session_id, session_revision),
+            )
+            rows = await cursor.fetchall()
+        if len(rows) != len(expected):
+            return False
+        for row, payload in zip(rows, expected):
+            encoded = _compact_exact_json_bytes(
+                payload,
+                error="crew_trust_outbox_invalid",
+            ).decode("utf-8")
+            if (
+                type(row[0]) is not str
+                or row[0] != payload["outcome_id"]
+                or type(row[1]) is not str
+                or row[1] != payload["evidence_sha256"]
+                or type(row[2]) is not str
+                or row[2] != encoded
+            ):
+                return False
+        return True
+
+    async def mark_crew_trust_outcome_delivered(
+        self,
+        outcome_id: str,
+        *,
+        session_id: str,
+        session_revision: int,
+        evidence_sha256: str,
+    ) -> bool:
+        """Mark one exact pending effect delivered using all identity fields."""
+        if (
+            type(outcome_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", outcome_id) is None
+            or type(session_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(session_id) is None
+            or type(session_revision) is not int
+            or not 1 <= session_revision <= 2_147_483_647
+            or type(evidence_sha256) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", evidence_sha256) is None
+        ):
+            raise ValueError("crew_trust_outbox_identity_invalid")
+        if not self._db:
+            return False
+        async with self._work_item_row_write_lock:
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                cursor = await self._db.execute(
+                    "UPDATE crew_trust_outbox SET delivered = 1, delivered_at = ? "
+                    "WHERE outcome_id = ? AND session_id = ? "
+                    "AND session_revision = ? AND evidence_sha256 = ? "
+                    "AND delivered = 0",
+                    (
+                        time.time(),
+                        outcome_id,
+                        session_id,
+                        session_revision,
+                        evidence_sha256,
+                    ),
+                )
+                changed = cursor.rowcount == 1
+                if not changed:
+                    cursor = await self._db.execute(
+                        "SELECT delivered FROM crew_trust_outbox "
+                        "WHERE outcome_id = ? AND session_id = ? "
+                        "AND session_revision = ? AND evidence_sha256 = ?",
+                        (
+                            outcome_id,
+                            session_id,
+                            session_revision,
+                            evidence_sha256,
+                        ),
+                    )
+                    row = await cursor.fetchone()
+                    changed = row is not None and row[0] == 1
+                await self._db.commit()
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+        return changed
 
     async def transition_work_item(
         self, work_item_id: str, new_status: str, source: str = "system",

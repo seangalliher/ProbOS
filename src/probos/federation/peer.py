@@ -9,9 +9,13 @@ the Beta(alpha, beta) probationary prior wiring.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+
+logger = logging.getLogger(__name__)
 
 
 PeerProtocol = Literal["zmq", "mcp", "a2a"]
@@ -97,13 +101,23 @@ class FederationPeerRegistry:
             return
         peer.last_outcome_at = time.time()
         if self._trust_network is not None:
-            self._trust_network.record_outcome(
-                peer.trust_record_id,
-                success=success,
-                weight=1.0,
-                intent_type=intent_type,
-                source="federation_outcome",
-            )
+            try:
+                self._trust_network.record_outcome(
+                    peer.trust_record_id,
+                    success=success,
+                    weight=1.0,
+                    intent_type=intent_type,
+                    source="federation_outcome",
+                )
+            except RuntimeError as exc:
+                if str(exc) != "trust_write_in_progress":
+                    raise
+                logger.warning(
+                    "AD-1130: Federation peer trust observation skipped for "
+                    "peer=%s because a durable trust write is in progress; the "
+                    "completed outcome timestamp is preserved",
+                    peer_id,
+                )
 
     def __len__(self) -> int:
         return len(self._peers)

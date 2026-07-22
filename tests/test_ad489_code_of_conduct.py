@@ -102,6 +102,53 @@ async def test_counselor_handles_severe_violation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_counselor_busy_trust_still_sends_honest_severe_violation_dm() -> None:
+    from probos.cognitive.counselor import CounselorAgent
+
+    counselor = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
+    counselor._registry = {"agent-1": SimpleNamespace(callsign="Data")}
+    counselor._trust_network = MagicMock()
+    counselor._trust_network.record_outcome.side_effect = RuntimeError(
+        "trust_write_in_progress",
+    )
+    counselor._send_therapeutic_dm = AsyncMock(return_value=True)
+
+    await counselor._on_conduct_violation({
+        "agent_id": "agent-1",
+        "principle": "Respect",
+        "severity": "severe",
+        "detail": "Dismissive conduct repeated.",
+    })
+
+    counselor._send_therapeutic_dm.assert_awaited_once()
+    message = counselor._send_therapeutic_dm.await_args.args[2]
+    assert "trust adjustment was skipped" in message
+    assert "has been applied" not in message
+
+
+@pytest.mark.asyncio
+async def test_counselor_other_trust_runtime_error_propagates() -> None:
+    from probos.cognitive.counselor import CounselorAgent
+
+    counselor = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
+    counselor._registry = {"agent-1": SimpleNamespace(callsign="Data")}
+    counselor._trust_network = MagicMock()
+    counselor._trust_network.record_outcome.side_effect = RuntimeError(
+        "trust store defect",
+    )
+    counselor._send_therapeutic_dm = AsyncMock(return_value=True)
+
+    with pytest.raises(RuntimeError, match="^trust store defect$"):
+        await counselor._on_conduct_violation({
+            "agent_id": "agent-1",
+            "principle": "Respect",
+            "severity": "severe",
+            "detail": "Dismissive conduct repeated.",
+        })
+    counselor._send_therapeutic_dm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_conduct_violation_without_agent_id_is_noop() -> None:
     from probos.cognitive.counselor import CounselorAgent
 

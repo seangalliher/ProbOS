@@ -1871,6 +1871,7 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "bind_scheduler",
         "captain_principal",
         "compare_and_set_recovery",
+        "fail_verified_outcome",
         "get_recovery",
         "initialize_session",
         "get_session",
@@ -1892,6 +1893,10 @@ def test_public_service_api_and_annotations_are_exact() -> None:
             "self", "parent_id", "recovery", "expected_session",
             "expected_recovery",
         },
+        "fail_verified_outcome": {
+            "self", "parent_id", "expected_revision", "reason",
+            "expected_recovery", "crew_trust_effects", "evidence_refs",
+        },
         "get_recovery": {"self", "parent_id"},
         "initialize_session": {
             "self", "parent_id", "thread_id", "goal", "origin", "originator_id",
@@ -1910,7 +1915,7 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "publish_verified_result": {
             "self", "parent_id", "expected_revision", "expected_recovery",
             "expected_direct_children", "crew_synth", "last_result_summary",
-            "provenance_ref", "result_artifact_id",
+            "provenance_ref", "result_artifact_id", "crew_trust_effects",
         },
         "repair_provisioning": {"self", "limit"},
         "transition_session": {

@@ -3277,17 +3277,31 @@ class ProbOSRuntime:
                             0.1,
                         )
                     _old_trust = self.trust_network.get_score(result.agent_id)  # AD-410
-                    self.trust_network.record_outcome(
-                        result.agent_id,
-                        success=vr.verified,
-                        weight=shapley_weight,
-                        intent_type=intent,
-                        episode_id=msg.id,
-                        verifier_id=rt_agent.id,
-                    )
+                    trust_updated = False
+                    try:
+                        self.trust_network.record_outcome(
+                            result.agent_id,
+                            success=vr.verified,
+                            weight=shapley_weight,
+                            intent_type=intent,
+                            episode_id=msg.id,
+                            verifier_id=rt_agent.id,
+                        )
+                        trust_updated = True
+                    except RuntimeError as exc:
+                        if str(exc) != "trust_write_in_progress":
+                            raise
+                        logger.warning(
+                            "AD-1130: Consensus verification trust observation "
+                            "skipped for target=%s verifier=%s because a durable "
+                            "trust write is in progress; verification, Hebbian, "
+                            "and completion recording continue",
+                            result.agent_id,
+                            rt_agent.id,
+                        )
 
                     # AD-410: Bridge Alert on significant trust drop
-                    if self.bridge_alerts:
+                    if trust_updated and self.bridge_alerts:
                         _trust_alert = self.bridge_alerts.check_trust_change(
                             result.agent_id, _old_trust,
                             self.trust_network.get_score(result.agent_id),
@@ -5157,12 +5171,25 @@ class ProbOSRuntime:
                         else self.config.qa.trust_penalty_weight
                     )
                     _old_trust_qa = self.trust_network.get_score(aid)  # AD-410
-                    self.trust_network.record_outcome(
-                        aid, success=test["passed"], weight=weight,
-                    )
+                    trust_updated = False
+                    try:
+                        self.trust_network.record_outcome(
+                            aid, success=test["passed"], weight=weight,
+                        )
+                        trust_updated = True
+                    except RuntimeError as exc:
+                        if str(exc) != "trust_write_in_progress":
+                            raise
+                        logger.warning(
+                            "AD-1130: System QA trust observation skipped for "
+                            "agent=%s because a durable trust write is in "
+                            "progress; the QA report, episode, and policy "
+                            "processing continue",
+                            aid,
+                        )
 
                     # AD-410: Bridge Alert on significant trust drop
-                    if self.bridge_alerts:
+                    if trust_updated and self.bridge_alerts:
                         _trust_alert_qa = self.bridge_alerts.check_trust_change(
                             aid, _old_trust_qa,
                             self.trust_network.get_score(aid),

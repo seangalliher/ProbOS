@@ -872,6 +872,8 @@ def _record_conversation_trust(
     self-sourcing). Honest-degrade Tier-2: any extract or record failure logs
     and returns; the fan-out result is never touched.
     """
+    if getattr(thread, "task_id", None) is not None:
+        return
     cfg = getattr(getattr(runtime, "config", None), "group_chat", None)
     if not getattr(cfg, "conversation_trust_enabled", False):
         return

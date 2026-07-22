@@ -1076,17 +1076,30 @@ class WardRoomRouter:
                     author_id = post_detail.get("author_id", "")
                     if author_id and author_id != "captain":
                         success = (direction == "up")
-                        self._trust_network.record_outcome(
-                            agent_id=author_id,
-                            success=success,
-                            weight=0.05,  # Light signal — social endorsement
-                            intent_type="ward_room_endorsement",
-                            verifier_id=agent_id,
-                        )
-                        logger.debug(
-                            "AD-426: Trust signal for %s from endorsement by %s (%s, net=%d)",
-                            author_id, agent_id, direction, net_score,
-                        )
+                        try:
+                            self._trust_network.record_outcome(
+                                agent_id=author_id,
+                                success=success,
+                                weight=0.05,  # Light signal — social endorsement
+                                intent_type="ward_room_endorsement",
+                                verifier_id=agent_id,
+                            )
+                        except RuntimeError as exc:
+                            if str(exc) != "trust_write_in_progress":
+                                raise
+                            logger.warning(
+                                "AD-1130: Ward Room endorsement trust signal "
+                                "skipped for author=%s voter=%s because a durable "
+                                "trust write is in progress; the endorsement "
+                                "remains committed",
+                                author_id,
+                                agent_id,
+                            )
+                        else:
+                            logger.debug(
+                                "AD-426: Trust signal for %s from endorsement by %s (%s, net=%d)",
+                                author_id, agent_id, direction, net_score,
+                            )
             except ValueError as exc:
                 # Self-endorsement, post not found, etc.
                 logger.debug("AD-426: Endorsement skipped for %s: %s", post_id, exc)

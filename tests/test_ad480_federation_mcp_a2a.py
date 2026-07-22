@@ -201,6 +201,40 @@ class TestFederationPeerRegistry:
         assert tn.outcomes[0][3] == "echo"
         assert tn.outcomes[0][4] == "federation_outcome"
 
+    @pytest.mark.asyncio
+    async def test_record_outcome_busy_trust_preserves_timestamp(self):
+        tn = MagicMock()
+        tn.create_with_prior = MagicMock()
+        tn.record_outcome.side_effect = RuntimeError("trust_write_in_progress")
+        reg = FederationPeerRegistry(trust_network=tn)
+        peer = FederationPeer(
+            protocol="a2a",
+            peer_id="p",
+            endpoint="p",
+            trust_record_id="a2a-peer:p",
+        )
+        await reg.register_peer(peer)
+
+        reg.record_outcome("p", True, intent_type="echo")
+
+        assert peer.last_outcome_at > 0.0
+
+    @pytest.mark.asyncio
+    async def test_record_outcome_other_trust_runtime_error_propagates(self):
+        tn = MagicMock()
+        tn.create_with_prior = MagicMock()
+        tn.record_outcome.side_effect = RuntimeError("trust store defect")
+        reg = FederationPeerRegistry(trust_network=tn)
+        await reg.register_peer(FederationPeer(
+            protocol="a2a",
+            peer_id="p",
+            endpoint="p",
+            trust_record_id="a2a-peer:p",
+        ))
+
+        with pytest.raises(RuntimeError, match="^trust store defect$"):
+            reg.record_outcome("p", True, intent_type="echo")
+
 
 # -------------------- TestAgentCard (480c) --------------------
 

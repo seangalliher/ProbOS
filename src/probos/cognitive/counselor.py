@@ -1455,21 +1455,42 @@ class CounselorAgent(CognitiveAgent):
             )
             next_step = "sent_private_reminder"
         else:
+            trust_adjusted = self._trust_network is None
             if self._trust_network:
-                self._trust_network.record_outcome(
-                    agent_id,
-                    success=False,
-                    weight=0.5,
-                    source="conduct_violation",
-                )
+                try:
+                    self._trust_network.record_outcome(
+                        agent_id,
+                        success=False,
+                        weight=0.5,
+                        source="conduct_violation",
+                    )
+                    trust_adjusted = True
+                except RuntimeError as exc:
+                    if str(exc) != "trust_write_in_progress":
+                        raise
+                    logger.warning(
+                        "AD-1130: Conduct trust adjustment skipped for agent=%s "
+                        "because a durable trust write is in progress; the "
+                        "counseling response will still be sent",
+                        agent_id,
+                    )
+            adjustment_text = (
+                "A trust adjustment has been applied."
+                if trust_adjusted
+                else "The trust adjustment was skipped because another trust write is in progress."
+            )
             await self._send_therapeutic_dm(
                 agent_id,
                 callsign,
                 f"A Code of Conduct violation has been recorded for the {principle} "
                 f"principle (severity: {severity}). {detail} "
-                f"A trust adjustment has been applied.",
+                f"{adjustment_text}",
             )
-            next_step = "applied_trust_adjustment_and_sent_dm"
+            next_step = (
+                "applied_trust_adjustment_and_sent_dm"
+                if trust_adjusted
+                else "skipped_busy_trust_adjustment_and_sent_dm"
+            )
         logger.info(
             "AD-489: Conduct violation handled for %s; principle=%s severity=%s next=%s",
             agent_id,
@@ -1717,18 +1738,31 @@ class CounselorAgent(CognitiveAgent):
         count = len(self._confab_history[agent_id])
 
         # Trust penalty on repeat offenses (2+ in window)
+        trust_adjusted = self._trust_network is None
         if count >= 2 and self._trust_network:
-            self._trust_network.record_outcome(
-                agent_id=agent_id,
-                success=False,
-                weight=0.5,
-                intent_type="confabulation_suppressed",
-                source="confabulation",
-            )
-            logger.info(
-                "BF-206: Trust penalty for %s — %d confabulations in window",
-                callsign, count,
-            )
+            try:
+                self._trust_network.record_outcome(
+                    agent_id=agent_id,
+                    success=False,
+                    weight=0.5,
+                    intent_type="confabulation_suppressed",
+                    source="confabulation",
+                )
+                trust_adjusted = True
+            except RuntimeError as exc:
+                if str(exc) != "trust_write_in_progress":
+                    raise
+                logger.warning(
+                    "AD-1130: Confabulation trust adjustment skipped for "
+                    "agent=%s because a durable trust write is in progress; "
+                    "the graduated counseling response will still be sent",
+                    agent_id,
+                )
+            if trust_adjusted:
+                logger.info(
+                    "BF-206: Trust penalty for %s — %d confabulations in window",
+                    callsign, count,
+                )
 
         # Therapeutic DM (rate-limited by _send_therapeutic_dm)
         if count == 1:
@@ -1740,12 +1774,16 @@ class CounselorAgent(CognitiveAgent):
                 "specific identifiers or metrics."
             )
         else:
+            trust_text = (
+                "Your trust rating has been adjusted to reflect this pattern."
+                if trust_adjusted
+                else "The trust adjustment was skipped because another trust write is in progress."
+            )
             message = (
                 f"I've noticed this is the {count}{'nd' if count == 2 else 'rd' if count == 3 else 'th'} "
                 "time your response contained unverifiable details within the past hour. "
                 "I'd encourage you to focus on what you can directly observe — the crew "
-                "benefits most from grounded analysis. Your trust rating has been adjusted "
-                "to reflect this pattern."
+                f"benefits most from grounded analysis. {trust_text}"
             )
 
         await self._send_therapeutic_dm(agent_id, callsign, message)

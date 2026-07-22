@@ -1163,12 +1163,22 @@ class ProactiveCognitiveLoop:
             if self._config:
                 no_response_weight = self._config.trust_no_response_weight
                 if no_response_weight > 0:
-                    self._runtime.trust_network.record_outcome(
-                        agent.id,
-                        success=True,
-                        weight=no_response_weight,
-                        intent_type="proactive_no_response",
-                    )
+                    try:
+                        self._runtime.trust_network.record_outcome(
+                            agent.id,
+                            success=True,
+                            weight=no_response_weight,
+                            intent_type="proactive_no_response",
+                        )
+                    except RuntimeError as exc:
+                        if str(exc) != "trust_write_in_progress":
+                            raise
+                        logger.warning(
+                            "AD-1130: Proactive silence trust observation skipped "
+                            "for agent=%s because a durable trust write is in "
+                            "progress; duty and episode accounting continue",
+                            agent.id,
+                        )
             # AD-430a: Store no-response as episodic memory (prevents redundant re-analysis)
             if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
                 try:
@@ -1382,12 +1392,22 @@ class ProactiveCognitiveLoop:
             if duty:
                 trust_weight += self._config.trust_duty_bonus  # Duty completion bonus
             if trust_weight > 0:
-                new_score = self._runtime.trust_network.record_outcome(
-                    agent.id,
-                    success=True,
-                    weight=trust_weight,
-                    intent_type="proactive_think",
-                )
+                try:
+                    self._runtime.trust_network.record_outcome(
+                        agent.id,
+                        success=True,
+                        weight=trust_weight,
+                        intent_type="proactive_think",
+                    )
+                except RuntimeError as exc:
+                    if str(exc) != "trust_write_in_progress":
+                        raise
+                    logger.warning(
+                        "AD-1130: Proactive post trust observation skipped for "
+                        "agent=%s because a durable trust write is in progress; "
+                        "the post, duty, and episode accounting remain complete",
+                        agent.id,
+                    )
 
         # Record duty execution after successful post
         if duty and self._duty_tracker:

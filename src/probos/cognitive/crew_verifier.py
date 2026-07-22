@@ -1116,13 +1116,24 @@ class SubtaskVerifier:
         # outcome against the trust ledger SYNCHRONOUSLY (keywords only; the
         # producer is the verifier_id field). Skip when honest-degraded.
         if verdict.verifier_agent_id:
-            self._trust.record_outcome(
-                verdict.verifier_agent_id,
-                success=verdict.accepted,
-                intent_type="crew_verification",
-                verifier_id=result.agent_id,
-                source="crew_verification",
-            )
+            try:
+                self._trust.record_outcome(
+                    verdict.verifier_agent_id,
+                    success=verdict.accepted,
+                    intent_type="crew_verification",
+                    verifier_id=result.agent_id,
+                    source="crew_verification",
+                )
+            except RuntimeError as exc:
+                if str(exc) != "trust_write_in_progress":
+                    raise
+                logger.warning(
+                    "AD-1130: Legacy verifier trust observation skipped for "
+                    "verifier=%s target=%s because a durable trust write is in "
+                    "progress; the completed verdict is preserved",
+                    verdict.verifier_agent_id,
+                    result.agent_id,
+                )
         return verdict
 
     async def converge(

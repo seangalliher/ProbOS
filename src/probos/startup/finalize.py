@@ -1833,6 +1833,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
     from probos.cognitive.crew_finalizer import CrewSessionFinalizer
     from probos.cognitive.crew_orchestrator import CrewOrchestrator
     from probos.cognitive.crew_synth import CrewSynthesizer
+    from probos.cognitive.crew_trust import CrewSessionTrustRecorder
     from probos.cognitive.crew_verifier import SubtaskVerifier
 
     emit_fn = getattr(runtime, "emit_event", None)
@@ -1883,6 +1884,12 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         runtime=runtime,
         emit_fn=emit_fn,
     )
+    trust_recorder = CrewSessionTrustRecorder(
+        outbox=work_item_store,
+        trust_network=trust_network,
+    )
+    runtime.crew_session_trust_recorder = trust_recorder
+    consensus_config = getattr(config, "consensus", None)
     finalizer = CrewSessionFinalizer(
         work_item_store=work_item_store,
         crew_session_service=crew_session_service,
@@ -1892,6 +1899,17 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         agent_registry=registry,
         verifier=verifier,
         synthesizer=synthesizer,
+        trust_recorder=trust_recorder,
+        approval_threshold=getattr(
+            consensus_config,
+            "approval_threshold",
+            0.6,
+        ),
+        use_confidence_weights=getattr(
+            consensus_config,
+            "use_confidence_weights",
+            True,
+        ),
     )
     runtime.crew_orchestrator = CrewOrchestrator(  # public attr (Wave 5 conv #1)
         assignment_resolver=assignment_resolver,
@@ -4844,6 +4862,10 @@ async def finalize_startup(
         else None
     )
     if crew_start is not None and asyncio.iscoroutinefunction(crew_start):
+        trust_recorder = getattr(runtime, "crew_session_trust_recorder", None)
+        trust_drain = getattr(trust_recorder, "drain_pending", None)
+        if callable(trust_drain):
+            await trust_drain()
         await crew_start()
 
     runtime._started = True

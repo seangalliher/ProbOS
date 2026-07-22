@@ -989,6 +989,7 @@ def _make_finalizer(
     work_store: Any | None = None,
     artifact_store: Any | None = None,
     attachment_store: Any | None = None,
+    trust_recorder: Any | None = None,
 ) -> Any:
     finalizer_type = _finalizer_type()
     if finalizer_type is None:
@@ -1002,6 +1003,7 @@ def _make_finalizer(
         agent_registry=registry,
         verifier=verifier,
         synthesizer=synthesizer,
+        trust_recorder=trust_recorder,
     )
 
 
@@ -2570,6 +2572,7 @@ class _ServiceFailure:
         last_result_summary: str,
         provenance_ref: str,
         result_artifact_id: str,
+        crew_trust_effects: tuple[Any, ...] = (),
     ) -> CrewSessionContract:
         if self.fail_publish is not None:
             raise self.fail_publish
@@ -2582,6 +2585,7 @@ class _ServiceFailure:
             last_result_summary=last_result_summary,
             provenance_ref=provenance_ref,
             result_artifact_id=result_artifact_id,
+            crew_trust_effects=crew_trust_effects,
         )
 
 
@@ -3214,7 +3218,7 @@ async def test_publication_failure_never_reports_done(
         assert oversized_session.result_ref is None
 
 
-async def test_publish_verified_result_commit_then_cancel_returns_authoritative_done(
+async def test_publish_verified_result_commit_then_cancel_propagates_with_authoritative_done(
     stores: _Stores,
 ) -> None:
     parent, _thread, service, contract, children, _results = await _executing_case(stores)
@@ -3230,20 +3234,21 @@ async def test_publish_verified_result_commit_then_cancel_returns_authoritative_
         after_commit=True,
     )
 
-    published = await service.publish_verified_result(
-        parent.id,
-        expected_revision=verifying.revision,
-        expected_recovery=None,
-        expected_direct_children=(_work_item_semantic_snapshot(persisted),),
-        crew_synth=synthesis,
-        last_result_summary="authoritative result",
-        provenance_ref=_SHA_B,
-        result_artifact_id="artifact-1",
-    )
+    with pytest.raises(
+        asyncio.CancelledError,
+        match="injected_publication_post_commit_cancel",
+    ):
+        await service.publish_verified_result(
+            parent.id,
+            expected_revision=verifying.revision,
+            expected_recovery=None,
+            expected_direct_children=(_work_item_semantic_snapshot(persisted),),
+            crew_synth=synthesis,
+            last_result_summary="authoritative result",
+            provenance_ref=_SHA_B,
+            result_artifact_id="artifact-1",
+        )
 
-    assert published.state == "done"
-    assert published.result_artifact_id == "artifact-1"
-    assert published.result_ref == _SHA_B
     row = await stores.work.get_work_item(parent.id)
     assert row is not None and row.status == "done"
     assert row.metadata["origin"] == "captain"
@@ -5575,6 +5580,7 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
         "bind_scheduler",
         "captain_principal",
         "compare_and_set_recovery",
+        "fail_verified_outcome",
         "get_recovery",
         "get_session",
         "initialize_session",
@@ -5612,9 +5618,10 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
                 "last_result_summary",
                 "provenance_ref",
                 "result_artifact_id",
+                "crew_trust_effects",
             ),
-            {"expected_revision", "expected_recovery", "expected_direct_children", "crew_synth", "last_result_summary", "provenance_ref", "result_artifact_id"},
-            {},
+            {"expected_revision", "expected_recovery", "expected_direct_children", "crew_synth", "last_result_summary", "provenance_ref", "result_artifact_id", "crew_trust_effects"},
+            {"crew_trust_effects": ()},
         ),
         WorkItemStore.publish_work_item_metadata_with_child_barrier: (
             (
@@ -5629,10 +5636,11 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
                 "expected_assigned_to",
                 "expected_direct_children",
                 "new_status",
+                "crew_trust_effects",
                 "source",
             ),
-            {"expected", "expected_absent_keys", "expected_present_keys", "expected_work_type", "expected_status", "expected_assigned_to", "expected_direct_children", "new_status", "source"},
-            {"source": "crew_session_verified_result"},
+            {"expected", "expected_absent_keys", "expected_present_keys", "expected_work_type", "expected_status", "expected_assigned_to", "expected_direct_children", "new_status", "crew_trust_effects", "source"},
+            {"crew_trust_effects": (), "source": "crew_session_verified_result"},
         ),
     }
     for method, (names, keyword_only, defaults) in expected_signatures.items():

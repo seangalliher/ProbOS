@@ -161,6 +161,38 @@ async def test_verify_refuted_records_negative_trust():
 
 
 @pytest.mark.asyncio
+async def test_verify_busy_trust_preserves_completed_verdict():
+    trust = TrustNetwork()
+    trust.record_outcome = lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("trust_write_in_progress"),
+    )
+    verifier, _llm, _ex, _trust = _make_verifier(
+        responses=[_accept()],
+        trust=trust,
+    )
+
+    verdict = await verifier.verify(_result())
+
+    assert verdict.accepted is True
+    assert verdict.verifier_agent_id == "verifier"
+
+
+@pytest.mark.asyncio
+async def test_verify_other_trust_runtime_error_propagates():
+    trust = TrustNetwork()
+    trust.record_outcome = lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("trust store defect"),
+    )
+    verifier, _llm, _ex, _trust = _make_verifier(
+        responses=[_accept()],
+        trust=trust,
+    )
+
+    with pytest.raises(RuntimeError, match="^trust store defect$"):
+        await verifier.verify(_result())
+
+
+@pytest.mark.asyncio
 async def test_verify_anchors_prompt_to_expected_output():
     verifier, llm, _ex, _trust = _make_verifier(
         responses=[_accept()],
