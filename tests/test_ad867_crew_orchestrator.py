@@ -446,14 +446,35 @@ async def test_single_spec_parent_skips_crew_path(store):
 
 @pytest.mark.asyncio
 async def test_maybe_dispatch_holds_task_reference(store):
+    class _RepairService:
+        def __init__(self) -> None:
+            self.limits: list[int] = []
+
+        async def repair_provisioning(self, *, limit: int) -> tuple[str, ...]:
+            self.limits.append(limit)
+            return ()
+
     parent, children = await _make_dag(store, 2)
     results = [_result(c.id, f"spec-{i}") for i, c in enumerate(children)]
     synth = _FakeSynth(store, complete_parent=True)
-    orch = _make_orch(
-        store=store, config=_config(enabled=True),
-        executor=_FakeExecutor(results), synthesizer=synth,
+    config = _config(enabled=True)
+    service = _RepairService()
+    orch = CrewOrchestrator(
+        assignment_resolver=_FakeResolver(),
+        delegator=_FakeDelegator(),
+        crew_executor=_FakeExecutor(results),
+        verifier=_FakeVerifier(),
+        synthesizer=synth,
+        work_item_store=store,
+        runtime=SimpleNamespace(),
+        emit_fn=None,
+        config=config,
+        crew_session_service=service,
     )
     await orch.start()
+    assert service.limits == [
+        config.agentic_dispatch.crew_provisioning_repair_limit,
+    ]
 
     task = await orch.maybe_dispatch_crew(parent.id)
 

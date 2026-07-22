@@ -30,6 +30,7 @@ fulltext), AD-791c (archival lifecycle policy).
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -108,6 +109,27 @@ CREATE INDEX IF NOT EXISTS idx_tombstones_purged ON chat_thread_tombstones (purg
 # ``metadata.kind="system"`` tags them without a schema change.
 MAIN_CHAT_THREAD_ID: str = "system-main-chat"
 COMPUTER_THREAD_ID: str = "system-ships-computer"
+_CREW_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_CREW_SESSION_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _crew_session_json_equal(left: object, right: object) -> bool:
+    try:
+        return json.dumps(
+            left,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ) == json.dumps(
+            right,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        return False
 
 
 @dataclass
@@ -516,6 +538,300 @@ class ChatThreadStore:
                 conn.execute("ROLLBACK")
                 raise
         return self.get_thread(thread_id)
+
+    def add_crew_session_participants(
+        self,
+        thread_id: str,
+        *,
+        task_id: str,
+        participant_ids: tuple[str, ...],
+    ) -> ChatThread | None:
+        """Union exact CrewSession owners into one task-linked room."""
+        if (
+            type(thread_id) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(thread_id) is None
+            or type(task_id) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(task_id) is None
+            or type(participant_ids) is not tuple
+            or not 1 <= len(participant_ids) <= 16
+            or len(set(participant_ids)) != len(participant_ids)
+            or any(
+                type(participant_id) is not str
+                or _CREW_SESSION_ID_RE.fullmatch(participant_id) is None
+                for participant_id in participant_ids
+            )
+        ):
+            raise ValueError("crew_session_participants_invalid")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT task_id, participants FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    conn.execute("COMMIT")
+                    return None
+                if row["task_id"] != task_id:
+                    raise ValueError("crew_session_thread_task_mismatch")
+                raw = json.loads(row["participants"] or "[]")
+                if (
+                    type(raw) is not list
+                    or any(
+                        type(value) is not str
+                        or _CREW_SESSION_ID_RE.fullmatch(value) is None
+                        for value in raw
+                    )
+                    or len(set(raw)) != len(raw)
+                ):
+                    raise ValueError("crew_session_thread_participants_invalid")
+                merged = list(raw)
+                for participant_id in participant_ids:
+                    if participant_id not in merged:
+                        merged.append(participant_id)
+                if merged != raw:
+                    conn.execute(
+                        "UPDATE chat_threads SET participants = ?, last_active_at = ? "
+                        "WHERE id = ?",
+                        (json.dumps(merged), self._clock(), thread_id),
+                    )
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+        return self.get_thread(thread_id)
+
+    def compare_and_set_task_link(
+        self,
+        thread_id: str,
+        *,
+        expected_task_id: str | None,
+        new_task_id: str | None,
+    ) -> ChatThread | None:
+        """Compare-and-set one exact room task link under a write lock."""
+        if (
+            type(thread_id) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(thread_id) is None
+            or (
+                expected_task_id is not None
+                and (
+                    type(expected_task_id) is not str
+                    or _CREW_SESSION_ID_RE.fullmatch(expected_task_id) is None
+                )
+            )
+            or (
+                new_task_id is not None
+                and (
+                    type(new_task_id) is not str
+                    or _CREW_SESSION_ID_RE.fullmatch(new_task_id) is None
+                )
+            )
+        ):
+            raise ValueError("crew_session_task_link_invalid")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT task_id FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None or row["task_id"] != expected_task_id:
+                    conn.execute("COMMIT")
+                    return None
+                conn.execute(
+                    "UPDATE chat_threads SET task_id = ? WHERE id = ?",
+                    (new_task_id, thread_id),
+                )
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+        return self.get_thread(thread_id)
+
+    def create_crew_session_thread(
+        self,
+        *,
+        thread_id: str,
+        title: str,
+        participants: tuple[str, ...],
+        task_id: str,
+        provision_id: str,
+        created_by: str,
+    ) -> ChatThread:
+        """Create or exactly reconcile one server-owned CrewSession room."""
+        if (
+            type(thread_id) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(thread_id) is None
+            or type(title) is not str
+            or not 1 <= len(title) <= 200
+            or "\x00" in title
+            or type(participants) is not tuple
+            or not 1 <= len(participants) <= 16
+            or len(set(participants)) != len(participants)
+            or any(
+                type(participant) is not str
+                or _CREW_SESSION_ID_RE.fullmatch(participant) is None
+                for participant in participants
+            )
+            or type(task_id) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(task_id) is None
+            or type(provision_id) is not str
+            or _CREW_SESSION_SHA_RE.fullmatch(provision_id) is None
+            or type(created_by) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(created_by) is None
+        ):
+            raise ValueError("crew_session_thread_create_invalid")
+        try:
+            title.encode("utf-8", errors="strict")
+        except UnicodeError as exc:
+            raise ValueError("crew_session_thread_create_invalid") from exc
+        metadata = {
+            "crew_provisioning": {
+                "version": 1,
+                "provision_id": provision_id,
+                "created_by": created_by,
+                "title": title,
+                "participants": list(participants),
+            },
+        }
+        now = self._clock()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = conn.execute(
+                    "SELECT * FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if existing is not None:
+                    current = _row_to_thread(existing)
+                    exact = (
+                        current.title == title
+                        and current.participants == list(participants)
+                        and current.project_id is None
+                        and current.task_id == task_id
+                        and current.pinned is False
+                        and current.archived is False
+                        and current.personality_override is None
+                        and current.workspace_root is None
+                        and current.preprompt is None
+                        and current.model is None
+                        and _crew_session_json_equal(current.metadata, metadata)
+                    )
+                    message_count = conn.execute(
+                        "SELECT COUNT(*) AS n FROM chat_thread_messages "
+                        "WHERE thread_id = ?",
+                        (thread_id,),
+                    ).fetchone()
+                    exact = (
+                        exact
+                        and current.created_at == current.last_active_at
+                        and int(message_count["n"] if message_count else 0) == 0
+                    )
+                    if not exact:
+                        raise ValueError("crew_session_thread_create_conflict")
+                    conn.execute("COMMIT")
+                    return current
+                conn.execute(
+                    "INSERT INTO chat_threads "
+                    "(id, title, participants, project_id, task_id, pinned, "
+                    "archived, personality_override, workspace_root, created_at, "
+                    "last_active_at, preprompt, model, metadata) "
+                    "VALUES (?,?,?,NULL,?,0,0,NULL,NULL,?,?,NULL,NULL,?)",
+                    (
+                        thread_id,
+                        title,
+                        json.dumps(list(participants)),
+                        task_id,
+                        now,
+                        now,
+                        json.dumps(metadata, sort_keys=True, separators=(",", ":")),
+                    ),
+                )
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+        created = self.get_thread(thread_id)
+        if created is None:
+            raise ValueError("crew_session_thread_create_failed")
+        return created
+
+    def delete_untouched_crew_session_thread(
+        self,
+        thread_id: str,
+        *,
+        task_id: str,
+        provision_id: str,
+    ) -> bool:
+        """Delete only an unchanged marker-owned room with no transcript."""
+        if (
+            type(thread_id) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(thread_id) is None
+            or type(task_id) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(task_id) is None
+            or type(provision_id) is not str
+            or _CREW_SESSION_SHA_RE.fullmatch(provision_id) is None
+        ):
+            raise ValueError("crew_session_thread_delete_invalid")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT * FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    conn.execute("COMMIT")
+                    return False
+                thread = _row_to_thread(row)
+                marker = thread.metadata.get("crew_provisioning")
+                message_count = conn.execute(
+                    "SELECT COUNT(*) AS n FROM chat_thread_messages WHERE thread_id = ?",
+                    (thread_id,),
+                ).fetchone()
+                untouched = (
+                    thread.id == f"crew-room-{provision_id}"
+                    and thread.task_id == task_id
+                    and thread.project_id is None
+                    and thread.pinned is False
+                    and thread.archived is False
+                    and thread.personality_override is None
+                    and thread.workspace_root is None
+                    and thread.preprompt is None
+                    and thread.model is None
+                    and thread.created_at == thread.last_active_at
+                    and int(message_count["n"] if message_count else 0) == 0
+                    and set(thread.metadata) == {"crew_provisioning"}
+                    and type(marker) is dict
+                    and set(marker) == {
+                        "version",
+                        "provision_id",
+                        "created_by",
+                        "title",
+                        "participants",
+                    }
+                    and type(marker.get("version")) is int
+                    and marker["version"] == 1
+                    and marker.get("provision_id") == provision_id
+                    and type(marker.get("created_by")) is str
+                    and _CREW_SESSION_ID_RE.fullmatch(marker["created_by"]) is not None
+                    and type(marker.get("title")) is str
+                    and thread.title == marker["title"]
+                    and type(marker.get("participants")) is list
+                    and thread.participants == marker["participants"]
+                )
+                if not untouched:
+                    conn.execute("COMMIT")
+                    return False
+                conn.execute(
+                    "DELETE FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                )
+                conn.execute("COMMIT")
+                return True
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
 
     def remove_participant(self, thread_id: str, agent_id: str) -> ChatThread | None:
         """AD-913: remove an agent from a thread's participant set (idempotent).

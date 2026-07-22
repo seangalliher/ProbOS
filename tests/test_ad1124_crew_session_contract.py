@@ -8,6 +8,7 @@ import builtins
 import hashlib
 import inspect
 import io
+import itertools
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,9 @@ from probos.storage.sqlite_factory import SQLiteConnectionFactory
 from probos.threads import ChatThread, ChatThreadStore
 from probos.workforce import (
     BUILTIN_WORK_TYPES,
+    CrewSessionAdmissionPort,
+    CrewSessionParentCreate,
+    CrewSessionParentReservation,
     WorkItem,
     WorkItemStatus,
     WorkItemStore,
@@ -74,6 +78,7 @@ _FINE_EDGES = {
     ("verifying", "failed"),
     ("blocked_needs_captain", "discussing"),
     ("blocked_needs_captain", "executing"),
+    ("blocked_needs_captain", "verifying"),
     ("blocked_needs_captain", "failed"),
 }
 _WORK_ITEM_COLUMNS = [
@@ -102,6 +107,7 @@ _WORK_ITEM_COLUMNS = [
     "ttl_seconds",
     "template_id",
 ]
+_CREW_PARENT_IDS = itertools.count(1)
 
 
 class _Clock:
@@ -298,6 +304,7 @@ class _Stores:
     work: WorkItemStore
     chat: ChatThreadStore
     events: _EventRecorder
+    admission_port: CrewSessionAdmissionPort | None = None
 
 
 @pytest.fixture
@@ -327,6 +334,36 @@ def _service(stores: _Stores, clock: _Clock) -> CrewSessionService:
     )
 
 
+async def _create_crew_parent(
+    stores: _Stores,
+    *,
+    assigned_to: str = "facilitator-1",
+    metadata: dict[str, Any] | None = None,
+) -> WorkItem:
+    if stores.admission_port is None:
+        stores.admission_port = stores.work.claim_crew_session_admission_port()
+    async with stores.admission_port.reserve() as reservation:
+        parent = await reservation.create_parent(CrewSessionParentCreate(
+            id=f"crew-session-fixture-{next(_CREW_PARENT_IDS)}",
+            title="Durable session",
+            description="Durable session",
+            assigned_to=assigned_to,
+            created_by="captain",
+            metadata={},
+            created_at=100.0,
+        ))
+    if metadata:
+        parent = await stores.work.merge_work_item_metadata(
+            parent.id,
+            dict(metadata),
+            expected_work_type="crew_session",
+            expected_status="draft",
+            expected_assigned_to=assigned_to,
+        )
+        assert parent is not None
+    return parent
+
+
 async def _parent_and_room(
     stores: _Stores,
     *,
@@ -336,17 +373,36 @@ async def _parent_and_room(
     metadata: dict[str, Any] | None = None,
     room_task_id: str | None = None,
 ) -> tuple[WorkItem, ChatThread]:
-    kwargs: dict[str, Any] = {
-        "title": "Durable session",
-        "work_type": work_type,
-        "assigned_to": assigned_to,
-        "created_at": 100.0,
-        "updated_at": 100.0,
-        "metadata": dict(metadata or {}),
-    }
-    if status is not None:
-        kwargs["status"] = status
-    parent = await stores.work.create_work_item(**kwargs)
+    if work_type == "crew_session":
+        if assigned_to is None:
+            raise ValueError("crew_session_parent_create_invalid")
+        parent = await _create_crew_parent(
+            stores,
+            assigned_to=assigned_to,
+            metadata=metadata,
+        )
+        if status is not None and status != "draft":
+            parent = await stores.work.merge_work_item_metadata(
+                parent.id,
+                {},
+                expected_work_type="crew_session",
+                expected_status="draft",
+                expected_assigned_to=assigned_to,
+                new_status=status,
+            )
+            assert parent is not None
+    else:
+        kwargs: dict[str, Any] = {
+            "title": "Durable session",
+            "work_type": work_type,
+            "assigned_to": assigned_to,
+            "created_at": 100.0,
+            "updated_at": 100.0,
+            "metadata": dict(metadata or {}),
+        }
+        if status is not None:
+            kwargs["status"] = status
+        parent = await stores.work.create_work_item(**kwargs)
     thread = stores.chat.create_thread(
         title="Crew room",
         participants=["facilitator-1", "owner-2"],
@@ -364,7 +420,7 @@ async def _initialize(
     values: dict[str, Any] = {
         "goal": "Deliver a verified result",
         "origin": "captain",
-        "originator_id": "captain-1",
+        "originator_id": "captain",
         "facilitator_id": "facilitator-1",
         "owner_ids": ["facilitator-1", "owner-2"],
         "success_criteria": ["Result is complete", "Evidence is linked"],
@@ -394,7 +450,7 @@ def _contract_payload(**updates: Any) -> dict[str, Any]:
         "revision": 1,
         "goal": "goal",
         "origin": "captain",
-        "originator_id": "captain-1",
+        "originator_id": "captain",
         "facilitator_id": "facilitator-1",
         "owner_ids": ["facilitator-1"],
         "success_criteria": ["criterion"],
@@ -459,6 +515,7 @@ def test_builtin_coarse_transition_matrix_all_pairs() -> None:
         ("review", "failed"),
         ("blocked", "open"),
         ("blocked", "in_progress"),
+        ("blocked", "review"),
         ("blocked", "failed"),
     }
     actual = {
@@ -888,23 +945,25 @@ async def test_initialize_session_generic_writer_interleaving_conflicts_without_
     initialize_task = asyncio.create_task(_initialize(service, parent, thread))
     await barrier.merge_entered.wait()
 
-    if mutation == "assigned_to":
-        changed = await stores.work.update_work_item(parent.id, assigned_to="other-owner")
-        assert changed is not None and changed.assigned_to == "other-owner"
-    elif mutation == "work_type":
-        changed = await stores.work.update_work_item(parent.id, work_type="task")
-        assert changed is not None and changed.work_type == "task"
-    else:
-        changed = await stores.work.transition_work_item(parent.id, "open")
-        assert changed is not None and changed.status == "open"
+    with pytest.raises(ValueError, match="^crew_session_write_reserved$"):
+        if mutation == "assigned_to":
+            await stores.work.update_work_item(
+                parent.id,
+                assigned_to="other-owner",
+            )
+        elif mutation == "work_type":
+            await stores.work.update_work_item(parent.id, work_type="task")
+        else:
+            await stores.work.transition_work_item(parent.id, "open")
 
     barrier.release_merge.set()
-    with pytest.raises(ValueError, match="work_item_state_conflict"):
-        await initialize_task
+    initialized = await initialize_task
 
     reloaded = await stores.work.get_work_item(parent.id)
     assert reloaded is not None
-    assert "crew_session" not in reloaded.metadata
+    assert initialized.state == "discussing"
+    assert reloaded.status == "open"
+    assert reloaded.metadata["crew_session"] == initialized.model_dump(mode="json")
     assert barrier.last_merge_options == {
         "expected_work_type": "crew_session",
         "expected_status": "draft",
@@ -926,16 +985,16 @@ async def test_transition_session_generic_status_interleaving_conflicts_without_
         service.transition_session(parent.id, "executing", expected_revision=1),
     )
     await barrier.merge_entered.wait()
-    changed = await stores.work.transition_work_item(parent.id, "blocked")
-    assert changed is not None and changed.status == "blocked"
+    with pytest.raises(ValueError, match="^crew_session_write_reserved$"):
+        await stores.work.transition_work_item(parent.id, "blocked")
 
     barrier.release_merge.set()
-    with pytest.raises(ValueError, match="work_item_state_conflict"):
-        await transition_task
+    transitioned = await transition_task
 
     reloaded = await stores.work.get_work_item(parent.id)
-    assert reloaded is not None and reloaded.status == "blocked"
-    assert reloaded.metadata["crew_session"] == contract.model_dump(mode="json")
+    assert reloaded is not None and reloaded.status == "in_progress"
+    assert transitioned.state == "executing"
+    assert reloaded.metadata["crew_session"] == transitioned.model_dump(mode="json")
     assert barrier.last_merge_options == {
         "expected_work_type": "crew_session",
         "expected_status": "open",
@@ -960,23 +1019,29 @@ async def test_transition_session_generic_metadata_alias_interleaving_conflicts_
 
     malformed = contract.model_dump(mode="json")
     malformed["revision"] = True
-    concurrent = await stores.work.update_work_item(
-        parent.id,
-        metadata={"crew_session": malformed},
-    )
-    assert concurrent is not None
+    with pytest.raises(ValueError, match="^crew_session_write_reserved$"):
+        await stores.work.update_work_item(
+            parent.id,
+            metadata={"crew_session": malformed},
+        )
 
     barrier.release_merge.set()
+    transitioned = await transition_task
     with pytest.raises(ValueError, match="work_item_metadata_conflict"):
-        await transition_task
+        await stores.work.merge_work_item_metadata(
+            parent.id,
+            {"alias_probe": True},
+            expected={"crew_session": malformed},
+            expected_work_type="crew_session",
+            expected_status="in_progress",
+            expected_assigned_to="facilitator-1",
+        )
 
     reloaded = await stores.work.get_work_item(parent.id)
     assert reloaded is not None
-    assert reloaded.status == "open"
-    assert reloaded.updated_at == concurrent.updated_at
-    assert reloaded.metadata == concurrent.metadata
-    assert reloaded.metadata["crew_session"]["state"] == "discussing"
-    assert reloaded.metadata["crew_session"]["revision"] is True
+    assert reloaded.status == "in_progress"
+    assert "alias_probe" not in reloaded.metadata
+    assert reloaded.metadata["crew_session"] == transitioned.model_dump(mode="json")
 
 
 def test_contract_rejects_unknown_version_state_and_key() -> None:
@@ -1159,7 +1224,7 @@ async def test_initialize_rejects_missing_wrong_type_and_wrong_status_parent(sto
     with pytest.raises(ValueError):
         await service.initialize_session(
             "missing", "thread-1", goal="g", origin="captain",
-            originator_id="captain-1", facilitator_id="facilitator-1",
+            originator_id="captain", facilitator_id="facilitator-1",
             owner_ids=["facilitator-1"], success_criteria=["c"],
             expected_deliverable="d",
         )
@@ -1175,9 +1240,19 @@ async def test_initialize_rejects_missing_wrong_type_and_wrong_status_parent(sto
 
 async def test_initialize_rejects_assignment_and_owner_invariants(stores: _Stores) -> None:
     service = _service(stores, _Clock(200.0))
-    unassigned, unassigned_thread = await _parent_and_room(stores, assigned_to=None)
-    with pytest.raises(ValueError):
-        await _initialize(service, unassigned, unassigned_thread)
+    with pytest.raises(ValueError, match="crew_session_parent_create_invalid"):
+        if stores.admission_port is None:
+            stores.admission_port = stores.work.claim_crew_session_admission_port()
+        async with stores.admission_port.reserve() as reservation:
+            await reservation.create_parent(CrewSessionParentCreate(
+                id=f"crew-session-fixture-{next(_CREW_PARENT_IDS)}",
+                title="Durable session",
+                description="Durable session",
+                assigned_to="",
+                created_by="captain",
+                metadata={},
+                created_at=100.0,
+            ))
 
     mismatch, mismatch_thread = await _parent_and_room(stores, assigned_to="other-owner")
     with pytest.raises(ValueError):
@@ -1191,15 +1266,12 @@ async def test_initialize_rejects_assignment_and_owner_invariants(stores: _Store
 
 
 async def test_initialize_rejects_missing_room_without_mutation(stores: _Stores) -> None:
-    parent = await stores.work.create_work_item(
-        title="session", work_type="crew_session", assigned_to="facilitator-1",
-        created_at=100.0, updated_at=100.0,
-    )
+    parent = await _create_crew_parent(stores)
     service = _service(stores, _Clock(200.0))
     with pytest.raises(ValueError):
         await service.initialize_session(
             parent.id, "missing-thread", goal="g", origin="captain",
-            originator_id="captain-1", facilitator_id="facilitator-1",
+            originator_id="captain", facilitator_id="facilitator-1",
             owner_ids=["facilitator-1"], success_criteria=["c"],
             expected_deliverable="d",
         )
@@ -1242,7 +1314,14 @@ async def test_duplicate_room_including_archived_fails_initialize_get_and_transi
 
 async def test_projection_mismatch_fails_get_and_transition_without_repair(stores: _Stores) -> None:
     service, _clock, parent, _thread, contract = await _bound(stores)
-    changed = await stores.work.update_work_item(parent.id, status="blocked")
+    changed = await stores.work.merge_work_item_metadata(
+        parent.id,
+        {},
+        expected_work_type="crew_session",
+        expected_status="open",
+        expected_assigned_to="facilitator-1",
+        new_status="blocked",
+    )
     assert changed is not None and changed.status == "blocked"
 
     with pytest.raises(ValueError):
@@ -1274,9 +1353,9 @@ async def test_server_owned_created_at_mismatch_fails_load_without_repair(
     assert after.metadata["crew_session"]["created_at"] == contract.created_at + 1.0
 
     type_service, _clock, type_parent, _thread, _contract = await _bound(stores)
-    await stores.work.update_work_item(type_parent.id, work_type="task")
-    with pytest.raises(ValueError, match="crew_session_parent_type_invalid"):
-        await type_service.get_session(type_parent.id)
+    with pytest.raises(ValueError, match="^crew_session_write_reserved$"):
+        await stores.work.update_work_item(type_parent.id, work_type="task")
+    assert await type_service.get_session(type_parent.id) is not None
 
     task_service, _clock, task_parent, _thread, task_contract = await _bound(stores)
     wrong_task = task_contract.model_dump(mode="json")
@@ -1420,9 +1499,7 @@ async def test_merge_expected_conflict_and_unserializable_patch_do_not_mutate(st
 
 
 async def test_merge_status_validation_events_and_true_noop(stores: _Stores) -> None:
-    item = await stores.work.create_work_item(
-        title="session", work_type="crew_session", assigned_to="facilitator-1",
-    )
+    item = await _create_crew_parent(stores)
     stores.events.clear()
     merged = await stores.work.merge_work_item_metadata(
         item.id, {"crew_session": {"revision": 1}}, new_status="open", source="test",
@@ -1484,7 +1561,12 @@ async def test_generic_status_writer_cannot_interleave_after_merge_admission(
     writer_task: asyncio.Task[WorkItem | None] | None = None
     try:
         chat = ChatThreadStore(tmp_path / "contended-threads.db")
-        local_stores = _Stores(work=store, chat=chat, events=_EventRecorder())
+        local_stores = _Stores(
+            work=store,
+            chat=chat,
+            events=_EventRecorder(),
+            admission_port=store.claim_crew_session_admission_port(),
+        )
         service, _clock, parent, _thread, _contract = await _bound(local_stores)
         connection = factory.connection
         assert connection is not None
@@ -1512,22 +1594,22 @@ async def test_generic_status_writer_cannot_interleave_after_merge_admission(
             connection.release_commit.set()
 
         transitioned = await transition_task
-        blocked = await writer_task
+        with pytest.raises(ValueError, match="^crew_session_write_reserved$"):
+            await writer_task
         assert transitioned.state == "executing"
-        assert blocked is not None and blocked.status == "blocked"
+        authoritative = await store.get_work_item(parent.id)
+        assert authoritative is not None
+        assert authoritative.status == "in_progress"
         first_update = next(
             index for index, operation in enumerate(connection.operations)
             if operation.startswith("UPDATE work_items")
         )
         first_commit = connection.operations.index("COMMIT", first_update)
-        second_update = next(
-            index
-            for index, operation in enumerate(
-                connection.operations[first_commit + 1 :], first_commit + 1,
-            )
-            if operation.startswith("UPDATE work_items")
-        )
-        assert first_update < first_commit < second_update
+        assert first_update < first_commit
+        assert sum(
+            operation.startswith("UPDATE work_items")
+            for operation in connection.operations
+        ) == 1
     finally:
         if factory.connection is not None:
             factory.connection.release_commit.set()
@@ -1683,9 +1765,16 @@ async def test_legacy_reopen_keeps_columns_and_values_then_session_reopens(tmp_p
         assert reloaded.metadata == {"legacy": [1, "two"]}
 
         chat = ChatThreadStore(thread_path)
-        parent = await second.create_work_item(
-            title="session", work_type="crew_session", assigned_to="facilitator-1",
-        )
+        admission_port = second.claim_crew_session_admission_port()
+        async with admission_port.reserve() as reservation:
+            parent = await reservation.create_parent(CrewSessionParentCreate(
+                id="crew-session-legacy",
+                title="session",
+                description="session",
+                assigned_to="facilitator-1",
+                created_by="captain",
+                metadata={},
+            ))
         thread = chat.create_thread(title="room", participants=[], task_id=parent.id)
         clock = _Clock(parent.created_at + 1.0)
         service = CrewSessionService(
@@ -1758,6 +1847,10 @@ def test_enabled_wirer_real_stores_attaches_once_preserving_identity(
     runtime = SimpleNamespace(
         work_item_store=stores.work,
         chat_thread_store=stores.chat,
+        registry=object(),
+        ontology=object(),
+        trust_network=object(),
+        llm_client=object(),
         crew_session_service=None,
     )
     assert _wire_crew_session_service(runtime=runtime, config=config) is True
@@ -1774,12 +1867,17 @@ def test_public_service_api_and_annotations_are_exact() -> None:
     }
     assert public == {
         "adopt_recovery_plan",
+        "agent_principal",
+        "bind_scheduler",
+        "captain_principal",
         "compare_and_set_recovery",
         "get_recovery",
         "initialize_session",
         "get_session",
         "install_recovery_plan",
+        "open_or_resume",
         "publish_verified_result",
+        "repair_provisioning",
         "transition_session",
     }
     expected_parameters = {
@@ -1787,6 +1885,9 @@ def test_public_service_api_and_annotations_are_exact() -> None:
             "self", "parent_id", "expected_session", "expected_recovery",
             "plan", "expected_children",
         },
+        "agent_principal": {"self", "agent_id"},
+        "bind_scheduler": {"self", "schedule"},
+        "captain_principal": {"self"},
         "compare_and_set_recovery": {
             "self", "parent_id", "recovery", "expected_session",
             "expected_recovery",
@@ -1801,11 +1902,17 @@ def test_public_service_api_and_annotations_are_exact() -> None:
             "self", "parent_id", "expected_session", "expected_recovery",
             "plan", "children",
         },
+        "open_or_resume": {
+            "self", "principal", "goal", "success_criteria",
+            "expected_deliverable", "facilitator_id", "owner_ids",
+            "requested_thread_id", "retry_blocked",
+        },
         "publish_verified_result": {
             "self", "parent_id", "expected_revision", "expected_recovery",
             "expected_direct_children", "crew_synth", "last_result_summary",
             "provenance_ref", "result_artifact_id",
         },
+        "repair_provisioning": {"self", "limit"},
         "transition_session": {
             "self", "parent_id", "new_state", "expected_revision",
             "last_result_summary", "blocked_reason", "evidence_refs",
@@ -1815,6 +1922,47 @@ def test_public_service_api_and_annotations_are_exact() -> None:
     for method_name, parameter_names in expected_parameters.items():
         signature = inspect.signature(getattr(CrewSessionService, method_name))
         assert set(signature.parameters) == parameter_names
+        assert signature.return_annotation is not inspect.Signature.empty
+        assert all(
+            parameter.annotation is not inspect.Signature.empty
+            for name, parameter in signature.parameters.items()
+            if name != "self"
+        )
+    constructor = inspect.signature(CrewSessionService.__init__)
+    assert set(constructor.parameters) == {
+        "self",
+        "work_item_store",
+        "chat_thread_store",
+        "registry",
+        "ontology",
+        "trust_network",
+        "config",
+        "compute_similarity",
+        "decomposer",
+        "admission_port",
+        "clock",
+    }
+    request_fields = tuple(CrewSessionParentCreate.__dataclass_fields__)
+    assert request_fields == (
+        "id",
+        "title",
+        "description",
+        "assigned_to",
+        "created_by",
+        "metadata",
+        "created_at",
+    )
+    admission_signatures = {
+        CrewSessionParentReservation.create_parent: {
+            "self",
+            "request",
+        },
+        CrewSessionAdmissionPort.reserve: {"self"},
+        WorkItemStore.claim_crew_session_admission_port: {"self"},
+    }
+    for method, parameters in admission_signatures.items():
+        signature = inspect.signature(method)
+        assert set(signature.parameters) == parameters
         assert signature.return_annotation is not inspect.Signature.empty
         assert all(
             parameter.annotation is not inspect.Signature.empty
@@ -1834,7 +1982,6 @@ def test_source_has_to_thread_and_no_raw_sqlite_schema_or_lifecycle_path() -> No
         "ALTER TABLE",
         "CREATE INDEX",
         "ensure_future",
-        "open_or_resume",
         "async def start",
         "async def stop",
     ):
@@ -1853,7 +2000,65 @@ def test_source_has_to_thread_and_no_raw_sqlite_schema_or_lifecycle_path() -> No
             and node.func.attr == "create_task"
         )
     ]
-    assert len(create_task_calls) == 1
+    parents = {
+        child: parent
+        for parent in ast.walk(service_tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    calls_by_owner: dict[str, list[ast.Call]] = {}
+    owner_nodes: dict[str, ast.AsyncFunctionDef] = {}
+    for call in create_task_calls:
+        owner = parents.get(call)
+        while owner is not None and not isinstance(owner, ast.AsyncFunctionDef):
+            owner = parents.get(owner)
+        assert isinstance(owner, ast.AsyncFunctionDef)
+        calls_by_owner.setdefault(owner.name, []).append(call)
+        owner_nodes[owner.name] = owner
+
+    expected_task_owners = {
+        "_run_held_to_thread",
+        "_reconcile_cancelled_parent_create",
+        "_checkpoint_cancelled_provisioning",
+        "_reconcile_cancelled_plan_commit",
+    }
+    assert set(calls_by_owner) == expected_task_owners
+    for owner_name in expected_task_owners:
+        owner = owner_nodes[owner_name]
+        owner_calls = calls_by_owner[owner_name]
+        assert len(owner_calls) == 1
+        owner_call = owner_calls[0]
+        assignments = [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Assign) and node.value is owner_call
+        ]
+        assert len(assignments) == 1
+        assert len(assignments[0].targets) == 1
+        assert isinstance(assignments[0].targets[0], ast.Name)
+        task_variable = assignments[0].targets[0].id
+        shield_calls = [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "asyncio"
+            and node.func.attr == "shield"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == task_variable
+        ]
+        assert len(shield_calls) == 1
+        result_calls = [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == task_variable
+            and node.func.attr == "result"
+        ]
+        assert result_calls
 
     reconciliation_helpers = [
         node
@@ -1863,7 +2068,7 @@ def test_source_has_to_thread_and_no_raw_sqlite_schema_or_lifecycle_path() -> No
     ]
     assert len(reconciliation_helpers) == 1
     reconciliation_helper = reconciliation_helpers[0]
-    reconciliation_call = create_task_calls[0]
+    reconciliation_call = calls_by_owner["_reconcile_cancelled_plan_commit"][0]
     assert reconciliation_call in ast.walk(reconciliation_helper)
     assert len(reconciliation_call.args) == 1
     reconciled_call = reconciliation_call.args[0]

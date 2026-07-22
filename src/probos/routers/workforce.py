@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["workforce"])
 
 
+def _raise_if_crew_session_write_reserved(exc: ValueError) -> None:
+    if str(exc) == "crew_session_write_reserved":
+        raise HTTPException(409, "crew_session_write_reserved") from exc
+
+
 # -- Work Type Registry & Templates (AD-498) --
 
 
@@ -92,6 +97,7 @@ async def create_from_template(
             created_by=body.get("created_by", "captain"),
         )
     except ValueError as e:
+        _raise_if_crew_session_write_reserved(e)
         raise HTTPException(404, str(e))
     broadcast({"type": "work_item_created", "data": {"work_item": item.to_dict()}})
     return {"work_item": item.to_dict()}
@@ -110,7 +116,11 @@ async def create_work_item(
     if not runtime.work_item_store:
         raise HTTPException(503, "Workforce engine not enabled")
     body = await request.json()
-    item = await runtime.work_item_store.create_work_item(**body)
+    try:
+        item = await runtime.work_item_store.create_work_item(**body)
+    except ValueError as exc:
+        _raise_if_crew_session_write_reserved(exc)
+        raise
     broadcast({"type": "work_item_created", "data": {"work_item": item.to_dict()}})
     return {"work_item": item.to_dict()}
 
@@ -158,7 +168,11 @@ async def update_work_item(
     if not runtime.work_item_store:
         raise HTTPException(503, "Workforce engine not enabled")
     body = await request.json()
-    item = await runtime.work_item_store.update_work_item(work_item_id, **body)
+    try:
+        item = await runtime.work_item_store.update_work_item(work_item_id, **body)
+    except ValueError as exc:
+        _raise_if_crew_session_write_reserved(exc)
+        raise
     if not item:
         raise HTTPException(404, "Work item not found")
     broadcast({"type": "work_item_updated", "data": {"work_item": item.to_dict()}})
@@ -176,9 +190,13 @@ async def transition_work_item(
     if not runtime.work_item_store:
         raise HTTPException(503, "Workforce engine not enabled")
     body = await request.json()
-    item = await runtime.work_item_store.transition_work_item(
-        work_item_id, body["status"], source=body.get("source", "captain"),
-    )
+    try:
+        item = await runtime.work_item_store.transition_work_item(
+            work_item_id, body["status"], source=body.get("source", "captain"),
+        )
+    except ValueError as exc:
+        _raise_if_crew_session_write_reserved(exc)
+        raise
     if not item:
         raise HTTPException(404, "Work item not found or invalid transition")
     broadcast({"type": "work_item_updated", "data": {"work_item": item.to_dict()}})
@@ -196,9 +214,15 @@ async def assign_work_item(
     if not runtime.work_item_store:
         raise HTTPException(503, "Workforce engine not enabled")
     body = await request.json()
-    booking = await runtime.work_item_store.assign_work_item(
-        work_item_id, body["resource_id"], source=body.get("source", "captain"),
-    )
+    try:
+        booking = await runtime.work_item_store.assign_work_item(
+            work_item_id,
+            body["resource_id"],
+            source=body.get("source", "captain"),
+        )
+    except ValueError as exc:
+        _raise_if_crew_session_write_reserved(exc)
+        raise
     if not booking:
         raise HTTPException(400, "Assignment failed (ineligible or no capacity)")
     # Re-fetch work item to get updated assigned_to
@@ -217,11 +241,15 @@ async def claim_work_item(
     if not runtime.work_item_store:
         raise HTTPException(503, "Workforce engine not enabled")
     body = await request.json()
-    result = await runtime.work_item_store.claim_work_item(
-        body["resource_id"],
-        work_type=body.get("work_type"),
-        department=body.get("department"),
-    )
+    try:
+        result = await runtime.work_item_store.claim_work_item(
+            body["resource_id"],
+            work_type=body.get("work_type"),
+            department=body.get("department"),
+        )
+    except ValueError as exc:
+        _raise_if_crew_session_write_reserved(exc)
+        raise
     if not result:
         raise HTTPException(404, "No eligible work items")
     work_item, booking = result

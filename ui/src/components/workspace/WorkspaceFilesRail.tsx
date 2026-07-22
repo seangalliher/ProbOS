@@ -34,7 +34,7 @@ import { ArtifactList } from '../artifacts/ArtifactList';
 import { ArtifactViewer } from '../artifacts/ArtifactViewer';
 import { fetchThreadArtifacts } from '../artifacts/artifactApi';
 import { TodosList } from './TodosList';
-import { fetchTaskSteps, updateTaskStep, ensureRoomTask, type TodoStep } from './todosApi';
+import { fetchTaskSteps, startRoomWork, updateTaskStep, type TodoStep } from './todosApi';
 import type { ArtifactView } from '../../store/useStore';
 
 const AMBER = '#f0b060';
@@ -74,22 +74,40 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   const [inputs, setInputs] = useState<TaskInput[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [steps, setSteps] = useState<TodoStep[]>([]);
-  const [localTaskId, setLocalTaskId] = useState<string | null>(null);
+  const [startedParentId, setStartedParentId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // AD-1084: a workspace room without a bound task self-binds one so the Todo
-  // loop + Inputs have somewhere to land (Captain-made rooms get no task_id).
-  const effectiveTaskId = taskId ?? localTaskId;
+  const [startDialogOpen, setStartDialogOpen] = useState(false);
+  const [startGoal, setStartGoal] = useState('');
+  const [startCriteria, setStartCriteria] = useState('');
+  const [startDeliverable, setStartDeliverable] = useState('');
+  const [retryBlocked, setRetryBlocked] = useState(false);
+  const [startPending, setStartPending] = useState(false);
+  const [startError, setStartError] = useState('');
+  const startSubmittingRef = useRef(false);
+  const startGenerationRef = useRef(0);
+  const startDialogRef = useRef<HTMLDivElement | null>(null);
+  const startGoalRef = useRef<HTMLTextAreaElement | null>(null);
+  const startOpenerRef = useRef<HTMLButtonElement | null>(null);
+  const effectiveTaskId = taskId ?? startedParentId;
   useEffect(() => {
-    if (taskId || !threadId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const id = await ensureRoomTask(threadId, 'Room workspace');
-        if (!cancelled) setLocalTaskId(id);
-      } catch { /* honest-degrade: room stays task-less */ }
-    })();
-    return () => { cancelled = true; };
-  }, [taskId, threadId]);
+    startGenerationRef.current += 1;
+    startSubmittingRef.current = false;
+    setStartPending(false);
+    setStartDialogOpen(false);
+    setStartError('');
+    setStartedParentId(null);
+  }, [threadId]);
+  useEffect(() => {
+    if (taskId) setStartedParentId(null);
+  }, [taskId]);
+  useEffect(() => {
+    if (!startDialogOpen) return;
+    startGoalRef.current?.focus();
+  }, [startDialogOpen]);
+  useEffect(() => {
+    if (!startDialogOpen || !startPending) return;
+    startDialogRef.current?.focus();
+  }, [startDialogOpen, startPending]);
   // Default-collapsed on first run (null from storage). Divergence from
   // ArtifactDrawer's default-expanded — justified by the 420px floating
   // AgentProfilePanel host (see module header).
@@ -165,6 +183,98 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
       return next;
     });
   }, []);
+
+  const criteriaValues = startCriteria
+    .split('\n')
+    .map((criterion) => criterion.trim())
+    .filter(Boolean);
+  const startFormValid = (
+    startGoal.trim().length > 0
+    && startGoal.trim().length <= 4096
+    && criteriaValues.length > 0
+    && criteriaValues.length <= 16
+    && criteriaValues.every((criterion) => criterion.length <= 512)
+    && new Set(criteriaValues.map((criterion) => criterion.toLocaleLowerCase())).size === criteriaValues.length
+    && startDeliverable.trim().length > 0
+    && startDeliverable.trim().length <= 2048
+  );
+
+  const restoreStartOpener = useCallback(() => {
+    const opener = startOpenerRef.current;
+    if (opener?.isConnected) {
+      const restore = () => {
+        if (opener.isConnected) opener.focus();
+      };
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(restore);
+      } else {
+        queueMicrotask(restore);
+      }
+    }
+  }, []);
+
+  const closeStartDialog = useCallback(() => {
+    if (startSubmittingRef.current) return;
+    setStartDialogOpen(false);
+    setStartError('');
+    restoreStartOpener();
+  }, [restoreStartOpener]);
+
+  const handleStartDialogKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!startPending) closeStartDialog();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const dialog = startDialogRef.current;
+    if (!dialog) return;
+    const focusableSelector = 'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])';
+    const controls = Array.from(dialog.querySelectorAll<HTMLElement>('*'))
+      .filter((control) => control.isConnected && control.matches(focusableSelector));
+    if (controls.length === 0) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    event.preventDefault();
+    const currentIndex = controls.indexOf(document.activeElement as HTMLElement);
+    const nextIndex = currentIndex < 0
+      ? (event.shiftKey ? controls.length - 1 : 0)
+      : (currentIndex + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
+    controls[nextIndex].focus();
+  }, [closeStartDialog, startPending]);
+
+  const handleStartWork = useCallback(async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!startFormValid || startSubmittingRef.current) return;
+    const generation = startGenerationRef.current;
+    startSubmittingRef.current = true;
+    setStartPending(true);
+    setStartError('');
+    try {
+      const result = await startRoomWork(threadId, {
+        goal: startGoal.trim(),
+        success_criteria: criteriaValues,
+        expected_deliverable: startDeliverable.trim(),
+        retry_blocked: retryBlocked,
+      });
+      if (startGenerationRef.current !== generation) return;
+      setStartedParentId(result.parent_id);
+      setStartDialogOpen(false);
+      restoreStartOpener();
+    } catch (error) {
+      if (startGenerationRef.current !== generation) return;
+      const message = error instanceof Error ? error.message : 'Start Work failed';
+      setStartError(message.slice(0, 256));
+    } finally {
+      if (startGenerationRef.current === generation) {
+        startSubmittingRef.current = false;
+        setStartPending(false);
+      }
+    }
+  }, [criteriaValues, restoreStartOpener, retryBlocked, startDeliverable, startFormValid, startGoal, threadId]);
 
   const openArtifact = useCallback((id: string) => {
     // BF-642: open the in-app ArtifactViewer preview (Cowork parity) rather
@@ -286,6 +396,29 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
           flex: '1 1 auto', fontSize: 11, letterSpacing: 1.5, color: AMBER,
         }}>FILES</span>
         <button
+          type="button"
+          onClick={(event) => {
+            startOpenerRef.current = event.currentTarget;
+            setStartError('');
+            setStartDialogOpen(true);
+          }}
+          data-testid="workspace-start-work-open"
+          title="Start work"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            background: 'transparent', border: '1px solid rgba(240, 176, 96, 0.35)',
+            borderRadius: 4, color: AMBER, cursor: 'pointer', padding: '3px 6px',
+            fontSize: 10,
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth={1.5}
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          Start Work
+        </button>
+        <button
           type="button" onClick={handleToggle}
           data-testid="workspace-files-collapse"
           title="Collapse files"
@@ -301,6 +434,100 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
           </svg>
         </button>
       </div>
+
+      {startDialogOpen && (
+        <div
+          ref={startDialogRef}
+          role="dialog"
+          tabIndex={-1}
+          aria-modal="true"
+          aria-labelledby="workspace-start-work-title"
+          data-testid="workspace-start-work-dialog"
+          onKeyDown={handleStartDialogKeyDown}
+          style={{
+            position: 'absolute', inset: 0, zIndex: 40,
+            background: 'rgba(8, 8, 14, 0.98)', padding: 12,
+            overflowY: 'auto',
+          }}
+        >
+          <form onSubmit={(event) => { void handleStartWork(event); }}>
+            <div id="workspace-start-work-title" style={{ color: AMBER, fontSize: 12, letterSpacing: 1.2, marginBottom: 12 }}>
+              START WORK
+            </div>
+            <label htmlFor="workspace-start-goal" style={{ display: 'block', color: DIM, fontSize: 10, marginBottom: 4 }}>
+              GOAL
+            </label>
+            <textarea
+              ref={startGoalRef}
+              id="workspace-start-goal"
+              data-testid="workspace-start-work-goal"
+              value={startGoal}
+              maxLength={4096}
+              onChange={(event) => setStartGoal(event.target.value)}
+              disabled={startPending}
+              style={{ width: '100%', minHeight: 74, boxSizing: 'border-box', resize: 'vertical', borderRadius: 4, border: '1px solid #353548', background: '#11111c', color: '#e5e5ef', padding: 7, marginBottom: 10 }}
+            />
+            <label htmlFor="workspace-start-criteria" style={{ display: 'block', color: DIM, fontSize: 10, marginBottom: 4 }}>
+              SUCCESS CRITERIA
+            </label>
+            <textarea
+              id="workspace-start-criteria"
+              data-testid="workspace-start-work-criteria"
+              value={startCriteria}
+              maxLength={8208}
+              onChange={(event) => setStartCriteria(event.target.value)}
+              disabled={startPending}
+              style={{ width: '100%', minHeight: 82, boxSizing: 'border-box', resize: 'vertical', borderRadius: 4, border: '1px solid #353548', background: '#11111c', color: '#e5e5ef', padding: 7, marginBottom: 10 }}
+            />
+            <label htmlFor="workspace-start-deliverable" style={{ display: 'block', color: DIM, fontSize: 10, marginBottom: 4 }}>
+              EXPECTED DELIVERABLE
+            </label>
+            <textarea
+              id="workspace-start-deliverable"
+              data-testid="workspace-start-work-deliverable"
+              value={startDeliverable}
+              maxLength={2048}
+              onChange={(event) => setStartDeliverable(event.target.value)}
+              disabled={startPending}
+              style={{ width: '100%', minHeight: 58, boxSizing: 'border-box', resize: 'vertical', borderRadius: 4, border: '1px solid #353548', background: '#11111c', color: '#e5e5ef', padding: 7, marginBottom: 10 }}
+            />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#cfcfe0', fontSize: 11, marginBottom: 10 }}>
+              <input
+                type="checkbox"
+                data-testid="workspace-start-work-retry"
+                checked={retryBlocked}
+                onChange={(event) => setRetryBlocked(event.target.checked)}
+                disabled={startPending}
+              />
+              Retry blocked work
+            </label>
+            {startError && (
+              <div role="alert" data-testid="workspace-start-work-error" style={{ color: '#f08b8b', fontSize: 11, marginBottom: 10, overflowWrap: 'anywhere' }}>
+                {startError}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                type="button"
+                onClick={closeStartDialog}
+                disabled={startPending}
+                data-testid="workspace-start-work-cancel"
+                style={{ borderRadius: 4, border: '1px solid #353548', background: 'transparent', color: DIM, padding: '5px 9px', cursor: startPending ? 'default' : 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!startFormValid || startPending}
+                data-testid="workspace-start-work-confirm"
+                style={{ borderRadius: 4, border: `1px solid ${AMBER}`, background: startFormValid && !startPending ? 'rgba(240, 176, 96, 0.12)' : 'transparent', color: startFormValid && !startPending ? AMBER : DIM, padding: '5px 9px', cursor: startFormValid && !startPending ? 'pointer' : 'default' }}
+              >
+                {startPending ? 'Starting' : 'Start'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* AD-1083: room Todo checklist (the AD-1080 senior-validation loop). Only
           when the room has a bound task; the Captain confirms/rejects submitted

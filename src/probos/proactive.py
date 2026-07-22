@@ -3474,40 +3474,49 @@ class ProactiveCognitiveLoop:
         )
         crew_pattern = r'\[CREW\]\s*(.*?)\s*\[/CREW\]'
         if can_originate_crew:
-            orchestrator = getattr(rt, "crew_orchestrator", None)
+            crew_session_service = getattr(rt, "crew_session_service", None)
             for match in re.finditer(crew_pattern, text, re.DOTALL):
                 goal = match.group(1).strip()
                 if not goal:
                     continue
-                if orchestrator is None:
+                if crew_session_service is None:
                     logger.info(
-                        "AD-868: %s emitted a [CREW] goal but crew_orchestrator "
-                        "is not wired; skipping (no crew task originated)",
+                        "AD-1128: %s emitted a [CREW] goal but unified "
+                        "CrewSession ingress is not wired; no work was created",
                         agent.id[:12],
                     )
                     continue
                 try:
-                    parent_id = await orchestrator.originate_crew_task(
-                        origin_agent_id=agent.id,
+                    result = await crew_session_service.open_or_resume(
+                        principal=crew_session_service.agent_principal(agent.id),
                         goal=goal,
+                        success_criteria=[
+                            "Complete the stated goal with verifiable evidence.",
+                        ],
+                        expected_deliverable=(
+                            "A verified result for the stated goal."
+                        ),
                     )
                 except Exception:
                     logger.warning(
-                        "AD-868: originate_crew_task raised for %s; the "
-                        "proactive loop continues without a crew task",
+                        "AD-1128: unified CrewSession admission rejected the "
+                        "[CREW] goal from %s; the proactive loop continues "
+                        "without alternate work creation",
                         agent.id[:12], exc_info=True,
                     )
                     continue
-                if parent_id:
-                    actions_executed.append({
-                        "type": "crew",
-                        "parent_id": parent_id,
-                        "goal": goal,
-                    })
-                    logger.info(
-                        "AD-868: %s originated crew task %s",
-                        agent.id[:12], parent_id,
-                    )
+                actions_executed.append({
+                    "type": "crew",
+                    "parent_id": result.parent_id,
+                    "goal": goal,
+                })
+                logger.info(
+                    "AD-1128: %s admitted CrewSession parent=%s disposition=%s; "
+                    "the AD-1127 scheduler owns execution",
+                    agent.id[:12],
+                    result.parent_id,
+                    result.disposition,
+                )
         # Ensign silently ignored (no [CREW] privilege); strip the tag regardless.
         text = re.sub(crew_pattern, '', text, flags=re.DOTALL).strip()
 

@@ -4785,6 +4785,20 @@ class ProbOSRuntime:
                     seen.add(desc.name)
                     descriptors.append(desc)
 
+        operations = getattr(self.config, "operations", None)
+        dispatch = getattr(self.config, "agentic_dispatch", None)
+        if (
+            getattr(operations, "enabled", False)
+            and getattr(dispatch, "orchestrator_enabled", False)
+        ):
+            from probos.agents.operations.coordinator import (
+                START_CREW_SESSION_DESCRIPTOR,
+            )
+
+            if START_CREW_SESSION_DESCRIPTOR.name not in seen:
+                seen.add(START_CREW_SESSION_DESCRIPTOR.name)
+                descriptors.append(START_CREW_SESSION_DESCRIPTOR)
+
         # AD-596b: collect from cognitive skill catalog
         if self.cognitive_skill_catalog:
             for entry in self.cognitive_skill_catalog.list_entries():

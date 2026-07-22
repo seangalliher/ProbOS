@@ -8,15 +8,24 @@ import json
 import logging
 import math
 import re
+import secrets
 import time
+import unicodedata
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 if TYPE_CHECKING:
+    from probos.cognitive.crew_synth import SynthesisResult
     from probos.threads import ChatThread
-    from probos.workforce import WorkItem, WorkItemPlanInsert
+    from probos.workforce import (
+        CrewSessionAdmissionPort,
+        CrewSessionParentReservation,
+        WorkItem,
+        WorkItemPlanInsert,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +66,9 @@ _TRANSITIONS = {
     "discussing": frozenset({"executing", "blocked_needs_captain", "failed"}),
     "executing": frozenset({"verifying", "blocked_needs_captain", "failed"}),
     "verifying": frozenset({"done", "blocked_needs_captain", "failed"}),
-    "blocked_needs_captain": frozenset({"discussing", "executing", "failed"}),
+    "blocked_needs_captain": frozenset({
+        "discussing", "executing", "verifying", "failed",
+    }),
     "done": frozenset(),
     "failed": frozenset(),
 }
@@ -81,6 +92,7 @@ _MAX_RECOVERY_CHILDREN = 1_000
 _MAX_RECOVERY_INTERRUPTED_CHILDREN = 64
 _MAX_PLAN_PROJECTION_BYTES = 131_072
 _MAX_PLAN_ARRAY_BYTES = 524_288
+_MAX_PROVISIONING_BYTES = 900_000
 _MAX_PLAN_METADATA_BYTES = 65_536
 _MAX_PLAN_METADATA_DEPTH = 8
 _MAX_PLAN_METADATA_NODES = 4_096
@@ -157,6 +169,222 @@ _VERIFYING_RECOVERY_PHASES = frozenset({
     "artifact_bound",
     "provenance_bound",
 })
+_PROVISIONING_PHASE_INDEX = {
+    phase: index
+    for index, phase in enumerate(
+        (
+            "parent_created",
+            "room_bound",
+            "session_initialized",
+            "plan_installed",
+            "failed",
+        )
+    )
+}
+
+
+def _validate_crew_session_provenance(
+    *,
+    origin: Any,
+    originator_id: Any,
+    created_by: Any,
+) -> None:
+    valid = (
+        type(origin) is str
+        and type(originator_id) is str
+        and type(created_by) is str
+        and (
+            (
+                origin == "captain"
+                and originator_id == "captain"
+                and created_by == "captain"
+            )
+            or (
+                origin == "agent"
+                and created_by == originator_id
+            )
+        )
+    )
+    if not valid:
+        raise ValueError("crew_session_provenance_invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class CrewSessionPrincipal:
+    origin: Literal["captain", "agent"]
+    originator_id: str
+    created_by: str
+    _authority: object = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class CrewSessionOpenResult:
+    disposition: Literal["created", "resumed", "blocked"]
+    parent_id: str
+    thread_id: str
+    state: CrewSessionState
+    facilitator_id: str
+    owner_ids: tuple[str, ...]
+    duplicate_resume_count: int
+    scheduled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _CrewIngressValues:
+    display_goal: str
+    canonical_goal: str
+    goal_fingerprint: str
+    success_criteria: tuple[str, ...]
+    canonical_criteria: tuple[str, ...]
+    expected_deliverable: str
+    canonical_deliverable: str
+
+
+class CrewSessionProvisioningContract(BaseModel):
+    """Strict temporary authority for reconstructable CrewSession provisioning."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    version: Literal[1]
+    provision_id: str
+    phase: Literal[
+        "parent_created",
+        "room_bound",
+        "session_initialized",
+        "plan_installed",
+        "failed",
+    ]
+    room_policy: Literal["create", "adopt"]
+    thread_id: str
+    goal: str
+    goal_fingerprint: str
+    origin: Literal["captain", "agent"]
+    originator_id: str
+    created_by: str
+    facilitator_id: str
+    owner_ids: tuple[str, ...]
+    success_criteria: tuple[str, ...]
+    expected_deliverable: str
+    plan_specs: tuple[dict[str, Any], ...]
+    last_error_code: str | None
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def _validate_version(cls, value: Any) -> int:
+        if type(value) is not int or value != 1:
+            raise ValueError("crew_provisioning_version_invalid")
+        return value
+
+    @field_validator("phase", "room_policy", "origin", mode="before")
+    @classmethod
+    def _validate_literal_string(cls, value: Any) -> str:
+        if type(value) is not str:
+            raise ValueError("crew_provisioning_literal_invalid")
+        return value
+
+    @field_validator("provision_id", "goal_fingerprint", mode="before")
+    @classmethod
+    def _validate_sha(cls, value: Any) -> str:
+        return _normalize_sha(value)
+
+    @field_validator(
+        "thread_id",
+        "originator_id",
+        "created_by",
+        "facilitator_id",
+        mode="before",
+    )
+    @classmethod
+    def _validate_id(cls, value: Any) -> str:
+        return _normalize_id(value)
+
+    @field_validator("goal", mode="before")
+    @classmethod
+    def _validate_goal(cls, value: Any) -> str:
+        return _normalize_ingress_text(
+            value,
+            maximum=4_096,
+            maximum_bytes=16_384,
+        )[0]
+
+    @field_validator("owner_ids", mode="before")
+    @classmethod
+    def _validate_owner_ids(cls, value: Any) -> tuple[str, ...]:
+        if type(value) is not list or not 1 <= len(value) <= 16:
+            raise ValueError("crew_provisioning_owner_ids_invalid")
+        normalized = tuple(_normalize_id(item) for item in value)
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("crew_provisioning_owner_ids_invalid")
+        return normalized
+
+    @field_validator("success_criteria", mode="before")
+    @classmethod
+    def _validate_success_criteria(cls, value: Any) -> tuple[str, ...]:
+        if type(value) is not list or not 1 <= len(value) <= 16:
+            raise ValueError("crew_provisioning_success_criteria_invalid")
+        display: list[str] = []
+        canonical: list[str] = []
+        for item in value:
+            normalized, comparison = _normalize_ingress_text(
+                item,
+                maximum=512,
+                maximum_bytes=2_048,
+            )
+            display.append(normalized)
+            canonical.append(comparison)
+        if len(set(canonical)) != len(canonical):
+            raise ValueError("crew_provisioning_success_criteria_invalid")
+        return tuple(display)
+
+    @field_validator("expected_deliverable", mode="before")
+    @classmethod
+    def _validate_expected_deliverable(cls, value: Any) -> str:
+        return _normalize_ingress_text(
+            value,
+            maximum=2_048,
+            maximum_bytes=8_192,
+        )[0]
+
+    @field_validator("plan_specs", mode="before")
+    @classmethod
+    def _validate_plan_specs(cls, value: Any) -> tuple[dict[str, Any], ...]:
+        return tuple(_normalize_provisioning_plan_specs(value))
+
+    @field_validator("last_error_code", mode="before")
+    @classmethod
+    def _validate_error_code(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if type(value) is not str or _RECOVERY_ERROR_RE.fullmatch(value) is None:
+            raise ValueError("crew_provisioning_error_code_invalid")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_consistency(self) -> Self:
+        _validate_crew_session_provenance(
+            origin=self.origin,
+            originator_id=self.originator_id,
+            created_by=self.created_by,
+        )
+        if self.facilitator_id not in self.owner_ids:
+            raise ValueError("crew_provisioning_facilitator_invalid")
+        normalized = _normalize_ingress_values(
+            goal=self.goal,
+            success_criteria=list(self.success_criteria),
+            expected_deliverable=self.expected_deliverable,
+        )
+        if normalized.goal_fingerprint != self.goal_fingerprint:
+            raise ValueError("crew_provisioning_goal_fingerprint_invalid")
+        if (self.phase == "failed") != (self.last_error_code is not None):
+            raise ValueError("crew_provisioning_error_phase_invalid")
+        compact = _canonical_plan_json_bytes(
+            self.model_dump(mode="json"),
+            maximum_bytes=_MAX_PROVISIONING_BYTES,
+            error="crew_provisioning_too_large",
+        )
+        if len(compact) > _MAX_PROVISIONING_BYTES:
+            raise ValueError("crew_provisioning_too_large")
+        return self
 
 
 class CrewRecoveryTransientError(RuntimeError):
@@ -336,6 +564,13 @@ class CrewRecoveryContract(BaseModel):
             "child_execution_integrity",
         }:
             raise ValueError("crew_recovery_interrupted_children_invalid")
+        if self.interrupted_child_ids and (
+            self.plan is None
+            or not set(self.interrupted_child_ids).issubset(
+                child.child_id for child in self.plan.children
+            )
+        ):
+            raise ValueError("crew_recovery_interrupted_children_invalid")
         compact = json.dumps(
             self.model_dump(mode="json"),
             sort_keys=True,
@@ -394,6 +629,111 @@ def _normalize_text(
     if len(normalized) > maximum:
         raise ValueError("crew_session_text_too_long")
     return normalized
+
+
+def _normalize_ingress_text(
+    value: Any,
+    *,
+    maximum: int,
+    maximum_bytes: int,
+) -> tuple[str, str]:
+    if type(value) is not str or "\x00" in value or any(
+        0xD800 <= ord(character) <= 0xDFFF for character in value
+    ):
+        raise ValueError("crew_session_ingress_text_invalid")
+    try:
+        normalized = unicodedata.normalize("NFKC", value)
+        display = re.sub(r"\s+", " ", normalized).strip()
+        encoded = display.encode("utf-8", errors="strict")
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError("crew_session_ingress_text_invalid") from exc
+    if not display:
+        raise ValueError("crew_session_ingress_text_empty")
+    if len(display) > maximum or len(encoded) > maximum_bytes:
+        raise ValueError("crew_session_ingress_text_too_long")
+    return display, display.casefold()
+
+
+def _normalize_ingress_values(
+    *,
+    goal: Any,
+    success_criteria: Any,
+    expected_deliverable: Any,
+) -> _CrewIngressValues:
+    display_goal, canonical_goal = _normalize_ingress_text(
+        goal,
+        maximum=4_096,
+        maximum_bytes=16_384,
+    )
+    if type(success_criteria) is not list or not 1 <= len(success_criteria) <= 16:
+        raise ValueError("crew_session_success_criteria_invalid")
+    criteria: list[str] = []
+    canonical_criteria: list[str] = []
+    for criterion in success_criteria:
+        display, canonical = _normalize_ingress_text(
+            criterion,
+            maximum=512,
+            maximum_bytes=2_048,
+        )
+        criteria.append(display)
+        canonical_criteria.append(canonical)
+    if len(set(canonical_criteria)) != len(canonical_criteria):
+        raise ValueError("crew_session_success_criteria_invalid")
+    deliverable, canonical_deliverable = _normalize_ingress_text(
+        expected_deliverable,
+        maximum=2_048,
+        maximum_bytes=8_192,
+    )
+    return _CrewIngressValues(
+        display_goal=display_goal,
+        canonical_goal=canonical_goal,
+        goal_fingerprint=hashlib.sha256(
+            canonical_goal.encode("utf-8"),
+        ).hexdigest(),
+        success_criteria=tuple(criteria),
+        canonical_criteria=tuple(canonical_criteria),
+        expected_deliverable=deliverable,
+        canonical_deliverable=canonical_deliverable,
+    )
+
+
+def _ingress_contract_compatible(
+    requested: _CrewIngressValues,
+    candidate: _CrewIngressValues,
+) -> bool:
+    return (
+        requested.canonical_criteria == candidate.canonical_criteria
+        and requested.canonical_deliverable == candidate.canonical_deliverable
+    )
+
+
+async def _run_held_to_thread(
+    function: Callable[..., Any],
+    *args: Any,
+    name: str,
+    **kwargs: Any,
+) -> Any:
+    task = asyncio.create_task(
+        asyncio.to_thread(function, *args, **kwargs),
+        name=name,
+    )
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+            current = asyncio.current_task()
+            if current is not None:
+                current.uncancel()
+    if cancellation is not None:
+        try:
+            task.result()
+        except BaseException:
+            pass
+        raise cancellation
+    return task.result()
 
 
 def _normalize_id(value: Any) -> str:
@@ -686,6 +1026,90 @@ def _normalize_new_spec(spec: Any) -> tuple[dict[str, Any], str | None]:
     else:
         raise ValueError("crew_recovery_plan_semantic_invalid")
     return projection, assigned_to
+
+
+_PROVISIONING_SPEC_KEYS = frozenset({
+    "spec_id",
+    "title",
+    "description",
+    "work_type",
+    "priority",
+    "depends_on",
+    "resources",
+    "spec_metadata",
+    "expected_output",
+    "capability",
+    "department",
+})
+
+
+def _normalize_provisioning_plan_specs(value: Any) -> list[dict[str, Any]]:
+    from probos.consultation.dispatch import WorkItemSpec
+
+    if type(value) is not list or not 1 <= len(value) <= _MAX_PLAN_SPECS:
+        raise ValueError("crew_provisioning_plan_specs_invalid")
+    detached = json.loads(_canonical_plan_json_bytes(
+        value,
+        maximum_bytes=_MAX_PLAN_ARRAY_BYTES,
+        error="crew_provisioning_plan_specs_invalid",
+    ).decode("utf-8"))
+    normalized: list[dict[str, Any]] = []
+    for projection in detached:
+        if type(projection) is not dict or set(projection) != _PROVISIONING_SPEC_KEYS:
+            raise ValueError("crew_provisioning_plan_specs_invalid")
+        try:
+            spec = WorkItemSpec(
+                spec_id=projection["spec_id"],
+                title=projection["title"],
+                description=projection["description"],
+                work_type=projection["work_type"],
+                priority=projection["priority"],
+                depends_on=tuple(projection["depends_on"]),
+                resources=tuple(projection["resources"]),
+                metadata=projection["spec_metadata"],
+                expected_output=projection["expected_output"],
+                capability=projection["capability"],
+                department=projection["department"],
+            )
+            candidate, _ = _normalize_new_spec(spec)
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ValueError("crew_provisioning_plan_specs_invalid") from exc
+        if not _json_values_exactly_equal(candidate, projection):
+            raise ValueError("crew_provisioning_plan_specs_invalid")
+        normalized.append(candidate)
+    _validate_plan_graph(normalized)
+    return normalized
+
+
+def _project_decomposition(specs: Any) -> list[dict[str, Any]]:
+    if type(specs) is not list or not 1 <= len(specs) <= _MAX_PLAN_SPECS:
+        raise ValueError("crew_recovery_plan_semantic_invalid")
+    projections = [_normalize_new_spec(spec)[0] for spec in specs]
+    return _normalize_provisioning_plan_specs(projections)
+
+
+def _specs_from_projections(
+    projections: tuple[dict[str, Any], ...],
+) -> list[Any]:
+    from probos.consultation.dispatch import WorkItemSpec
+
+    normalized = _normalize_provisioning_plan_specs(list(projections))
+    return [
+        WorkItemSpec(
+            spec_id=projection["spec_id"],
+            title=projection["title"],
+            description=projection["description"],
+            work_type=projection["work_type"],
+            priority=projection["priority"],
+            depends_on=tuple(projection["depends_on"]),
+            resources=tuple(projection["resources"]),
+            metadata=dict(projection["spec_metadata"]),
+            expected_output=projection["expected_output"],
+            capability=projection["capability"],
+            department=projection["department"],
+        )
+        for projection in normalized
+    ]
 
 
 def _derived_child_id(parent_id: str, plan_seed_hash: str, spec_id: str) -> str:
@@ -1614,6 +2038,8 @@ def _validate_session_recovery_invariant(
 
 
 class _WorkItemStoreProtocol(Protocol):
+    async def create_work_item(self, **kwargs: Any) -> WorkItem: ...
+
     async def get_work_item(self, work_item_id: str) -> WorkItem | None: ...
 
     async def list_work_items(
@@ -1627,6 +2053,43 @@ class _WorkItemStoreProtocol(Protocol):
         limit: int = 50,
         offset: int = 0,
     ) -> list[WorkItem]: ...
+
+    async def list_crew_session_ingress_candidates(
+        self,
+        *,
+        limit: int,
+    ) -> list[WorkItem]: ...
+
+    async def list_crew_session_provisioning_candidates(
+        self,
+        *,
+        limit: int,
+    ) -> list[WorkItem]: ...
+
+    async def clear_crew_session_provisioning(
+        self,
+        parent_id: str,
+        *,
+        expected_marker: dict[str, Any],
+        expected_session: dict[str, Any],
+        expected_recovery: dict[str, Any],
+    ) -> WorkItem | None: ...
+
+    async def delete_untouched_crew_session_provisioning(
+        self,
+        parent_id: str,
+        *,
+        expected_marker: dict[str, Any],
+        expected_assigned_to: str,
+    ) -> bool: ...
+
+    async def fail_crew_session_provisioning(
+        self,
+        parent_id: str,
+        *,
+        expected_marker: dict[str, Any],
+        error_code: str,
+    ) -> WorkItem | None: ...
 
     async def merge_work_item_metadata(
         self,
@@ -1696,6 +2159,41 @@ class _ChatThreadStoreProtocol(Protocol):
         limit: int = 100,
     ) -> list[ChatThread]: ...
 
+    def add_crew_session_participants(
+        self,
+        thread_id: str,
+        *,
+        task_id: str,
+        participant_ids: tuple[str, ...],
+    ) -> ChatThread | None: ...
+
+    def compare_and_set_task_link(
+        self,
+        thread_id: str,
+        *,
+        expected_task_id: str | None,
+        new_task_id: str | None,
+    ) -> ChatThread | None: ...
+
+    def create_crew_session_thread(
+        self,
+        *,
+        thread_id: str,
+        title: str,
+        participants: tuple[str, ...],
+        task_id: str,
+        provision_id: str,
+        created_by: str,
+    ) -> ChatThread: ...
+
+    def delete_untouched_crew_session_thread(
+        self,
+        thread_id: str,
+        *,
+        task_id: str,
+        provision_id: str,
+    ) -> bool: ...
+
 
 class CrewSessionService:
     """Validate and persist one durable CrewSession contract per parent."""
@@ -1705,11 +2203,1478 @@ class CrewSessionService:
         *,
         work_item_store: _WorkItemStoreProtocol,
         chat_thread_store: _ChatThreadStoreProtocol,
+        registry: Any | None = None,
+        ontology: Any | None = None,
+        trust_network: Any | None = None,
+        config: Any | None = None,
+        compute_similarity: Callable[[str, str], float] | None = None,
+        decomposer: Any | None = None,
+        admission_port: CrewSessionAdmissionPort | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._work_items = work_item_store
         self._threads = chat_thread_store
+        self._registry = registry
+        self._ontology = ontology
+        self._trust_network = trust_network
+        self._config = config
+        self._compute_similarity = compute_similarity
+        self._decomposer = decomposer
+        self._admission_port = admission_port
         self._clock = clock
+        self._principal_authority = object()
+        self._admission_lock = asyncio.Lock()
+        self._schedule: Callable[[str], asyncio.Task[SynthesisResult]] | None = None
+
+    def captain_principal(self) -> CrewSessionPrincipal:
+        return CrewSessionPrincipal(
+            origin="captain",
+            originator_id="captain",
+            created_by="captain",
+            _authority=self._principal_authority,
+        )
+
+    def agent_principal(self, agent_id: str) -> CrewSessionPrincipal:
+        agent_key = _normalize_id(agent_id)
+        return CrewSessionPrincipal(
+            origin="agent",
+            originator_id=agent_key,
+            created_by=agent_key,
+            _authority=self._principal_authority,
+        )
+
+    def bind_scheduler(
+        self,
+        schedule: Callable[[str], asyncio.Task[SynthesisResult]],
+    ) -> None:
+        if not callable(schedule) or self._schedule is not None:
+            raise ValueError("crew_session_scheduler_binding_invalid")
+        self._schedule = schedule
+
+    async def open_or_resume(
+        self,
+        *,
+        principal: CrewSessionPrincipal,
+        goal: str,
+        success_criteria: list[str],
+        expected_deliverable: str,
+        facilitator_id: str | None = None,
+        owner_ids: list[str] | None = None,
+        requested_thread_id: str | None = None,
+        retry_blocked: bool = False,
+    ) -> CrewSessionOpenResult:
+        if (
+            type(principal) is not CrewSessionPrincipal
+            or principal._authority is not self._principal_authority
+        ):
+            raise ValueError("crew_session_principal_invalid")
+        if self._admission_port is None:
+            raise ValueError("crew_session_ingress_unwired")
+        request = _normalize_ingress_values(
+            goal=goal,
+            success_criteria=success_criteria,
+            expected_deliverable=expected_deliverable,
+        )
+        if type(retry_blocked) is not bool:
+            raise ValueError("crew_session_retry_invalid")
+        requested_thread = (
+            _normalize_id(requested_thread_id)
+            if requested_thread_id is not None
+            else None
+        )
+        if retry_blocked and (
+            principal.origin != "captain" or requested_thread is None
+        ):
+            raise ValueError("crew_session_retry_invalid")
+        requested_facilitator = (
+            _normalize_id(facilitator_id)
+            if facilitator_id is not None
+            else None
+        )
+        if owner_ids is None:
+            requested_owners: tuple[str, ...] = ()
+        elif type(owner_ids) is not list or len(owner_ids) > 16:
+            raise ValueError("crew_session_owner_ids_invalid")
+        else:
+            unique_owners: list[str] = []
+            for value in owner_ids:
+                owner_id = _normalize_id(value)
+                if owner_id not in unique_owners:
+                    unique_owners.append(owner_id)
+            requested_owners = tuple(unique_owners)
+
+        agent_identity = self._validate_principal(principal)
+        if principal.origin == "agent":
+            if (
+                requested_facilitator is not None
+                and requested_facilitator != principal.originator_id
+            ):
+                raise ValueError("crew_session_agent_facilitator_invalid")
+            requested_facilitator = principal.originator_id
+        requested_crew_identities: dict[str, Any] = {}
+        for crew_id in (
+            *((requested_facilitator,) if requested_facilitator else ()),
+            *requested_owners,
+        ):
+            requested_crew_identities.setdefault(
+                crew_id,
+                self._validate_live_crew_id(crew_id),
+            )
+
+        async with self._admission_lock:
+            self._revalidate_principal(principal, agent_identity)
+            self._revalidate_agent_crew(
+                principal,
+                requested_crew_identities,
+            )
+            room = None
+            if requested_thread is not None:
+                room = await asyncio.to_thread(
+                    self._threads.get_thread,
+                    requested_thread,
+                )
+                if room is None:
+                    raise ValueError("crew_session_thread_not_found")
+                if room.archived:
+                    raise ValueError("crew_session_thread_archived")
+            effective_facilitator = requested_facilitator
+            if effective_facilitator is None and room is not None:
+                for participant_id in room.participants:
+                    try:
+                        participant_key = _normalize_id(participant_id)
+                        self._validate_live_crew_id(participant_key)
+                    except ValueError:
+                        continue
+                    effective_facilitator = participant_key
+                    break
+            if effective_facilitator is None:
+                raise ValueError("crew_session_facilitator_required")
+
+            requested_union_values: list[str] = [effective_facilitator]
+            for owner_id in requested_owners:
+                if owner_id not in requested_union_values:
+                    requested_union_values.append(owner_id)
+            if len(requested_union_values) > 16:
+                raise ValueError("crew_session_owner_ids_invalid")
+            requested_union = tuple(requested_union_values)
+            if retry_blocked and (room is None or room.task_id is None):
+                raise ValueError("crew_session_retry_state_invalid")
+            if room is not None and room.task_id is not None:
+                parent = await self._work_items.get_work_item(room.task_id)
+                if parent is None:
+                    raise ValueError("crew_session_thread_task_invalid")
+                if parent.work_type != "crew_session":
+                    raise ValueError("crew_session_thread_task_incompatible")
+                if "crew_provisioning" in (parent.metadata or {}):
+                    self._parse_provisioning(
+                        (parent.metadata or {}).get("crew_provisioning"),
+                    )
+                    raise ValueError("crew_provisioning_pending")
+                session = await self.get_session(parent.id)
+                if session is None:
+                    raise ValueError("crew_session_thread_task_incompatible")
+                await self.get_recovery(parent.id)
+                if session.state in _TERMINAL_STATES:
+                    raise ValueError("crew_session_terminal_not_reopenable")
+                if not await self._session_is_equivalent(
+                    session,
+                    request,
+                    principal=principal,
+                    agent_identity=agent_identity,
+                ):
+                    raise ValueError("crew_session_thread_task_incompatible")
+                return await self._resume_equivalent(
+                    principal=principal,
+                    agent_identity=agent_identity,
+                    expected_session=session,
+                    requested_owner_ids=requested_union,
+                    retry_blocked=retry_blocked,
+                    requested_crew_identities=requested_crew_identities,
+                )
+
+            match = await self._find_equivalent(
+                request,
+                principal=principal,
+                agent_identity=agent_identity,
+            )
+            if match is not None:
+                return await self._resume_equivalent(
+                    principal=principal,
+                    agent_identity=agent_identity,
+                    expected_session=match,
+                    requested_owner_ids=requested_union,
+                    retry_blocked=False,
+                    requested_crew_identities=requested_crew_identities,
+                )
+            if self._decomposer is None:
+                raise ValueError("crew_session_decomposer_unavailable")
+            self._revalidate_principal(principal, agent_identity)
+            try:
+                decomposition = await _run_held_to_thread(
+                    self._decomposer.decompose,
+                    request.display_goal,
+                    name="crew-ingress-decomposition",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                raise ValueError("crew_session_decomposition_failed") from exc
+            plan_specs = _project_decomposition(decomposition)
+            self._revalidate_principal(principal, agent_identity)
+            self._revalidate_agent_crew(
+                principal,
+                requested_crew_identities,
+            )
+
+            async with self._admission_port.reserve() as reservation:
+                if requested_thread is not None:
+                    room = await asyncio.to_thread(
+                        self._threads.get_thread,
+                        requested_thread,
+                    )
+                    if room is None:
+                        raise ValueError("crew_session_thread_not_found")
+                    if room.archived:
+                        raise ValueError("crew_session_thread_archived")
+                    if room.task_id is not None:
+                        parent = await self._work_items.get_work_item(room.task_id)
+                        if parent is None or parent.work_type != "crew_session":
+                            raise ValueError("crew_session_thread_task_incompatible")
+                        if "crew_provisioning" in (parent.metadata or {}):
+                            self._parse_provisioning(
+                                (parent.metadata or {}).get("crew_provisioning"),
+                            )
+                            raise ValueError("crew_provisioning_pending")
+                        session = await self.get_session(parent.id)
+                        if session is None or session.state in _TERMINAL_STATES:
+                            raise ValueError("crew_session_terminal_not_reopenable")
+                        if not await self._session_is_equivalent(
+                            session,
+                            request,
+                            principal=principal,
+                            agent_identity=agent_identity,
+                        ):
+                            raise ValueError("crew_session_thread_task_incompatible")
+                        return await self._resume_equivalent(
+                            principal=principal,
+                            agent_identity=agent_identity,
+                            expected_session=session,
+                            requested_owner_ids=requested_union,
+                            retry_blocked=retry_blocked,
+                            requested_crew_identities=requested_crew_identities,
+                        )
+
+                match = await self._find_equivalent(
+                    request,
+                    principal=principal,
+                    agent_identity=agent_identity,
+                )
+                if match is not None:
+                    return await self._resume_equivalent(
+                        principal=principal,
+                        agent_identity=agent_identity,
+                        expected_session=match,
+                        requested_owner_ids=requested_union,
+                        retry_blocked=False,
+                        requested_crew_identities=requested_crew_identities,
+                    )
+                self._revalidate_principal(principal, agent_identity)
+                created = await self._create_provisioning_parent(
+                    reservation=reservation,
+                    principal=principal,
+                    request=request,
+                    facilitator_id=effective_facilitator,
+                    owner_ids=requested_union,
+                    requested_thread_id=requested_thread,
+                    plan_specs=plan_specs,
+                    agent_identity=agent_identity,
+                    requested_crew_identities=requested_crew_identities,
+                )
+                parent, marker, adopted_room_snapshot = created
+                return await self._complete_new_provisioning(
+                    parent,
+                    marker,
+                    adopted_room_snapshot=adopted_room_snapshot,
+                )
+
+    async def repair_provisioning(self, *, limit: int) -> tuple[str, ...]:
+        """Advance one bounded oldest-first scan of durable provisioning markers."""
+        if type(limit) is not int or not 1 <= limit <= 1_000:
+            raise ValueError("crew_provisioning_scan_limit_invalid")
+        repaired: list[str] = []
+        async with self._admission_lock:
+            parents = await self._work_items.list_crew_session_provisioning_candidates(
+                limit=limit,
+            )
+            for parent in parents:
+                marker = self._parse_provisioning(
+                    (parent.metadata or {}).get("crew_provisioning"),
+                )
+                await self._require_provisioning_parent(parent.id, marker)
+                if marker.phase == "failed":
+                    continue
+                try:
+                    await self._continue_provisioning(
+                        parent.id,
+                        marker,
+                        schedule=False,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except ValueError as exc:
+                    if str(exc) == "crew_session_provenance_invalid":
+                        raise
+                    await self._fail_irreparable_provisioning(
+                        parent.id,
+                        marker,
+                        exc,
+                    )
+                else:
+                    repaired.append(parent.id)
+            sessions = await self._work_items.list_crew_session_ingress_candidates(
+                limit=limit,
+            )
+            for parent in sessions:
+                session = await self.get_session(parent.id)
+                if session is None:
+                    raise ValueError("crew_session_candidate_integrity_invalid")
+                await self.get_recovery(parent.id)
+                room = await _run_held_to_thread(
+                    self._threads.add_crew_session_participants,
+                    session.thread_id,
+                    task_id=parent.id,
+                    participant_ids=session.owner_ids,
+                    name=f"crew-repair-participants:{parent.id}",
+                )
+                if room is None:
+                    raise ValueError("crew_session_thread_not_found")
+        return tuple(repaired)
+
+    async def _create_provisioning_parent(
+        self,
+        *,
+        reservation: CrewSessionParentReservation,
+        principal: CrewSessionPrincipal,
+        request: _CrewIngressValues,
+        facilitator_id: str,
+        owner_ids: tuple[str, ...],
+        requested_thread_id: str | None,
+        plan_specs: list[dict[str, Any]],
+        agent_identity: Any | None,
+        requested_crew_identities: dict[str, Any],
+    ) -> tuple[WorkItem, CrewSessionProvisioningContract, dict[str, Any] | None]:
+        from probos.workforce import CrewSessionParentCreate
+
+        if len(owner_ids) > 16:
+            raise ValueError("crew_session_owner_ids_invalid")
+        adopted_room_snapshot: dict[str, Any] | None = None
+        if requested_thread_id is not None:
+            self._revalidate_principal(principal, agent_identity)
+            adopted_room = await asyncio.to_thread(
+                self._threads.get_thread,
+                requested_thread_id,
+            )
+            if adopted_room is None:
+                raise ValueError("crew_session_thread_not_found")
+            if adopted_room.archived or adopted_room.task_id is not None:
+                raise ValueError("crew_session_thread_task_incompatible")
+            adopted_room_snapshot = adopted_room.to_dict()
+        provision_id = secrets.token_hex(32)
+        parent_id = f"crew-session-{provision_id}"
+        thread_id = requested_thread_id or f"crew-room-{provision_id}"
+        marker = CrewSessionProvisioningContract.model_validate({
+            "version": 1,
+            "provision_id": provision_id,
+            "phase": "parent_created",
+            "room_policy": "adopt" if requested_thread_id else "create",
+            "thread_id": thread_id,
+            "goal": request.display_goal,
+            "goal_fingerprint": request.goal_fingerprint,
+            "origin": principal.origin,
+            "originator_id": principal.originator_id,
+            "created_by": principal.created_by,
+            "facilitator_id": facilitator_id,
+            "owner_ids": list(owner_ids),
+            "success_criteria": list(request.success_criteria),
+            "expected_deliverable": request.expected_deliverable,
+            "plan_specs": plan_specs,
+            "last_error_code": None,
+        })
+        raw_marker = marker.model_dump(mode="json")
+        metadata = {"crew_provisioning": raw_marker}
+        if (
+            set(metadata) != {"crew_provisioning"}
+            or not _json_values_exactly_equal(
+                metadata["crew_provisioning"],
+                raw_marker,
+            )
+            or principal.created_by != marker.created_by
+            or facilitator_id != marker.facilitator_id
+        ):
+            raise ValueError("crew_session_parent_create_invalid")
+        create_request = CrewSessionParentCreate(
+            id=parent_id,
+            title=request.display_goal[:200],
+            description=request.display_goal,
+            assigned_to=facilitator_id,
+            created_by=principal.created_by,
+            metadata=metadata,
+        )
+        create_error: BaseException | None = None
+        self._revalidate_principal(principal, agent_identity)
+        self._revalidate_agent_crew(principal, requested_crew_identities)
+        try:
+            parent = await reservation.create_parent(create_request)
+        except BaseException as exc:
+            create_error = exc
+            if isinstance(exc, asyncio.CancelledError):
+                parent = await self._reconcile_cancelled_parent_create(
+                    parent_id,
+                    first_cancellation=exc,
+                )
+            else:
+                parent = await self._work_items.get_work_item(parent_id)
+        if parent is None or not _json_values_exactly_equal(
+            parent.metadata,
+            {"crew_provisioning": raw_marker},
+        ):
+            if create_error is not None:
+                raise create_error
+            raise ValueError("crew_provisioning_parent_create_failed")
+        if create_error is not None:
+            raise create_error
+        return parent, marker, adopted_room_snapshot
+
+    async def _complete_new_provisioning(
+        self,
+        parent: WorkItem,
+        marker: CrewSessionProvisioningContract,
+        *,
+        adopted_room_snapshot: dict[str, Any] | None,
+    ) -> CrewSessionOpenResult:
+        try:
+            return await self._continue_provisioning(
+                parent.id,
+                marker,
+                schedule=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if (
+                isinstance(exc, ValueError)
+                and str(exc) == "crew_session_provenance_invalid"
+            ):
+                raise
+            authoritative = await self._work_items.get_work_item(parent.id)
+            if authoritative is not None and "crew_session" not in (
+                authoritative.metadata or {}
+            ):
+                current_marker = self._parse_provisioning(
+                    (authoritative.metadata or {}).get("crew_provisioning"),
+                )
+                await self._compensate_pre_session(
+                    parent.id,
+                    current_marker,
+                    adopted_room_snapshot=adopted_room_snapshot,
+                )
+            raise
+
+    async def _reconcile_cancelled_parent_create(
+        self,
+        parent_id: str,
+        *,
+        first_cancellation: asyncio.CancelledError,
+    ) -> WorkItem | None:
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            current_task.uncancel()
+        reconciliation = asyncio.create_task(
+            self._work_items.get_work_item(parent_id),
+            name=f"crew-provision-parent-reconcile:{parent_id}",
+        )
+        while not reconciliation.done():
+            try:
+                await asyncio.shield(reconciliation)
+            except asyncio.CancelledError:
+                if current_task is not None:
+                    current_task.uncancel()
+        try:
+            return reconciliation.result()
+        except asyncio.CancelledError:
+            logger.warning(
+                "CrewSession provisioning parent=%s authoritative reread was "
+                "cancelled; the marker outcome remains unknown and the first "
+                "cancellation will propagate",
+                parent_id,
+            )
+            return None
+        except Exception:
+            logger.exception(
+                "CrewSession provisioning parent=%s authoritative reread "
+                "failed; the marker outcome remains unknown and the first "
+                "cancellation will propagate",
+                parent_id,
+            )
+            return None
+
+    async def _continue_provisioning(
+        self,
+        parent_id: str,
+        marker: CrewSessionProvisioningContract,
+        *,
+        schedule: bool,
+    ) -> CrewSessionOpenResult:
+        try:
+            return await self._continue_provisioning_inner(
+                parent_id,
+                marker,
+                schedule=schedule,
+            )
+        except asyncio.CancelledError as first_cancellation:
+            await self._checkpoint_cancelled_provisioning(
+                parent_id,
+                first_cancellation,
+            )
+            raise first_cancellation
+
+    async def _continue_provisioning_inner(
+        self,
+        parent_id: str,
+        marker: CrewSessionProvisioningContract,
+        *,
+        schedule: bool,
+    ) -> CrewSessionOpenResult:
+        current_marker = marker
+        parent = await self._require_provisioning_parent(parent_id, current_marker)
+        room = await self._ensure_provisioning_room(parent.id, current_marker)
+        if current_marker.phase == "parent_created":
+            current_marker = await self._advance_provisioning_marker(
+                parent.id,
+                current_marker,
+                "room_bound",
+                expected_status="draft",
+            )
+        elif _PROVISIONING_PHASE_INDEX[current_marker.phase] < _PROVISIONING_PHASE_INDEX["room_bound"]:
+            raise ValueError("crew_provisioning_phase_invalid")
+        if room.task_id != parent.id:
+            raise ValueError("crew_session_thread_task_mismatch")
+
+        session = await self.get_session(parent.id)
+        if session is None:
+            if _PROVISIONING_PHASE_INDEX[current_marker.phase] >= _PROVISIONING_PHASE_INDEX["session_initialized"]:
+                raise ValueError("crew_provisioning_session_conflict")
+            session = await self.initialize_session(
+                parent.id,
+                current_marker.thread_id,
+                goal=current_marker.goal,
+                origin=current_marker.origin,
+                originator_id=current_marker.originator_id,
+                facilitator_id=current_marker.facilitator_id,
+                owner_ids=list(current_marker.owner_ids),
+                success_criteria=list(current_marker.success_criteria),
+                expected_deliverable=current_marker.expected_deliverable,
+            )
+        if session.state in _TERMINAL_STATES:
+            raise ValueError("crew_provisioning_session_terminal")
+        self._validate_session_matches_marker(session, current_marker)
+        if _PROVISIONING_PHASE_INDEX[current_marker.phase] < _PROVISIONING_PHASE_INDEX["session_initialized"]:
+            current_marker = await self._advance_provisioning_marker(
+                parent.id,
+                current_marker,
+                "session_initialized",
+                expected_status=_STATUS_PROJECTION[session.state],
+            )
+
+        recovery = await self.get_recovery(parent.id)
+        specs = _specs_from_projections(current_marker.plan_specs)
+        expected_plan, inserts = _build_derived_recovery_plan(
+            parent.id,
+            specs,
+            created_by=current_marker.facilitator_id,
+        )
+        children = await self._work_items.list_work_items(
+            parent_id=parent.id,
+            limit=_MAX_RECOVERY_CHILDREN + 1,
+        )
+        if len(children) > _MAX_RECOVERY_CHILDREN:
+            raise ValueError("crew_recovery_plan_children_invalid")
+        if recovery is None:
+            if _PROVISIONING_PHASE_INDEX[current_marker.phase] >= _PROVISIONING_PHASE_INDEX["plan_installed"]:
+                raise ValueError("crew_recovery_plan_missing")
+            if children:
+                ordered = tuple(sorted(children, key=lambda child: child.id))
+                adopted = _build_adopted_recovery_plan(parent.id, ordered)
+                recovery = await self.adopt_recovery_plan(
+                    parent.id,
+                    expected_session=session,
+                    expected_recovery=None,
+                    plan=adopted,
+                    expected_children=ordered,
+                )
+            else:
+                recovery, _ = await self.install_recovery_plan(
+                    parent.id,
+                    expected_session=session,
+                    expected_recovery=None,
+                    plan=expected_plan,
+                    children=inserts,
+                )
+        if recovery.plan is None:
+            raise ValueError("crew_recovery_plan_missing")
+        if recovery.plan.plan_seed_hash != expected_plan.plan_seed_hash:
+            raise ValueError("crew_recovery_plan_conflict")
+        if not _json_values_exactly_equal(
+            recovery.plan.model_dump(mode="json"),
+            expected_plan.model_dump(mode="json"),
+        ):
+            if children:
+                _validate_contextual_recovery_plan(
+                    parent.id,
+                    recovery.plan,
+                    tuple(sorted(children, key=lambda child: child.id)),
+                )
+            else:
+                raise ValueError("crew_recovery_plan_conflict")
+        if _PROVISIONING_PHASE_INDEX[current_marker.phase] < _PROVISIONING_PHASE_INDEX["plan_installed"]:
+            current_marker = await self._advance_provisioning_marker(
+                parent.id,
+                current_marker,
+                "plan_installed",
+                expected_status=_STATUS_PROJECTION[session.state],
+            )
+
+        room = await _run_held_to_thread(
+            self._threads.add_crew_session_participants,
+            current_marker.thread_id,
+            task_id=parent.id,
+            participant_ids=current_marker.owner_ids,
+            name=f"crew-provision-participants:{parent.id}",
+        )
+        if room is None:
+            raise ValueError("crew_session_thread_not_found")
+        authoritative_session = await self.get_session(parent.id)
+        authoritative_recovery = await self.get_recovery(parent.id)
+        if authoritative_session is None or authoritative_recovery is None:
+            raise ValueError("crew_provisioning_authority_missing")
+        cleared = await self._work_items.clear_crew_session_provisioning(
+            parent.id,
+            expected_marker=current_marker.model_dump(mode="json"),
+            expected_session=authoritative_session.model_dump(mode="json"),
+            expected_recovery=authoritative_recovery.model_dump(mode="json"),
+        )
+        if cleared is None or "crew_provisioning" in (cleared.metadata or {}):
+            raise ValueError("crew_provisioning_clear_failed")
+        scheduled = False
+        if schedule:
+            self._schedule_parent(parent.id)
+            scheduled = True
+        return CrewSessionOpenResult(
+            disposition="created",
+            parent_id=parent.id,
+            thread_id=authoritative_session.thread_id,
+            state=authoritative_session.state,
+            facilitator_id=authoritative_session.facilitator_id,
+            owner_ids=authoritative_session.owner_ids,
+            duplicate_resume_count=authoritative_session.duplicate_resume_count,
+            scheduled=scheduled,
+        )
+
+    async def _require_provisioning_parent(
+        self,
+        parent_id: str,
+        marker: CrewSessionProvisioningContract,
+    ) -> WorkItem:
+        parent = await self._work_items.get_work_item(parent_id)
+        if parent is not None:
+            _validate_crew_session_provenance(
+                origin=marker.origin,
+                originator_id=marker.originator_id,
+                created_by=parent.created_by,
+            )
+        if (
+            parent is None
+            or parent.work_type != "crew_session"
+            or parent.assigned_to != marker.facilitator_id
+            or not _json_values_exactly_equal(
+                (parent.metadata or {}).get("crew_provisioning"),
+                marker.model_dump(mode="json"),
+            )
+        ):
+            raise ValueError("crew_provisioning_parent_conflict")
+        return parent
+
+    async def _ensure_provisioning_room(
+        self,
+        parent_id: str,
+        marker: CrewSessionProvisioningContract,
+    ) -> ChatThread:
+        if marker.room_policy == "create":
+            if marker.phase == "parent_created":
+                room = await _run_held_to_thread(
+                    self._threads.create_crew_session_thread,
+                    thread_id=marker.thread_id,
+                    title=marker.goal[:200],
+                    participants=marker.owner_ids,
+                    task_id=parent_id,
+                    provision_id=marker.provision_id,
+                    created_by=marker.created_by,
+                    name=f"crew-provision-room-create:{parent_id}",
+                )
+                self._validate_created_provisioning_room(
+                    room,
+                    parent_id,
+                    marker,
+                )
+                return room
+            room = await asyncio.to_thread(
+                self._threads.get_thread,
+                marker.thread_id,
+            )
+            self._validate_created_provisioning_room(room, parent_id, marker)
+            return room
+        room = await asyncio.to_thread(self._threads.get_thread, marker.thread_id)
+        if room is None:
+            raise ValueError("crew_session_thread_not_found")
+        if room.archived:
+            raise ValueError("crew_session_thread_archived")
+        if room.task_id is None and marker.phase == "parent_created":
+            room = await _run_held_to_thread(
+                self._threads.compare_and_set_task_link,
+                marker.thread_id,
+                expected_task_id=None,
+                new_task_id=parent_id,
+                name=f"crew-provision-room-link:{parent_id}",
+            )
+        if room is None:
+            room = await asyncio.to_thread(
+                self._threads.get_thread,
+                marker.thread_id,
+            )
+        if room is None or room.task_id != parent_id or room.archived:
+            raise ValueError("crew_session_thread_task_mismatch")
+        return room
+
+    @staticmethod
+    def _validate_created_provisioning_room(
+        room: ChatThread | None,
+        parent_id: str,
+        marker: CrewSessionProvisioningContract,
+    ) -> None:
+        expected_metadata = {
+            "crew_provisioning": {
+                "version": 1,
+                "provision_id": marker.provision_id,
+                "created_by": marker.created_by,
+                "title": marker.goal[:200],
+                "participants": list(marker.owner_ids),
+            },
+        }
+        if (
+            room is None
+            or room.title != marker.goal[:200]
+            or room.participants != list(marker.owner_ids)
+            or room.project_id is not None
+            or room.task_id != parent_id
+            or room.pinned
+            or room.archived
+            or room.personality_override is not None
+            or room.workspace_root is not None
+            or room.preprompt is not None
+            or room.model is not None
+            or not _json_values_exactly_equal(room.metadata, expected_metadata)
+        ):
+            raise ValueError("crew_session_thread_create_conflict")
+
+    async def _advance_provisioning_marker(
+        self,
+        parent_id: str,
+        marker: CrewSessionProvisioningContract,
+        phase: Literal["room_bound", "session_initialized", "plan_installed"],
+        *,
+        expected_status: str,
+    ) -> CrewSessionProvisioningContract:
+        if _PROVISIONING_PHASE_INDEX[phase] <= _PROVISIONING_PHASE_INDEX[marker.phase]:
+            raise ValueError("crew_provisioning_phase_invalid")
+        values = marker.model_dump(mode="json")
+        values["phase"] = phase
+        candidate = CrewSessionProvisioningContract.model_validate(values)
+        updated = await self._work_items.merge_work_item_metadata(
+            parent_id,
+            {"crew_provisioning": candidate.model_dump(mode="json")},
+            expected={"crew_provisioning": marker.model_dump(mode="json")},
+            expected_work_type="crew_session",
+            expected_status=expected_status,
+            expected_assigned_to=marker.facilitator_id,
+            source="crew_session_provisioning_phase",
+        )
+        if updated is None:
+            raise ValueError("crew_provisioning_phase_update_failed")
+        return self._parse_provisioning(
+            (updated.metadata or {}).get("crew_provisioning"),
+        )
+
+    async def _compensate_pre_session(
+        self,
+        parent_id: str,
+        marker: CrewSessionProvisioningContract,
+        *,
+        adopted_room_snapshot: dict[str, Any] | None,
+    ) -> None:
+        parent = await self._work_items.get_work_item(parent_id)
+        if (
+            parent is None
+            or "crew_session" in (parent.metadata or {})
+            or not _json_values_exactly_equal(
+                (parent.metadata or {}).get("crew_provisioning"),
+                marker.model_dump(mode="json"),
+            )
+        ):
+            return
+        room = await asyncio.to_thread(self._threads.get_thread, marker.thread_id)
+        if marker.room_policy == "create":
+            if room is None:
+                return
+            if not await _run_held_to_thread(
+                self._threads.delete_untouched_crew_session_thread,
+                marker.thread_id,
+                task_id=parent_id,
+                provision_id=marker.provision_id,
+                name=f"crew-provision-room-compensate:{parent_id}",
+            ):
+                return
+        elif room is not None and adopted_room_snapshot is not None:
+            if room.task_id == parent_id:
+                expected_linked = dict(adopted_room_snapshot)
+                expected_linked["task_id"] = parent_id
+                if not _json_values_exactly_equal(
+                    room.to_dict(),
+                    expected_linked,
+                ):
+                    return
+                unlinked = await _run_held_to_thread(
+                    self._threads.compare_and_set_task_link,
+                    marker.thread_id,
+                    expected_task_id=parent_id,
+                    new_task_id=None,
+                    name=f"crew-provision-room-unlink:{parent_id}",
+                )
+                if unlinked is None:
+                    return
+            elif room.task_id is None:
+                if not _json_values_exactly_equal(
+                    room.to_dict(),
+                    adopted_room_snapshot,
+                ):
+                    return
+            else:
+                return
+        else:
+            return
+        await self._work_items.delete_untouched_crew_session_provisioning(
+            parent_id,
+            expected_marker=marker.model_dump(mode="json"),
+            expected_assigned_to=marker.facilitator_id,
+        )
+
+    async def _checkpoint_cancelled_provisioning(
+        self,
+        parent_id: str,
+        first_cancellation: asyncio.CancelledError,
+    ) -> None:
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            current_task.uncancel()
+        checkpoint = asyncio.create_task(
+            self._checkpoint_provisioning_authority(parent_id),
+            name=f"crew-provision-cancel-reconcile:{parent_id}",
+        )
+        while not checkpoint.done():
+            try:
+                await asyncio.shield(checkpoint)
+            except asyncio.CancelledError:
+                if current_task is not None:
+                    current_task.uncancel()
+        try:
+            checkpoint.result()
+        except asyncio.CancelledError:
+            logger.warning(
+                "CrewSession provisioning parent=%s cancellation reconciliation "
+                "was itself cancelled; the marker remains discoverable and the "
+                "first cancellation will propagate",
+                parent_id,
+            )
+        except Exception:
+            logger.exception(
+                "CrewSession provisioning parent=%s cancellation reconciliation "
+                "could not prove a later durable phase; the marker remains "
+                "discoverable and the first cancellation will propagate",
+                parent_id,
+            )
+
+    async def _checkpoint_provisioning_authority(self, parent_id: str) -> None:
+        parent = await self._work_items.get_work_item(parent_id)
+        if parent is None:
+            return
+        marker_raw = (parent.metadata or {}).get("crew_provisioning", _MISSING)
+        if marker_raw is _MISSING:
+            return
+        marker = self._parse_provisioning(marker_raw)
+        parent = await self._require_provisioning_parent(parent_id, marker)
+        if marker.phase == "failed":
+            return
+        room = await asyncio.to_thread(self._threads.get_thread, marker.thread_id)
+        if room is None or room.archived or room.task_id != parent_id:
+            return
+        if marker.room_policy == "create":
+            self._validate_created_provisioning_room(
+                room,
+                parent_id,
+                marker,
+            )
+        if marker.phase == "parent_created":
+            marker = await self._advance_provisioning_marker(
+                parent_id,
+                marker,
+                "room_bound",
+                expected_status="draft",
+            )
+        session = await self.get_session(parent_id)
+        if session is None:
+            return
+        self._validate_session_matches_marker(session, marker)
+        if marker.phase == "room_bound":
+            marker = await self._advance_provisioning_marker(
+                parent_id,
+                marker,
+                "session_initialized",
+                expected_status=_STATUS_PROJECTION[session.state],
+            )
+        recovery = await self.get_recovery(parent_id)
+        if recovery is None or recovery.plan is None:
+            return
+        specs = _specs_from_projections(marker.plan_specs)
+        expected_plan, _ = _build_derived_recovery_plan(
+            parent_id,
+            specs,
+            created_by=marker.facilitator_id,
+        )
+        if recovery.plan.plan_seed_hash != expected_plan.plan_seed_hash:
+            return
+        children = await self._work_items.list_work_items(
+            parent_id=parent_id,
+            limit=_MAX_RECOVERY_CHILDREN + 1,
+        )
+        if not children or len(children) > _MAX_RECOVERY_CHILDREN:
+            return
+        _validate_contextual_recovery_plan(
+            parent_id,
+            recovery.plan,
+            tuple(sorted(children, key=lambda child: child.id)),
+        )
+        if marker.phase == "session_initialized":
+            await self._advance_provisioning_marker(
+                parent_id,
+                marker,
+                "plan_installed",
+                expected_status=_STATUS_PROJECTION[session.state],
+            )
+
+    async def _fail_irreparable_provisioning(
+        self,
+        parent_id: str,
+        marker: CrewSessionProvisioningContract,
+        error: ValueError,
+    ) -> None:
+        raw_code = str(error)
+        error_code = (
+            raw_code
+            if _RECOVERY_ERROR_RE.fullmatch(raw_code) is not None
+            else "provisioning_integrity"
+        )
+        parent = await self._work_items.get_work_item(parent_id)
+        if parent is None:
+            raise error
+        session_raw = (parent.metadata or {}).get("crew_session", _MISSING)
+        current_marker = self._parse_provisioning(
+            (parent.metadata or {}).get("crew_provisioning"),
+        )
+        if session_raw is _MISSING:
+            failed = await self._work_items.fail_crew_session_provisioning(
+                parent_id,
+                expected_marker=current_marker.model_dump(mode="json"),
+                error_code=error_code,
+            )
+            if failed is None:
+                raise error
+            return
+
+        session = self._parse_contract(session_raw)
+        await self._validate_loaded(parent, session)
+        recovery = await self.get_recovery(parent_id)
+        if session.state not in _TERMINAL_STATES:
+            session = await self.transition_session(
+                parent_id,
+                "failed",
+                expected_revision=session.revision,
+                last_result_summary=f"crew_provisioning_failed:{error_code}",
+                expected_recovery=recovery,
+                recovery=recovery,
+            )
+        elif session.state != "failed":
+            raise error
+        parent = await self._work_items.get_work_item(parent_id)
+        if parent is None:
+            raise error
+        current_marker_raw = (parent.metadata or {}).get(
+            "crew_provisioning",
+            _MISSING,
+        )
+        current_marker = self._parse_provisioning(current_marker_raw)
+        failed_values = current_marker.model_dump(mode="json")
+        failed_values.update({
+            "phase": "failed",
+            "last_error_code": error_code,
+        })
+        failed_marker = CrewSessionProvisioningContract.model_validate(
+            failed_values,
+        )
+        current_session_raw = (parent.metadata or {}).get(
+            "crew_session",
+            _MISSING,
+        )
+        expected = {
+            "crew_provisioning": current_marker_raw,
+            "crew_session": current_session_raw,
+        }
+        expected_absent = frozenset()
+        recovery_raw = (parent.metadata or {}).get("crew_recovery", _MISSING)
+        if recovery_raw is _MISSING:
+            expected_absent = frozenset({"crew_recovery"})
+        else:
+            expected["crew_recovery"] = recovery_raw
+        updated = await self._work_items.merge_work_item_metadata(
+            parent_id,
+            {"crew_provisioning": failed_marker.model_dump(mode="json")},
+            expected=expected,
+            expected_absent_keys=expected_absent,
+            expected_work_type="crew_session",
+            expected_status="failed",
+            expected_assigned_to=session.facilitator_id,
+            source="crew_session_provisioning_failed",
+        )
+        if updated is None:
+            raise error
+
+    def _validate_session_matches_marker(
+        self,
+        session: CrewSessionContract,
+        marker: CrewSessionProvisioningContract,
+    ) -> None:
+        if (
+            session.thread_id != marker.thread_id
+            or session.goal != marker.goal
+            or session.origin != marker.origin
+            or session.originator_id != marker.originator_id
+            or session.facilitator_id != marker.facilitator_id
+            or session.owner_ids != marker.owner_ids
+            or session.success_criteria != marker.success_criteria
+            or session.expected_deliverable != marker.expected_deliverable
+        ):
+            raise ValueError("crew_provisioning_session_conflict")
+
+    def _schedule_parent(self, parent_id: str) -> asyncio.Task[SynthesisResult]:
+        if self._schedule is None:
+            raise ValueError("crew_session_scheduler_unavailable")
+        try:
+            task = self._schedule(parent_id)
+        except RuntimeError as exc:
+            raise ValueError("crew_session_scheduler_unavailable") from exc
+        if not isinstance(task, asyncio.Task):
+            raise ValueError("crew_session_scheduler_contract_invalid")
+        return task
+
+    @staticmethod
+    def _parse_provisioning(value: Any) -> CrewSessionProvisioningContract:
+        if type(value) is dict and all(
+            key in value for key in ("origin", "originator_id", "created_by")
+        ):
+            _validate_crew_session_provenance(
+                origin=value["origin"],
+                originator_id=value["originator_id"],
+                created_by=value["created_by"],
+            )
+        try:
+            return CrewSessionProvisioningContract.model_validate(value)
+        except (ValidationError, ValueError) as exc:
+            raise ValueError("crew_provisioning_contract_invalid") from exc
+
+    def _validate_principal(self, principal: CrewSessionPrincipal) -> Any | None:
+        try:
+            _validate_crew_session_provenance(
+                origin=principal.origin,
+                originator_id=principal.originator_id,
+                created_by=principal.created_by,
+            )
+        except ValueError as exc:
+            raise ValueError("crew_session_principal_invalid") from exc
+        if principal.origin == "captain":
+            return None
+        return self._validate_live_origin_agent(principal.originator_id)
+
+    def _validate_live_origin_agent(self, agent_id: str) -> Any:
+        from probos.crew_profile import Rank
+        from probos.crew_utils import is_crew_agent
+
+        if self._registry is None or self._trust_network is None:
+            raise ValueError("crew_session_ingress_unwired")
+        agent = self._registry.get(agent_id)
+        if agent is None or not is_crew_agent(agent, self._ontology):
+            raise ValueError("crew_session_agent_invalid")
+        score = self._trust_network.get_score(agent_id)
+        if type(score) is not float or not math.isfinite(score):
+            raise ValueError("crew_session_agent_trust_invalid")
+        if Rank.from_trust(score) is Rank.ENSIGN:
+            raise ValueError("crew_session_agent_rank_insufficient")
+        return agent
+
+    def _revalidate_principal(
+        self,
+        principal: CrewSessionPrincipal,
+        expected_agent: Any | None,
+    ) -> None:
+        if (
+            principal.origin == "agent"
+            and self._validate_live_origin_agent(principal.originator_id)
+            is not expected_agent
+        ):
+            raise ValueError("crew_session_agent_identity_changed")
+
+    def _revalidate_agent_crew(
+        self,
+        principal: CrewSessionPrincipal,
+        expected: dict[str, Any],
+    ) -> None:
+        if principal.origin != "agent":
+            return
+        for crew_id, expected_agent in expected.items():
+            if self._validate_live_crew_id(crew_id) is not expected_agent:
+                raise ValueError("crew_session_owner_identity_changed")
+
+    def _validate_live_crew_id(self, agent_id: str) -> Any:
+        from probos.crew_utils import is_crew_agent
+
+        if self._registry is None:
+            raise ValueError("crew_session_ingress_unwired")
+        agent = self._registry.get(agent_id)
+        if agent is None or not is_crew_agent(agent, self._ontology):
+            raise ValueError("crew_session_owner_invalid")
+        return agent
+
+    async def _find_equivalent(
+        self,
+        request: _CrewIngressValues,
+        *,
+        principal: CrewSessionPrincipal,
+        agent_identity: Any | None,
+    ) -> CrewSessionContract | None:
+        if self._config is None:
+            raise ValueError("crew_session_ingress_unwired")
+        self._revalidate_principal(principal, agent_identity)
+        candidates = await self._work_items.list_crew_session_ingress_candidates(
+            limit=self._config.crew_ingress_scan_limit,
+        )
+        compatible: list[tuple[Any, CrewSessionContract, _CrewIngressValues]] = []
+        exact: list[tuple[Any, CrewSessionContract]] = []
+        for parent in candidates:
+            if "crew_provisioning" in (parent.metadata or {}):
+                self._parse_provisioning(
+                    (parent.metadata or {}).get("crew_provisioning"),
+                )
+                raise ValueError("crew_provisioning_pending")
+            session = await self.get_session(parent.id)
+            if session is None:
+                raise ValueError("crew_session_candidate_integrity_invalid")
+            await self.get_recovery(parent.id)
+            normalized = _normalize_ingress_values(
+                goal=session.goal,
+                success_criteria=list(session.success_criteria),
+                expected_deliverable=session.expected_deliverable,
+            )
+            if not _ingress_contract_compatible(request, normalized):
+                continue
+            compatible.append((parent, session, normalized))
+            if normalized.goal_fingerprint == request.goal_fingerprint:
+                exact.append((parent, session))
+        if exact:
+            return min(
+                exact,
+                key=lambda value: (value[0].created_at, value[0].id),
+            )[1]
+        if len(compatible) > self._config.crew_ingress_semantic_call_limit:
+            raise ValueError("crew_session_semantic_scan_overflow")
+        scored: list[tuple[float, float, str, CrewSessionContract]] = []
+        for parent, session, normalized in compatible:
+            self._revalidate_principal(principal, agent_identity)
+            score = await self._score_similarity(
+                request.canonical_goal,
+                normalized.canonical_goal,
+            )
+            if score >= self._config.crew_ingress_semantic_threshold:
+                scored.append((score, parent.created_at, parent.id, session))
+        if not scored:
+            return None
+        scored.sort(key=lambda value: (-value[0], value[1], value[2]))
+        return scored[0][3]
+
+    async def _session_is_equivalent(
+        self,
+        session: CrewSessionContract,
+        request: _CrewIngressValues,
+        *,
+        principal: CrewSessionPrincipal,
+        agent_identity: Any | None,
+    ) -> bool:
+        normalized = _normalize_ingress_values(
+            goal=session.goal,
+            success_criteria=list(session.success_criteria),
+            expected_deliverable=session.expected_deliverable,
+        )
+        if not _ingress_contract_compatible(request, normalized):
+            return False
+        if normalized.goal_fingerprint == request.goal_fingerprint:
+            return True
+        if self._config is None:
+            raise ValueError("crew_session_ingress_unwired")
+        self._revalidate_principal(principal, agent_identity)
+        return (
+            await self._score_similarity(
+                request.canonical_goal,
+                normalized.canonical_goal,
+            )
+            >= self._config.crew_ingress_semantic_threshold
+        )
+
+    async def _score_similarity(self, left: str, right: str) -> float:
+        if self._compute_similarity is None:
+            raise ValueError("crew_session_similarity_unwired")
+        try:
+            score = await _run_held_to_thread(
+                self._compute_similarity,
+                left,
+                right,
+                name="crew-ingress-similarity",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise ValueError("crew_session_similarity_failed") from exc
+        if (
+            type(score) is not float
+            or not math.isfinite(score)
+            or not 0.0 <= score <= 1.0
+        ):
+            raise ValueError("crew_session_similarity_invalid")
+        return score
+
+    async def _resume_equivalent(
+        self,
+        *,
+        principal: CrewSessionPrincipal,
+        agent_identity: Any | None,
+        expected_session: CrewSessionContract,
+        requested_owner_ids: tuple[str, ...],
+        retry_blocked: bool,
+        requested_crew_identities: dict[str, Any],
+    ) -> CrewSessionOpenResult:
+        self._revalidate_principal(principal, agent_identity)
+        parent = await self._work_items.get_work_item(expected_session.task_id)
+        if parent is None:
+            raise ValueError("crew_session_parent_not_found")
+        raw = (parent.metadata or {}).get("crew_session", _MISSING)
+        if raw is _MISSING:
+            raise ValueError("crew_session_candidate_integrity_invalid")
+        current = self._parse_contract(raw)
+        await self._validate_loaded(parent, current)
+        await self.get_recovery(parent.id)
+        if not _json_values_exactly_equal(
+            current.model_dump(mode="json"),
+            expected_session.model_dump(mode="json"),
+        ):
+            raise ValueError("crew_session_candidate_changed")
+        if current.state in _TERMINAL_STATES:
+            raise ValueError("crew_session_terminal_not_reopenable")
+        owners = list(current.owner_ids)
+        for owner_id in requested_owner_ids:
+            if owner_id not in owners:
+                owners.append(owner_id)
+        if len(owners) > 16:
+            raise ValueError("crew_session_owner_ids_invalid")
+        if current.duplicate_resume_count >= 1_000_000:
+            raise ValueError("crew_session_duplicate_resume_count_invalid")
+
+        values = current.model_dump(mode="json")
+        values.update({
+            "revision": current.revision + 1,
+            "owner_ids": owners,
+            "duplicate_resume_count": current.duplicate_resume_count + 1,
+        })
+        recovery_raw = (parent.metadata or {}).get("crew_recovery", _MISSING)
+        expected: dict[str, Any] = {"crew_session": raw}
+        expected_absent = frozenset()
+        if recovery_raw is _MISSING:
+            if await self.get_recovery(parent.id) is not None:
+                raise ValueError("crew_session_candidate_changed")
+            expected_absent = frozenset({"crew_recovery"})
+        else:
+            recovery = self._parse_recovery(recovery_raw)
+            await self._validate_recovery_context(parent.id, recovery)
+            if not _json_values_exactly_equal(
+                (await self.get_recovery(parent.id)).model_dump(mode="json"),
+                recovery.model_dump(mode="json"),
+            ):
+                raise ValueError("crew_session_candidate_changed")
+            expected["crew_recovery"] = recovery_raw
+        target_status = _STATUS_PROJECTION[current.state]
+        if retry_blocked:
+            if current.state != "blocked_needs_captain":
+                raise ValueError("crew_session_retry_state_invalid")
+            recovery = (
+                None
+                if recovery_raw is _MISSING
+                else self._parse_recovery(recovery_raw)
+            )
+            target, next_recovery = await self._authorize_blocked_retry(
+                current,
+                recovery,
+            )
+            if current.blocked_since is None:
+                raise ValueError("crew_session_blocked_fields_invalid")
+            now = self._server_time(current.transitioned_at, current.blocked_since)
+            values.update({
+                "state": target,
+                "previous_state": current.state,
+                "transitioned_at": now,
+                "blocked_reason": None,
+                "blocked_since": None,
+                "blocked_duration_seconds": (
+                    current.blocked_duration_seconds + now - current.blocked_since
+                ),
+            })
+            patch = {
+                "crew_session": self._validate_contract(values).model_dump(
+                    mode="json",
+                ),
+                "crew_recovery": next_recovery.model_dump(mode="json"),
+            }
+            target_status = _STATUS_PROJECTION[target]
+        else:
+            patch = {
+                "crew_session": self._validate_contract(values).model_dump(
+                    mode="json",
+                ),
+            }
+        self._revalidate_principal(principal, agent_identity)
+        self._revalidate_agent_crew(principal, requested_crew_identities)
+        updated = await self._work_items.merge_work_item_metadata(
+            parent.id,
+            patch,
+            expected=expected,
+            expected_absent_keys=expected_absent,
+            expected_work_type="crew_session",
+            expected_status=_STATUS_PROJECTION[current.state],
+            expected_assigned_to=current.facilitator_id,
+            new_status=target_status,
+            source="crew_session_ingress_resume",
+        )
+        if updated is None:
+            raise ValueError("crew_session_resume_failed")
+        authoritative = self._parse_contract(
+            updated.metadata.get("crew_session"),
+        )
+        await self._validate_loaded(updated, authoritative)
+        room = await _run_held_to_thread(
+            self._threads.add_crew_session_participants,
+            authoritative.thread_id,
+            task_id=parent.id,
+            participant_ids=authoritative.owner_ids,
+            name=f"crew-ingress-participants:{parent.id}",
+        )
+        if room is None:
+            raise ValueError("crew_session_thread_not_found")
+        blocked = authoritative.state == "blocked_needs_captain"
+        scheduled = False
+        if not blocked:
+            self._schedule_parent(parent.id)
+            scheduled = True
+        return CrewSessionOpenResult(
+            disposition="blocked" if blocked else "resumed",
+            parent_id=parent.id,
+            thread_id=authoritative.thread_id,
+            state=authoritative.state,
+            facilitator_id=authoritative.facilitator_id,
+            owner_ids=authoritative.owner_ids,
+            duplicate_resume_count=authoritative.duplicate_resume_count,
+            scheduled=scheduled,
+        )
+
+    async def _authorize_blocked_retry(
+        self,
+        session: CrewSessionContract,
+        recovery: CrewRecoveryContract | None,
+    ) -> tuple[CrewSessionState, CrewRecoveryContract]:
+        previous = session.previous_state
+        if (
+            previous not in {"discussing", "executing", "verifying"}
+            or recovery is None
+        ):
+            raise ValueError("crew_session_retry_not_authorized")
+        if session.blocked_reason == "child_execution_interrupted":
+            children = await self._validate_recovery_context(
+                session.task_id,
+                recovery,
+            )
+            live_interrupted = tuple(sorted(
+                child.id for child in children if child.status == "in_progress"
+            ))
+            valid = (
+                recovery.phase == "executing"
+                and recovery.last_error_code == "child_execution_cancelled"
+                and bool(live_interrupted)
+                and recovery.interrupted_child_ids == live_interrupted
+            )
+        elif session.blocked_reason == "recovery_retry_exhausted":
+            if self._config is None:
+                raise ValueError("crew_session_ingress_unwired")
+            compatible = (
+                (
+                    previous == "discussing"
+                    and recovery.phase in _DISCUSSING_RECOVERY_PHASES
+                )
+                or (previous == "executing" and recovery.phase == "executing")
+                or (
+                    previous == "verifying"
+                    and recovery.phase in _VERIFYING_RECOVERY_PHASES
+                )
+            )
+            valid = (
+                compatible
+                and recovery.last_error_code == "recovery_retry_exhausted"
+                and recovery.retry_count
+                == self._config.crew_recovery_max_retries
+            )
+        else:
+            valid = False
+        if not valid:
+            raise ValueError("crew_session_retry_not_authorized")
+        recovery_values = recovery.model_dump(mode="json")
+        recovery_values.update({
+            "retry_count": 0,
+            "next_attempt_at": None,
+            "last_error_code": None,
+            "interrupted_child_ids": [],
+        })
+        return previous, self._validate_recovery(recovery_values)
 
     async def initialize_session(
         self,
@@ -1758,6 +3723,11 @@ class CrewSessionService:
             raise ValueError("crew_session_parent_unassigned")
         if parent.assigned_to != _normalize_id(facilitator_id):
             raise ValueError("crew_session_facilitator_assignment_mismatch")
+        _validate_crew_session_provenance(
+            origin=origin,
+            originator_id=originator_id,
+            created_by=parent.created_by,
+        )
         await self._validate_room(parent.id, thread_key)
         now = self._server_time(parent.created_at)
         contract = self._build_initial_contract(
@@ -1790,7 +3760,11 @@ class CrewSessionService:
             contract.state,
             contract.revision,
         )
-        return self._parse_contract(updated.metadata.get("crew_session"))
+        authoritative = self._parse_contract(
+            updated.metadata.get("crew_session"),
+        )
+        await self._validate_loaded(updated, authoritative)
+        return authoritative
 
     async def get_session(self, parent_id: str) -> CrewSessionContract | None:
         parent_key = _normalize_id(parent_id)
@@ -2330,7 +4304,11 @@ class CrewSessionService:
             contract.revision,
             _STATUS_PROJECTION[target],
         )
-        return self._parse_contract(updated.metadata.get("crew_session"))
+        authoritative = self._parse_contract(
+            updated.metadata.get("crew_session"),
+        )
+        await self._validate_loaded(updated, authoritative)
+        return authoritative
 
     async def publish_verified_result(
         self,
@@ -2549,6 +4527,10 @@ class CrewSessionService:
             return None
         try:
             authoritative_contract = self._parse_contract(metadata["crew_session"])
+            await self._validate_loaded(
+                authoritative,
+                authoritative_contract,
+            )
             authoritative_synthesis = CrewSynthesisMetadata.model_validate(
                 metadata["crew_synth"],
             )
@@ -2560,7 +4542,11 @@ class CrewSessionService:
                     parent_id,
                     authoritative_recovery,
                 )
-        except (KeyError, ValidationError, ValueError):
+        except ValueError as exc:
+            if str(exc) == "crew_session_provenance_invalid":
+                raise
+            return None
+        except (KeyError, ValidationError):
             return None
         if (
             authoritative_contract.result_artifact_id
@@ -2640,6 +4626,15 @@ class CrewSessionService:
     def _parse_contract(self, value: Any) -> CrewSessionContract:
         if type(value) is not dict:
             raise ValueError("crew_session_contract_invalid")
+        if all(key in value for key in ("origin", "originator_id")):
+            created_by = value.get("originator_id")
+            if value.get("origin") == "captain":
+                created_by = "captain"
+            _validate_crew_session_provenance(
+                origin=value.get("origin"),
+                originator_id=value.get("originator_id"),
+                created_by=created_by,
+            )
         return self._validate_contract(value)
 
     def _parse_recovery(self, value: Any) -> CrewRecoveryContract:
@@ -2807,7 +4802,11 @@ class CrewSessionService:
                         )
                     ):
                         return None
-        except (ValidationError, ValueError):
+        except ValueError as exc:
+            if str(exc) == "crew_session_provenance_invalid":
+                raise
+            return None
+        except ValidationError:
             return None
         return expected_recovery, live_tuple
 
@@ -2893,6 +4892,11 @@ class CrewSessionService:
     ) -> None:
         if parent.work_type != "crew_session":
             raise ValueError("crew_session_parent_type_invalid")
+        _validate_crew_session_provenance(
+            origin=contract.origin,
+            originator_id=contract.originator_id,
+            created_by=parent.created_by,
+        )
         if contract.task_id != parent.id:
             raise ValueError("crew_session_task_mismatch")
         if contract.created_at != parent.created_at:
@@ -2918,6 +4922,8 @@ class CrewSessionService:
         thread = await asyncio.to_thread(self._threads.get_thread, thread_id)
         if thread is None:
             raise ValueError("crew_session_thread_not_found")
+        if thread.archived:
+            raise ValueError("crew_session_thread_archived")
         if thread.task_id != parent_id:
             raise ValueError("crew_session_thread_task_mismatch")
         rooms = await asyncio.to_thread(

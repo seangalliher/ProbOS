@@ -16,11 +16,12 @@ working with its implicit per-agent default thread. AD-791a wires it.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,23 @@ class ParticipantRequest(BaseModel):
     agent_id: str = ""
 
 
+class StartWorkRequest(BaseModel):
+    """Strict Captain-authored request for one room-bound CrewSession."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    goal: str = Field(..., min_length=1, max_length=4_096)
+    success_criteria: list[
+        Annotated[str, Field(min_length=1, max_length=512)]
+    ] = Field(..., min_length=1, max_length=16)
+    expected_deliverable: str = Field(..., min_length=1, max_length=2_048)
+    facilitator_id: str | None = Field(default=None, min_length=1, max_length=128)
+    owner_ids: list[
+        Annotated[str, Field(min_length=1, max_length=128)]
+    ] | None = Field(default=None, max_length=16)
+    retry_blocked: bool = False
+
+
 @router.get("")
 async def list_threads(
     include_archived: bool = False,
@@ -241,6 +259,74 @@ async def create_thread(
         workspace_root=body.workspace_root,
     )
     return thread.to_dict()
+
+
+@router.post("/{thread_id}/start-work")
+async def start_thread_work(
+    thread_id: str,
+    body: StartWorkRequest,
+    _crew_scope: None = Depends(require_crew_scope),
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Use the existing configured crew-scope boundary to admit Captain work.
+
+    The shared token is default-off for local installs. This route adds no new
+    user identity, signatures, roles, or multi-Captain model; the server still
+    constructs the Captain principal and accepts no caller provenance fields.
+    """
+    dispatch = getattr(getattr(runtime, "config", None), "agentic_dispatch", None)
+    service = getattr(runtime, "crew_session_service", None)
+    if not getattr(dispatch, "orchestrator_enabled", False) or service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="CrewSession ingress is not available",
+        )
+    try:
+        result = await service.open_or_resume(
+            principal=service.captain_principal(),
+            goal=body.goal,
+            success_criteria=body.success_criteria,
+            expected_deliverable=body.expected_deliverable,
+            facilitator_id=body.facilitator_id,
+            owner_ids=body.owner_ids,
+            requested_thread_id=thread_id,
+            retry_blocked=body.retry_blocked,
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code == "crew_session_thread_not_found":
+            status = 404
+        elif code in {
+            "crew_session_scheduler_unavailable",
+            "crew_session_scheduler_contract_invalid",
+            "crew_session_ingress_unwired",
+            "crew_session_similarity_unwired",
+            "crew_session_decomposer_unavailable",
+        }:
+            status = 503
+        elif code in {
+            "crew_session_thread_archived",
+            "crew_session_thread_task_invalid",
+            "crew_session_thread_task_incompatible",
+            "crew_session_terminal_not_reopenable",
+            "crew_session_retry_state_invalid",
+            "crew_session_retry_not_authorized",
+            "crew_provisioning_pending",
+        }:
+            status = 409
+        else:
+            status = 422
+        raise HTTPException(status_code=status, detail=code) from exc
+    return {
+        "disposition": result.disposition,
+        "parent_id": result.parent_id,
+        "thread_id": result.thread_id,
+        "state": result.state,
+        "facilitator_id": result.facilitator_id,
+        "owner_ids": list(result.owner_ids),
+        "duplicate_resume_count": result.duplicate_resume_count,
+        "scheduled": result.scheduled,
+    }
 
 
 @router.get("/{thread_id}")

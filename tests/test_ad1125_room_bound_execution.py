@@ -6,6 +6,7 @@ import asyncio
 import gc
 import hashlib
 import inspect
+import itertools
 import json
 import weakref
 from collections.abc import Awaitable, Callable
@@ -38,6 +39,8 @@ from probos.workforce import (
     AgentCalendar,
     BookableResource,
     CalendarEntry,
+    CrewSessionAdmissionPort,
+    CrewSessionParentCreate,
     WorkItem,
     WorkItemStore,
 )
@@ -45,6 +48,7 @@ from probos.workforce import (
 
 _SHA_A = "a" * 64
 _SHA_B = "b" * 64
+_CREW_PARENT_IDS = itertools.count(1)
 _EVIDENCE_KEYS = {
     "version",
     "parent_id",
@@ -278,6 +282,7 @@ class _Stores:
     artifacts: ArtifactStore
     attachments: _ObservingAttachmentStore
     events: _EventRecorder
+    admission_port: CrewSessionAdmissionPort | None = None
 
 
 @pytest.fixture
@@ -289,6 +294,7 @@ async def stores(tmp_path: Path) -> Any:
         tick_interval=1_000,
     )
     await work.start()
+    admission_port = work.claim_crew_session_admission_port()
     try:
         yield _Stores(
             work=work,
@@ -300,6 +306,7 @@ async def stores(tmp_path: Path) -> Any:
             ),
             attachments=_ObservingAttachmentStore(tmp_path / "attachments"),
             events=events,
+            admission_port=admission_port,
         )
     finally:
         await work.stop()
@@ -334,13 +341,17 @@ async def _session_parent(
     *,
     assignee: str = "agent-1",
 ) -> tuple[WorkItem, ChatThread, CrewSessionService]:
-    parent = await stores.work.create_work_item(
-        title="Room-bound session",
-        work_type="crew_session",
-        assigned_to="facilitator-1",
-        created_at=100.0,
-        updated_at=100.0,
-    )
+    assert stores.admission_port is not None
+    async with stores.admission_port.reserve() as reservation:
+        parent = await reservation.create_parent(CrewSessionParentCreate(
+            id=f"crew-session-fixture-{next(_CREW_PARENT_IDS)}",
+            title="Room-bound session",
+            description="Room-bound session",
+            assigned_to="facilitator-1",
+            created_by="captain",
+            metadata={},
+            created_at=100.0,
+        ))
     thread = stores.chat.create_thread(
         title="Room-bound session",
         participants=["facilitator-1", assignee],
@@ -356,7 +367,7 @@ async def _session_parent(
         thread.id,
         goal="Produce a room-bound result",
         origin="captain",
-        originator_id="captain-1",
+        originator_id="captain",
         facilitator_id="facilitator-1",
         owner_ids=["facilitator-1", assignee],
         success_criteria=["Artifact is persisted", "Evidence is durable"],

@@ -6114,6 +6114,15 @@ class AgenticDispatchConfig(BaseModel):
 
     max_active_crew_sessions: int = Field(default=2, ge=1, le=32)
     crew_resume_scan_limit: int = Field(default=100, ge=1, le=1_000)
+    crew_ingress_scan_limit: int = Field(default=100, ge=1, le=1_000)
+    crew_ingress_semantic_call_limit: int = Field(default=32, ge=1, le=128)
+    crew_ingress_semantic_threshold: float = Field(
+        default=0.90,
+        ge=0.0,
+        le=1.0,
+        allow_inf_nan=False,
+    )
+    crew_provisioning_repair_limit: int = Field(default=100, ge=1, le=1_000)
     crew_recovery_max_retries: int = Field(default=3, ge=0, le=10)
     crew_recovery_initial_backoff_seconds: float = Field(
         default=5.0,
@@ -6128,6 +6137,11 @@ class AgenticDispatchConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_crew_recovery_backoff(self) -> "AgenticDispatchConfig":
+        if self.crew_ingress_semantic_call_limit > self.crew_ingress_scan_limit:
+            raise ValueError(
+                "crew_ingress_semantic_call_limit must be less than or equal "
+                "to crew_ingress_scan_limit"
+            )
         if (
             self.crew_recovery_max_backoff_seconds
             < self.crew_recovery_initial_backoff_seconds

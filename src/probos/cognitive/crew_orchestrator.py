@@ -157,17 +157,47 @@ class CrewOrchestrator:
                 return
             try:
                 dispatch_config = getattr(self._config, "agentic_dispatch", None)
+                if self._crew_session_service is None:
+                    raise RuntimeError("crew_session_service_unavailable")
+                repair_limit = getattr(
+                    dispatch_config,
+                    "crew_provisioning_repair_limit",
+                    100,
+                )
+                repaired_ids = await self._crew_session_service.repair_provisioning(
+                    limit=int(repair_limit),
+                )
                 scan_limit = getattr(dispatch_config, "crew_resume_scan_limit", 100)
                 candidates = (
                     await self._work_item_store.list_crew_session_recovery_candidates(
                         limit=int(scan_limit),
                     )
                 )
+                selected_ids: list[str] = []
+                seen_ids: set[str] = set()
+                for parent_id in (
+                    *repaired_ids,
+                    *(item.id for item in candidates),
+                ):
+                    if parent_id in seen_ids:
+                        continue
+                    seen_ids.add(parent_id)
+                    selected_ids.append(parent_id)
+                    if len(selected_ids) == int(scan_limit):
+                        break
+                validated: list[tuple[str, str]] = []
+                for parent_id in selected_ids:
+                    session = await self._crew_session_service.get_session(parent_id)
+                    if session is None:
+                        raise ValueError("crew_session_candidate_integrity_invalid")
+                    await self._crew_session_service.get_recovery(parent_id)
+                    validated.append((parent_id, session.state))
                 if self._stopped:
                     self._scheduling_open = False
                     raise RuntimeError("crew_session_lifecycle_stopped")
-                for item in candidates:
-                    self.schedule(item.id)
+                for parent_id, state in validated:
+                    if state in {"discussing", "executing", "verifying"}:
+                        self.schedule(parent_id)
                 self._started = True
             except BaseException as start_error:
                 self._scheduling_open = False
@@ -1077,161 +1107,37 @@ class CrewOrchestrator:
         goal: str,
         work_type: str = "task",
     ) -> str | None:
-        """AD-868: a Lieutenant+ agent originates its own crew task.
-
-        Decomposes ``goal`` into specs, creates a self-originated parent
-        WorkItem with its ``parent_id``-linked children, then runs the full
-        AD-867 crew pipeline (resolve -> delegate -> fan-out -> verify ->
-        synthesize) and returns the parent id.
-
-        **Provenance.** The parent carries ``created_by=origin_agent_id`` and
-        ``metadata={"origin": "self_originated", "originator": origin_agent_id}``
-        so the originating chain is auditable end-to-end. Trust attribution is
-        owned by the AD-861 synthesizer — this method performs **no second trust
-        write**.
-
-        **Honest-degrade (Tier 2).** The orchestrator being disabled, an empty
-        goal, no available decomposer, or a decomposition that yields zero specs
-        all log *what/why/what-next* and return ``None`` with **no dangling
-        parent** (decomposition runs before the parent is created). The method
-        never raises.
-        """
-        goal = (goal or "").strip()
-        if not goal:
+        """Compatibility delegate to the unified AD-1128 ingress authority."""
+        if work_type != "task" or self._crew_session_service is None:
             logger.warning(
-                "AD-868: %s originated an empty crew goal; nothing to dispatch",
-                origin_agent_id,
-            )
-            return None
-        if not self._orchestrator_enabled():
-            logger.info(
-                "AD-868: crew orchestrator disabled; ignoring self-originated "
-                "goal from %s (set agentic_dispatch.orchestrator_enabled to "
-                "allow)",
-                origin_agent_id,
-            )
-            return None
-
-        # Decompose FIRST so a failure never leaves a dangling parent.
-        decomposer = self._get_decomposer()
-        if decomposer is None:
-            logger.warning(
-                "AD-868: no plan decomposer available (runtime.llm_client "
-                "missing); cannot decompose self-originated goal from %s; "
-                "skipping (no parent created)",
+                "AD-1128: self-originated CrewSession from agent=%s was not "
+                "admitted because the compatibility contract or service is "
+                "unavailable; no work was created",
                 origin_agent_id,
             )
             return None
         try:
-            specs = list(decomposer.decompose(goal))
-        except Exception:
-            logger.warning(
-                "AD-868: decomposition raised for self-originated goal from %s; "
-                "skipping (no parent created)",
-                origin_agent_id, exc_info=True,
-            )
-            return None
-        if not specs:
-            logger.warning(
-                "AD-868: decomposition yielded zero specs for self-originated "
-                "goal from %s; skipping (no parent created)",
-                origin_agent_id,
-            )
-            return None
-
-        # Create the self-originated parent (provenance metadata; AD-861 owns
-        # trust attribution, so no second trust write happens here).
-        try:
-            parent = await self._work_item_store.create_work_item(
-                title=goal,
-                work_type=work_type,
-                created_by=origin_agent_id,
-                metadata={
-                    "origin": "self_originated",
-                    "originator": origin_agent_id,
-                },
+            result = await self._crew_session_service.open_or_resume(
+                principal=self._crew_session_service.agent_principal(
+                    origin_agent_id,
+                ),
+                goal=goal,
+                success_criteria=[
+                    "Complete the stated goal with verifiable evidence.",
+                ],
+                expected_deliverable=(
+                    "A verified result for the stated goal."
+                ),
             )
         except Exception:
             logger.warning(
-                "AD-868: failed to create self-originated parent for %s; "
-                "skipping",
-                origin_agent_id, exc_info=True,
-            )
-            return None
-        parent_id = getattr(parent, "id", "") or ""
-        if not parent_id:
-            logger.warning(
-                "AD-868: self-originated parent created without an id for %s; "
-                "skipping",
+                "AD-1128: self-originated CrewSession from agent=%s failed "
+                "unified admission; no alternate parent or runner was used",
                 origin_agent_id,
+                exc_info=True,
             )
             return None
-
-        # Persist the decomposed children (parent_id-linked; AD-863
-        # capability/department hints carried in metadata for _spec_view).
-        created = await self._create_children(parent_id, specs, origin_agent_id)
-        logger.info(
-            "AD-868: %s originated crew task %s with %d child(ren)",
-            origin_agent_id, parent_id, created,
-        )
-
-        # Run the full AD-867 pipeline (honest-degrades internally, never raises).
-        await self.run_crew_task(parent_id)
-        return parent_id
-
-    async def _create_children(
-        self,
-        parent_id: str,
-        specs: list[WorkItemSpec],
-        origin_agent_id: str,
-    ) -> int:
-        """Persist decomposed specs as ``parent_id``-linked child WorkItems.
-
-        Mirrors the AD-863 ParallelDispatcher spec->WorkItem translation so the
-        ``capability``/``department``/``expected_output``/``spec_id`` hints land
-        in metadata where :meth:`_spec_view` reads them back. Per-child failures
-        are Tier-2 logged but never abort the remaining children. Returns the
-        number of children successfully persisted.
-        """
-        spec_to_wid: dict[str, str] = {}
-        created = 0
-        for spec in specs:
-            translated_deps = [
-                spec_to_wid[d] for d in spec.depends_on if d in spec_to_wid
-            ]
-            metadata = dict(spec.metadata)
-            metadata.update({
-                "spec_id": spec.spec_id,
-                "capability": spec.capability,
-                "department": spec.department,
-                "expected_output": spec.expected_output,
-                "resources": list(spec.resources),
-            })
-            try:
-                item = await self._work_item_store.create_work_item(
-                    title=spec.title or spec.spec_id,
-                    description=spec.description,
-                    work_type=spec.work_type or "task",
-                    priority=int(spec.priority),
-                    parent_id=parent_id,
-                    depends_on=translated_deps,
-                    assigned_to=spec.agent or None,
-                    metadata=metadata,
-                    created_by=origin_agent_id,
-                )
-            except Exception:
-                logger.warning(
-                    "AD-868: failed to persist child %s for self-originated "
-                    "parent %s; its siblings still proceed",
-                    spec.spec_id, parent_id, exc_info=True,
-                )
-                continue
-            wid = getattr(item, "id", "") or ""
-            if not wid:
-                continue
-            spec_to_wid[spec.spec_id] = wid
-            created += 1
-        return created
+        return result.parent_id
 
     def _get_decomposer(self) -> Any | None:
         """Return the plan decomposer, building one lazily from the runtime.

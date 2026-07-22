@@ -23,9 +23,10 @@ import re
 import time
 import uuid
 from collections import defaultdict
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 import aiosqlite
 
@@ -263,6 +264,7 @@ BUILTIN_WORK_TYPES: dict[str, WorkTypeDefinition] = {
             WorkTypeTransition("review", "failed"),
             WorkTypeTransition("blocked", "open"),
             WorkTypeTransition("blocked", "in_progress", requires_assignment=True),
+            WorkTypeTransition("blocked", "review"),
             WorkTypeTransition("blocked", "failed"),
         ],
         required_fields=["title"],
@@ -672,6 +674,79 @@ class WorkItem:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class CrewSessionParentCreate:
+    id: str
+    title: str
+    description: str
+    assigned_to: str
+    created_by: str
+    metadata: dict[str, Any]
+    created_at: float | None = None
+
+    def __post_init__(self) -> None:
+        if any(
+            type(value) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(value) is None
+            for value in (self.id, self.assigned_to, self.created_by)
+        ):
+            raise ValueError("crew_session_parent_create_invalid")
+        text_fields = (
+            (self.title, 4_096, 16_384),
+            (self.description, 32_768, 131_072),
+        )
+        for value, maximum, maximum_bytes in text_fields:
+            if (
+                type(value) is not str
+                or not value.strip()
+                or "\x00" in value
+                or len(value) > maximum
+            ):
+                raise ValueError("crew_session_parent_create_invalid")
+            try:
+                if len(value.encode("utf-8")) > maximum_bytes:
+                    raise ValueError("crew_session_parent_create_invalid")
+            except UnicodeEncodeError as exc:
+                raise ValueError("crew_session_parent_create_invalid") from exc
+        if type(self.metadata) is not dict:
+            raise ValueError("crew_session_parent_create_invalid")
+        metadata_bytes = _compact_exact_json_bytes(
+            self.metadata,
+            error="crew_session_parent_create_invalid",
+        )
+        if len(metadata_bytes) > _MAX_WORK_ITEM_METADATA_BYTES:
+            raise ValueError("crew_session_parent_create_invalid")
+        if self.created_at is None:
+            created_at = None
+        elif (
+            type(self.created_at) not in (int, float)
+            or not math.isfinite(float(self.created_at))
+            or not 0.0 <= float(self.created_at) <= _MAX_WORK_ITEM_TIMESTAMP
+        ):
+            raise ValueError("crew_session_parent_create_invalid")
+        else:
+            created_at = float(self.created_at)
+        object.__setattr__(
+            self,
+            "metadata",
+            json.loads(metadata_bytes.decode("utf-8")),
+        )
+        object.__setattr__(self, "created_at", created_at)
+
+
+class CrewSessionParentReservation(Protocol):
+    async def create_parent(
+        self,
+        request: CrewSessionParentCreate,
+    ) -> WorkItem: ...
+
+
+class CrewSessionAdmissionPort(Protocol):
+    def reserve(
+        self,
+    ) -> AbstractAsyncContextManager[CrewSessionParentReservation]: ...
+
+
 @dataclass(frozen=True)
 class WorkItemPlanInsert:
     """Validated generic WorkItem fields for one atomic child-plan insert."""
@@ -1039,6 +1114,7 @@ _MAX_WORK_ITEM_METADATA_KEY_CODEPOINTS = 256
 _MAX_WORK_ITEM_METADATA_KEY_BYTES = 1_024
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_BYTES = 1_572_864
 _MAX_WORK_ITEM_CHILD_SNAPSHOTS_BYTES = 33_554_432
+_MAX_WORK_ITEM_TIMESTAMP = 253_402_300_799.0
 _MAX_WORK_ITEM_DIRECT_CHILDREN = 1_000
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_DEPTH = 64
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_NODES = 65_536
@@ -1076,6 +1152,7 @@ _WORK_ITEM_PLAN_ADOPTION_SNAPSHOT_KEYS = (
 _WORK_ITEM_PUBLICATION_ID_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
 )
+_CREW_PROVISIONING_ERROR_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,127}$")
 
 
 class _OmittedWorkItemExpectation:
@@ -1156,6 +1233,50 @@ def _compact_exact_json_bytes(value: Any, *, error: str) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError, OverflowError, RecursionError) as exc:
         raise ValueError(error) from exc
+
+
+def _build_crew_session_parent(
+    request: CrewSessionParentCreate,
+) -> WorkItem:
+    if type(request) is not CrewSessionParentCreate:
+        raise ValueError("crew_session_parent_create_invalid")
+    metadata_bytes = _compact_exact_json_bytes(
+        request.metadata,
+        error="crew_session_parent_create_invalid",
+    )
+    if len(metadata_bytes) > _MAX_WORK_ITEM_METADATA_BYTES:
+        raise ValueError("crew_session_parent_create_invalid")
+    detached_metadata = json.loads(metadata_bytes.decode("utf-8"))
+    if request.created_at is None:
+        created_at = time.time()
+    else:
+        created_at = request.created_at
+    return WorkItem(
+        id=request.id,
+        title=request.title,
+        description=request.description,
+        work_type="crew_session",
+        status="draft",
+        priority=3,
+        parent_id=None,
+        depends_on=[],
+        assigned_to=request.assigned_to,
+        created_by=request.created_by,
+        created_at=created_at,
+        updated_at=created_at,
+        due_at=None,
+        estimated_tokens=None,
+        actual_tokens=0,
+        trust_requirement=0.0,
+        required_capabilities=[],
+        tags=[],
+        metadata=detached_metadata,
+        steps=[],
+        verification={},
+        schedule={},
+        ttl_seconds=None,
+        template_id=None,
+    )
 
 
 def _bounded_child_snapshot_bytes(
@@ -1444,6 +1565,116 @@ def _all_steps_done(steps: list[dict[str, Any]]) -> bool:
     )
 
 
+class _CrewSessionParentReservation:
+    def __init__(
+        self,
+        store: WorkItemStore,
+        context: _CrewSessionAdmissionContext,
+        generation: object,
+        owner: asyncio.Task[Any],
+    ) -> None:
+        self._store = store
+        self._context = context
+        self._generation = generation
+        self._owner = owner
+        self._created = False
+
+    async def create_parent(
+        self,
+        request: CrewSessionParentCreate,
+    ) -> WorkItem:
+        if (
+            self._created
+            or asyncio.current_task() is not self._owner
+            or not self._context.owns(
+                store=self._store,
+                generation=self._generation,
+                reservation=self,
+            )
+        ):
+            raise RuntimeError("crew_session_admission_reservation_invalid")
+        item = _build_crew_session_parent(request)
+        self._created = True
+        return await self._store._insert_work_item(item)
+
+    def invalidate(self) -> None:
+        self._generation = object()
+
+
+class _CrewSessionAdmissionContext(
+    AbstractAsyncContextManager[CrewSessionParentReservation]
+):
+    def __init__(
+        self,
+        store: WorkItemStore,
+        lock: asyncio.Lock,
+    ) -> None:
+        self._store = store
+        self._lock = lock
+        self._entered = False
+        self._acquired = False
+        self._generation: object | None = None
+        self._reservation: _CrewSessionParentReservation | None = None
+
+    async def __aenter__(self) -> CrewSessionParentReservation:
+        if self._entered:
+            raise RuntimeError("crew_session_admission_reservation_invalid")
+        self._entered = True
+        await self._lock.acquire()
+        self._acquired = True
+        owner = asyncio.current_task()
+        if owner is None:
+            self._lock.release()
+            self._acquired = False
+            raise RuntimeError("crew_session_admission_reservation_invalid")
+        self._generation = object()
+        self._reservation = _CrewSessionParentReservation(
+            self._store,
+            self,
+            self._generation,
+            owner,
+        )
+        return self._reservation
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        self._generation = None
+        if self._reservation is not None:
+            self._reservation.invalidate()
+        if self._acquired:
+            self._lock.release()
+            self._acquired = False
+
+    def owns(
+        self,
+        *,
+        store: WorkItemStore,
+        generation: object,
+        reservation: _CrewSessionParentReservation,
+    ) -> bool:
+        return (
+            self._acquired
+            and self._store is store
+            and self._generation is generation
+            and self._reservation is reservation
+        )
+
+
+class _CrewSessionAdmissionPort:
+    def __init__(self, store: WorkItemStore, lock: asyncio.Lock) -> None:
+        self._store = store
+        self._lock = lock
+
+    def reserve(
+        self,
+    ) -> AbstractAsyncContextManager[CrewSessionParentReservation]:
+        return _CrewSessionAdmissionContext(self._store, self._lock)
+
+
 # ---------------------------------------------------------------------------
 # WorkItemStore — SQLite-backed persistence
 # ---------------------------------------------------------------------------
@@ -1479,6 +1710,12 @@ class WorkItemStore(EventEmitterMixin):
         # Snapshot cache for sync-safe access
         self._snapshot_cache: dict[str, Any] = {"work_items": [], "bookings": []}
         self._work_item_row_write_lock = asyncio.Lock()
+        self._crew_session_admission_lock = asyncio.Lock()
+        self._crew_session_admission_port_claimed = False
+        self._crew_session_admission_port = _CrewSessionAdmissionPort(
+            self,
+            self._crew_session_admission_lock,
+        )
         # AD-498: Work Type Registry + Template Store
         self.work_type_registry = WorkTypeRegistry()
         self.template_store = TemplateStore()
@@ -1503,6 +1740,12 @@ class WorkItemStore(EventEmitterMixin):
     def attach_dispatcher(self, dispatcher: Any) -> None:
         """AD-654d: Late-bind dispatcher for work_item_assigned TaskEvent."""
         self._dispatcher = dispatcher
+
+    def claim_crew_session_admission_port(self) -> CrewSessionAdmissionPort:
+        if self._crew_session_admission_port_claimed:
+            raise RuntimeError("crew_session_admission_port_claimed")
+        self._crew_session_admission_port_claimed = True
+        return self._crew_session_admission_port
 
     async def start(self) -> None:
         """Open DB, create schema, start tick loop."""
@@ -1538,6 +1781,8 @@ class WorkItemStore(EventEmitterMixin):
 
     async def create_work_item(self, **kwargs: Any) -> WorkItem:
         """Create and persist a new work item."""
+        if kwargs.get("work_type", "task") == "crew_session":
+            raise ValueError("crew_session_write_reserved")
         now = time.time()
         kwargs.setdefault("created_at", now)
         kwargs.setdefault("updated_at", now)
@@ -1546,6 +1791,9 @@ class WorkItemStore(EventEmitterMixin):
         if "status" not in kwargs:
             kwargs["status"] = self.work_type_registry.get_initial_status(work_type)
         item = WorkItem(**kwargs)
+        return await self._insert_work_item(item)
+
+    async def _insert_work_item(self, item: WorkItem) -> WorkItem:
         if self._db:
             async with self._work_item_row_write_lock:
                 try:
@@ -1678,6 +1926,310 @@ class WorkItemStore(EventEmitterMixin):
         )
         rows = await cursor.fetchall()
         return [self._row_to_work_item(row) for row in rows]
+
+    async def list_crew_session_ingress_candidates(
+        self,
+        *,
+        limit: int,
+    ) -> list[WorkItem]:
+        """Return one complete bounded oldest-first nonterminal ingress scan."""
+        if type(limit) is not int or not 1 <= limit <= 1_000:
+            raise ValueError("crew_session_ingress_scan_limit_invalid")
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM work_items WHERE work_type = ? "
+            "AND status IN (?, ?, ?, ?) "
+            "ORDER BY created_at ASC, id ASC LIMIT ?",
+            (
+                "crew_session",
+                "open",
+                "in_progress",
+                "review",
+                "blocked",
+                limit + 1,
+            ),
+        )
+        rows = await cursor.fetchall()
+        if len(rows) > limit:
+            raise ValueError("crew_session_ingress_scan_overflow")
+        return [self._row_to_work_item(row) for row in rows]
+
+    async def list_crew_session_provisioning_candidates(
+        self,
+        *,
+        limit: int,
+    ) -> list[WorkItem]:
+        """Return one complete bounded oldest-first provisioning-marker scan."""
+        if type(limit) is not int or not 1 <= limit <= 1_000:
+            raise ValueError("crew_provisioning_scan_limit_invalid")
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM work_items WHERE work_type = ? "
+            "AND json_type(metadata, '$.crew_provisioning') IS NOT NULL "
+            "ORDER BY created_at ASC, id ASC LIMIT ?",
+            ("crew_session", limit + 1),
+        )
+        rows = await cursor.fetchall()
+        if len(rows) > limit:
+            raise ValueError("crew_provisioning_scan_overflow")
+        return [self._row_to_work_item(row) for row in rows]
+
+    async def clear_crew_session_provisioning(
+        self,
+        parent_id: str,
+        *,
+        expected_marker: dict[str, Any],
+        expected_session: dict[str, Any],
+        expected_recovery: dict[str, Any],
+    ) -> WorkItem | None:
+        """Remove only an exact installed provisioning marker sibling."""
+        if (
+            type(parent_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(parent_id) is None
+            or any(
+                type(value) is not dict
+                for value in (expected_marker, expected_session, expected_recovery)
+            )
+        ):
+            raise ValueError("crew_provisioning_clear_invalid")
+        for value in (expected_marker, expected_session, expected_recovery):
+            _compact_exact_json_bytes(value, error="crew_provisioning_clear_invalid")
+        if not self._db:
+            return None
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(parent_id)
+            if item is None or item.work_type != "crew_session":
+                return None
+            metadata = dict(item.metadata or {})
+            session_state = expected_session.get("state")
+            status_by_state = {
+                "discussing": "open",
+                "executing": "in_progress",
+                "verifying": "review",
+                "blocked_needs_captain": "blocked",
+                "done": "done",
+                "failed": "failed",
+            }
+            facilitator_id = expected_session.get("facilitator_id")
+            if (
+                type(session_state) is not str
+                or status_by_state.get(session_state) != item.status
+                or type(facilitator_id) is not str
+                or item.assigned_to != facilitator_id
+            ):
+                raise ValueError("crew_provisioning_clear_conflict")
+            if not all(
+                key in metadata and _json_values_exactly_equal(metadata[key], value)
+                for key, value in (
+                    ("crew_provisioning", expected_marker),
+                    ("crew_session", expected_session),
+                    ("crew_recovery", expected_recovery),
+                )
+            ):
+                raise ValueError("crew_provisioning_clear_conflict")
+            metadata.pop("crew_provisioning")
+            serialized = _compact_exact_json_bytes(
+                metadata,
+                error="crew_provisioning_clear_invalid",
+            )
+            if len(serialized) > _MAX_WORK_ITEM_METADATA_BYTES:
+                raise ValueError("work_item_metadata_too_large")
+            try:
+                await self._db.execute(
+                    "UPDATE work_items SET metadata = ?, updated_at = ? WHERE id = ?",
+                    (serialized.decode("utf-8"), time.time(), parent_id),
+                )
+                await self._db.commit()
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+            updated = await self.get_work_item(parent_id)
+        await self._refresh_snapshot_cache()
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": updated.to_dict() if updated else {}},
+        )
+        return updated
+
+    async def delete_untouched_crew_session_provisioning(
+        self,
+        parent_id: str,
+        *,
+        expected_marker: dict[str, Any],
+        expected_assigned_to: str,
+    ) -> bool:
+        """Delete only an exact pre-session marker parent with no child work."""
+        if (
+            type(parent_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(parent_id) is None
+            or type(expected_marker) is not dict
+            or type(expected_assigned_to) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(expected_assigned_to) is None
+        ):
+            raise ValueError("crew_provisioning_delete_invalid")
+        _compact_exact_json_bytes(
+            expected_marker,
+            error="crew_provisioning_delete_invalid",
+        )
+        if not self._db:
+            return False
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(parent_id)
+            if item is None:
+                return False
+            child_cursor = await self._db.execute(
+                "SELECT 1 FROM work_items WHERE parent_id = ? LIMIT 1",
+                (parent_id,),
+            )
+            has_child = await child_cursor.fetchone() is not None
+            booking_cursor = await self._db.execute(
+                "SELECT 1 FROM bookings WHERE work_item_id = ? LIMIT 1",
+                (parent_id,),
+            )
+            has_booking = await booking_cursor.fetchone() is not None
+            requirement_cursor = await self._db.execute(
+                "SELECT duration_estimate_seconds, from_date, to_date, "
+                "required_characteristics, min_trust, department_constraint, "
+                "priority, resource_preference, fulfilled "
+                "FROM resource_requirements WHERE work_item_id = ?",
+                (parent_id,),
+            )
+            requirement_rows = await requirement_cursor.fetchall()
+            requirement_untouched = (
+                len(requirement_rows) == 1
+                and requirement_rows[0]["duration_estimate_seconds"] is None
+                and requirement_rows[0]["from_date"] is None
+                and requirement_rows[0]["to_date"] is None
+                and requirement_rows[0]["required_characteristics"] == "[]"
+                and requirement_rows[0]["min_trust"] == 0.0
+                and requirement_rows[0]["department_constraint"] is None
+                and requirement_rows[0]["priority"] == 3
+                and requirement_rows[0]["resource_preference"] == "{}"
+                and requirement_rows[0]["fulfilled"] == 0
+            )
+            untouched = (
+                item.work_type == "crew_session"
+                and item.status == "draft"
+                and item.title == str(expected_marker.get("goal", ""))[:200]
+                and item.description == expected_marker.get("goal")
+                and item.priority == 3
+                and item.assigned_to == expected_assigned_to
+                and item.created_by == expected_marker.get("created_by")
+                and item.parent_id is None
+                and item.depends_on == []
+                and item.due_at is None
+                and item.estimated_tokens is None
+                and item.actual_tokens == 0
+                and item.trust_requirement == 0.0
+                and item.required_capabilities == []
+                and item.tags == []
+                and item.steps == []
+                and item.verification == {}
+                and item.schedule == {}
+                and item.ttl_seconds is None
+                and item.template_id is None
+                and not has_child
+                and not has_booking
+                and requirement_untouched
+                and _json_values_exactly_equal(
+                    item.metadata,
+                    {"crew_provisioning": expected_marker},
+                )
+            )
+            if not untouched:
+                return False
+            try:
+                await self._db.execute(
+                    "DELETE FROM resource_requirements WHERE work_item_id = ?",
+                    (parent_id,),
+                )
+                await self._db.execute(
+                    "DELETE FROM work_items WHERE id = ?",
+                    (parent_id,),
+                )
+                await self._db.commit()
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+        await self._refresh_snapshot_cache()
+        return True
+
+    async def fail_crew_session_provisioning(
+        self,
+        parent_id: str,
+        *,
+        expected_marker: dict[str, Any],
+        error_code: str,
+    ) -> WorkItem | None:
+        """Mark one exact pre-session provisioning authority irreparable."""
+        if (
+            type(parent_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(parent_id) is None
+            or type(expected_marker) is not dict
+            or type(error_code) is not str
+            or _CREW_PROVISIONING_ERROR_RE.fullmatch(error_code) is None
+        ):
+            raise ValueError("crew_provisioning_failure_invalid")
+        _compact_exact_json_bytes(
+            expected_marker,
+            error="crew_provisioning_failure_invalid",
+        )
+        if not self._db:
+            return None
+        failed_marker = dict(expected_marker)
+        failed_marker.update({"phase": "failed", "last_error_code": error_code})
+        _compact_exact_json_bytes(
+            failed_marker,
+            error="crew_provisioning_failure_invalid",
+        )
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(parent_id)
+            if item is None or item.work_type != "crew_session":
+                return None
+            metadata = dict(item.metadata or {})
+            if (
+                item.status != "draft"
+                or item.assigned_to != expected_marker.get("facilitator_id")
+                or not _json_values_exactly_equal(
+                    metadata.get("crew_provisioning"),
+                    expected_marker,
+                )
+            ):
+                raise ValueError("crew_provisioning_failure_conflict")
+            metadata["crew_provisioning"] = failed_marker
+            serialized = _compact_exact_json_bytes(
+                metadata,
+                error="crew_provisioning_failure_invalid",
+            )
+            if len(serialized) > _MAX_WORK_ITEM_METADATA_BYTES:
+                raise ValueError("work_item_metadata_too_large")
+            try:
+                await self._db.execute(
+                    "UPDATE work_items SET metadata = ?, updated_at = ? WHERE id = ?",
+                    (serialized.decode("utf-8"), time.time(), parent_id),
+                )
+                await self._db.commit()
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+            updated = await self.get_work_item(parent_id)
+        await self._refresh_snapshot_cache()
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": updated.to_dict() if updated else {}},
+        )
+        return updated
 
     async def install_child_plan_with_parent_metadata(
         self,
@@ -2123,10 +2675,14 @@ class WorkItemStore(EventEmitterMixin):
         """Update work item fields. Sets updated_at. Emits 'work_item_updated'."""
         if not self._db:
             return None
+        if updates.get("work_type") == "crew_session":
+            raise ValueError("crew_session_write_reserved")
         async with self._work_item_row_write_lock:
             item = await self.get_work_item(work_item_id)
             if not item:
                 return None
+            if item.work_type == "crew_session":
+                raise ValueError("crew_session_write_reserved")
             set_clauses: list[str] = []
             params: list[Any] = []
             for key, value in updates.items():
@@ -2829,6 +3385,8 @@ class WorkItemStore(EventEmitterMixin):
             item = await self.get_work_item(work_item_id)
             if not item:
                 return None
+            if item.work_type == "crew_session":
+                raise ValueError("crew_session_write_reserved")
             # BF-606: A same-status transition is an idempotent no-op, not a state
             # machine violation. ``work_item_dispatched`` is delivered at-least-once
             # (broadcast fan-out to every crew agent, AD-855 capability-gap resume
@@ -2927,12 +3485,14 @@ class WorkItemStore(EventEmitterMixin):
         source: str = "captain",
     ) -> Booking | None:
         """Push assignment: Captain assigns work directly to an agent."""
-        resource = self.get_resource(resource_id)
-        if not resource:
-            return None
         async with self._work_item_row_write_lock:
             item = await self.get_work_item(work_item_id)
             if not item:
+                return None
+            if item.work_type == "crew_session":
+                raise ValueError("crew_session_write_reserved")
+            resource = self.get_resource(resource_id)
+            if not resource:
                 return None
             if not self._check_eligibility(resource, item):
                 return None
@@ -3018,13 +3578,19 @@ class WorkItemStore(EventEmitterMixin):
         department: str | None = None,
     ) -> tuple[WorkItem, Booking] | None:
         """Pull assignment: Agent claims highest-priority eligible unassigned work."""
+        if work_type == "crew_session":
+            raise ValueError("crew_session_write_reserved")
         resource = self.get_resource(resource_id)
         if not resource:
             return None
         if not self._db:
             return None
         # Find eligible unassigned work
-        conditions = ["status = 'open'", "assigned_to IS NULL"]
+        conditions = [
+            "status = 'open'",
+            "assigned_to IS NULL",
+            "work_type != 'crew_session'",
+        ]
         params: list[Any] = []
         if work_type:
             conditions.append("work_type = ?")
@@ -3055,9 +3621,14 @@ class WorkItemStore(EventEmitterMixin):
         """Remove assignment. Cancels active booking. Resets assigned_to to NULL."""
         if not self._db:
             return False
-        item = await self.get_work_item(work_item_id)
-        if not item or not item.assigned_to:
-            return False
+        async with self._work_item_row_write_lock:
+            item = await self.get_work_item(work_item_id)
+            if not item:
+                return False
+            if item.work_type == "crew_session":
+                raise ValueError("crew_session_write_reserved")
+            if not item.assigned_to:
+                return False
         # Cancel active bookings
         cursor = await self._db.execute(
             "SELECT id FROM bookings WHERE work_item_id = ? AND status NOT IN ('completed', 'cancelled')",
@@ -3087,19 +3658,20 @@ class WorkItemStore(EventEmitterMixin):
         """Transition booking: scheduled → active."""
         if not self._db:
             return None
-        booking = await self.get_booking(booking_id)
-        if not booking or booking.status != "scheduled":
-            return None
-        now = time.time()
-        await self._db.execute(
-            "UPDATE bookings SET status = 'active', actual_start = ? WHERE id = ?",
-            (now, booking_id),
-        )
-        await self._record_timestamp(booking_id, "active", "system")
-        await self._db.commit()
-        # Update work item status
         async with self._work_item_row_write_lock:
+            booking = await self.get_booking(booking_id)
+            if not booking or booking.status != "scheduled":
+                return None
             item = await self.get_work_item(booking.work_item_id)
+            if item is not None and item.work_type == "crew_session":
+                raise ValueError("crew_session_write_reserved")
+            now = time.time()
+            await self._db.execute(
+                "UPDATE bookings SET status = 'active', actual_start = ? WHERE id = ?",
+                (now, booking_id),
+            )
+            await self._record_timestamp(booking_id, "active", "system")
+            await self._db.commit()
             if item is not None:
                 await self._db.execute(
                     "UPDATE work_items SET status = 'in_progress', updated_at = ? WHERE id = ?",
@@ -3158,6 +3730,8 @@ class WorkItemStore(EventEmitterMixin):
                 else None
             )
             if item is not None:
+                if item.work_type == "crew_session":
+                    raise ValueError("crew_session_write_reserved")
                 if (
                     type(item.actual_tokens) is not int
                     or not 0

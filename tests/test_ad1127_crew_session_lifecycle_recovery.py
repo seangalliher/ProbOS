@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import weakref
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -14,11 +16,20 @@ from probos.cognitive.crew_session import CrewSessionService
 from probos.config import AgenticDispatchConfig
 from probos.storage.sqlite_factory import SQLiteConnectionFactory
 from probos.threads import ChatThreadStore
-from probos.workforce import WorkItem, WorkItemStore
+from probos.workforce import (
+    CrewSessionAdmissionPort,
+    CrewSessionParentCreate,
+    WorkItem,
+    WorkItemStore,
+)
 
 
 _SHA_A = "a" * 64
 _SHA_B = "b" * 64
+_ADMISSION_PORTS: weakref.WeakKeyDictionary[
+    WorkItemStore,
+    CrewSessionAdmissionPort,
+] = weakref.WeakKeyDictionary()
 
 _VECTOR_PLAN_SEED_HASH = (
     "8e53150cafb2837a2efa70f795703388ba91fe4ccd96563e2afe11b734108980"
@@ -378,17 +389,76 @@ async def work_store(tmp_path: Path) -> Any:
         await store.stop()
 
 
+def _admission_port(store: WorkItemStore) -> CrewSessionAdmissionPort:
+    port = _ADMISSION_PORTS.get(store)
+    if port is None:
+        port = store.claim_crew_session_admission_port()
+        _ADMISSION_PORTS[store] = port
+    return port
+
+
+async def _create_crew_parent(
+    store: WorkItemStore,
+    *,
+    parent_id: str,
+    title: str,
+    assigned_to: str = "facilitator-1",
+    created_by: str = "captain",
+    created_at: float = 100.0,
+    metadata: dict[str, Any] | None = None,
+    status: str = "draft",
+) -> WorkItem:
+    async with _admission_port(store).reserve() as reservation:
+        parent = await reservation.create_parent(CrewSessionParentCreate(
+            id=parent_id,
+            title=title,
+            description=title,
+            assigned_to=assigned_to,
+            created_by=created_by,
+            metadata={},
+            created_at=created_at,
+        ))
+    if metadata:
+        parent = await store.merge_work_item_metadata(
+            parent.id,
+            dict(metadata),
+            expected_work_type="crew_session",
+            expected_status="draft",
+            expected_assigned_to=assigned_to,
+        )
+        assert parent is not None
+    paths = {
+        "draft": (),
+        "open": ("open",),
+        "in_progress": ("open", "in_progress"),
+        "review": ("open", "in_progress", "review"),
+        "blocked": ("open", "blocked"),
+        "done": ("open", "in_progress", "review", "done"),
+        "failed": ("open", "failed"),
+    }
+    if status not in paths:
+        raise ValueError("crew_session_fixture_status_invalid")
+    for next_status in paths[status]:
+        parent = await store.merge_work_item_metadata(
+            parent.id,
+            {},
+            expected_work_type="crew_session",
+            expected_status=parent.status,
+            expected_assigned_to=assigned_to,
+            new_status=next_status,
+        )
+        assert parent is not None
+    return parent
+
+
 async def _new_session(
     work_store: WorkItemStore,
     tmp_path: Path,
 ) -> tuple[WorkItem, CrewSessionService, Any]:
-    parent = await work_store.create_work_item(
-        id="session-parent",
+    parent = await _create_crew_parent(
+        work_store,
+        parent_id="session-parent",
         title="Session",
-        work_type="crew_session",
-        assigned_to="facilitator-1",
-        created_at=100.0,
-        updated_at=100.0,
     )
     threads = ChatThreadStore(tmp_path / "threads.db")
     thread = threads.create_thread(
@@ -406,7 +476,7 @@ async def _new_session(
         thread.id,
         goal="Produce a durable result",
         origin="captain",
-        originator_id="captain-1",
+        originator_id="captain",
         facilitator_id="facilitator-1",
         owner_ids=["facilitator-1", "agent-1"],
         success_criteria=["Result is complete"],
@@ -1057,7 +1127,18 @@ async def test_state_recovery_invariant_rejects_verifying_planned_before_work(
     assert authoritative is not None
     corrupted_metadata = dict(authoritative.metadata)
     corrupted_metadata["crew_recovery"] = planned.model_dump(mode="json")
-    await work_store.update_work_item(parent.id, metadata=corrupted_metadata)
+    corrupted = await work_store.merge_work_item_metadata(
+        parent.id,
+        {"crew_recovery": planned.model_dump(mode="json")},
+        expected={
+            "crew_session": authoritative.metadata["crew_session"],
+            "crew_recovery": authoritative.metadata["crew_recovery"],
+        },
+        expected_work_type="crew_session",
+        expected_status=authoritative.status,
+        expected_assigned_to=authoritative.assigned_to,
+    )
+    assert corrupted is not None
     child_before = await work_store.get_work_item(_VECTOR_CHILD_ID)
     assert child_before is not None
 
@@ -1478,8 +1559,17 @@ async def test_install_recovery_plan_repeated_cancel_preserves_first_and_authori
         assert store.reconciliation_task.cancelled() is False
         assert store.reconciliation_task.exception() is None
         assert store._work_item_row_write_lock.locked() is False
-        updated = await store.update_work_item(parent.id, title="Install reconciled")
-        assert updated is not None and updated.title == "Install reconciled"
+        authoritative_parent = await store.get_work_item(parent.id)
+        assert authoritative_parent is not None
+        updated = await store.merge_work_item_metadata(
+            parent.id,
+            {"post_reconcile_probe": "install"},
+            expected_work_type="crew_session",
+            expected_status=authoritative_parent.status,
+            expected_assigned_to=authoritative_parent.assigned_to,
+        )
+        assert updated is not None
+        assert updated.metadata["post_reconcile_probe"] == "install"
     finally:
         store.release_reconciliation.set()
         await store.stop()
@@ -1543,8 +1633,17 @@ async def test_adopt_recovery_plan_repeated_cancel_preserves_first_and_authority
         assert store.reconciliation_task.cancelled() is False
         assert store.reconciliation_task.exception() is None
         assert store._work_item_row_write_lock.locked() is False
-        updated = await store.update_work_item(parent.id, title="Adoption reconciled")
-        assert updated is not None and updated.title == "Adoption reconciled"
+        authoritative_parent = await store.get_work_item(parent.id)
+        assert authoritative_parent is not None
+        updated = await store.merge_work_item_metadata(
+            parent.id,
+            {"post_reconcile_probe": "adopt"},
+            expected_work_type="crew_session",
+            expected_status=authoritative_parent.status,
+            expected_assigned_to=authoritative_parent.assigned_to,
+        )
+        assert updated is not None
+        assert updated.metadata["post_reconcile_probe"] == "adopt"
     finally:
         store.release_reconciliation.set()
         await store.stop()
@@ -1564,15 +1663,24 @@ async def test_scan_uses_one_global_limit_and_deterministic_order(
         ("ordinary-task", "open", 4.0),
     )
     for item_id, status, created_at in rows:
-        await work_store.create_work_item(
-            id=item_id,
-            title=item_id,
-            work_type="task" if item_id == "ordinary-task" else "crew_session",
-            status=status,
-            assigned_to="facilitator-1",
-            created_at=created_at,
-            updated_at=created_at,
-        )
+        if item_id == "ordinary-task":
+            await work_store.create_work_item(
+                id=item_id,
+                title=item_id,
+                work_type="task",
+                status=status,
+                assigned_to="facilitator-1",
+                created_at=created_at,
+                updated_at=created_at,
+            )
+        else:
+            await _create_crew_parent(
+                work_store,
+                parent_id=item_id,
+                title=item_id,
+                created_at=created_at,
+                status=status,
+            )
 
     candidates = await work_store.list_crew_session_recovery_candidates(limit=2)
 
@@ -1585,12 +1693,11 @@ async def test_plan_install_is_atomic_and_creates_one_requirement_per_child(
 ) -> None:
     from probos.workforce import WorkItemPlanInsert
 
-    parent = await work_store.create_work_item(
-        id="parent-plan",
+    parent = await _create_crew_parent(
+        work_store,
+        parent_id="parent-plan",
         title="Session",
-        work_type="crew_session",
         status="open",
-        assigned_to="facilitator-1",
         metadata={"crew_session": {"version": 1}},
     )
     children = (
@@ -1650,12 +1757,11 @@ async def test_plan_install_cancellation_rolls_back_every_child_and_parent_patch
 ) -> None:
     from probos.workforce import WorkItemPlanInsert
 
-    parent = await work_store.create_work_item(
-        id="parent-cancel",
+    parent = await _create_crew_parent(
+        work_store,
+        parent_id="parent-cancel",
         title="Session",
-        work_type="crew_session",
         status="open",
-        assigned_to="facilitator-1",
         metadata={"crew_session": {"version": 1}},
     )
     child = WorkItemPlanInsert(
@@ -2984,6 +3090,41 @@ class _StartGenerationScanStore(WorkItemStore):
         return await super().list_crew_session_recovery_candidates(limit=limit)
 
 
+class _StartupValidationService:
+    def __init__(
+        self,
+        store: WorkItemStore,
+        *,
+        fail_parent_id: str | None = None,
+    ) -> None:
+        self._store = store
+        self.fail_parent_id = fail_parent_id
+        self.repair_limits: list[int] = []
+
+    async def repair_provisioning(self, *, limit: int) -> tuple[str, ...]:
+        self.repair_limits.append(limit)
+        return ()
+
+    async def get_session(self, parent_id: str) -> Any:
+        if parent_id == self.fail_parent_id:
+            raise ValueError("injected_start_validation_failure")
+        parent = await self._store.get_work_item(parent_id)
+        if parent is None:
+            return None
+        state_by_status = {
+            "open": "discussing",
+            "in_progress": "executing",
+            "review": "verifying",
+            "blocked": "blocked_needs_captain",
+            "done": "done",
+            "failed": "failed",
+        }
+        return SimpleNamespace(state=state_by_status[parent.status])
+
+    async def get_recovery(self, parent_id: str) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_lifecycle_schedule_is_keyed_synchronous_and_closes_admission(
     work_store: WorkItemStore,
@@ -3019,6 +3160,7 @@ async def test_lifecycle_schedule_is_keyed_synchronous_and_closes_admission(
         work_item_store=work_store,
         runtime=SimpleNamespace(),
         config=config,
+        crew_session_service=_StartupValidationService(work_store),
     )
 
     with pytest.raises(RuntimeError, match="^crew_session_scheduling_closed$"):
@@ -3056,14 +3198,12 @@ async def test_lifecycle_disabled_start_is_inert_and_enabled_start_scans_once(
         ("scan-c", "in_progress", 20.0),
         ("scan-done", "done", 1.0),
     ):
-        await work_store.create_work_item(
-            id=item_id,
+        await _create_crew_parent(
+            work_store,
+            parent_id=item_id,
             title=item_id,
-            work_type="crew_session",
-            status=status,
-            assigned_to="facilitator-1",
             created_at=created_at,
-            updated_at=created_at,
+            status=status,
         )
 
     class _ScanOwner(CrewOrchestrator):
@@ -3085,6 +3225,7 @@ async def test_lifecycle_disabled_start_is_inert_and_enabled_start_scans_once(
             work_item_store=work_store,
             runtime=SimpleNamespace(),
             config=config,
+            crew_session_service=_StartupValidationService(work_store),
         )
 
     disabled_config = SystemConfig()
@@ -3216,6 +3357,7 @@ async def test_lifecycle_parent_concurrency_and_concurrent_stop_are_bounded(
         work_item_store=work_store,
         runtime=SimpleNamespace(),
         config=config,
+        crew_session_service=_StartupValidationService(work_store),
     )
     await owner.start()
     tasks = [owner.schedule(f"parent-{index}") for index in range(4)]
@@ -3262,6 +3404,7 @@ async def test_lifecycle_stop_preserves_first_repeated_cancellation(
         work_item_store=work_store,
         runtime=SimpleNamespace(),
         config=config,
+        crew_session_service=_StartupValidationService(work_store),
     )
     await owner.start()
     stopping = asyncio.create_task(owner.stop())
@@ -3360,23 +3503,19 @@ async def test_lifecycle_failed_start_closes_drains_and_can_retry(
     from probos.cognitive.crew_synth import SynthesisResult
     from probos.config import SystemConfig
 
-    await work_store.create_work_item(
-        id="valid-parent",
+    await _create_crew_parent(
+        work_store,
+        parent_id="valid-parent",
         title="valid",
-        work_type="crew_session",
-        status="open",
-        assigned_to="facilitator-1",
         created_at=1.0,
-        updated_at=1.0,
-    )
-    await work_store.create_work_item(
-        id="invalid parent",
-        title="invalid",
-        work_type="crew_session",
         status="open",
-        assigned_to="facilitator-1",
+    )
+    await _create_crew_parent(
+        work_store,
+        parent_id="second-parent",
+        title="second",
         created_at=2.0,
-        updated_at=2.0,
+        status="open",
     )
     config = SystemConfig()
     config.agentic_dispatch.orchestrator_enabled = True
@@ -3385,6 +3524,10 @@ async def test_lifecycle_failed_start_closes_drains_and_can_retry(
         async def _run_owned_parent(self, parent_id: str) -> SynthesisResult:
             await asyncio.Event().wait()
 
+    startup_service = _StartupValidationService(
+        work_store,
+        fail_parent_id="second-parent",
+    )
     owner = _RetryOwner(
         assignment_resolver=object(),
         delegator=object(),
@@ -3394,14 +3537,15 @@ async def test_lifecycle_failed_start_closes_drains_and_can_retry(
         work_item_store=work_store,
         runtime=SimpleNamespace(),
         config=config,
+        crew_session_service=startup_service,
     )
-    with pytest.raises(ValueError, match="^crew_session_parent_id_invalid$"):
+    with pytest.raises(ValueError, match="^injected_start_validation_failure$"):
         await owner.start()
     assert owner._scheduling_open is False
     assert owner._started is False
     assert owner._tasks_by_parent == {}
 
-    await work_store.delete_work_item("invalid parent")
+    startup_service.fail_parent_id = None
     await owner.start()
     await owner.stop()
 
@@ -3454,6 +3598,7 @@ async def test_lifecycle_failed_start_drains_only_its_registration_generation(
         work_item_store=store,
         runtime=SimpleNamespace(),
         config=config,
+        crew_session_service=_StartupValidationService(store),
     )
     prior = asyncio.create_task(owner._run_owned_parent("prior-parent"))
     owner._tasks_by_parent["prior-parent"] = prior
@@ -3550,6 +3695,7 @@ async def test_lifecycle_start_cleanup_preserves_first_repeated_cancellation(
         work_item_store=store,
         runtime=SimpleNamespace(),
         config=config,
+        crew_session_service=_StartupValidationService(store),
     )
     try:
         starting = asyncio.create_task(owner.start())
@@ -3845,13 +3991,10 @@ async def test_lifecycle_transient_retry_backoff_and_exhaustion_are_exact(
     from probos.config import SystemConfig
     from probos.threads import ChatThreadStore
 
-    parent = await work_store.create_work_item(
-        id="retry-parent",
+    parent = await _create_crew_parent(
+        work_store,
+        parent_id="retry-parent",
         title="retry",
-        work_type="crew_session",
-        assigned_to="facilitator-1",
-        created_at=100.0,
-        updated_at=100.0,
     )
     threads = ChatThreadStore(tmp_path / "retry-threads.db")
     thread = threads.create_thread(
@@ -3874,7 +4017,7 @@ async def test_lifecycle_transient_retry_backoff_and_exhaustion_are_exact(
         thread.id,
         goal="retry",
         origin="captain",
-        originator_id="captain-1",
+        originator_id="captain",
         facilitator_id="facilitator-1",
         owner_ids=["facilitator-1"],
         success_criteria=["done"],
@@ -4040,13 +4183,10 @@ async def test_lifecycle_decomposition_cancellation_preserves_plan_checkpoint(
     from probos.consultation.dispatch import WorkItemSpec
     from probos.threads import ChatThreadStore
 
-    parent = await work_store.create_work_item(
-        id="decompose-parent",
+    parent = await _create_crew_parent(
+        work_store,
+        parent_id="decompose-parent",
         title="decompose",
-        work_type="crew_session",
-        assigned_to="facilitator-1",
-        created_at=100.0,
-        updated_at=100.0,
     )
     threads = ChatThreadStore(tmp_path / "decompose-threads.db")
     thread = threads.create_thread(
@@ -4066,7 +4206,7 @@ async def test_lifecycle_decomposition_cancellation_preserves_plan_checkpoint(
         thread.id,
         goal="decompose",
         origin="captain",
-        originator_id="captain-1",
+        originator_id="captain",
         facilitator_id="facilitator-1",
         owner_ids=["facilitator-1"],
         success_criteria=["done"],
@@ -4123,13 +4263,10 @@ async def test_lifecycle_decomposition_preserves_first_repeated_cancellation(
     from probos.consultation.dispatch import WorkItemSpec
     from probos.threads import ChatThreadStore
 
-    parent = await work_store.create_work_item(
-        id="decompose-cancel-parent",
+    parent = await _create_crew_parent(
+        work_store,
+        parent_id="decompose-cancel-parent",
         title="decompose cancel",
-        work_type="crew_session",
-        assigned_to="facilitator-1",
-        created_at=100.0,
-        updated_at=100.0,
     )
     threads = ChatThreadStore(tmp_path / "decompose-cancel-threads.db")
     thread = threads.create_thread(
@@ -4147,7 +4284,7 @@ async def test_lifecycle_decomposition_preserves_first_repeated_cancellation(
         thread.id,
         goal="decompose with repeated cancellation",
         origin="captain",
-        originator_id="captain-1",
+        originator_id="captain",
         facilitator_id="facilitator-1",
         owner_ids=["facilitator-1"],
         success_criteria=["done"],

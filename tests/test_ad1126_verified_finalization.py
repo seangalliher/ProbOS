@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import importlib.util
 import inspect
+import itertools
 import json
 import threading
 from collections.abc import Iterable, Sequence
@@ -49,11 +50,17 @@ from probos.tools.permissions import ToolPermissionStore
 from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolPermissionDenied, ToolRegistry
 from probos.types import LLMRequest, LLMResponse, Priority
-from probos.workforce import WorkItem, WorkItemStore
+from probos.workforce import (
+    CrewSessionAdmissionPort,
+    CrewSessionParentCreate,
+    WorkItem,
+    WorkItemStore,
+)
 
 
 _SHA_A = "a" * 64
 _SHA_B = "b" * 64
+_CREW_PARENT_IDS = itertools.count(1)
 _ARTIFACT_KEYS = {
     "artifact_id",
     "content_hash",
@@ -652,6 +659,7 @@ class _Stores:
     attachments: FilesystemAttachmentStore
     events: _EventRecorder
     connection: _ControlledConnection
+    admission_port: CrewSessionAdmissionPort | None = None
 
 
 @pytest.fixture
@@ -666,6 +674,7 @@ async def stores(tmp_path: Path) -> Any:
     )
     await work.start()
     assert connection_factory.connection is not None
+    admission_port = work.claim_crew_session_admission_port()
     try:
         yield _Stores(
             work=work,
@@ -678,6 +687,7 @@ async def stores(tmp_path: Path) -> Any:
             attachments=FilesystemAttachmentStore(tmp_path / "attachments"),
             events=events,
             connection=connection_factory.connection,
+            admission_port=admission_port,
         )
     finally:
         await work.stop()
@@ -719,15 +729,25 @@ async def _new_session(
     participants: list[str] | None = None,
 ) -> tuple[WorkItem, ChatThread, CrewSessionService, CrewSessionContract]:
     owners = list(participants or [facilitator_id, "producer-1"])
-    parent = await stores.work.create_work_item(
-        title="Verified session",
-        description="Create the final verified result",
-        work_type="crew_session",
-        assigned_to=facilitator_id,
-        created_at=100.0,
-        updated_at=100.0,
-        metadata={"origin": "captain", "input_attachments": []},
+    assert stores.admission_port is not None
+    async with stores.admission_port.reserve() as reservation:
+        parent = await reservation.create_parent(CrewSessionParentCreate(
+            id=f"crew-session-fixture-{next(_CREW_PARENT_IDS)}",
+            title="Verified session",
+            description="Create the final verified result",
+            assigned_to=facilitator_id,
+            created_by="captain",
+            metadata={},
+            created_at=100.0,
+        ))
+    parent = await stores.work.merge_work_item_metadata(
+        parent.id,
+        {"origin": "captain", "input_attachments": []},
+        expected_work_type="crew_session",
+        expected_status="draft",
+        expected_assigned_to=facilitator_id,
     )
+    assert parent is not None
     thread = stores.chat.create_thread(
         title="Verified session",
         participants=owners,
@@ -743,7 +763,7 @@ async def _new_session(
         thread.id,
         goal=goal,
         origin="captain",
-        originator_id="captain-1",
+        originator_id="captain",
         facilitator_id=facilitator_id,
         owner_ids=owners,
         success_criteria=list(criteria or ["Every child is verified", "Evidence is durable"]),
@@ -1906,11 +1926,16 @@ async def test_real_session_initialization_rejects_empty_none_contract_inputs(
     deliverable: Any,
     match: str,
 ) -> None:
-    parent = await stores.work.create_work_item(
-        title="invalid",
-        work_type="crew_session",
-        assigned_to="facilitator-1",
-    )
+    assert stores.admission_port is not None
+    async with stores.admission_port.reserve() as reservation:
+        parent = await reservation.create_parent(CrewSessionParentCreate(
+            id=f"crew-session-fixture-{next(_CREW_PARENT_IDS)}",
+            title="invalid",
+            description="invalid",
+            assigned_to="facilitator-1",
+            created_by="captain",
+            metadata={},
+        ))
     thread = stores.chat.create_thread(
         title="invalid",
         participants=["facilitator-1"],
@@ -1928,7 +1953,7 @@ async def test_real_session_initialization_rejects_empty_none_contract_inputs(
             thread.id,
             goal="goal",
             origin="captain",
-            originator_id="captain-1",
+            originator_id="captain",
             facilitator_id="facilitator-1",
             owner_ids=["facilitator-1"],
             success_criteria=criteria,
@@ -1950,8 +1975,15 @@ async def test_malformed_persisted_contract_cannot_be_repaired_or_completed(
     metadata = dict(row.metadata)
     malformed = dict(metadata["crew_session"])
     malformed["revision"] = True
-    metadata["crew_session"] = malformed
-    await stores.work.update_work_item(parent.id, metadata=metadata)
+    updated = await stores.work.merge_work_item_metadata(
+        parent.id,
+        {"crew_session": malformed},
+        expected={"crew_session": metadata["crew_session"]},
+        expected_work_type="crew_session",
+        expected_status=row.status,
+        expected_assigned_to=row.assigned_to,
+    )
+    assert updated is not None
     registry = _Registry([_Agent("facilitator-1"), _Agent("verifier-1")])
     finalizer = _make_finalizer(
         stores=stores,
@@ -2799,13 +2831,62 @@ class _CoordinatedClaimStore:
 
 
 class _RealMergeRaceStore:
-    def __init__(self, delegate: WorkItemStore, mutation: str) -> None:
+    def __init__(
+        self,
+        delegate: WorkItemStore,
+        mutation: str,
+        *,
+        transition_service: CrewSessionService | None = None,
+        transition_revision: int | None = None,
+    ) -> None:
         self.delegate = delegate
         self.mutation = mutation
+        self.transition_service = transition_service
+        self.transition_revision = transition_revision
         self.mutated = False
+        self.generic_rejection: str | None = None
+        self.status_transition: CrewSessionContract | None = None
 
     async def get_work_item(self, work_item_id: str) -> WorkItem | None:
         return await self.delegate.get_work_item(work_item_id)
+
+    async def _apply_mutation(self, work_item_id: str) -> None:
+        if self.mutation == "assignment":
+            try:
+                await self.delegate.update_work_item(
+                    work_item_id,
+                    assigned_to="other-facilitator",
+                )
+            except ValueError as exc:
+                assert str(exc) == "crew_session_write_reserved"
+                self.generic_rejection = str(exc)
+            else:
+                raise AssertionError("generic CrewSession reassignment was accepted")
+        elif self.mutation == "status":
+            assert self.transition_service is not None
+            assert self.transition_revision is not None
+            self.status_transition = await self.transition_service.transition_session(
+                work_item_id,
+                "blocked_needs_captain",
+                expected_revision=self.transition_revision,
+                blocked_reason="concurrent status transition",
+            )
+        elif self.mutation == "crew_synth":
+            await self.delegate.merge_work_item_metadata(
+                work_item_id,
+                {"crew_synth": {"racer": True}},
+                source="concurrent_writer",
+            )
+        elif self.mutation == "revision":
+            current = await self.delegate.get_work_item(work_item_id)
+            assert current is not None
+            contract = dict(current.metadata["crew_session"])
+            contract["revision"] += 1
+            await self.delegate.merge_work_item_metadata(
+                work_item_id,
+                {"crew_session": contract},
+                source="concurrent_writer",
+            )
 
     async def merge_work_item_metadata(
         self,
@@ -2826,29 +2907,7 @@ class _RealMergeRaceStore:
             "crew_session_verified_result",
         }:
             self.mutated = True
-            if self.mutation == "assignment":
-                await self.delegate.update_work_item(
-                    work_item_id,
-                    assigned_to="other-facilitator",
-                )
-            elif self.mutation == "status":
-                await self.delegate.update_work_item(work_item_id, status="blocked")
-            elif self.mutation == "crew_synth":
-                await self.delegate.merge_work_item_metadata(
-                    work_item_id,
-                    {"crew_synth": {"racer": True}},
-                    source="concurrent_writer",
-                )
-            elif self.mutation == "revision":
-                current = await self.delegate.get_work_item(work_item_id)
-                assert current is not None
-                contract = dict(current.metadata["crew_session"])
-                contract["revision"] += 1
-                await self.delegate.merge_work_item_metadata(
-                    work_item_id,
-                    {"crew_session": contract},
-                    source="concurrent_writer",
-                )
+            await self._apply_mutation(work_item_id)
         return await self.delegate.merge_work_item_metadata(
             work_item_id,
             patch,
@@ -2879,29 +2938,7 @@ class _RealMergeRaceStore:
     ) -> WorkItem | None:
         if not self.mutated:
             self.mutated = True
-            if self.mutation == "assignment":
-                await self.delegate.update_work_item(
-                    work_item_id,
-                    assigned_to="other-facilitator",
-                )
-            elif self.mutation == "status":
-                await self.delegate.update_work_item(work_item_id, status="blocked")
-            elif self.mutation == "crew_synth":
-                await self.delegate.merge_work_item_metadata(
-                    work_item_id,
-                    {"crew_synth": {"racer": True}},
-                    source="concurrent_writer",
-                )
-            elif self.mutation == "revision":
-                current = await self.delegate.get_work_item(work_item_id)
-                assert current is not None
-                contract = dict(current.metadata["crew_session"])
-                contract["revision"] += 1
-                await self.delegate.merge_work_item_metadata(
-                    work_item_id,
-                    {"crew_session": contract},
-                    source="concurrent_writer",
-                )
+            await self._apply_mutation(work_item_id)
         return await self.delegate.publish_work_item_metadata_with_child_barrier(
             work_item_id,
             patch,
@@ -2925,6 +2962,23 @@ class _SiblingDeletionRaceStore:
     async def get_work_item(self, work_item_id: str) -> WorkItem | None:
         return await self.delegate.get_work_item(work_item_id)
 
+    async def _update_sibling(self, work_item_id: str) -> None:
+        if self.mutated:
+            return
+        self.mutated = True
+        current = await self.delegate.get_work_item(work_item_id)
+        assert current is not None
+        changed = await self.delegate.merge_work_item_metadata(
+            work_item_id,
+            {"origin": "concurrent_audit"},
+            expected={"origin": current.metadata["origin"]},
+            expected_work_type=current.work_type,
+            expected_status=current.status,
+            expected_assigned_to=current.assigned_to,
+            source="concurrent_sibling_writer",
+        )
+        assert changed is not None
+
     async def merge_work_item_metadata(
         self,
         work_item_id: str,
@@ -2939,16 +2993,8 @@ class _SiblingDeletionRaceStore:
         new_status: str | None = None,
         source: str = "system",
     ) -> WorkItem | None:
-        if not self.mutated and source == "crew_session_verified_result":
-            self.mutated = True
-            current = await self.delegate.get_work_item(work_item_id)
-            assert current is not None
-            metadata = dict(current.metadata)
-            del metadata["origin"]
-            await self.delegate.update_work_item(
-                work_item_id,
-                metadata=metadata,
-            )
+        if source == "crew_session_verified_result":
+            await self._update_sibling(work_item_id)
         if expected_present_keys:
             return await self.delegate.merge_work_item_metadata(
                 work_item_id,
@@ -2989,16 +3035,7 @@ class _SiblingDeletionRaceStore:
         new_status: str,
         source: str = "crew_session_verified_result",
     ) -> WorkItem | None:
-        if not self.mutated:
-            self.mutated = True
-            current = await self.delegate.get_work_item(work_item_id)
-            assert current is not None
-            metadata = dict(current.metadata)
-            del metadata["origin"]
-            await self.delegate.update_work_item(
-                work_item_id,
-                metadata=metadata,
-            )
+        await self._update_sibling(work_item_id)
         return await self.delegate.publish_work_item_metadata_with_child_barrier(
             work_item_id,
             patch,
@@ -3406,13 +3443,18 @@ async def _assert_publication_reread_cancellation(
         assert row.metadata["crew_session"]["result_ref"] is None
         assert "crew_synth" not in row.metadata
     probe = await asyncio.wait_for(
-        stores.work.update_work_item(
+        stores.work.merge_work_item_metadata(
             parent.id,
-            description="post-cancellation public write",
+            {"post_cancellation_probe": "public merge completed"},
+            expected_work_type="crew_session",
+            expected_status=row.status,
+            expected_assigned_to=row.assigned_to,
+            source="post_cancellation_probe",
         ),
         timeout=2.0,
     )
     assert probe is not None
+    assert probe.metadata["post_cancellation_probe"] == "public merge completed"
 
 
 async def test_publish_precommit_error_reread_cancellation_propagates(
@@ -4458,7 +4500,7 @@ def test_done_contract_requires_both_result_references(
         "revision": 4,
         "goal": "goal",
         "origin": "captain",
-        "originator_id": "captain-1",
+        "originator_id": "captain",
         "facilitator_id": "facilitator-1",
         "owner_ids": ["facilitator-1"],
         "success_criteria": ["criterion"],
@@ -4872,24 +4914,26 @@ async def test_facilitator_reassignment_between_service_load_and_real_claim_conf
     stores: _Stores,
 ) -> None:
     parent, _thread, _service, contract, _children, _results = await _executing_case(stores)
+    race_store = _RealMergeRaceStore(stores.work, "assignment")
     service = CrewSessionService(
-        work_item_store=_RealMergeRaceStore(stores.work, "assignment"),
+        work_item_store=race_store,
         chat_thread_store=stores.chat,
         clock=_Clock(contract.transitioned_at + 10.0),
     )
 
-    with pytest.raises(ValueError, match="work_item_state_conflict"):
-        await service.transition_session(
-            parent.id,
-            "verifying",
-            expected_revision=contract.revision,
-        )
+    transitioned = await service.transition_session(
+        parent.id,
+        "verifying",
+        expected_revision=contract.revision,
+    )
 
+    assert race_store.generic_rejection == "crew_session_write_reserved"
+    assert transitioned.state == "verifying"
     row = await stores.work.get_work_item(parent.id)
     assert row is not None
-    assert row.assigned_to == "other-facilitator"
-    assert row.status == "in_progress"
-    assert row.metadata["crew_session"]["state"] == "executing"
+    assert row.assigned_to == "facilitator-1"
+    assert row.status == "review"
+    assert row.metadata["crew_session"] == transitioned.model_dump(mode="json")
 
 
 @pytest.mark.parametrize(
@@ -4907,8 +4951,14 @@ async def test_final_publication_real_cas_races_never_overwrite_authority(
         expected_revision=contract.revision,
     )
     persisted = await _commit_test_verification(stores.work, children[0])
+    race_store = _RealMergeRaceStore(
+        stores.work,
+        mutation,
+        transition_service=service if mutation == "status" else None,
+        transition_revision=verifying.revision if mutation == "status" else None,
+    )
     racing_service = CrewSessionService(
-        work_item_store=_RealMergeRaceStore(stores.work, mutation),
+        work_item_store=race_store,
         chat_thread_store=stores.chat,
         clock=_Clock(verifying.transitioned_at + 10.0),
     )
@@ -4930,24 +4980,46 @@ async def test_final_publication_real_cas_races_never_overwrite_authority(
         "provenance_ref": _SHA_B,
     })
 
-    with pytest.raises(ValueError, match="work_item_(metadata|state)_conflict"):
-        await racing_service.publish_verified_result(
-            parent.id,
-            expected_revision=verifying.revision,
-            expected_recovery=None,
-            expected_direct_children=(_work_item_semantic_snapshot(persisted),),
-            crew_synth=synthesis,
-            last_result_summary="candidate",
-            provenance_ref=_SHA_B,
-            result_artifact_id="artifact-1",
-        )
+    publication = racing_service.publish_verified_result(
+        parent.id,
+        expected_revision=verifying.revision,
+        expected_recovery=None,
+        expected_direct_children=(_work_item_semantic_snapshot(persisted),),
+        crew_synth=synthesis,
+        last_result_summary="candidate",
+        provenance_ref=_SHA_B,
+        result_artifact_id="artifact-1",
+    )
+    if mutation == "assignment":
+        published = await publication
+        assert published.state == "done"
+        assert race_store.generic_rejection == "crew_session_write_reserved"
+    else:
+        with pytest.raises(ValueError, match="work_item_(metadata|state)_conflict"):
+            await publication
 
     row = await stores.work.get_work_item(parent.id)
-    assert row is not None and row.status != "done"
-    assert row.metadata["crew_session"]["state"] == "verifying"
-    if mutation == "crew_synth":
+    assert row is not None
+    if mutation == "assignment":
+        assert row.status == "done"
+        assert row.assigned_to == "facilitator-1"
+        assert row.metadata["crew_session"] == published.model_dump(mode="json")
+        assert row.metadata["crew_synth"] == synthesis.model_dump(mode="json")
+    elif mutation == "status":
+        assert race_store.status_transition is not None
+        assert row.status == "blocked"
+        assert row.assigned_to == "facilitator-1"
+        assert row.metadata["crew_session"] == race_store.status_transition.model_dump(
+            mode="json",
+        )
+        assert "crew_synth" not in row.metadata
+    elif mutation == "crew_synth":
+        assert row.status == "review"
+        assert row.metadata["crew_session"]["state"] == "verifying"
         assert row.metadata["crew_synth"] == {"racer": True}
     else:
+        assert row.status == "review"
+        assert row.metadata["crew_session"]["state"] == "verifying"
         assert "crew_synth" not in row.metadata
 
 
@@ -4967,26 +5039,26 @@ async def test_final_publication_sibling_deletion_conflicts_before_done(
         clock=_Clock(verifying.transitioned_at + 10.0),
     )
 
-    with pytest.raises(ValueError, match="work_item_metadata_conflict"):
-        await racing_service.publish_verified_result(
-            parent.id,
-            expected_revision=verifying.revision,
-            expected_recovery=None,
-            expected_direct_children=(_work_item_semantic_snapshot(persisted),),
-            crew_synth=_crew_synthesis_metadata(),
-            last_result_summary="candidate",
-            provenance_ref=_SHA_B,
-            result_artifact_id="artifact-1",
-        )
+    published = await racing_service.publish_verified_result(
+        parent.id,
+        expected_revision=verifying.revision,
+        expected_recovery=None,
+        expected_direct_children=(_work_item_semantic_snapshot(persisted),),
+        crew_synth=_crew_synthesis_metadata(),
+        last_result_summary="candidate",
+        provenance_ref=_SHA_B,
+        result_artifact_id="artifact-1",
+    )
 
     row = await stores.work.get_work_item(parent.id)
     assert row is not None
-    assert row.status == "review"
-    assert row.metadata["crew_session"]["state"] == "verifying"
-    assert row.metadata["crew_session"]["result_artifact_id"] is None
-    assert row.metadata["crew_session"]["result_ref"] is None
-    assert "origin" not in row.metadata
-    assert "crew_synth" not in row.metadata
+    assert row.status == "done"
+    assert row.metadata["origin"] == "concurrent_audit"
+    assert row.metadata["input_attachments"] == []
+    assert row.metadata["crew_session"] == published.model_dump(mode="json")
+    assert row.metadata["crew_synth"] == _crew_synthesis_metadata().model_dump(
+        mode="json",
+    )
 
 
 async def test_failure_classification_noop_reassignment_and_startup_matrix(
@@ -5015,6 +5087,7 @@ async def test_failure_classification_noop_reassignment_and_startup_matrix(
         )
         await work.start()
         assert connection_factory.connection is not None
+        admission_port = work.claim_crew_session_admission_port()
         local = _Stores(
             work=work,
             chat=ChatThreadStore(root / "threads.db"),
@@ -5026,6 +5099,7 @@ async def test_failure_classification_noop_reassignment_and_startup_matrix(
             attachments=FilesystemAttachmentStore(root / "attachments"),
             events=events,
             connection=connection_factory.connection,
+            admission_port=admission_port,
         )
         parent, thread, service, _contract, children, results = await _executing_case(
             local,
@@ -5298,8 +5372,11 @@ async def test_failure_classification_noop_reassignment_and_startup_matrix(
 
     local, service, parent, _thread, children, results = await make_case("reassigned")
     try:
-        changed = await local.work.update_work_item(parent.id, assigned_to="other-facilitator")
-        assert changed is not None
+        with pytest.raises(ValueError, match="^crew_session_write_reserved$"):
+            await local.work.update_work_item(
+                parent.id,
+                assigned_to="other-facilitator",
+            )
         finalizer = _make_finalizer(
             stores=local,
             service=service,
@@ -5308,17 +5385,42 @@ async def test_failure_classification_noop_reassignment_and_startup_matrix(
             synthesizer=object(),
         )
         assert finalizer is not None
-        with pytest.raises(ValueError, match="crew_session_facilitator_assignment_mismatch"):
-            await finalizer.finalize(parent.id, results)
-        row = await local.work.get_work_item(parent.id)
-        assert row is not None and row.status == "in_progress"
-        assert row.metadata["crew_session"]["state"] == "executing"
+        current = await service.get_session(parent.id)
+        assert current is not None
+        row_before = await local.work.get_work_item(parent.id)
+        assert row_before is not None
+        event_count = len(local.events.events)
+
+        unchanged = await service.transition_session(
+            parent.id,
+            "executing",
+            expected_revision=current.revision,
+        )
+
+        assert unchanged == current
+        assert unchanged.revision == current.revision
+        row_after = await local.work.get_work_item(parent.id)
+        assert row_after is not None
+        assert row_after.assigned_to == row_before.assigned_to == "facilitator-1"
+        assert row_after.status == row_before.status == "in_progress"
+        assert row_after.metadata == row_before.metadata
+        assert row_after.updated_at == row_before.updated_at
+        assert len(local.events.events) == event_count
+
+        result = await finalizer.finalize(parent.id, results)
+        assert result.claimed is True
+        assert result.completed is False
+        assert result.state == "failed"
+        assert result.reason == "verification_defect"
     finally:
         await local.work.stop()
 
     local, service, parent, _thread, children, results = await make_case("claim-race")
     try:
-        class _ReassignOnClaim:
+        class _StatusTransitionOnClaim:
+            def __init__(self) -> None:
+                self.winner: CrewSessionContract | None = None
+
             async def get_session(self, parent_id: str) -> CrewSessionContract | None:
                 return await service.get_session(parent_id)
 
@@ -5335,9 +5437,11 @@ async def test_failure_classification_noop_reassignment_and_startup_matrix(
                 result_ref: str | None = None,
             ) -> CrewSessionContract:
                 if new_state == "verifying":
-                    await local.work.update_work_item(
+                    self.winner = await service.transition_session(
                         parent_id,
-                        assigned_to="other-facilitator",
+                        "blocked_needs_captain",
+                        expected_revision=expected_revision,
+                        blocked_reason="concurrent status transition",
                     )
                 return await service.transition_session(
                     parent_id,
@@ -5350,21 +5454,28 @@ async def test_failure_classification_noop_reassignment_and_startup_matrix(
                     result_ref=result_ref,
                 )
 
+        racing_service = _StatusTransitionOnClaim()
         finalizer = _make_finalizer(
             stores=local,
-            service=_ReassignOnClaim(),
+            service=racing_service,
             registry=_registry_for(children),
             verifier=object(),
             synthesizer=object(),
         )
         assert finalizer is not None
-        with pytest.raises(ValueError, match="crew_session_facilitator_assignment_mismatch"):
-            await finalizer.finalize(parent.id, results)
+        observed = await finalizer.finalize(parent.id, results)
+        assert observed.claimed is False
+        assert observed.completed is False
+        assert observed.state == "blocked_needs_captain"
+        assert observed.reason == "claim_lost"
         row = await local.work.get_work_item(parent.id)
         assert row is not None
-        assert row.assigned_to == "other-facilitator"
-        assert row.status == "in_progress"
-        assert row.metadata["crew_session"]["state"] == "executing"
+        assert racing_service.winner is not None
+        assert row.assigned_to == "facilitator-1"
+        assert row.status == "blocked"
+        assert row.metadata["crew_session"] == racing_service.winner.model_dump(
+            mode="json",
+        )
     finally:
         await local.work.stop()
 
@@ -5380,6 +5491,7 @@ async def test_failure_classification_noop_reassignment_and_startup_matrix(
     )
     await startup_work.start()
     assert startup_connection_factory.connection is not None
+    startup_admission_port = startup_work.claim_crew_session_admission_port()
     try:
         startup_chat = ChatThreadStore(startup_root / "threads.db")
         startup_artifacts = ArtifactStore(startup_root / "artifacts.db")
@@ -5391,6 +5503,7 @@ async def test_failure_classification_noop_reassignment_and_startup_matrix(
             attachments=startup_attachments,
             events=startup_events,
             connection=startup_connection_factory.connection,
+            admission_port=startup_admission_port,
         )
         startup_service = CrewSessionService(
             work_item_store=startup_work,
@@ -5458,12 +5571,17 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
     }
     assert service_public == {
         "adopt_recovery_plan",
+        "agent_principal",
+        "bind_scheduler",
+        "captain_principal",
         "compare_and_set_recovery",
         "get_recovery",
         "get_session",
         "initialize_session",
         "install_recovery_plan",
+        "open_or_resume",
         "publish_verified_result",
+        "repair_provisioning",
         "transition_session",
     }
     for owner, method_name in (
@@ -5875,11 +5993,14 @@ class _PostCommitSiblingDeletionStore:
         )
         current = await self.delegate.get_work_item(work_item_id)
         assert current is not None
-        metadata = dict(current.metadata)
-        metadata.pop("origin", None)
-        changed = await self.delegate.update_work_item(
+        changed = await self.delegate.merge_work_item_metadata(
             work_item_id,
-            metadata=metadata,
+            {"postcommit_audit": "preserved"},
+            expected={"origin": current.metadata["origin"]},
+            expected_work_type=current.work_type,
+            expected_status=current.status,
+            expected_assigned_to=current.assigned_to,
+            source="postcommit_sibling_writer",
         )
         assert changed is not None
         return None
@@ -6012,6 +6133,7 @@ async def test_final_publication_child_barrier_is_atomic_with_parent_done(
     )
     await work.start()
     assert connection_factory.connection is not None
+    admission_port = work.claim_crew_session_admission_port()
     local = _Stores(
         work=work,
         chat=ChatThreadStore(tmp_path / "atomic-threads.db"),
@@ -6019,6 +6141,7 @@ async def test_final_publication_child_barrier_is_atomic_with_parent_done(
         attachments=FilesystemAttachmentStore(tmp_path / "atomic-attachments"),
         events=events,
         connection=connection_factory.connection,
+        admission_port=admission_port,
     )
     try:
         parent, _thread, service, contract, children, _results = await _executing_case(
@@ -6569,7 +6692,8 @@ async def test_publish_verified_result_postcommit_sibling_deletion_returns_done(
     assert published.state == "done"
     row = await stores.work.get_work_item(parent.id)
     assert row is not None and row.status == "done"
-    assert "origin" not in row.metadata
+    assert row.metadata["origin"] == "captain"
+    assert row.metadata["postcommit_audit"] == "preserved"
     assert row.metadata["crew_session"] == published.model_dump(mode="json")
     assert row.metadata["crew_synth"] == _crew_synthesis_metadata().model_dump(
         mode="json",

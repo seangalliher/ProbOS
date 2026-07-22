@@ -1721,11 +1721,19 @@ def _wire_crew_session_service(*, runtime: Any, config: "SystemConfig") -> bool:
 
     work_item_store = getattr(runtime, "work_item_store", None)
     chat_thread_store = getattr(runtime, "chat_thread_store", None)
+    registry = getattr(runtime, "registry", None)
+    ontology = getattr(runtime, "ontology", None)
+    trust_network = getattr(runtime, "trust_network", None)
+    llm_client = getattr(runtime, "llm_client", None)
     missing = [
         name
         for name, dependency in (
             ("work_item_store", work_item_store),
             ("chat_thread_store", chat_thread_store),
+            ("registry", registry),
+            ("ontology", ontology),
+            ("trust_network", trust_network),
+            ("llm_client", llm_client),
         )
         if dependency is None
     ]
@@ -1740,13 +1748,23 @@ def _wire_crew_session_service(*, runtime: Any, config: "SystemConfig") -> bool:
         )
 
     from probos.cognitive.crew_session import CrewSessionService
+    from probos.consultation.llm_decomposer import LLMPlanDecomposer
+    from probos.knowledge.embeddings import compute_similarity
 
     existing = getattr(runtime, "crew_session_service", None)
     if isinstance(existing, CrewSessionService):
         return True
+    admission_port = work_item_store.claim_crew_session_admission_port()
     runtime.crew_session_service = CrewSessionService(
         work_item_store=work_item_store,
         chat_thread_store=chat_thread_store,
+        registry=registry,
+        ontology=ontology,
+        trust_network=trust_network,
+        config=cfg,
+        compute_similarity=compute_similarity,
+        decomposer=LLMPlanDecomposer(llm_client),
+        admission_port=admission_port,
     )
     logger.info(
         "AD-1124: CrewSessionService initialized; durable sessions remain inert until explicitly bound"
@@ -1888,6 +1906,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         crew_session_finalizer=finalizer,
         crew_session_service=crew_session_service,
     )
+    crew_session_service.bind_scheduler(runtime.crew_orchestrator.schedule)
     logger.info(
         "AD-867: CrewOrchestrator initialized (max_parallel=%d, max_rounds=%d)",
         max_parallel, max_rounds,
