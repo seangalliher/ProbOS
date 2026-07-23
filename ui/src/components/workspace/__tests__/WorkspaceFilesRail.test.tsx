@@ -13,7 +13,14 @@ import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 
 import type { TaskInput } from '../../inputs/inputsApi';
-import type { ArtifactView } from '../../../store/useStore';
+import { useStore, type ArtifactView } from '../../../store/useStore';
+import type {
+  CrewSessionArtifactCommand,
+  CrewSessionDetailProjection,
+  CrewSessionRetryCommand,
+  CrewSessionState,
+  StartWorkResult,
+} from '../../../store/types';
 
 vi.mock('../../inputs/inputsApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../inputs/inputsApi')>();
@@ -21,7 +28,7 @@ vi.mock('../../inputs/inputsApi', async (importOriginal) => {
 });
 vi.mock('../../artifacts/artifactApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../artifacts/artifactApi')>();
-  return { ...actual, fetchThreadArtifacts: vi.fn() };
+  return { ...actual, fetchThreadArtifacts: vi.fn(), fetchArtifactMetadata: vi.fn() };
 });
 vi.mock('../todosApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../todosApi')>();
@@ -29,12 +36,14 @@ vi.mock('../todosApi', async (importOriginal) => {
 });
 
 import { fetchThreadInputs } from '../../inputs/inputsApi';
-import { fetchThreadArtifacts } from '../../artifacts/artifactApi';
+import { fetchArtifactMetadata, fetchThreadArtifacts } from '../../artifacts/artifactApi';
 import * as todosApi from '../todosApi';
 import { fetchTaskSteps, updateTaskStep } from '../todosApi';
 import { WorkspaceFilesRail } from '../WorkspaceFilesRail';
 
 const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F600}-\u{1F64F}]/u;
+const SHA_A = 'a'.repeat(64);
+const SHA_B = 'b'.repeat(64);
 
 const INPUTS: TaskInput[] = [
   {
@@ -62,13 +71,76 @@ const ARTIFACTS: ArtifactView[] = [
   },
 ];
 
+function sessionProjection(
+  parentId: string,
+  threadId: string,
+  state: CrewSessionState = 'discussing',
+): CrewSessionDetailProjection {
+  const blocked = state === 'blocked_needs_captain';
+  return {
+    task_id: parentId,
+    thread_id: threadId,
+    goal: 'Prepare the readiness report',
+    origin: 'captain',
+    originator_id: 'captain',
+    facilitator_id: 'facilitator-1',
+    owner_ids: ['facilitator-1', 'owner-2'],
+    state,
+    revision: 1,
+    success_criteria: ['Report is complete', 'Evidence is attached'],
+    expected_deliverable: 'A verified readiness report',
+    timestamps: {
+      created_at: 1,
+      transitioned_at: 2,
+      started_at: state === 'executing' ? 2 : null,
+      first_result_at: null,
+      verified_at: null,
+      completed_at: null,
+    },
+    progress: {
+      total: 1, done: 0, failed: 0, active: 1,
+      active_child: { id: 'child-1', title: 'Prepare evidence', status: 'in_progress', owner_id: 'owner-2' },
+    },
+    last_result_summary: '',
+    blocker: blocked ? { reason: 'Captain approval required', since: 2, duration_seconds: 60, action: 'retry_start_work' } : null,
+    result: null,
+    verification: null,
+    duplicate_resume_count: 0,
+  };
+}
+
+function startWorkResult(
+  parentId: string,
+  threadId: string,
+  state: CrewSessionState = 'discussing',
+  disposition: StartWorkResult['disposition'] = 'created',
+): StartWorkResult {
+  const session = sessionProjection(parentId, threadId, state);
+  return {
+    disposition,
+    parent_id: parentId,
+    thread_id: threadId,
+    state,
+    facilitator_id: session.facilitator_id,
+    owner_ids: session.owner_ids,
+    duplicate_resume_count: session.duplicate_resume_count,
+    scheduled: true,
+    session,
+  };
+}
+
 beforeEach(() => {
   localStorage.clear();
   vi.mocked(fetchThreadInputs).mockResolvedValue(INPUTS);
   vi.mocked(fetchThreadArtifacts).mockResolvedValue(ARTIFACTS);
+  vi.mocked(fetchArtifactMetadata).mockResolvedValue(null);
   vi.mocked(fetchTaskSteps).mockResolvedValue([]);
   vi.mocked(updateTaskStep).mockResolvedValue();
   vi.stubGlobal('fetch', vi.fn());
+  useStore.setState({
+    crewSessionsByParent: new Map(),
+    crewSessionSummariesByThread: new Map(),
+  });
 });
 
 afterEach(() => {
@@ -76,6 +148,10 @@ afterEach(() => {
   localStorage.clear();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  useStore.setState({
+    crewSessionsByParent: new Map(),
+    crewSessionSummariesByThread: new Map(),
+  });
 });
 
 function openStartWorkDialog(): void {
@@ -297,13 +373,7 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     await act(async () => {
       resolveRequest?.({
         ok: true,
-        json: async () => ({
-          disposition: 'created',
-          parent_id: 'pending-parent',
-          thread_id: 't1',
-          state: 'discussing',
-          scheduled: true,
-        }),
+        json: async () => startWorkResult('pending-parent', 't1'),
       } as Response);
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -313,13 +383,7 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     localStorage.setItem('probos.workspaceFiles.collapsed', '0');
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
-      json: async () => ({
-        disposition: 'created',
-        parent_id: 'focus-parent',
-        thread_id: 't1',
-        state: 'discussing',
-        scheduled: true,
-      }),
+      json: async () => startWorkResult('focus-parent', 't1'),
     } as Response);
     render(<WorkspaceFilesRail threadId="t1" />);
     const opener = screen.getByTestId('workspace-start-work-open');
@@ -354,7 +418,8 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     vi.mocked(fetch).mockImplementation(() => new Promise<Response>((resolve) => {
       resolveRequest = resolve;
     }));
-    render(<WorkspaceFilesRail threadId="room/1" />);
+    const onSessionBound = vi.fn();
+    render(<WorkspaceFilesRail threadId="room/1" onSessionBound={onSessionBound} />);
     openStartWorkDialog();
     fillValidStartWorkForm();
     fireEvent.click(screen.getByTestId('workspace-start-work-retry'));
@@ -381,42 +446,45 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     await act(async () => {
       resolveRequest?.({
         ok: true,
-        json: async () => ({
-          disposition: 'created',
-          parent_id: 'parent-1',
-          thread_id: 'room/1',
-          state: 'discussing',
-          scheduled: true,
-        }),
+        json: async () => startWorkResult('parent-1', 'room/1'),
       } as Response);
     });
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(fetchTaskSteps).toHaveBeenCalledWith('parent-1'));
     expect(screen.getByTestId('workspace-files-todos')).toBeTruthy();
+    expect(useStore.getState().crewSessionsByParent.get('parent-1')).toEqual(
+      sessionProjection('parent-1', 'room/1'),
+    );
+    expect(onSessionBound).toHaveBeenCalledTimes(1);
+    expect(onSessionBound).toHaveBeenCalledWith(startWorkResult('parent-1', 'room/1'));
   });
 
-  it('binds a deduplicated parent returned from an existing authority room', async () => {
+  it('rejects a parent returned for a different authority room without hydration', async () => {
     localStorage.setItem('probos.workspaceFiles.collapsed', '0');
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
-      json: async () => ({
-        disposition: 'resumed',
-        parent_id: 'existing-parent',
-        thread_id: 'existing-authority-room',
-        state: 'executing',
-        scheduled: true,
-      }),
+      json: async () => startWorkResult(
+        'existing-parent',
+        'existing-authority-room',
+        'executing',
+        'resumed',
+      ),
     } as Response);
-    render(<WorkspaceFilesRail threadId="requested-room" />);
+    const onSessionBound = vi.fn();
+    render(<WorkspaceFilesRail threadId="requested-room" onSessionBound={onSessionBound} />);
     openStartWorkDialog();
     fillValidStartWorkForm();
 
     fireEvent.click(screen.getByTestId('workspace-start-work-confirm'));
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    await waitFor(() => expect(fetchTaskSteps).toHaveBeenCalledWith('existing-parent'));
-    expect(screen.getByTestId('workspace-files-todos')).toBeTruthy();
+    expect(await screen.findByTestId('workspace-start-work-error')).toHaveTextContent(
+      'different room',
+    );
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(fetchTaskSteps).not.toHaveBeenCalledWith('existing-parent');
+    expect(useStore.getState().crewSessionsByParent.has('existing-parent')).toBe(false);
+    expect(onSessionBound).not.toHaveBeenCalled();
   });
 
   it('server error stays visible with inputs preserved and is retryable', async () => {
@@ -429,15 +497,10 @@ describe('WorkspaceFilesRail (AD-929)', () => {
       } as Response)
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          disposition: 'created',
-          parent_id: 'parent-2',
-          thread_id: 't1',
-          state: 'discussing',
-          scheduled: true,
-        }),
+        json: async () => startWorkResult('parent-2', 't1'),
       } as Response);
     render(<WorkspaceFilesRail threadId="t1" />);
+    const opener = screen.getByTestId('workspace-start-work-open');
     openStartWorkDialog();
     fillValidStartWorkForm();
 
@@ -448,13 +511,16 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     expect(screen.getByTestId('workspace-start-work-goal')).toHaveValue(
       'Prepare the readiness report',
     );
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.contains(document.activeElement)).toBe(true);
 
     fireEvent.click(screen.getByTestId('workspace-start-work-confirm'));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 
-  it('ignores a Start Work response owned by the previous room', async () => {
+  it('ignores a Start Work response resolved in the same act as a room switch', async () => {
     localStorage.setItem('probos.workspaceFiles.collapsed', '0');
     let resolveRequest: ((value: Response) => void) | undefined;
     vi.mocked(fetch).mockImplementation(() => new Promise<Response>((resolve) => {
@@ -466,23 +532,156 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     fireEvent.click(screen.getByTestId('workspace-start-work-confirm'));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
 
-    rerender(<WorkspaceFilesRail threadId="room-2" />);
     await act(async () => {
       resolveRequest?.({
         ok: true,
-        json: async () => ({
-          disposition: 'created',
-          parent_id: 'stale-parent',
-          thread_id: 'room-1',
-          state: 'discussing',
-          scheduled: true,
-        }),
+        json: async () => startWorkResult('stale-parent', 'room-1'),
       } as Response);
+      rerender(<WorkspaceFilesRail threadId="room-2" />);
     });
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(fetchTaskSteps).not.toHaveBeenCalledWith('stale-parent');
+    expect(useStore.getState().crewSessionsByParent.has('stale-parent')).toBe(false);
     expect(screen.queryByTestId('workspace-files-todos')).toBeNull();
+  });
+
+  it('drops an old polling refresh started during a room-switch render', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    const intervalCallbacks: Array<() => void> = [];
+    vi.stubGlobal('setInterval', vi.fn((callback: TimerHandler) => {
+      if (typeof callback === 'function') intervalCallbacks.push(callback as () => void);
+      return 1;
+    }));
+    let staleResolve: ((value: ArtifactView[]) => void) | undefined;
+    let roomOneCalls = 0;
+    vi.mocked(fetchThreadArtifacts).mockImplementation((roomId) => {
+      if (roomId === 'room-1') {
+        roomOneCalls += 1;
+        if (roomOneCalls === 1) return Promise.resolve([]);
+        return new Promise<ArtifactView[]>((resolve) => { staleResolve = resolve; });
+      }
+      return Promise.resolve([]);
+    });
+
+    function FireOldInterval({ enabled }: { enabled: boolean }) {
+      if (enabled) intervalCallbacks[0]?.();
+      return null;
+    }
+
+    const view = render(
+      <>
+        <WorkspaceFilesRail threadId="room-1" />
+        <FireOldInterval enabled={false} />
+      </>,
+    );
+    await waitFor(() => expect(intervalCallbacks.length).toBeGreaterThan(0));
+
+    view.rerender(
+      <>
+        <WorkspaceFilesRail threadId="room-2" />
+        <FireOldInterval enabled />
+      </>,
+    );
+    await waitFor(() => expect(staleResolve).toBeTypeOf('function'));
+    await act(async () => {
+      staleResolve?.([{
+        ...ARTIFACTS[0],
+        id: 'stale-artifact',
+        thread_id: 'room-1',
+        name: 'stale-room-one.md',
+      }]);
+    });
+
+    expect(screen.queryByTestId('artifact-row-stale-artifact')).toBeNull();
+    expect(fetchThreadArtifacts).toHaveBeenCalledWith('room-2');
+  });
+
+  it('owned retry command expands, pre-fills, checks retry, focuses Goal, and performs no write', async () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'Retry blocked CrewSession work';
+    document.body.appendChild(opener);
+    const retryCommand: CrewSessionRetryCommand = {
+      requestId: 1,
+      parentId: 'blocked-parent',
+      threadId: 't1',
+      projection: sessionProjection('blocked-parent', 't1', 'blocked_needs_captain'),
+      opener,
+    };
+    render(<WorkspaceFilesRail threadId="t1" retryCommand={retryCommand} />);
+
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+    expect(screen.getByTestId('workspace-files-rail').getAttribute('data-collapsed')).toBe('false');
+    expect(screen.getByTestId('workspace-start-work-goal')).toHaveValue(retryCommand.projection.goal);
+    expect(screen.getByTestId('workspace-start-work-criteria')).toHaveValue(retryCommand.projection.success_criteria.join('\n'));
+    expect(screen.getByTestId('workspace-start-work-deliverable')).toHaveValue(retryCommand.projection.expected_deliverable);
+    expect(screen.getByTestId('workspace-start-work-retry')).toBeChecked();
+    await waitFor(() => expect(screen.getByTestId('workspace-start-work-goal')).toHaveFocus());
+    expect(fetch).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('workspace-start-work-cancel'));
+    await waitFor(() => expect(opener).toHaveFocus());
+    opener.remove();
+  });
+
+  it('owned artifact command prefers local metadata and opens the existing viewer', async () => {
+    const command: CrewSessionArtifactCommand = {
+      requestId: 1,
+      parentId: 'parent-1',
+      threadId: 't1',
+      artifactId: 'art1',
+    };
+    render(<WorkspaceFilesRail threadId="t1" artifactCommand={command} />);
+
+    expect(await screen.findByTestId('workspace-files-preview')).toBeTruthy();
+    expect(screen.getAllByText('report.md').length).toBeGreaterThan(0);
+    expect(fetchArtifactMetadata).not.toHaveBeenCalled();
+  });
+
+  it('rejects a matching preloaded artifact owned by another room', async () => {
+    vi.mocked(fetchThreadArtifacts).mockResolvedValue([{ ...ARTIFACTS[0], thread_id: 'other-room' }]);
+    const command: CrewSessionArtifactCommand = {
+      requestId: 3,
+      parentId: 'parent-1',
+      threadId: 't1',
+      artifactId: 'art1',
+    };
+
+    render(<WorkspaceFilesRail threadId="t1" artifactCommand={command} />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('metadata could not be loaded');
+    expect(screen.queryByTestId('workspace-files-preview')).toBeNull();
+    expect(fetchArtifactMetadata).not.toHaveBeenCalled();
+  });
+
+  it('missing or mismatched artifact metadata alerts, then Retry opens the existing viewer', async () => {
+    vi.mocked(fetchThreadArtifacts).mockResolvedValue([]);
+    const loaded: ArtifactView = {
+      ...ARTIFACTS[0],
+      id: 'art2',
+      thread_id: 't1',
+      name: 'recovered.md',
+    };
+    vi.mocked(fetchArtifactMetadata)
+      .mockResolvedValueOnce({ ...loaded, thread_id: 'other-room' })
+      .mockResolvedValueOnce(loaded);
+    const command: CrewSessionArtifactCommand = {
+      requestId: 2,
+      parentId: 'parent-1',
+      threadId: 't1',
+      artifactId: 'art2',
+    };
+    render(<WorkspaceFilesRail threadId="t1" artifactCommand={command} />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('metadata could not be loaded');
+    expect(screen.queryByTestId('workspace-files-preview')).toBeNull();
+    fireEvent.click(screen.getByTestId('workspace-artifact-command-retry'));
+
+    expect(await screen.findByTestId('workspace-files-preview')).toBeTruthy();
+    expect(screen.getAllByText('recovered.md').length).toBeGreaterThan(0);
+    expect(fetchArtifactMetadata).toHaveBeenCalledTimes(2);
+    expect(fetchArtifactMetadata).toHaveBeenNthCalledWith(1, 'art2');
+    expect(fetchArtifactMetadata).toHaveBeenNthCalledWith(2, 'art2');
   });
 
   it('todosApi no longer exports passive ensureRoomTask', () => {

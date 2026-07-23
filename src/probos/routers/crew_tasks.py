@@ -26,6 +26,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from probos.crew_session_projection import (
+    CREW_SESSION_PROJECTION_ERROR,
+    CrewSessionProjectionError,
+    build_crew_session_detail,
+    validate_synthesis_metadata,
+)
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -113,6 +119,49 @@ async def get_crew_task(
     parent = await store.get_work_item(parent_id)
     if parent is None:
         raise HTTPException(status_code=404, detail="crew task not found")
+
+    if parent.work_type == "crew_session":
+        service = getattr(runtime, "crew_session_service", None)
+        if service is None:
+            raise HTTPException(
+                status_code=503,
+                detail="CrewSession service not available",
+            )
+        try:
+            session = await service.get_session(parent.id)
+            if session is None:
+                raise CrewSessionProjectionError()
+            metadata = parent.metadata
+            if type(metadata) is not dict:
+                raise CrewSessionProjectionError()
+            synthesis = (
+                validate_synthesis_metadata(metadata["crew_synth"])
+                if "crew_synth" in metadata
+                else None
+            )
+            session_children = await store.list_work_items(
+                parent_id=parent.id,
+                limit=1001,
+            )
+            detail = build_crew_session_detail(
+                session=session,
+                synthesis=synthesis,
+                children=session_children,
+            )
+            if detail.task_id != parent.id:
+                raise CrewSessionProjectionError()
+        except ValueError as exc:
+            logger.warning(
+                "AD-1132: CrewSession parent %s projection failed (%s); "
+                "returning stable 409",
+                parent.id,
+                CREW_SESSION_PROJECTION_ERROR,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=CREW_SESSION_PROJECTION_ERROR,
+            ) from exc
+        return {"session": detail.to_wire()}
 
     children = await store.list_work_items(parent_id=parent_id, limit=1000)
     prov_index = await _provenance_by_work_item(runtime, parent)

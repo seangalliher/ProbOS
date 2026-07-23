@@ -2989,6 +2989,7 @@ def _thread_api_app(
         config=config,
         crew_session_service=service or harness.service,
         chat_thread_store=harness.threads,
+        work_item_store=harness.work,
     )
     app = FastAPI()
     app.include_router(threads_router.router)
@@ -3018,6 +3019,8 @@ async def test_room_api_happy_returns_open_result(
         )
         assert response.status_code == 200
         assert response.json()["thread_id"] == room.id
+        assert response.json()["session"]["thread_id"] == room.id
+        assert response.json()["session"]["task_id"] == response.json()["parent_id"]
 
 
 async def test_start_work_configured_token_missing_and_wrong_reject_before_service(
@@ -3079,9 +3082,11 @@ async def test_start_work_configured_token_valid_reaches_service(
     harness: _Harness,
 ) -> None:
     class _ServiceRecorder:
-        def __init__(self) -> None:
+        def __init__(self, session: CrewSessionContract) -> None:
             self.principal_calls = 0
             self.open_calls = 0
+            self.get_calls = 0
+            self.session = session
 
         def captain_principal(self) -> str:
             self.principal_calls += 1
@@ -3092,20 +3097,29 @@ async def test_start_work_configured_token_valid_reaches_service(
             assert kwargs["principal"] == "captain-principal"
             return SimpleNamespace(
                 disposition="created",
-                parent_id="protected-parent",
+                parent_id=self.session.task_id,
                 thread_id=kwargs["requested_thread_id"],
-                state="discussing",
-                facilitator_id="facilitator-1",
-                owner_ids=("facilitator-1",),
-                duplicate_resume_count=0,
+                state=self.session.state,
+                facilitator_id=self.session.facilitator_id,
+                owner_ids=self.session.owner_ids,
+                duplicate_resume_count=self.session.duplicate_resume_count,
                 scheduled=True,
             )
 
-    room = harness.threads.create_thread(
-        title="Protected API room",
-        participants=["facilitator-1"],
+        async def get_session(self, parent_id: str) -> CrewSessionContract | None:
+            self.get_calls += 1
+            assert parent_id == self.session.task_id
+            return self.session
+
+    parent, room, session = await _create_bound_session(
+        harness,
+        parent_id="protected-parent",
+        goal="Protected work",
+        owner_ids=["facilitator-1"],
+        success_criteria=["Complete"],
+        expected_deliverable="Result",
     )
-    recorder = _ServiceRecorder()
+    recorder = _ServiceRecorder(session)
     transport = httpx.ASGITransport(
         app=_thread_api_app(
             harness,
@@ -3128,9 +3142,12 @@ async def test_start_work_configured_token_valid_reaches_service(
         )
 
     assert response.status_code == 200
-    assert response.json()["parent_id"] == "protected-parent"
+    assert response.json()["parent_id"] == parent.id
+    assert response.json()["session"]["task_id"] == parent.id
+    assert response.json()["session"]["thread_id"] == room.id
     assert recorder.principal_calls == 1
     assert recorder.open_calls == 1
+    assert recorder.get_calls == 1
 
 
 async def test_room_api_rejects_caller_principal_fields(

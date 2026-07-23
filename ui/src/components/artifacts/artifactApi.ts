@@ -13,6 +13,35 @@
  */
 import type { ArtifactView } from '../../store/useStore';
 
+function isArtifactMetadata(value: unknown): value is Omit<ArtifactView, '_pinned_from_project'> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.id === 'string'
+    && typeof row.thread_id === 'string'
+    && typeof row.name === 'string'
+    && Number.isInteger(row.version)
+    && typeof row.content_hash === 'string'
+    && typeof row.mime === 'string'
+    && Number.isInteger(row.size_bytes)
+    && typeof row.created_by === 'string'
+    && typeof row.created_at === 'number'
+    && (row.supersedes === null || typeof row.supersedes === 'string');
+}
+
+export async function fetchArtifactMetadata(
+  artifactId: string,
+): Promise<ArtifactView | null> {
+  try {
+    const res = await fetch(`/api/artifacts/${encodeURIComponent(artifactId)}`);
+    if (!res.ok) return null;
+    const data: unknown = await res.json();
+    if (!isArtifactMetadata(data)) return null;
+    return { ...data, _pinned_from_project: false };
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchThreadArtifacts(
   threadId: string,
 ): Promise<ArtifactView[]> {

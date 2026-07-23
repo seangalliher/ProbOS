@@ -32,10 +32,16 @@ import { InputsList } from '../inputs/InputsList';
 import { fetchThreadInputs, attachTaskInputs, type TaskInput } from '../inputs/inputsApi';
 import { ArtifactList } from '../artifacts/ArtifactList';
 import { ArtifactViewer } from '../artifacts/ArtifactViewer';
-import { fetchThreadArtifacts } from '../artifacts/artifactApi';
+import { fetchArtifactMetadata, fetchThreadArtifacts } from '../artifacts/artifactApi';
 import { TodosList } from './TodosList';
 import { fetchTaskSteps, startRoomWork, updateTaskStep, type TodoStep } from './todosApi';
 import type { ArtifactView } from '../../store/useStore';
+import { useStore } from '../../store/useStore';
+import type {
+  CrewSessionArtifactCommand,
+  CrewSessionRetryCommand,
+  StartWorkResult,
+} from '../../store/types';
 
 const AMBER = '#f0b060';
 const DIM = '#666680';
@@ -67,14 +73,27 @@ export interface WorkspaceFilesRailProps {
    *  room without a bound work item (>=2 crew, no task_id) has no place to
    *  hold inputs, so the button is hidden. */
   taskId?: string | null;
+  retryCommand?: CrewSessionRetryCommand | null;
+  artifactCommand?: CrewSessionArtifactCommand | null;
+  onSessionBound?: (result: StartWorkResult) => void;
 }
 
 export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
-  const { threadId, taskId } = props;
+  const {
+    threadId,
+    taskId,
+    retryCommand = null,
+    artifactCommand = null,
+    onSessionBound,
+  } = props;
   const [inputs, setInputs] = useState<TaskInput[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
+  const [artifactsLoaded, setArtifactsLoaded] = useState(false);
   const [steps, setSteps] = useState<TodoStep[]>([]);
-  const [startedParentId, setStartedParentId] = useState<string | null>(null);
+  const [startedSessionBinding, setStartedSessionBinding] = useState<{
+    threadId: string;
+    parentId: string;
+  } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [startDialogOpen, setStartDialogOpen] = useState(false);
   const [startGoal, setStartGoal] = useState('');
@@ -88,17 +107,50 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   const startDialogRef = useRef<HTMLDivElement | null>(null);
   const startGoalRef = useRef<HTMLTextAreaElement | null>(null);
   const startOpenerRef = useRef<HTMLButtonElement | null>(null);
-  const effectiveTaskId = taskId ?? startedParentId;
-  useEffect(() => {
+  const startOpenerOwnerRef = useRef<{ threadId: string; generation: number } | null>(null);
+  const blockedRetryOriginRef = useRef(false);
+  const lastRetryRequestRef = useRef(0);
+  const lastArtifactRequestRef = useRef(0);
+  const artifactGenerationRef = useRef(0);
+  const [artifactCommandError, setArtifactCommandError] = useState('');
+  const [artifactLookupPending, setArtifactLookupPending] = useState(false);
+  const roomTokenRef = useRef({ threadId, generation: 0 });
+  if (roomTokenRef.current.threadId !== threadId) {
+    roomTokenRef.current = {
+      threadId,
+      generation: roomTokenRef.current.generation + 1,
+    };
     startGenerationRef.current += 1;
+    artifactGenerationRef.current += 1;
+    lastRetryRequestRef.current = 0;
+    lastArtifactRequestRef.current = 0;
+  }
+  const ownsRoom = useCallback((token: { threadId: string; generation: number }): boolean => (
+    roomTokenRef.current.threadId === token.threadId
+    && roomTokenRef.current.generation === token.generation
+  ), []);
+  const startedParentId = startedSessionBinding?.threadId === threadId
+    ? startedSessionBinding.parentId
+    : null;
+  const effectiveTaskId = taskId ?? startedParentId;
+  const effectiveTaskIdRef = useRef(effectiveTaskId);
+  effectiveTaskIdRef.current = effectiveTaskId;
+  useEffect(() => {
     startSubmittingRef.current = false;
     setStartPending(false);
     setStartDialogOpen(false);
     setStartError('');
-    setStartedParentId(null);
+    setStartedSessionBinding(null);
+    startOpenerRef.current = null;
+    startOpenerOwnerRef.current = null;
+    blockedRetryOriginRef.current = false;
+    setArtifactCommandError('');
+    setArtifactLookupPending(false);
+    setSelectedId(null);
+    setArtifactsLoaded(false);
   }, [threadId]);
   useEffect(() => {
-    if (taskId) setStartedParentId(null);
+    if (taskId) setStartedSessionBinding(null);
   }, [taskId]);
   useEffect(() => {
     if (!startDialogOpen) return;
@@ -142,39 +194,58 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   // Fetch inputs + artifacts on threadId change; honest-degrade to [] so a
   // failed endpoint shows an empty section instead of crashing the rail.
   useEffect(() => {
-    let cancelled = false;
+    const token = roomTokenRef.current;
     (async () => {
       try {
         const list = await fetchThreadInputs(threadId);
-        if (!cancelled) setInputs(list);
+        if (ownsRoom(token)) setInputs(list);
       } catch {
-        if (!cancelled) setInputs([]);
+        if (ownsRoom(token)) setInputs([]);
       }
     })();
     (async () => {
       try {
         const list = await fetchThreadArtifacts(threadId);
-        if (!cancelled) setArtifacts(list);
+        if (ownsRoom(token)) {
+          setArtifacts(list);
+          setArtifactsLoaded(true);
+        }
       } catch {
-        if (!cancelled) setArtifacts([]);
+        if (ownsRoom(token)) {
+          setArtifacts([]);
+          setArtifactsLoaded(true);
+        }
       }
     })();
-    return () => { cancelled = true; };
-  }, [threadId]);
+  }, [ownsRoom, threadId]);
 
   // BF-644: poll outputs + todos every 5s so files/steps the crew produce
   // mid-session fill in without reopening the rail (no WS yet). Stops when the
   // rail is collapsed (offscreen) to avoid needless fetches.
   useEffect(() => {
     if (collapsed) return;
+    const token = roomTokenRef.current;
     const t = setInterval(() => {
-      (async () => { try { setArtifacts(await fetchThreadArtifacts(threadId)); } catch { /* keep */ } })();
+      (async () => {
+        try {
+          const nextArtifacts = await fetchThreadArtifacts(threadId);
+          if (ownsRoom(token)) setArtifacts(nextArtifacts);
+        } catch { /* keep */ }
+      })();
       if (effectiveTaskId) {
-        (async () => { try { setSteps(await fetchTaskSteps(effectiveTaskId)); } catch { /* keep */ } })();
+        const targetTaskId = effectiveTaskId;
+        (async () => {
+          try {
+            const nextSteps = await fetchTaskSteps(targetTaskId);
+            if (ownsRoom(token) && effectiveTaskIdRef.current === targetTaskId) {
+              setSteps(nextSteps);
+            }
+          } catch { /* keep */ }
+        })();
       }
     }, 5000);
     return () => clearInterval(t);
-  }, [collapsed, threadId, effectiveTaskId]);
+  }, [collapsed, effectiveTaskId, ownsRoom, threadId]);
 
   const handleToggle = useCallback(() => {
     setCollapsed((prev) => {
@@ -183,6 +254,31 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    if (
+      !retryCommand
+      || retryCommand.threadId !== threadId
+      || retryCommand.projection.thread_id !== threadId
+      || retryCommand.parentId !== retryCommand.projection.task_id
+      || !retryCommand.opener.isConnected
+      || retryCommand.requestId <= lastRetryRequestRef.current
+    ) return;
+    lastRetryRequestRef.current = retryCommand.requestId;
+    const token = roomTokenRef.current;
+    startOpenerRef.current = retryCommand.opener;
+    startOpenerOwnerRef.current = token;
+    blockedRetryOriginRef.current = true;
+    setCollapsed(false);
+    persistCollapsed(false);
+    setStartedSessionBinding({ threadId, parentId: retryCommand.parentId });
+    setStartGoal(retryCommand.projection.goal);
+    setStartCriteria(retryCommand.projection.success_criteria.join('\n'));
+    setStartDeliverable(retryCommand.projection.expected_deliverable);
+    setRetryBlocked(true);
+    setStartError('');
+    setStartDialogOpen(true);
+  }, [retryCommand, threadId]);
 
   const criteriaValues = startCriteria
     .split('\n')
@@ -201,9 +297,10 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
 
   const restoreStartOpener = useCallback(() => {
     const opener = startOpenerRef.current;
-    if (opener?.isConnected) {
+    const owner = startOpenerOwnerRef.current;
+    if (opener?.isConnected && owner && ownsRoom(owner)) {
       const restore = () => {
-        if (opener.isConnected) opener.focus();
+        if (opener.isConnected && ownsRoom(owner)) opener.focus();
       };
       if (typeof requestAnimationFrame === 'function') {
         requestAnimationFrame(restore);
@@ -211,7 +308,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
         queueMicrotask(restore);
       }
     }
-  }, []);
+  }, [ownsRoom]);
 
   const closeStartDialog = useCallback(() => {
     if (startSubmittingRef.current) return;
@@ -249,6 +346,8 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   const handleStartWork = useCallback(async (event: React.FormEvent) => {
     event.preventDefault();
     if (!startFormValid || startSubmittingRef.current) return;
+    const roomToken = roomTokenRef.current;
+    if (roomToken.threadId !== threadId) return;
     const generation = startGenerationRef.current;
     startSubmittingRef.current = true;
     setStartPending(true);
@@ -260,64 +359,152 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
         expected_deliverable: startDeliverable.trim(),
         retry_blocked: retryBlocked,
       });
-      if (startGenerationRef.current !== generation) return;
-      setStartedParentId(result.parent_id);
+      if (startGenerationRef.current !== generation || !ownsRoom(roomToken)) return;
+      if (result.thread_id !== threadId) {
+        setStartError('Start Work returned a different room');
+        return;
+      }
+      setStartedSessionBinding({ threadId, parentId: result.parent_id });
+      useStore.getState().hydrateCrewSession(result.parent_id, result.session);
+      onSessionBound?.(result);
       setStartDialogOpen(false);
-      restoreStartOpener();
+      if (!blockedRetryOriginRef.current) restoreStartOpener();
     } catch (error) {
-      if (startGenerationRef.current !== generation) return;
+      if (startGenerationRef.current !== generation || !ownsRoom(roomToken)) return;
       const message = error instanceof Error ? error.message : 'Start Work failed';
       setStartError(message.slice(0, 256));
     } finally {
-      if (startGenerationRef.current === generation) {
+      if (startGenerationRef.current === generation && ownsRoom(roomToken)) {
         startSubmittingRef.current = false;
         setStartPending(false);
       }
     }
-  }, [criteriaValues, restoreStartOpener, retryBlocked, startDeliverable, startFormValid, startGoal, threadId]);
+  }, [criteriaValues, onSessionBound, ownsRoom, restoreStartOpener, retryBlocked, startDeliverable, startFormValid, startGoal, threadId]);
 
   const openArtifact = useCallback((id: string) => {
     // BF-642: open the in-app ArtifactViewer preview (Cowork parity) rather
     // than dumping raw bytes in a new tab. The selected output renders in an
     // overlay below; the Captain closes it to return to the lists.
-    setSelectedId(id);
-  }, []);
+    const row = artifacts.find(artifact => (
+      artifact.id === id && artifact.thread_id === roomTokenRef.current.threadId
+    ));
+    if (row) setSelectedId(id);
+  }, [artifacts]);
+
+  const loadCommandArtifact = useCallback(async (command: CrewSessionArtifactCommand) => {
+    if (command.threadId !== threadId) return;
+    const roomToken = roomTokenRef.current;
+    if (!ownsRoom(roomToken)) return;
+    const generation = ++artifactGenerationRef.current;
+    setCollapsed(false);
+    persistCollapsed(false);
+    setArtifactCommandError('');
+    const existing = artifacts.find(artifact => (
+      artifact.id === command.artifactId && artifact.thread_id === command.threadId
+    ));
+    if (existing) {
+      setSelectedId(existing.id);
+      return;
+    }
+    if (artifacts.some(artifact => artifact.id === command.artifactId)) {
+      setArtifactCommandError('Result artifact metadata could not be loaded.');
+      setSelectedId(null);
+      return;
+    }
+    setArtifactLookupPending(true);
+    const metadata = await fetchArtifactMetadata(command.artifactId);
+    if (
+      artifactGenerationRef.current !== generation
+      || !ownsRoom(roomToken)
+      || command.threadId !== threadId
+    ) return;
+    setArtifactLookupPending(false);
+    if (
+      metadata === null
+      || metadata.id !== command.artifactId
+      || metadata.thread_id !== command.threadId
+    ) {
+      setArtifactCommandError('Result artifact metadata could not be loaded.');
+      setSelectedId(null);
+      return;
+    }
+    setArtifacts(current => current.some(row => (
+      row.id === metadata.id && row.thread_id === metadata.thread_id
+    )) ? current : [...current.filter(row => row.thread_id === command.threadId), metadata]);
+    setSelectedId(metadata.id);
+  }, [artifacts, ownsRoom, threadId]);
+
+  useEffect(() => {
+    if (
+      !artifactCommand
+      || artifactCommand.threadId !== threadId
+      || !artifactsLoaded
+      || artifactCommand.requestId <= lastArtifactRequestRef.current
+    ) return;
+    lastArtifactRequestRef.current = artifactCommand.requestId;
+    void loadCommandArtifact(artifactCommand);
+  }, [artifactCommand, artifactsLoaded, loadCommandArtifact, threadId]);
 
   // AD-926a: attach one or more files to the room's work item (task). One
   // multipart request for all files (mirrors ProfileChatTab.uploadAttachment).
   // On success the rail's local inputs state is replaced by the returned list.
   const handleAttach = useCallback(async (picked: File[]) => {
     if (!effectiveTaskId || picked.length === 0) return;
+    const roomToken = roomTokenRef.current;
+    const targetTaskId = effectiveTaskId;
     try {
-      const updated = await attachTaskInputs(effectiveTaskId, picked);
-      setInputs(updated);
+      const updated = await attachTaskInputs(targetTaskId, picked);
+      if (ownsRoom(roomToken) && effectiveTaskIdRef.current === targetTaskId) {
+        setInputs(updated);
+      }
     } catch {
       // honest-degrade — the attach failed; the rail keeps its current list.
     }
-  }, [effectiveTaskId]);
+  }, [effectiveTaskId, ownsRoom]);
 
   // AD-1083: load the room Todo checklist when the task changes, and on
   // confirm/reject by the Captain. Honest-degrade to [] (no task / no steps).
   const refreshSteps = useCallback(async () => {
     if (!effectiveTaskId) { setSteps([]); return; }
-    try { setSteps(await fetchTaskSteps(effectiveTaskId)); } catch { setSteps([]); }
-  }, [effectiveTaskId]);
+    const roomToken = roomTokenRef.current;
+    const targetTaskId = effectiveTaskId;
+    try {
+      const nextSteps = await fetchTaskSteps(targetTaskId);
+      if (ownsRoom(roomToken) && effectiveTaskIdRef.current === targetTaskId) {
+        setSteps(nextSteps);
+      }
+    } catch {
+      if (ownsRoom(roomToken) && effectiveTaskIdRef.current === targetTaskId) {
+        setSteps([]);
+      }
+    }
+  }, [effectiveTaskId, ownsRoom]);
   useEffect(() => { void refreshSteps(); }, [refreshSteps]);
   const handleConfirm = useCallback(async (idx: number) => {
     if (!effectiveTaskId) return;
-    try { await updateTaskStep(effectiveTaskId, idx, { status: 'done', actor: 'captain' }); } catch { /* keep list */ }
+    const roomToken = roomTokenRef.current;
+    const targetTaskId = effectiveTaskId;
+    try { await updateTaskStep(targetTaskId, idx, { status: 'done', actor: 'captain' }); } catch { /* keep list */ }
+    if (!ownsRoom(roomToken) || effectiveTaskIdRef.current !== targetTaskId) return;
     void refreshSteps();
-  }, [effectiveTaskId, refreshSteps]);
+  }, [effectiveTaskId, ownsRoom, refreshSteps]);
   const handleReject = useCallback(async (idx: number) => {
     if (!effectiveTaskId) return;
-    try { await updateTaskStep(effectiveTaskId, idx, { status: 'rejected', actor: 'captain' }); } catch { /* keep list */ }
+    const roomToken = roomTokenRef.current;
+    const targetTaskId = effectiveTaskId;
+    try { await updateTaskStep(targetTaskId, idx, { status: 'rejected', actor: 'captain' }); } catch { /* keep list */ }
+    if (!ownsRoom(roomToken) || effectiveTaskIdRef.current !== targetTaskId) return;
     void refreshSteps();
-  }, [effectiveTaskId, refreshSteps]);
+  }, [effectiveTaskId, ownsRoom, refreshSteps]);
   const doneCount = steps.filter((s) => s.status === 'done').length;
 
   const totalCount = inputs.length + artifacts.length + steps.length;
   // BF-642: the output selected for in-app preview (Cowork-style file preview).
-  const selectedArtifact = selectedId ? (artifacts.find((a) => a.id === selectedId) ?? null) : null;
+  const selectedArtifact = selectedId ? (
+    artifacts.find(artifact => (
+      artifact.id === selectedId && artifact.thread_id === threadId
+    )) ?? null
+  ) : null;
 
   if (collapsed) {
     return (
@@ -399,7 +586,10 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
           type="button"
           onClick={(event) => {
             startOpenerRef.current = event.currentTarget;
+            startOpenerOwnerRef.current = roomTokenRef.current;
+            blockedRetryOriginRef.current = false;
             setStartError('');
+            setRetryBlocked(false);
             setStartDialogOpen(true);
           }}
           data-testid="workspace-start-work-open"
@@ -434,6 +624,20 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
           </svg>
         </button>
       </div>
+
+      {artifactCommandError && artifactCommand ? (
+        <div role="alert" data-testid="workspace-artifact-command-error" style={{ padding: '8px 10px', color: '#f08b8b', fontSize: 11, overflowWrap: 'anywhere' }}>
+          {artifactCommandError}{' '}
+          <button
+            type="button"
+            disabled={artifactLookupPending}
+            onClick={() => { void loadCommandArtifact(artifactCommand); }}
+            data-testid="workspace-artifact-command-retry"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
 
       {startDialogOpen && (
         <div

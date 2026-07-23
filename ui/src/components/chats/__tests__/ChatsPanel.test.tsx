@@ -7,18 +7,19 @@
 // real-fixture style, no MagicMock at the store boundary. Includes the HXI
 // no-emoji guard. Test #1 FLIPS the AD-919 contract: 1:1s are now INCLUDED.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, type RenderResult } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within, type RenderResult } from '@testing-library/react';
 import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
-import type { Agent } from '../../../store/types';
+import type { Agent, CrewSessionSummaryProjection, RoomSummary } from '../../../store/types';
 
 vi.mock('../../sidebar/threadApi', () => ({
   listThreads: vi.fn(),
   addParticipant: vi.fn(),
   getThread: vi.fn(),
+  fetchRoomSummaries: vi.fn(),
   createThread: vi.fn(),
 }));
 
-import { listThreads, addParticipant } from '../../sidebar/threadApi';
+import { listThreads, addParticipant, fetchRoomSummaries } from '../../sidebar/threadApi';
 import ChatsPanel from '../ChatsPanel';
 
 function mkAgent(p: { id: string; callsign: string; isCrew?: boolean; department?: string }): Agent {
@@ -81,14 +82,21 @@ function seedAgents(list: Agent[]): Map<string, Agent> {
   return am;
 }
 
-async function renderOpen(threads: AD791aChatThreadView[] = ALL, agents: Agent[] = AGENTS): Promise<RenderResult> {
+async function renderOpen(
+  threads: AD791aChatThreadView[] = ALL,
+  agents: Agent[] = AGENTS,
+  roomSummaries: Record<string, RoomSummary> = {},
+): Promise<RenderResult> {
   vi.mocked(listThreads).mockResolvedValue(threads);
+  vi.mocked(fetchRoomSummaries).mockResolvedValue(roomSummaries);
   useStore.setState({
     agents: seedAgents(agents),
     chatsOpen: true,
     threadIdByAgent: new Map(),
+    chatThreads: new Map(),
     activeProfileAgent: null,
     activeProfileThreadId: null,
+    crewSessionSummariesByThread: new Map(),
   });
   const r = render(<ChatsPanel />);
   // Wait for the on-open fetch to populate the list (g1 is always a chat).
@@ -102,8 +110,10 @@ afterEach(() => {
     agents: new Map(),
     chatsOpen: false,
     threadIdByAgent: new Map(),
+    chatThreads: new Map(),
     activeProfileAgent: null,
     activeProfileThreadId: null,
+    crewSessionSummariesByThread: new Map(),
   });
   vi.clearAllMocks();
 });
@@ -210,6 +220,163 @@ describe('AD-931 ChatsPanel', () => {
     expect(i4).toBeGreaterThanOrEqual(0);
     expect(i4).toBeLessThan(i1);
     expect(i4).toBeLessThan(i2);
+  });
+
+  it('uses the validated session goal and hydrates compact session context', async () => {
+    const session: CrewSessionSummaryProjection = {
+      task_id: 'task-1',
+      thread_id: 't1',
+      goal: 'Resolve the long-range navigation anomaly with verified evidence',
+      state: 'blocked_needs_captain',
+      facilitator_id: 'scotty',
+      owner_ids: ['scotty', 'mccoy'],
+      progress: { total: 4, done: 2, failed: 0, active: 2 },
+      last_result_summary: 'The crew needs approval for the final source.',
+      blocker: { reason: 'Approve source', since: 10, duration_seconds: 90 },
+      needs_attention: true,
+      result_artifact_id: null,
+      verified_at: null,
+    };
+    await renderOpen(ALL, AGENTS, {
+      t1: { outputs: 0, steps_total: 0, steps_done: 0, topic: session.goal, session },
+    });
+
+    const title = await screen.findByText(session.goal);
+    expect((title as HTMLElement).style.whiteSpace).toBe('normal');
+    const row = screen.getByTestId('chat-row-t1');
+    const context = screen.getByTestId('room-session-t1');
+    expect(row.getAttribute('data-needs-attention')).toBe('true');
+    expect(row.style.minWidth).toBe('0px');
+    expect(context.style.minWidth).toBe('0px');
+    expect(context.textContent).toContain('blocked_needs_captain');
+    expect(context.textContent).toContain('Facilitator scotty');
+    expect(useStore.getState().crewSessionSummariesByThread.get('t1')).toEqual(session);
+
+    fireEvent.change(screen.getByTestId('rooms-search'), { target: { value: 'navigation anomaly' } });
+    expect(screen.getByTestId('chat-row-t1')).toBeTruthy();
+  });
+
+  it('renders the same complete compact session context for a one-owner row', async () => {
+    const session: CrewSessionSummaryProjection = {
+      task_id: 'task-solo',
+      thread_id: 'g3',
+      goal: 'Prepare the verified medical readiness brief',
+      state: 'done',
+      facilitator_id: 'mccoy',
+      owner_ids: ['mccoy'],
+      progress: { total: 3, done: 2, failed: 1, active: 0 },
+      last_result_summary: 'Readiness brief accepted.',
+      blocker: null,
+      needs_attention: false,
+      result_artifact_id: 'artifact-medical',
+      verified_at: Date.now() / 1000 - 120,
+    };
+    await renderOpen(ALL, AGENTS, {
+      g3: { outputs: 1, steps_total: 3, steps_done: 2, topic: session.goal, session },
+    });
+
+    const row = screen.getByTestId('chat-row-g3');
+    const context = screen.getByTestId('room-session-g3');
+    expect(row.textContent).toContain(session.goal);
+    expect(context.textContent).toContain('done · 2/3 done · 0 active · 1 failed');
+    expect(context.textContent).toContain('Facilitator mccoy · Owners mccoy');
+    expect(context.textContent).toContain('Readiness brief accepted.');
+    expect(context.textContent).toContain('Result artifact-medical · verified');
+    expect(row.textContent).not.toContain('\u2713');
+  });
+
+  it('retains exact generic non-session one-owner markup and styles', async () => {
+    await renderOpen();
+
+    const row = screen.getByTestId('chat-row-g3');
+    const title = screen.getByText('Bones');
+    expect(row.textContent).toContain('Bones');
+    expect(row.hasAttribute('data-needs-attention')).toBe(false);
+    expect(row.querySelector('[data-testid="room-session-g3"]')).toBeNull();
+    expect(row.querySelector('[data-testid="chat-agent-badge"]')).toBeNull();
+    expect(screen.queryByTestId('chat-join-g3')).toBeNull();
+    expect(row.style.display).toBe('flex');
+    expect(row.style.alignItems).toBe('center');
+    expect(row.style.gap).toBe('8px');
+    expect(row.style.minWidth).toBe('');
+    expect(title.style.fontSize).toBe('13px');
+    expect(title.style.fontWeight).toBe('600');
+    expect(title.style.minWidth).toBe('');
+    expect(title.style.overflowWrap).toBe('');
+    expect(title.style.whiteSpace).toBe('');
+  });
+
+  it('retains exact generic non-session group markup and styles', async () => {
+    await renderOpen();
+
+    const row = screen.getByTestId('chat-row-g1');
+  const title = within(row).getByText('Bones, Scott');
+    expect(row.hasAttribute('data-needs-attention')).toBe(false);
+    expect(row.querySelector('[data-testid="room-session-g1"]')).toBeNull();
+    expect(row.style.display).toBe('');
+    expect(row.style.minWidth).toBe('');
+    expect(title.style.fontSize).toBe('13px');
+    expect(title.style.fontWeight).toBe('600');
+    expect(title.style.minWidth).toBe('');
+    expect(title.style.overflowWrap).toBe('');
+    expect(title.style.whiteSpace).toBe('');
+  });
+
+  it('keeps the legacy generic room badge including its checkmark', async () => {
+    await renderOpen(ALL, AGENTS, {
+      g1: { outputs: 0, steps_total: 3, steps_done: 2, topic: 'Generic work' },
+    });
+
+    expect(screen.getByTestId('room-badge-g1').textContent).toBe('\u2713 2/3');
+  });
+
+  it('renders session verification at epoch zero', async () => {
+    const session: CrewSessionSummaryProjection = {
+      task_id: 'task-solo',
+      thread_id: 'g3',
+      goal: 'Archive the verified readiness brief',
+      state: 'done',
+      facilitator_id: 'mccoy',
+      owner_ids: ['mccoy'],
+      progress: { total: 1, done: 1, failed: 0, active: 0 },
+      last_result_summary: 'Archive complete.',
+      blocker: null,
+      needs_attention: false,
+      result_artifact_id: 'artifact-epoch',
+      verified_at: 0,
+    };
+    await renderOpen(ALL, AGENTS, {
+      g3: { outputs: 1, steps_total: 1, steps_done: 1, topic: session.goal, session },
+    });
+
+    const context = screen.getByTestId('room-session-g3');
+    expect(context.textContent).toContain('verified');
+    expect(context.textContent).toContain('1970');
+  });
+
+  it('Needs You includes blocked sessions before existing unjoined alerts', async () => {
+    const blocked: CrewSessionSummaryProjection = {
+      task_id: 'task-1',
+      thread_id: 't1',
+      goal: 'Captain decision needed',
+      state: 'blocked_needs_captain',
+      facilitator_id: 'mccoy',
+      owner_ids: ['mccoy', 'scotty'],
+      progress: { total: 1, done: 0, failed: 0, active: 1 },
+      last_result_summary: '',
+      blocker: { reason: 'Choose route', since: 10, duration_seconds: 30 },
+      needs_attention: true,
+      result_artifact_id: null,
+      verified_at: null,
+    };
+    await renderOpen(ALL, AGENTS, {
+      t1: { outputs: 0, steps_total: 0, steps_done: 0, topic: blocked.goal, session: blocked },
+    });
+    fireEvent.click(screen.getByTestId('rooms-filter-needs'));
+
+    const ids = screen.getAllByTestId(/^chat-row-/).map(row => row.getAttribute('data-testid'));
+    expect(ids).toEqual(['chat-row-t1', 'chat-row-g4']);
+    expect(screen.getByTestId('chat-row-t1').getAttribute('data-needs-attention')).toBe('true');
   });
 
   it('self-gates: renders nothing when closed', () => {

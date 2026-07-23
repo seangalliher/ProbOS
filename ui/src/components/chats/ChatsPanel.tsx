@@ -20,10 +20,10 @@
  */
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useStore, type AD791aChatThreadView } from '../../store/useStore';
-import type { Agent } from '../../store/types';
+import type { Agent, CrewSessionSummaryProjection, RoomSummary } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { UserPlus, Close } from '../icons/Glyphs';
-import { listThreads, addParticipant, getThread, fetchRoomSummaries, type RoomSummary } from '../sidebar/threadApi';
+import { listThreads, addParticipant, getThread, fetchRoomSummaries } from '../sidebar/threadApi';
 import { NewChatModal } from './NewChatModal';
 import {
   CAPTAIN_PARTICIPANT_ID,
@@ -56,6 +56,11 @@ function fmtAgo(tsSeconds: number | undefined): string {
   return new Date(tsSeconds * 1000).toLocaleDateString();
 }
 
+function fmtSessionVerifiedAt(tsSeconds: number): string {
+  if (tsSeconds === 0) return '1970-01-01';
+  return fmtAgo(tsSeconds);
+}
+
 // Local inline header glyph (LeftRail GlyphAgents precedent — keeps Glyphs.tsx
 // and its export-count test untouched). Stroke-based, no fill, no emoji.
 function GlyphGroup({ color }: { color: string }) {
@@ -83,6 +88,7 @@ export default function ChatsPanel() {
   // MeetingView / the meetingActive selector (all read chatThreads.get(id))
   // resolve, and the thread-keyed transcript can load on open.
   const setChatThread = useStore((s) => s.setChatThread);
+  const hydrateCrewSessionSummaries = useStore((s) => s.hydrateCrewSessionSummaries);
   // AD-971: the live chatThreads store. A participant added from the
   // GroupChatHeader writes the updated thread here (setChatThread) and bumps
   // last_active_at, but ChatsPanel keeps its own listThreads() snapshot. Reading
@@ -140,11 +146,19 @@ export default function ChatsPanel() {
     void listThreads({ includeArchived: false }).then((list) => {
       if (active) setThreads(list);
     });
-    void Promise.resolve().then(() => fetchRoomSummaries?.()).then((s) => { if (active && s) setSummaries(s); }).catch(() => {});
+    void fetchRoomSummaries().then((nextSummaries) => {
+      if (!active) return;
+      setSummaries(nextSummaries);
+      const sessionSummaries: Record<string, CrewSessionSummaryProjection> = {};
+      for (const [threadId, summary] of Object.entries(nextSummaries)) {
+        if ('session' in summary) sessionSummaries[threadId] = summary.session;
+      }
+      hydrateCrewSessionSummaries(sessionSummaries);
+    }).catch(() => {});
     return () => {
       active = false;
     };
-  }, [open]);
+  }, [hydrateCrewSessionSummaries, open]);
 
   // AD-940: header drag (GamePanel.startDrag pattern) — capture the offset on
   // mousedown, track window mousemove, and tear the listeners down on mouseup.
@@ -184,10 +198,18 @@ export default function ChatsPanel() {
     .filter((t) => isCollabRoom(t, agents))
     .filter((t) => {
       const q = query.trim().toLowerCase();
-      return !q || chatDisplayName(t, agents).toLowerCase().includes(q);
+      const summary = summaries[t.id];
+      const title = summary && 'session' in summary
+        ? summary.session.goal
+        : chatDisplayName(t, agents);
+      return !q || title.toLowerCase().includes(q);
     })
     .filter((t) => {
-      if (filter === 'needs') return isAgentCreated(t) && !captainJoined(t);
+      const summary = summaries[t.id];
+      const blocked = !!(summary && 'session' in summary && summary.session.needs_attention);
+      if (filter === 'needs') {
+        return blocked || (isAgentCreated(t) && !captainJoined(t));
+      }
       if (filter === 'rooms') return isTaskRoom(t) || isGroupChat(t, agents);
       if (filter === 'dms') return !isTaskRoom(t) && !isGroupChat(t, agents);
       return true;
@@ -200,10 +222,19 @@ export default function ChatsPanel() {
       return ageS < 2592000; // month
     })
     .sort((a, b) => {
-      const aAlert = isAgentCreated(a) && !captainJoined(a) ? 1 : 0;
-      const bAlert = isAgentCreated(b) && !captainJoined(b) ? 1 : 0;
-      if (aAlert !== bAlert) return bAlert - aAlert;
-      if (sort === 'name') return chatDisplayName(a, agents).localeCompare(chatDisplayName(b, agents));
+      const aSummary = summaries[a.id];
+      const bSummary = summaries[b.id];
+      const aBlocked = !!(aSummary && 'session' in aSummary && aSummary.session.needs_attention);
+      const bBlocked = !!(bSummary && 'session' in bSummary && bSummary.session.needs_attention);
+      const aPriority = aBlocked ? 2 : isAgentCreated(a) && !captainJoined(a) ? 1 : 0;
+      const bPriority = bBlocked ? 2 : isAgentCreated(b) && !captainJoined(b) ? 1 : 0;
+      if (aPriority !== bPriority) return bPriority - aPriority;
+      if (sort === 'name') {
+        const aTitle = aSummary && 'session' in aSummary ? aSummary.session.goal : chatDisplayName(a, agents);
+        const bTitle = bSummary && 'session' in bSummary ? bSummary.session.goal : chatDisplayName(b, agents);
+        const nameOrder = aTitle.localeCompare(bTitle);
+        if (nameOrder !== 0) return nameOrder;
+      }
       return (b.last_active_at ?? 0) - (a.last_active_at ?? 0);
     });
 
@@ -214,6 +245,28 @@ export default function ChatsPanel() {
       <span data-testid={`room-badge-${id}`} style={{ fontSize: 9, color: COLOR_INACTIVE, marginRight: 6 }}>
         {s.steps_total > 0 ? `\u2713 ${s.steps_done}/${s.steps_total}` : ''}{s.steps_total > 0 && s.outputs > 0 ? ' \u00b7 ' : ''}{s.outputs > 0 ? `${s.outputs} out` : ''}
       </span>
+    );
+  };
+
+  const sessionContext = (id: string) => {
+    const summary = summaries[id];
+    if (!summary || !('session' in summary)) return null;
+    const session = summary.session;
+    return (
+      <div data-testid={`room-session-${id}`} style={{ minWidth: 0, marginBottom: 8, color: '#9a94a8', fontSize: 10, overflowWrap: 'anywhere', whiteSpace: 'normal' }}>
+        <div>
+          {session.state} · {session.progress.done}/{session.progress.total} done · {session.progress.active} active · {session.progress.failed} failed
+        </div>
+        <div style={{ marginTop: 3 }}>
+          Facilitator {session.facilitator_id} · Owners {session.owner_ids.join(', ')}
+        </div>
+        {session.last_result_summary ? <div style={{ marginTop: 3 }}>{session.last_result_summary}</div> : null}
+        {session.result_artifact_id ? (
+          <div style={{ marginTop: 3 }}>
+            Result {session.result_artifact_id}{session.verified_at !== null ? ` · verified ${fmtSessionVerifiedAt(session.verified_at)}` : ''}
+          </div>
+        ) : null}
+      </div>
     );
   };
 
@@ -401,11 +454,50 @@ export default function ChatsPanel() {
           chats.map((thread) => {
             const group = isGroupChat(thread, agents);
             const crewIds = crewParticipantIds(thread, agents);
+            const summary = summaries[thread.id];
+            const session = summary && 'session' in summary ? summary.session : null;
+            const rowTitle = session?.goal ?? chatDisplayName(thread, agents);
 
             // ── 1:1 row — a single crew avatar + callsign, no Join, no badge.
             if (!group) {
               const soloId = crewIds[0];
               const solo = agents.get(soloId);
+              if (session) {
+                return (
+                  <div
+                    key={thread.id}
+                    data-testid={`chat-row-${thread.id}`}
+                    data-needs-attention={session.needs_attention ? 'true' : 'false'}
+                    onClick={() => void handleOpen(thread)}
+                    style={{
+                      cursor: 'pointer',
+                      padding: '10px 12px',
+                      marginBottom: 6,
+                      borderRadius: 6,
+                      border: '1px solid rgba(240, 176, 96, 0.12)',
+                      background: 'rgba(240, 176, 96, 0.04)',
+                      minWidth: 0,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, minWidth: 0 }}>
+                      <AgentAvatarBadge
+                        agentId={soloId}
+                        callsign={solo?.callsign ?? '?'}
+                        department={deptOf(solo)}
+                        size={24}
+                      />
+                      <span style={{ fontSize: 13, fontWeight: 600, color: COLOR_ACTIVE, minWidth: 0, overflowWrap: 'anywhere', whiteSpace: 'normal' }}>
+                        {rowTitle}
+                      </span>
+                      <div style={{ flex: 1 }} />
+                      <span data-testid={`room-time-${thread.id}`} style={{ fontSize: 10, color: COLOR_INACTIVE }}>
+                        {fmtAgo(thread.last_active_at)}
+                      </span>
+                    </div>
+                    {sessionContext(thread.id)}
+                  </div>
+                );
+              }
               return (
                 <div
                   key={thread.id}
@@ -447,6 +539,99 @@ export default function ChatsPanel() {
             const creatorRaw = thread.metadata?.created_by_agent;
             const creatorId = typeof creatorRaw === 'string' ? creatorRaw : '';
             const creatorCallsign = agents.get(creatorId)?.callsign ?? creatorId;
+            if (session) {
+              return (
+                <div
+                  key={thread.id}
+                  data-testid={`chat-row-${thread.id}`}
+                  data-needs-attention={session.needs_attention ? 'true' : 'false'}
+                  onClick={() => void handleOpen(thread)}
+                  style={{
+                    cursor: 'pointer',
+                    padding: '10px 12px',
+                    marginBottom: 6,
+                    borderRadius: 6,
+                    border: '1px solid rgba(240, 176, 96, 0.12)',
+                    background: 'rgba(240, 176, 96, 0.04)',
+                    minWidth: 0,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, minWidth: 0 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: COLOR_ACTIVE, minWidth: 0, overflowWrap: 'anywhere', whiteSpace: 'normal' }}>
+                      {rowTitle}
+                    </span>
+                    {agentCreated && (
+                      <span
+                        data-testid="chat-agent-badge"
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 700,
+                          letterSpacing: 0.5,
+                          color: '#0a0a12',
+                          background: COLOR_ACTIVE,
+                          borderRadius: 8,
+                          padding: '1px 8px',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Started by {creatorCallsign}
+                      </span>
+                    )}
+                    <div style={{ flex: 1 }} />
+                    <span style={{ fontSize: 10, color: COLOR_INACTIVE }}>{fmtAgo(thread.last_active_at)}</span>
+                  </div>
+
+                  {sessionContext(thread.id)}
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {crewIds.map((id) => (
+                      <AgentAvatarBadge
+                        key={id}
+                        agentId={id}
+                        callsign={agents.get(id)?.callsign ?? '?'}
+                        department={deptOf(agents.get(id))}
+                        size={24}
+                      />
+                    ))}
+                    <div style={{ flex: 1 }} />
+                    {!joined ? (
+                      <button
+                        data-testid={`chat-join-${thread.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleJoin(thread);
+                        }}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          cursor: 'pointer',
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: 1,
+                          color: COLOR_ACTIVE,
+                          background: 'rgba(240,176,96,0.08)',
+                          border: '1px solid rgba(240,176,96,0.35)',
+                          borderRadius: 6,
+                          padding: '4px 10px',
+                        }}
+                      >
+                        <UserPlus size={12} />
+                        Join
+                      </button>
+                    ) : (
+                      <span
+                        data-testid={`chat-joined-${thread.id}`}
+                        style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: COLOR_INACTIVE }}
+                      >
+                        Joined
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            }
             return (
               <div
                 key={thread.id}

@@ -27,6 +27,7 @@ import type {
   BillDefinitionView, BillInstanceView,  // AD-618d
   WorkstationDoc,  // AD-1021
   Workspace,  // AD-1023
+  CrewSessionDetailProjection, CrewSessionSummaryProjection,  // AD-1132
 } from './types';
 
 // AD-562: Knowledge Browser types
@@ -346,6 +347,8 @@ export interface HXIState {
   // existing selectors depend on these, so adding them is additive.
   threadIdByAgent: Map<string, string>;
   chatThreads: Map<string, AD791aChatThreadView>;
+  crewSessionsByParent: ReadonlyMap<string, CrewSessionDetailProjection>;
+  crewSessionSummariesByThread: ReadonlyMap<string, CrewSessionSummaryProjection>;
   // AD-938: thread-keyed display transcript. When a thread is active the
   // profile chat tab renders these (the thread's real messages) instead of the
   // per-agent ``agentConversations`` buffer; loaded on open + reconciled on
@@ -525,6 +528,13 @@ export interface HXIState {
   // the response.thread_id field here; AD-792 sidebar consumes the hydrated map.
   setThreadForAgent: (agentId: string, threadId: string) => void;
   setChatThread: (thread: AD791aChatThreadView) => void;
+  hydrateCrewSession: (
+    parentId: string,
+    projection: CrewSessionDetailProjection,
+  ) => void;
+  hydrateCrewSessionSummaries: (
+    summaries: Readonly<Record<string, CrewSessionSummaryProjection>>,
+  ) => void;
   // AD-938: thread-keyed display transcript actions (mirror the chatThreads Map
   // pattern). ``setThreadMessages`` replaces a thread's list (load-on-open);
   // ``appendThreadMessage`` adds one message (send-reconcile), capped to 200.
@@ -877,6 +887,8 @@ export const useStore = create<HXIState>((set, get) => ({
   // populate them as turns and /api/threads responses land.
   threadIdByAgent: new Map(),
   chatThreads: new Map(),
+  crewSessionsByParent: new Map(),
+  crewSessionSummariesByThread: new Map(),
   // AD-938: empty at boot; ProfileChatTab populates per active thread.
   threadMessages: new Map(),
   activeThreadId: null,
@@ -1401,6 +1413,19 @@ export const useStore = create<HXIState>((set, get) => ({
     const next = new Map(get().chatThreads);
     next.set(thread.id, thread);
     set({ chatThreads: next });
+  },
+  hydrateCrewSession: (parentId, projection) => {
+    if (projection.task_id !== parentId) return;
+    const next = new Map(get().crewSessionsByParent);
+    next.set(parentId, projection);
+    set({ crewSessionsByParent: next });
+  },
+  hydrateCrewSessionSummaries: (summaries) => {
+    const next = new Map<string, CrewSessionSummaryProjection>();
+    for (const [threadId, projection] of Object.entries(summaries)) {
+      if (projection.thread_id === threadId) next.set(threadId, projection);
+    }
+    set({ crewSessionSummariesByThread: next });
   },
   // AD-938: replace a thread's display transcript (load-on-open).
   setThreadMessages: (threadId, msgs) => {

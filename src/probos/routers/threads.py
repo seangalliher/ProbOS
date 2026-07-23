@@ -21,6 +21,14 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from probos.crew_session_projection import (
+    CREW_SESSION_PROJECTION_ERROR,
+    CrewSessionDetailProjection,
+    CrewSessionProjectionError,
+    build_crew_session_detail,
+    build_crew_session_summary,
+    validate_synthesis_metadata,
+)
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
 
@@ -179,6 +187,36 @@ class StartWorkRequest(BaseModel):
     retry_blocked: bool = False
 
 
+async def _build_crew_session_detail(
+    runtime: Any,
+    parent: Any,
+) -> CrewSessionDetailProjection:
+    service = getattr(runtime, "crew_session_service", None)
+    work_item_store = getattr(runtime, "work_item_store", None)
+    if service is None or work_item_store is None:
+        raise CrewSessionProjectionError()
+    session = await service.get_session(parent.id)
+    if session is None or session.task_id != parent.id:
+        raise CrewSessionProjectionError()
+    metadata = parent.metadata
+    if type(metadata) is not dict:
+        raise CrewSessionProjectionError()
+    synthesis = (
+        validate_synthesis_metadata(metadata["crew_synth"])
+        if "crew_synth" in metadata
+        else None
+    )
+    children = await work_item_store.list_work_items(
+        parent_id=parent.id,
+        limit=1001,
+    )
+    return build_crew_session_detail(
+        session=session,
+        synthesis=synthesis,
+        children=children,
+    )
+
+
 @router.get("")
 async def list_threads(
     include_archived: bool = False,
@@ -232,6 +270,7 @@ async def thread_summaries(runtime: Any = Depends(get_runtime)) -> dict:
                 pass
         tid = getattr(t, "task_id", None)
         if tid and wis is not None:
+            item = None
             try:
                 item = await wis.get_work_item(tid)
                 steps = (item.steps if item else []) or []
@@ -241,6 +280,22 @@ async def thread_summaries(runtime: Any = Depends(get_runtime)) -> dict:
                     s["topic"] = item.title
             except Exception:
                 pass
+            if item is not None and item.work_type == "crew_session":
+                try:
+                    detail = await _build_crew_session_detail(runtime, item)
+                    if detail.thread_id != t.id:
+                        raise CrewSessionProjectionError()
+                    summary = build_crew_session_summary(detail)
+                    s["topic"] = detail.goal
+                    s["session"] = summary.to_wire()
+                except Exception:
+                    logger.warning(
+                        "AD-1132: thread %s parent %s projection failed (%s); "
+                        "returning four-key legacy summary",
+                        t.id,
+                        item.id,
+                        CREW_SESSION_PROJECTION_ERROR,
+                    )
         out[t.id] = s
     return {"summaries": out}
 
@@ -276,7 +331,12 @@ async def start_thread_work(
     """
     dispatch = getattr(getattr(runtime, "config", None), "agentic_dispatch", None)
     service = getattr(runtime, "crew_session_service", None)
-    if not getattr(dispatch, "orchestrator_enabled", False) or service is None:
+    work_item_store = getattr(runtime, "work_item_store", None)
+    if (
+        not getattr(dispatch, "orchestrator_enabled", False)
+        or service is None
+        or work_item_store is None
+    ):
         raise HTTPException(
             status_code=503,
             detail="CrewSession ingress is not available",
@@ -317,6 +377,29 @@ async def start_thread_work(
         else:
             status = 422
         raise HTTPException(status_code=status, detail=code) from exc
+    try:
+        parent = await work_item_store.get_work_item(result.parent_id)
+        if parent is None or parent.work_type != "crew_session":
+            raise CrewSessionProjectionError()
+        detail = await _build_crew_session_detail(runtime, parent)
+        if (
+            detail.task_id != result.parent_id
+            or detail.thread_id != result.thread_id
+            or detail.thread_id != thread_id
+            or detail.state != result.state
+        ):
+            raise CrewSessionProjectionError()
+    except Exception as exc:
+        logger.warning(
+            "AD-1132: CrewSession parent %s projection failed (%s) after "
+            "Start Work admission; returning stable 409",
+            result.parent_id,
+            CREW_SESSION_PROJECTION_ERROR,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=CREW_SESSION_PROJECTION_ERROR,
+        ) from exc
     return {
         "disposition": result.disposition,
         "parent_id": result.parent_id,
@@ -326,6 +409,7 @@ async def start_thread_work(
         "owner_ids": list(result.owner_ids),
         "duplicate_resume_count": result.duplicate_resume_count,
         "scheduled": result.scheduled,
+        "session": detail.to_wire(),
     }
 
 

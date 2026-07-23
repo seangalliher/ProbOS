@@ -577,6 +577,213 @@ export interface WorkItemView {
   template_id: string | null;
 }
 
+export type CrewSessionState =
+  | 'discussing'
+  | 'executing'
+  | 'verifying'
+  | 'blocked_needs_captain'
+  | 'done'
+  | 'failed';
+
+export type CrewSessionOrigin = 'captain' | 'agent';
+
+export interface LegacyCrewVerdict {
+  readonly accepted: boolean | null;
+  readonly confidence: number | null;
+  readonly critique: string;
+  readonly verifier_agent_id: string;
+}
+
+export interface LegacyCrewWorkItemView {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly work_type: string;
+  readonly status: string;
+  readonly priority: number;
+  readonly parent_id: string | null;
+  readonly depends_on: readonly string[];
+  readonly assigned_to: string | null;
+  readonly created_by: string;
+  readonly created_at: number;
+  readonly updated_at: number;
+  readonly due_at: number | null;
+  readonly estimated_tokens: number | null;
+  readonly actual_tokens: number;
+  readonly trust_requirement: number;
+  readonly required_capabilities: readonly string[];
+  readonly tags: readonly string[];
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly steps: readonly Readonly<Record<string, unknown>>[];
+  readonly verification: Readonly<Record<string, unknown>>;
+  readonly schedule: Readonly<Record<string, unknown>>;
+  readonly ttl_seconds: number | null;
+  readonly template_id: string | null;
+}
+
+export interface LegacyCrewChildView extends LegacyCrewWorkItemView {
+  readonly verdict: LegacyCrewVerdict | null;
+  readonly rounds: number | null;
+}
+
+export interface LegacyCrewTaskTree {
+  readonly parent: LegacyCrewWorkItemView;
+  readonly children: readonly LegacyCrewChildView[];
+  readonly count: number;
+}
+
+export interface CrewSessionActiveChildProjection {
+  readonly id: string;
+  readonly title: string;
+  readonly status: string;
+  readonly owner_id: string | null;
+}
+
+export interface CrewSessionTimestampsProjection {
+  readonly created_at: number;
+  readonly transitioned_at: number;
+  readonly started_at: number | null;
+  readonly first_result_at: number | null;
+  readonly verified_at: number | null;
+  readonly completed_at: number | null;
+}
+
+export interface CrewSessionDetailProgressProjection {
+  readonly total: number;
+  readonly done: number;
+  readonly failed: number;
+  readonly active: number;
+  readonly active_child: CrewSessionActiveChildProjection | null;
+}
+
+export interface CrewSessionBlockerProjection {
+  readonly reason: string;
+  readonly since: number;
+  readonly duration_seconds: number;
+  readonly action: 'retry_start_work';
+}
+
+export interface CrewSessionResultProjection {
+  readonly artifact_id: string;
+  readonly content_hash: string;
+  readonly result_ref: string;
+  readonly evidence_refs: readonly string[];
+}
+
+export interface CrewSessionVerificationProjection {
+  readonly verifier_agent_id: string;
+  readonly confidence: number;
+  readonly critique: string;
+  readonly accepted_count: number;
+  readonly total_count: number;
+  readonly convergence_rounds: number;
+}
+
+export interface CrewSessionDetailProjection {
+  readonly task_id: string;
+  readonly thread_id: string;
+  readonly goal: string;
+  readonly origin: CrewSessionOrigin;
+  readonly originator_id: string;
+  readonly facilitator_id: string;
+  readonly owner_ids: readonly string[];
+  readonly state: CrewSessionState;
+  readonly revision: number;
+  readonly success_criteria: readonly string[];
+  readonly expected_deliverable: string;
+  readonly timestamps: CrewSessionTimestampsProjection;
+  readonly progress: CrewSessionDetailProgressProjection;
+  readonly last_result_summary: string;
+  readonly blocker: CrewSessionBlockerProjection | null;
+  readonly result: CrewSessionResultProjection | null;
+  readonly verification: CrewSessionVerificationProjection | null;
+  readonly duplicate_resume_count: number;
+}
+
+export interface CrewSessionSummaryProgressProjection {
+  readonly total: number;
+  readonly done: number;
+  readonly failed: number;
+  readonly active: number;
+}
+
+export interface CrewSessionSummaryProjection {
+  readonly task_id: string;
+  readonly thread_id: string;
+  readonly goal: string;
+  readonly state: CrewSessionState;
+  readonly facilitator_id: string;
+  readonly owner_ids: readonly string[];
+  readonly progress: CrewSessionSummaryProgressProjection;
+  readonly last_result_summary: string;
+  readonly blocker: null | {
+    readonly reason: string;
+    readonly since: number;
+    readonly duration_seconds: number;
+  };
+  readonly needs_attention: boolean;
+  readonly result_artifact_id: string | null;
+  readonly verified_at: number | null;
+}
+
+export interface LegacyRoomSummary {
+  readonly outputs: number;
+  readonly steps_total: number;
+  readonly steps_done: number;
+  readonly topic: string;
+}
+
+export interface CrewSessionRoomSummary extends LegacyRoomSummary {
+  readonly session: CrewSessionSummaryProjection;
+}
+
+export type RoomSummary = LegacyRoomSummary | CrewSessionRoomSummary;
+
+export type CrewTaskDetailResponse =
+  | LegacyCrewTaskTree
+  | { readonly session: CrewSessionDetailProjection };
+
+export type CrewTaskDetailOutcome =
+  | { readonly kind: 'success'; readonly response: CrewTaskDetailResponse }
+  | { readonly kind: 'empty' }
+  | { readonly kind: 'error'; readonly status: number | null };
+
+export interface StartWorkRequest {
+  readonly goal: string;
+  readonly success_criteria: readonly string[];
+  readonly expected_deliverable: string;
+  readonly facilitator_id?: string | null;
+  readonly owner_ids?: readonly string[] | null;
+  readonly retry_blocked: boolean;
+}
+
+export interface StartWorkResult {
+  readonly disposition: 'created' | 'resumed' | 'blocked';
+  readonly parent_id: string;
+  readonly thread_id: string;
+  readonly state: CrewSessionState;
+  readonly facilitator_id: string;
+  readonly owner_ids: readonly string[];
+  readonly duplicate_resume_count: number;
+  readonly scheduled: boolean;
+  readonly session: CrewSessionDetailProjection;
+}
+
+export interface CrewSessionRetryCommand {
+  readonly requestId: number;
+  readonly parentId: string;
+  readonly threadId: string;
+  readonly projection: CrewSessionDetailProjection;
+  readonly opener: HTMLButtonElement;
+}
+
+export interface CrewSessionArtifactCommand {
+  readonly requestId: number;
+  readonly parentId: string;
+  readonly threadId: string;
+  readonly artifactId: string;
+}
+
 export interface BookingView {
   id: string;
   resource_id: string;

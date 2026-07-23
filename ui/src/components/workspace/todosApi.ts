@@ -6,6 +6,11 @@
  * Honest-degrade: non-ok responses throw so the caller's try/catch shows an
  * empty section instead of crashing the rail.
  */
+import type { StartWorkRequest, StartWorkResult } from '../../store/types';
+import { isCrewSessionDetailProjection } from '../sidebar/threadApi';
+
+export type { StartWorkRequest, StartWorkResult } from '../../store/types';
+
 export interface TodoStep {
   label: string;
   status: 'pending' | 'in_progress' | 'submitted' | 'done' | 'rejected';
@@ -38,21 +43,6 @@ export async function updateTaskStep(
   if (!res.ok) throw new Error(`updateTaskStep: ${res.status}`);
 }
 
-export interface StartWorkRequest {
-  goal: string;
-  success_criteria: string[];
-  expected_deliverable: string;
-  retry_blocked: boolean;
-}
-
-export interface StartWorkResult {
-  disposition: 'created' | 'resumed' | 'blocked';
-  parent_id: string;
-  thread_id: string;
-  state: string;
-  scheduled: boolean;
-}
-
 export async function startRoomWork(
   threadId: string,
   body: StartWorkRequest,
@@ -77,14 +67,25 @@ export async function startRoomWork(
     }
     throw new Error(detail);
   }
-  const result = await response.json();
+  const result: unknown = await response.json();
   if (
-    typeof result?.parent_id !== 'string'
-    || !result.parent_id
-    || typeof result.thread_id !== 'string'
-    || !result.thread_id
+    typeof result !== 'object'
+    || result === null
+    || typeof (result as Record<string, unknown>).parent_id !== 'string'
+    || !(result as Record<string, unknown>).parent_id
+    || typeof (result as Record<string, unknown>).thread_id !== 'string'
+    || !(result as Record<string, unknown>).thread_id
+    || !isCrewSessionDetailProjection((result as Record<string, unknown>).session)
   ) {
     throw new Error('Start Work returned an invalid result');
   }
-  return result as StartWorkResult;
+  const typed = result as unknown as StartWorkResult;
+  if (
+    typed.session.task_id !== typed.parent_id
+    || typed.session.thread_id !== typed.thread_id
+    || typed.session.state !== typed.state
+  ) {
+    throw new Error('Start Work returned an invalid result');
+  }
+  return typed;
 }

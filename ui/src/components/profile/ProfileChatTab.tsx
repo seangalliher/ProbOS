@@ -35,7 +35,13 @@ import {
 } from '../../audio/transformersStt';
 import { MicIndicator } from './MicIndicator';
 import { subscribePcm } from '../../audio/voiceActivity';
-import type { ChatAttachment } from '../../store/types';
+import type {
+  ChatAttachment,
+  CrewSessionArtifactCommand,
+  CrewSessionDetailProjection,
+  CrewSessionRetryCommand,
+  StartWorkResult,
+} from '../../store/types';
 // AD-938: thread-keyed transcript helpers (extracted for testability — the
 // AD-936 ChatMessageRow precedent; keeps the heavy audio deps out of the test).
 import { selectTranscriptMessages, loadThreadMessages, buildTranscriptItems } from './profileTranscript';
@@ -65,6 +71,7 @@ import { useScreenStore } from '../../store/useScreenStore';
 // AD-929: unified workspace "Files" rail (Inputs + Outputs), gated to rooms.
 import { WorkspaceFilesRail } from '../workspace/WorkspaceFilesRail';
 import { isWorkspaceRoom } from '../workspace/isWorkspaceRoom';
+import CrewCollaborationPanel from '../crew/CrewCollaborationPanel';
 
 interface Props {
   agentId: string;
@@ -663,6 +670,108 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const workspaceThread = useStore((s) => (activeThreadId ? s.chatThreads.get(activeThreadId) : undefined));
   const agentsMap = useStore((s) => s.agents);
   const showWorkspaceFiles = !!activeThreadId && isWorkspaceRoom(workspaceThread, agentsMap);
+  const [boundCrewSession, setBoundCrewSession] = useState<{
+    threadId: string;
+    parentId: string;
+  } | null>(null);
+  const [crewRetryCommand, setCrewRetryCommand] = useState<CrewSessionRetryCommand | null>(null);
+  const [crewArtifactCommand, setCrewArtifactCommand] = useState<CrewSessionArtifactCommand | null>(null);
+  const [crewSessionFocusRequest, setCrewSessionFocusRequest] = useState<{
+    threadId: string;
+    parentId: string;
+    generation: number;
+  } | null>(null);
+  const crewCommandRequestRef = useRef(0);
+  const crewSessionBandRef = useRef<HTMLElement | null>(null);
+  const roomTokenRef = useRef({ threadId: activeThreadId, generation: 0 });
+  if (roomTokenRef.current.threadId !== activeThreadId) {
+    roomTokenRef.current = {
+      threadId: activeThreadId,
+      generation: roomTokenRef.current.generation + 1,
+    };
+    crewCommandRequestRef.current += 1;
+  }
+  useEffect(() => {
+    setBoundCrewSession(null);
+    setCrewRetryCommand(null);
+    setCrewArtifactCommand(null);
+    setCrewSessionFocusRequest(null);
+  }, [activeThreadId]);
+  const boundCrewParentId = boundCrewSession && boundCrewSession.threadId === activeThreadId
+    ? boundCrewSession.parentId
+    : null;
+  const crewPanelParentId = workspaceThread?.task_id ?? boundCrewParentId;
+  const visibleCrewRetryCommand = crewRetryCommand?.threadId === activeThreadId
+    ? crewRetryCommand
+    : null;
+  const visibleCrewArtifactCommand = crewArtifactCommand?.threadId === activeThreadId
+    ? crewArtifactCommand
+    : null;
+  const handleCrewRetry = useCallback((
+    projection: CrewSessionDetailProjection,
+    opener: HTMLButtonElement,
+  ) => {
+    const roomId = roomTokenRef.current.threadId;
+    if (!roomId || projection.thread_id !== roomId) return;
+    setCrewRetryCommand({
+      requestId: ++crewCommandRequestRef.current,
+      parentId: projection.task_id,
+      threadId: roomId,
+      projection,
+      opener,
+    });
+  }, []);
+  const handleCrewArtifact = useCallback((
+    artifactId: string,
+    projection: CrewSessionDetailProjection,
+  ) => {
+    const roomId = roomTokenRef.current.threadId;
+    if (!roomId || projection.thread_id !== roomId) return;
+    setCrewArtifactCommand({
+      requestId: ++crewCommandRequestRef.current,
+      parentId: projection.task_id,
+      threadId: roomId,
+      artifactId,
+    });
+  }, []);
+  const handleSessionBound = useCallback((result: StartWorkResult) => {
+    const token = roomTokenRef.current;
+    if (token.threadId !== result.thread_id) return;
+    setBoundCrewSession({
+      threadId: result.thread_id,
+      parentId: result.parent_id,
+    });
+    if (
+      crewRetryCommand?.threadId === result.thread_id
+      && crewRetryCommand.parentId === result.parent_id
+    ) {
+      setCrewSessionFocusRequest({
+        threadId: result.thread_id,
+        parentId: result.parent_id,
+        generation: token.generation,
+      });
+    }
+  }, [crewRetryCommand]);
+  useEffect(() => {
+    const request = crewSessionFocusRequest;
+    if (!request || crewPanelParentId !== request.parentId) return;
+    const focus = () => {
+      const token = roomTokenRef.current;
+      if (
+        token.threadId !== request.threadId
+        || token.generation !== request.generation
+        || crewPanelParentId !== request.parentId
+      ) return;
+      const band = crewSessionBandRef.current;
+      if (band?.isConnected) band.focus();
+      setCrewSessionFocusRequest(current => current === request ? null : current);
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      const frame = requestAnimationFrame(focus);
+      return () => cancelAnimationFrame(frame);
+    }
+    queueMicrotask(focus);
+  }, [crewPanelParentId, crewSessionFocusRequest]);
   // AD-921: sequenced meeting voice. speakReplies self-gates on
   // meetingActive && callAudioEnabled; speakingAgentId is the AD-923 seam and the
   // AD-922 echo gate (the meeting mic refuses to arm while it is non-null).
@@ -1513,6 +1622,15 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           yet). Mutually exclusive with GroupChatHeader; materializes the thread
           so the header (+ its picker) takes over on the next render. */}
       {!activeThreadId && <EmptyChatAddPeople agentId={agentId} />}
+      {activeThreadId && crewPanelParentId && (
+        <CrewCollaborationPanel
+          threadId={activeThreadId}
+          parentId={crewPanelParentId}
+          sessionBandRef={crewSessionBandRef}
+          onRetryBlockedWork={handleCrewRetry}
+          onOpenResultArtifact={handleCrewArtifact}
+        />
+      )}
       {/* AD-920: meeting-mode avatar gallery — mounted below the controls when
           the thread is in a meeting (metadata.meeting_active). The thread
           remains the transcript below. AD-923: speakingAgentId lights the
@@ -2313,6 +2431,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         <WorkspaceFilesRail
           threadId={activeThreadId}
           taskId={workspaceThread?.task_id ?? null}
+          retryCommand={visibleCrewRetryCommand}
+          artifactCommand={visibleCrewArtifactCommand}
+          onSessionBound={handleSessionBound}
         />
       )}
     </div>
