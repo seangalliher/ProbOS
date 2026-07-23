@@ -102,10 +102,12 @@ function projection(
 }
 
 function json(body: unknown, status = 200): Response {
+  const serialized = JSON.stringify(body);
   return {
     ok: status >= 200 && status < 300,
     status,
     json: async () => body,
+    text: async () => serialized,
     headers: new Headers({ 'content-type': 'text/markdown' }),
     blob: async () => new Blob(['artifact body'], { type: 'text/markdown' }),
   } as Response;
@@ -114,6 +116,15 @@ function json(body: unknown, status = 200): Response {
 type NetworkOptions = {
   details: Record<string, CrewSessionDetailProjection>;
   startResult?: StartWorkResult;
+  messagesByThread?: Record<string, Array<{
+    id: string;
+    thread_id: string;
+    author_id: string;
+    role: string;
+    body: string;
+    created_at: number;
+    metadata: Record<string, unknown>;
+  }>>;
 };
 
 function installNetwork(options: NetworkOptions): ReturnType<typeof vi.fn> {
@@ -125,17 +136,24 @@ function installNetwork(options: NetworkOptions): ReturnType<typeof vi.fn> {
     }
     if (url.endsWith('/chat/history')) return Promise.resolve(json({ memories: [] }));
     if (url.endsWith('/profile')) return Promise.resolve(json({ voiceProfile: null }));
-    if (/\/api\/threads\/[^/]+\/messages\?limit=200$/.test(url)) {
-      return Promise.resolve(json({ messages: [] }));
+    const messageMatch = url.match(/^\/api\/threads\/([^/]+)\/messages\?limit=200$/);
+    if (messageMatch) {
+      return Promise.resolve(json({
+        thread_id: decodeURIComponent(messageMatch[1]),
+        messages: options.messagesByThread?.[decodeURIComponent(messageMatch[1])] ?? [],
+      }));
     }
     if (/\/api\/threads\/[^/]+\/inputs$/.test(url)) {
       return Promise.resolve(json({ inputs: [] }));
     }
-    if (/\/api\/artifacts\/thread\//.test(url)) {
-      return Promise.resolve(json({ artifacts: [] }));
+    const artifactMatch = url.match(/^\/api\/artifacts\/thread\/([^?]+)\?limit=1001$/);
+    if (artifactMatch) {
+      return Promise.resolve(json({
+        thread_id: decodeURIComponent(artifactMatch[1]), artifacts: [],
+      }));
     }
-    if (/\/api\/work-items\/[^/]+\/steps$/.test(url)) {
-      return Promise.resolve(json({ steps: [] }));
+    if (/\/api\/work-items\/[^/]+\/steps\?limit=1001$/.test(url)) {
+      return Promise.resolve(json({ steps: [], gate_completion: false }));
     }
     const detailMatch = url.match(/^\/api\/crew-tasks\/(.+)$/);
     if (detailMatch) {
@@ -181,6 +199,10 @@ function seed(threadRows: AD791aChatThreadView[]): void {
     callAudioEnabled: true,
     typingAgent: null,
     chatDrafts: {},
+    liveGeneration: null,
+    liveSequence: 0,
+    liveRepairEpoch: 0,
+    liveThreadRefresh: null,
   });
 }
 
@@ -201,6 +223,95 @@ afterEach(() => {
 });
 
 describe('AD-1132 ProfileChatTab CrewSession integration', () => {
+  it('repairs an active transcript only after the triggering message is authoritative', async () => {
+    const room = thread('t1', null);
+    const options: NetworkOptions = { details: {}, messagesByThread: { t1: [] } };
+    seed([room]);
+    useStore.getState().openGroupChatThread('host', 't1');
+    installNetwork(options);
+    render(<ProfileChatTab agentId="host" threadId="t1" />);
+    await waitFor(() => expect(useStore.getState().threadMessages.get('t1')).toEqual([]));
+    act(() => {
+      useStore.getState().handleEvent({
+        type: 'state_snapshot',
+        data: { agents: [], connections: [], pools: [], system_mode: 'active', tc_n: 0, routing_entropy: 0 },
+        timestamp: 1,
+        stream: { generation: 'a'.repeat(32), sequence: 0 },
+      });
+    });
+    options.messagesByThread!.t1 = [{
+      id: 'message-1', thread_id: 't1', author_id: 'peer', role: 'agent',
+      body: 'Live result arrived.', created_at: 5, metadata: {},
+    }];
+    act(() => {
+      useStore.getState().handleEvent({
+        type: 'chat_thread_message_appended',
+        data: { thread_id: 't1', message_id: 'message-1', author_id: 'peer', role: 'agent', created_at: 5 },
+        timestamp: 5,
+        stream: { generation: 'a'.repeat(32), sequence: 1 },
+      });
+    });
+    expect(await screen.findByText('Live result arrived.')).toBeTruthy();
+    expect(useStore.getState().threadMessages.get('t1')).toHaveLength(1);
+    act(() => {
+      useStore.getState().handleEvent({
+        type: 'chat_thread_message_appended',
+        data: { thread_id: 't1', message_id: 'message-1', author_id: 'peer', role: 'agent', created_at: 5 },
+        timestamp: 5,
+        stream: { generation: 'a'.repeat(32), sequence: 1 },
+      });
+    });
+    expect(useStore.getState().threadMessages.get('t1')).toHaveLength(1);
+  });
+
+  it('loads a newly owned room while the prior transcript request is pending', async () => {
+    const first = thread('t1', null);
+    const second = thread('t2', null);
+    seed([first, second]);
+    useStore.getState().openGroupChatThread('host', 't1');
+    let resolveFirst: ((value: Response) => void) | undefined;
+    const baseFetch = installNetwork({ details: {}, messagesByThread: {} });
+    const fallbackFetch = baseFetch as unknown as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/threads/t1/messages?limit=200') {
+        return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+      }
+      if (url === '/api/threads/t2/messages?limit=200') {
+        return Promise.resolve(json({
+          thread_id: 't2',
+          messages: [{
+            id: 'message-2', thread_id: 't2', author_id: 'peer', role: 'agent',
+            body: 'Second room is current.', created_at: 2, metadata: {},
+          }],
+        }));
+      }
+      return fallbackFetch(input, init);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const view = render(<ProfileChatTab agentId="host" threadId="t1" />);
+    await waitFor(() => expect(resolveFirst).toBeTypeOf('function'));
+
+    act(() => useStore.getState().openGroupChatThread('host', 't2'));
+    view.rerender(<ProfileChatTab agentId="host" threadId="t2" />);
+    expect(await screen.findByText('Second room is current.')).toBeTruthy();
+
+    await act(async () => {
+      resolveFirst?.(json({
+        thread_id: 't1',
+        messages: [{
+          id: 'message-1', thread_id: 't1', author_id: 'peer', role: 'agent',
+          body: 'First room is stale.', created_at: 1, metadata: {},
+        }],
+      }));
+    });
+    expect(screen.queryByText('First room is stale.')).toBeNull();
+    expect(useStore.getState().threadMessages.get('t2')).toHaveLength(1);
+  });
+
   it('mounts the panel in the chat column and forwards owned retry with zero passive writes', async () => {
     const room = thread('t1', 'p1');
     const blocked = projection('p1', 't1', 'blocked_needs_captain');

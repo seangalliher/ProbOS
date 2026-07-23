@@ -15,8 +15,11 @@ from typing import Any
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+
+from probos.routers.auth import verify_ws_token
+from probos.ws_event_stream import WSEventStreamHub
 
 # AD-516: Models moved to api_models.py — re-export for backwards compatibility
 from probos.api_models import (  # noqa: F401
@@ -106,17 +109,36 @@ async def _handle_slash_command(text: str, runtime: Any) -> dict[str, Any]:
 def create_app(runtime: Any) -> FastAPI:
     """Build the FastAPI application wired to *runtime*."""
 
+    event_hub = WSEventStreamHub(runtime)
+    event_listener = event_hub.ingress
+
     @asynccontextmanager
     async def _lifespan(app_instance: FastAPI):
-        """Application lifespan — drain background tasks on shutdown."""
-        yield
-        # Shutdown: cancel all tracked background tasks
-        if _background_tasks:
-            logger.info("Shutting down: cancelling %d background task(s)", len(_background_tasks))
-            for task in _background_tasks:
-                task.cancel()
-            await asyncio.gather(*_background_tasks, return_exceptions=True)
-            _background_tasks.clear()
+        """Application lifespan — own the event hub and background tasks."""
+        listener_handle = None
+        try:
+            await event_hub.start()
+            listener_handle = await runtime.register_live_event_listener(
+                event_listener,
+            )
+            app_instance.state.broadcast_event = event_listener
+            yield
+        finally:
+            event_hub.close_admission()
+            try:
+                if listener_handle is not None:
+                    await listener_handle.stop()
+            finally:
+                await event_hub.stop()
+                if _background_tasks:
+                    logger.info(
+                        "Shutting down: cancelling %d background task(s)",
+                        len(_background_tasks),
+                    )
+                    for task in _background_tasks:
+                        task.cancel()
+                    await asyncio.gather(*_background_tasks, return_exceptions=True)
+                    _background_tasks.clear()
 
     app = FastAPI(title="ProbOS", version="0.1.0", lifespan=_lifespan)
 
@@ -129,9 +151,6 @@ def create_app(runtime: Any) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # Active WebSocket connections for event broadcasting
-    _ws_clients: list[WebSocket] = []
 
     # Pending architect proposals awaiting Captain approval (AD-308)
     _pending_designs: dict[str, dict[str, Any]] = {}
@@ -154,18 +173,8 @@ def create_app(runtime: Any) -> FastAPI:
     app.state.runtime = runtime
     app.state.track_task = _track_task
     app.state.pending_designs = _pending_designs
-    # app.state.broadcast_event set after _broadcast_event is defined (below)
-
-    # ------------------------------------------------------------------
-    # Event listener bridge: runtime -> WebSocket clients (AD-254)
-    # ------------------------------------------------------------------
-
-    def _on_runtime_event(event: dict[str, Any]) -> None:
-        """Forward runtime events to all connected WebSocket clients."""
-        _broadcast_event(event)
-
-    if hasattr(runtime, 'add_event_listener'):
-        runtime.add_event_listener(_on_runtime_event)
+    app.state.broadcast_event = None
+    app.state.event_stream_hub = event_hub
 
     # ------------------------------------------------------------------
     # REST endpoints
@@ -279,67 +288,9 @@ def create_app(runtime: Any) -> FastAPI:
 
     @app.websocket("/ws/events")
     async def ws_events(websocket: WebSocket) -> None:
-        await websocket.accept()
-        _ws_clients.append(websocket)
-        try:
-            # Send full state snapshot on connect (AD-254)
-            if hasattr(runtime, 'build_state_snapshot'):
-                snapshot = runtime.build_state_snapshot()
-                await websocket.send_json({
-                    "type": "state_snapshot",
-                    "data": snapshot,
-                    "timestamp": time.time(),
-                })
-
-            # Keep connection alive — client can send pings
-            while True:
-                try:
-                    await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                except asyncio.TimeoutError:
-                    # Send a keepalive ping
-                    await websocket.send_json({"type": "ping", "timestamp": time.time()})
-        except WebSocketDisconnect:
-            pass
-        finally:
-            if websocket in _ws_clients:
-                _ws_clients.remove(websocket)
-
-    def _safe_serialize(obj: Any) -> Any:
-        """Make an object JSON-safe by converting dataclasses and non-serializable types."""
-        import json
-        import dataclasses
-        
-        def _default(o: Any) -> Any:
-            if dataclasses.is_dataclass(o) and not isinstance(o, type):
-                return dataclasses.asdict(o)
-            if hasattr(o, '__dict__'):
-                return {k: v for k, v in o.__dict__.items() if not k.startswith('_')}
-            return str(o)
-        
-        # Round-trip through json to ensure everything is serializable
-        try:
-            return json.loads(json.dumps(obj, default=_default))
-        except (TypeError, ValueError):
-            return {"error": "serialization_failed"}
-
-    def _broadcast_event(event: dict[str, Any]) -> None:
-        """Send event to all connected WebSocket clients."""
-        safe_event = _safe_serialize(event)
-
-        async def _safe_send(ws: WebSocket, data: dict) -> None:
-            try:
-                await ws.send_json(data)
-            except Exception:
-                logger.debug("WS client prune failed", exc_info=True)
-                # Client disconnected or errored — prune from list
-                if ws in _ws_clients:
-                    _ws_clients.remove(ws)
-
-        for ws in list(_ws_clients):
-            asyncio.create_task(_safe_send(ws, safe_event))
-
-    # AD-516: Now that _broadcast_event is defined, expose it via app.state
-    app.state.broadcast_event = _broadcast_event
+        if not await verify_ws_token(websocket, runtime):
+            return
+        await event_hub.serve(websocket)
 
     # ------------------------------------------------------------------
     # Static file serving for HXI frontend (AD-260)

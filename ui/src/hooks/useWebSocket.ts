@@ -2,9 +2,15 @@
 
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
+import type { WSEvent } from '../store/types';
 
-const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/events`;
 const MAX_BACKOFF = 30_000;
+
+export function buildEventWebSocketUrl(location: Location = window.location): string {
+  const base = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/events`;
+  const token = new URLSearchParams(location.search).get('token');
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
 
 export function useWebSocket() {
   const handleEvent = useStore((s) => s.handleEvent);
@@ -12,6 +18,7 @@ export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const backoffRef = useRef(1000);
   const mountedRef = useRef(true);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -19,34 +26,45 @@ export function useWebSocket() {
     function connect() {
       if (!mountedRef.current) return;
 
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
+      const socket = new WebSocket(buildEventWebSocketUrl());
+      wsRef.current = socket;
 
-      ws.onopen = () => {
+      socket.onopen = () => {
+        if (wsRef.current !== socket) return;
         backoffRef.current = 1000;
         setConnected(true);
       };
 
-      ws.onmessage = (ev) => {
+      socket.onmessage = (ev) => {
+        if (wsRef.current !== socket) return;
         try {
           const event = JSON.parse(ev.data);
           if (event.type === 'ping') return;
-          handleEvent(event);
+          handleEvent(event as WSEvent);
         } catch {
           // ignore malformed messages
         }
       };
 
-      ws.onclose = () => {
+      socket.onclose = () => {
+        if (wsRef.current !== socket) return;
+        wsRef.current = null;
         setConnected(false);
+        useStore.setState({ liveGeneration: null });
         if (!mountedRef.current) return;
         const delay = backoffRef.current;
         backoffRef.current = Math.min(delay * 2, MAX_BACKOFF);
-        setTimeout(connect, delay);
+        if (reconnectTimeoutRef.current !== null) {
+          clearTimeout(reconnectTimeoutRef.current);
+        }
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectTimeoutRef.current = null;
+          connect();
+        }, delay);
       };
 
-      ws.onerror = () => {
-        ws.close();
+      socket.onerror = () => {
+        if (wsRef.current === socket) socket.close();
       };
     }
 
@@ -54,6 +72,10 @@ export function useWebSocket() {
 
     return () => {
       mountedRef.current = false;
+      if (reconnectTimeoutRef.current !== null) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;

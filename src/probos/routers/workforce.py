@@ -19,6 +19,25 @@ def _raise_if_crew_session_write_reserved(exc: ValueError) -> None:
         raise HTTPException(409, "crew_session_write_reserved") from exc
 
 
+async def build_ws_workforce_snapshot(
+    runtime: Any,
+    *,
+    limit: int,
+) -> dict[str, list[dict[str, Any]]]:
+    """Build a bounded WebSocket workforce view without CrewSession rows."""
+    store = getattr(runtime, "work_item_store", None)
+    if store is None:
+        return {"work_items": [], "bookings": [], "resources": []}
+    visible_items = await store.list_ws_visible_work_items(limit=limit)
+    if len(visible_items) > limit:
+        raise ValueError("ws_workforce_source_overflow")
+    return {
+        "work_items": [item.to_dict() for item in visible_items],
+        "bookings": [],
+        "resources": [],
+    }
+
+
 # -- Work Type Registry & Templates (AD-498) --
 
 
@@ -262,7 +281,9 @@ async def claim_work_item(
 
 @router.get("/work-items/{work_item_id}/steps")
 async def get_work_item_steps(
-    work_item_id: str, runtime: Any = Depends(get_runtime),
+    work_item_id: str,
+    limit: int | None = None,
+    runtime: Any = Depends(get_runtime),
 ) -> dict[str, Any]:
     """AD-1080: the work item's Todo checklist (the room plan + validation state)."""
     if not runtime.work_item_store:
@@ -270,8 +291,11 @@ async def get_work_item_steps(
     item = await runtime.work_item_store.get_work_item(work_item_id)
     if not item:
         raise HTTPException(404, "Work item not found")
+    steps = item.steps
+    if limit is not None:
+        steps = steps[:max(1, min(limit, 1001))]
     return {
-        "steps": item.steps,
+        "steps": steps,
         "gate_completion": bool((item.metadata or {}).get("steps_gate_completion")),
     }
 

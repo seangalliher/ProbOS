@@ -30,6 +30,8 @@ fulltext), AD-791c (archival lifecycle policy).
 from __future__ import annotations
 
 import json
+import logging
+import math
 import re
 import sqlite3
 import time
@@ -37,6 +39,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_threads (
@@ -241,6 +245,7 @@ class ChatThreadStore:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._clock = clock
         self._id_factory = id_factory
+        self._message_committed_callback: Callable[[ChatThreadMessage], None] | None = None
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
             # AD-791a: idempotent additive-column migration. SQLite has no
@@ -1234,6 +1239,26 @@ class ChatThreadStore:
 
     # ---------- messages ----------
 
+    def set_message_committed_callback(
+        self,
+        callback: Callable[[ChatThreadMessage], None] | None,
+    ) -> None:
+        self._message_committed_callback = callback
+
+    def _notify_message_committed(self, message: ChatThreadMessage) -> None:
+        callback = self._message_committed_callback
+        if callback is None:
+            return
+        try:
+            callback(message)
+        except Exception:
+            logger.warning(
+                "Chat message %s committed but its live-refresh callback failed; "
+                "clients will repair on reconnect",
+                message.id,
+                exc_info=True,
+            )
+
     def append_message(
         self,
         thread_id: str,
@@ -1243,30 +1268,127 @@ class ChatThreadStore:
         body: str,
         metadata: dict | None = None,
     ) -> ChatThreadMessage | None:
-        if self.get_thread(thread_id) is None:
-            return None
-        msg_id = self._id_factory()
-        now = self._clock()
-        meta_json = json.dumps(metadata or {})
+        return self.append_message_once(
+            thread_id,
+            message_id=self._id_factory(),
+            author_id=author_id,
+            role=role,
+            body=body,
+            created_at=self._clock(),
+            metadata=metadata,
+        )
+
+    def append_message_once(
+        self,
+        thread_id: str,
+        *,
+        message_id: str,
+        author_id: str,
+        role: str,
+        body: str,
+        created_at: float,
+        metadata: dict | None = None,
+    ) -> ChatThreadMessage | None:
+        if (
+            type(thread_id) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(thread_id) is None
+            or type(message_id) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(message_id) is None
+            or type(author_id) is not str
+            or _CREW_SESSION_ID_RE.fullmatch(author_id) is None
+            or role not in {"captain", "agent", "system"}
+            or type(body) is not str
+            or type(created_at) not in {int, float}
+            or not math.isfinite(created_at)
+            or created_at < 0
+            or metadata is not None
+            and type(metadata) is not dict
+        ):
+            raise ValueError("chat_thread_message_invalid")
+        timestamp = float(created_at)
+        message_metadata = dict(metadata or {})
+        try:
+            metadata_json = json.dumps(
+                message_metadata,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+            raise ValueError("chat_thread_message_invalid") from exc
+
+        inserted = False
         with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO chat_thread_messages (id, thread_id, author_id, role, body, "
-                "created_at, metadata) VALUES (?,?,?,?,?,?,?)",
-                (msg_id, thread_id, author_id, role, body, now, meta_json),
-            )
-            conn.execute(
-                "UPDATE chat_threads SET last_active_at = ? WHERE id = ?",
-                (now, thread_id),
-            )
-        return ChatThreadMessage(
-            id=msg_id,
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                thread = conn.execute(
+                    "SELECT id FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if thread is None:
+                    conn.execute("COMMIT")
+                    return None
+                existing = conn.execute(
+                    "SELECT * FROM chat_thread_messages WHERE id = ?",
+                    (message_id,),
+                ).fetchone()
+                if existing is not None:
+                    current = _row_to_message(existing)
+                    exact = (
+                        current.id == message_id
+                        and current.thread_id == thread_id
+                        and current.author_id == author_id
+                        and current.role == role
+                        and current.body == body
+                        and type(current.created_at) is float
+                        and current.created_at == timestamp
+                        and _crew_session_json_equal(
+                            current.metadata,
+                            message_metadata,
+                        )
+                    )
+                    if not exact:
+                        raise ValueError("chat_thread_message_conflict")
+                    conn.execute("COMMIT")
+                    return current
+                conn.execute(
+                    "INSERT INTO chat_thread_messages "
+                    "(id, thread_id, author_id, role, body, created_at, metadata) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (
+                        message_id,
+                        thread_id,
+                        author_id,
+                        role,
+                        body,
+                        timestamp,
+                        metadata_json,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE chat_threads SET last_active_at = "
+                    "CASE WHEN last_active_at < ? THEN ? ELSE last_active_at END "
+                    "WHERE id = ?",
+                    (timestamp, timestamp, thread_id),
+                )
+                conn.execute("COMMIT")
+                inserted = True
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+        message = ChatThreadMessage(
+            id=message_id,
             thread_id=thread_id,
             author_id=author_id,
             role=role,
             body=body,
-            created_at=now,
-            metadata=metadata or {},
+            created_at=timestamp,
+            metadata=message_metadata,
         )
+        if inserted:
+            self._notify_message_committed(message)
+        return message
 
     def list_messages(
         self,

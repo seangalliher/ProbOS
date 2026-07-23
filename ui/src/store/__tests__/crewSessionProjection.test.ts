@@ -82,6 +82,23 @@ describe('AD-1132 CrewSession one-shot hydration', () => {
     expect(after.has(detail.task_id)).toBe(false);
   });
 
+  it('hydrateCrewSession refuses a lower revision and accepts same-revision progress', () => {
+    useStore.getState().hydrateCrewSession('parent-1', detail);
+    useStore.getState().hydrateCrewSession('parent-1', {
+      ...detail,
+      revision: 0,
+      state: 'discussing',
+    });
+    expect(useStore.getState().crewSessionsByParent.get('parent-1')).toBe(detail);
+
+    const progressed = {
+      ...detail,
+      progress: { ...detail.progress, done: 1 },
+    };
+    useStore.getState().hydrateCrewSession('parent-1', progressed);
+    expect(useStore.getState().crewSessionsByParent.get('parent-1')).toBe(progressed);
+  });
+
   it('hydrateCrewSessionSummaries builds a new thread-keyed map per response', () => {
     const before = useStore.getState().crewSessionSummariesByThread;
     useStore.getState().hydrateCrewSessionSummaries({ 'thread-1': summary });

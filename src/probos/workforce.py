@@ -2186,6 +2186,30 @@ class WorkItemStore(EventEmitterMixin):
             items = [i for i in items if tag_set.intersection(i.tags)]
         return items
 
+    async def list_ws_visible_work_items(
+        self,
+        *,
+        limit: int,
+    ) -> list[WorkItem]:
+        """Return at most ``limit + 1`` WebSocket-visible rows as an overflow sentinel."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("ws_visible_work_items_limit_invalid")
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT item.* FROM work_items AS item "
+            "WHERE item.work_type != ? "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM work_items AS parent "
+            "WHERE parent.id = item.parent_id AND parent.work_type = ?"
+            ") "
+            "ORDER BY item.priority ASC, item.created_at DESC, item.id ASC "
+            "LIMIT ?",
+            ("crew_session", "crew_session", limit + 1),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_work_item(row) for row in rows]
+
     async def list_crew_session_recovery_candidates(
         self,
         *,

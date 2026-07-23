@@ -62,6 +62,25 @@ class PoolGroupRegistry:
                 result.update(group.pool_names)
         return result
 
+    @property
+    def count(self) -> int:
+        """Return the number of registered pool groups."""
+        return len(self._groups)
+
+    @property
+    def membership_count(self) -> int:
+        """Return the aggregate number of pool memberships."""
+        return sum(len(group.pool_names) for group in self._groups.values())
+
+    @property
+    def pool_mapping_count(self) -> int:
+        """Return the number of reverse-index pool mappings."""
+        return len(self._pool_to_group)
+
+    def pool_to_group_snapshot(self) -> dict[str, str]:
+        """Return a detached copy of the complete reverse index."""
+        return dict(self._pool_to_group)
+
     def all_groups(self) -> list[PoolGroup]:
         """Return all registered groups, sorted by name."""
         return sorted(self._groups.values(), key=lambda g: g.name)

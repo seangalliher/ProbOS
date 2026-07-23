@@ -44,7 +44,7 @@ import type {
 } from '../../store/types';
 // AD-938: thread-keyed transcript helpers (extracted for testability — the
 // AD-936 ChatMessageRow precedent; keeps the heavy audio deps out of the test).
-import { selectTranscriptMessages, loadThreadMessages, buildTranscriptItems } from './profileTranscript';
+import { selectTranscriptMessages, threadDtoToMessage, buildTranscriptItems } from './profileTranscript';
 import { ModulationIndicator } from './ModulationIndicator';
 import { GroupChatHeader } from './GroupChatHeader';
 // AD-932: discoverable "+ Add people" on a fresh/empty 1:1 (no thread yet).
@@ -55,7 +55,7 @@ import { MeetingView } from './MeetingView';
 // AD-1058: Teams-style call control + the get-or-create-1:1-thread helper that
 // lets a call start from a fresh chat (no message first), and the shared camera.
 import { CallMenu } from './CallMenu';
-import { setMeetingActive, getOrCreateAgentThread } from '../sidebar/threadApi';
+import { repairThreadMessages, setMeetingActive, getOrCreateAgentThread } from '../sidebar/threadApi';
 import { startCameraStream, stopCameraStream } from '../../hooks/useCameraStream';
 // AD-936: per-message avatar + timestamp row (extracted; keeps the heavy
 // bubble JSX out of this audio-dep-laden module and independently testable).
@@ -602,6 +602,13 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const activeThreadId = useStore((s) =>
     resolveProfileThreadId(threadId, s.activeProfileThreadId, s.threadIdByAgent, agentId),
   );
+  const liveThreadRefresh = useStore((s) => s.liveThreadRefresh);
+  const liveRepairEpoch = useStore((s) => s.liveRepairEpoch);
+  const transcriptRequestRef = useRef(0);
+  const transcriptInFlightRef = useRef(new Set<string>());
+  const transcriptPendingRef = useRef(new Map<string, string | null>());
+  const transcriptOwnerRef = useRef({ agentId, threadId: activeThreadId });
+  transcriptOwnerRef.current = { agentId, threadId: activeThreadId };
   const outputPolicyAgentIdRef = useRef(agentId);
   const outputPolicyThreadIdRef = useRef(threadId);
   outputPolicyAgentIdRef.current = agentId;
@@ -618,6 +625,59 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const currentTail = messages[messages.length - 1];
   const currentTailId = currentTail?.id ?? null;
   const currentTailRole = (currentTail as { role?: string } | undefined)?.role;
+
+  const refreshThreadTranscript = useCallback(async (
+    triggerMessageId: string | null = null,
+  ) => {
+    const targetThreadId = activeThreadId;
+    if (!targetThreadId) return;
+    if (transcriptInFlightRef.current.has(targetThreadId)) {
+      const pending = transcriptPendingRef.current.get(targetThreadId) ?? null;
+      transcriptPendingRef.current.set(targetThreadId, triggerMessageId ?? pending);
+      return;
+    }
+    transcriptInFlightRef.current.add(targetThreadId);
+    const requestId = ++transcriptRequestRef.current;
+    const authority = useStore.getState();
+    const generation = authority.liveGeneration;
+    const sequence = authority.liveSequence;
+    try {
+      const outcome = await repairThreadMessages(targetThreadId);
+      const current = useStore.getState();
+      const currentOwner = transcriptOwnerRef.current;
+      if (
+        requestId !== transcriptRequestRef.current
+        || currentOwner.agentId !== agentId
+        || currentOwner.threadId !== targetThreadId
+        || current.liveGeneration !== generation
+        || current.liveSequence !== sequence
+        || outcome.kind !== 'success'
+      ) return;
+      if (
+        triggerMessageId !== null
+        && !outcome.messages.some(message => message.id === triggerMessageId)
+      ) return;
+      current.setThreadMessages(
+        targetThreadId,
+        outcome.messages.map(message => threadDtoToMessage(message, current.agents)),
+      );
+    } finally {
+      transcriptInFlightRef.current.delete(targetThreadId);
+      const requested = transcriptPendingRef.current.has(targetThreadId);
+      const pending = transcriptPendingRef.current.get(targetThreadId) ?? null;
+      transcriptPendingRef.current.delete(targetThreadId);
+      const currentOwner = transcriptOwnerRef.current;
+      if (
+        requested
+        && currentOwner.agentId === agentId
+        && currentOwner.threadId === targetThreadId
+      ) {
+        queueMicrotask(() => {
+          void refreshThreadTranscript(pending);
+        });
+      }
+    }
+  }, [activeThreadId, agentId, threadId]);
 
   // AD-920: meeting-mode flag (persisted on the shared thread). When set, the
   // avatar gallery mounts below the group-controls header. Reactive so the
@@ -1013,21 +1073,29 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         .catch(() => {});  // Non-critical
   }, [agentId]);
 
-  // AD-938: load the thread's real transcript when a thread becomes active (a
-  // group opened from CHATS, or a warm 1:1 with a server-confirmed thread), and
-  // re-load when the active thread changes. listMessages already Tier-2
-  // degrades to []; the ``active`` guard drops a stale write if the thread
-  // changes or the tab unmounts before the fetch resolves.
+  // AD-938/AD-1133: load the real transcript on open and repair it only for
+  // the currently owned room. Failed or stale repair retains cached messages.
   useEffect(() => {
     if (!activeThreadId) return;
-    let active = true;
-    void loadThreadMessages(
-      activeThreadId,
-      useStore.getState().agents,
-      (id, msgs) => { if (active) useStore.getState().setThreadMessages(id, msgs); },
-    );
-    return () => { active = false; };
-  }, [activeThreadId]);
+    void refreshThreadTranscript();
+    return () => {
+      transcriptRequestRef.current += 1;
+      transcriptPendingRef.current.delete(activeThreadId);
+    };
+  }, [activeThreadId, refreshThreadTranscript]);
+
+  useEffect(() => {
+    const command = liveThreadRefresh;
+    if (command !== null && command.threadId === activeThreadId) {
+      void refreshThreadTranscript(command.requestId);
+    }
+  }, [activeThreadId, liveThreadRefresh, refreshThreadTranscript]);
+
+  useEffect(() => {
+    if (activeThreadId && liveRepairEpoch > 0) {
+      void refreshThreadTranscript();
+    }
+  }, [activeThreadId, liveRepairEpoch, refreshThreadTranscript]);
 
   // AD-795: Hydrate the input from a pending chat draft (set by the
   // Compact-mode starter chips). Subscribes via a selector so the effect

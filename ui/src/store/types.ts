@@ -267,6 +267,27 @@ export interface WSEvent {
   type: string;
   data: Record<string, unknown>;
   timestamp: number;
+  stream?: LiveStreamCursor;
+}
+
+export interface LiveStreamCursor {
+  readonly generation: string;
+  readonly sequence: number;
+}
+
+export interface ChatThreadMessageAppendedData {
+  readonly thread_id: string;
+  readonly message_id: string;
+  readonly author_id: string;
+  readonly role: 'captain' | 'agent' | 'system';
+  readonly created_at: number;
+}
+
+export interface ArtifactVersionAddedData {
+  readonly thread_id: string;
+  readonly artifact_id: string;
+  readonly version: number;
+  readonly created_at: number;
 }
 
 export interface StateSnapshot {
@@ -738,6 +759,34 @@ export interface CrewSessionRoomSummary extends LegacyRoomSummary {
 }
 
 export type RoomSummary = LegacyRoomSummary | CrewSessionRoomSummary;
+
+export interface CrewSessionProjectionEventData {
+  readonly parent_id: string;
+  readonly thread_id: string;
+  readonly revision: number;
+  readonly session: CrewSessionDetailProjection;
+  readonly room_summary: CrewSessionRoomSummary;
+}
+
+export interface LiveThreadRefreshCommand {
+  readonly threadId: string;
+  readonly requestId: string;
+}
+
+export interface LiveArtifactRefreshCommand {
+  readonly threadId: string;
+  readonly requestId: string;
+}
+
+export interface LiveTodoRefreshCommand {
+  readonly parentId: string;
+  readonly requestId: number;
+}
+
+export interface LiveRailOwner {
+  readonly threadId: string;
+  readonly parentId: string;
+}
 
 export type CrewTaskDetailResponse =
   | LegacyCrewTaskTree

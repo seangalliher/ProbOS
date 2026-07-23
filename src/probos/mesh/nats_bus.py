@@ -107,6 +107,9 @@ class NATSBus:
         self._nc: Any = None  # nats.NATS client
         self._js: Any = None  # JetStream context
         self._subscriptions: list[Any] = []
+        self._raw_subscription_release_tasks: list[
+            tuple[object, asyncio.Task[bool]]
+        ] = []
         self._connected = False
         self._started = False
         self._active_subs: list[dict[str, Any]] = []  # Tracked subs for prefix re-subscription
@@ -938,6 +941,78 @@ class NATSBus:
         sub = await self._nc.subscribe(subject, queue=queue, cb=_handler)
         self._subscriptions.append(sub)
         return sub
+
+    async def release_raw_subscription(self, subscription: object) -> bool:
+        """Drain and identity-remove one exact tracked raw subscription."""
+        if not any(candidate is subscription for candidate in self._subscriptions):
+            return False
+
+        release_task = next(
+            (
+                task
+                for candidate, task in self._raw_subscription_release_tasks
+                if candidate is subscription
+            ),
+            None,
+        )
+        if release_task is None:
+            release_task = asyncio.create_task(
+                self._release_raw_subscription(subscription),
+                name="nats-raw-subscription-release",
+            )
+            self._raw_subscription_release_tasks.append(
+                (subscription, release_task),
+            )
+            release_task.add_done_callback(
+                lambda completed, owned=subscription: self._forget_raw_release_task(
+                    owned,
+                    completed,
+                )
+            )
+
+        try:
+            return await asyncio.shield(release_task)
+        except asyncio.CancelledError:
+            try:
+                await asyncio.shield(release_task)
+            except Exception:
+                pass
+            raise
+
+    async def _release_raw_subscription(self, subscription: object) -> bool:
+        try:
+            drain = getattr(subscription, "drain")
+            await drain()
+        except asyncio.CancelledError:
+            raise
+        except Exception as drain_error:
+            try:
+                unsubscribe = getattr(subscription, "unsubscribe")
+                await unsubscribe()
+            except asyncio.CancelledError:
+                raise
+            except Exception as unsubscribe_error:
+                raise RuntimeError(
+                    "nats_raw_subscription_release_failed"
+                ) from unsubscribe_error
+
+        self._subscriptions = [
+            candidate
+            for candidate in self._subscriptions
+            if candidate is not subscription
+        ]
+        return True
+
+    def _forget_raw_release_task(
+        self,
+        subscription: object,
+        release_task: asyncio.Task[bool],
+    ) -> None:
+        self._raw_subscription_release_tasks = [
+            (candidate, task)
+            for candidate, task in self._raw_subscription_release_tasks
+            if candidate is not subscription or task is not release_task
+        ]
 
 
 # ---------------------------------------------------------------------------

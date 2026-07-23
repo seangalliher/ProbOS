@@ -187,7 +187,7 @@ export function isCrewSessionDetailProjection(
     && Number.isInteger(value.duplicate_resume_count);
 }
 
-function isCrewSessionSummaryProjection(
+export function isCrewSessionSummaryProjection(
   value: unknown,
 ): value is CrewSessionSummaryProjection {
   if (!isRecord(value) || !hasExactKeys(value, [
@@ -313,7 +313,7 @@ export async function fetchCrewTaskDetail(parentId: string): Promise<CrewTaskDet
   }
 }
 
-function isRoomSummary(value: unknown): value is RoomSummary {
+export function isRoomSummary(value: unknown): value is RoomSummary {
   if (!isRecord(value)) return false;
   const hasSession = Object.prototype.hasOwnProperty.call(value, 'session');
   if (!hasExactKeys(value, hasSession
@@ -351,6 +351,50 @@ export async function fetchRoomSummaries(): Promise<Record<string, RoomSummary>>
   } catch {
     return {};
   }
+}
+
+export type RoomSummaryRepairOutcome =
+  | { readonly kind: 'success'; readonly summaries: Readonly<Record<string, RoomSummary>> }
+  | { readonly kind: 'error'; readonly status: number | null };
+
+export async function repairRoomSummaries(): Promise<RoomSummaryRepairOutcome> {
+  try {
+    const res = await fetch('/api/threads/summaries');
+    if (!res.ok) return { kind: 'error', status: res.status };
+    const text = await res.text();
+    if (new TextEncoder().encode(text).byteLength > 1024 * 1024) {
+      return { kind: 'error', status: res.status };
+    }
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { kind: 'error', status: res.status };
+    }
+    if (!isRecord(data) || !hasExactKeys(data, ['summaries']) || !isRecord(data.summaries)) {
+      return { kind: 'error', status: res.status };
+    }
+    if (Object.keys(data.summaries).length > 1000) {
+      return { kind: 'error', status: res.status };
+    }
+    const summaries: Record<string, RoomSummary> = {};
+    for (const [threadId, summary] of Object.entries(data.summaries)) {
+      if (!isBoundedLiveThreadId(threadId) || !isRoomSummary(summary)) {
+        return { kind: 'error', status: res.status };
+      }
+      if ('session' in summary && summary.session.thread_id !== threadId) {
+        return { kind: 'error', status: res.status };
+      }
+      summaries[threadId] = summary;
+    }
+    return { kind: 'success', summaries };
+  } catch {
+    return { kind: 'error', status: null };
+  }
+}
+
+function isBoundedLiveThreadId(value: string): boolean {
+  return value.length > 0 && value.length <= 128;
 }
 
 export interface CreateThreadBody {
@@ -567,6 +611,61 @@ export interface ThreadMessageDTO {
   body: string;
   created_at: number;
   metadata?: Record<string, unknown> | null;
+}
+
+export type ThreadMessageRepairOutcome =
+  | { readonly kind: 'success'; readonly messages: readonly ThreadMessageDTO[] }
+  | { readonly kind: 'error'; readonly status: number | null };
+
+function isThreadMessageDTO(value: unknown, threadId: string): value is ThreadMessageDTO {
+  return isRecord(value)
+    && hasExactKeys(value, [
+      'id', 'thread_id', 'author_id', 'role', 'body', 'created_at', 'metadata',
+    ])
+    && typeof value.id === 'string' && value.id.length > 0 && value.id.length <= 128
+    && value.thread_id === threadId
+    && typeof value.author_id === 'string' && value.author_id.length > 0 && value.author_id.length <= 128
+    && ['captain', 'agent', 'system'].includes(String(value.role))
+    && typeof value.body === 'string'
+    && isFiniteNumber(value.created_at) && value.created_at >= 0
+    && isRecord(value.metadata);
+}
+
+export async function repairThreadMessages(
+  threadId: string,
+): Promise<ThreadMessageRepairOutcome> {
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/messages?limit=200`);
+    if (!res.ok) return { kind: 'error', status: res.status };
+    const text = await res.text();
+    if (new TextEncoder().encode(text).byteLength > 1024 * 1024) {
+      return { kind: 'error', status: res.status };
+    }
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { kind: 'error', status: res.status };
+    }
+    if (!isRecord(data) || !hasExactKeys(data, ['thread_id', 'messages'])) {
+      return { kind: 'error', status: res.status };
+    }
+    if (data.thread_id !== threadId || !Array.isArray(data.messages) || data.messages.length > 200) {
+      return { kind: 'error', status: res.status };
+    }
+    const seen = new Set<string>();
+    const messages: ThreadMessageDTO[] = [];
+    for (const candidate of data.messages) {
+      if (!isThreadMessageDTO(candidate, threadId) || seen.has(candidate.id)) {
+        return { kind: 'error', status: res.status };
+      }
+      seen.add(candidate.id);
+      messages.push(candidate);
+    }
+    return { kind: 'success', messages };
+  } catch {
+    return { kind: 'error', status: null };
+  }
 }
 
 /**

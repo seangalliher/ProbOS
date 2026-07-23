@@ -314,6 +314,20 @@ describe('AD-938 HXI no-emoji guard (#3)', () => {
   });
 });
 
+describe('AD-1133 live transcript repair wiring', () => {
+  it('uses the strict repair outcome and existing DTO mapper', () => {
+    expect(profileChatSource).toContain('repairThreadMessages(targetThreadId)');
+    expect(profileChatSource).toContain('threadDtoToMessage(message, current.agents)');
+    expect(profileChatSource).toContain('message.id === triggerMessageId');
+  });
+
+  it('drops stale room and stream results before replacing messages', () => {
+    expect(profileChatSource).toContain('currentOwner.threadId !== targetThreadId');
+    expect(profileChatSource).toContain('current.liveGeneration !== generation');
+    expect(profileChatSource).toContain('current.liveSequence !== sequence');
+  });
+});
+
 describe('AD-1056/1057 transcript layout + scroll guards', () => {
   it('AD-1056: renders day separators via buildTranscriptItems', () => {
     expect(profileChatSource).toMatch(/buildTranscriptItems\(messages\)/);

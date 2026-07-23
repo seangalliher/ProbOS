@@ -13,11 +13,29 @@
  */
 import type { ArtifactView } from '../../store/useStore';
 
+const MAX_ARTIFACT_ROWS = 1000;
+const MAX_ARTIFACT_RESPONSE_BYTES = 1024 * 1024;
+
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index]);
+}
+
+function responseByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
 function isArtifactMetadata(value: unknown): value is Omit<ArtifactView, '_pinned_from_project'> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
-  return typeof row.id === 'string'
-    && typeof row.thread_id === 'string'
+  return exactKeys(row, [
+    'id', 'thread_id', 'name', 'version', 'content_hash', 'mime', 'size_bytes',
+    'created_by', 'created_at', 'supersedes',
+  ])
+    && typeof row.id === 'string' && row.id.length > 0 && row.id.length <= 128
+    && typeof row.thread_id === 'string' && row.thread_id.length > 0 && row.thread_id.length <= 128
     && typeof row.name === 'string'
     && Number.isInteger(row.version)
     && typeof row.content_hash === 'string'
@@ -26,6 +44,17 @@ function isArtifactMetadata(value: unknown): value is Omit<ArtifactView, '_pinne
     && typeof row.created_by === 'string'
     && typeof row.created_at === 'number'
     && (row.supersedes === null || typeof row.supersedes === 'string');
+}
+
+function isArtifactView(value: unknown): value is ArtifactView {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  if (!exactKeys(row, [
+    'id', 'thread_id', 'name', 'version', 'content_hash', 'mime', 'size_bytes',
+    'created_by', 'created_at', 'supersedes', '_pinned_from_project',
+  ]) || typeof row._pinned_from_project !== 'boolean') return false;
+  const { _pinned_from_project: _ignored, ...metadata } = row;
+  return isArtifactMetadata(metadata);
 }
 
 export async function fetchArtifactMetadata(
@@ -45,12 +74,46 @@ export async function fetchArtifactMetadata(
 export async function fetchThreadArtifacts(
   threadId: string,
 ): Promise<ArtifactView[]> {
-  const res = await fetch(`/api/artifacts/thread/${encodeURIComponent(threadId)}`);
+  const res = await fetch(`/api/artifacts/thread/${encodeURIComponent(threadId)}?limit=1001`);
   if (!res.ok) {
     throw new Error(`fetchThreadArtifacts: ${res.status}`);
   }
-  const body = await res.json();
-  return Array.isArray(body.artifacts) ? body.artifacts : [];
+  const text = await res.text();
+  if (responseByteLength(text) > MAX_ARTIFACT_RESPONSE_BYTES) {
+    throw new Error('fetchThreadArtifacts: response_too_large');
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error('fetchThreadArtifacts: malformed_response');
+  }
+  if (
+    typeof body !== 'object'
+    || body === null
+    || Array.isArray(body)
+    || !exactKeys(body as Record<string, unknown>, ['thread_id', 'artifacts'])
+  ) throw new Error('fetchThreadArtifacts: malformed_response');
+  const record = body as Record<string, unknown>;
+  if (record.thread_id !== threadId || !Array.isArray(record.artifacts)) {
+    throw new Error('fetchThreadArtifacts: owner_mismatch');
+  }
+  if (record.artifacts.length > MAX_ARTIFACT_ROWS) {
+    throw new Error('fetchThreadArtifacts: count_exceeded');
+  }
+  const artifacts: ArtifactView[] = [];
+  const seen = new Set<string>();
+  for (const candidate of record.artifacts) {
+    if (!isArtifactView(candidate) || seen.has(candidate.id)) {
+      throw new Error('fetchThreadArtifacts: malformed_row');
+    }
+    if (!candidate._pinned_from_project && candidate.thread_id !== threadId) {
+      throw new Error('fetchThreadArtifacts: owner_mismatch');
+    }
+    seen.add(candidate.id);
+    artifacts.push(candidate);
+  }
+  return artifacts;
 }
 
 export async function fetchArtifactContent(

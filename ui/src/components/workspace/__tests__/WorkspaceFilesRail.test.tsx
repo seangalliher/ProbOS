@@ -40,6 +40,7 @@ import { fetchArtifactMetadata, fetchThreadArtifacts } from '../../artifacts/art
 import * as todosApi from '../todosApi';
 import { fetchTaskSteps, updateTaskStep } from '../todosApi';
 import { WorkspaceFilesRail } from '../WorkspaceFilesRail';
+import railSource from '../WorkspaceFilesRail.tsx?raw';
 
 const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F600}-\u{1F64F}]/u;
 const SHA_A = 'a'.repeat(64);
@@ -140,6 +141,10 @@ beforeEach(() => {
   useStore.setState({
     crewSessionsByParent: new Map(),
     crewSessionSummariesByThread: new Map(),
+    liveArtifactRefresh: null,
+    liveTodoRefresh: null,
+    liveRepairEpoch: 0,
+    liveRailOwner: null,
   });
 });
 
@@ -151,6 +156,10 @@ afterEach(() => {
   useStore.setState({
     crewSessionsByParent: new Map(),
     crewSessionSummariesByThread: new Map(),
+    liveArtifactRefresh: null,
+    liveTodoRefresh: null,
+    liveRepairEpoch: 0,
+    liveRailOwner: null,
   });
 });
 
@@ -171,6 +180,58 @@ function fillValidStartWorkForm(): void {
 }
 
 describe('WorkspaceFilesRail (AD-929)', () => {
+  it('registers only an expanded bound room and releases it on unmount', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    const view = render(<WorkspaceFilesRail threadId="t1" taskId="parent-1" />);
+    await waitFor(() => expect(useStore.getState().liveRailOwner).toEqual({
+      threadId: 't1', parentId: 'parent-1',
+    }));
+    view.unmount();
+    expect(useStore.getState().liveRailOwner).toBeNull();
+  });
+
+  it('does zero GET work while collapsed and contains no BF-644 interval', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '1');
+    render(<WorkspaceFilesRail threadId="t1" taskId="parent-1" />);
+    await Promise.resolve();
+    expect(fetchThreadInputs).not.toHaveBeenCalled();
+    expect(fetchThreadArtifacts).not.toHaveBeenCalled();
+    expect(fetchTaskSteps).not.toHaveBeenCalled();
+    expect(railSource).not.toContain('setInterval(');
+    expect(railSource).not.toContain('5000');
+  });
+
+  it('refreshes matching live artifact and Todo commands while expanded', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    render(<WorkspaceFilesRail threadId="t1" taskId="parent-1" />);
+    await waitFor(() => expect(fetchThreadArtifacts).toHaveBeenCalled());
+    vi.mocked(fetchThreadArtifacts).mockResolvedValue([
+      ...ARTIFACTS,
+      { ...ARTIFACTS[0], id: 'art2', name: 'live.md' },
+    ]);
+    vi.mocked(fetchTaskSteps).mockResolvedValue([
+      { label: 'Live Todo', status: 'submitted' },
+    ]);
+    act(() => useStore.setState({
+      liveArtifactRefresh: { threadId: 't1', requestId: 'art2' },
+      liveTodoRefresh: { parentId: 'parent-1', requestId: 2 },
+    }));
+    expect(await screen.findByText('live.md')).toBeTruthy();
+    expect(await screen.findByText(/Live Todo/)).toBeTruthy();
+  });
+
+  it('runs one non-overlapping manual artifact/Todo refresh pair', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    render(<WorkspaceFilesRail threadId="t1" taskId="parent-1" />);
+    await waitFor(() => expect(fetchTaskSteps).toHaveBeenCalled());
+    vi.mocked(fetchThreadArtifacts).mockClear();
+    vi.mocked(fetchTaskSteps).mockClear();
+    fireEvent.click(screen.getByTestId('workspace-files-refresh'));
+    fireEvent.click(screen.getByTestId('workspace-files-refresh'));
+    await waitFor(() => expect(fetchThreadArtifacts).toHaveBeenCalledTimes(1));
+    expect(fetchTaskSteps).toHaveBeenCalledTimes(1);
+  });
+
   it('renders the Inputs section for a workspace room (expanded)', async () => {
     localStorage.setItem('probos.workspaceFiles.collapsed', '0');
     render(<WorkspaceFilesRail threadId="t1" />);
@@ -186,11 +247,13 @@ describe('WorkspaceFilesRail (AD-929)', () => {
   });
 
   it('calls fetchThreadInputs with the passed threadId', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
     render(<WorkspaceFilesRail threadId="t1" />);
     await waitFor(() => expect(fetchThreadInputs).toHaveBeenCalledWith('t1'));
   });
 
   it('calls fetchThreadArtifacts with the passed threadId', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
     render(<WorkspaceFilesRail threadId="t1" />);
     await waitFor(() => expect(fetchThreadArtifacts).toHaveBeenCalledWith('t1'));
   });
@@ -546,13 +609,8 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     expect(screen.queryByTestId('workspace-files-todos')).toBeNull();
   });
 
-  it('drops an old polling refresh started during a room-switch render', async () => {
+  it('drops an old live refresh started before a room switch', async () => {
     localStorage.setItem('probos.workspaceFiles.collapsed', '0');
-    const intervalCallbacks: Array<() => void> = [];
-    vi.stubGlobal('setInterval', vi.fn((callback: TimerHandler) => {
-      if (typeof callback === 'function') intervalCallbacks.push(callback as () => void);
-      return 1;
-    }));
     let staleResolve: ((value: ArtifactView[]) => void) | undefined;
     let roomOneCalls = 0;
     vi.mocked(fetchThreadArtifacts).mockImplementation((roomId) => {
@@ -564,26 +622,13 @@ describe('WorkspaceFilesRail (AD-929)', () => {
       return Promise.resolve([]);
     });
 
-    function FireOldInterval({ enabled }: { enabled: boolean }) {
-      if (enabled) intervalCallbacks[0]?.();
-      return null;
-    }
-
-    const view = render(
-      <>
-        <WorkspaceFilesRail threadId="room-1" />
-        <FireOldInterval enabled={false} />
-      </>,
-    );
-    await waitFor(() => expect(intervalCallbacks.length).toBeGreaterThan(0));
-
-    view.rerender(
-      <>
-        <WorkspaceFilesRail threadId="room-2" />
-        <FireOldInterval enabled />
-      </>,
-    );
+    const view = render(<WorkspaceFilesRail threadId="room-1" />);
+    await waitFor(() => expect(fetchThreadArtifacts).toHaveBeenCalledWith('room-1'));
+    act(() => useStore.setState({
+      liveArtifactRefresh: { threadId: 'room-1', requestId: 'artifact-live' },
+    }));
     await waitFor(() => expect(staleResolve).toBeTypeOf('function'));
+    view.rerender(<WorkspaceFilesRail threadId="room-2" />);
     await act(async () => {
       staleResolve?.([{
         ...ARTIFACTS[0],

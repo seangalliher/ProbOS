@@ -17,6 +17,34 @@ from probos.mesh.nats_bus import MockNATSBus, NATSBus, NATSMessage
 from probos.protocols import NATSBusProtocol
 
 
+class _ReleasableSubscription:
+    def __init__(
+        self,
+        *,
+        fail_drain: bool = False,
+        fail_unsubscribe: bool = False,
+    ) -> None:
+        self.fail_drain = fail_drain
+        self.fail_unsubscribe = fail_unsubscribe
+        self.drain_calls = 0
+        self.unsubscribe_calls = 0
+        self.drain_started = asyncio.Event()
+        self.drain_release = asyncio.Event()
+        self.drain_release.set()
+
+    async def drain(self) -> None:
+        self.drain_calls += 1
+        self.drain_started.set()
+        await self.drain_release.wait()
+        if self.fail_drain:
+            raise RuntimeError("drain failed")
+
+    async def unsubscribe(self) -> None:
+        self.unsubscribe_calls += 1
+        if self.fail_unsubscribe:
+            raise RuntimeError("unsubscribe failed")
+
+
 # ---------------------------------------------------------------------------
 # Test 1: MockNATSBus satisfies NATSBusProtocol
 # ---------------------------------------------------------------------------
@@ -196,6 +224,107 @@ class TestNATSBus:
             # Should NOT raise — graceful degradation
             await bus.start()
             assert bus.connected is False
+
+    @pytest.mark.asyncio
+    async def test_release_raw_subscription_is_identity_only_and_idempotent(
+        self,
+    ) -> None:
+        class _EqualityTrapSubscription(_ReleasableSubscription):
+            def __eq__(self, _other: object) -> bool:
+                return True
+
+        bus = NATSBus()
+        owned = _EqualityTrapSubscription()
+        wrong = _EqualityTrapSubscription()
+        bus._subscriptions.append(owned)
+
+        assert await bus.release_raw_subscription(wrong) is False
+        assert bus._subscriptions == [owned]
+        assert owned.drain_calls == 0
+        assert wrong.drain_calls == 0
+
+        assert await bus.release_raw_subscription(owned) is True
+        assert bus._subscriptions == []
+        assert owned.drain_calls == 1
+        assert owned.unsubscribe_calls == 0
+        assert await bus.release_raw_subscription(owned) is False
+        assert owned.drain_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_release_raw_subscription_concurrent_calls_share_cleanup(
+        self,
+    ) -> None:
+        bus = NATSBus()
+        subscription = _ReleasableSubscription()
+        subscription.drain_release.clear()
+        bus._subscriptions.append(subscription)
+
+        first = asyncio.create_task(bus.release_raw_subscription(subscription))
+        second = asyncio.create_task(bus.release_raw_subscription(subscription))
+        await subscription.drain_started.wait()
+        await asyncio.sleep(0)
+        assert subscription.drain_calls == 1
+
+        subscription.drain_release.set()
+        assert await asyncio.gather(first, second) == [True, True]
+        assert bus._subscriptions == []
+
+    @pytest.mark.asyncio
+    async def test_release_raw_subscription_falls_back_to_unsubscribe(
+        self,
+    ) -> None:
+        bus = NATSBus()
+        subscription = _ReleasableSubscription(fail_drain=True)
+        bus._subscriptions.append(subscription)
+
+        assert await bus.release_raw_subscription(subscription) is True
+        assert subscription.drain_calls == 1
+        assert subscription.unsubscribe_calls == 1
+        assert bus._subscriptions == []
+
+    @pytest.mark.asyncio
+    async def test_release_raw_subscription_both_fail_retains_tracking(
+        self,
+    ) -> None:
+        bus = NATSBus()
+        subscription = _ReleasableSubscription(
+            fail_drain=True,
+            fail_unsubscribe=True,
+        )
+        bus._subscriptions.append(subscription)
+
+        with pytest.raises(
+            RuntimeError,
+            match="^nats_raw_subscription_release_failed$",
+        ):
+            await bus.release_raw_subscription(subscription)
+
+        assert subscription.drain_calls == 1
+        assert subscription.unsubscribe_calls == 1
+        assert len(bus._subscriptions) == 1
+        assert bus._subscriptions[0] is subscription
+
+    @pytest.mark.asyncio
+    async def test_release_raw_subscription_cancellation_waits_for_cleanup(
+        self,
+    ) -> None:
+        bus = NATSBus()
+        subscription = _ReleasableSubscription()
+        subscription.drain_release.clear()
+        bus._subscriptions.append(subscription)
+        caller = asyncio.create_task(bus.release_raw_subscription(subscription))
+        await subscription.drain_started.wait()
+
+        caller.cancel()
+        await asyncio.sleep(0)
+        assert caller.done() is False
+        subscription.drain_release.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        assert subscription.drain_calls == 1
+        assert subscription.unsubscribe_calls == 0
+        assert bus._subscriptions == []
 
 
 # ---------------------------------------------------------------------------

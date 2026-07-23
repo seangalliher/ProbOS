@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchCrewTaskDetail, fetchRoomSummaries } from '../threadApi';
+import { fetchCrewTaskDetail, fetchRoomSummaries, repairRoomSummaries } from '../threadApi';
 import type {
   CrewSessionDetailProjection,
   CrewSessionSummaryProjection,
@@ -132,7 +132,12 @@ function withoutKey(value: object, key: string): Record<string, unknown> {
 }
 
 function response(body: unknown, status = 200): Response {
-  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  } as Response;
 }
 
 afterEach(() => {
@@ -276,5 +281,23 @@ describe('AD-1132 threadApi CrewSession contracts', () => {
     });
     expect('session' in result['outer-thread']).toBe(false);
     expect(result).not.toHaveProperty('embedded-thread');
+  });
+
+  it('strict repair accepts authoritative empty and rejects a malformed sibling whole', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response({ summaries: {} })));
+    expect(await repairRoomSummaries()).toEqual({ kind: 'success', summaries: {} });
+
+    const generic = { outputs: 0, steps_total: 0, steps_done: 0, topic: 'Generic' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response({
+      summaries: { generic, malformed: { ...generic, raw: true } },
+    })));
+    expect(await repairRoomSummaries()).toEqual({ kind: 'error', status: 200 });
+  });
+
+  it('strict repair distinguishes transport failure from authoritative empty', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response({}, 503)));
+    expect(await repairRoomSummaries()).toEqual({ kind: 'error', status: 503 });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('offline')));
+    expect(await repairRoomSummaries()).toEqual({ kind: 'error', status: null });
   });
 });

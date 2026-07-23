@@ -99,6 +99,8 @@ class EventType(str, Enum):
     WORK_ITEM_CREATED = "work_item_created"
     WORK_ITEM_UPDATED = "work_item_updated"
     WORK_ITEM_STATUS_CHANGED = "work_item_status_changed"
+    CHAT_THREAD_MESSAGE_APPENDED = "chat_thread_message_appended"
+    ARTIFACT_VERSION_ADDED = "artifact_version_added"
     WORK_ITEM_RECONCILED = "work_item_reconciled"  # AD-875
     WORK_ITEM_ASSIGNED = "work_item_assigned"
     WORK_ITEM_CLAIMED = "work_item_claimed"

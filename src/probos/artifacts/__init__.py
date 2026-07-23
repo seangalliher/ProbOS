@@ -28,9 +28,12 @@ from __future__ import annotations
 import sqlite3
 import time
 import uuid
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -93,8 +96,30 @@ class ArtifactStore:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._clock = clock
         self._id_factory = id_factory
+        self._version_committed_callback: Callable[[Artifact], None] | None = None
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+
+    def set_version_committed_callback(
+        self,
+        callback: Callable[[Artifact], None] | None,
+    ) -> None:
+        self._version_committed_callback = callback
+
+    def _notify_version_committed(self, artifact: Artifact) -> None:
+        callback = self._version_committed_callback
+        if callback is None:
+            return
+        try:
+            callback(artifact)
+        except Exception:
+            logger.warning(
+                "Artifact %s version %d committed but its live-refresh callback "
+                "failed; clients will repair on reconnect",
+                artifact.id,
+                artifact.version,
+                exc_info=True,
+            )
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path), isolation_level=None)
@@ -160,7 +185,7 @@ class ArtifactStore:
             except Exception:
                 conn.execute("ROLLBACK")
                 raise
-        return Artifact(
+        artifact = Artifact(
             id=artifact_id,
             thread_id=thread_id,
             name=name,
@@ -172,6 +197,8 @@ class ArtifactStore:
             created_at=now,
             supersedes=supersedes,
         )
+        self._notify_version_committed(artifact)
+        return artifact
 
     def reconcile_exact_version(
         self,
@@ -184,6 +211,7 @@ class ArtifactStore:
         created_by: str,
     ) -> Artifact:
         """Create v1 for an empty chain or reuse its one exact row."""
+        created: Artifact | None = None
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -206,7 +234,7 @@ class ArtifactStore:
                     conn.execute("COMMIT")
                     return artifact
 
-                artifact = Artifact(
+                created = Artifact(
                     id=self._id_factory(),
                     thread_id=thread_id,
                     name=name,
@@ -222,26 +250,29 @@ class ArtifactStore:
                     "content_hash, mime, size_bytes, created_by, created_at, "
                     "supersedes) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
-                        artifact.id,
-                        artifact.thread_id,
-                        artifact.name,
-                        artifact.version,
-                        artifact.content_hash,
-                        artifact.mime,
-                        artifact.size_bytes,
-                        artifact.created_by,
-                        artifact.created_at,
-                        artifact.supersedes,
+                        created.id,
+                        created.thread_id,
+                        created.name,
+                        created.version,
+                        created.content_hash,
+                        created.mime,
+                        created.size_bytes,
+                        created.created_by,
+                        created.created_at,
+                        created.supersedes,
                     ),
                 )
                 conn.execute("COMMIT")
-                return artifact
             except BaseException:
                 try:
                     conn.execute("ROLLBACK")
                 except sqlite3.Error:
                     pass
                 raise
+        if created is None:
+            raise ValueError("artifact_exact_match_create_failed")
+        self._notify_version_committed(created)
+        return created
 
     def get(self, artifact_id: str) -> Artifact | None:
         with self._connect() as conn:
@@ -268,14 +299,17 @@ class ArtifactStore:
             ).fetchall()
         return [_row(r) for r in rows]
 
-    def list_thread_latest(self, thread_id: str) -> list[Artifact]:
+    def list_thread_latest(
+        self,
+        thread_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[Artifact]:
         """Return the latest version of every distinct artifact name in
         ``thread_id``, ordered by most-recently-created descending. This
         is the default "Artifacts pane" listing.
         """
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
+        query = """
                 SELECT a.* FROM artifacts a
                 INNER JOIN (
                     SELECT name, MAX(version) AS max_version
@@ -284,10 +318,24 @@ class ArtifactStore:
                 ) m ON a.name = m.name AND a.version = m.max_version
                 WHERE a.thread_id = ?
                 ORDER BY a.created_at DESC
-                """,
-                (thread_id, thread_id),
-            ).fetchall()
+                """
+        params: tuple[object, ...] = (thread_id, thread_id)
+        if limit is not None:
+            if type(limit) is not int or limit < 1:
+                raise ValueError("artifact_list_limit_invalid")
+            query += " LIMIT ?"
+            params = (*params, limit)
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
         return [_row(r) for r in rows]
+
+    def count_thread_latest(self, thread_id: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(DISTINCT name) AS n FROM artifacts WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+        return int(row["n"] if row else 0)
 
     def delete(self, artifact_id: str) -> bool:
         with self._connect() as conn:

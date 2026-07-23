@@ -104,6 +104,10 @@ export function mkMessage(
 export interface MockChatApiOptions {
   threads?: ThreadFixture[];
   messagesByThread?: Record<string, MessageFixture[]>;
+  roomSummaries?: Record<string, unknown>;
+  crewDetailsByParent?: Record<string, unknown>;
+  stepsByParent?: Record<string, unknown[]>;
+  artifactsByThread?: Record<string, unknown[]>;
   /** The thread returned by POST /api/threads (the new group). */
   createdThread?: ThreadFixture;
 }
@@ -140,8 +144,39 @@ export async function mockChatApi(page: Page, opts: MockChatApiOptions = {}): Pr
       }
     }
 
+    if (path === '/api/threads/summaries' && method === 'GET') {
+      return fulfill({ summaries: opts.roomSummaries ?? {} });
+    }
+
+    let m = path.match(/^\/api\/crew-tasks\/([^/]+)$/);
+    if (m && method === 'GET') {
+      const parentId = decodeURIComponent(m[1]);
+      const detail = opts.crewDetailsByParent?.[parentId];
+      return detail === undefined
+        ? route.fulfill({ status: 404, headers: JSON_HEADERS, body: '{}' })
+        : fulfill({ session: detail });
+    }
+
+    m = path.match(/^\/api\/work-items\/([^/]+)\/steps$/);
+    if (m && method === 'GET') {
+      const parentId = decodeURIComponent(m[1]);
+      return fulfill({
+        steps: opts.stepsByParent?.[parentId] ?? [],
+        gate_completion: false,
+      });
+    }
+
+    m = path.match(/^\/api\/artifacts\/thread\/([^/]+)$/);
+    if (m && method === 'GET') {
+      const threadId = decodeURIComponent(m[1]);
+      return fulfill({
+        thread_id: threadId,
+        artifacts: opts.artifactsByThread?.[threadId] ?? [],
+      });
+    }
+
     // GET /api/threads/{id}/messages -> {thread_id, messages}
-    let m = path.match(/^\/api\/threads\/([^/]+)\/messages$/);
+    m = path.match(/^\/api\/threads\/([^/]+)\/messages$/);
     if (m && method === 'GET') {
       const id = decodeURIComponent(m[1]);
       return fulfill({ thread_id: id, messages: messagesByThread[id] ?? [] });

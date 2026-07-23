@@ -109,6 +109,34 @@ class TestPoolGroupRegistry:
         names = [g.name for g in registry.all_groups()]
         assert names == ["core", "medical", "utility"]
 
+    def test_snapshot_counts_and_mapping_copy_are_owner_exact(
+        self,
+        registry: PoolGroupRegistry,
+    ) -> None:
+        registry.register(PoolGroup(
+            name="core",
+            display_name="Core",
+            pool_names={"system", "shared"},
+        ))
+        registry.register(PoolGroup(
+            name="utility",
+            display_name="Utility",
+            pool_names={"shared", "weather"},
+        ))
+
+        mapping = registry.pool_to_group_snapshot()
+
+        assert registry.count == 2
+        assert registry.membership_count == 4
+        assert registry.pool_mapping_count == 3
+        assert mapping == {
+            "system": "core",
+            "shared": "utility",
+            "weather": "utility",
+        }
+        mapping["system"] = "changed"
+        assert registry.get_group_for_pool("system") == "core"
+
     def test_group_health(self, registry: PoolGroupRegistry):
         """group_health aggregates across pools in a group."""
         registry.register(PoolGroup(

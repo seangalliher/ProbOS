@@ -20,11 +20,65 @@ export interface TodoStep {
   note?: string | null;
 }
 
+const TODO_STATUSES = new Set([
+  'pending', 'in_progress', 'submitted', 'done', 'rejected',
+]);
+const MAX_TODO_ROWS = 1000;
+const MAX_TODO_RESPONSE_BYTES = 1024 * 1024;
+
+function isTodoStep(value: unknown): value is TodoStep {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  const allowed = new Set([
+    'label', 'status', 'assigned_to', 'submitted_by', 'confirmed_by', 'note',
+  ]);
+  if (Object.keys(row).some(key => !allowed.has(key))) return false;
+  if (
+    typeof row.label !== 'string'
+    || row.label.length === 0
+    || row.label.length > 4096
+    || typeof row.status !== 'string'
+    || !TODO_STATUSES.has(row.status)
+  ) return false;
+  return ['assigned_to', 'submitted_by', 'confirmed_by', 'note'].every((key) => (
+    row[key] === undefined
+    || row[key] === null
+    || (typeof row[key] === 'string' && (row[key] as string).length <= 4096)
+  ));
+}
+
 export async function fetchTaskSteps(taskId: string): Promise<TodoStep[]> {
-  const res = await fetch(`/api/work-items/${encodeURIComponent(taskId)}/steps`);
+  const res = await fetch(`/api/work-items/${encodeURIComponent(taskId)}/steps?limit=1001`);
   if (!res.ok) throw new Error(`fetchTaskSteps: ${res.status}`);
-  const body = await res.json();
-  return Array.isArray(body.steps) ? body.steps : [];
+  const text = await res.text();
+  if (new TextEncoder().encode(text).byteLength > MAX_TODO_RESPONSE_BYTES) {
+    throw new Error('fetchTaskSteps: response_too_large');
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error('fetchTaskSteps: malformed_response');
+  }
+  if (
+    typeof body !== 'object'
+    || body === null
+    || Array.isArray(body)
+    || Object.keys(body).length !== 2
+    || !Object.prototype.hasOwnProperty.call(body, 'steps')
+    || !Object.prototype.hasOwnProperty.call(body, 'gate_completion')
+  ) throw new Error('fetchTaskSteps: malformed_response');
+  const record = body as Record<string, unknown>;
+  if (!Array.isArray(record.steps) || typeof record.gate_completion !== 'boolean') {
+    throw new Error('fetchTaskSteps: malformed_response');
+  }
+  if (record.steps.length > MAX_TODO_ROWS) {
+    throw new Error('fetchTaskSteps: count_exceeded');
+  }
+  if (!record.steps.every(isTodoStep)) {
+    throw new Error('fetchTaskSteps: malformed_row');
+  }
+  return record.steps;
 }
 
 export async function updateTaskStep(

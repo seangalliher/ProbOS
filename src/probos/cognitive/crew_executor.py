@@ -706,6 +706,15 @@ class CrewTaskExecutor:
         spec_id = metadata.get("spec_id")
         if type(spec_id) is not str or not spec_id:
             raise ValueError("crew_execution_evidence_invalid")
+        if child.status == "done":
+            self._append_crew_session_child_result(
+                parent_id=parent_id,
+                child=child,
+                thread_id=thread_id,
+                output=output,
+                content_hash=output_record["content_hash"],
+                finished_at=execution["finished_at"],
+            )
         return SubtaskResult(
             work_item_id=child.id,
             spec_id=spec_id,
@@ -1227,6 +1236,16 @@ class CrewTaskExecutor:
             if updated is None:
                 raise ValueError("crew_execution_persistence_failed")
             persisted = True
+            output_record = metadata_patch.get("crew_execution_output")
+            if status == "done" and type(output_record) is dict:
+                self._append_crew_session_child_result(
+                    parent_id=parent_key,
+                    child=child,
+                    thread_id=thread_id,
+                    output=output,
+                    content_hash=output_record["content_hash"],
+                    finished_at=evidence["finished_at"],
+                )
         except Exception as exc:
             state_conflict = (
                 isinstance(exc, ValueError)
@@ -1320,6 +1339,70 @@ class CrewTaskExecutor:
             artifact_refs=refs,
             blocked_dependency_ids=result_blocked_dependency_ids,
         )
+
+    def _append_crew_session_child_result(
+        self,
+        *,
+        parent_id: str,
+        child: WorkItem,
+        thread_id: str,
+        output: object,
+        content_hash: object,
+        finished_at: object,
+    ) -> None:
+        thread_store = getattr(self._runtime, "chat_thread_store", None)
+        if thread_store is None:
+            logger.warning(
+                "Crew child %s committed successfully but no chat-thread store "
+                "is available; resume will retry transcript repair",
+                child.id,
+            )
+            return
+        try:
+            parent_key = _bounded_id(parent_id)
+            child_key = _bounded_id(child.id)
+            room_key = _bounded_id(thread_id)
+            author_id = _bounded_id(child.assigned_to)
+            if (
+                type(output) is not str
+                or type(content_hash) is not str
+                or _SHA_RE.fullmatch(content_hash) is None
+                or type(finished_at) is not float
+                or not math.isfinite(finished_at)
+                or finished_at < 0
+            ):
+                raise ValueError("crew_execution_message_invalid")
+            message_id = hashlib.sha256(
+                b"probos:crew-session-child-result:v1\x00"
+                + parent_key.encode("utf-8")
+                + b"\x00"
+                + child_key.encode("utf-8")
+                + b"\x00"
+                + content_hash.encode("ascii")
+            ).hexdigest()
+            message = thread_store.append_message_once(
+                room_key,
+                message_id=message_id,
+                author_id=author_id,
+                role="agent",
+                body=output,
+                created_at=finished_at,
+                metadata={
+                    "source": "crew_session_child_result",
+                    "parent_id": parent_key,
+                    "work_item_id": child_key,
+                    "content_hash": content_hash,
+                },
+            )
+            if message is None:
+                raise ValueError("crew_execution_message_thread_missing")
+        except Exception:
+            logger.warning(
+                "Crew child %s committed successfully but its room message "
+                "could not be repaired; a later resume can retry idempotently",
+                child.id,
+                exc_info=True,
+            )
 
     async def _reconcile_terminal_commit(
         self,

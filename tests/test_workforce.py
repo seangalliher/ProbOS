@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any, Iterable, Sequence
 from unittest.mock import MagicMock
 
 import pytest
 
+from probos.protocols import ConnectionFactory, DatabaseConnection
+from probos.storage.sqlite_factory import SQLiteConnectionFactory
 from probos.workforce import (
     AgentCalendar,
     AssignmentMode,
@@ -17,6 +20,8 @@ from probos.workforce import (
     BookingStatus,
     BookingTimestamp,
     CalendarEntry,
+    CrewSessionAdmissionPort,
+    CrewSessionParentCreate,
     JournalType,
     ResourceRequirement,
     ResourceType,
@@ -82,6 +87,306 @@ async def store_with_resource(store, sample_resource):
         entries=[CalendarEntry()],
     ))
     return store
+
+
+class _RecordingConnection:
+    def __init__(self, delegate: DatabaseConnection) -> None:
+        self._delegate = delegate
+        self.queries: list[tuple[str, Sequence[Any]]] = []
+
+    @property
+    def row_factory(self) -> Any:
+        return self._delegate.row_factory  # type: ignore[attr-defined]
+
+    @row_factory.setter
+    def row_factory(self, value: Any) -> None:
+        self._delegate.row_factory = value  # type: ignore[attr-defined]
+
+    async def execute(
+        self,
+        sql: str,
+        parameters: Sequence[Any] = (),
+    ) -> Any:
+        self.queries.append((sql, parameters))
+        return await self._delegate.execute(sql, parameters)
+
+    async def executemany(
+        self,
+        sql: str,
+        parameters: Iterable[Sequence[Any]],
+    ) -> Any:
+        return await self._delegate.executemany(sql, parameters)
+
+    async def executescript(self, sql_script: str) -> None:
+        await self._delegate.executescript(sql_script)
+
+    async def fetchone(self) -> Any:
+        return await self._delegate.fetchone()
+
+    async def fetchall(self) -> Any:
+        return await self._delegate.fetchall()
+
+    async def commit(self) -> None:
+        await self._delegate.commit()
+
+    async def close(self) -> None:
+        await self._delegate.close()
+
+
+class _RecordingConnectionFactory:
+    def __init__(self) -> None:
+        self._delegate: ConnectionFactory = SQLiteConnectionFactory()
+        self.connection: _RecordingConnection | None = None
+
+    async def connect(self, db_path: str) -> DatabaseConnection:
+        connection = _RecordingConnection(await self._delegate.connect(db_path))
+        self.connection = connection
+        return connection
+
+
+async def _create_crew_session_parent(
+    admission: CrewSessionAdmissionPort,
+    *,
+    parent_id: str,
+    created_at: float,
+) -> WorkItem:
+    async with admission.reserve() as reservation:
+        return await reservation.create_parent(CrewSessionParentCreate(
+            id=parent_id,
+            title="Crew session",
+            description="Crew session",
+            assigned_to="facilitator-1",
+            created_by="captain",
+            metadata={},
+            created_at=created_at,
+        ))
+
+
+# ---------------------------------------------------------------------------
+# TestWSVisibleWorkItems
+# ---------------------------------------------------------------------------
+
+class TestWSVisibleWorkItems:
+    @pytest.mark.asyncio
+    async def test_list_ws_visible_work_items_empty_returns_empty(self, store):
+        assert await store.list_ws_visible_work_items(limit=100) == []
+
+    @pytest.mark.asyncio
+    async def test_list_ws_visible_work_items_unstarted_store_returns_empty(self):
+        unstarted = WorkItemStore()
+        assert await unstarted.list_ws_visible_work_items(limit=1) == []
+
+    @pytest.mark.asyncio
+    async def test_list_ws_visible_work_items_invalid_limit_raises(self):
+        unstarted = WorkItemStore()
+        for invalid_limit in (True, False, 0, -1, 101, 1.0, "1", None):
+            with pytest.raises(
+                ValueError,
+                match="^ws_visible_work_items_limit_invalid$",
+            ):
+                await unstarted.list_ws_visible_work_items(limit=invalid_limit)
+
+    @pytest.mark.asyncio
+    async def test_list_ws_visible_work_items_crew_rows_do_not_starve_ordinary_rows(
+        self,
+        store,
+    ):
+        admission = store.claim_crew_session_admission_port()
+        parents: list[WorkItem] = []
+        for index in range(51):
+            parents.append(await _create_crew_session_parent(
+                admission,
+                parent_id=f"crew-parent-{index:03d}",
+                created_at=300.0 + index,
+            ))
+        for index, parent in enumerate(parents):
+            await store.create_work_item(
+                id=f"crew-child-{index:03d}",
+                title="Crew child",
+                parent_id=parent.id,
+                created_at=500.0 + index,
+                updated_at=500.0 + index,
+            )
+        await store.create_work_item(
+            id="ordinary-middle",
+            title="Ordinary middle",
+            created_at=400.0,
+            updated_at=400.0,
+        )
+        await store.create_work_item(
+            id="ordinary-tail",
+            title="Ordinary tail",
+            created_at=100.0,
+            updated_at=100.0,
+        )
+
+        visible = await store.list_ws_visible_work_items(limit=100)
+
+        assert [item.id for item in visible] == [
+            "ordinary-middle",
+            "ordinary-tail",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_list_ws_visible_work_items_parent_classification_is_exact(
+        self,
+        store,
+    ):
+        admission = store.claim_crew_session_admission_port()
+        crew_parent = await _create_crew_session_parent(
+            admission,
+            parent_id="crew-parent",
+            created_at=10.0,
+        )
+        ordinary_parent = await store.create_work_item(
+            id="ordinary-parent",
+            title="Ordinary parent",
+            created_at=9.0,
+            updated_at=9.0,
+        )
+        await store.create_work_item(
+            id="crew-child",
+            title="Crew child",
+            parent_id=crew_parent.id,
+            created_at=8.0,
+            updated_at=8.0,
+        )
+        await store.create_work_item(
+            id="ordinary-child",
+            title="Ordinary child",
+            parent_id=ordinary_parent.id,
+            created_at=7.0,
+            updated_at=7.0,
+        )
+        await store.create_work_item(
+            id="missing-parent-child",
+            title="Missing parent child",
+            parent_id="missing-parent",
+            created_at=6.0,
+            updated_at=6.0,
+        )
+
+        visible = await store.list_ws_visible_work_items(limit=100)
+        visible_ids = {item.id for item in visible}
+
+        assert crew_parent.id not in visible_ids
+        assert "crew-child" not in visible_ids
+        assert visible_ids == {
+            ordinary_parent.id,
+            "ordinary-child",
+            "missing-parent-child",
+        }
+
+    @pytest.mark.asyncio
+    async def test_list_ws_visible_work_items_returns_cap_plus_one_sentinel(
+        self,
+        store,
+    ):
+        for index in range(101):
+            await store.create_work_item(
+                id=f"ordinary-{index:03d}",
+                title="Ordinary",
+                created_at=float(index),
+                updated_at=float(index),
+            )
+
+        visible = await store.list_ws_visible_work_items(limit=100)
+
+        assert len(visible) == 101
+
+    @pytest.mark.asyncio
+    async def test_list_ws_visible_work_items_order_is_deterministic(self, store):
+        for item_id, priority, created_at in (
+            ("priority-two", 2, 20.0),
+            ("same-time-b", 1, 10.0),
+            ("newest", 1, 30.0),
+            ("same-time-a", 1, 10.0),
+        ):
+            await store.create_work_item(
+                id=item_id,
+                title=item_id,
+                priority=priority,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+
+        visible = await store.list_ws_visible_work_items(limit=100)
+
+        assert [item.id for item in visible] == [
+            "newest",
+            "same-time-a",
+            "same-time-b",
+            "priority-two",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_list_ws_visible_work_items_uses_one_sql_query(
+        self,
+        tmp_path,
+    ):
+        factory = _RecordingConnectionFactory()
+        recorded_store = WorkItemStore(
+            db_path=str(tmp_path / "recorded-workforce.db"),
+            connection_factory=factory,
+            tick_interval=1_000,
+        )
+        await recorded_store.start()
+        try:
+            admission = recorded_store.claim_crew_session_admission_port()
+            crew_parent = await _create_crew_session_parent(
+                admission,
+                parent_id="crew-parent",
+                created_at=3.0,
+            )
+            await recorded_store.create_work_item(
+                id="crew-child",
+                title="Crew child",
+                parent_id=crew_parent.id,
+                created_at=2.0,
+                updated_at=2.0,
+            )
+            await recorded_store.create_work_item(
+                id="ordinary",
+                title="Ordinary",
+                created_at=1.0,
+                updated_at=1.0,
+            )
+            assert factory.connection is not None
+            factory.connection.queries.clear()
+
+            visible = await recorded_store.list_ws_visible_work_items(limit=100)
+
+            assert [item.id for item in visible] == ["ordinary"]
+            assert len(factory.connection.queries) == 1
+            sql, parameters = factory.connection.queries[0]
+            assert "NOT EXISTS" in sql
+            assert "ORDER BY item.priority ASC, item.created_at DESC, item.id ASC" in sql
+            assert parameters == ("crew_session", "crew_session", 101)
+        finally:
+            await recorded_store.stop()
+
+    @pytest.mark.asyncio
+    async def test_list_work_items_generic_contract_still_includes_crew_rows(
+        self,
+        store,
+    ):
+        admission = store.claim_crew_session_admission_port()
+        crew_parent = await _create_crew_session_parent(
+            admission,
+            parent_id="crew-parent",
+            created_at=3.0,
+        )
+        await store.create_work_item(
+            id="crew-child",
+            title="Crew child",
+            parent_id=crew_parent.id,
+            created_at=2.0,
+            updated_at=2.0,
+        )
+
+        generic = await store.list_work_items(limit=10)
+
+        assert {item.id for item in generic} == {crew_parent.id, "crew-child"}
 
 
 # ---------------------------------------------------------------------------

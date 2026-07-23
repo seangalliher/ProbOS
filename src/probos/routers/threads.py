@@ -21,13 +21,11 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from probos.crew_session_live import load_crew_session_projection
 from probos.crew_session_projection import (
     CREW_SESSION_PROJECTION_ERROR,
     CrewSessionDetailProjection,
     CrewSessionProjectionError,
-    build_crew_session_detail,
-    build_crew_session_summary,
-    validate_synthesis_metadata,
 )
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
@@ -195,26 +193,12 @@ async def _build_crew_session_detail(
     work_item_store = getattr(runtime, "work_item_store", None)
     if service is None or work_item_store is None:
         raise CrewSessionProjectionError()
-    session = await service.get_session(parent.id)
-    if session is None or session.task_id != parent.id:
-        raise CrewSessionProjectionError()
-    metadata = parent.metadata
-    if type(metadata) is not dict:
-        raise CrewSessionProjectionError()
-    synthesis = (
-        validate_synthesis_metadata(metadata["crew_synth"])
-        if "crew_synth" in metadata
-        else None
+    loaded = await load_crew_session_projection(
+        parent.id,
+        crew_session_service=service,
+        work_item_store=work_item_store,
     )
-    children = await work_item_store.list_work_items(
-        parent_id=parent.id,
-        limit=1001,
-    )
-    return build_crew_session_detail(
-        session=session,
-        synthesis=synthesis,
-        children=children,
-    )
+    return loaded.detail
 
 
 @router.get("")
@@ -265,7 +249,7 @@ async def thread_summaries(runtime: Any = Depends(get_runtime)) -> dict:
         s = {"outputs": 0, "steps_total": 0, "steps_done": 0, "topic": ""}
         if arts is not None:
             try:
-                s["outputs"] = len(arts.list_thread_latest(t.id))
+                s["outputs"] = arts.count_thread_latest(t.id)
             except Exception:
                 pass
         tid = getattr(t, "task_id", None)
@@ -282,10 +266,18 @@ async def thread_summaries(runtime: Any = Depends(get_runtime)) -> dict:
                 pass
             if item is not None and item.work_type == "crew_session":
                 try:
-                    detail = await _build_crew_session_detail(runtime, item)
+                    service = getattr(runtime, "crew_session_service", None)
+                    if service is None:
+                        raise CrewSessionProjectionError()
+                    loaded = await load_crew_session_projection(
+                        item.id,
+                        crew_session_service=service,
+                        work_item_store=wis,
+                    )
+                    detail = loaded.detail
                     if detail.thread_id != t.id:
                         raise CrewSessionProjectionError()
-                    summary = build_crew_session_summary(detail)
+                    summary = loaded.summary
                     s["topic"] = detail.goal
                     s["session"] = summary.to_wire()
                 except Exception:

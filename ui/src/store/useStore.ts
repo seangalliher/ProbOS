@@ -27,7 +27,11 @@ import type {
   BillDefinitionView, BillInstanceView,  // AD-618d
   WorkstationDoc,  // AD-1021
   Workspace,  // AD-1023
-  CrewSessionDetailProjection, CrewSessionSummaryProjection,  // AD-1132
+  ArtifactVersionAddedData, ChatThreadMessageAppendedData,
+  CrewSessionDetailProjection, CrewSessionProjectionEventData,
+  CrewSessionSummaryProjection, LiveArtifactRefreshCommand,
+  LiveRailOwner, LiveThreadRefreshCommand, LiveTodoRefreshCommand,
+  RoomSummary,
 } from './types';
 
 // AD-562: Knowledge Browser types
@@ -349,6 +353,15 @@ export interface HXIState {
   chatThreads: Map<string, AD791aChatThreadView>;
   crewSessionsByParent: ReadonlyMap<string, CrewSessionDetailProjection>;
   crewSessionSummariesByThread: ReadonlyMap<string, CrewSessionSummaryProjection>;
+  roomSummariesByThread: ReadonlyMap<string, RoomSummary>;
+  liveGeneration: string | null;
+  liveSequence: number;
+  liveRepairEpoch: number;
+  liveThreadRefresh: LiveThreadRefreshCommand | null;
+  liveArtifactRefresh: LiveArtifactRefreshCommand | null;
+  liveTodoRefresh: LiveTodoRefreshCommand | null;
+  liveCrewOwnerParentId: string | null;
+  liveRailOwner: LiveRailOwner | null;
   // AD-938: thread-keyed display transcript. When a thread is active the
   // profile chat tab renders these (the thread's real messages) instead of the
   // per-agent ``agentConversations`` buffer; loaded on open + reconciled on
@@ -535,6 +548,13 @@ export interface HXIState {
   hydrateCrewSessionSummaries: (
     summaries: Readonly<Record<string, CrewSessionSummaryProjection>>,
   ) => void;
+  hydrateRoomSummaries: (
+    summaries: Readonly<Record<string, RoomSummary>>,
+  ) => void;
+  claimLiveCrewOwner: (parentId: string) => symbol;
+  releaseLiveCrewOwner: (parentId: string, claim: symbol) => void;
+  claimLiveRailOwner: (owner: LiveRailOwner) => symbol;
+  releaseLiveRailOwner: (owner: LiveRailOwner, claim: symbol) => void;
   // AD-938: thread-keyed display transcript actions (mirror the chatThreads Map
   // pattern). ``setThreadMessages`` replaces a thread's list (load-on-open);
   // ``appendThreadMessage`` adds one message (send-reconcile), capped to 200.
@@ -827,6 +847,352 @@ function persistPersonnelRect(rect: WardRoomWindowRect): void {
   }
 }
 
+const LIVE_MAP_LIMIT = 256;
+const LIVE_GENERATION_RE = /^[0-9a-f]{32}$/;
+let liveCrewOwnerClaim: symbol | null = null;
+let liveRailOwnerClaim: symbol | null = null;
+
+function isLiveRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasLiveExactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index]);
+}
+
+function isBoundedLiveId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128;
+}
+
+function isFiniteNonNegative(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+const LIVE_CREW_STATES = new Set([
+  'discussing', 'executing', 'verifying', 'blocked_needs_captain', 'done', 'failed',
+]);
+
+function isLiveStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function isLiveDetailProjection(value: unknown): value is CrewSessionDetailProjection {
+  if (!isLiveRecord(value) || !hasLiveExactKeys(value, [
+    'task_id', 'thread_id', 'goal', 'origin', 'originator_id', 'facilitator_id',
+    'owner_ids', 'state', 'revision', 'success_criteria', 'expected_deliverable',
+    'timestamps', 'progress', 'last_result_summary', 'blocker', 'result',
+    'verification', 'duplicate_resume_count',
+  ])) return false;
+  const timestamps = value.timestamps;
+  const progress = value.progress;
+  if (
+    !isLiveRecord(timestamps)
+    || !hasLiveExactKeys(timestamps, [
+      'created_at', 'transitioned_at', 'started_at', 'first_result_at',
+      'verified_at', 'completed_at',
+    ])
+    || !isLiveRecord(progress)
+    || !hasLiveExactKeys(progress, ['total', 'done', 'failed', 'active', 'active_child'])
+  ) return false;
+  const nullableTimes = ['started_at', 'first_result_at', 'verified_at', 'completed_at'];
+  if (
+    !isFiniteNonNegative(timestamps.created_at)
+    || !isFiniteNonNegative(timestamps.transitioned_at)
+    || !nullableTimes.every(key => timestamps[key] === null || isFiniteNonNegative(timestamps[key]))
+    || !['total', 'done', 'failed', 'active'].every(
+      key => Number.isInteger(progress[key]) && (progress[key] as number) >= 0,
+    )
+  ) return false;
+  const activeChild = progress.active_child;
+  if (activeChild !== null && (
+    !isLiveRecord(activeChild)
+    || !hasLiveExactKeys(activeChild, ['id', 'title', 'status', 'owner_id'])
+    || !isBoundedLiveId(activeChild.id)
+    || typeof activeChild.title !== 'string'
+    || typeof activeChild.status !== 'string'
+    || !(activeChild.owner_id === null || isBoundedLiveId(activeChild.owner_id))
+  )) return false;
+  const blocker = value.blocker;
+  if (blocker !== null && (
+    !isLiveRecord(blocker)
+    || !hasLiveExactKeys(blocker, ['reason', 'since', 'duration_seconds', 'action'])
+    || typeof blocker.reason !== 'string'
+    || !isFiniteNonNegative(blocker.since)
+    || !isFiniteNonNegative(blocker.duration_seconds)
+    || blocker.action !== 'retry_start_work'
+  )) return false;
+  const result = value.result;
+  if (result !== null && (
+    !isLiveRecord(result)
+    || !hasLiveExactKeys(result, ['artifact_id', 'content_hash', 'result_ref', 'evidence_refs'])
+    || !isBoundedLiveId(result.artifact_id)
+    || typeof result.content_hash !== 'string'
+    || !/^[0-9a-f]{64}$/.test(result.content_hash)
+    || typeof result.result_ref !== 'string'
+    || !/^[0-9a-f]{64}$/.test(result.result_ref)
+    || !isLiveStringArray(result.evidence_refs)
+    || !result.evidence_refs.every(ref => /^[0-9a-f]{64}$/.test(ref))
+  )) return false;
+  const verification = value.verification;
+  if (verification !== null && (
+    !isLiveRecord(verification)
+    || !hasLiveExactKeys(verification, [
+      'verifier_agent_id', 'confidence', 'critique', 'accepted_count',
+      'total_count', 'convergence_rounds',
+    ])
+    || !isBoundedLiveId(verification.verifier_agent_id)
+    || !isFiniteNonNegative(verification.confidence)
+    || typeof verification.critique !== 'string'
+    || !Number.isInteger(verification.accepted_count)
+    || !Number.isInteger(verification.total_count)
+    || !Number.isInteger(verification.convergence_rounds)
+  )) return false;
+  return isBoundedLiveId(value.task_id)
+    && isBoundedLiveId(value.thread_id)
+    && typeof value.goal === 'string'
+    && (value.origin === 'captain' || value.origin === 'agent')
+    && isBoundedLiveId(value.originator_id)
+    && isBoundedLiveId(value.facilitator_id)
+    && isLiveStringArray(value.owner_ids)
+    && typeof value.state === 'string' && LIVE_CREW_STATES.has(value.state)
+    && Number.isInteger(value.revision) && (value.revision as number) >= 0
+    && isLiveStringArray(value.success_criteria)
+    && typeof value.expected_deliverable === 'string'
+    && typeof value.last_result_summary === 'string'
+    && Number.isInteger(value.duplicate_resume_count)
+    && (value.duplicate_resume_count as number) >= 0;
+}
+
+function isLiveSummaryProjection(value: unknown): value is CrewSessionSummaryProjection {
+  if (!isLiveRecord(value) || !hasLiveExactKeys(value, [
+    'task_id', 'thread_id', 'goal', 'state', 'facilitator_id', 'owner_ids',
+    'progress', 'last_result_summary', 'blocker', 'needs_attention',
+    'result_artifact_id', 'verified_at',
+  ])) return false;
+  const progress = value.progress;
+  const blocker = value.blocker;
+  return isBoundedLiveId(value.task_id)
+    && isBoundedLiveId(value.thread_id)
+    && typeof value.goal === 'string'
+    && typeof value.state === 'string' && LIVE_CREW_STATES.has(value.state)
+    && isBoundedLiveId(value.facilitator_id)
+    && isLiveStringArray(value.owner_ids)
+    && isLiveRecord(progress)
+    && hasLiveExactKeys(progress, ['total', 'done', 'failed', 'active'])
+    && ['total', 'done', 'failed', 'active'].every(
+      key => Number.isInteger(progress[key]) && (progress[key] as number) >= 0,
+    )
+    && typeof value.last_result_summary === 'string'
+    && (blocker === null || (
+      isLiveRecord(blocker)
+      && hasLiveExactKeys(blocker, ['reason', 'since', 'duration_seconds'])
+      && typeof blocker.reason === 'string'
+      && isFiniteNonNegative(blocker.since)
+      && isFiniteNonNegative(blocker.duration_seconds)
+    ))
+    && typeof value.needs_attention === 'boolean'
+    && (value.result_artifact_id === null || isBoundedLiveId(value.result_artifact_id))
+    && (value.verified_at === null || isFiniteNonNegative(value.verified_at));
+}
+
+function isLiveRoomSummary(value: unknown): value is RoomSummary {
+  if (!isLiveRecord(value)) return false;
+  const hasSession = Object.prototype.hasOwnProperty.call(value, 'session');
+  if (!hasLiveExactKeys(value, hasSession
+    ? ['outputs', 'steps_total', 'steps_done', 'topic', 'session']
+    : ['outputs', 'steps_total', 'steps_done', 'topic'])) return false;
+  return Number.isInteger(value.outputs) && (value.outputs as number) >= 0
+    && Number.isInteger(value.steps_total) && (value.steps_total as number) >= 0
+    && Number.isInteger(value.steps_done) && (value.steps_done as number) >= 0
+    && (value.steps_done as number) <= (value.steps_total as number)
+    && typeof value.topic === 'string'
+    && (!hasSession || isLiveSummaryProjection(value.session));
+}
+
+interface ParsedLiveFrame {
+  readonly type: string;
+  readonly data: Record<string, unknown>;
+  readonly timestamp: number;
+  readonly generation: string;
+  readonly sequence: number;
+}
+
+function parseChatThreadMessageAppended(
+  value: unknown,
+): ChatThreadMessageAppendedData | null {
+  if (!isLiveRecord(value) || !hasLiveExactKeys(value, [
+    'thread_id', 'message_id', 'author_id', 'role', 'created_at',
+  ])) return null;
+  if (
+    !isBoundedLiveId(value.thread_id)
+    || !isBoundedLiveId(value.message_id)
+    || !isBoundedLiveId(value.author_id)
+    || !['captain', 'agent', 'system'].includes(String(value.role))
+    || !isFiniteNonNegative(value.created_at)
+  ) return null;
+  return value as unknown as ChatThreadMessageAppendedData;
+}
+
+function parseArtifactVersionAdded(
+  value: unknown,
+): ArtifactVersionAddedData | null {
+  if (!isLiveRecord(value) || !hasLiveExactKeys(value, [
+    'thread_id', 'artifact_id', 'version', 'created_at',
+  ])) return null;
+  if (
+    !isBoundedLiveId(value.thread_id)
+    || !isBoundedLiveId(value.artifact_id)
+    || !Number.isInteger(value.version)
+    || (value.version as number) <= 0
+    || !isFiniteNonNegative(value.created_at)
+  ) return null;
+  return value as unknown as ArtifactVersionAddedData;
+}
+
+function parseCrewSessionProjection(
+  value: unknown,
+): CrewSessionProjectionEventData | null {
+  if (!isLiveRecord(value) || !hasLiveExactKeys(value, [
+    'parent_id', 'thread_id', 'revision', 'session', 'room_summary',
+  ])) return null;
+  if (
+    !isBoundedLiveId(value.parent_id)
+    || !isBoundedLiveId(value.thread_id)
+    || !Number.isInteger(value.revision)
+    || (value.revision as number) < 0
+    || !isLiveDetailProjection(value.session)
+    || !isLiveRoomSummary(value.room_summary)
+    || !('session' in value.room_summary)
+    || !isLiveSummaryProjection(value.room_summary.session)
+  ) return null;
+  const detail = value.session;
+  const room = value.room_summary;
+  const summary = room.session;
+  if (
+    detail.task_id !== value.parent_id
+    || summary.task_id !== value.parent_id
+    || detail.thread_id !== value.thread_id
+    || summary.thread_id !== value.thread_id
+    || detail.revision !== value.revision
+    || detail.state !== summary.state
+    || detail.goal !== summary.goal
+    || room.topic !== detail.goal
+    || room.steps_total < 0
+    || room.steps_total > 1000
+    || room.steps_done < 0
+    || room.steps_done > room.steps_total
+    || room.outputs < 0
+    || detail.progress.total !== summary.progress.total
+    || detail.progress.done !== summary.progress.done
+    || detail.progress.failed !== summary.progress.failed
+    || detail.progress.active !== summary.progress.active
+  ) return null;
+  return value as unknown as CrewSessionProjectionEventData;
+}
+
+function isStateSnapshotData(value: unknown): value is StateSnapshot {
+  if (!isLiveRecord(value)) return false;
+  if (
+    !Array.isArray(value.agents)
+    || !Array.isArray(value.connections)
+    || !Array.isArray(value.pools)
+    || value.agents.length > 1000
+    || value.connections.length > 1000
+    || value.pools.length > 1000
+    || typeof value.system_mode !== 'string'
+    || !Number.isFinite(value.tc_n)
+    || !Number.isFinite(value.routing_entropy)
+  ) return false;
+  return value.agents.every((agent) => (
+    isLiveRecord(agent)
+    && isBoundedLiveId(agent.id)
+    && typeof agent.agent_type === 'string'
+    && typeof agent.callsign === 'string'
+    && typeof agent.display_name === 'string'
+    && typeof agent.pool === 'string'
+    && typeof agent.state === 'string'
+    && typeof agent.confidence === 'number'
+    && typeof agent.trust === 'number'
+    && typeof agent.tier === 'string'
+  )) && value.connections.every((connection) => (
+    isLiveRecord(connection)
+    && typeof connection.source === 'string'
+    && typeof connection.target === 'string'
+    && typeof connection.rel_type === 'string'
+    && typeof connection.weight === 'number'
+  )) && value.pools.every((pool) => (
+    isLiveRecord(pool)
+    && typeof pool.name === 'string'
+    && typeof pool.agent_type === 'string'
+    && Number.isInteger(pool.size)
+    && Number.isInteger(pool.target_size)
+  ));
+}
+
+function parseLiveFrame(event: WSEvent): ParsedLiveFrame | null {
+  const raw = event as unknown;
+  if (!isLiveRecord(raw) || !hasLiveExactKeys(raw, [
+    'type', 'data', 'timestamp', 'stream',
+  ])) return null;
+  if (
+    typeof raw.type !== 'string'
+    || raw.type.length === 0
+    || raw.type.length > 128
+    || !isLiveRecord(raw.data)
+    || !isFiniteNonNegative(raw.timestamp)
+    || !isLiveRecord(raw.stream)
+    || !hasLiveExactKeys(raw.stream, ['generation', 'sequence'])
+    || typeof raw.stream.generation !== 'string'
+    || !LIVE_GENERATION_RE.test(raw.stream.generation)
+    || !Number.isInteger(raw.stream.sequence)
+    || (raw.stream.sequence as number) < 0
+  ) return null;
+  if (raw.type === 'state_snapshot' && !isStateSnapshotData(raw.data)) return null;
+  if (
+    raw.type === 'resync_required'
+    && !hasLiveExactKeys(raw.data, [])
+  ) return null;
+  if (
+    raw.type === 'chat_thread_message_appended'
+    && parseChatThreadMessageAppended(raw.data) === null
+  ) return null;
+  if (
+    raw.type === 'artifact_version_added'
+    && parseArtifactVersionAdded(raw.data) === null
+  ) return null;
+  if (
+    raw.type === 'crew_session_projection'
+    && parseCrewSessionProjection(raw.data) === null
+  ) return null;
+  return {
+    type: raw.type,
+    data: raw.data,
+    timestamp: raw.timestamp,
+    generation: raw.stream.generation,
+    sequence: raw.stream.sequence as number,
+  };
+}
+
+function boundedMapSet<K, V>(
+  source: ReadonlyMap<K, V>,
+  key: K,
+  value: V,
+): Map<K, V> {
+  const next = new Map(source);
+  if (!next.has(key) && next.size >= LIVE_MAP_LIMIT) {
+    const oldest = next.keys().next();
+    if (!oldest.done) next.delete(oldest.value);
+  }
+  next.set(key, value);
+  return next;
+}
+
 export const useStore = create<HXIState>((set, get) => ({
   agents: new Map(),
   connections: [],
@@ -889,6 +1255,15 @@ export const useStore = create<HXIState>((set, get) => ({
   chatThreads: new Map(),
   crewSessionsByParent: new Map(),
   crewSessionSummariesByThread: new Map(),
+  roomSummariesByThread: new Map(),
+  liveGeneration: null,
+  liveSequence: 0,
+  liveRepairEpoch: 0,
+  liveThreadRefresh: null,
+  liveArtifactRefresh: null,
+  liveTodoRefresh: null,
+  liveCrewOwnerParentId: null,
+  liveRailOwner: null,
   // AD-938: empty at boot; ProfileChatTab populates per active thread.
   threadMessages: new Map(),
   activeThreadId: null,
@@ -1416,6 +1791,14 @@ export const useStore = create<HXIState>((set, get) => ({
   },
   hydrateCrewSession: (parentId, projection) => {
     if (projection.task_id !== parentId) return;
+    const current = get().crewSessionsByParent.get(parentId);
+    if (
+      current
+      && (
+        current.thread_id !== projection.thread_id
+        || projection.revision < current.revision
+      )
+    ) return;
     const next = new Map(get().crewSessionsByParent);
     next.set(parentId, projection);
     set({ crewSessionsByParent: next });
@@ -1426,6 +1809,53 @@ export const useStore = create<HXIState>((set, get) => ({
       if (projection.thread_id === threadId) next.set(threadId, projection);
     }
     set({ crewSessionSummariesByThread: next });
+  },
+  hydrateRoomSummaries: (summaries) => {
+    const next = new Map<string, RoomSummary>();
+    const sessionNext = new Map<string, CrewSessionSummaryProjection>();
+    for (const [threadId, summary] of Object.entries(summaries)) {
+      if (isLiveRoomSummary(summary)) {
+        next.set(threadId, summary);
+        if ('session' in summary) sessionNext.set(threadId, summary.session);
+      }
+    }
+    set({
+      roomSummariesByThread: next,
+      crewSessionSummariesByThread: sessionNext,
+    });
+  },
+  claimLiveCrewOwner: (parentId) => {
+    const claim = Symbol('liveCrewOwner');
+    liveCrewOwnerClaim = claim;
+    if (parentId) set({ liveCrewOwnerParentId: parentId });
+    return claim;
+  },
+  releaseLiveCrewOwner: (parentId, claim) => {
+    if (
+      liveCrewOwnerClaim === claim
+      && get().liveCrewOwnerParentId === parentId
+    ) {
+      liveCrewOwnerClaim = null;
+      set({ liveCrewOwnerParentId: null });
+    }
+  },
+  claimLiveRailOwner: (owner) => {
+    const claim = Symbol('liveRailOwner');
+    liveRailOwnerClaim = claim;
+    if (owner.threadId && owner.parentId) set({ liveRailOwner: owner });
+    return claim;
+  },
+  releaseLiveRailOwner: (owner, claim) => {
+    const current = get().liveRailOwner;
+    if (
+      liveRailOwnerClaim === claim
+      &&
+      current?.threadId === owner.threadId
+      && current.parentId === owner.parentId
+    ) {
+      liveRailOwnerClaim = null;
+      set({ liveRailOwner: null });
+    }
   },
   // AD-938: replace a thread's display transcript (load-on-open).
   setThreadMessages: (threadId, msgs) => {
@@ -1946,7 +2376,38 @@ export const useStore = create<HXIState>((set, get) => ({
   clearAnimationEvent: (key) => set({ [key]: null }),
 
   handleEvent: (event: WSEvent) => {
-    const { type, data } = event;
+    const frame = parseLiveFrame(event);
+    if (frame === null) return;
+    const { type, data, generation, sequence } = frame;
+    const authority = get();
+    if (type === 'state_snapshot') {
+      set({
+        liveGeneration: generation,
+        liveSequence: sequence,
+        liveRepairEpoch: authority.liveRepairEpoch + 1,
+        liveThreadRefresh: null,
+        liveArtifactRefresh: null,
+        liveTodoRefresh: null,
+      });
+    } else {
+      if (authority.liveGeneration === null || authority.liveGeneration !== generation) {
+        return;
+      }
+      if (type === 'resync_required') {
+        set({
+          liveSequence: Math.max(authority.liveSequence, sequence),
+          liveRepairEpoch: authority.liveRepairEpoch + 1,
+        });
+        return;
+      }
+      if (sequence <= authority.liveSequence) return;
+      set({
+        liveSequence: sequence,
+        ...(sequence > authority.liveSequence + 1
+          ? { liveRepairEpoch: authority.liveRepairEpoch + 1 }
+          : {}),
+      });
+    }
 
     switch (type) {
       case 'state_snapshot': {
@@ -2083,6 +2544,101 @@ export const useStore = create<HXIState>((set, get) => ({
             });
           }
         }).catch(() => {});
+        break;
+      }
+
+      case 'crew_session_projection': {
+        const projection = parseCrewSessionProjection(data);
+        if (projection === null) break;
+        const current = get();
+        const cached = current.crewSessionsByParent.get(projection.parent_id);
+        if (
+          cached
+          && (
+            cached.thread_id !== projection.thread_id
+            || projection.revision < cached.revision
+            || (
+              projection.revision === cached.revision
+              && projection.session.state !== cached.state
+            )
+          )
+        ) break;
+        const crewSessionsByParent = current.liveCrewOwnerParentId === projection.parent_id
+          ? boundedMapSet(
+              current.crewSessionsByParent,
+              projection.parent_id,
+              projection.session,
+            )
+          : current.crewSessionsByParent;
+        const crewSessionSummariesByThread = boundedMapSet(
+          current.crewSessionSummariesByThread,
+          projection.thread_id,
+          projection.room_summary.session,
+        );
+        const roomSummariesByThread = boundedMapSet(
+          current.roomSummariesByThread,
+          projection.thread_id,
+          projection.room_summary,
+        );
+        const liveTodoRefresh = (
+          current.liveRailOwner?.threadId === projection.thread_id
+          && current.liveRailOwner.parentId === projection.parent_id
+        ) ? {
+          parentId: projection.parent_id,
+          requestId: sequence,
+        } : current.liveTodoRefresh;
+        set({
+          crewSessionsByParent,
+          crewSessionSummariesByThread,
+          roomSummariesByThread,
+          liveTodoRefresh,
+        });
+        break;
+      }
+
+      case 'chat_thread_message_appended': {
+        const message = parseChatThreadMessageAppended(data);
+        if (message === null) break;
+        const current = get();
+        const chatThreads = new Map(current.chatThreads);
+        const thread = chatThreads.get(message.thread_id);
+        if (thread) {
+          chatThreads.set(message.thread_id, {
+            ...thread,
+            last_active_at: Math.max(thread.last_active_at, message.created_at),
+          });
+        }
+        const activeThread = current.activeProfileAgent === null
+          ? null
+          : current.activeProfileThreadId
+            ?? current.threadIdByAgent.get(current.activeProfileAgent)
+            ?? null;
+        set({
+          chatThreads,
+          ...(activeThread === message.thread_id
+            ? {
+                liveThreadRefresh: {
+                  threadId: message.thread_id,
+                  requestId: message.message_id,
+                },
+              }
+            : {}),
+        });
+        break;
+      }
+
+      case 'artifact_version_added': {
+        const artifact = parseArtifactVersionAdded(data);
+        if (artifact === null) break;
+        const owner = get().liveRailOwner;
+        if (owner?.threadId === artifact.thread_id) {
+          set({
+            liveArtifactRefresh: {
+              threadId: artifact.thread_id,
+              requestId: artifact.artifact_id,
+            },
+          });
+        }
         break;
       }
 

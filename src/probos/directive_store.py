@@ -274,6 +274,28 @@ class DirectiveStore:
             ).fetchall()
         return [RuntimeDirective.from_dict(json.loads(row[0])) for row in rows]
 
+    def list_directives_bounded(
+        self,
+        *,
+        include_inactive: bool = False,
+        limit: int,
+    ) -> list[RuntimeDirective]:
+        """Return at most ``limit + 1`` directives as an overflow sentinel."""
+        if type(limit) is not int or limit < 1:
+            raise ValueError("directive_list_limit_invalid")
+        if include_inactive:
+            rows = self._conn.execute(
+                "SELECT data FROM directives ORDER BY created_at DESC LIMIT ?",
+                (limit + 1,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT data FROM directives WHERE status IN ('active', 'pending_approval') "
+                "ORDER BY created_at DESC LIMIT ?",
+                (limit + 1,),
+            ).fetchall()
+        return [RuntimeDirective.from_dict(json.loads(row[0])) for row in rows]
+
     def create_directive(
         self,
         *,

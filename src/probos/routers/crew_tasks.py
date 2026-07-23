@@ -26,11 +26,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from probos.crew_session_live import load_crew_session_projection
 from probos.crew_session_projection import (
     CREW_SESSION_PROJECTION_ERROR,
     CrewSessionProjectionError,
-    build_crew_session_detail,
-    validate_synthesis_metadata,
 )
 from probos.routers.deps import get_runtime
 
@@ -128,26 +127,12 @@ async def get_crew_task(
                 detail="CrewSession service not available",
             )
         try:
-            session = await service.get_session(parent.id)
-            if session is None:
-                raise CrewSessionProjectionError()
-            metadata = parent.metadata
-            if type(metadata) is not dict:
-                raise CrewSessionProjectionError()
-            synthesis = (
-                validate_synthesis_metadata(metadata["crew_synth"])
-                if "crew_synth" in metadata
-                else None
+            loaded = await load_crew_session_projection(
+                parent.id,
+                crew_session_service=service,
+                work_item_store=store,
             )
-            session_children = await store.list_work_items(
-                parent_id=parent.id,
-                limit=1001,
-            )
-            detail = build_crew_session_detail(
-                session=session,
-                synthesis=synthesis,
-                children=session_children,
-            )
+            detail = loaded.detail
             if detail.task_id != parent.id:
                 raise CrewSessionProjectionError()
         except ValueError as exc:

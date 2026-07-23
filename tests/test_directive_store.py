@@ -302,6 +302,62 @@ class TestDirectiveStore(unittest.TestCase):
         assert "b2" in ids
         assert "b3" in ids
 
+    def test_list_directives_bounded_rejects_invalid_limit(self) -> None:
+        for invalid in (True, False, 0, -1, 1.0, "1", None):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "^directive_list_limit_invalid$",
+                ):
+                    self.store.list_directives_bounded(limit=invalid)  # type: ignore[arg-type]
+
+    def test_list_directives_bounded_preserves_filter_order_and_sentinel(
+        self,
+    ) -> None:
+        self.store.add(self._make_directive(
+            id="active-old",
+            status=DirectiveStatus.ACTIVE,
+            created_at=100.0,
+        ))
+        self.store.add(self._make_directive(
+            id="revoked-newest",
+            status=DirectiveStatus.REVOKED,
+            created_at=400.0,
+        ))
+        self.store.add(self._make_directive(
+            id="pending-new",
+            status=DirectiveStatus.PENDING_APPROVAL,
+            created_at=300.0,
+        ))
+        self.store.add(self._make_directive(
+            id="active-middle",
+            status=DirectiveStatus.ACTIVE,
+            created_at=200.0,
+        ))
+
+        active = self.store.list_directives_bounded(limit=2)
+        all_rows = self.store.list_directives_bounded(
+            include_inactive=True,
+            limit=2,
+        )
+
+        assert [directive.id for directive in active] == [
+            "pending-new",
+            "active-middle",
+            "active-old",
+        ]
+        assert [directive.id for directive in all_rows] == [
+            "revoked-newest",
+            "pending-new",
+            "active-middle",
+        ]
+        assert [directive.id for directive in self.store.list_directives_bounded(
+            limit=10,
+        )] == [
+            directive.id
+            for directive in self.store.all_directives(include_inactive=False)
+        ]
+
     def test_create_directive_duplicate_rejected(self) -> None:
         directive1, reason1 = self.store.create_directive(
             issuer_type="captain",

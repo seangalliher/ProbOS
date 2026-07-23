@@ -146,6 +146,20 @@ class TestNotificationQueue(unittest.TestCase):
         assert snap[1]["title"] == "Second"
         assert snap[2]["title"] == "First"
 
+    def test_count_tracks_retained_notifications(self) -> None:
+        assert self.queue.count == 0
+        first = self.queue.notify(
+            agent_id="a", agent_type="builder", department="eng", title="First",
+        )
+        self.queue.notify(
+            agent_id="b", agent_type="builder", department="eng", title="Second",
+        )
+        assert self.queue.count == 2
+
+        self.queue._max_acknowledged = 0
+        self.queue.acknowledge(first.id)
+        assert self.queue.count == 1
+
     def test_prune_old_acknowledged(self) -> None:
         queue = NotificationQueue()
         queue._max_acknowledged = 5

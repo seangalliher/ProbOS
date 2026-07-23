@@ -86,6 +86,11 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     artifactCommand = null,
     onSessionBound,
   } = props;
+  const liveArtifactRefresh = useStore(state => state.liveArtifactRefresh);
+  const liveTodoRefresh = useStore(state => state.liveTodoRefresh);
+  const liveRepairEpoch = useStore(state => state.liveRepairEpoch);
+  const claimLiveRailOwner = useStore(state => state.claimLiveRailOwner);
+  const releaseLiveRailOwner = useStore(state => state.releaseLiveRailOwner);
   const [inputs, setInputs] = useState<TaskInput[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [artifactsLoaded, setArtifactsLoaded] = useState(false);
@@ -114,6 +119,14 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   const artifactGenerationRef = useRef(0);
   const [artifactCommandError, setArtifactCommandError] = useState('');
   const [artifactLookupPending, setArtifactLookupPending] = useState(false);
+  const [manualRefreshPending, setManualRefreshPending] = useState(false);
+  const manualRefreshRef = useRef(false);
+  const artifactRefreshRequestRef = useRef(0);
+  const artifactRefreshInFlightRef = useRef<string | null>(null);
+  const pendingArtifactTriggerRef = useRef(new Map<string, string | null>());
+  const stepsRefreshRequestRef = useRef(0);
+  const stepsRefreshInFlightRef = useRef<string | null>(null);
+  const pendingStepsRefreshRef = useRef(new Set<string>());
   const roomTokenRef = useRef({ threadId, generation: 0 });
   if (roomTokenRef.current.threadId !== threadId) {
     roomTokenRef.current = {
@@ -122,6 +135,8 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     };
     startGenerationRef.current += 1;
     artifactGenerationRef.current += 1;
+    artifactRefreshRequestRef.current += 1;
+    stepsRefreshRequestRef.current += 1;
     lastRetryRequestRef.current = 0;
     lastArtifactRequestRef.current = 0;
   }
@@ -191,9 +206,94 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     window.addEventListener('mouseup', up);
   }, [previewWidth]);
 
-  // Fetch inputs + artifacts on threadId change; honest-degrade to [] so a
-  // failed endpoint shows an empty section instead of crashing the rail.
+  const refreshArtifacts = useCallback(async (triggerArtifactId: string | null = null) => {
+    if (collapsed) return;
+    if (artifactRefreshInFlightRef.current === threadId) {
+      const currentTrigger = pendingArtifactTriggerRef.current.get(threadId) ?? null;
+      pendingArtifactTriggerRef.current.set(
+        threadId,
+        triggerArtifactId ?? currentTrigger,
+      );
+      return;
+    }
+    artifactRefreshInFlightRef.current = threadId;
+    const token = roomTokenRef.current;
+    const requestId = ++artifactRefreshRequestRef.current;
+    const authority = useStore.getState();
+    const generation = authority.liveGeneration;
+    const sequence = authority.liveSequence;
+    try {
+      const list = await fetchThreadArtifacts(threadId);
+      const current = useStore.getState();
+      if (
+        requestId !== artifactRefreshRequestRef.current
+        || !ownsRoom(token)
+        || current.liveGeneration !== generation
+        || current.liveSequence !== sequence
+        || (triggerArtifactId !== null && !list.some(row => row.id === triggerArtifactId))
+      ) return;
+      setArtifacts(list);
+      setArtifactsLoaded(true);
+      setSelectedId(selected => (
+        selected !== null && !list.some(row => row.id === selected)
+          ? null
+          : selected
+      ));
+    } catch {
+      // Retain the last authoritative metadata list on transport/shape failure.
+    } finally {
+      if (artifactRefreshInFlightRef.current === threadId) {
+        artifactRefreshInFlightRef.current = null;
+      }
+      const requested = pendingArtifactTriggerRef.current.has(threadId);
+      const pending = pendingArtifactTriggerRef.current.get(threadId) ?? null;
+      pendingArtifactTriggerRef.current.delete(threadId);
+      if (requested && ownsRoom(token)) {
+        queueMicrotask(() => { void refreshArtifacts(pending); });
+      }
+    }
+  }, [collapsed, ownsRoom, threadId]);
+
+  const refreshSteps = useCallback(async () => {
+    if (collapsed || !effectiveTaskId) return;
+    if (stepsRefreshInFlightRef.current === effectiveTaskId) {
+      pendingStepsRefreshRef.current.add(effectiveTaskId);
+      return;
+    }
+    stepsRefreshInFlightRef.current = effectiveTaskId;
+    const token = roomTokenRef.current;
+    const targetTaskId = effectiveTaskId;
+    const requestId = ++stepsRefreshRequestRef.current;
+    const authority = useStore.getState();
+    const generation = authority.liveGeneration;
+    const sequence = authority.liveSequence;
+    try {
+      const nextSteps = await fetchTaskSteps(targetTaskId);
+      const current = useStore.getState();
+      if (
+        requestId !== stepsRefreshRequestRef.current
+        || !ownsRoom(token)
+        || effectiveTaskIdRef.current !== targetTaskId
+        || current.liveGeneration !== generation
+        || current.liveSequence !== sequence
+      ) return;
+      setSteps(nextSteps);
+    } catch {
+      // Retain the last authoritative Todo list on transport/shape failure.
+    } finally {
+      if (stepsRefreshInFlightRef.current === targetTaskId) {
+        stepsRefreshInFlightRef.current = null;
+      }
+      const requested = pendingStepsRefreshRef.current.delete(targetTaskId);
+      if (requested && ownsRoom(token)) {
+        queueMicrotask(() => { void refreshSteps(); });
+      }
+    }
+  }, [collapsed, effectiveTaskId, ownsRoom]);
+
+  // Initial GETs run only while the rail is expanded and visible.
   useEffect(() => {
+    if (collapsed) return;
     const token = roomTokenRef.current;
     (async () => {
       try {
@@ -203,49 +303,38 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
         if (ownsRoom(token)) setInputs([]);
       }
     })();
-    (async () => {
-      try {
-        const list = await fetchThreadArtifacts(threadId);
-        if (ownsRoom(token)) {
-          setArtifacts(list);
-          setArtifactsLoaded(true);
-        }
-      } catch {
-        if (ownsRoom(token)) {
-          setArtifacts([]);
-          setArtifactsLoaded(true);
-        }
-      }
-    })();
-  }, [ownsRoom, threadId]);
+    void refreshArtifacts();
+  }, [collapsed, ownsRoom, refreshArtifacts, threadId]);
 
-  // BF-644: poll outputs + todos every 5s so files/steps the crew produce
-  // mid-session fill in without reopening the rail (no WS yet). Stops when the
-  // rail is collapsed (offscreen) to avoid needless fetches.
   useEffect(() => {
-    if (collapsed) return;
-    const token = roomTokenRef.current;
-    const t = setInterval(() => {
-      (async () => {
-        try {
-          const nextArtifacts = await fetchThreadArtifacts(threadId);
-          if (ownsRoom(token)) setArtifacts(nextArtifacts);
-        } catch { /* keep */ }
-      })();
-      if (effectiveTaskId) {
-        const targetTaskId = effectiveTaskId;
-        (async () => {
-          try {
-            const nextSteps = await fetchTaskSteps(targetTaskId);
-            if (ownsRoom(token) && effectiveTaskIdRef.current === targetTaskId) {
-              setSteps(nextSteps);
-            }
-          } catch { /* keep */ }
-        })();
-      }
-    }, 5000);
-    return () => clearInterval(t);
-  }, [collapsed, effectiveTaskId, ownsRoom, threadId]);
+    if (collapsed || !effectiveTaskId) return;
+    const owner = { threadId, parentId: effectiveTaskId };
+    const claim = claimLiveRailOwner(owner);
+    return () => releaseLiveRailOwner(owner, claim);
+  }, [claimLiveRailOwner, collapsed, effectiveTaskId, releaseLiveRailOwner, threadId]);
+
+  useEffect(() => {
+    if (!collapsed && liveArtifactRefresh?.threadId === threadId) {
+      void refreshArtifacts(liveArtifactRefresh.requestId);
+    }
+  }, [collapsed, liveArtifactRefresh, refreshArtifacts, threadId]);
+
+  useEffect(() => {
+    if (
+      !collapsed
+      && effectiveTaskId
+      && liveTodoRefresh?.parentId === effectiveTaskId
+    ) {
+      void refreshSteps();
+    }
+  }, [collapsed, effectiveTaskId, liveTodoRefresh, refreshSteps]);
+
+  useEffect(() => {
+    if (!collapsed && liveRepairEpoch > 0) {
+      void refreshArtifacts();
+      void refreshSteps();
+    }
+  }, [collapsed, liveRepairEpoch, refreshArtifacts, refreshSteps]);
 
   const handleToggle = useCallback(() => {
     setCollapsed((prev) => {
@@ -436,6 +525,17 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
 
   useEffect(() => {
     if (
+      artifactCommand
+      && artifactCommand.threadId === threadId
+      && artifactCommand.requestId > lastArtifactRequestRef.current
+    ) {
+      setCollapsed(false);
+      persistCollapsed(false);
+    }
+  }, [artifactCommand, threadId]);
+
+  useEffect(() => {
+    if (
       !artifactCommand
       || artifactCommand.threadId !== threadId
       || !artifactsLoaded
@@ -462,24 +562,10 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     }
   }, [effectiveTaskId, ownsRoom]);
 
-  // AD-1083: load the room Todo checklist when the task changes, and on
-  // confirm/reject by the Captain. Honest-degrade to [] (no task / no steps).
-  const refreshSteps = useCallback(async () => {
-    if (!effectiveTaskId) { setSteps([]); return; }
-    const roomToken = roomTokenRef.current;
-    const targetTaskId = effectiveTaskId;
-    try {
-      const nextSteps = await fetchTaskSteps(targetTaskId);
-      if (ownsRoom(roomToken) && effectiveTaskIdRef.current === targetTaskId) {
-        setSteps(nextSteps);
-      }
-    } catch {
-      if (ownsRoom(roomToken) && effectiveTaskIdRef.current === targetTaskId) {
-        setSteps([]);
-      }
-    }
-  }, [effectiveTaskId, ownsRoom]);
-  useEffect(() => { void refreshSteps(); }, [refreshSteps]);
+  // AD-1083: load the room Todo checklist when the visible task changes.
+  useEffect(() => {
+    if (!collapsed) void refreshSteps();
+  }, [collapsed, refreshSteps]);
   const handleConfirm = useCallback(async (idx: number) => {
     if (!effectiveTaskId) return;
     const roomToken = roomTokenRef.current;
@@ -497,6 +583,18 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     void refreshSteps();
   }, [effectiveTaskId, ownsRoom, refreshSteps]);
   const doneCount = steps.filter((s) => s.status === 'done').length;
+
+  const handleManualRefresh = useCallback(async () => {
+    if (manualRefreshRef.current || collapsed) return;
+    manualRefreshRef.current = true;
+    setManualRefreshPending(true);
+    try {
+      await Promise.all([refreshArtifacts(), refreshSteps()]);
+    } finally {
+      manualRefreshRef.current = false;
+      setManualRefreshPending(false);
+    }
+  }, [collapsed, refreshArtifacts, refreshSteps]);
 
   const totalCount = inputs.length + artifacts.length + steps.length;
   // BF-642: the output selected for in-app preview (Cowork-style file preview).
@@ -582,6 +680,26 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
         <span style={{
           flex: '1 1 auto', fontSize: 11, letterSpacing: 1.5, color: AMBER,
         }}>FILES</span>
+        <button
+          type="button"
+          onClick={() => { void handleManualRefresh(); }}
+          disabled={manualRefreshPending}
+          data-testid="workspace-files-refresh"
+          title="Refresh files and Todos"
+          aria-label="Refresh files and Todos"
+          style={{
+            background: 'transparent', border: 'none', color: DIM,
+            cursor: manualRefreshPending ? 'default' : 'pointer', padding: 4,
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth={1.5}
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M20 7v5h-5" /><path d="M4 17v-5h5" />
+            <path d="M6.1 9a7 7 0 0 1 11.2-2L20 9" />
+            <path d="M17.9 15a7 7 0 0 1-11.2 2L4 15" />
+          </svg>
+        </button>
         <button
           type="button"
           onClick={(event) => {

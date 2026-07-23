@@ -500,6 +500,9 @@ export default function CrewCollaborationPanel({
   onOpenResultArtifact,
 }: CrewCollaborationPanelProps) {
   const hydrateCrewSession = useStore(state => state.hydrateCrewSession);
+  const liveRepairEpoch = useStore(state => state.liveRepairEpoch);
+  const claimLiveCrewOwner = useStore(state => state.claimLiveCrewOwner);
+  const releaseLiveCrewOwner = useStore(state => state.releaseLiveCrewOwner);
   const cachedSession = useStore(state => state.crewSessionsByParent.get(parentId));
   const ownerKey = `${threadId}\u0000${parentId}`;
   const ownedCachedSession = cachedSession?.thread_id === threadId
@@ -523,6 +526,7 @@ export default function CrewCollaborationPanel({
     staleError: false,
   });
   const inFlightRef = useRef<InFlightRequest | null>(null);
+  const pendingLoadRef = useRef(false);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [stacked, setStacked] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= 760,
@@ -548,27 +552,46 @@ export default function CrewCollaborationPanel({
       !targetThreadId
       || !targetParentId
       || !owns(targetThreadId, targetParentId, targetOwnerKey, targetGeneration)
-      || (
-        inFlightRef.current?.ownerKey === targetOwnerKey
-        && inFlightRef.current.generation === targetGeneration
-      )
     ) return;
+    if (
+      inFlightRef.current?.ownerKey === targetOwnerKey
+      && inFlightRef.current.generation === targetGeneration
+    ) {
+      pendingLoadRef.current = true;
+      return;
+    }
     const cached = useStore.getState().crewSessionsByParent.get(targetParentId);
     const hasOwnedCache = cached?.thread_id === targetThreadId;
     const requestId = ++requestIdRef.current;
     const inFlight = { ownerKey: targetOwnerKey, generation: targetGeneration, requestId };
+    const authority = useStore.getState();
+    const requestedLiveGeneration = authority.liveGeneration;
+    const requestedLiveSequence = authority.liveSequence;
     inFlightRef.current = inFlight;
+    const finish = () => {
+      if (inFlightRef.current === inFlight) inFlightRef.current = null;
+      if (
+        pendingLoadRef.current
+        && owns(targetThreadId, targetParentId, targetOwnerKey, targetGeneration)
+      ) {
+        pendingLoadRef.current = false;
+        queueMicrotask(() => { void load(targetThreadId, targetParentId); });
+      }
+    };
     setStatus({
       ownerKey: targetOwnerKey,
       state: hasOwnedCache ? 'refreshing' : 'loading',
       staleError: false,
     });
     const outcome = await fetchCrewTaskDetail(targetParentId);
+    const currentAuthority = useStore.getState();
     if (
       requestId !== requestIdRef.current
       || !owns(targetThreadId, targetParentId, targetOwnerKey, targetGeneration)
+      || currentAuthority.liveGeneration !== requestedLiveGeneration
+      || currentAuthority.liveSequence !== requestedLiveSequence
     ) {
-      if (inFlightRef.current === inFlight) inFlightRef.current = null;
+      finish();
       return;
     }
     if (outcome.kind === 'success') {
@@ -582,7 +605,7 @@ export default function CrewCollaborationPanel({
             state: retainOwned ? 'ready' : 'error',
             staleError: retainOwned,
           });
-          if (inFlightRef.current === inFlight) inFlightRef.current = null;
+          finish();
           return;
         }
         hydrateCrewSession(targetParentId, outcome.response.session);
@@ -603,15 +626,22 @@ export default function CrewCollaborationPanel({
         staleError: retainOwned,
       });
     }
-    if (inFlightRef.current === inFlight) inFlightRef.current = null;
+    finish();
   }, [hydrateCrewSession, owns]);
 
   useEffect(() => {
+    const claim = claimLiveCrewOwner(parentId);
     void load(threadId, parentId);
     return () => {
       requestIdRef.current += 1;
+      pendingLoadRef.current = false;
+      releaseLiveCrewOwner(parentId, claim);
     };
-  }, [load, parentId, threadId]);
+  }, [claimLiveCrewOwner, load, parentId, releaseLiveCrewOwner, threadId]);
+
+  useEffect(() => {
+    if (liveRepairEpoch > 0) void load(threadId, parentId);
+  }, [liveRepairEpoch, load, parentId, threadId]);
 
   useEffect(() => {
     const host = hostRef.current;

@@ -125,12 +125,42 @@ function stubFetch(body: unknown, status = 200): ReturnType<typeof vi.fn> {
 
 afterEach(() => {
   cleanup();
-  useStore.setState({ crewSessionsByParent: new Map() });
+  useStore.setState({
+    crewSessionsByParent: new Map(),
+    liveCrewOwnerParentId: null,
+    liveGeneration: null,
+    liveSequence: 0,
+    liveRepairEpoch: 0,
+  });
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('CrewCollaborationPanel', () => {
+  it('claims only its mounted parent and releases ownership on unmount', async () => {
+    stubFetch({ session: projection('executing') });
+    const view = render(<CrewCollaborationPanel threadId="t1" parentId="p1" />);
+    await screen.findByTestId('crew-collaboration-panel');
+    expect(useStore.getState().liveCrewOwnerParentId).toBe('p1');
+    view.unmount();
+    expect(useStore.getState().liveCrewOwnerParentId).toBeNull();
+  });
+
+  it('renders a same-revision live progress update from the immutable store map', async () => {
+    const initial = projection('executing');
+    stubFetch({ session: initial });
+    render(<CrewCollaborationPanel threadId="t1" parentId="p1" />);
+    await screen.findByText('1/4');
+    const progressed = {
+      ...initial,
+      progress: { ...initial.progress, done: 2, active: 1 },
+      last_result_summary: 'Two children complete.',
+    };
+    act(() => useStore.getState().hydrateCrewSession('p1', progressed));
+    expect(await screen.findByText('2/4')).toBeTruthy();
+    expect(screen.getByText('Two children complete.')).toBeTruthy();
+  });
+
   it.each([
     'discussing', 'executing', 'verifying', 'blocked_needs_captain', 'done', 'failed',
   ] as CrewSessionState[])('renders exact %s state semantics', async (state) => {

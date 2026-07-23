@@ -159,6 +159,11 @@ class NotificationQueue:
         self._prune_acknowledged()
         return count
 
+    @property
+    def count(self) -> int:
+        """Return the number of retained notifications."""
+        return len(self._notifications)
+
     def snapshot(self) -> list[dict[str, Any]]:
         return [n.to_dict() for n in sorted(
             self._notifications.values(),

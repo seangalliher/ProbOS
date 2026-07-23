@@ -44,7 +44,9 @@ async def add_artifact(body: AddArtifactRequest, runtime: Any = Depends(get_runt
 
 @router.get("/thread/{thread_id}")
 async def list_thread_artifacts(
-    thread_id: str, runtime: Any = Depends(get_runtime)
+    thread_id: str,
+    limit: int | None = None,
+    runtime: Any = Depends(get_runtime),
 ) -> dict:
     """AD-797 (Wave 197): native + project-pinned artifacts for a thread.
 
@@ -61,7 +63,8 @@ async def list_thread_artifacts(
     ``{"thread_id": ..., "artifacts": [...]}``.
     """
     store = _get_store(runtime)
-    native = store.list_thread_latest(thread_id)
+    bounded_limit = None if limit is None else max(1, min(limit, 1001))
+    native = store.list_thread_latest(thread_id, limit=bounded_limit)
     native_dicts = [a.to_dict() for a in native]
     for d in native_dicts:
         d["_pinned_from_project"] = False
@@ -76,7 +79,12 @@ async def list_thread_artifacts(
             pinned_ids = getattr(project, "pinned_attachment_ids", None) or []
             if project is not None and pinned_ids:
                 native_hashes = {d["content_hash"] for d in native_dicts}
-                for sha in pinned_ids:
+                remaining = (
+                    len(pinned_ids)
+                    if bounded_limit is None
+                    else max(0, bounded_limit - len(native_dicts))
+                )
+                for sha in pinned_ids[:remaining]:
                     if sha in native_hashes:
                         continue  # native wins
                     matched = store.find_first_by_hash(sha)

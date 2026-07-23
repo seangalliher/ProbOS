@@ -15,11 +15,11 @@ vi.mock('../../sidebar/threadApi', () => ({
   listThreads: vi.fn(),
   addParticipant: vi.fn(),
   getThread: vi.fn(),
-  fetchRoomSummaries: vi.fn(),
+  repairRoomSummaries: vi.fn(),
   createThread: vi.fn(),
 }));
 
-import { listThreads, addParticipant, fetchRoomSummaries } from '../../sidebar/threadApi';
+import { listThreads, addParticipant, repairRoomSummaries } from '../../sidebar/threadApi';
 import ChatsPanel from '../ChatsPanel';
 
 function mkAgent(p: { id: string; callsign: string; isCrew?: boolean; department?: string }): Agent {
@@ -88,7 +88,9 @@ async function renderOpen(
   roomSummaries: Record<string, RoomSummary> = {},
 ): Promise<RenderResult> {
   vi.mocked(listThreads).mockResolvedValue(threads);
-  vi.mocked(fetchRoomSummaries).mockResolvedValue(roomSummaries);
+  vi.mocked(repairRoomSummaries).mockResolvedValue({
+    kind: 'success', summaries: roomSummaries,
+  });
   useStore.setState({
     agents: seedAgents(agents),
     chatsOpen: true,
@@ -97,6 +99,7 @@ async function renderOpen(
     activeProfileAgent: null,
     activeProfileThreadId: null,
     crewSessionSummariesByThread: new Map(),
+    roomSummariesByThread: new Map(),
   });
   const r = render(<ChatsPanel />);
   // Wait for the on-open fetch to populate the list (g1 is always a chat).
@@ -114,11 +117,33 @@ afterEach(() => {
     activeProfileAgent: null,
     activeProfileThreadId: null,
     crewSessionSummariesByThread: new Map(),
+    roomSummariesByThread: new Map(),
   });
   vi.clearAllMocks();
 });
 
 describe('AD-931 ChatsPanel', () => {
+  it('updates live room fields from the authoritative store map without reopen', async () => {
+    await renderOpen();
+    const liveSummary: RoomSummary = {
+      outputs: 2,
+      steps_total: 4,
+      steps_done: 3,
+      topic: 'Live navigation report',
+    };
+    useStore.getState().hydrateRoomSummaries({ g1: liveSummary });
+    expect(await screen.findByTestId('room-badge-g1')).toHaveTextContent('3/4');
+    expect(screen.getByTestId('room-badge-g1')).toHaveTextContent('2 out');
+  });
+
+  it('does no reconnect summary work while closed', async () => {
+    vi.mocked(repairRoomSummaries).mockClear();
+    useStore.setState({ chatsOpen: false, liveRepairEpoch: 9 });
+    render(<ChatsPanel />);
+    await Promise.resolve();
+    expect(repairRoomSummaries).not.toHaveBeenCalled();
+  });
+
   it('lists 1:1, group, AND task rooms (AD-1093)', async () => {
     await renderOpen();
     expect(screen.getByTestId('chat-row-g1')).toBeTruthy();

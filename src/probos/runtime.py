@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
+import math
 import os
 import sys
 import time
 import uuid as _uuid
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine, Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import islice
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from probos.events import BaseEvent, EventType
 from probos.agents.directory_list import DirectoryListAgent
@@ -223,6 +227,58 @@ def _platform_data_dir() -> Path:
 _DEFAULT_DATA_DIR = _platform_data_dir()
 
 
+class _LiveNATSSubscription(Protocol):
+    async def drain(self) -> None: ...
+
+    async def unsubscribe(self) -> None: ...
+
+
+class _LiveNATSSubscriptionOwner(Protocol):
+    async def release_raw_subscription(self, subscription: object) -> bool: ...
+
+
+@dataclass(slots=True)
+class _LiveEventListenerToken:
+    listener: Callable[[dict[str, Any]], object]
+    event_types: frozenset[str] | None
+    open: bool = False
+
+
+class LiveEventListenerHandle:
+    """Lifecycle owner for one exact local and optional core-NATS listener."""
+
+    def __init__(
+        self,
+        runtime: ProbOSRuntime,
+        token: _LiveEventListenerToken,
+        subscription_owner: _LiveNATSSubscriptionOwner | None,
+        subscription: object | None,
+    ) -> None:
+        self._runtime = runtime
+        self._token = token
+        self._subscription_owner = subscription_owner
+        self._subscription = subscription
+        self._cleanup_task: asyncio.Task[None] | None = None
+
+    async def stop(self) -> None:
+        """Close admission and remove only the identities owned by this handle."""
+        if self._cleanup_task is None:
+            self._cleanup_task = asyncio.create_task(
+                self._runtime._cleanup_live_event_listener(
+                    self._token,
+                    self._subscription_owner,
+                    self._subscription,
+                ),
+                name="runtime-live-event-listener-stop",
+            )
+        cleanup_task = self._cleanup_task
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            await asyncio.shield(cleanup_task)
+            raise
+
+
 class ProbOSRuntime:
     """Top-level orchestrator. Wires substrate + mesh + consensus components, manages lifecycle."""
 
@@ -358,6 +414,7 @@ class ProbOSRuntime:
     _strategy_advisor: StrategyAdvisor | None
     _semantic_layer: SemanticKnowledgeLayer | None
     _event_listeners: list[tuple[Callable[..., Any], frozenset[str] | None]]
+    _live_event_listeners: list[_LiveEventListenerToken]
     _started: bool
     _fresh_boot: bool
     _start_time_wall: float
@@ -477,7 +534,7 @@ class ProbOSRuntime:
 
         # AD-791 (Wave 193): chat-threads substrate. Eager init so REST
         # routes + IntentMessage emitters can reference it from any phase.
-        from probos.threads import ChatThreadStore, ProjectStore
+        from probos.threads import ChatThreadMessage, ChatThreadStore, ProjectStore
         self.chat_thread_store = ChatThreadStore(
             db_path=self._data_dir / "chat_threads.db",
         )
@@ -521,7 +578,7 @@ class ProbOSRuntime:
 
         # AD-797 (Wave 195): artifact metadata store. Bytes live in the
         # existing AttachmentStore; this is the named/versioned layer.
-        from probos.artifacts import ArtifactStore
+        from probos.artifacts import Artifact, ArtifactStore
         self.artifact_store = ArtifactStore(
             db_path=self._data_dir / "artifacts.db",
         )
@@ -1087,11 +1144,79 @@ class ProbOSRuntime:
 
         # --- HXI event listeners (AD-254) ---
         self._event_listeners: list[tuple[Callable[..., Any], frozenset[str] | None]] = []
+        self._live_event_listeners: list[_LiveEventListenerToken] = []
         self._nats_publish_tasks: set[asyncio.Task] = set()  # AD-637d: prevents GC of publish tasks
         # BF-639: per-event coroutine-listener tasks — held so they aren't GC'd
         # mid-flight (mirrors _nats_publish_tasks). NOT _background_tasks (that set
         # is the AD-824 shutdown-cancel registry for long-lived loops).
         self._event_listener_tasks: set[asyncio.Task] = set()
+
+        def _emit_chat_thread_message_appended(
+            message: ChatThreadMessage,
+        ) -> None:
+            if (
+                type(message) is not ChatThreadMessage
+                or type(message.thread_id) is not str
+                or not 1 <= len(message.thread_id) <= 128
+                or type(message.id) is not str
+                or not 1 <= len(message.id) <= 128
+                or type(message.author_id) is not str
+                or not 1 <= len(message.author_id) <= 128
+                or message.role not in {"captain", "agent", "system"}
+                or type(message.created_at) not in {int, float}
+                or not math.isfinite(float(message.created_at))
+                or float(message.created_at) < 0
+            ):
+                logger.warning(
+                    "Committed chat message callback had an invalid IDs-only "
+                    "projection; live clients will repair on reconnect",
+                )
+                return
+            self.emit_event(
+                EventType.CHAT_THREAD_MESSAGE_APPENDED,
+                {
+                    "thread_id": message.thread_id,
+                    "message_id": message.id,
+                    "author_id": message.author_id,
+                    "role": message.role,
+                    "created_at": float(message.created_at),
+                },
+            )
+
+        def _emit_artifact_version_added(artifact: Artifact) -> None:
+            if (
+                type(artifact) is not Artifact
+                or type(artifact.thread_id) is not str
+                or not 1 <= len(artifact.thread_id) <= 128
+                or type(artifact.id) is not str
+                or not 1 <= len(artifact.id) <= 128
+                or type(artifact.version) is not int
+                or artifact.version <= 0
+                or type(artifact.created_at) not in {int, float}
+                or not math.isfinite(float(artifact.created_at))
+                or float(artifact.created_at) < 0
+            ):
+                logger.warning(
+                    "Committed artifact callback had an invalid IDs-only "
+                    "projection; live clients will repair on reconnect",
+                )
+                return
+            self.emit_event(
+                EventType.ARTIFACT_VERSION_ADDED,
+                {
+                    "thread_id": artifact.thread_id,
+                    "artifact_id": artifact.id,
+                    "version": artifact.version,
+                    "created_at": float(artifact.created_at),
+                },
+            )
+
+        self.chat_thread_store.set_message_committed_callback(
+            _emit_chat_thread_message_appended,
+        )
+        self.artifact_store.set_version_committed_callback(
+            _emit_artifact_version_added,
+        )
 
         # AD-1121: best-effort background tasks for the cascade-confab divergence
         # probe (per-event, non-blocking; NOT _background_tasks — those are
@@ -1313,6 +1438,132 @@ class ProbOSRuntime:
             (f, tf) for f, tf in self._event_listeners if f is not fn
         ]
 
+    async def register_live_event_listener(
+        self,
+        fn: Callable[[dict[str, Any]], object],
+        event_types: Iterable[str] | None = None,
+    ) -> LiveEventListenerHandle:
+        """Atomically register one live-only listener and await NATS readiness."""
+        type_filter = frozenset(str(item) for item in event_types) if event_types else None
+        token = _LiveEventListenerToken(fn, type_filter)
+        subscription_owner: _LiveNATSSubscriptionOwner | None = None
+        subscription: object | None = None
+
+        async def _nats_callback(message: Any) -> None:
+            if not token.open:
+                return
+            event = message.data
+            if type(event) is not dict:
+                return
+            event_type = event.get("type")
+            if (
+                type(event_type) is not str
+                or (token.event_types is not None and event_type not in token.event_types)
+            ):
+                return
+            try:
+                result = token.listener(event)
+                if inspect.isawaitable(result):
+                    await result
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Live NATS event listener failed with %s; this event is "
+                    "dropped and later stream repair remains available",
+                    type(exc).__name__[:128],
+                )
+
+        async def _setup() -> None:
+            nonlocal subscription_owner, subscription
+            bus = self.nats_bus
+            if bus is not None and bus.connected:
+                raw_subscription = await bus.subscribe_raw(
+                    f"{bus.subject_prefix}.system.events.>",
+                    _nats_callback,
+                )
+                subscription_owner = bus
+                subscription = raw_subscription
+                if (
+                    raw_subscription is None
+                    or not callable(getattr(raw_subscription, "drain", None))
+                    or not callable(getattr(raw_subscription, "unsubscribe", None))
+                ):
+                    raise RuntimeError("live_event_subscription_invalid")
+                subscription = raw_subscription
+            self._live_event_listeners.append(token)
+            token.open = True
+
+        setup_task = asyncio.create_task(
+            _setup(),
+            name="runtime-live-event-listener-setup",
+        )
+        try:
+            await asyncio.shield(setup_task)
+        except asyncio.CancelledError:
+            try:
+                await asyncio.shield(setup_task)
+            except BaseException:
+                pass
+            cleanup_task = asyncio.create_task(
+                self._cleanup_live_event_listener(
+                    token,
+                    subscription_owner,
+                    subscription,
+                ),
+                name="runtime-live-event-listener-rollback",
+            )
+            try:
+                await asyncio.shield(cleanup_task)
+            except BaseException:
+                pass
+            raise
+        except BaseException:
+            cleanup_task = asyncio.create_task(
+                self._cleanup_live_event_listener(
+                    token,
+                    subscription_owner,
+                    subscription,
+                ),
+                name="runtime-live-event-listener-rollback",
+            )
+            try:
+                await asyncio.shield(cleanup_task)
+            except BaseException:
+                pass
+            raise
+        return LiveEventListenerHandle(
+            self,
+            token,
+            subscription_owner,
+            subscription,
+        )
+
+    async def _cleanup_live_event_listener(
+        self,
+        token: _LiveEventListenerToken,
+        subscription_owner: _LiveNATSSubscriptionOwner | None,
+        subscription: object | None,
+    ) -> None:
+        token.open = False
+        self._live_event_listeners = [
+            candidate
+            for candidate in self._live_event_listeners
+            if candidate is not token
+        ]
+        if subscription_owner is None or subscription is None:
+            return
+        try:
+            await subscription_owner.release_raw_subscription(subscription)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Live NATS subscription release failed with %s; local "
+                "listener admission remains closed and bus tracking is retained",
+                type(exc).__name__[:128],
+            )
+
     def _create_nats_event_subscription(
         self,
         fn: Callable[..., Any],
@@ -1427,6 +1678,24 @@ class ProbOSRuntime:
                     fn,
                     type_str,
                     exc_info=True,
+                )
+        for token in tuple(self._live_event_listeners):
+            if (
+                not token.open
+                or (token.event_types is not None and type_str not in token.event_types)
+            ):
+                continue
+            try:
+                result = token.listener(event)
+                if inspect.isawaitable(result):
+                    task = asyncio.create_task(result)
+                    self._event_listener_tasks.add(task)
+                    task.add_done_callback(self._event_listener_tasks.discard)
+            except Exception as exc:
+                logger.warning(
+                    "Live local event listener failed with %s; this event is "
+                    "dropped and later stream repair remains available",
+                    type(exc).__name__[:128],
                 )
 
     def emit_event(self, event: BaseEvent | str | EventType, data: dict[str, Any] | None = None) -> None:
@@ -1642,49 +1911,50 @@ class ProbOSRuntime:
         from probos.routers.chat import _get_attachment_store
         return _get_attachment_store(self)
 
-    def build_state_snapshot(self) -> dict[str, Any]:
-        """Build a full state snapshot for HXI clients (AD-254)."""
+    def _build_hxi_agent_row(self, agent: Any) -> dict[str, Any]:
         from probos.earned_agency import agency_from_rank
         from probos.crew_profile import Rank
 
-        agents = []
-        for agent in self.registry.all():
-            trust_score = self.trust_network.get_score(agent.id)
-            # Look up display_name from crew profile registry
-            profile = self.callsign_registry._type_to_profile.get(agent.agent_type, {})
-            agents.append({
-                "id": agent.id,
-                "agent_type": agent.agent_type,
-                "callsign": agent.callsign,  # BF-013
-                "display_name": profile.get("display_name", ""),
-                "pool": agent.pool,
-                "state": agent.state.value if hasattr(agent.state, "value") else str(agent.state),
-                "confidence": agent.confidence,
-                "trust": format_trust(trust_score),
-                "tier": getattr(agent, "tier", "core"),
-                "isCrew": is_crew_agent(agent, self.ontology),
-                "agency": agency_from_rank(Rank.from_trust(trust_score)).value,
-            })
+        trust_score = self.trust_network.get_score(agent.id)
+        profile = self.callsign_registry._type_to_profile.get(agent.agent_type, {})
+        return {
+            "id": agent.id,
+            "agent_type": agent.agent_type,
+            "callsign": agent.callsign,
+            "display_name": profile.get("display_name", ""),
+            "pool": agent.pool,
+            "state": agent.state.value if hasattr(agent.state, "value") else str(agent.state),
+            "confidence": agent.confidence,
+            "trust": format_trust(trust_score),
+            "tier": getattr(agent, "tier", "core"),
+            "isCrew": is_crew_agent(agent, self.ontology),
+            "agency": agency_from_rank(Rank.from_trust(trust_score)).value,
+        }
 
-        connections = []
-        for (source, target, rel_type), weight in self.hebbian_router.all_weights_typed().items():
-            connections.append({
-                "source": source,
-                "target": target,
-                "rel_type": rel_type,
-                "weight": format_trust(weight),
-            })
+    @staticmethod
+    def _build_hxi_connection_row(
+        key: tuple[str, str, str],
+        weight: float,
+    ) -> dict[str, Any]:
+        source, target, rel_type = key
+        return {
+            "source": source,
+            "target": target,
+            "rel_type": rel_type,
+            "weight": format_trust(weight),
+        }
 
-        pools = []
-        for name, pool in self.pools.items():
-            info = pool.info()
-            pools.append({
-                "name": name,
-                "agent_type": info.get("agent_type", ""),
-                "size": info.get("current_size", 0),
-                "target_size": info.get("target_size", 0),
-            })
+    @staticmethod
+    def _build_hxi_pool_row(name: str, pool: Any) -> dict[str, Any]:
+        info = pool.info()
+        return {
+            "name": name,
+            "agent_type": info.get("agent_type", ""),
+            "size": info.get("current_size", 0),
+            "target_size": info.get("target_size", 0),
+        }
 
+    def _build_hxi_system_scalars(self) -> dict[str, Any]:
         system_mode = "active"
         if self.dream_scheduler and self.dream_scheduler.is_dreaming:
             system_mode = "dreaming"
@@ -1702,9 +1972,6 @@ class ProbOSRuntime:
                 logger.debug("Emergent detector summary failed", exc_info=True)
 
         return {
-            "agents": agents,
-            "connections": connections,
-            "pools": pools,
             "system_mode": system_mode,
             "tc_n": format_trust(tc_n),
             "routing_entropy": format_trust(routing_entropy),
@@ -1716,8 +1983,61 @@ class ProbOSRuntime:
                 "stasis_duration": self._stasis_duration if self._lifecycle_state == "stasis_recovery" else None,
                 "session_id": self._session_id,
             },
+        }
+
+    @staticmethod
+    def _bounded_hxi_source(
+        source: Iterable[Any],
+        *,
+        limit: int,
+        name: str,
+    ) -> list[Any]:
+        rows = list(islice(iter(source), limit + 1))
+        if len(rows) > limit:
+            raise ValueError(f"ws_snapshot_{name}_overflow")
+        return rows
+
+    @staticmethod
+    def _require_bounded_hxi_count(
+        count: object,
+        *,
+        limit: int,
+        name: str,
+    ) -> None:
+        if type(count) is not int or count < 0 or count > limit:
+            raise ValueError(f"ws_snapshot_{name}_overflow")
+
+    @staticmethod
+    def _summarize_directives(active: Iterable[Any]) -> dict[str, int]:
+        active_count = 0
+        pending_count = 0
+        for directive in active:
+            if directive.status.value == "active":
+                active_count += 1
+            elif directive.status.value == "pending_approval":
+                pending_count += 1
+        return {"active": active_count, "pending": pending_count}
+
+    def build_state_snapshot(self) -> dict[str, Any]:
+        """Build a full state snapshot for HXI clients (AD-254)."""
+        agents = [self._build_hxi_agent_row(agent) for agent in self.registry.all()]
+        connections = [
+            self._build_hxi_connection_row(key, weight)
+            for key, weight in self.hebbian_router.all_weights_typed().items()
+        ]
+        pools = [
+            self._build_hxi_pool_row(name, pool)
+            for name, pool in self.pools.items()
+        ]
+        scalars = self._build_hxi_system_scalars()
+
+        return {
+            "agents": agents,
+            "connections": connections,
+            "pools": pools,
+            **scalars,
             "pool_groups": self.pool_groups.status(self.pools),
-            "pool_to_group": dict(self.pool_groups._pool_to_group),
+            "pool_to_group": self.pool_groups.pool_to_group_snapshot(),
             "directives": self._directive_summary(),
             "notifications": self.notification_queue.snapshot(),
             "unread_count": self.notification_queue.unread_count(),
@@ -1728,15 +2048,133 @@ class ProbOSRuntime:
             "acm": self.acm is not None,  # AD-427
         }
 
+    def build_bounded_hxi_snapshot_base(self) -> dict[str, Any]:
+        """Build the authoritative HXI snapshot base under explicit source caps."""
+        self._require_bounded_hxi_count(
+            self.registry.count,
+            limit=1_000,
+            name="agents",
+        )
+        agents_source = self._bounded_hxi_source(
+            self.registry.all(),
+            limit=1_000,
+            name="agents",
+        )
+        self._require_bounded_hxi_count(
+            self.hebbian_router.weight_count,
+            limit=1_000,
+            name="connections",
+        )
+        connection_source = self._bounded_hxi_source(
+            self.hebbian_router.all_weights_typed().items(),
+            limit=1_000,
+            name="connections",
+        )
+        self._require_bounded_hxi_count(
+            len(self.pools),
+            limit=1_000,
+            name="pools",
+        )
+        pool_source = self._bounded_hxi_source(
+            self.pools.items(),
+            limit=1_000,
+            name="pools",
+        )
+        self._require_bounded_hxi_count(
+            self.pool_groups.count,
+            limit=128,
+            name="pool_groups",
+        )
+        self._require_bounded_hxi_count(
+            self.pool_groups.membership_count,
+            limit=1_000,
+            name="group_memberships",
+        )
+        self._require_bounded_hxi_count(
+            self.pool_groups.pool_mapping_count,
+            limit=1_000,
+            name="pool_mappings",
+        )
+        groups = self._bounded_hxi_source(
+            self.pool_groups.all_groups(),
+            limit=128,
+            name="pool_groups",
+        )
+        membership_count = 0
+        for group in groups:
+            membership_count += len(group.pool_names)
+            if membership_count > 1_000:
+                raise ValueError("ws_snapshot_group_memberships_overflow")
+        mapping_source = self._bounded_hxi_source(
+            self.pool_groups.pool_to_group_snapshot().items(),
+            limit=1_000,
+            name="pool_mappings",
+        )
+        self._require_bounded_hxi_count(
+            self.notification_queue.count,
+            limit=1_000,
+            name="notifications",
+        )
+        notifications = self._bounded_hxi_source(
+            self.notification_queue.snapshot(),
+            limit=1_000,
+            name="notifications",
+        )
+        scheduled_source = (
+            self.persistent_task_store.snapshot()
+            if self.persistent_task_store
+            else []
+        )
+        scheduled_tasks = self._bounded_hxi_source(
+            scheduled_source,
+            limit=1_000,
+            name="scheduled_tasks",
+        )
+        if self.directive_store:
+            active_directives = self._bounded_hxi_source(
+                self.directive_store.list_directives_bounded(
+                    include_inactive=False,
+                    limit=1_000,
+                ),
+                limit=1_000,
+                name="directives",
+            )
+            directives = self._summarize_directives(active_directives)
+        else:
+            directives = {"active": 0, "pending": 0}
+        scalars = self._build_hxi_system_scalars()
+
+        return {
+            "agents": [self._build_hxi_agent_row(agent) for agent in agents_source],
+            "connections": [
+                self._build_hxi_connection_row(key, weight)
+                for key, weight in connection_source
+            ],
+            "pools": [
+                self._build_hxi_pool_row(name, pool)
+                for name, pool in pool_source
+            ],
+            **scalars,
+            "pool_groups": {
+                group.name: self.pool_groups.group_health(group.name, self.pools)
+                for group in groups
+            },
+            "pool_to_group": dict(mapping_source),
+            "directives": directives,
+            "notifications": notifications,
+            "unread_count": self.notification_queue.unread_count(),
+            "scheduled_tasks": scheduled_tasks,
+            "ward_room_stats": getattr(self.ward_room, "_last_stats", None) if self.ward_room else None,
+            "skill_framework": self.skill_registry is not None,
+            "acm": self.acm is not None,
+        }
+
     def _directive_summary(self) -> dict[str, int]:
         """Build directive count summary for state snapshot (AD-386)."""
         if not self.directive_store:
             return {"active": 0, "pending": 0}
         active = self.directive_store.all_directives(include_inactive=False)
-        return {
-            "active": len([d for d in active if d.status.value == "active"]),
-            "pending": len([d for d in active if d.status.value == "pending_approval"]),
-        }
+        return self._summarize_directives(active)
 
     def notify(
         self,
@@ -1770,7 +2208,7 @@ class ProbOSRuntime:
         if not agent:
             return ""
         pool_name = agent.pool
-        return self.pool_groups._pool_to_group.get(pool_name, "")
+        return self.pool_groups.get_group_for_pool(pool_name) or ""
 
     async def create_pool(
         self,

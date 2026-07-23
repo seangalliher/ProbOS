@@ -20,10 +20,10 @@
  */
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useStore, type AD791aChatThreadView } from '../../store/useStore';
-import type { Agent, CrewSessionSummaryProjection, RoomSummary } from '../../store/types';
+import type { Agent } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { UserPlus, Close } from '../icons/Glyphs';
-import { listThreads, addParticipant, getThread, fetchRoomSummaries } from '../sidebar/threadApi';
+import { listThreads, addParticipant, getThread, repairRoomSummaries } from '../sidebar/threadApi';
 import { NewChatModal } from './NewChatModal';
 import {
   CAPTAIN_PARTICIPANT_ID,
@@ -88,7 +88,9 @@ export default function ChatsPanel() {
   // MeetingView / the meetingActive selector (all read chatThreads.get(id))
   // resolve, and the thread-keyed transcript can load on open.
   const setChatThread = useStore((s) => s.setChatThread);
-  const hydrateCrewSessionSummaries = useStore((s) => s.hydrateCrewSessionSummaries);
+  const hydrateRoomSummaries = useStore((s) => s.hydrateRoomSummaries);
+  const liveRepairEpoch = useStore((s) => s.liveRepairEpoch);
+  const roomSummariesByThread = useStore((s) => s.roomSummariesByThread);
   // AD-971: the live chatThreads store. A participant added from the
   // GroupChatHeader writes the updated thread here (setChatThread) and bumps
   // last_active_at, but ChatsPanel keeps its own listThreads() snapshot. Reading
@@ -108,7 +110,10 @@ export default function ChatsPanel() {
   // AD-1090: status filter chips.
   const [filter, setFilter] = useState<'all' | 'needs' | 'rooms' | 'dms'>('all');
   const [dateFilter, setDateFilter] = useState<'any' | 'today' | 'week' | 'month'>('any');
-  const [summaries, setSummaries] = useState<Record<string, RoomSummary>>({});
+  const summaries = Object.fromEntries(roomSummariesByThread);
+  const summaryRequestRef = useRef(0);
+  const summaryInFlightRef = useRef(false);
+  const summaryPendingRef = useRef(false);
   // AD-1093: resizable panel (width + height), persisted.
   const [size, setSize] = useState<{ w: number; h: number }>(() => {
     try {
@@ -138,6 +143,38 @@ export default function ChatsPanel() {
     try { localStorage.setItem('probos.chatsPanel.size', JSON.stringify(size)); } catch { /* best-effort */ }
   }, [size]);
 
+  const refreshSummaries = useCallback(async () => {
+    if (!useStore.getState().chatsOpen) return;
+    if (summaryInFlightRef.current) {
+      summaryPendingRef.current = true;
+      return;
+    }
+    summaryInFlightRef.current = true;
+    const requestId = ++summaryRequestRef.current;
+    const authority = useStore.getState();
+    const generation = authority.liveGeneration;
+    const sequence = authority.liveSequence;
+    try {
+      const outcome = await repairRoomSummaries();
+      const current = useStore.getState();
+      if (
+        requestId !== summaryRequestRef.current
+        || !current.chatsOpen
+        || current.liveGeneration !== generation
+        || current.liveSequence !== sequence
+      ) return;
+      if (outcome.kind === 'success') {
+        hydrateRoomSummaries(outcome.summaries);
+      }
+    } finally {
+      summaryInFlightRef.current = false;
+      if (summaryPendingRef.current && useStore.getState().chatsOpen) {
+        summaryPendingRef.current = false;
+        queueMicrotask(() => { void refreshSummaries(); });
+      }
+    }
+  }, [hydrateRoomSummaries]);
+
   // Fetch on open. The wrapper already honest-degrades to [] (Tier-2), so no
   // try/catch needed here. The `active` guard avoids a setState after unmount.
   useEffect(() => {
@@ -146,19 +183,17 @@ export default function ChatsPanel() {
     void listThreads({ includeArchived: false }).then((list) => {
       if (active) setThreads(list);
     });
-    void fetchRoomSummaries().then((nextSummaries) => {
-      if (!active) return;
-      setSummaries(nextSummaries);
-      const sessionSummaries: Record<string, CrewSessionSummaryProjection> = {};
-      for (const [threadId, summary] of Object.entries(nextSummaries)) {
-        if ('session' in summary) sessionSummaries[threadId] = summary.session;
-      }
-      hydrateCrewSessionSummaries(sessionSummaries);
-    }).catch(() => {});
+    void refreshSummaries();
     return () => {
       active = false;
+      summaryRequestRef.current += 1;
+      summaryPendingRef.current = false;
     };
-  }, [hydrateCrewSessionSummaries, open]);
+  }, [open, refreshSummaries]);
+
+  useEffect(() => {
+    if (open && liveRepairEpoch > 0) void refreshSummaries();
+  }, [liveRepairEpoch, open, refreshSummaries]);
 
   // AD-940: header drag (GamePanel.startDrag pattern) — capture the offset on
   // mousedown, track window mousemove, and tear the listeners down on mouseup.

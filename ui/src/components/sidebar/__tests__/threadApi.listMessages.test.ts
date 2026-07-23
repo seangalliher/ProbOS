@@ -3,7 +3,7 @@
 // Verifies the GET endpoint + limit query, the {messages:[...]} unwrap, and the
 // Tier-2 [] degrade on !res.ok and on a thrown/parse failure.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { listMessages, type ThreadMessageDTO } from '../threadApi';
+import { listMessages, repairThreadMessages, type ThreadMessageDTO } from '../threadApi';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -14,6 +14,16 @@ const sampleMessages: ThreadMessageDTO[] = [
   { id: 'm1', thread_id: 't1', author_id: 'captain', role: 'captain', body: 'status?', created_at: 1_700_000_000 },
   { id: 'm2', thread_id: 't1', author_id: 'a1', role: 'agent', body: 'nominal', created_at: 1_700_000_005 },
 ];
+
+const repairMessages = sampleMessages.map(message => ({ ...message, metadata: {} }));
+
+function textResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(body),
+  } as Response;
+}
 
 describe('AD-938 threadApi listMessages', () => {
   it('GETs /api/threads/{id}/messages with the limit query and returns the messages array', async () => {
@@ -56,5 +66,28 @@ describe('AD-938 threadApi listMessages', () => {
   it('returns [] when the payload has no messages array', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ thread_id: 't1' }) }));
     expect(await listMessages('t1')).toEqual([]);
+  });
+
+  it('strict repair accepts authoritative empty and exact bounded messages', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(textResponse({ thread_id: 't1', messages: [] }))
+      .mockResolvedValueOnce(textResponse({ thread_id: 't1', messages: repairMessages }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await repairThreadMessages('t1')).toEqual({ kind: 'success', messages: [] });
+    expect(await repairThreadMessages('t1')).toEqual({ kind: 'success', messages: repairMessages });
+  });
+
+  it('strict repair rejects duplicate ids, wrong ownership, malformed shape and status errors', async () => {
+    const duplicate = [repairMessages[0], { ...repairMessages[1], id: repairMessages[0].id }];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(textResponse({ thread_id: 't1', messages: duplicate }))
+      .mockResolvedValueOnce(textResponse({ thread_id: 'other', messages: repairMessages }))
+      .mockResolvedValueOnce(textResponse({ thread_id: 't1', messages: [{ id: 'partial' }] }))
+      .mockResolvedValueOnce(textResponse({}, 503));
+    vi.stubGlobal('fetch', fetchMock);
+    expect((await repairThreadMessages('t1')).kind).toBe('error');
+    expect((await repairThreadMessages('t1')).kind).toBe('error');
+    expect((await repairThreadMessages('t1')).kind).toBe('error');
+    expect(await repairThreadMessages('t1')).toEqual({ kind: 'error', status: 503 });
   });
 });
