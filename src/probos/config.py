@@ -927,6 +927,15 @@ class LLMRateConfig(BaseModel):
     # disabled (unbounded past the lane fail-open = pre-BF-654 byte-identical).
     max_inflight_per_endpoint: int = 8
 
+    # BF-674: persistent empty HTTP 200s from one endpoint open a background
+    # cooldown shared by every alias tier on that endpoint. Critical Captain
+    # calls bypass it; one half-open background probe tests recovery. 0 disables.
+    endpoint_failure_cooldown_seconds: float = Field(
+        default=15.0,
+        ge=0.0,
+        le=300.0,
+    )
+
 
 class AttentionConfig(BaseModel):
     """AD-1028: ContextAssembler / global token-budget configuration.

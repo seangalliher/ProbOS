@@ -74,6 +74,28 @@ class _ClientPoolState:
         self.borrowers_zero.set()
 
 
+@dataclass(frozen=True, slots=True)
+class _EndpointAdmission:
+    """One completion attempt's endpoint-cooldown admission decision."""
+
+    allowed: bool
+    epoch: int
+    governed: bool
+    recovery_probe: bool = False
+    cooldown_remaining_seconds: float = 0.0
+
+
+@dataclass(slots=True)
+class _EndpointFailureState:
+    """Endpoint-keyed empty-response breaker state."""
+
+    epoch: int = 0
+    failures: int = 0
+    cooldown_until: float = 0.0
+    recovery_probe_inflight: bool = False
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
 class BaseLLMClient(ABC):
     """Abstract LLM client interface."""
 
@@ -260,6 +282,22 @@ class OpenAICompatibleClient(BaseLLMClient):
                     self._endpoint_semaphores[key] = asyncio.Semaphore(_max_inflight)
         self._endpoint_failopen_jitter_seconds: float = 0.5
 
+        # BF-674: empty HTTP 200s can originate inside the shared proxy while
+        # its upstream model/session list refreshes. Recycling sockets cannot
+        # repair that endpoint-wide condition; without a breaker every queued
+        # background call retries standard -> fast -> deep and amplifies the
+        # outage. Track one state per real endpoint, not per alias tier.
+        self._endpoint_failure_cooldown_seconds = 15.0
+        if rate_config and hasattr(
+            rate_config, "endpoint_failure_cooldown_seconds"
+        ):
+            self._endpoint_failure_cooldown_seconds = float(
+                rate_config.endpoint_failure_cooldown_seconds
+            )
+        self._endpoint_failure_states: dict[str, _EndpointFailureState] = {
+            key: _EndpointFailureState() for key in self._clients
+        }
+
     # Backward-compat properties
     @property
     def base_url(self) -> str:
@@ -285,20 +323,210 @@ class OpenAICompatibleClient(BaseLLMClient):
         tc = self._tier_configs[tier]
         return f"{tc['base_url']}|{tc.get('api_format', 'openai')}"
 
+    async def _claim_endpoint_admission(
+        self,
+        attempt_tier: str,
+    ) -> _EndpointAdmission:
+        """Admit normal traffic or one half-open background recovery probe."""
+        key = self._client_key(attempt_tier)
+        state = self._endpoint_failure_states[key]
+        governed = _ENDPOINT_GOVERNED.get()
+        now = time.monotonic()
+        async with state.lock:
+            epoch = state.epoch
+            if not governed or self._endpoint_failure_cooldown_seconds <= 0.0:
+                return _EndpointAdmission(
+                    allowed=True,
+                    epoch=epoch,
+                    governed=governed,
+                )
+            remaining = state.cooldown_until - now
+            if remaining > 0.0:
+                return _EndpointAdmission(
+                    allowed=False,
+                    epoch=epoch,
+                    governed=governed,
+                    cooldown_remaining_seconds=remaining,
+                )
+            if state.cooldown_until <= 0.0:
+                return _EndpointAdmission(
+                    allowed=True,
+                    epoch=epoch,
+                    governed=governed,
+                )
+            if state.recovery_probe_inflight:
+                return _EndpointAdmission(
+                    allowed=False,
+                    epoch=epoch,
+                    governed=governed,
+                )
+            state.recovery_probe_inflight = True
+
+        logger.info(
+            "BF-674: LLM endpoint %s cooldown elapsed; allowing one "
+            "background recovery probe while queued calls continue to degrade",
+            key,
+        )
+        return _EndpointAdmission(
+            allowed=True,
+            epoch=epoch,
+            governed=governed,
+            recovery_probe=True,
+        )
+
+    async def _release_endpoint_admission(
+        self,
+        attempt_tier: str,
+        admission: _EndpointAdmission,
+    ) -> None:
+        """Release half-open probe ownership after every terminal path."""
+        if not admission.recovery_probe:
+            return
+        state = self._endpoint_failure_states[self._client_key(attempt_tier)]
+        async with state.lock:
+            if state.epoch == admission.epoch:
+                state.recovery_probe_inflight = False
+
+    async def _release_endpoint_admission_owned(
+        self,
+        attempt_tier: str,
+        admission: _EndpointAdmission,
+    ) -> None:
+        """Drain half-open ownership cleanup even under repeated cancellation."""
+        if not admission.recovery_probe:
+            return
+        cleanup_task = asyncio.create_task(
+            self._release_endpoint_admission(attempt_tier, admission),
+            name="probos-llm-endpoint-admission-release",
+        )
+        await self._await_cleanup_task(cleanup_task)
+
+    async def _record_endpoint_failure(
+        self,
+        attempt_tier: str,
+        admission: _EndpointAdmission,
+        *,
+        count_when_closed: bool,
+    ) -> bool:
+        """Record one current-epoch failure; return True when fallback must stop."""
+        if self._endpoint_failure_cooldown_seconds <= 0.0:
+            return False
+        key = self._client_key(attempt_tier)
+        state = self._endpoint_failure_states[key]
+        now = time.monotonic()
+        opened = False
+        failure_count = 0
+        async with state.lock:
+            if state.epoch != admission.epoch:
+                return False
+            if admission.recovery_probe:
+                state.epoch += 1
+                state.failures = self._UNREACHABLE_THRESHOLD
+                state.cooldown_until = (
+                    now + self._endpoint_failure_cooldown_seconds
+                )
+                state.recovery_probe_inflight = False
+                opened = True
+                failure_count = state.failures
+            elif state.cooldown_until > 0.0 or not count_when_closed:
+                return False
+            else:
+                state.failures += 1
+                failure_count = state.failures
+                if state.failures >= self._UNREACHABLE_THRESHOLD:
+                    state.epoch += 1
+                    state.cooldown_until = (
+                        now + self._endpoint_failure_cooldown_seconds
+                    )
+                    state.recovery_probe_inflight = False
+                    opened = True
+        if opened:
+            logger.warning(
+                "BF-674: LLM endpoint %s entered %.1fs background cooldown "
+                "after %d persistent empty responses; queued background calls "
+                "will use cache or honest-degrade, critical calls remain available, "
+                "and one half-open probe will test recovery",
+                key,
+                self._endpoint_failure_cooldown_seconds,
+                failure_count,
+            )
+        return opened
+
+    async def _record_endpoint_success(
+        self,
+        attempt_tier: str,
+        admission: _EndpointAdmission,
+    ) -> None:
+        """Close the breaker on a probe/critical success or reset closed state."""
+        if self._endpoint_failure_cooldown_seconds <= 0.0:
+            return
+        key = self._client_key(attempt_tier)
+        state = self._endpoint_failure_states[key]
+        recovered = False
+        async with state.lock:
+            if state.epoch != admission.epoch:
+                return
+            breaker_exists = state.cooldown_until > 0.0
+            if breaker_exists and admission.governed and not admission.recovery_probe:
+                return
+            recovered = breaker_exists
+            if recovered or state.failures > 0:
+                state.epoch += 1
+            state.failures = 0
+            state.cooldown_until = 0.0
+            state.recovery_probe_inflight = False
+        if recovered:
+            logger.info(
+                "BF-674: LLM endpoint %s recovered with non-empty content; "
+                "background traffic resumed",
+                key,
+            )
+
     @asynccontextmanager
-    async def _endpoint_permit(self, attempt_tier: str) -> AsyncIterator[None]:
-        """Hold the endpoint permit for one background transport attempt."""
+    async def _endpoint_permit(
+        self,
+        attempt_tier: str,
+        *,
+        respect_cooldown: bool = False,
+    ) -> AsyncIterator[_EndpointAdmission]:
+        """Hold endpoint capacity and optional outage-recovery admission."""
+        admission = (
+            await self._claim_endpoint_admission(attempt_tier)
+            if respect_cooldown
+            else _EndpointAdmission(
+                allowed=True,
+                epoch=0,
+                governed=_ENDPOINT_GOVERNED.get(),
+            )
+        )
+        if not admission.allowed:
+            yield admission
+            return
+
         endpoint_semaphores = getattr(self, "_endpoint_semaphores", {})
         if not _ENDPOINT_GOVERNED.get() or not endpoint_semaphores:
-            yield
+            try:
+                yield admission
+            finally:
+                await self._release_endpoint_admission_owned(
+                    attempt_tier,
+                    admission,
+                )
             return
 
         endpoint_sem = endpoint_semaphores[self._client_key(attempt_tier)]
-        await endpoint_sem.acquire()
+        acquired = False
         try:
-            yield
+            await endpoint_sem.acquire()
+            acquired = True
+            yield admission
         finally:
-            endpoint_sem.release()
+            if acquired:
+                endpoint_sem.release()
+            await self._release_endpoint_admission_owned(
+                attempt_tier,
+                admission,
+            )
 
     @staticmethod
     async def _await_cleanup_task(task: asyncio.Task[Any]) -> Any:
@@ -669,16 +897,24 @@ class OpenAICompatibleClient(BaseLLMClient):
         timestamps.append(now)
         return True
 
-    async def check_connectivity(self) -> dict[str, bool]:
+    async def check_connectivity(
+        self,
+        *,
+        respect_cooldown: bool = False,
+    ) -> dict[str, bool]:
         """Check connectivity for each tier independently.
 
         Returns {"fast": True/False, "standard": True/False, "deep": True/False,
         "vision": True/False}. Tiers sharing the same endpoint share the result
         (no duplicate checks). AD-732: the vision tier short-circuits to False
         without an HTTP call when llm_model_vision is unset/empty.
+
+        ``respect_cooldown`` is reserved for the periodic BF-246 recovery loop.
+        Boot/doctor checks remain observational; the periodic loop shares the
+        BF-674 half-open claim so it cannot race a completion recovery probe.
         """
         results: dict[str, bool] = {}
-        checked_urls: dict[str, bool] = {}
+        checked_endpoints: dict[str, bool] = {}
 
         for tier in _LLM_TIERS:
             tc = self._tier_configs[tier]
@@ -691,12 +927,18 @@ class OpenAICompatibleClient(BaseLLMClient):
                 results[tier] = False
                 self._tier_status[tier] = False
                 continue
-            url = tc["base_url"]
-            if url in checked_urls:
-                results[tier] = checked_urls[url]
+            endpoint_key = self._client_key(tier)
+            if endpoint_key in checked_endpoints:
+                results[tier] = checked_endpoints[endpoint_key]
             else:
-                reachable = await self._check_endpoint(tier)
-                checked_urls[url] = reachable
+                if respect_cooldown:
+                    reachable = await self._check_endpoint(
+                        tier,
+                        respect_cooldown=True,
+                    )
+                else:
+                    reachable = await self._check_endpoint(tier)
+                checked_endpoints[endpoint_key] = reachable
                 results[tier] = reachable
             self._tier_status[tier] = results[tier]
             # BF-240: Dwell-time recovery for connectivity checks
@@ -739,7 +981,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                     continue
 
                 old_overall = health["overall"]
-                await self.check_connectivity()
+                await self.check_connectivity(respect_cooldown=True)
                 new_health = self.get_health_status()
                 new_overall = new_health["overall"]
 
@@ -778,7 +1020,12 @@ class OpenAICompatibleClient(BaseLLMClient):
             except asyncio.CancelledError:
                 pass
 
-    async def _check_endpoint(self, tier: str) -> bool:
+    async def _check_endpoint(
+        self,
+        tier: str,
+        *,
+        respect_cooldown: bool = False,
+    ) -> bool:
         """Check if a tier's endpoint is reachable.
 
         Sends a minimal completion request and treats any response below
@@ -799,72 +1046,125 @@ class OpenAICompatibleClient(BaseLLMClient):
         probe_timeout = min(float(tc.get("timeout") or 5.0), 30.0)
         governance_token = _ENDPOINT_GOVERNED.set(True)
         try:
-            async with self._endpoint_permit(tier):
-                async with self._client_lease(tier) as lease:
-                    if api_format == "ollama":
-                        resp = await lease.client.post(
-                            "api/chat",
-                            json={
-                                "model": tc["model"],
-                                "messages": [{"role": "user", "content": "ping"}],
-                                "stream": False,
-                                "think": False,
-                                "keep_alive": self._ollama_keep_alive,
-                            },
-                            timeout=probe_timeout,
+            async with self._endpoint_permit(
+                tier,
+                respect_cooldown=respect_cooldown,
+            ) as admission:
+                if not admission.allowed:
+                    return False
+                try:
+                    async with self._client_lease(tier) as lease:
+                        if api_format == "ollama":
+                            resp = await lease.client.post(
+                                "api/chat",
+                                json={
+                                    "model": tc["model"],
+                                    "messages": [
+                                        {"role": "user", "content": "ping"}
+                                    ],
+                                    "stream": False,
+                                    "think": False,
+                                    "keep_alive": self._ollama_keep_alive,
+                                },
+                                timeout=probe_timeout,
+                            )
+                        else:
+                            resp = await lease.client.post(
+                                "chat/completions",
+                                json={
+                                    "model": tc["model"],
+                                    "messages": [
+                                        {"role": "user", "content": "ping"}
+                                    ],
+                                    "max_tokens": 1,
+                                },
+                                timeout=probe_timeout,
+                            )
+                except (httpx.ConnectError, httpx.TimeoutException, OSError) as exc:
+                    if respect_cooldown:
+                        await self._record_endpoint_failure(
+                            tier,
+                            admission,
+                            count_when_closed=False,
                         )
-                    else:
-                        resp = await lease.client.post(
-                            "chat/completions",
-                            json={
-                                "model": tc["model"],
-                                "messages": [{"role": "user", "content": "ping"}],
-                                "max_tokens": 1,
-                            },
-                            timeout=probe_timeout,
+                    logger.warning(
+                        "LLM health check failed for tier=%s model=%s url=%s "
+                        "with %s: %s; the tier remains degraded and the next "
+                        "probe will retry",
+                        tier,
+                        tc["model"],
+                        tc["base_url"],
+                        type(exc).__name__,
+                        exc,
+                    )
+                    return False
+
+                if resp.status_code >= 500:
+                    if respect_cooldown:
+                        await self._record_endpoint_failure(
+                            tier,
+                            admission,
+                            count_when_closed=False,
                         )
-            reachable = resp.status_code < 500
-            if not reachable:
-                logger.warning(
-                    "LLM health check failed for tier=%s model=%s with status=%d; "
-                    "the tier remains degraded and the next probe will retry",
-                    tier, tc["model"], resp.status_code,
-                )
-                return False
-            if resp.status_code != 200:
-                return True
-            try:
-                data = resp.json()
-                if api_format == "ollama":
-                    content = data["message"].get("content")
-                else:
-                    message = data["choices"][0]["message"]
-                    content = message.get("content") or message.get("reasoning")
-                if isinstance(content, str) and content.strip():
+                    logger.warning(
+                        "LLM health check failed for tier=%s model=%s with "
+                        "status=%d; the tier remains degraded and the next "
+                        "probe will retry",
+                        tier,
+                        tc["model"],
+                        resp.status_code,
+                    )
+                    return False
+                if resp.status_code != 200:
+                    if respect_cooldown:
+                        await self._record_endpoint_failure(
+                            tier,
+                            admission,
+                            count_when_closed=False,
+                        )
+                        return False
                     return True
-            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                try:
+                    data = resp.json()
+                    if api_format == "ollama":
+                        content = data["message"].get("content")
+                    else:
+                        message = data["choices"][0]["message"]
+                        content = message.get("content") or message.get("reasoning")
+                except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                    if respect_cooldown:
+                        await self._record_endpoint_failure(
+                            tier,
+                            admission,
+                            count_when_closed=False,
+                        )
+                    logger.warning(
+                        "LLM health check received malformed HTTP 200 for "
+                        "tier=%s model=%s; the tier remains degraded and the "
+                        "next probe will retry",
+                        tier,
+                        tc["model"],
+                        exc_info=True,
+                    )
+                    return False
+                if isinstance(content, str) and content.strip():
+                    if respect_cooldown:
+                        await self._record_endpoint_success(tier, admission)
+                    return True
+                if respect_cooldown:
+                    await self._record_endpoint_failure(
+                        tier,
+                        admission,
+                        count_when_closed=False,
+                    )
                 logger.warning(
-                    "LLM health check received malformed HTTP 200 for tier=%s "
-                    "model=%s; the tier remains degraded and the next probe will retry",
+                    "LLM health check received empty HTTP 200 for tier=%s "
+                    "model=%s; the tier remains degraded and the next probe "
+                    "will retry",
                     tier,
                     tc["model"],
-                    exc_info=True,
                 )
                 return False
-            logger.warning(
-                "LLM health check received empty HTTP 200 for tier=%s model=%s; "
-                "the tier remains degraded and the next probe will retry",
-                tier,
-                tc["model"],
-            )
-            return False
-        except (httpx.ConnectError, httpx.TimeoutException, OSError) as e:
-            logger.warning(
-                "LLM health check failed for tier=%s model=%s url=%s with %s: %s; "
-                "the tier remains degraded and the next probe will retry",
-                tier, tc["model"], tc["base_url"], type(e).__name__, e,
-            )
-            return False
         finally:
             _ENDPOINT_GOVERNED.reset(governance_token)
 
@@ -958,8 +1258,12 @@ class OpenAICompatibleClient(BaseLLMClient):
         # BF-665: one refresh budget per shared endpoint generation. Sibling
         # tiers cannot rebuild the same observed generation twice.
         _refreshed_generations: set[tuple[str, int]] = set()
+        stopped_endpoint_keys: set[str] = set()
         for attempt_tier in fallback_tiers:
             tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
+            endpoint_key = self._client_key(attempt_tier)
+            if endpoint_key in stopped_endpoint_keys:
+                continue
             # AD-463: ModelRouter override (caller-optional; absent = existing path)
             _override = self._resolve_model_for_tier(attempt_tier)
             model = _override or tc["model"]
@@ -996,7 +1300,18 @@ class OpenAICompatibleClient(BaseLLMClient):
             # transport layer never reads global tier state (DIP).
             effective_system_suffix = tc.get("system_prompt_suffix")
 
-            async with self._endpoint_permit(attempt_tier):
+            stop_endpoint_fallback = False
+            async with self._endpoint_permit(
+                attempt_tier,
+                respect_cooldown=True,
+            ) as endpoint_admission:
+                if not endpoint_admission.allowed:
+                    last_error = (
+                        "LLM endpoint background cooldown active for "
+                        f"{endpoint_admission.cooldown_remaining_seconds:.1f}s "
+                        f"at {self._client_key(attempt_tier)}"
+                    )
+                    continue
                 # AD-617: Inner retry loop for 429 backpressure (stays on same tier)
                 _max_429_retries = 5
                 for _429_attempt in range(_max_429_retries):
@@ -1081,6 +1396,13 @@ class OpenAICompatibleClient(BaseLLMClient):
                             and not response.error
                             and api_format != "ollama"
                         ):
+                            stop_endpoint_fallback = (
+                                await self._record_endpoint_failure(
+                                    attempt_tier,
+                                    endpoint_admission,
+                                    count_when_closed=True,
+                                )
+                            )
                             last_error = (
                                 "Persistent empty LLM response for "
                                 f"tier={attempt_tier} model={model}"
@@ -1091,6 +1413,30 @@ class OpenAICompatibleClient(BaseLLMClient):
                             logger.warning(
                                 "%s (consecutive_failures=%d/%d); "
                                 "attempting the existing fallback chain",
+                                last_error,
+                                self._consecutive_failures[attempt_tier],
+                                self._UNREACHABLE_THRESHOLD,
+                            )
+                            break
+                        if response.error:
+                            last_error = (
+                                "LLM response error for "
+                                f"tier={attempt_tier} model={model}: "
+                                f"{response.error}"
+                            )
+                            stop_endpoint_fallback = (
+                                await self._record_endpoint_failure(
+                                    attempt_tier,
+                                    endpoint_admission,
+                                    count_when_closed=False,
+                                )
+                            )
+                            self._consecutive_failures[attempt_tier] += 1
+                            self._consecutive_successes[attempt_tier] = 0
+                            self._last_failure[attempt_tier] = time.monotonic()
+                            logger.warning(
+                                "%s (consecutive_failures=%d/%d); attempting "
+                                "the existing fallback chain",
                                 last_error,
                                 self._consecutive_failures[attempt_tier],
                                 self._UNREACHABLE_THRESHOLD,
@@ -1113,6 +1459,10 @@ class OpenAICompatibleClient(BaseLLMClient):
                                 while len(self._cache) > self._cache_max_entries:
                                     self._cache.popitem(last=False)
                         # BF-240: Dwell-time recovery — track consecutive successes
+                        await self._record_endpoint_success(
+                            attempt_tier,
+                            endpoint_admission,
+                        )
                         prev_failures = self._consecutive_failures[attempt_tier]
                         self._consecutive_successes[attempt_tier] += 1
                         self._last_success[attempt_tier] = time.monotonic()
@@ -1143,6 +1493,13 @@ class OpenAICompatibleClient(BaseLLMClient):
                         return response
                     except httpx.ConnectError:
                         last_error = f"LLM endpoint unreachable at {tc['base_url']}"
+                        stop_endpoint_fallback = (
+                            await self._record_endpoint_failure(
+                                attempt_tier,
+                                endpoint_admission,
+                                count_when_closed=False,
+                            )
+                        )
                         self._consecutive_failures[attempt_tier] += 1
                         self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                         self._last_failure[attempt_tier] = time.monotonic()
@@ -1155,6 +1512,13 @@ class OpenAICompatibleClient(BaseLLMClient):
                         break  # Move to next tier
                     except httpx.TimeoutException:
                         last_error = f"LLM request timed out after {tc['timeout']:.0f}s"
+                        stop_endpoint_fallback = (
+                            await self._record_endpoint_failure(
+                                attempt_tier,
+                                endpoint_admission,
+                                count_when_closed=False,
+                            )
+                        )
                         self._consecutive_failures[attempt_tier] += 1
                         self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                         self._last_failure[attempt_tier] = time.monotonic()
@@ -1186,10 +1550,30 @@ class OpenAICompatibleClient(BaseLLMClient):
                                 attempt_tier, wait, retry_after,
                             )
                             await asyncio.sleep(wait)
+                            if _429_attempt == _max_429_retries - 1:
+                                last_error = (
+                                    "LLM endpoint remained rate limited after "
+                                    f"{_max_429_retries} attempts"
+                                )
+                                stop_endpoint_fallback = (
+                                    await self._record_endpoint_failure(
+                                        attempt_tier,
+                                        endpoint_admission,
+                                        count_when_closed=False,
+                                    )
+                                )
+                                break
                             # Don't count 429 as a tier failure — retry same tier
                             continue
                         else:
                             last_error = f"LLM endpoint returned HTTP {status_code}"
+                            stop_endpoint_fallback = (
+                                await self._record_endpoint_failure(
+                                    attempt_tier,
+                                    endpoint_admission,
+                                    count_when_closed=False,
+                                )
+                            )
                             self._consecutive_failures[attempt_tier] += 1
                             self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                             self._last_failure[attempt_tier] = time.monotonic()
@@ -1203,6 +1587,13 @@ class OpenAICompatibleClient(BaseLLMClient):
                             break  # Move to next tier
                     except Exception as e:
                         last_error = f"{type(e).__name__}: {e}"
+                        stop_endpoint_fallback = (
+                            await self._record_endpoint_failure(
+                                attempt_tier,
+                                endpoint_admission,
+                                count_when_closed=False,
+                            )
+                        )
                         self._consecutive_failures[attempt_tier] += 1
                         self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                         self._last_failure[attempt_tier] = time.monotonic()
@@ -1214,6 +1605,9 @@ class OpenAICompatibleClient(BaseLLMClient):
                             last_error,
                         )
                         break  # Move to next tier
+
+            if stop_endpoint_fallback:
+                stopped_endpoint_keys.add(endpoint_key)
 
         # Try cache (keyed by original tier).
         # BF-272: multimodal requests bypass the cache — their content lives
@@ -1594,6 +1988,17 @@ class OpenAICompatibleClient(BaseLLMClient):
             }
         return info
 
+    def _endpoint_cooldown_remaining(self, tier: str) -> float:
+        """Return cooldown telemetry without requiring a fully initialized client."""
+        states = getattr(self, "_endpoint_failure_states", {})
+        tier_configs = getattr(self, "_tier_configs", {})
+        if tier not in tier_configs:
+            return 0.0
+        state = states.get(self._client_key(tier))
+        if state is None:
+            return 0.0
+        return max(0.0, state.cooldown_until - time.monotonic())
+
     def get_health_status(self) -> dict[str, Any]:
         """BF-069: Return per-tier and overall LLM health status.
 
@@ -1645,6 +2050,9 @@ class OpenAICompatibleClient(BaseLLMClient):
                 "consecutive_successes": successes,  # BF-240
                 "last_success": self._last_success.get(tier),
                 "last_failure": self._last_failure.get(tier),
+                "endpoint_cooldown_remaining_seconds": (
+                    self._endpoint_cooldown_remaining(tier)
+                ),
             }
 
         statuses = [t["status"] for t in tiers.values()]

@@ -10,6 +10,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-674 (2026-07-24) - shared LLM endpoint outage cooldown (#1065)
+
+**Context.** At 10:53:26 VS Code refreshed chat models; from 10:53:30 through 10:54:19 its shared Copilot proxy returned 157 empty HTTP 200 replies. Fresh and six-call concurrent probes were healthy after recovery. ProbOS health marked standard/fast/deep unreachable but did not gate execution, so each queued background request retried and fell through every alias on the same endpoint, converting one external refresh into a retry storm.
+
+**Decision.** Govern background admission by the actual endpoint key, not tier alias. After persistent empty/error outcomes, open a bounded shared cooldown with an outage epoch; admit exactly one half-open recovery owner after expiry; let Captain-critical calls bypass; preserve cache reads and independent endpoints. Only matching epochs may reopen or close an outage, and every cancellation, transport failure, error envelope, persistent empty reply, and health-probe path releases half-open ownership. Surface cooldown telemetry and expose a bounded default-on config with zero as the compatibility escape hatch.
+
+**Tests.** **29 dedicated + 247 compatibility** tests passed. The consolidated suite passed **20,465 / 33 skipped / 7 subtests** in **764.00s**. Architect review: **APPROVED**.
+
 ### AD-1133 (2026-07-23) - bounded live CrewSession and room refresh (#1052)
 
 **Context.** AD-1132 exposed durable CrewSession state, but open HXI surfaces refreshed only through initial GETs and legacy polling. The existing `/ws/events` path lacked auth-before-accept, bounded lifecycle ownership, authoritative sequence/generation, message/artifact invalidation, and Crew-safe projections. Highest landed top-level was **AD-1132**; **AD-1133 is the new top-level ceiling**, while **BF-673 remains the BF ceiling**.
