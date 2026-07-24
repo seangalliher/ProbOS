@@ -540,6 +540,12 @@ class AgentOnboardingService:
         if self._cognitive_skill_catalog:
             agent._cognitive_skill_catalog = self._cognitive_skill_catalog
 
+    async def unwire_agent(self, agent_id: str) -> None:
+        """Remove an agent from mesh indexes before registry unregistration."""
+        await self._intent_bus.unsubscribe_and_wait(agent_id)
+        self._capability_registry.unregister(agent_id)
+        self._gossip.remove(agent_id)
+
     async def run_naming_ceremony(self, agent: Any) -> str:
         """Run the self-naming ceremony for a crew agent. Returns chosen callsign (AD-442)."""
         seed_callsign = agent.callsign  # from CallsignRegistry

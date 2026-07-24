@@ -98,6 +98,23 @@ def _attach_onboarding(rt):
     )
 
 
+@pytest.mark.asyncio
+async def test_unwire_agent_removes_all_mesh_indexes() -> None:
+    rt = _make_runtime()
+    _attach_onboarding(rt)
+    onboarding = rt.onboarding
+
+    await onboarding.unwire_agent("removed-agent")
+
+    onboarding._intent_bus.unsubscribe_and_wait.assert_awaited_once_with(
+        "removed-agent"
+    )
+    onboarding._capability_registry.unregister.assert_called_once_with(
+        "removed-agent"
+    )
+    onboarding._gossip.remove.assert_called_once_with("removed-agent")
+
+
 # ── Naming Ceremony Tests ──────────────────────────────────────────
 
 

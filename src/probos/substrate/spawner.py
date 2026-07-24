@@ -47,7 +47,30 @@ class AgentSpawner:
         agent = agent_class(pool=pool, **kwargs)
         agent.state = AgentState.SPAWNING
         await self.registry.register(agent)
-        await agent.start()
+        try:
+            await agent.start()
+        except BaseException as start_error:
+            try:
+                await agent.stop()
+            except BaseException:
+                logger.warning(
+                    "Agent startup rollback could not stop type=%s id=%s; "
+                    "retaining registry ownership of the failed instance",
+                    type_name,
+                    agent.id,
+                    exc_info=True,
+                )
+                raise start_error
+            try:
+                await self.registry.unregister(agent.id)
+            except BaseException:
+                logger.exception(
+                    "Agent startup rollback could not unregister type=%s id=%s; "
+                    "preserving the original startup error",
+                    type_name,
+                    agent.id,
+                )
+            raise start_error
         return agent
 
     async def recycle(self, agent_id: str, respawn: bool = True) -> BaseAgent | None:

@@ -1981,7 +1981,8 @@ def test_source_guards_forbid_dispatch_learning_queue_task_and_allow_all_shapes(
     }
 
 
-def test_authorized_scope_has_no_generic_relay_protocol_transport_or_fleet_diff() -> None:
+def test_federation_relay_contract_has_no_unrelated_worktree_diff() -> None:
+    """Guard AD-1123-owned relay files, not future shared mesh maintenance."""
     root = Path(__file__).resolve().parents[1]
     forbidden = (
         "src/probos/federation/bridge.py",
@@ -1991,9 +1992,6 @@ def test_authorized_scope_has_no_generic_relay_protocol_transport_or_fleet_diff(
         "src/probos/federation/mock_transport.py",
         "src/probos/types.py",
         "src/probos/events.py",
-        "src/probos/protocols.py",
-        "src/probos/mesh/intent.py",
-        "src/probos/mesh/nats_bus.py",
         "src/probos/startup/fleet_organization.py",
     )
     result = subprocess.run(

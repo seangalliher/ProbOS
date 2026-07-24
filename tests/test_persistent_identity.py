@@ -324,9 +324,15 @@ class TestPruning:
             pool = rt.pools["filesystem"]
             agent_id = pool._agent_ids[0]
             assert rt.registry.get(agent_id) is not None
+            assert rt.intent_bus.has_subscriber(agent_id)
+            assert agent_id in rt.capability_registry.get_all_capabilities()
+            assert rt.gossip.get_entry(agent_id) is not None
 
             await rt.prune_agent(agent_id)
             assert rt.registry.get(agent_id) is None
+            assert not rt.intent_bus.has_subscriber(agent_id)
+            assert agent_id not in rt.capability_registry.get_all_capabilities()
+            assert rt.gossip.get_entry(agent_id) is None
         finally:
             await rt.stop()
 

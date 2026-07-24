@@ -5,13 +5,14 @@ agent self-posting, manual_ack/term semantics, consumer cleanup.
 """
 
 import asyncio
+import inspect
 import time
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from probos.mesh.intent import IntentBus
-from probos.mesh.nats_bus import MockNATSBus
+from probos.mesh.nats_bus import MockNATSBus, NATSBus
 from probos.mesh.signal import SignalManager
 from probos.types import IntentMessage, IntentResult
 from probos.ward_room_pipeline import WardRoomPostPipeline
@@ -338,7 +339,14 @@ class TestConsumerCleanup:
     @pytest.mark.asyncio
     async def test_unsubscribe_deletes_jetstream_consumer(self, intent_bus, mock_nats_bus):
         """unsubscribe() calls delete_consumer for the dispatch consumer."""
-        mock_nats_bus.delete_consumer = AsyncMock()
+        cleanup_started = asyncio.Event()
+        cleanup_release = asyncio.Event()
+
+        async def delete_consumer(stream: str, durable: str) -> None:
+            cleanup_started.set()
+            await cleanup_release.wait()
+
+        mock_nats_bus.delete_consumer = AsyncMock(side_effect=delete_consumer)
 
         async def handler(intent):
             return None
@@ -347,11 +355,336 @@ class TestConsumerCleanup:
         await asyncio.sleep(0.05)
 
         intent_bus.unsubscribe("agent-cleanup")
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(cleanup_started.wait(), timeout=2.0)
+
+        assert any(
+            task.get_name() == "nats-unsub-agent-cleanu"
+            for task in intent_bus._pending_sub_tasks
+        )
+
+        cleanup_release.set()
+        await asyncio.gather(*intent_bus._pending_sub_tasks)
 
         mock_nats_bus.delete_consumer.assert_awaited_once_with(
             "INTENT_DISPATCH", "agent-dispatch-agent-cleanup",
         )
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_and_wait_removes_recipes_before_durable_delete(
+        self,
+        intent_bus,
+        mock_nats_bus,
+    ):
+        intent_bus._defer_dispatch_consumers = False
+        intent_bus.subscribe("agent-awaited", AsyncMock())
+        if intent_bus._pending_sub_tasks:
+            await asyncio.gather(
+                *tuple(intent_bus._pending_sub_tasks),
+                return_exceptions=True,
+            )
+
+        subjects = {
+            "intent.agent-awaited",
+            "intent.dispatch.agent-awaited",
+        }
+        assert subjects <= {
+            entry["subject"] for entry in mock_nats_bus._active_subs
+        }
+
+        order: list[str] = []
+        remove = mock_nats_bus.remove_tracked_subscriptions
+
+        async def remove_recipes(items) -> int:
+            order.append("recipes")
+            return await remove(items)
+
+        async def delete_consumer(stream: str, durable: str) -> None:
+            assert not subjects & {
+                entry["subject"] for entry in mock_nats_bus._active_subs
+            }
+            order.append("durable")
+
+        mock_nats_bus.remove_tracked_subscriptions = remove_recipes
+        mock_nats_bus.delete_consumer = AsyncMock(side_effect=delete_consumer)
+
+        await intent_bus.unsubscribe_and_wait("agent-awaited")
+
+        assert order == ["recipes", "durable"]
+        assert subjects <= mock_nats_bus._removed_subscription_subjects
+        assert intent_bus.has_subscriber("agent-awaited") is False
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_recipe_failure_keeps_local_and_attempts_durable(
+        self,
+        intent_bus,
+        mock_nats_bus,
+    ):
+        intent_bus.subscribe("agent-fail-closed", AsyncMock())
+        if intent_bus._pending_sub_tasks:
+            await asyncio.gather(
+                *tuple(intent_bus._pending_sub_tasks),
+                return_exceptions=True,
+            )
+        mock_nats_bus.remove_tracked_subscriptions = AsyncMock(
+            side_effect=TimeoutError("unsubscribe timeout")
+        )
+        mock_nats_bus.delete_consumer = AsyncMock()
+
+        with pytest.raises(TimeoutError, match="unsubscribe timeout"):
+            await intent_bus.unsubscribe_and_wait("agent-fail-closed")
+
+        assert intent_bus.has_subscriber("agent-fail-closed")
+        mock_nats_bus.delete_consumer.assert_awaited_once_with(
+            "INTENT_DISPATCH",
+            "agent-dispatch-agent-fail-closed",
+        )
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_waits_for_late_subscription_tasks_before_tombstone(
+        self,
+        intent_bus,
+        mock_nats_bus,
+    ):
+        core_started = asyncio.Event()
+        dispatch_started = asyncio.Event()
+        core_cancelled = asyncio.Event()
+        dispatch_cancelled = asyncio.Event()
+        release = asyncio.Event()
+        original_core = mock_nats_bus.subscribe
+        original_dispatch = mock_nats_bus.js_subscribe
+
+        async def delayed_core(*args, **kwargs):
+            core_started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                core_cancelled.set()
+                await release.wait()
+            return await original_core(*args, **kwargs)
+
+        async def delayed_dispatch(*args, **kwargs):
+            dispatch_started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                dispatch_cancelled.set()
+                await release.wait()
+            return await original_dispatch(*args, **kwargs)
+
+        mock_nats_bus.subscribe = delayed_core
+        mock_nats_bus.js_subscribe = delayed_dispatch
+        intent_bus._defer_dispatch_consumers = False
+        intent_bus.subscribe("agent-late", AsyncMock())
+        await asyncio.gather(core_started.wait(), dispatch_started.wait())
+
+        teardown = asyncio.create_task(
+            intent_bus.unsubscribe_and_wait("agent-late")
+        )
+        await asyncio.gather(core_cancelled.wait(), dispatch_cancelled.wait())
+        assert teardown.done() is False
+
+        release.set()
+        await teardown
+
+        subjects = {
+            "intent.agent-late",
+            "intent.dispatch.agent-late",
+        }
+        assert not subjects & {
+            entry["subject"] for entry in mock_nats_bus._active_subs
+        }
+        assert subjects <= mock_nats_bus._removed_subscription_subjects
+        assert intent_bus._agent_subscription_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_pending_cleanup_drain_waits_for_consumer_delete(
+        self,
+        intent_bus,
+        mock_nats_bus,
+    ):
+        cleanup_started = asyncio.Event()
+        cleanup_release = asyncio.Event()
+
+        async def delete_consumer(stream: str, durable: str) -> None:
+            cleanup_started.set()
+            await cleanup_release.wait()
+
+        mock_nats_bus.delete_consumer = AsyncMock(side_effect=delete_consumer)
+        intent_bus.subscribe("agent-drain", AsyncMock())
+        await asyncio.sleep(0)
+        intent_bus.unsubscribe("agent-drain")
+        await asyncio.wait_for(cleanup_started.wait(), timeout=2.0)
+
+        drain = asyncio.create_task(intent_bus.drain_pending_tasks())
+        await asyncio.sleep(0)
+        assert drain.done() is False
+        cleanup_release.set()
+        await asyncio.wait_for(drain, timeout=2.0)
+
+        assert not [
+            task for task in intent_bus._pending_sub_tasks if not task.done()
+        ]
+
+    @pytest.mark.asyncio
+    async def test_pending_cleanup_drain_collects_task_registered_during_wait(
+        self,
+        intent_bus,
+        mock_nats_bus,
+    ):
+        late_tasks: list[asyncio.Task] = []
+
+        async def late_task() -> None:
+            await asyncio.sleep(10)
+
+        async def first_task() -> None:
+            task = asyncio.create_task(late_task())
+            late_tasks.append(task)
+            intent_bus._track_pending_task(task)
+
+        first = asyncio.create_task(first_task())
+        intent_bus._track_pending_task(first)
+
+        await intent_bus.drain_pending_tasks()
+        intent_bus.subscribe("after-drain", AsyncMock())
+        await asyncio.sleep(0)
+
+        assert len(late_tasks) == 1
+        assert late_tasks[0].done()
+        assert late_tasks[0].cancelled()
+        assert intent_bus._pending_task_registration_closed is True
+        assert not intent_bus._pending_sub_tasks
+        assert not any(
+            entry["subject"] == "intent.after-drain"
+            for entry in mock_nats_bus._active_subs
+        )
+
+    @pytest.mark.asyncio
+    async def test_pending_cleanup_drain_bounds_cancellation_resistant_task(
+        self,
+        intent_bus,
+    ):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def resistant_task() -> None:
+            started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                await release.wait()
+
+        task = asyncio.create_task(resistant_task())
+        intent_bus._track_pending_task(task)
+        await started.wait()
+
+        await asyncio.wait_for(
+            intent_bus.drain_pending_tasks(timeout_seconds=0.01),
+            timeout=0.5,
+        )
+
+        assert task.done() is False
+        release.set()
+        await asyncio.wait_for(task, timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_real_consumer_delete_propagates_timeout(self):
+        bus = NATSBus()
+        bus._js = AsyncMock()
+        bus._js.delete_consumer.side_effect = TimeoutError("nats timeout")
+
+        with pytest.raises(TimeoutError, match="nats timeout"):
+            await bus.delete_consumer("INTENT_DISPATCH", "agent-dispatch-a")
+
+    @pytest.mark.asyncio
+    async def test_real_consumer_delete_ignores_not_found(self):
+        bus = NATSBus()
+        bus._js = AsyncMock()
+        bus._js.delete_consumer.side_effect = RuntimeError("consumer not found")
+
+        await bus.delete_consumer("INTENT_DISPATCH", "agent-dispatch-missing")
+
+    def test_shutdown_drains_consumer_cleanup_before_nats_stop(self):
+        from probos.startup.shutdown import (
+            _stop_pools_and_drain_intent_bus,
+            shutdown,
+        )
+
+        source = inspect.getsource(shutdown)
+        pool_phase = source.index("await _stop_pools_and_drain_intent_bus")
+        nats_stop = source.index("await runtime.nats_bus.stop()")
+        helper_source = inspect.getsource(_stop_pools_and_drain_intent_bus)
+
+        assert "await pool.stop()" in helper_source
+        assert "await intent_bus.drain_pending_tasks" in helper_source
+        assert pool_phase < nats_stop
+
+    @pytest.mark.asyncio
+    async def test_pool_stop_failure_still_drains_intent_bus(self):
+        from probos.startup.shutdown import _stop_pools_and_drain_intent_bus
+
+        failed_pool = AsyncMock()
+        failed_pool.stop.side_effect = RuntimeError("unwire failed")
+        stopped_pool = AsyncMock()
+        intent_bus = AsyncMock()
+        runtime = MagicMock()
+        runtime.pools = {
+            "failed": failed_pool,
+            "stopped": stopped_pool,
+        }
+        runtime.intent_bus = intent_bus
+
+        cancellation = await _stop_pools_and_drain_intent_bus(runtime)
+
+        assert cancellation is None
+        failed_pool.stop.assert_awaited_once()
+        stopped_pool.stop.assert_awaited_once()
+        intent_bus.drain_pending_tasks.assert_awaited_once_with(
+            timeout_seconds=5.0
+        )
+        assert runtime.pools == {"failed": failed_pool}
+
+    @pytest.mark.asyncio
+    async def test_dispatch_consumer_retries_transient_subscribe_failure(
+        self,
+        intent_bus,
+        mock_nats_bus,
+    ):
+        subscription = object()
+        mock_nats_bus.js_subscribe = AsyncMock(
+            side_effect=[None, subscription]
+        )
+
+        with patch(
+            "probos.mesh.intent.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as sleep:
+            await intent_bus._js_subscribe_agent_dispatch(
+                "agent-retry",
+                AsyncMock(),
+            )
+
+        assert mock_nats_bus.js_subscribe.await_count == 2
+        sleep.assert_awaited_once_with(0.5)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_consumer_fails_after_bounded_retries(
+        self,
+        intent_bus,
+        mock_nats_bus,
+    ):
+        mock_nats_bus.js_subscribe = AsyncMock(return_value=None)
+
+        with patch(
+            "probos.mesh.intent.asyncio.sleep",
+            new_callable=AsyncMock,
+        ):
+            with pytest.raises(RuntimeError, match="failed after 3 attempts"):
+                await intent_bus._js_subscribe_agent_dispatch(
+                    "agent-fail",
+                    AsyncMock(),
+                )
+
+        assert mock_nats_bus.js_subscribe.await_count == 3
 
     @pytest.mark.asyncio
     async def test_delete_consumer_handles_missing_gracefully(self, mock_nats_bus):

@@ -2,10 +2,11 @@
 
 import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
-from probos.mesh.nats_bus import MockNATSBus
+from probos.mesh.nats_bus import MockNATSBus, NATSBus
 from probos.mesh.intent import IntentBus
 from probos.mesh.signal import SignalManager
 from probos.types import IntentMessage, IntentResult
@@ -119,6 +120,171 @@ async def test_remove_tracked_subscription(mock_bus):
     # Verify subscription is gone
     await mock_bus.publish("intent.agent-1", {"v": 2})
     assert len(received) == 1  # no new messages
+
+
+@pytest.mark.asyncio
+async def test_remove_tracked_subscriptions_tombstones_all_before_await():
+    bus = NATSBus()
+    unsubscribe_started = asyncio.Event()
+    unsubscribe_release = asyncio.Event()
+    core_sub = AsyncMock()
+    dispatch_sub = AsyncMock()
+
+    async def blocking_unsubscribe() -> None:
+        unsubscribe_started.set()
+        await unsubscribe_release.wait()
+
+    core_sub.unsubscribe = AsyncMock(side_effect=blocking_unsubscribe)
+    dispatch_sub.unsubscribe = AsyncMock()
+    bus._active_subs = [
+        {
+            "kind": "core",
+            "subject": "intent.agent-1",
+            "callback": AsyncMock(),
+            "kwargs": {},
+            "sub": core_sub,
+        },
+        {
+            "kind": "js",
+            "subject": "intent.dispatch.agent-1",
+            "callback": AsyncMock(),
+            "kwargs": {
+                "durable": "agent-dispatch-agent-1",
+                "stream": "INTENT_DISPATCH",
+            },
+            "sub": dispatch_sub,
+        },
+    ]
+    bus._subscriptions = [core_sub, dispatch_sub]
+
+    removal = asyncio.create_task(
+        bus.remove_tracked_subscriptions(
+            ("intent.agent-1", "intent.dispatch.agent-1")
+        )
+    )
+    await unsubscribe_started.wait()
+
+    assert bus._active_subs == []
+    assert bus._removed_subscription_subjects == {
+        "intent.agent-1",
+        "intent.dispatch.agent-1",
+    }
+
+    unsubscribe_release.set()
+    assert await removal == 2
+    assert bus._subscriptions == []
+
+
+@pytest.mark.asyncio
+async def test_remove_tracked_subscriptions_retains_failed_handle_for_retry():
+    bus = NATSBus()
+    failed_sub = AsyncMock()
+    removed_sub = AsyncMock()
+    failed_sub.unsubscribe = AsyncMock(side_effect=TimeoutError("nats timeout"))
+    removed_sub.unsubscribe = AsyncMock()
+    bus._active_subs = [
+        {
+            "kind": "core",
+            "subject": "intent.agent-1",
+            "callback": AsyncMock(),
+            "kwargs": {},
+            "sub": failed_sub,
+        },
+        {
+            "kind": "js",
+            "subject": "intent.dispatch.agent-1",
+            "callback": AsyncMock(),
+            "kwargs": {},
+            "sub": removed_sub,
+        },
+    ]
+    bus._subscriptions = [failed_sub, removed_sub]
+
+    with pytest.raises(TimeoutError, match="nats timeout"):
+        await bus.remove_tracked_subscriptions(
+            ("intent.agent-1", "intent.dispatch.agent-1")
+        )
+
+    failed_sub.unsubscribe.assert_awaited_once()
+    removed_sub.unsubscribe.assert_awaited_once()
+    assert [entry["sub"] for entry in bus._active_subs] == [failed_sub]
+    assert bus._subscriptions == [failed_sub]
+    assert bus._removed_subscription_subjects == {
+        "intent.agent-1",
+        "intent.dispatch.agent-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tombstoned_dispatch_recipe_is_not_recovered():
+    bus = NATSBus()
+    bus._js = AsyncMock()
+    bus._removed_subscription_subjects.add("intent.dispatch.agent-1")
+
+    result = await bus.js_subscribe(
+        "intent.dispatch.agent-1",
+        AsyncMock(),
+        durable="agent-dispatch-agent-1",
+        stream="INTENT_DISPATCH",
+        _allow_removed=False,
+    )
+
+    assert result is None
+    bus._js.subscribe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["core", "js"])
+async def test_concurrent_subscribe_then_remove_has_no_untracked_handle(kind):
+    bus = NATSBus()
+    bus._connected = True
+    started = asyncio.Event()
+    release = asyncio.Event()
+    subscription = AsyncMock()
+    subscription.unsubscribe = AsyncMock()
+
+    async def create_subscription(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+        return subscription
+
+    if kind == "core":
+        bus._nc = AsyncMock()
+        bus._nc.is_connected = True
+        bus._nc.subscribe = AsyncMock(side_effect=create_subscription)
+        creation = asyncio.create_task(
+            bus.subscribe(
+                "intent.agent-1",
+                AsyncMock(),
+                _allow_removed=False,
+            )
+        )
+        subjects = ("intent.agent-1",)
+    else:
+        bus._js = AsyncMock()
+        bus._js.subscribe = AsyncMock(side_effect=create_subscription)
+        creation = asyncio.create_task(
+            bus.js_subscribe(
+                "intent.dispatch.agent-1",
+                AsyncMock(),
+                durable="agent-dispatch-agent-1",
+                stream="INTENT_DISPATCH",
+                _allow_removed=False,
+            )
+        )
+        subjects = ("intent.dispatch.agent-1",)
+
+    await started.wait()
+    removal = asyncio.create_task(bus.remove_tracked_subscriptions(subjects))
+    await asyncio.sleep(0)
+    assert removal.done() is False
+
+    release.set()
+    assert await creation is subscription
+    assert await removal == 1
+    subscription.unsubscribe.assert_awaited_once()
+    assert bus._active_subs == []
+    assert bus._subscriptions == []
 
 
 # ---------------------------------------------------------------------------

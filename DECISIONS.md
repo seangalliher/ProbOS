@@ -18,6 +18,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 **Tests.** **29 dedicated + 247 compatibility** tests passed. The consolidated suite passed **20,465 / 33 skipped / 7 subtests** in **764.00s**. Architect review: **APPROVED**.
 
+### BF-676 (2026-07-24) - lifecycle-owned agent transport teardown (#1066)
+
+**Context.** SIF correctly identified a removed MCP consensus voter that remained subscribed after pool scale-down. JetStream also had one fewer durable dispatch consumer than local IntentBus subscribers because startup subscription failure returned `None` without retry. Registry, pool, local mesh indexes, tracked NATS recipes, live handles, durable consumers, and recovery tasks had no single symmetric lifecycle owner.
+
+**Decision.** Make AgentOnboardingService the symmetric mesh wire/unwire boundary and ResourcePool the serialized lifecycle owner. Every start, health pass, scale, recycle, exact prune, and stop runs through one cancellation-deferred pool lock. Transport teardown cancels/awaits exact-agent subscription tasks, atomically tombstones/removes both core and dispatch recipes under the NATS mutation lock, retains failed handles for retry, deletes the durable consumer, and only then removes local intent/capability/gossip indexes. Same-ID replacement cannot begin before teardown succeeds. Failed spawn, wiring, stop, unregister, or rollback retains the remaining registry/pool/runtime owner. Shutdown attempts all pools, retains failed owners, always drains IntentBus before NATS stop, and re-raises deferred cancellation only at the tail. Retry transient dispatch-consumer creation three times.
+
+**Tests.** **284 focused** lifecycle/NATS/scaling/shutdown tests plus an independent **8-case** Architect gate passed. The consolidated suite passed **20,465 / 33 skipped / 7 subtests**. Final Architect review: **APPROVED**, zero Required findings.
+
 ### AD-1133 (2026-07-23) - bounded live CrewSession and room refresh (#1052)
 
 **Context.** AD-1132 exposed durable CrewSession state, but open HXI surfaces refreshed only through initial GETs and legacy polling. The existing `/ws/events` path lacked auth-before-accept, bounded lifecycle ownership, authoritative sequence/generation, message/artifact invalidation, and Crew-safe projections. Highest landed top-level was **AD-1132**; **AD-1133 is the new top-level ceiling**, while **BF-673 remains the BF ceiling**.

@@ -2232,31 +2232,55 @@ class ProbOSRuntime:
             config=self.config.pools,
             target_size=target_size,
             agent_ids=agent_ids,
+            on_agent_spawned=(
+                self.onboarding.wire_agent
+                if getattr(self, "onboarding", None) is not None
+                else None
+            ),
+            on_agent_removing=(
+                self.onboarding.unwire_agent
+                if getattr(self, "onboarding", None) is not None
+                else None
+            ),
             **spawn_kwargs,
         )
         self.pools[name] = pool
-        await pool.start()
+        try:
+            await pool.start()
 
-        # Wire newly spawned agents into the mesh
-        for agent in self.registry.get_by_pool(name):
-            if self.onboarding:
-                await self.onboarding.wire_agent(agent)
-            # AD-889: commission crew agents at birth — walk Role → Skills → Tools.
-            if self.acm and is_crew_agent(agent, self.ontology):
-                try:
-                    await self.acm.commission(agent.id, agent.agent_type, self)
-                except Exception:
-                    logger.debug(
-                        "AD-889: commission skipped for %s (type=%s)",
-                        agent.id, getattr(agent, "agent_type", "?"), exc_info=True,
-                    )
+            # Wire newly spawned agents into the mesh
+            for agent in self.registry.get_by_pool(name):
+                if self.onboarding:
+                    await self.onboarding.wire_agent(agent)
+                # AD-889: commission crew agents at birth — walk Role → Skills → Tools.
+                if self.acm and is_crew_agent(agent, self.ontology):
+                    try:
+                        await self.acm.commission(agent.id, agent.agent_type, self)
+                    except Exception:
+                        logger.debug(
+                            "AD-889: commission skipped for %s (type=%s)",
+                            agent.id, getattr(agent, "agent_type", "?"), exc_info=True,
+                        )
 
-        await self.event_log.log(
-            category="system",
-            event="pool_created",
-            pool=name,
-            detail=f"type={agent_type} size={pool.current_size}",
-        )
+            await self.event_log.log(
+                category="system",
+                event="pool_created",
+                pool=name,
+                detail=f"type={agent_type} size={pool.current_size}",
+            )
+        except BaseException:
+            try:
+                await pool.stop()
+            except BaseException:
+                logger.exception(
+                    "Pool %r creation failed and rollback could not fully stop "
+                    "its partially created agents; retaining runtime ownership "
+                    "and preserving the original error",
+                    name,
+                )
+            else:
+                self.pools.pop(name, None)
+            raise
         return pool
 
     async def _spawn_red_team(self, count: int) -> None:
@@ -5372,7 +5396,7 @@ class ProbOSRuntime:
         # Find the agent's pool
         target_pool: ResourcePool | None = None
         for pool in self.pools.values():
-            if agent_id in pool._agent_ids:
+            if pool.contains_agent(agent_id):
                 target_pool = pool
                 break
 
@@ -5380,11 +5404,8 @@ class ProbOSRuntime:
             return False
 
         # Remove from pool
-        target_pool._agent_ids.remove(agent_id)
-        agent = self.registry.get(agent_id)
-        if agent:
-            await agent.stop()
-            await self.registry.unregister(agent_id)
+        if not await target_pool.remove_specific_agent(agent_id):
+            return False
 
         # Remove trust records
         if agent_id in self.trust_network._records:

@@ -161,6 +161,49 @@ async def _stop_runtime_sqlite_sidecars(runtime: Any) -> None:
             setattr(runtime, attribute, None)
 
 
+async def _stop_pools_and_drain_intent_bus(
+    runtime: Any,
+) -> asyncio.CancelledError | None:
+    """Stop every pool and always drain IntentBus before transport shutdown."""
+    deferred_cancellation: asyncio.CancelledError | None = None
+    for name, pool in list(runtime.pools.items()):
+        try:
+            await pool.stop()
+        except asyncio.CancelledError as exc:
+            deferred_cancellation = exc
+            logger.warning(
+                "Pool %r completed its cancellation-safe stop but shutdown "
+                "cancellation is deferred until transport teardown completes",
+                name,
+            )
+        except Exception:
+            logger.exception(
+                "Pool %r failed to stop; retaining runtime ownership while "
+                "remaining pools and transport teardown continue",
+                name,
+            )
+        else:
+            runtime.pools.pop(name, None)
+
+    intent_bus = getattr(runtime, "intent_bus", None)
+    if intent_bus is not None and hasattr(intent_bus, "drain_pending_tasks"):
+        try:
+            await intent_bus.drain_pending_tasks(timeout_seconds=5.0)
+        except asyncio.CancelledError as exc:
+            deferred_cancellation = deferred_cancellation or exc
+            logger.warning(
+                "IntentBus cleanup drain was cancelled; deferring cancellation "
+                "until transport teardown completes"
+            )
+        except Exception:
+            logger.warning(
+                "IntentBus cleanup drain failed before NATS shutdown; "
+                "continuing transport teardown",
+                exc_info=True,
+            )
+    return deferred_cancellation
+
+
 async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     """Graceful shutdown of all pools, mesh services, and persistence."""
     # BF-598: idempotency guard. A second shutdown() invocation (a duplicate
@@ -178,6 +221,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         )
         return
     runtime._shutdown_started = True
+    deferred_shutdown_cancellation: asyncio.CancelledError | None = None
 
     crew_orchestrator = getattr(runtime, "crew_orchestrator", None)
     crew_close = (
@@ -992,10 +1036,12 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         except Exception as e:
             logger.warning("AD-573: Working memory freeze failed: %s", e)
 
-    # Stop pools (stops agents, unregisters from registry)
-    for name, pool in runtime.pools.items():
-        await pool.stop()
-    runtime.pools.clear()
+    # Stop all pools, then drain any previously scheduled or concurrent
+    # IntentBus work while NATS is still available. Failures retain the pool
+    # owner but cannot bypass the remaining transport teardown.
+    deferred_shutdown_cancellation = await _stop_pools_and_drain_intent_bus(
+        runtime
+    )
 
     # Persist knowledge store artifacts before stopping services
     if runtime._knowledge_store:
@@ -1084,3 +1130,5 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
 
     runtime._started = False
     logger.info("ProbOS shutdown complete. Final agent count: %d", runtime.registry.count)
+    if deferred_shutdown_cancellation is not None:
+        raise deferred_shutdown_cancellation

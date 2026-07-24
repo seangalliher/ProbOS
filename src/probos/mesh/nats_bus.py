@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Iterable
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,24 @@ MessageCallback = Callable[["NATSMessage"], Awaitable[None]]
 # BF-229: NATS subject tokens allow [A-Za-z0-9_\-] on all server versions.
 # Dots are token separators. Colons, spaces, and other chars are unsafe.
 _NATS_UNSAFE_CHAR = re.compile(r'[^A-Za-z0-9_\-.]')
+
+
+def _subscription_tombstones(bus: Any) -> set[str]:
+    """Return the per-bus removal tombstones, tolerating pre-init fixtures."""
+    tombstones = getattr(bus, "_removed_subscription_subjects", None)
+    if tombstones is None:
+        tombstones = set()
+        bus._removed_subscription_subjects = tombstones
+    return tombstones
+
+
+def _subscription_mutation_lock(bus: Any) -> asyncio.Lock:
+    """Return the per-bus lock serializing recipe creation and removal."""
+    lock = getattr(bus, "_subscription_mutation_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        bus._subscription_mutation_lock = lock
+    return lock
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +132,8 @@ class NATSBus:
         self._connected = False
         self._started = False
         self._active_subs: list[dict[str, Any]] = []  # Tracked subs for prefix re-subscription
+        self._removed_subscription_subjects: set[str] = set()
+        self._subscription_mutation_lock = asyncio.Lock()
         self._prefix_change_callbacks: list[Callable] = []
         self._resubscribing: bool = False
         self._stream_configs: list[dict[str, Any]] = []  # Track streams for prefix re-creation
@@ -165,6 +186,8 @@ class NATSBus:
             core_entries = [e for e in self._active_subs if e["kind"] == "core"]
             if core_entries:
                 for entry in core_entries:
+                    if entry["subject"] in _subscription_tombstones(self):
+                        continue
                     old_sub = entry["sub"]
                     if old_sub is not None:
                         try:
@@ -172,7 +195,10 @@ class NATSBus:
                         except Exception as e:
                             logger.debug("Unsubscribe during prefix change: %s", e)
                     new_sub = await self.subscribe(
-                        entry["subject"], entry["callback"], **entry["kwargs"]
+                        entry["subject"],
+                        entry["callback"],
+                        _allow_removed=False,
+                        **entry["kwargs"],
                     )
                     entry["sub"] = new_sub
         else:
@@ -204,17 +230,62 @@ class NATSBus:
         without maintaining a parallel tracking dict.
         Returns True if found and removed, False otherwise.
         """
-        for i, entry in enumerate(self._active_subs):
-            if entry["subject"] == subject:
-                sub = entry["sub"]
-                if sub is not None:
-                    try:
-                        await sub.unsubscribe()
-                    except Exception as e:
-                        logger.debug("Tracked unsubscribe error: %s", e)
-                self._active_subs.pop(i)
-                return True
-        return False
+        return bool(await self.remove_tracked_subscriptions((subject,)))
+
+    async def remove_tracked_subscriptions(
+        self,
+        subjects: Iterable[str],
+    ) -> int:
+        """Serialize removal against subscription creation and recovery."""
+        async with _subscription_mutation_lock(self):
+            return await self._remove_tracked_subscriptions_locked(subjects)
+
+    async def _remove_tracked_subscriptions_locked(
+        self,
+        subjects: Iterable[str],
+    ) -> int:
+        """Tombstone and remove all tracked recipes for the given subjects.
+
+        Every tombstone and recipe removal happens before the first await so
+        concurrent prefix/JetStream recovery cannot recreate one subject while
+        teardown is still unsubscribing another.
+        """
+        stripped_subjects = {
+            self._strip_prefix(subject)
+            for subject in subjects
+        }
+        if not stripped_subjects:
+            return 0
+        _subscription_tombstones(self).update(stripped_subjects)
+        entries = [
+            entry for entry in self._active_subs
+            if entry["subject"] in stripped_subjects
+        ]
+        self._active_subs = [
+            entry for entry in self._active_subs
+            if entry["subject"] not in stripped_subjects
+        ]
+        failed_entries: list[dict[str, Any]] = []
+        failures: list[BaseException] = []
+        for entry in entries:
+            sub = entry["sub"]
+            if sub is not None:
+                try:
+                    await sub.unsubscribe()
+                except BaseException as exc:
+                    failed_entries.append(entry)
+                    failures.append(exc)
+                    continue
+                self._subscriptions = [
+                    candidate
+                    for candidate in self._subscriptions
+                    if candidate is not sub
+                ]
+        if failed_entries:
+            self._active_subs.extend(failed_entries)
+        if failures:
+            raise failures[0]
+        return len(entries)
 
     def _strip_prefix(self, subject: str) -> str:
         """Remove current prefix from subject for storage in _active_subs."""
@@ -289,6 +360,8 @@ class NATSBus:
             self._resubscribing = True
             try:
                 for entry in js_entries:
+                    if entry["subject"] in _subscription_tombstones(self):
+                        continue
                     old_sub = entry["sub"]
                     if old_sub is not None:
                         try:
@@ -313,7 +386,10 @@ class NATSBus:
 
                     try:
                         new_sub = await self.js_subscribe(
-                            entry["subject"], entry["callback"], **entry["kwargs"]
+                            entry["subject"],
+                            entry["callback"],
+                            _allow_removed=False,
+                            **entry["kwargs"],
                         )
                         entry["sub"] = new_sub
                     except Exception as e:
@@ -522,11 +598,36 @@ class NATSBus:
         subject: str,
         callback: MessageCallback,
         queue: str = "",
+        *,
+        _allow_removed: bool = True,
+    ) -> Any:
+        """Serialize core subscription creation against tracked removal."""
+        async with _subscription_mutation_lock(self):
+            return await self._subscribe_locked(
+                subject,
+                callback,
+                queue,
+                _allow_removed=_allow_removed,
+            )
+
+    async def _subscribe_locked(
+        self,
+        subject: str,
+        callback: MessageCallback,
+        queue: str = "",
+        *,
+        _allow_removed: bool = True,
     ) -> Any:
         """Subscribe to a core NATS subject."""
         if not self.connected:
             return None
 
+        stripped_subject = self._strip_prefix(subject)
+        tombstones = _subscription_tombstones(self)
+        if not _allow_removed and stripped_subject in tombstones:
+            return None
+        if _allow_removed:
+            tombstones.discard(stripped_subject)
         full_subject = self._full_subject(subject)
 
         async def _handler(msg: Any) -> None:
@@ -550,6 +651,9 @@ class NATSBus:
                 )
 
         sub = await self._nc.subscribe(full_subject, queue=queue, cb=_handler)
+        if not _allow_removed and stripped_subject in tombstones:
+            await sub.unsubscribe()
+            return None
         self._subscriptions.append(sub)
         if not self._resubscribing:
             self._active_subs.append({
@@ -675,12 +779,51 @@ class NATSBus:
         ack_wait: int | None = None,
         manual_ack: bool = False,
         max_deliver: int | None = None,  # AD-654b
+        *,
+        _allow_removed: bool = True,
+    ) -> Any:
+        """Serialize JetStream consumer creation against tracked removal."""
+        async with _subscription_mutation_lock(self):
+            return await self._js_subscribe_locked(
+                subject,
+                callback,
+                durable=durable,
+                stream=stream,
+                max_ack_pending=max_ack_pending,
+                ack_wait=ack_wait,
+                manual_ack=manual_ack,
+                max_deliver=max_deliver,
+                _allow_removed=_allow_removed,
+            )
+
+    async def _js_subscribe_locked(
+        self,
+        subject: str,
+        callback: MessageCallback,
+        durable: str | None = None,
+        stream: str | None = None,
+        max_ack_pending: int | None = None,
+        ack_wait: int | None = None,
+        manual_ack: bool = False,
+        max_deliver: int | None = None,
+        *,
+        _allow_removed: bool = True,
     ) -> Any:
         """Subscribe to a JetStream subject (durable consumer)."""
         if not self._js:
             # Fallback to core NATS subscription
-            return await self.subscribe(subject, callback)
+            return await self._subscribe_locked(
+                subject,
+                callback,
+                _allow_removed=_allow_removed,
+            )
 
+        stripped_subject = self._strip_prefix(subject)
+        tombstones = _subscription_tombstones(self)
+        if not _allow_removed and stripped_subject in tombstones:
+            return None
+        if _allow_removed:
+            tombstones.discard(stripped_subject)
         full_subject = self._full_subject(subject)
 
         async def _handler(msg: Any) -> None:
@@ -728,6 +871,11 @@ class NATSBus:
                     config_kwargs["max_deliver"] = max_deliver
                 subscribe_kwargs["config"] = ConsumerConfig(**config_kwargs)
             sub = await self._js.subscribe(full_subject, **subscribe_kwargs)
+            if not _allow_removed and stripped_subject in tombstones:
+                await sub.unsubscribe()
+                if stream and durable:
+                    await self.delete_consumer(stream, durable)
+                return None
             self._subscriptions.append(sub)
             if not self._resubscribing:
                 self._active_subs.append({
@@ -860,7 +1008,16 @@ class NATSBus:
             await self._js.delete_consumer(stream, durable_name)
             logger.debug("NATSBus: Deleted consumer %s from stream %s", durable_name, stream)
         except Exception as e:
-            logger.debug("NATSBus: Consumer delete failed (%s/%s): %s", stream, durable_name, e)
+            message = str(e).lower()
+            if "not found" in message or "10014" in message:
+                logger.debug(
+                    "NATSBus: Consumer already absent (%s/%s): %s",
+                    stream,
+                    durable_name,
+                    e,
+                )
+                return
+            raise
 
     async def _delete_stream(self, name: str) -> bool:
         """BF-231: Delete a JetStream stream by name. Returns True if deleted."""
@@ -1036,6 +1193,8 @@ class MockNATSBus:
         self._streams: dict[str, dict[str, Any]] = {}
         self.published: list[tuple[str, dict[str, Any]]] = []  # Test inspection
         self._active_subs: list[dict[str, Any]] = []
+        self._removed_subscription_subjects: set[str] = set()
+        self._subscription_mutation_lock = asyncio.Lock()
         self._prefix_change_callbacks: list[Callable] = []
         self._resubscribing: bool = False
         self._stream_configs: list[dict[str, Any]] = []
@@ -1060,6 +1219,8 @@ class MockNATSBus:
         # Rebuild _subs from _active_subs (un-prefixed source of truth)
         new_subs: dict[str, list[MessageCallback]] = {}
         for entry in self._active_subs:
+            if entry["subject"] in _subscription_tombstones(self):
+                continue
             full = self._full_subject(entry["subject"])
             new_subs.setdefault(full, []).append(entry["callback"])
             entry["sub"] = full  # update tracked sub to new full subject
@@ -1092,21 +1253,46 @@ class MockNATSBus:
 
     async def remove_tracked_subscription(self, subject: str) -> bool:
         """Remove a tracked subscription by un-prefixed subject."""
-        for i, entry in enumerate(self._active_subs):
-            if entry["subject"] == subject:
-                # Remove from _subs dict
-                full = self._full_subject(subject)
-                if full in self._subs:
-                    # Remove the specific callback, not all subs on this subject
-                    try:
-                        self._subs[full].remove(entry["callback"])
-                    except ValueError:
-                        pass
-                    if not self._subs[full]:
-                        del self._subs[full]
-                self._active_subs.pop(i)
-                return True
-        return False
+        return bool(await self.remove_tracked_subscriptions((subject,)))
+
+    async def remove_tracked_subscriptions(
+        self,
+        subjects: Iterable[str],
+    ) -> int:
+        """Serialize removal against mock subscription creation."""
+        async with _subscription_mutation_lock(self):
+            return await self._remove_tracked_subscriptions_locked(subjects)
+
+    async def _remove_tracked_subscriptions_locked(
+        self,
+        subjects: Iterable[str],
+    ) -> int:
+        """Tombstone and remove all tracked recipes for the given subjects."""
+        stripped_subjects = {
+            self._strip_prefix(subject)
+            for subject in subjects
+        }
+        if not stripped_subjects:
+            return 0
+        _subscription_tombstones(self).update(stripped_subjects)
+        entries = [
+            entry for entry in self._active_subs
+            if entry["subject"] in stripped_subjects
+        ]
+        self._active_subs = [
+            entry for entry in self._active_subs
+            if entry["subject"] not in stripped_subjects
+        ]
+        for entry in entries:
+            full = self._full_subject(entry["subject"])
+            if full in self._subs:
+                try:
+                    self._subs[full].remove(entry["callback"])
+                except ValueError:
+                    pass
+                if not self._subs[full]:
+                    del self._subs[full]
+        return len(entries)
 
     def _strip_prefix(self, subject: str) -> str:
         prefix_dot = self._subject_prefix + "."
@@ -1168,7 +1354,31 @@ class MockNATSBus:
         subject: str,
         callback: MessageCallback,
         queue: str = "",
+        *,
+        _allow_removed: bool = True,
     ) -> str:
+        async with _subscription_mutation_lock(self):
+            return await self._subscribe_locked(
+                subject,
+                callback,
+                queue,
+                _allow_removed=_allow_removed,
+            )
+
+    async def _subscribe_locked(
+        self,
+        subject: str,
+        callback: MessageCallback,
+        queue: str = "",
+        *,
+        _allow_removed: bool = True,
+    ) -> str:
+        stripped = self._strip_prefix(subject)
+        tombstones = _subscription_tombstones(self)
+        if not _allow_removed and stripped in tombstones:
+            return ""
+        if _allow_removed:
+            tombstones.discard(stripped)
         full = self._full_subject(subject)
         if full not in self._subs:
             self._subs[full] = []
@@ -1236,7 +1446,41 @@ class MockNATSBus:
         ack_wait: int | None = None,
         manual_ack: bool = False,
         max_deliver: int | None = None,  # AD-654b
+        *,
+        _allow_removed: bool = True,
     ) -> str:
+        async with _subscription_mutation_lock(self):
+            return await self._js_subscribe_locked(
+                subject,
+                callback,
+                durable=durable,
+                stream=stream,
+                max_ack_pending=max_ack_pending,
+                ack_wait=ack_wait,
+                manual_ack=manual_ack,
+                max_deliver=max_deliver,
+                _allow_removed=_allow_removed,
+            )
+
+    async def _js_subscribe_locked(
+        self,
+        subject: str,
+        callback: MessageCallback,
+        durable: str | None = None,
+        stream: str | None = None,
+        max_ack_pending: int | None = None,
+        ack_wait: int | None = None,
+        manual_ack: bool = False,
+        max_deliver: int | None = None,
+        *,
+        _allow_removed: bool = True,
+    ) -> str:
+        stripped = self._strip_prefix(subject)
+        tombstones = _subscription_tombstones(self)
+        if not _allow_removed and stripped in tombstones:
+            return ""
+        if _allow_removed:
+            tombstones.discard(stripped)
         full = self._full_subject(subject)
         if full not in self._subs:
             self._subs[full] = []

@@ -225,6 +225,8 @@ class IntentBus:
         self._federation_fn: Callable[[IntentMessage], Awaitable[list[IntentResult]]] | None = None
         self._nats_bus: Any = None  # AD-637b: wired via set_nats_bus()
         self._pending_sub_tasks: set[asyncio.Task] = set()  # AD-637z: tracked NATS sub tasks
+        self._agent_subscription_tasks: dict[str, set[asyncio.Task]] = {}
+        self._pending_task_registration_closed: bool = False
         # BF-223: Defer JetStream dispatch consumer creation until after ship
         # commissioning sets the correct NATS subject prefix (DID-based).
         # During startup, subscribe() skips dispatch consumers; finalize.py
@@ -278,6 +280,118 @@ class IntentBus:
             len(self._agent_queues),
         )
 
+    async def drain_pending_tasks(self, timeout_seconds: float = 5.0) -> None:
+        """Close task registration and drain owned work before NATS shutdown."""
+        self._pending_task_registration_closed = True
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, timeout_seconds)
+        try:
+            while True:
+                tasks = tuple(
+                    task for task in self._pending_sub_tasks if not task.done()
+                )
+                if not tasks:
+                    await asyncio.sleep(0)
+                    tasks = tuple(
+                        task for task in self._pending_sub_tasks if not task.done()
+                    )
+                    if not tasks:
+                        return
+
+                remaining = deadline - loop.time()
+                if remaining <= 0.0:
+                    await self._cancel_pending_tasks(tasks, timeout_seconds)
+                    return
+                done, pending = await asyncio.wait(tasks, timeout=remaining)
+                if done:
+                    await asyncio.gather(*done, return_exceptions=True)
+                if pending:
+                    await self._cancel_pending_tasks(tuple(pending), timeout_seconds)
+                    return
+        except asyncio.CancelledError:
+            pending = tuple(
+                task for task in self._pending_sub_tasks if not task.done()
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            raise
+
+    async def _cancel_pending_tasks(
+        self,
+        tasks: tuple[asyncio.Task, ...],
+        timeout_seconds: float,
+    ) -> None:
+        for task in tasks:
+            task.cancel()
+        cancellation_grace = min(1.0, max(0.0, timeout_seconds))
+        done, pending = await asyncio.wait(
+            tasks,
+            timeout=cancellation_grace,
+        )
+        if done:
+            await asyncio.gather(*done, return_exceptions=True)
+        logger.warning(
+            "IntentBus pending-task drain timed out after %.1fs; cancelled "
+            "%d task(s), %d still settling, so NATS shutdown can proceed",
+            timeout_seconds,
+            len(tasks),
+            len(pending),
+        )
+
+    def _track_pending_task(
+        self,
+        task: asyncio.Task,
+        *,
+        report_nats_error: bool = False,
+    ) -> bool:
+        """Own one task unless shutdown already closed registration."""
+        if self._pending_task_registration_closed:
+            self._pending_sub_tasks.add(task)
+            task.add_done_callback(self._pending_sub_tasks.discard)
+            if report_nats_error:
+                task.add_done_callback(self._on_nats_task_done)
+            task.cancel()
+            return False
+        self._pending_sub_tasks.add(task)
+        task.add_done_callback(self._pending_sub_tasks.discard)
+        if report_nats_error:
+            task.add_done_callback(self._on_nats_task_done)
+        return True
+
+    def _track_agent_subscription_task(
+        self,
+        agent_id: str,
+        task: asyncio.Task,
+    ) -> None:
+        """Own one transport-subscription task for exact lifecycle teardown."""
+        if not self._track_pending_task(task, report_nats_error=True):
+            return
+        tasks = self._agent_subscription_tasks.setdefault(agent_id, set())
+        tasks.add(task)
+
+        def _discard(completed: asyncio.Task) -> None:
+            agent_tasks = self._agent_subscription_tasks.get(agent_id)
+            if agent_tasks is None:
+                return
+            agent_tasks.discard(completed)
+            if not agent_tasks:
+                self._agent_subscription_tasks.pop(agent_id, None)
+
+        task.add_done_callback(_discard)
+
+    async def _cancel_agent_subscription_tasks(self, agent_id: str) -> None:
+        """Cancel and await every pending subscription owned by one agent."""
+        tasks = tuple(
+            task
+            for task in self._agent_subscription_tasks.pop(agent_id, set())
+            if not task.done()
+        )
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     def _remove_intent_index_memberships(self, agent_id: str) -> None:
         for agent_ids in self._intent_index.values():
             agent_ids.discard(agent_id)
@@ -308,16 +422,18 @@ class IntentBus:
                 self._intent_index[name].add(agent_id)
 
         # AD-637b/z: Create NATS subscription for targeted send()
-        if self._nats_bus and self._nats_bus.connected:
+        if (
+            self._nats_bus
+            and self._nats_bus.connected
+            and not self._pending_task_registration_closed
+        ):
             try:
                 loop = asyncio.get_running_loop()
                 task = loop.create_task(
                     self._nats_subscribe_agent(agent_id, handler),
                     name=f"nats-sub-{agent_id[:12]}",
                 )
-                self._pending_sub_tasks.add(task)
-                task.add_done_callback(self._pending_sub_tasks.discard)
-                task.add_done_callback(self._on_nats_task_done)
+                self._track_agent_subscription_task(agent_id, task)
                 # AD-654a: Also subscribe to JetStream dispatch subject
                 # BF-223: Skip during startup — deferred until prefix is stable
                 if not self._defer_dispatch_consumers:
@@ -325,9 +441,7 @@ class IntentBus:
                         self._js_subscribe_agent_dispatch(agent_id, handler),
                         name=f"js-dispatch-sub-{agent_id[:12]}",
                     )
-                    self._pending_sub_tasks.add(dispatch_task)
-                    dispatch_task.add_done_callback(self._pending_sub_tasks.discard)
-                    dispatch_task.add_done_callback(self._on_nats_task_done)
+                    self._track_agent_subscription_task(agent_id, dispatch_task)
             except RuntimeError:
                 pass
 
@@ -499,47 +613,93 @@ class IntentBus:
         # With circuit breaker nak(delay=60) + max_deliver=10, a stuck breaker
         # causes at most 10 redeliveries (~10 min) before JetStream auto-discards.
         # Without this, nak loops are unbounded.
-        sub = await self._nats_bus.js_subscribe(
-            subject,
-            _on_dispatch,
-            durable=durable_name,
-            stream="INTENT_DISPATCH",
-            max_ack_pending=1,
-            ack_wait=300,
-            manual_ack=True,
-            max_deliver=10,
+        for attempt in range(3):
+            sub = await self._nats_bus.js_subscribe(
+                subject,
+                _on_dispatch,
+                durable=durable_name,
+                stream="INTENT_DISPATCH",
+                max_ack_pending=1,
+                ack_wait=300,
+                manual_ack=True,
+                max_deliver=10,
+            )
+            if sub:
+                logger.debug(
+                    "AD-654b: JetStream dispatch consumer for %s",
+                    agent_id[:12],
+                )
+                return
+            if attempt < 2:
+                delay = 0.5 * (2 ** attempt)
+                logger.warning(
+                    "JetStream dispatch consumer for %s was not created "
+                    "(attempt %d/3); retrying in %.1fs",
+                    agent_id[:12],
+                    attempt + 1,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        raise RuntimeError(
+            "JetStream dispatch consumer creation failed after 3 attempts "
+            f"for agent {agent_id}"
         )
-        if sub:
-            logger.debug("AD-654b: JetStream dispatch consumer for %s", agent_id[:12])
 
-    def unsubscribe(self, agent_id: str) -> None:
-        """Remove an agent's subscription and intent index entries."""
+    def _unsubscribe_local(self, agent_id: str) -> None:
+        """Synchronously remove one agent from all in-process indexes."""
         self._subscribers.pop(agent_id, None)
         self._subscriber_latency_classes.pop(agent_id, None)
         self.unregister_queue(agent_id)  # AD-654b: clean up cognitive queue
         self._remove_intent_index_memberships(agent_id)
-        # AD-637z: Clean up NATS subscription via NATSBus lifecycle management
-        if self._nats_bus:
-            subject = f"intent.{agent_id}"
+
+    async def _unsubscribe_remote(self, agent_id: str) -> None:
+        """Remove tracked NATS recipes before deleting the durable consumer."""
+        await self._cancel_agent_subscription_tasks(agent_id)
+        if not self._nats_bus:
+            return
+        removal_error: BaseException | None = None
+        try:
+            await self._nats_bus.remove_tracked_subscriptions(
+                (
+                    f"intent.{agent_id}",
+                    f"intent.dispatch.{agent_id}",
+                )
+            )
+        except BaseException as exc:
+            removal_error = exc
+        try:
+            await self._nats_bus.delete_consumer(
+                "INTENT_DISPATCH",
+                f"agent-dispatch-{agent_id}",
+            )
+        except BaseException:
+            if removal_error is None:
+                raise
+            logger.warning(
+                "Agent %s transport teardown failed for both tracked "
+                "subscriptions and durable consumer; preserving the first error",
+                agent_id,
+                exc_info=True,
+            )
+        if removal_error is not None:
+            raise removal_error
+
+    async def unsubscribe_and_wait(self, agent_id: str) -> None:
+        """Remove one agent locally and await complete transport teardown."""
+        await self._unsubscribe_remote(agent_id)
+        self._unsubscribe_local(agent_id)
+
+    def unsubscribe(self, agent_id: str) -> None:
+        """Remove an agent locally and schedule transport cleanup."""
+        self._unsubscribe_local(agent_id)
+        if self._nats_bus and not self._pending_task_registration_closed:
             try:
                 loop = asyncio.get_running_loop()
                 task = loop.create_task(
-                    self._nats_bus.remove_tracked_subscription(subject),
+                    self._unsubscribe_remote(agent_id),
                     name=f"nats-unsub-{agent_id[:12]}",
                 )
-                self._pending_sub_tasks.add(task)
-                task.add_done_callback(self._pending_sub_tasks.discard)
-                task.add_done_callback(self._on_nats_task_done)
-            except RuntimeError:
-                pass
-            # AD-654a: Clean up JetStream dispatch consumer
-            durable_name = f"agent-dispatch-{agent_id}"
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(
-                    self._nats_bus.delete_consumer("INTENT_DISPATCH", durable_name),
-                    name=f"cleanup-dispatch-{agent_id[:12]}",
-                )
+                self._track_pending_task(task, report_nats_error=True)
             except RuntimeError:
                 pass
 
@@ -863,8 +1023,7 @@ class IntentBus:
             _run_handler(),
             name=f"dispatch-async-{intent.target_agent_id[:12]}",
         )
-        self._pending_sub_tasks.add(task)
-        task.add_done_callback(self._pending_sub_tasks.discard)
+        self._track_pending_task(task)
 
     # ── AD-654b: Cognitive queue management ─────────────────────────
 
