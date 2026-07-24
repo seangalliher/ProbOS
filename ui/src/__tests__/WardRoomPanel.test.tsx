@@ -1,7 +1,32 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStore } from '../store/useStore';
+import type { WSEvent } from '../store/types';
+
+const GENERATION = 'b'.repeat(32);
+let nextLiveSequence = 0;
+
+function frame(type: string, data: Record<string, unknown>): WSEvent {
+  return {
+    type,
+    data,
+    timestamp: Date.now() / 1000,
+    stream: { generation: GENERATION, sequence: nextLiveSequence++ },
+  };
+}
+
+function installSnapshot(): void {
+  useStore.getState().handleEvent(frame('state_snapshot', {
+    agents: [],
+    connections: [],
+    pools: [],
+    system_mode: 'active',
+    tc_n: 0,
+    routing_entropy: 0,
+  }));
+}
 
 beforeEach(() => {
+  nextLiveSequence = 0;
   useStore.setState({
     wardRoomOpen: false,
     wardRoomActiveChannel: null,
@@ -9,6 +34,12 @@ beforeEach(() => {
     wardRoomActiveThread: null,
     wardRoomThreadDetail: null,
     wardRoomUnread: {},
+    liveGeneration: null,
+    liveSequence: 0,
+    liveRepairEpoch: 0,
+    liveThreadRefresh: null,
+    liveArtifactRefresh: null,
+    liveTodoRefresh: null,
     wardRoomChannels: [
       {
         id: 'ch1', name: 'All Hands', channel_type: 'ship' as const,
@@ -80,11 +111,11 @@ describe('WardRoomPanel store (AD-407c)', () => {
 
   it('handleEvent recognizes ward_room_thread_created', () => {
     // Just verify the event type is handled without error
-    useStore.getState().handleEvent({
-      type: 'ward_room_thread_created',
-      data: { channel_id: 'ch1', thread_id: 't1' },
-      timestamp: Date.now() / 1000,
-    });
+    installSnapshot();
+    useStore.getState().handleEvent(frame(
+      'ward_room_thread_created',
+      { channel_id: 'ch1', thread_id: 't1' },
+    ));
     // No crash means the event case matched
   });
 });
@@ -115,13 +146,15 @@ describe('BF-080: DM Channel Viewer', () => {
     const original = useStore.getState().refreshWardRoomDmChannels;
     useStore.setState({
       refreshWardRoomDmChannels: async () => { calls.push('refreshed'); },
+      wardRoomOpen: true,
+      wardRoomView: 'dms',
     });
 
-    useStore.getState().handleEvent({
-      type: 'ward_room_post_created',
-      data: { thread_id: 't1', channel_id: 'ch1' },
-      timestamp: Date.now() / 1000,
-    });
+    installSnapshot();
+    useStore.getState().handleEvent(frame(
+      'ward_room_post_created',
+      { thread_id: 't1', channel_id: 'ch1' },
+    ));
 
     // AD-613: ward-room refreshes are debounced ~300ms; wait for the
     // timer to fire and any microtasks (refresh fns are async).

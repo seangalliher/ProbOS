@@ -12,6 +12,7 @@ import type { Agent } from '../../../store/types';
 vi.mock('../../sidebar/threadApi', () => ({
   listThreads: vi.fn(),
   addParticipant: vi.fn(),
+  repairRoomSummaries: vi.fn().mockResolvedValue({ kind: 'success', summaries: {} }),
   createThread: vi.fn(),
 }));
 

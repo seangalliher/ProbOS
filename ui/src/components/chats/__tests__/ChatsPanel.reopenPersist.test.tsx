@@ -20,6 +20,7 @@ vi.mock('../../sidebar/threadApi', () => ({
   listThreads: vi.fn(),
   addParticipant: vi.fn(),
   getThread: vi.fn(),
+  repairRoomSummaries: vi.fn().mockResolvedValue({ kind: 'success', summaries: {} }),
   createThread: vi.fn(),
 }));
 

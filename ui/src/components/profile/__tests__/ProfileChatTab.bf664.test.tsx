@@ -64,6 +64,7 @@ function jsonResponse(body: unknown): Response {
   return {
     ok: true,
     status: 200,
+    text: async () => JSON.stringify(body),
     json: async () => body,
   } as Response;
 }
@@ -121,6 +122,7 @@ function toDto(threadId: string, message: AgentProfileMessage): ThreadMessageDTO
     role: message.role === 'user' ? 'captain' : message.role,
     body: message.text,
     created_at: message.timestamp,
+    metadata: {},
   };
 }
 
@@ -141,6 +143,14 @@ function resetStore(): void {
     typingAgent: null,
     voiceEnabled: false,
     chatDrafts: {},
+    liveGeneration: null,
+    liveSequence: 0,
+    liveRepairEpoch: 0,
+    liveThreadRefresh: null,
+    liveArtifactRefresh: null,
+    liveTodoRefresh: null,
+    liveCrewOwnerParentId: null,
+    liveRailOwner: null,
   });
 }
 

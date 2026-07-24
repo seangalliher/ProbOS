@@ -16,9 +16,12 @@ beforeEach(() => {
     selectedArtifactId: null,
     artifactDrawerCollapsed: false,
   });
+  const body = { thread_id: 't-empty', artifacts: [] };
   global.fetch = vi.fn(() => Promise.resolve({
     ok: true,
-    json: async () => ({ thread_id: 't-empty', artifacts: [] }),
+    status: 200,
+    text: async () => JSON.stringify(body),
+    json: async () => body,
   }) as any);
 });
 

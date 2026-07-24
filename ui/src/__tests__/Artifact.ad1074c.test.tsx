@@ -20,6 +20,15 @@ const DOC: ArtifactView = {
 
 const callsByThread: Record<string, number> = {};
 
+function jsonResponse(body: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  } as Response;
+}
+
 beforeEach(() => {
   localStorage.clear();
   for (const k of Object.keys(callsByThread)) delete callsByThread[k];
@@ -38,10 +47,7 @@ beforeEach(() => {
     const m = /\/api\/artifacts\/thread\/([^?]+)/.exec(u);
     const tid = m?.[1] ?? '';
     callsByThread[tid] = (callsByThread[tid] ?? 0) + 1;
-    return Promise.resolve({
-      ok: true,
-      json: async () => ({ thread_id: tid, artifacts: [] }),
-    }) as any;
+    return Promise.resolve(jsonResponse({ thread_id: tid, artifacts: [] }));
   });
 });
 
@@ -55,10 +61,7 @@ describe('AD-1074c — produced document auto-opens', () => {
       const m = /\/api\/artifacts\/thread\/([^?]+)/.exec(u);
       const tid = m?.[1] ?? '';
       callsByThread[tid] = (callsByThread[tid] ?? 0) + 1;
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({ thread_id: tid, artifacts: [DOC] }),
-      }) as any;
+      return Promise.resolve(jsonResponse({ thread_id: tid, artifacts: [DOC] }));
     });
 
     render(
@@ -106,10 +109,7 @@ describe('AD-1074c — produced document auto-opens', () => {
       const m = /\/api\/artifacts\/thread\/([^?]+)/.exec(u);
       const tid = m?.[1] ?? '';
       callsByThread[tid] = (callsByThread[tid] ?? 0) + 1;
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({ thread_id: tid, artifacts: [DOC] }),
-      }) as any;
+      return Promise.resolve(jsonResponse({ thread_id: tid, artifacts: [DOC] }));
     });
     act(() => {
       useStore.setState({ artifactsByThread: new Map([['t1', [DOC]]]) });

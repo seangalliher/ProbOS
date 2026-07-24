@@ -1,8 +1,32 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStore, computeLayout } from '../store/useStore';
-import type { Agent } from '../store/types';
+import type { Agent, WSEvent } from '../store/types';
+
+const GENERATION = 'a'.repeat(32);
+let nextLiveSequence = 0;
+
+function frame(type: string, data: Record<string, unknown>): WSEvent {
+  return {
+    type,
+    data,
+    timestamp: Date.now() / 1000,
+    stream: { generation: GENERATION, sequence: nextLiveSequence++ },
+  };
+}
+
+function installSnapshot(): void {
+  useStore.getState().handleEvent(frame('state_snapshot', {
+    agents: [],
+    connections: [],
+    pools: [],
+    system_mode: 'active',
+    tc_n: 0,
+    routing_entropy: 0,
+  }));
+}
 
 beforeEach(() => {
+  nextLiveSequence = 0;
   // Reset store between tests
   useStore.setState({
     agents: new Map(),
@@ -22,6 +46,15 @@ beforeEach(() => {
     groupCenters: new Map(),
     poolToGroup: {},
     poolGroups: {},
+    liveGeneration: null,
+    liveSequence: 0,
+    liveRepairEpoch: 0,
+    liveThreadRefresh: null,
+    liveArtifactRefresh: null,
+    liveTodoRefresh: null,
+    liveCrewOwnerParentId: null,
+    liveRailOwner: null,
+    notifications: null,
   });
   // Clear localStorage
   localStorage.clear();
@@ -78,47 +111,37 @@ describe('useStore', () => {
 
   describe('handleEvent', () => {
     it('handles agent_state for new agent', () => {
-      useStore.getState().handleEvent({
-        type: 'agent_state',
-        data: {
+      installSnapshot();
+      useStore.getState().handleEvent(frame('agent_state', {
           agent_id: 'test-1',
           pool: 'test_pool',
           state: 'active',
           confidence: 0.8,
           trust: 0.5,
-        },
-        timestamp: Date.now() / 1000,
-      });
+      }));
       const agents = useStore.getState().agents;
       expect(agents.has('test-1')).toBe(true);
       expect(agents.get('test-1')!.confidence).toBe(0.8);
     });
 
     it('handles agent_state update for existing agent', () => {
+      installSnapshot();
       // Add agent first
-      useStore.getState().handleEvent({
-        type: 'agent_state',
-        data: {
+      useStore.getState().handleEvent(frame('agent_state', {
           agent_id: 'test-1',
           pool: 'test_pool',
           state: 'active',
           confidence: 0.8,
           trust: 0.5,
-        },
-        timestamp: Date.now() / 1000,
-      });
+      }));
       // Update it
-      useStore.getState().handleEvent({
-        type: 'agent_state',
-        data: {
+      useStore.getState().handleEvent(frame('agent_state', {
           agent_id: 'test-1',
           pool: 'test_pool',
           state: 'active',
           confidence: 0.95,
           trust: 0.7,
-        },
-        timestamp: Date.now() / 1000,
-      });
+      }));
       const agent = useStore.getState().agents.get('test-1');
       expect(agent!.confidence).toBe(0.95);
       expect(agent!.trust).toBe(0.7);
@@ -128,12 +151,10 @@ describe('useStore', () => {
       const { handleEvent } = useStore.getState();
 
       // First, send a state_snapshot that establishes pool groups
-      handleEvent({
-        type: 'state_snapshot',
-        data: {
+      handleEvent(frame('state_snapshot', {
           agents: [
-            { id: 'a1', agent_type: 'file_reader', pool: 'filesystem', state: 'active', confidence: 0.9, trust: 0.5, tier: 'core' },
-            { id: 'a2', agent_type: 'diagnostician', pool: 'medical_diagnostician', state: 'active', confidence: 0.9, trust: 0.5, tier: 'domain' },
+            { id: 'a1', agent_type: 'file_reader', callsign: 'Reader', display_name: 'File Reader', pool: 'filesystem', state: 'active', confidence: 0.9, trust: 0.5, tier: 'core' },
+            { id: 'a2', agent_type: 'diagnostician', callsign: 'Medic', display_name: 'Diagnostician', pool: 'medical_diagnostician', state: 'active', confidence: 0.9, trust: 0.5, tier: 'domain' },
           ],
           connections: [],
           pools: [],
@@ -145,19 +166,15 @@ describe('useStore', () => {
           system_mode: 'active',
           tc_n: 1,
           routing_entropy: 0.5,
-        },
-        timestamp: Date.now() / 1000,
-      });
+      }));
 
       const afterSnapshot = useStore.getState();
       expect(afterSnapshot.poolToGroup).toEqual({ filesystem: 'core', medical_diagnostician: 'medical' });
 
       // Now send an agent_state update
-      handleEvent({
-        type: 'agent_state',
-        data: { agent_id: 'a1', pool: 'filesystem', state: 'active', confidence: 0.95, trust: 0.6 },
-        timestamp: Date.now() / 1000,
-      });
+      handleEvent(frame('agent_state', {
+        agent_id: 'a1', pool: 'filesystem', state: 'active', confidence: 0.95, trust: 0.6,
+      }));
 
       // groupCenters should still be populated (not empty)
       const afterUpdate = useStore.getState();
@@ -166,9 +183,7 @@ describe('useStore', () => {
 
     it('stores poolToGroup and poolGroups from state_snapshot (AD-349)', () => {
       const { handleEvent } = useStore.getState();
-      handleEvent({
-        type: 'state_snapshot',
-        data: {
+      handleEvent(frame('state_snapshot', {
           agents: [],
           connections: [],
           pools: [],
@@ -177,24 +192,19 @@ describe('useStore', () => {
           system_mode: 'active',
           tc_n: 0,
           routing_entropy: 0,
-        },
-        timestamp: Date.now() / 1000,
-      });
+      }));
       const state = useStore.getState();
       expect(state.poolToGroup).toEqual({ filesystem: 'core' });
       expect(state.poolGroups).toEqual({ core: { pools: { filesystem: { healthy: 1, target: 1 } } } });
     });
 
     it('handles self_mod_success event with agent_id', () => {
-      useStore.getState().handleEvent({
-        type: 'self_mod_success',
-        data: {
+      installSnapshot();
+      useStore.getState().handleEvent(frame('self_mod_success', {
           agent_type: 'test_agent',
           agent_id: 'test_agent_0',
           message: 'TestAgent deployed!',
-        },
-        timestamp: Date.now() / 1000,
-      });
+      }));
       // Should prefer agent_id over agent_type
       expect(useStore.getState().pendingSelfModBloom).toBe('test_agent_0');
       expect(useStore.getState().chatHistory).toHaveLength(1);
@@ -202,29 +212,23 @@ describe('useStore', () => {
     });
 
     it('handles self_mod_success event with agent_type fallback', () => {
-      useStore.getState().handleEvent({
-        type: 'self_mod_success',
-        data: {
+      installSnapshot();
+      useStore.getState().handleEvent(frame('self_mod_success', {
           agent_type: 'test_agent',
           message: 'TestAgent deployed!',
-        },
-        timestamp: Date.now() / 1000,
-      });
+      }));
       // Without agent_id, should fall back to agent_type
       expect(useStore.getState().pendingSelfModBloom).toBe('test_agent');
     });
 
     it('handles self_mod_progress event', () => {
-      useStore.getState().handleEvent({
-        type: 'self_mod_progress',
-        data: {
+      installSnapshot();
+      useStore.getState().handleEvent(frame('self_mod_progress', {
           step: 'designing',
           current: 1,
           total: 5,
           step_label: 'Designing agent code...',
-        },
-        timestamp: Date.now() / 1000,
-      });
+      }));
       const progress = useStore.getState().selfModProgress;
       expect(progress).toBeDefined();
       expect(progress!.step).toBe('designing');
@@ -234,11 +238,8 @@ describe('useStore', () => {
     it('clears selfModProgress on self_mod_failure', () => {
       // Set progress first
       useStore.setState({ selfModProgress: { step: 'testing', current: 3, total: 5, label: 'test' } });
-      useStore.getState().handleEvent({
-        type: 'self_mod_failure',
-        data: { message: 'failed' },
-        timestamp: Date.now() / 1000,
-      });
+      installSnapshot();
+      useStore.getState().handleEvent(frame('self_mod_failure', { message: 'failed' }));
       expect(useStore.getState().selfModProgress).toBeNull();
     });
 
@@ -246,9 +247,7 @@ describe('useStore', () => {
       useStore.getState().addChatMessage('user', 'old message');
       expect(useStore.getState().chatHistory).toHaveLength(1);
 
-      useStore.getState().handleEvent({
-        type: 'state_snapshot',
-        data: {
+      useStore.getState().handleEvent(frame('state_snapshot', {
           agents: [],
           connections: [],
           pools: [],
@@ -256,9 +255,7 @@ describe('useStore', () => {
           tc_n: 0,
           routing_entropy: 0,
           fresh_boot: true,
-        },
-        timestamp: Date.now() / 1000,
-      });
+      }));
       expect(useStore.getState().chatHistory).toHaveLength(0);
     });
   });
@@ -395,12 +392,10 @@ describe('useStore', () => {
     });
 
     it('state_snapshot populates groupCenters', () => {
-      useStore.getState().handleEvent({
-        type: 'state_snapshot',
-        data: {
+      useStore.getState().handleEvent(frame('state_snapshot', {
           agents: [
-            { id: 'med-0', agent_type: 'vitals', pool: 'medical_vitals', state: 'active', confidence: 0.8, trust: 0.5, tier: 'domain' },
-            { id: 'core-0', agent_type: 'shell', pool: 'shell', state: 'active', confidence: 0.8, trust: 0.5, tier: 'core' },
+            { id: 'med-0', agent_type: 'vitals', callsign: 'Vitals', display_name: 'Medical Vitals', pool: 'medical_vitals', state: 'active', confidence: 0.8, trust: 0.5, tier: 'domain' },
+            { id: 'core-0', agent_type: 'shell', callsign: 'Shell', display_name: 'Shell', pool: 'shell', state: 'active', confidence: 0.8, trust: 0.5, tier: 'core' },
           ],
           connections: [],
           pools: [],
@@ -419,9 +414,7 @@ describe('useStore', () => {
               pools: { shell: { current_size: 1, target_size: 1, agent_type: 'shell' } },
             },
           },
-        },
-        timestamp: Date.now() / 1000,
-      });
+      }));
 
       const gc = useStore.getState().groupCenters;
       expect(gc.size).toBe(2);
@@ -564,9 +557,8 @@ describe('animation event clearing (AD-329)', () => {
 
 describe('build_generated builder_source (AD-354)', () => {
   it('sets builder_source on build proposal from event data', () => {
-    useStore.getState().handleEvent({
-      type: 'build_generated',
-      data: {
+    installSnapshot();
+    useStore.getState().handleEvent(frame('build_generated', {
         build_id: 'b1',
         title: 'Test build',
         description: 'desc',
@@ -576,18 +568,15 @@ describe('build_generated builder_source (AD-354)', () => {
         llm_output: '',
         builder_source: 'visiting',
         message: 'Generated 0 file(s)',
-      },
-      timestamp: Date.now() / 1000,
-    });
+    }));
     const history = useStore.getState().chatHistory;
     expect(history).toHaveLength(1);
     expect(history[0].buildProposal?.builder_source).toBe('visiting');
   });
 
   it('defaults builder_source to native when not provided', () => {
-    useStore.getState().handleEvent({
-      type: 'build_generated',
-      data: {
+    installSnapshot();
+    useStore.getState().handleEvent(frame('build_generated', {
         build_id: 'b2',
         title: 'Test build',
         description: 'desc',
@@ -596,9 +585,7 @@ describe('build_generated builder_source (AD-354)', () => {
         change_count: 0,
         llm_output: '',
         message: 'Generated 0 file(s)',
-      },
-      timestamp: Date.now() / 1000,
-    });
+    }));
     const history = useStore.getState().chatHistory;
     expect(history).toHaveLength(1);
     expect(history[0].buildProposal?.builder_source).toBe('native');
@@ -607,55 +594,44 @@ describe('build_generated builder_source (AD-354)', () => {
 
 describe('notification events (AD-323)', () => {
   it('handles notification event and updates state', () => {
-    useStore.getState().handleEvent({
-      type: 'notification',
-      data: {
+    installSnapshot();
+    useStore.getState().handleEvent(frame('notification', {
         notification: { id: 'n1', title: 'Test', notification_type: 'info', acknowledged: false },
         notifications: [
           { id: 'n1', agent_id: 'a1', agent_type: 'builder', department: 'engineering', notification_type: 'info', title: 'Test', detail: '', action_url: '', created_at: 1000, acknowledged: false },
         ],
         unread_count: 1,
-      },
-      timestamp: Date.now() / 1000,
-    });
+    }));
     const notifs = useStore.getState().notifications;
     expect(notifs).toHaveLength(1);
     expect(notifs![0].title).toBe('Test');
   });
 
   it('handles notification_ack event', () => {
-    useStore.getState().handleEvent({
-      type: 'notification_ack',
-      data: {
+    installSnapshot();
+    useStore.getState().handleEvent(frame('notification_ack', {
         notification: { id: 'n1', title: 'Test', acknowledged: true },
         notifications: [
           { id: 'n1', agent_id: 'a1', agent_type: 'builder', department: 'engineering', notification_type: 'info', title: 'Test', detail: '', action_url: '', created_at: 1000, acknowledged: true },
         ],
         unread_count: 0,
-      },
-      timestamp: Date.now() / 1000,
-    });
+    }));
     const notifs = useStore.getState().notifications;
     expect(notifs).toHaveLength(1);
     expect(notifs![0].acknowledged).toBe(true);
   });
 
   it('sets notifications to null when empty', () => {
-    useStore.getState().handleEvent({
-      type: 'notification_snapshot',
-      data: {
+    installSnapshot();
+    useStore.getState().handleEvent(frame('notification_snapshot', {
         notifications: [],
         unread_count: 0,
-      },
-      timestamp: Date.now() / 1000,
-    });
+    }));
     expect(useStore.getState().notifications).toBeNull();
   });
 
   it('hydrates notifications from state_snapshot', () => {
-    useStore.getState().handleEvent({
-      type: 'state_snapshot',
-      data: {
+    useStore.getState().handleEvent(frame('state_snapshot', {
         agents: [],
         connections: [],
         pools: [],
@@ -665,9 +641,7 @@ describe('notification events (AD-323)', () => {
         notifications: [
           { id: 'n1', agent_id: 'a1', agent_type: 'builder', department: 'engineering', notification_type: 'info', title: 'Hydrated', detail: '', action_url: '', created_at: 1000, acknowledged: false },
         ],
-      },
-      timestamp: Date.now() / 1000,
-    });
+    }));
     const notifs = useStore.getState().notifications;
     expect(notifs).toHaveLength(1);
     expect(notifs![0].title).toBe('Hydrated');
