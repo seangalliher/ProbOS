@@ -10,6 +10,54 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1133 (2026-07-23) - bounded live CrewSession and room refresh (#1052)
+
+**Context.** AD-1132 exposed durable CrewSession state, but open HXI surfaces refreshed only through initial GETs and legacy polling. The existing `/ws/events` path lacked auth-before-accept, bounded lifecycle ownership, authoritative sequence/generation, message/artifact invalidation, and Crew-safe projections. Highest landed top-level was **AD-1132**; **AD-1133 is the new top-level ceiling**, while **BF-673 remains the BF ceiling**.
+
+**Decision.** Reuse the sole WebSocket path. Add awaited live-only event-listener handles, exact NATS subscription release, owner-first bounded snapshots, generation/sequence envelopes, bounded per-client queues, and per-item failure containment. Emit IDs-only post-commit message/artifact events, project Crew parent/child work events through AD-1132, suppress raw session metadata, and let only visible owners repair via bounded GETs with stale-token guards. Remove BF-644 polling, retain one accessible manual refresh, and preserve exactly-one event ownership between stores/services and routes. Normalize only exact trusted event types; move the immutable CrewTrustEffect contract to consensus.
+
+**Tests.** AD-1133 focused gates passed **678 backend + 155 UI**, production build, and one full-App Playwright flow. Consolidated closeout passed **20,398 Python / 33 skipped / 7 subtests**, **2,221 Vitest / 1 skipped**, a **2,616-module build**, and **8/8 Playwright**. Final reviews were **APPROVED**. Issue #1052 closes on push; parent #1041 closes after remote checks and child reconciliation.
+
+### AD-1132 (2026-07-22) - HXI CrewSession projection (#1051)
+
+**Context.** Durable CrewSession contracts, execution, finalization, lifecycle, ingress, trust, and delivery existed, but the HXI still rendered generic task/chat state. The Captain could not reliably see the goal, ownership, fine state, last result, blockers, verification, or output authority. Highest landed top-level was **AD-1131**.
+
+**Decision.** Add bounded detail and compact-summary projections over existing WorkItem, CrewSession, room, verification, Todo, and Artifact authorities. Render them in existing collaboration/workspace surfaces with alert-first blocked state, responsive stable layout, reduced motion, accessible focus restoration, and the existing ArtifactViewer. Passive mount remains read-only; explicit Start Work remains the only creation action. Live transport remains deferred to AD-1133.
+
+**Tests.** **122 backend + 81 targeted UI** tests and the production build passed; final consolidated gates passed. Review was **APPROVED**.
+
+### AD-1131 (2026-07-22) - CrewSession outcome delivery and metrics (#1050)
+
+**Context.** AD-1126 produced terminal verified results and AD-1127 could resume them, but Captain delivery and operational measurement were not durable or idempotent. Replayed terminal events could duplicate notices, and metrics lacked a bounded session denominator.
+
+**Decision.** Persist one delivery fact per terminal session revision beside final publication, reconcile ambiguous commits, and emit one room-linked done/failed/blocked notification while preserving non-session AD-846 behavior. Compute bounded session-denominated rates and percentiles from metadata-only facts; return zero-safe empty windows and never include result bodies, secrets, or artifact bytes. Lifecycle shutdown owns listener cleanup and cancellation.
+
+**Tests.** **435 changed-surface** tests and final consolidated gates passed. Review was **APPROVED**.
+
+### AD-1130 (2026-07-22) - outcome-only CrewSession trust (#1049)
+
+**Context.** Legacy room conversation could update trust from linguistic convergence, while CrewSession verification needed trust to reflect actual attempted outcomes. Penalizing a peer for correct rejection, missing authority, cancellation, or governance denial would create lockout feedback loops.
+
+**Decision.** Derive idempotent raw-Beta trust effects only from durable attempted terminal evidence. Reward verified producer success and correct verifier refutation/correction; record producer failure only for attempted work; preserve all neutral/no-attempt paths. Use deterministic bounded Shapley attribution, exact outbox receipts/post-state reconciliation, and overlapping-drain exclusion. Own the immutable `CrewTrustEffect` in consensus while cognitive derivation re-exports the same class.
+
+**Tests.** **1,057 changed-surface** tests and final consolidated gates passed. Review was **APPROVED**.
+
+### AD-1129 (2026-07-21) - governed bounded EventLog query tool (#1048)
+
+**Context.** Crew agents could diagnose only what prompts exposed and could not query already-authoritative EventLog rows without inventing facts or reaching into SQLite. A raw SQL or HTTP export would bypass governance and leak content.
+
+**Decision.** Introduce a narrow injected EventLog query protocol and read-only registered tool. Resolve live identity/department/rank/grants, enforce bounded filters/windows/limits, redact output, audit success and denial safely, and fail closed on partial authority. Expose no arbitrary SQL, raw DB path, network export, write/delete/prune capability, or new agent pool.
+
+**Tests.** The changed-surface batch passed **220** tests and failed three AD-1072 fixture nodes; after repair, those three nodes passed together under `-n 0`. Final consolidated gates passed. Review was **APPROVED**.
+
+### AD-1128 (2026-07-21) - unified CrewSession ingress and dedup (#1047)
+
+**Context.** AD-1127 owned execution lifecycle, but Captain requests, explicit room work, and agent-originated `[CREW]` used separate paths, could duplicate equivalent sessions, and passive UI mounting created tasks. Provenance and partial provisioning recovery were inconsistent.
+
+**Decision.** Make `CrewSessionService.open_or_resume()` the single ingress authority. Validate frozen server-owned principals, canonicalize/fingerprint goals, perform bounded exact-first semantic matching with a double scan around decomposition, and atomically resume or provision one parent, linked room, recovery plan, and lifecycle schedule. Support Captain NL, explicit Start Work, and Lieutenant+ agent ingress; fail closed for Ensign, spoofed provenance, invalid scoring, terminal reopen, and unauthorized blocked retry. Remove passive UI POSTs.
+
+**Tests.** The **535-node** backend surface was reconciled by a **534/535** changed-surface batch plus one corrected exact-node pass. **21 targeted UI** tests and final consolidated gates passed. Review was **APPROVED**.
+
 ### AD-1127 (2026-07-21) - CrewSession lifecycle recovery (#1046)
 
 **Context.** AD-1126 made verified finalization durable but left CrewSession scheduling, restart recovery, bounded retry, and shutdown ownership dependent on in-process invocation. Highest landed top-level was **AD-1126**; **AD-1127 is the new top-level ceiling**, while **BF-673 remains the BF ceiling**.
