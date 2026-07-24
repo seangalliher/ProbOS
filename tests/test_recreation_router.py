@@ -210,7 +210,7 @@ class TestRecreationRouter:
         runtime.recreation_service.get_valid_moves.return_value = [str(i) for i in range(1, 9)]
         runtime.ward_room = None
 
-        result = await make_move({"game_id": "g-1", "position": "0"}, runtime, MagicMock())
+        result = await make_move({"game_id": "g-1", "position": "0"}, runtime)
         assert result["board"][0] == "X"
         assert result["current_player"] == "Lynx"
         assert result["moves_count"] == 1
@@ -226,7 +226,7 @@ class TestRecreationRouter:
         runtime.recreation_service.make_move = AsyncMock(side_effect=ValueError("Not your turn"))
 
         with pytest.raises(HTTPException) as exc_info:
-            await make_move({"game_id": "g-1", "position": "0"}, runtime, MagicMock())
+            await make_move({"game_id": "g-1", "position": "0"}, runtime)
         assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
@@ -266,15 +266,13 @@ class TestRecreationRouter:
 
     @pytest.mark.asyncio
     async def test_forfeit_endpoint(self):
-        """forfeit_game() calls service and broadcasts event."""
+        """forfeit_game() delegates to the event-owning service."""
         from probos.routers.recreation import forfeit_game
 
         runtime = MagicMock()
         runtime.recreation_service = MagicMock()
         runtime.recreation_service.forfeit_game = AsyncMock()
-        broadcast = MagicMock()
 
-        result = await forfeit_game({"game_id": "g-1"}, runtime, broadcast)
+        result = await forfeit_game({"game_id": "g-1"}, runtime)
         assert result["status"] == "forfeited"
         runtime.recreation_service.forfeit_game.assert_called_once_with("g-1", "Captain")
-        assert broadcast.called

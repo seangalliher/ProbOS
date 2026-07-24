@@ -57,11 +57,6 @@ def _upload(name: str, blob: bytes, mime: str) -> UploadFile:
     )
 
 
-def _broadcast(*_a, **_k) -> None:
-    """No-op WS broadcast hook (real lambda, not a mock)."""
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Real-but-isolated substrate fixtures (BF-287)
 # ---------------------------------------------------------------------------
@@ -123,7 +118,6 @@ async def test_two_files_attach_appends_two_refs(runtime, wi_store):
         wi.id,
         files=[_upload("a.txt", _TXT_A, "text/plain"), _upload("b.txt", _TXT_B, "text/plain")],
         runtime=runtime,
-        broadcast=_broadcast,
     )
     assert out["work_item_id"] == wi.id
     assert out["skipped"] == []
@@ -151,7 +145,6 @@ async def test_bytes_land_in_store_by_sha256(runtime, wi_store, attach_store):
         wi.id,
         files=[_upload("a.txt", _TXT_A, "text/plain"), _upload("b.txt", _TXT_B, "text/plain")],
         runtime=runtime,
-        broadcast=_broadcast,
     )
     assert await attach_store.read(_sha(_TXT_A)) == _TXT_A
     assert await attach_store.read(_sha(_TXT_B)) == _TXT_B
@@ -173,7 +166,6 @@ async def test_second_upload_appends_preserving_other_metadata(runtime, wi_store
         wi.id,
         files=[_upload("new.txt", _TXT_A, "text/plain")],
         runtime=runtime,
-        broadcast=_broadcast,
     )
     # The new ref AND the pre-existing ref are both present (3 inputs counted
     # via the read-back metadata: pre + new).
@@ -200,7 +192,6 @@ async def test_duplicate_within_request_dedupes_to_one(runtime, wi_store):
         # Two distinct UploadFile objects wrapping the SAME bytes -> same sha256.
         files=[_upload("a.txt", _TXT_A, "text/plain"), _upload("a-copy.txt", _TXT_A, "text/plain")],
         runtime=runtime,
-        broadcast=_broadcast,
     )
     assert [i["content_hash"] for i in out["inputs"]] == [_sha(_TXT_A)]
     reloaded = await wi_store.get_work_item(wi.id)
@@ -221,7 +212,6 @@ async def test_mixed_good_and_bad_skips_per_file(runtime, wi_store):
             _upload("evil.png", _FAKE_PNG, "image/png"),  # non-image bytes -> magic mismatch
         ],
         runtime=runtime,
-        broadcast=_broadcast,
     )
     assert [i["content_hash"] for i in out["inputs"]] == [_sha(_TXT_A)]
     assert len(out["skipped"]) == 1
@@ -242,7 +232,6 @@ async def test_disallowed_mime_skipped(runtime, wi_store):
         wi.id,
         files=[_upload("archive.zip", b"PK\x03\x04stuff", "application/zip")],
         runtime=runtime,
-        broadcast=_broadcast,
     )
     assert out["inputs"] == []
     assert len(out["skipped"]) == 1
@@ -262,7 +251,6 @@ async def test_unknown_work_item_404(runtime):
             "does-not-exist",
             files=[_upload("a.txt", _TXT_A, "text/plain")],
             runtime=runtime,
-            broadcast=_broadcast,
         )
     assert exc.value.status_code == 404
 
@@ -279,7 +267,6 @@ async def test_no_work_item_store_503():
             "wi-1",
             files=[_upload("a.txt", _TXT_A, "text/plain")],
             runtime=rt,
-            broadcast=_broadcast,
         )
     assert exc.value.status_code == 503
 
@@ -292,7 +279,7 @@ async def test_no_work_item_store_503():
 async def test_empty_files_list_noop(runtime, wi_store):
     wi = await wi_store.create_work_item(title="parent", work_type="task")
     out = await attach_work_item_inputs(
-        wi.id, files=[], runtime=runtime, broadcast=_broadcast,
+        wi.id, files=[], runtime=runtime,
     )
     assert out["inputs"] == []
     assert out["skipped"] == []
@@ -314,7 +301,6 @@ async def test_integration_surfaces_via_read_endpoint(runtime, wi_store, chat_st
         wi.id,
         files=[_upload("a.txt", _TXT_A, "text/plain"), _upload("b.txt", _TXT_B, "text/plain")],
         runtime=runtime,
-        broadcast=_broadcast,
     )
     read = await list_thread_inputs(thread.id, runtime=runtime)
     assert read["task_id"] == wi.id

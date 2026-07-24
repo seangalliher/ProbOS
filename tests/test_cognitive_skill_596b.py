@@ -20,6 +20,7 @@ from probos.cognitive.standing_orders import (
     compose_instructions,
     set_skill_catalog,
 )
+from probos.config import SystemConfig
 from probos.types import HandlerLatencyClass, IntentDescriptor, IntentMessage
 
 # ---------------------------------------------------------------------------
@@ -251,6 +252,7 @@ class TestCollectIntentDescriptors:
         ]
         rt.spawner._templates = {"builder": template_cls}
         rt.cognitive_skill_catalog = catalog
+        rt.config = SystemConfig()
 
         # Import the actual method and bind to mock
         from probos.runtime import ProbOSRuntime

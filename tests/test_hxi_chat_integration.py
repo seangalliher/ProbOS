@@ -18,6 +18,7 @@ async def chat_client(tmp_path):
     rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
     await rt.start()
     app = create_app(rt)
+    assert app.state.broadcast_event is None
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client

@@ -1697,7 +1697,6 @@ async def test_input_upload_preserves_origin_session_and_synth(
             item.id,
             files=[_upload("context.txt", blob), _upload("copy.txt", blob)],
             runtime=runtime,
-            broadcast=_broadcast,
         )
     finally:
         chat_router._ATTACHMENT_STORE_CACHE.pop(id(runtime), None)
@@ -1876,6 +1875,7 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "initialize_session",
         "get_session",
         "install_recovery_plan",
+        "metrics",
         "open_or_resume",
         "publish_verified_result",
         "repair_provisioning",
@@ -1907,6 +1907,7 @@ def test_public_service_api_and_annotations_are_exact() -> None:
             "self", "parent_id", "expected_session", "expected_recovery",
             "plan", "children",
         },
+        "metrics": {"self", "days", "limit"},
         "open_or_resume": {
             "self", "principal", "goal", "success_criteria",
             "expected_deliverable", "facilitator_id", "owner_ids",

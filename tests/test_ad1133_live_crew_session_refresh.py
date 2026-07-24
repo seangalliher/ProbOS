@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -24,12 +25,18 @@ from probos.crew_profile import Rank
 from probos.earned_agency import agency_from_rank
 from probos.events import EventType
 from probos.mesh.nats_bus import MockNATSBus, NATSBus
+from probos.recreation.service import RecreationService
 from probos.routers.workforce import build_ws_workforce_snapshot
 from probos.runtime import ProbOSRuntime
 from probos.storage.sqlite_factory import SQLiteConnectionFactory
 from probos.substrate.pool_group import PoolGroup, PoolGroupRegistry
 from probos.threads import ChatThreadStore
-from probos.workforce import CrewSessionParentCreate, WorkItem, WorkItemStore
+from probos.workforce import (
+    BookableResource,
+    CrewSessionParentCreate,
+    WorkItem,
+    WorkItemStore,
+)
 from probos.ws_event_stream import (
     MAX_CLIENT_BYTES,
     MAX_CLIENT_FRAMES,
@@ -208,7 +215,7 @@ class _Runtime:
         self.listeners = [candidate for candidate in self.listeners if candidate is not listener]
         self.removed.append(listener)
 
-    def emit(self, event_type: str, data: dict[str, Any]) -> None:
+    def emit(self, event_type: str | EventType, data: dict[str, Any]) -> None:
         event = {"type": event_type, "data": data, "timestamp": time.time()}
         for listener in tuple(self.listeners):
             listener(event)
@@ -699,6 +706,355 @@ def test_ws_auth_envelope_sequence_and_lifespan_listener_identity(tmp_path: Path
     assert app.state.event_stream_hub.client_count == 0
 
 
+def test_chat_progress_normalizes_event_type_and_preserves_literal_and_drop(
+    tmp_path: Path,
+) -> None:
+    class _HostileStr(str):
+        pass
+
+    runtime = _Runtime(tmp_path)
+
+    async def _process(
+        _text: str,
+        *,
+        on_event: Callable[..., Any] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        assert on_event is not None
+        await on_event(EventType.DECOMPOSE_START, {"stage": "enum"})
+        await on_event("node_start", {"stage": "literal"})
+        await on_event(_HostileStr("node_complete"), {"stage": "hostile"})
+        return {"response": "complete", "dag": None, "results": None}
+
+    runtime.process_natural_language = _process  # type: ignore[attr-defined]
+    app = create_app(runtime)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/events") as websocket:
+            snapshot = websocket.receive_json()
+            generation = snapshot["stream"]["generation"]
+            response = client.post(
+                "/api/chat",
+                json={"message": "report progress", "history": []},
+            )
+            assert response.status_code == 200
+            assert response.json()["response"] == "complete"
+            for _ in range(100):
+                if app.state.event_stream_hub.sequence >= 2:
+                    break
+                time.sleep(0.005)
+            assert app.state.event_stream_hub.sequence == 2
+
+            enum_frame = websocket.receive_json()
+            literal_frame = websocket.receive_json()
+            assert enum_frame["type"] == EventType.DECOMPOSE_START.value
+            assert enum_frame["data"] == {"stage": "enum"}
+            assert enum_frame["stream"] == {
+                "generation": generation,
+                "sequence": 1,
+            }
+            assert literal_frame["type"] == "node_start"
+            assert literal_frame["data"] == {"stage": "literal"}
+            assert literal_frame["stream"] == {
+                "generation": generation,
+                "sequence": 2,
+            }
+
+
+async def test_workforce_create_without_lifespan_persists_without_broadcast(
+    tmp_path: Path,
+    work_store: WorkItemStore,
+) -> None:
+    runtime = _Runtime(tmp_path, work_items=work_store)
+    app = create_app(runtime)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+    ) as client:
+        assert app.state.broadcast_event is None
+        no_lifespan = await client.post(
+            "/api/work-items",
+            json={"id": "without-broadcast", "title": "Without broadcaster"},
+        )
+        assert no_lifespan.status_code == 200
+        assert await work_store.get_work_item("without-broadcast") is not None
+
+async def test_recreation_forfeit_without_lifespan_persists_without_broadcast(
+    tmp_path: Path,
+) -> None:
+    runtime = _Runtime(tmp_path)
+    service = RecreationService()
+    runtime.recreation_service = service  # type: ignore[attr-defined]
+    app = create_app(runtime)
+    transport = httpx.ASGITransport(app=app)
+
+    first = await service.create_game("tictactoe", "Captain", "Lynx")
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+    ) as client:
+        assert app.state.broadcast_event is None
+        no_lifespan = await client.post(
+            "/api/recreation/forfeit",
+            json={"game_id": first["game_id"]},
+        )
+        assert no_lifespan.status_code == 200
+        assert no_lifespan.json() == {"status": "forfeited"}
+        assert service.get_active_games() == []
+
+
+def test_workforce_create_lifespan_websocket_uses_store_event_once(
+    tmp_path: Path,
+) -> None:
+    runtime = _Runtime(tmp_path)
+    store = WorkItemStore(
+        db_path=str(tmp_path / "workforce-owner.db"),
+        emit_event=runtime.emit,
+        connection_factory=SQLiteConnectionFactory(),
+        tick_interval=1_000,
+    )
+    runtime.work_item_store = store
+    app = create_app(runtime)
+
+    with TestClient(app) as client:
+        assert client.portal is not None
+        client.portal.call(store.start)
+        try:
+            with client.websocket_connect("/ws/events") as websocket:
+                snapshot = websocket.receive_json()
+                generation = snapshot["stream"]["generation"]
+                response = client.post(
+                    "/api/work-items",
+                    json={"id": "store-owned", "title": "Store-owned event"},
+                )
+                assert response.status_code == 200
+                for _ in range(100):
+                    if app.state.event_stream_hub.sequence >= 1:
+                        break
+                    time.sleep(0.005)
+                assert app.state.event_stream_hub.sequence == 1
+
+                frame = websocket.receive_json()
+                assert frame["type"] == EventType.WORK_ITEM_CREATED.value
+                assert frame["data"] == {
+                    "work_item": response.json()["work_item"],
+                }
+                assert frame["stream"] == {
+                    "generation": generation,
+                    "sequence": 1,
+                }
+        finally:
+            client.portal.call(store.stop)
+
+
+def test_workforce_mutation_routes_use_store_events_exactly_once(
+    tmp_path: Path,
+) -> None:
+    runtime = _Runtime(tmp_path)
+    store = WorkItemStore(
+        db_path=str(tmp_path / "workforce-mutations.db"),
+        emit_event=runtime.emit,
+        connection_factory=SQLiteConnectionFactory(),
+        tick_interval=1_000,
+    )
+    runtime.work_item_store = store
+    store.register_resource(BookableResource(
+        resource_id="agent-1",
+        agent_type="worker",
+        callsign="Agent One",
+        capacity=2,
+    ))
+    store.register_resource(BookableResource(
+        resource_id="agent-2",
+        agent_type="worker",
+        callsign="Agent Two",
+        capacity=2,
+    ))
+    app = create_app(runtime)
+
+    with TestClient(app) as client:
+        assert client.portal is not None
+        client.portal.call(store.start)
+        try:
+            first = client.post(
+                "/api/work-items",
+                json={"id": "mutate-1", "title": "Mutate one"},
+            )
+            second = client.post(
+                "/api/work-items",
+                json={"id": "mutate-2", "title": "Mutate two"},
+            )
+            assert first.status_code == 200
+            assert second.status_code == 200
+            for _ in range(100):
+                if app.state.event_stream_hub.sequence >= 2:
+                    break
+                time.sleep(0.005)
+            assert app.state.event_stream_hub.sequence == 2
+
+            with client.websocket_connect("/ws/events") as websocket:
+                snapshot = websocket.receive_json()
+                generation = snapshot["stream"]["generation"]
+
+                operations = [
+                    (
+                        "patch",
+                        "/api/work-items/mutate-1",
+                        {"title": "Updated"},
+                        (EventType.WORK_ITEM_UPDATED.value,),
+                    ),
+                    (
+                        "put",
+                        "/api/work-items/mutate-1/steps",
+                        {"steps": [{"label": "Verify", "status": "pending"}]},
+                        (EventType.WORK_ITEM_UPDATED.value,),
+                    ),
+                    (
+                        "patch",
+                        "/api/work-items/mutate-1/steps/0",
+                        {"status": "submitted", "actor": "agent-1"},
+                        (EventType.WORK_ITEM_UPDATED.value,),
+                    ),
+                    (
+                        "post",
+                        "/api/work-items/mutate-1/transition",
+                        {"status": "blocked"},
+                        (
+                            EventType.WORK_ITEM_STATUS_CHANGED.value,
+                            EventType.WORK_ITEM_UPDATED.value,
+                        ),
+                    ),
+                    (
+                        "post",
+                        "/api/work-items/mutate-1/assign",
+                        {"resource_id": "agent-1"},
+                        (EventType.WORK_ITEM_ASSIGNED.value,),
+                    ),
+                    (
+                        "post",
+                        "/api/work-items/claim",
+                        {"resource_id": "agent-2"},
+                        (
+                            EventType.WORK_ITEM_ASSIGNED.value,
+                            EventType.WORK_ITEM_CLAIMED.value,
+                        ),
+                    ),
+                ]
+
+                expected_sequence = snapshot["stream"]["sequence"]
+                for method, url, payload, expected_types in operations:
+                    response = getattr(client, method)(url, json=payload)
+                    assert response.status_code == 200
+                    expected_sequence += len(expected_types)
+                    for _ in range(100):
+                        if app.state.event_stream_hub.sequence >= expected_sequence:
+                            break
+                        time.sleep(0.005)
+                    assert app.state.event_stream_hub.sequence == expected_sequence
+                    first_sequence = expected_sequence - len(expected_types) + 1
+                    for offset, expected_type in enumerate(expected_types):
+                        frame = websocket.receive_json()
+                        assert frame["type"] == expected_type
+                        assert frame["stream"] == {
+                            "generation": generation,
+                            "sequence": first_sequence + offset,
+                        }
+
+                upload = client.post(
+                    "/api/work-items/mutate-1/inputs",
+                    files={"files": ("context.txt", b"context", "text/plain")},
+                )
+                assert upload.status_code == 200
+                expected_sequence += 1
+                for _ in range(100):
+                    if app.state.event_stream_hub.sequence >= expected_sequence:
+                        break
+                    time.sleep(0.005)
+                upload_frame = websocket.receive_json()
+                assert upload_frame["type"] == EventType.WORK_ITEM_UPDATED.value
+                assert upload_frame["stream"] == {
+                    "generation": generation,
+                    "sequence": expected_sequence,
+                }
+
+                deleted = client.delete("/api/work-items/mutate-1")
+                assert deleted.status_code == 200
+                expected_sequence += 1
+                for _ in range(100):
+                    if app.state.event_stream_hub.sequence >= expected_sequence:
+                        break
+                    time.sleep(0.005)
+                delete_frame = websocket.receive_json()
+                assert delete_frame["type"] == "work_item_deleted"
+                assert delete_frame["stream"] == {
+                    "generation": generation,
+                    "sequence": expected_sequence,
+                }
+                assert app.state.event_stream_hub.sequence == 12
+        finally:
+            client.portal.call(store.stop)
+
+
+def test_input_upload_route_has_no_duplicate_broadcast_dependency() -> None:
+    from inspect import signature
+
+    from probos.routers.workforce import attach_work_item_inputs
+
+    assert "broadcast" not in signature(attach_work_item_inputs).parameters
+
+
+def test_recreation_forfeit_lifespan_websocket_uses_service_event_once(
+    tmp_path: Path,
+) -> None:
+    runtime = _Runtime(tmp_path)
+    service = RecreationService(emit_event_fn=runtime.emit)
+    runtime.recreation_service = service  # type: ignore[attr-defined]
+    app = create_app(runtime)
+
+    with TestClient(app) as client:
+        assert client.portal is not None
+        game = client.portal.call(
+            service.create_game,
+            "tictactoe",
+            "Captain",
+            "Lynx",
+        )
+        with client.websocket_connect("/ws/events") as websocket:
+            snapshot = websocket.receive_json()
+            generation = snapshot["stream"]["generation"]
+            response = client.post(
+                "/api/recreation/forfeit",
+                json={"game_id": game["game_id"]},
+            )
+            assert response.status_code == 200
+            assert response.json() == {"status": "forfeited"}
+            for _ in range(100):
+                if app.state.event_stream_hub.sequence >= 1:
+                    break
+                time.sleep(0.005)
+            assert app.state.event_stream_hub.sequence == 1
+
+            frame = websocket.receive_json()
+            assert frame["type"] == EventType.GAME_UPDATE.value
+            assert frame["data"] == {
+                "game_id": game["game_id"],
+                "status": "forfeited",
+                "board": [],
+                "current_player": "",
+                "winner": "",
+                "valid_moves": [],
+                "moves_count": 0,
+            }
+            assert frame["stream"] == {
+                "generation": generation,
+                "sequence": 1,
+            }
+
+    assert service.get_active_games() == []
+
+
 async def test_runtime_live_listener_is_live_only_and_stops_exact_subscription(
     tmp_path: Path,
 ) -> None:
@@ -959,6 +1315,36 @@ def test_detacher_rejects_hostile_containers_nonfinite_and_excess_depth() -> Non
         nested = [nested]
     with pytest.raises(WireValueError):
         detach_json_value(nested)
+
+
+async def test_ingress_drops_unknown_hostile_event_type_without_stringifying(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _HostileEventType:
+        @property
+        def __class__(self) -> type[EventType]:
+            return EventType
+
+        def __str__(self) -> str:
+            raise AssertionError("must not stringify an unknown event type")
+
+    runtime = _Runtime(tmp_path)
+    hub = WSEventStreamHub(runtime)
+    await hub.start()
+    try:
+        with caplog.at_level("WARNING", logger="probos.ws_event_stream"):
+            hub.ingress({
+                "type": _HostileEventType(),
+                "data": {},
+                "timestamp": 1.0,
+            })
+        assert hub.sequence == 0
+        assert list(hub._ingress) == []
+        assert "runtime event type invalid" in caplog.text
+        assert "HostileEventType" not in caplog.text
+    finally:
+        await hub.stop()
 
 
 async def test_router_broadcast_without_timestamp_gets_server_timestamp(

@@ -4611,7 +4611,7 @@ class CrewSessionService:
         if type(expected_revision) is not int:
             raise ValueError("crew_session_revision_invalid")
         if crew_trust_effects:
-            from probos.cognitive.crew_trust import CrewTrustEffect
+            from probos.consensus.crew_trust_effect import CrewTrustEffect
 
             if (
                 type(crew_trust_effects) is not tuple
@@ -4862,7 +4862,7 @@ class CrewSessionService:
         if type(expected_revision) is not int:
             raise ValueError("crew_session_revision_invalid")
         summary = _normalize_text(reason, maximum=4_096, allow_empty=False)
-        from probos.cognitive.crew_trust import CrewTrustEffect
+        from probos.consensus.crew_trust_effect import CrewTrustEffect
 
         if (
             type(crew_trust_effects) is not tuple

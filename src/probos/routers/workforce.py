@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
-from probos.routers.deps import get_runtime, get_ws_broadcast
+from probos.routers.deps import (
+    WebSocketBroadcast,
+    broadcast_ws_event,
+    get_runtime,
+    get_ws_broadcast,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +107,6 @@ async def create_from_template(
     template_id: str,
     request: Request,
     runtime: Any = Depends(get_runtime),
-    broadcast: Callable = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """Create work item from template."""
     if not runtime.work_item_store:
@@ -118,7 +122,6 @@ async def create_from_template(
     except ValueError as e:
         _raise_if_crew_session_write_reserved(e)
         raise HTTPException(404, str(e))
-    broadcast({"type": "work_item_created", "data": {"work_item": item.to_dict()}})
     return {"work_item": item.to_dict()}
 
 
@@ -129,7 +132,6 @@ async def create_from_template(
 async def create_work_item(
     request: Request,
     runtime: Any = Depends(get_runtime),
-    broadcast: Callable = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """Create a new work item."""
     if not runtime.work_item_store:
@@ -140,7 +142,6 @@ async def create_work_item(
     except ValueError as exc:
         _raise_if_crew_session_write_reserved(exc)
         raise
-    broadcast({"type": "work_item_created", "data": {"work_item": item.to_dict()}})
     return {"work_item": item.to_dict()}
 
 
@@ -181,7 +182,6 @@ async def update_work_item(
     work_item_id: str,
     request: Request,
     runtime: Any = Depends(get_runtime),
-    broadcast: Callable = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """Update work item fields."""
     if not runtime.work_item_store:
@@ -194,7 +194,6 @@ async def update_work_item(
         raise
     if not item:
         raise HTTPException(404, "Work item not found")
-    broadcast({"type": "work_item_updated", "data": {"work_item": item.to_dict()}})
     return {"work_item": item.to_dict()}
 
 
@@ -203,7 +202,7 @@ async def transition_work_item(
     work_item_id: str,
     request: Request,
     runtime: Any = Depends(get_runtime),
-    broadcast: Callable = Depends(get_ws_broadcast),
+    broadcast: WebSocketBroadcast | None = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """Transition work item status."""
     if not runtime.work_item_store:
@@ -218,7 +217,10 @@ async def transition_work_item(
         raise
     if not item:
         raise HTTPException(404, "Work item not found or invalid transition")
-    broadcast({"type": "work_item_updated", "data": {"work_item": item.to_dict()}})
+    broadcast_ws_event(
+        broadcast,
+        {"type": "work_item_updated", "data": {"work_item": item.to_dict()}},
+    )
     return {"work_item": item.to_dict()}
 
 
@@ -227,7 +229,6 @@ async def assign_work_item(
     work_item_id: str,
     request: Request,
     runtime: Any = Depends(get_runtime),
-    broadcast: Callable = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """Push assignment: assign work to a specific agent."""
     if not runtime.work_item_store:
@@ -244,9 +245,6 @@ async def assign_work_item(
         raise
     if not booking:
         raise HTTPException(400, "Assignment failed (ineligible or no capacity)")
-    # Re-fetch work item to get updated assigned_to
-    wi = await runtime.work_item_store.get_work_item(work_item_id)
-    broadcast({"type": "work_item_assigned", "data": {"work_item": wi.to_dict() if wi else {}, "booking": booking.to_dict()}})
     return {"booking": booking.to_dict()}
 
 
@@ -254,7 +252,6 @@ async def assign_work_item(
 async def claim_work_item(
     request: Request,
     runtime: Any = Depends(get_runtime),
-    broadcast: Callable = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """Pull assignment: agent claims highest-priority eligible work."""
     if not runtime.work_item_store:
@@ -272,7 +269,6 @@ async def claim_work_item(
     if not result:
         raise HTTPException(404, "No eligible work items")
     work_item, booking = result
-    broadcast({"type": "work_item_assigned", "data": {"work_item": work_item.to_dict(), "booking": booking.to_dict()}})
     return {"work_item": work_item.to_dict(), "booking": booking.to_dict()}
 
 
@@ -304,7 +300,6 @@ async def get_work_item_steps(
 async def set_work_item_steps(
     work_item_id: str, request: Request,
     runtime: Any = Depends(get_runtime),
-    broadcast: Callable = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """AD-1080: seed/replace the Todo checklist (the room plan)."""
     if not runtime.work_item_store:
@@ -316,7 +311,6 @@ async def set_work_item_steps(
     )
     if not item:
         raise HTTPException(404, "Work item not found")
-    broadcast({"type": "work_item_updated", "data": {"work_item": item.to_dict()}})
     return {"work_item": item.to_dict()}
 
 
@@ -324,7 +318,6 @@ async def set_work_item_steps(
 async def update_work_item_step(
     work_item_id: str, index: int, request: Request,
     runtime: Any = Depends(get_runtime),
-    broadcast: Callable = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """AD-1080: transition one Todo step (submit / confirm / reject — the
     senior-validation loop)."""
@@ -337,7 +330,6 @@ async def update_work_item_step(
     )
     if not item:
         raise HTTPException(400, "Work item not found, bad index, or invalid step transition")
-    broadcast({"type": "work_item_updated", "data": {"work_item": item.to_dict()}})
     return {"work_item": item.to_dict()}
 
 
@@ -345,7 +337,7 @@ async def update_work_item_step(
 async def delete_work_item(
     work_item_id: str,
     runtime: Any = Depends(get_runtime),
-    broadcast: Callable = Depends(get_ws_broadcast),
+    broadcast: WebSocketBroadcast | None = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """Delete a work item."""
     if not runtime.work_item_store:
@@ -353,7 +345,10 @@ async def delete_work_item(
     deleted = await runtime.work_item_store.delete_work_item(work_item_id)
     if not deleted:
         raise HTTPException(404, "Work item not found")
-    broadcast({"type": "work_item_deleted", "data": {"work_item_id": work_item_id}})
+    broadcast_ws_event(
+        broadcast,
+        {"type": "work_item_deleted", "data": {"work_item_id": work_item_id}},
+    )
     return {"deleted": True}
 
 
@@ -362,7 +357,6 @@ async def attach_work_item_inputs(
     work_item_id: str,
     files: list[UploadFile] = File(...),
     runtime: Any = Depends(get_runtime),
-    broadcast: Callable = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """AD-926a: attach one or more context-input files to a work item (task).
 
@@ -435,10 +429,6 @@ async def attach_work_item_inputs(
             work_item_id, {"input_attachments": existing},
         )
         wi = updated or wi
-        broadcast({
-            "type": "work_item_updated",
-            "data": {"work_item": wi.to_dict()},
-        })
 
     # Return the task-level input list (mirrors the AD-926 read shape,
     # source="task"). size is best-effort from the content-addressable store.

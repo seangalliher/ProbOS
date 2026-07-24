@@ -14,6 +14,8 @@ from probos.runtime import ProbOSRuntime
 def _minimal_runtime() -> ProbOSRuntime:
     runtime = ProbOSRuntime.__new__(ProbOSRuntime)
     runtime._event_listeners = []
+    runtime._live_event_listeners = []
+    runtime._event_listener_tasks = set()
     runtime._nats_publish_tasks = set()
     runtime.nats_bus = None
     runtime._check_night_order_escalation = lambda _event_type, _data: None

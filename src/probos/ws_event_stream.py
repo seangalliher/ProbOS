@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 from probos.crew_session_live import CrewSessionLiveProjector
+from probos.events import EventType
 from probos.routers.workforce import build_ws_workforce_snapshot
 
 logger = logging.getLogger(__name__)
@@ -125,11 +126,11 @@ def detach_json_value(
                 key_value = _bounded_string(raw_key, key=True)
                 detached[key_value] = _detach(item, depth + 1)
             return detached
-        if isinstance(candidate, Enum) and candidate_type.__module__.startswith("probos."):
+        if Enum in candidate_type.__mro__ and candidate_type.__module__.startswith("probos."):
             return _detach(candidate.value, depth + 1)
         if (
-            dataclasses.is_dataclass(candidate)
-            and not isinstance(candidate, type)
+            dataclasses.is_dataclass(candidate_type)
+            and type not in candidate_type.__mro__
             and candidate_type.__module__.startswith("probos.")
         ):
             declared = dataclasses.fields(candidate_type)
@@ -333,13 +334,13 @@ class WSEventStreamHub:
         try:
             item = self._prepare_ingress(event)
         except WireValueError:
-            event_name = (
-                event.get("type")
-                if type(event) is dict
-                and type(event.get("type")) is str
-                and len(event["type"]) <= 128
-                else "invalid"
-            )
+            raw_event_type = event.get("type") if type(event) is dict else None
+            if type(raw_event_type) is EventType:
+                event_name = raw_event_type.value
+            elif type(raw_event_type) is str and len(raw_event_type) <= 128:
+                event_name = raw_event_type
+            else:
+                event_name = "invalid"
             logger.warning(
                 "Dropped runtime event type %s because bounded wire "
                 "finalization failed; clients retain their prior state",
@@ -367,7 +368,10 @@ class WSEventStreamHub:
     def _prepare_ingress(self, event: dict[str, Any]) -> _IngressItem:
         if type(event) is not dict:
             raise WireValueError("runtime_event_invalid")
-        event_type = _bounded_string(event.get("type"))
+        raw_event_type = event.get("type")
+        if type(raw_event_type) is EventType:
+            raw_event_type = raw_event_type.value
+        event_type = _bounded_string(raw_event_type)
         if not event_type or len(event_type) > 128:
             raise WireValueError("runtime_event_invalid")
         timestamp = event.get("timestamp", time.time())

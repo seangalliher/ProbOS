@@ -10,14 +10,12 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import Any, Callable, Literal
 
 from probos.config import format_trust
+from probos.consensus.crew_trust_effect import CrewTrustEffect
 from probos.protocols import ConnectionFactory, DatabaseConnection
 from probos.types import AgentID
-
-if TYPE_CHECKING:
-    from probos.cognitive.crew_trust import CrewTrustEffect
 
 # AD-702: Diplomatic Relations — discounted trust transitivity tunables.
 # Per Nooplex §4.3.4: T(A→C) = T(A→B) × T(B→C) × δ, with safety-critical
@@ -616,8 +614,6 @@ class TrustNetwork:
         effect: CrewTrustEffect,
     ) -> TrustOutcomeWriteResult:
         """Atomically apply one exact durable CrewSession outcome once."""
-        from probos.cognitive.crew_trust import CrewTrustEffect
-
         if type(effect) is not CrewTrustEffect:
             raise ValueError("crew_trust_effect_invalid")
         canonical = effect.canonical_bytes()

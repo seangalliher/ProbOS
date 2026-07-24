@@ -102,6 +102,13 @@ ALLOWED_EXCEPTIONS = {
     ("cognitive/crew_synth.py", "probos.consensus.shapley"),
     ("cognitive/crew_synth.py", "probos.consensus.trust"),
     ("cognitive/crew_verifier.py", "probos.consensus.trust"),
+    # AD-1130: outcome-only CrewSession trust. The cognitive derivation module
+    # consumes the pure Shapley function and the consensus-owned immutable
+    # effect contract. CrewSession validates that same contract at its durable
+    # boundary; neither import reaches into mutable consensus implementation.
+    ("cognitive/crew_trust.py", "probos.consensus.shapley"),
+    ("cognitive/crew_trust.py", "probos.consensus.crew_trust_effect"),
+    ("cognitive/crew_session.py", "probos.consensus.crew_trust_effect"),
 }
 
 

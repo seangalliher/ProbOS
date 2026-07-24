@@ -21,7 +21,8 @@ from probos.cognitive.commands.personality_command import (
     is_personality_command,
 )
 from probos.routers.deps import (
-    get_pending_designs, get_runtime, get_task_tracker, get_ws_broadcast,
+    WebSocketBroadcast, broadcast_ws_event, get_pending_designs, get_runtime,
+    get_task_tracker, get_ws_broadcast,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ async def chat(
     req: ChatRequest,
     runtime: Any = Depends(get_runtime),
     track_task: Callable = Depends(get_task_tracker),
-    broadcast: Callable = Depends(get_ws_broadcast),
+    broadcast: WebSocketBroadcast | None = Depends(get_ws_broadcast),
     pending_designs: dict = Depends(get_pending_designs),
 ) -> dict[str, Any]:
     text = req.message.strip()
@@ -747,15 +748,21 @@ async def chat(
 
     events: list[dict[str, Any]] = []
 
-    async def on_event(event_type: str, data: dict[str, Any] | None = None) -> None:
+    async def on_event(
+        event_type: str | EventType,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        wire_event_type = (
+            event_type.value if isinstance(event_type, EventType) else event_type
+        )
         evt = {
-            "type": event_type,
+            "type": wire_event_type,
             "data": data or {},
             "timestamp": time.time(),
         }
         events.append(evt)
         # Broadcast to WebSocket clients (fire-and-forget)
-        broadcast(evt)
+        broadcast_ws_event(broadcast, evt)
 
     try:
         dag_result = await asyncio.wait_for(

@@ -22,6 +22,9 @@ from probos.cognitive.crew_trust import (
     derive_convergence_exhausted_effects,
     derive_final_refutation_effects,
 )
+from probos.consensus.crew_trust_effect import (
+    CrewTrustEffect as ConsensusCrewTrustEffect,
+)
 from probos.consensus.shapley import compute_shapley_values
 from probos.consensus.trust import TrustNetwork
 from probos.config import SystemConfig
@@ -808,6 +811,10 @@ def test_effect_identity_changes_with_revision_and_evidence() -> None:
     revision = _effect(session_revision=5)
     evidence = _effect(evidence_sha256=_SHA_B)
     assert len({base.outcome_id, revision.outcome_id, evidence.outcome_id}) == 3
+
+
+def test_cognitive_crew_trust_effect_reexports_consensus_contract_identity() -> None:
+    assert CrewTrustEffect is ConsensusCrewTrustEffect
 
 
 def test_completed_derivation_rewards_corrected_producer_and_verifiers() -> None:

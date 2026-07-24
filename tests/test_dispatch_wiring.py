@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.events import EventType
 from probos.runtime import ProbOSRuntime
 
 
@@ -45,7 +46,7 @@ class TestRuntimeWiring:
         from probos.runtime import ProbOSRuntime
 
         rt = ProbOSRuntime.__new__(ProbOSRuntime)
-        rt._event_listeners = []
+        rt._emit_event = MagicMock()
 
         spec = BuildSpec(title="test", description="test")
         build = QueuedBuild(
@@ -57,8 +58,11 @@ class TestRuntimeWiring:
         # Call the callback
         asyncio.run(rt._on_build_complete(build))
 
-        # Can't easily check emit_event without full init,
-        # but we verify it doesn't crash
+        rt._emit_event.assert_called_once()
+        event_type, payload = rt._emit_event.call_args.args
+        assert event_type is EventType.BUILD_QUEUE_ITEM
+        assert payload["item"]["id"] == "test123"
+        assert payload["item"]["status"] == "merged"
 
 
 class TestDispatchAPI:

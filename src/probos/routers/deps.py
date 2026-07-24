@@ -9,15 +9,26 @@ from fastapi import Request
 if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
 
+WebSocketBroadcast = Callable[[dict[str, Any]], None]
+
 
 def get_runtime(request: Request) -> ProbOSRuntime:
     """Inject ProbOSRuntime from app state."""
     return request.app.state.runtime
 
 
-def get_ws_broadcast(request: Request) -> Callable:
+def get_ws_broadcast(request: Request) -> WebSocketBroadcast | None:
     """Inject WebSocket broadcast function from app state."""
     return request.app.state.broadcast_event
+
+
+def broadcast_ws_event(
+    broadcast: WebSocketBroadcast | None,
+    event: dict[str, Any],
+) -> None:
+    """Broadcast an event when the application lifespan owns the stream."""
+    if broadcast is not None:
+        broadcast(event)
 
 
 def get_task_tracker(request: Request) -> Callable:

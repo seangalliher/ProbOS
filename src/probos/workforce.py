@@ -1283,7 +1283,7 @@ def _detach_crew_trust_effects(
     session_id: str,
     session_revision: int,
 ) -> tuple[dict[str, Any], ...]:
-    from probos.cognitive.crew_trust import CrewTrustEffect
+    from probos.consensus.crew_trust_effect import CrewTrustEffect
 
     if (
         type(effects) is not tuple
@@ -3844,7 +3844,7 @@ class WorkItemStore(EventEmitterMixin):
         limit: int,
     ) -> tuple[dict[str, Any], ...]:
         """Return a bounded deterministic batch of validated pending effects."""
-        from probos.cognitive.crew_trust import CrewTrustEffect
+        from probos.consensus.crew_trust_effect import CrewTrustEffect
 
         if type(limit) is not int or not 1 <= limit <= _MAX_CREW_TRUST_EFFECTS:
             raise ValueError("crew_trust_outbox_limit_invalid")

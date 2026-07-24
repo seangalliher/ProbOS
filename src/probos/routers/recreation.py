@@ -8,7 +8,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from probos.routers.deps import get_runtime, get_ws_broadcast
+from probos.routers.deps import (
+    WebSocketBroadcast,
+    broadcast_ws_event,
+    get_runtime,
+    get_ws_broadcast,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +22,10 @@ router = APIRouter(prefix="/api/recreation", tags=["recreation"])
 
 @router.post("/challenge")
 async def challenge_agent(
-    body: dict,
+    body: dict[str, Any],
     runtime: Any = Depends(get_runtime),
-    broadcast: Any = Depends(get_ws_broadcast),
-):
+    broadcast: WebSocketBroadcast | None = Depends(get_ws_broadcast),
+) -> dict[str, Any]:
     """Captain challenges a crew agent to a game."""
     opponent_id = body.get("opponent_agent_id", "")
     game_type = body.get("game_type", "tictactoe")
@@ -85,16 +90,18 @@ async def challenge_agent(
         "thread_id": thread_id,
     }
 
-    broadcast({"type": "game_update", "data": result, "timestamp": time.time()})
+    broadcast_ws_event(
+        broadcast,
+        {"type": "game_update", "data": result, "timestamp": time.time()},
+    )
     return result
 
 
 @router.post("/move")
 async def make_move(
-    body: dict,
+    body: dict[str, Any],
     runtime: Any = Depends(get_runtime),
-    broadcast: Any = Depends(get_ws_broadcast),
-):
+) -> dict[str, Any]:
     """Captain makes a move in an active game."""
     game_id = body.get("game_id", "")
     position = body.get("position", "")
@@ -177,10 +184,9 @@ async def get_active_game(runtime: Any = Depends(get_runtime)):
 
 @router.post("/forfeit")
 async def forfeit_game(
-    body: dict,
+    body: dict[str, Any],
     runtime: Any = Depends(get_runtime),
-    broadcast: Any = Depends(get_ws_broadcast),
-):
+) -> dict[str, str]:
     """Captain forfeits the active game."""
     game_id = body.get("game_id", "")
 
@@ -189,15 +195,5 @@ async def forfeit_game(
         raise HTTPException(status_code=503, detail="Recreation service not available")
 
     await rec_svc.forfeit_game(game_id, "Captain")
-
-    broadcast({"type": "game_update", "data": {
-        "game_id": game_id,
-        "status": "forfeited",
-        "board": [""] * 9,
-        "current_player": "",
-        "winner": "",
-        "valid_moves": [],
-        "moves_count": 0,
-    }, "timestamp": time.time()})
 
     return {"status": "forfeited"}
