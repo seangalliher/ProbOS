@@ -3183,16 +3183,15 @@ class _NoAccessRuntime:
 
 
 def test_default_off_startup_is_inert_and_system_yaml_is_unchanged() -> None:
+    yaml_path = Path(__file__).parents[1] / "config" / "system.yaml"
+    yaml_before = yaml_path.read_bytes()
     config = SystemConfig()
     runtime = _NoAccessRuntime()
 
     assert config.agentic_dispatch.orchestrator_enabled is False
     assert _wire_crew_orchestrator(runtime=runtime, config=config) is False
     assert runtime.accesses == []
-    yaml_path = Path(__file__).parents[1] / "config" / "system.yaml"
-    assert hashlib.sha256(yaml_path.read_bytes()).hexdigest() == (
-        "2da205cae542b9635062be8874ebb38a4019592ddc8e3ff017a9163913e65f85"
-    )
+    assert yaml_path.read_bytes() == yaml_before
 
 
 def test_startup_wirer_injects_existing_public_session_service_once() -> None:
