@@ -26,6 +26,14 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 **Tests.** **284 focused** lifecycle/NATS/scaling/shutdown tests plus an independent **8-case** Architect gate passed. The consolidated suite passed **20,465 / 33 skipped / 7 subtests**. Final Architect review: **APPROVED**, zero Required findings.
 
+### BF-677 (2026-07-24) - `crew_trace` provenance retention (#1067)
+
+**Context.** The agentic executor intentionally writes content-addressed execution provenance with origin `crew_trace`, but AttachmentStore did not recognize that origin. Each trace warned and was coerced to `chat_attachment`, corrupting retention classification and flooding logs.
+
+**Decision.** Add `crew_trace` to the canonical known-origin contract and filesystem store. Keep traces durable with no age TTL, but place them below Captain chat attachments in LRU priority so storage pressure removes provenance before user-authored content.
+
+**Tests.** **19 dedicated** attachment/agentic tests and the final **20,465-test** consolidated gate passed. Architect review: **APPROVED**. BF-677 is the new BF ceiling; AD-1133 remains the top-level AD ceiling.
+
 ### AD-1133 (2026-07-23) - bounded live CrewSession and room refresh (#1052)
 
 **Context.** AD-1132 exposed durable CrewSession state, but open HXI surfaces refreshed only through initial GETs and legacy polling. The existing `/ws/events` path lacked auth-before-accept, bounded lifecycle ownership, authoritative sequence/generation, message/artifact invalidation, and Crew-safe projections. Highest landed top-level was **AD-1132**; **AD-1133 is the new top-level ceiling**, while **BF-673 remains the BF ceiling**.

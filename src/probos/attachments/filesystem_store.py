@@ -92,6 +92,7 @@ class FilesystemAttachmentStore:
         "perception_frame",
         "browser_screenshot",
         "avatar_render",
+        "crew_trace",
         "chat_attachment",
         "agent_artifact",
     )

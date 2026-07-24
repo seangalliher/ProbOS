@@ -83,6 +83,67 @@ async def test_age_ttl_evicts_perception_frames_only(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_crew_trace_is_durable_known_origin(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = FilesystemAttachmentStore(tmp_path)
+    perception, attachments = _make_cfg(frame_retention_seconds=30)
+    past = time.time() - 600
+
+    with caplog.at_level("WARNING"):
+        sha = await _seed(
+            store,
+            origin="crew_trace",
+            blob=b"{\"tool_calls\": []}",
+            written_at=past,
+        )
+    await AttachmentReaper(
+        store,
+        perception_cfg=perception,
+        attachments_cfg=attachments,
+    ).sweep_once()
+
+    assert "unknown attachment origin" not in caplog.text
+    assert await store.list_by_origin("crew_trace") == [(sha, past)]
+    assert await store.exists(sha)
+
+
+@pytest.mark.asyncio
+async def test_lru_evicts_crew_trace_before_chat_attachment(
+    tmp_path: Path,
+) -> None:
+    store = FilesystemAttachmentStore(tmp_path)
+    perception, attachments = _make_cfg(
+        frame_retention_seconds=86400,
+        max_store_bytes=2_500,
+    )
+    past = time.time() - 600
+    trace_sha = await _seed(
+        store,
+        origin="crew_trace",
+        blob=b"T" * 2_000,
+        written_at=past,
+    )
+    chat_sha = await _seed(
+        store,
+        origin="chat_attachment",
+        blob=b"C" * 2_000,
+        written_at=past + 1,
+    )
+
+    summary = await AttachmentReaper(
+        store,
+        perception_cfg=perception,
+        attachments_cfg=attachments,
+    ).sweep_once()
+
+    assert summary["lru_removed"] == 1
+    assert not await store.exists(trace_sha)
+    assert await store.exists(chat_sha)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("retention", [30, 300, 3600])
 async def test_age_ttl_respects_retention_knob(tmp_path: Path, retention: int) -> None:
     store = FilesystemAttachmentStore(tmp_path)

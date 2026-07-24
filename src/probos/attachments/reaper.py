@@ -3,8 +3,8 @@
 Two policies, run in sequence each tick:
   1. Age TTL -- origin=perception_frame older than frame_retention_seconds.
   2. LRU cap -- if total > attachments.max_store_bytes, evict oldest
-     perception_frame entries first, then oldest chat_attachment entries,
-     until under cap.
+      perception_frame, browser_screenshot, avatar_render, crew_trace, then
+      chat_attachment entries until under cap.
 
 Tier-2 honest-degrade: any filesystem error is logged at WARNING; the
 sweep continues with the next candidate. Never raises out of the loop.
@@ -31,6 +31,7 @@ _LRU_EVICTION_ORDER: tuple[str, ...] = (
     "perception_frame",
     "browser_screenshot",
     "avatar_render",
+    "crew_trace",
     "chat_attachment",
 )
 
@@ -171,8 +172,8 @@ class AttachmentReaper:
         """Evict oldest entries until total <= max_store_bytes.
 
         Less-durable origins (perception_frame) are evicted first; if
-        that's not enough, walk through browser_screenshot, then
-        avatar_render, then chat_attachment.
+        that's not enough, walk through browser_screenshot, avatar_render,
+        crew_trace, then chat_attachment.
         """
         cap = int(self._attachments_cfg.max_store_bytes)
         if cap <= 0:

@@ -19,6 +19,7 @@ ATTACHMENT_ORIGINS: tuple[str, ...] = (
     "browser_screenshot",
     "avatar_render",
     "agent_artifact",  # AD-797 (Wave 197): artifact bytes extracted from agent replies
+    "crew_trace",  # AD-859a: durable agentic-loop provenance JSON
 )
 
 
