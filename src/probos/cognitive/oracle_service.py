@@ -11,6 +11,7 @@ knows which knowledge tier each result came from.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections import OrderedDict
@@ -60,6 +61,27 @@ _MEMORY_REF_CACHE_SIZE = 256          # OracleService instance-scoped LRU bound
 _MEMORY_REF_SNIPPET_CHARS = 200       # MemoryRef.snippet cap
 _FORMAT_REFS_DEFAULT_LINES = 10       # default cap for format_refs() output
 _FORMAT_REFS_LINE_CHAR_CAP = 120      # per-line cap inside format_refs()
+
+# AD-1138: scope Tier 2 queries Ship's Records under. Shared by the keyword and
+# semantic paths so both admit exactly the same classifications.
+_RECORDS_QUERY_SCOPE = "ship"
+
+
+def _decode_record_frontmatter(raw: Any) -> dict[str, Any]:
+    """AD-1138: rehydrate the frontmatter sidecar stored in ChromaDB metadata.
+
+    ChromaDB metadata values are flat scalars, so ``index_record`` serialises
+    frontmatter to JSON. A missing, malformed, or non-object payload degrades
+    to ``{}`` — Tier 2 promises a dict under ``metadata["frontmatter"]``.
+    """
+    if not raw or not isinstance(raw, str):
+        return {}
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.debug("AD-1138: unparseable frontmatter sidecar; using {}", exc_info=True)
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 # Small inline stopword set — keeps _extract_entity_tokens self-contained
 # (no nltk / no external corpus). Lowercase only.
@@ -184,6 +206,7 @@ class OracleService:
         knowledge_graph: Any = None,  # AD-688 (Tier 6)
         health_provider: Any = None,  # AD-695 (Tier 7)
         match_reason_enabled: bool = False,  # AD-988 (default-OFF)
+        records_semantic_enabled: bool = False,  # AD-1138 (default-OFF)
     ) -> None:
         self._episodic_memory = episodic_memory
         self._records_store = records_store
@@ -199,6 +222,9 @@ class OracleService:
         # When False (default) the episodic projection sets no match_reason
         # and query_formatted renders byte-identically to pre-AD-988.
         self._match_reason_enabled = match_reason_enabled
+        # AD-1138: gate for semantic retrieval over Ship's Records (Tier 2).
+        # When False (default) Tier 2 runs the keyword path verbatim.
+        self._records_semantic_enabled = records_semantic_enabled
         self._callsign_registry: Any = None  # BF-264 (callsign→agent_type expansion)
         # AD-462f: Instance-scoped LRU for resolve_ref(). Bounded by
         # _MEMORY_REF_CACHE_SIZE; OrderedDict eviction (oldest first).
@@ -698,7 +724,41 @@ class OracleService:
         return results[:k]
 
     async def _query_records(self, query_text: str, *, k: int) -> list[OracleResult]:
-        raw = await self._records_store.search(query_text, scope="ship")
+        """Tier 2: Ship's Records.
+
+        AD-1138: when the semantic index is enabled and a layer is attached,
+        retrieval runs through ChromaDB with classification enforced in the
+        query. Otherwise — and whenever semantic retrieval yields nothing or
+        raises — the original keyword path runs. The layer may be unattached
+        or its collection empty (fresh boot, backfill not yet run), so an
+        empty semantic result must degrade to keyword rather than report the
+        commons as empty.
+
+        The ``OracleResult`` shape is identical on both paths; only the
+        retrieval mechanism and the score differ.
+        """
+        if self._records_semantic_enabled and self._semantic_layer is not None:
+            try:
+                semantic_results = await self._query_records_semantic(query_text, k=k)
+            except Exception:
+                logger.warning(
+                    "AD-1138: semantic records retrieval failed; falling back to "
+                    "the keyword path for this query",
+                    exc_info=True,
+                )
+                semantic_results = []
+            if semantic_results:
+                return semantic_results
+            logger.debug(
+                "AD-1138: semantic records retrieval returned nothing; falling "
+                "back to the keyword path",
+            )
+        return await self._query_records_keyword(query_text, k=k)
+
+    async def _query_records_keyword(
+        self, query_text: str, *, k: int,
+    ) -> list[OracleResult]:
+        raw = await self._records_store.search(query_text, scope=_RECORDS_QUERY_SCOPE)
         results: list[OracleResult] = []
         for r in raw[:k]:
             score = min(r.get("score", 0) / 10.0, 1.0)
@@ -709,6 +769,44 @@ class OracleService:
                 metadata={
                     "path": r.get("path", ""),
                     "frontmatter": r.get("frontmatter", {}),
+                },
+                provenance="[ship's records]",
+            ))
+        return results
+
+    async def _query_records_semantic(
+        self, query_text: str, *, k: int,
+    ) -> list[OracleResult]:
+        """AD-1138: semantic retrieval over the records collection.
+
+        ``records_scope`` matches the scope the keyword path has always used,
+        so the set of admissible classifications is the same on both paths —
+        semantic retrieval is not a way around ``RecordsStore.search``'s
+        enforcement. Reader identity is deliberately not applied here: the
+        keyword path Tier 2 replaces applies none either, and adding it would
+        hide an agent's own department records rather than close a hole.
+        """
+        raw = await self._semantic_layer.search(
+            query_text,
+            types=["records"],
+            limit=k,
+            include_episodes=False,
+            records_scope=_RECORDS_QUERY_SCOPE,
+        )
+        results: list[OracleResult] = []
+        for r in raw[:k]:
+            metadata = r.get("metadata") or {}
+            score = float(r.get("score", 0.0) or 0.0)
+            content = metadata.get("snippet", "") or (r.get("document", "") or "")
+            results.append(OracleResult(
+                source_tier="records",
+                content=content,
+                score=max(0.0, min(score, 1.0)),
+                metadata={
+                    "path": metadata.get("path", ""),
+                    "frontmatter": _decode_record_frontmatter(
+                        metadata.get("frontmatter_json", ""),
+                    ),
                 },
                 provenance="[ship's records]",
             ))
@@ -776,26 +874,42 @@ class OracleService:
         normalises each result dict into an `OracleResult` so the merged feed
         is uniform with the other tiers. When the layer is not attached
         (test/legacy bootstrap), returns `[]` and logs at debug.
+
+        BF-675: episodes are excluded at the source (``include_episodes=False``).
+        The layer recalls episodes globally, with no sovereign-shard filter, so
+        surfacing them here labelled ``"semantic"`` bypassed the AD-607e shard
+        policy entirely. Episode content reaches agents through Tier 1
+        (``_query_episodic``), which is agent-scoped. Any episode-typed row that
+        still arrives is relabelled ``"episodic"`` below so AD-607e can act on
+        it — defence in depth for future paths that re-enable episodes.
         """
         layer = self._semantic_layer
         if layer is None:
             logger.debug("Oracle: Tier 5 (semantic) — no layer attached; returning []")
             return []
 
-        raw = await layer.search(query_text, types=types, limit=k)
+        raw = await layer.search(
+            query_text, types=types, limit=k, include_episodes=False,
+        )
         results: list[OracleResult] = []
         for r in raw:
             doc_type = r.get("type", "semantic")
+            metadata = r.get("metadata") or {}
+            # BF-675 DD-3: episode-derived rows carry sovereign provenance, and
+            # "episodic" is the only tier label _apply_access_policy inspects.
+            is_episode = doc_type == "episode" or metadata.get("type") == "episode"
             results.append(OracleResult(
-                source_tier="semantic",
+                source_tier="episodic" if is_episode else "semantic",
                 content=r.get("document", "") or "",
                 score=float(r.get("score", 0.0) or 0.0),
                 metadata={
                     "id": r.get("id", ""),
                     "type": doc_type,
-                    **(r.get("metadata") or {}),
+                    **metadata,
                 },
-                provenance=f"[semantic: {doc_type}]",
+                provenance=(
+                    "[episodic memory]" if is_episode else f"[semantic: {doc_type}]"
+                ),
             ))
         return results
 

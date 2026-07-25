@@ -1508,6 +1508,10 @@ def _wire_native_swe_harness(
         from probos.cognitive.swe_harness.policies import make_blocked_paths_hook
         from probos.cognitive.swe_harness.native_builder import NativeBuilderHarness
         from probos.cognitive.swe_harness.session_compactor import SessionCompactor
+        from probos.cognitive.swe_harness.agentic_loop import (
+            resolve_parallel_tool_settings,
+            resolve_tool_result_bounds,
+        )
 
         registry = getattr(runtime, "tool_registry", None)
         if registry is None or tool_executor is None:
@@ -1542,6 +1546,18 @@ def _wire_native_swe_harness(
             token_budget=cfg.token_budget,
             compactor=SessionCompactor(),
             compaction_threshold=int(cfg.compaction_threshold_pct * 100_000),
+            # AD-1146: shared AgenticLoop wire-protocol flag (default-OFF).
+            structured_tool_messages=bool(
+                getattr(
+                    getattr(config, "agentic_loop", None),
+                    "structured_tool_messages",
+                    False,
+                )
+            ),
+            # AD-1148: shared per-tool-result bound (0 = unbounded, default-OFF).
+            **resolve_tool_result_bounds(getattr(config, "agentic_loop", None)),
+            # AD-1147: shared parallel-tool settings (default-OFF).
+            **resolve_parallel_tool_settings(getattr(config, "agentic_loop", None)),
         )
         runtime.native_builder_harness = harness
         logger.info(

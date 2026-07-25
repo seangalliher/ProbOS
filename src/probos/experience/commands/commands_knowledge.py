@@ -82,9 +82,15 @@ async def cmd_search(runtime: ProbOSRuntime, console: Console, args: str) -> Non
     # AD-686: Query via Oracle Tier 5 when available; fall back to direct
     # layer for legacy paths. Stats panel still reads `layer.stats()` —
     # stats migration is deferred (no Oracle equivalent in v1).
+    # BF-675: Tier 5 no longer carries episodes (they bypassed the AD-607e
+    # sovereign-shard filter). The Captain is not shard-scoped, so request the
+    # episodic tier explicitly to keep /search output unchanged — with no
+    # `agent_id` the Oracle takes the same global recall path as before.
     oracle = getattr(runtime, "oracle", None) or getattr(runtime, "_oracle_service", None)
     if oracle is not None:
-        oracle_results = await oracle.query(query, k_per_tier=10, tiers=["semantic"])
+        oracle_results = await oracle.query(
+            query, k_per_tier=10, tiers=["semantic", "episodic"],
+        )
         results = [
             {
                 "type": r.metadata.get("type", "semantic"),

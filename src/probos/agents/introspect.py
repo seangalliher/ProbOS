@@ -782,7 +782,15 @@ class IntrospectionAgent(BaseAgent):
                 for r in oracle_results
             ]
         elif layer is not None:
-            results = await layer.search(query, types=types, limit=10)
+            # BF-675 (DD-5): `types` is None whenever the caller omits the
+            # optional "types" param, which used to make the layer recall
+            # episodes globally — unfiltered by sovereign shard (AD-397/607e).
+            # IntrospectionAgent is an agent, not the Captain, and the Oracle
+            # branch above no longer returns episodes either, so the fallback
+            # must match it.
+            results = await layer.search(
+                query, types=types, limit=10, include_episodes=False,
+            )
 
         # Also search project docs via CodebaseIndex (AD-301)
         doc_snippets: list[dict[str, str]] = []

@@ -697,6 +697,10 @@ async def init_cognitive_services(
             match_reason_enabled=getattr(
                 config.memory, "oracle_match_reason_enabled", False,
             ),
+            # AD-1138: default-OFF semantic retrieval over Ship's Records.
+            records_semantic_enabled=getattr(
+                config.records, "semantic_index_enabled", False,
+            ),
         )
         logger.info("AD-462e: OracleService initialized")
     except Exception as e:

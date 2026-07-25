@@ -72,6 +72,13 @@ _AGENTIC_EXTRA_CONTEXT_KEYS = frozenset(
 _AGENTIC_RANKS = frozenset(
     {"ensign", "lieutenant", "commander", "senior_officer"}
 )
+# AD-1129 / AD-1139: tools whose availability is decided ONLY by the
+# department + rank gate on their registration. A raw Captain grant is dropped
+# from ``granted_ids`` for these so it cannot route around
+# ``ToolRegistry.resolve_permission``'s scope layer, which returns NONE for an
+# out-of-scope department *before* grants are ever considered. Each id is
+# re-offered below through an explicit ``check_permission`` call.
+_GATED_TOOL_IDS = frozenset({"event_log_query", "oracle_query"})
 
 
 def _resolve_agentic_identity(
@@ -651,7 +658,11 @@ class WorkItemAgenticExecutor:
         change on the AD-839 path), then additionally persists the tool trace to
         ``runtime.attachment_store`` and returns a :class:`WorkItemAgenticOutcome`.
         """
-        from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+        from probos.cognitive.swe_harness.agentic_loop import (
+            AgenticLoop,
+            resolve_parallel_tool_settings,
+            resolve_tool_result_bounds,
+        )
         from probos.cognitive.swe_harness.tool_call import (
             tool_registration_to_llm_definition,
         )
@@ -724,7 +735,7 @@ class WorkItemAgenticExecutor:
             granted_ids = [
                 g.tool_id
                 for g in grants
-                if not g.is_restriction and g.tool_id != "event_log_query"
+                if not g.is_restriction and g.tool_id not in _GATED_TOOL_IDS
             ]
 
         # AD-1019c: contribute the agent's authorized MCP workbench tools — the
@@ -891,10 +902,28 @@ class WorkItemAgenticExecutor:
             ):
                 event_log_ids = ["event_log_query"]
 
+        # AD-1139: offer the read-only Oracle consult tool when startup
+        # registered it (default-OFF via config.agentic_tools). It lets the
+        # agent reach the ship's shared knowledge commons — Σ tiers only, never
+        # the sovereign episodic shard — mid-task, instead of only receiving
+        # Oracle context passively during perceive. Permission-checked, and an
+        # agent whose department/rank is denied simply does not see the tool
+        # (silent honest-degrade, mirroring the event_log_query block above).
+        oracle_ids: list[str] = []
+        if registry is not None and registry.get("oracle_query") is not None:
+            if registry.check_permission(
+                agent_id,
+                "oracle_query",
+                ToolPermission.READ,
+                agent_department=department,
+                agent_rank=rank,
+            ):
+                oracle_ids = ["oracle_query"]
+
         tool_ids = list(
             dict.fromkeys([
                 *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
-                *search_ids, *delegate_ids, *event_log_ids,
+                *search_ids, *delegate_ids, *event_log_ids, *oracle_ids,
             ])
         )
 
@@ -915,10 +944,29 @@ class WorkItemAgenticExecutor:
             _loop_kwargs["max_iterations"] = max_iterations
         if tier is not None:
             _loop_kwargs["tier"] = tier
+        # AD-1146: opt into the provider's real multi-turn message array
+        # (assistant.tool_calls + role:"tool" results). Default-OFF — with the
+        # flag off the loop builds the AD-545 flattened prompt verbatim. Read
+        # defensively so synthetic/event-neutral runtimes without a config still
+        # construct the loop.
+        _agentic_loop_cfg = getattr(
+            getattr(runtime, "config", None), "agentic_loop", None
+        )
         loop = AgenticLoop(
             llm_client=self._llm,
             tool_executor=executor,
             event_emit_fn=getattr(runtime, "emit_event", None),
+            structured_tool_messages=bool(
+                getattr(_agentic_loop_cfg, "structured_tool_messages", False)
+            ),
+            # AD-1148: bound each tool result before it enters the loop's
+            # message history. 0 = unbounded (default-OFF), so message content
+            # is byte-identical until an operator opts in.
+            **resolve_tool_result_bounds(_agentic_loop_cfg),
+            # AD-1147: fan the read-only allowlisted tool calls of one response
+            # out concurrently, bounded. Default-OFF — the sequential AD-545
+            # path runs verbatim until an operator opts in.
+            **resolve_parallel_tool_settings(_agentic_loop_cfg),
             **_loop_kwargs,
         )
         # AD-1129: accepted compatibility extras are copied first; the run's

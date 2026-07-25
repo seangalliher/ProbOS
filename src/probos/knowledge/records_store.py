@@ -59,6 +59,7 @@ class RecordsStore:
         self._pending_commits: list[str] = []
         self._commit_task: asyncio.Task | None = None
         self._confidence_tracker: Any = None
+        self._semantic_indexer: Any = None  # AD-1138
 
     @property
     def repo_path(self) -> Path:
@@ -160,8 +161,42 @@ class RecordsStore:
         if self._confidence_tracker is not None:
             self._confidence_tracker.initialize_entry(path)
 
+        # AD-1138: keep the semantic index current so a newly written record is
+        # discoverable immediately rather than at the next backfill. Never let
+        # indexing fail a write — the record is on disk and committed, and
+        # keyword search already covers it.
+        if self._semantic_indexer is not None:
+            try:
+                await self._semantic_indexer.index_record(
+                    path=path,
+                    content=content,
+                    classification=classification,
+                    author=author,
+                    department=department,
+                    topic=topic,
+                    tags=tags,
+                    frontmatter=frontmatter,
+                )
+            except Exception:
+                logger.warning(
+                    "AD-1138: semantic indexing failed for %s; the record is written "
+                    "and stays keyword-searchable until its next write or backfill",
+                    path, exc_info=True,
+                )
+
         logger.info("Record written: %s by %s (%s)", path, author, classification)
         return path
+
+    def set_semantic_indexer(self, indexer: Any) -> None:
+        """AD-1138: Late-bind the semantic record indexer.
+
+        Mirrors :meth:`set_confidence_tracker` (AD-444). Needed because the
+        ``SemanticKnowledgeLayer`` is built in the structural-services startup
+        phase, after the cognitive phase that constructs this store. The
+        indexer is duck-typed on a single awaitable ``index_record(...)``
+        method. ``None`` (the default) leaves ``write_entry`` byte-identical.
+        """
+        self._semantic_indexer = indexer
 
     def set_confidence_tracker(self, tracker: Any) -> None:
         """AD-444: Late-bind confidence tracker."""

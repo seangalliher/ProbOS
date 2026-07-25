@@ -31,6 +31,29 @@ def estimate_messages_tokens(messages: list[dict]) -> int:
     return sum(estimate_tokens(str(m.get("content", ""))) for m in messages)
 
 
+def align_to_group_start(messages: list[dict], index: int) -> int:
+    """AD-1146 (DD-5): move ``index`` back so a tail slice never starts mid-group.
+
+    With AD-1146 structured tool messages, an assistant turn carrying
+    ``tool_calls`` is followed by one ``role:"tool"`` entry per call. A blind
+    ``messages[-n:]`` slice can begin in the middle of that group, leaving
+    ``role:"tool"`` entries whose owning assistant was summarised away — the
+    provider rejects that correlation with a 400.
+
+    Walks backwards over any leading ``role:"tool"`` entries so the returned
+    index lands on the assistant that owns them. Returns ``index`` unchanged
+    (clamped to ``[0, len(messages)]``) when the slice already starts on a
+    group boundary, so histories without tool messages are unaffected.
+    """
+    if index <= 0:
+        return 0
+    if index >= len(messages):
+        return len(messages)
+    while index > 0 and messages[index].get("role") == "tool":
+        index -= 1
+    return index
+
+
 class SessionCompactor:
     """AD-547: Compact older messages via fast-tier LLM summarisation."""
 
@@ -75,7 +98,10 @@ class SessionCompactor:
                 original_user = m
                 break
 
-        tail = messages[-preserve_count:] if preserve_count > 0 else []
+        tail: list[dict] = []
+        if preserve_count > 0:
+            # AD-1146 (DD-5): never start the preserved tail mid tool-call group.
+            tail = messages[align_to_group_start(messages, len(messages) - preserve_count):]
         preserved_ids: set[int] = set()
         if system_msg is not None:
             preserved_ids.add(id(system_msg))
@@ -114,12 +140,11 @@ class SessionCompactor:
             system_msg is None or id(original_user) != id(system_msg)
         ):
             compacted.append(original_user)
-        compacted.append(
-            {
-                "role": "user",
-                "content": f"[CONTEXT SUMMARY — earlier exchanges]\n{summary}",
-            }
-        )
+        summary_msg: dict = {
+            "role": "user",
+            "content": f"[CONTEXT SUMMARY — earlier exchanges]\n{summary}",
+        }
+        compacted.append(summary_msg)
         compacted.extend(tail)
 
         if budget_tokens is not None:
@@ -131,5 +156,23 @@ class SessionCompactor:
                     budget_tokens,
                 )
                 if len(compacted) > 4:
-                    compacted = [compacted[0], compacted[2]] + compacted[-2:]
+                    # AD-1146 (DD-5): keep the head + the summary we just built
+                    # (identity, not index 2 — that position is only the summary
+                    # when both a system and an original-user message survived)
+                    # and a group-aligned trailing slice. The alignment walk is
+                    # floored at the start of the preserved tail (already a group
+                    # boundary) so it can never reach back into the head/summary
+                    # region and duplicate an entry.
+                    tail_floor = len(compacted) - len(tail)
+                    start = max(
+                        tail_floor,
+                        align_to_group_start(compacted, len(compacted) - 2),
+                    )
+                    # When neither a system nor an original-user message
+                    # survived, ``compacted[0]`` IS the summary; splicing it
+                    # alongside ``summary_msg`` would duplicate it.
+                    head = (
+                        [compacted[0]] if compacted[0] is not summary_msg else []
+                    )
+                    compacted = head + [summary_msg] + compacted[start:]
         return compacted

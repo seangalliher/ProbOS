@@ -3395,6 +3395,9 @@ class RecordsConfig(BaseModel):
     notebook_quality_low_threshold: float = 0.3
     notebook_quality_warn_threshold: float = 0.5
     notebook_staleness_alert_rate: float = 0.7
+    # AD-1138: index records into SemanticKnowledgeLayer and serve Oracle
+    # Tier 2 from it. Default-OFF — when False, Tier 2 uses the keyword path.
+    semantic_index_enabled: bool = False
 
 
 class ArchiveConfig(BaseModel):
@@ -4361,6 +4364,90 @@ class SoftwareEngineerSpecialistsConfig(BaseModel):
                     f"not in {sorted(valid_tiers)}"
                 )
         return v
+
+
+class AgenticLoopConfig(BaseModel):
+    """AD-1146: configuration shared by every ``AgenticLoop``.
+
+    The loop is constructed from two places — the conversational/crew path
+    (``cognitive/agentic_dispatch.py``) and the native SWE harness
+    (``swe_harness/native_builder.py``) — so these settings live in their own
+    section rather than under either caller's config. Both read the same keys,
+    which keeps the two paths from diverging.
+
+    Holds the AD-1146 wire-protocol flag, the AD-1148 tool-result bounds and
+    the AD-1147 parallel-tool-execution settings.
+    """
+
+    structured_tool_messages: bool = Field(
+        default=False,
+        description=(
+            "AD-1146: emit the provider's real multi-turn message array "
+            "(assistant.tool_calls + role:'tool' results keyed by "
+            "tool_call_id) instead of flattening the transcript into one "
+            "prompt string. Default-OFF per convention #14 — the flattened "
+            "AD-545 path stays byte-identical until the operator opts in."
+        ),
+    )
+    tool_result_max_chars: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "AD-1148: maximum characters of a single tool result allowed into "
+            "the loop's message history. 0 = unbounded (default-OFF), which "
+            "keeps message content byte-identical. Applies to both the legacy "
+            "flattened path and the AD-1146 structured path, and to error "
+            "results. The durable tool trace is unaffected — bounding is a "
+            "working-context concern only."
+        ),
+    )
+    tool_result_head_chars: int = Field(
+        default=4000,
+        ge=0,
+        description=(
+            "AD-1148: characters kept from the START of a bounded tool result. "
+            "Mirrors TOOL_RESULT_HEAD_CHARS in swe_harness/agentic_loop.py. "
+            "Head and tail are both preserved because many tools print their "
+            "header first and their summary line last. Shrunk proportionally "
+            "when tool_result_max_chars cannot hold head + tail + the elision "
+            "marker. Only consulted once tool_result_max_chars is non-zero."
+        ),
+    )
+    tool_result_tail_chars: int = Field(
+        default=2000,
+        ge=0,
+        description=(
+            "AD-1148: characters kept from the END of a bounded tool result. "
+            "Mirrors TOOL_RESULT_TAIL_CHARS in swe_harness/agentic_loop.py. "
+            "Only consulted once tool_result_max_chars is non-zero."
+        ),
+    )
+    parallel_tool_calls_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1147: execute the read-only tool calls from a single LLM "
+            "response concurrently instead of one at a time. Default-OFF per "
+            "convention #14 — the AD-545 sequential loop stays byte-identical "
+            "until the operator opts in. Only tool ids on the "
+            "PARALLEL_SAFE_TOOL_IDS allowlist in swe_harness/agentic_loop.py "
+            "ever run concurrently; mutating tools and unrecognised tool ids "
+            "stay sequential. That allowlist is deliberately NOT configurable "
+            "— it is a safety property, not a tuning knob."
+        ),
+    )
+    max_parallel_tool_calls: int = Field(
+        default=3,
+        ge=1,
+        le=16,
+        description=(
+            "AD-1147: ceiling on concurrently in-flight tool calls within one "
+            "LLM response. Mirrors PARALLEL_TOOL_CALLS_DEFAULT / "
+            "PARALLEL_TOOL_CALLS_MAX in swe_harness/agentic_loop.py and the "
+            "AgenticDispatchConfig.max_parallel_subtasks default — fan-out is "
+            "a Safety Budget concern, so it is bounded rather than unlimited. "
+            "Only consulted once parallel_tool_calls_enabled is True."
+        ),
+    )
 
 
 class NativeSWEHarnessConfig(BaseModel):
@@ -5895,12 +5982,19 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
     agent by callsign, routed through the same governed
     ``WorkItemAgenticExecutor`` so its tool permissions / consensus gates /
     tool-trace logging all apply). Both default OFF and additive: with the flags
-    off, ``WorkItemAgenticExecutor.run`` is byte-identical to today."""
+    off, ``WorkItemAgenticExecutor.run`` is byte-identical to today.
+
+    AD-1139 adds ``oracle_query_enabled`` alongside them: the read-only Oracle
+    consult tool that lets an agent reach the ship's shared knowledge commons
+    (Σ tiers only, never the sovereign episodic shard) *during* a task. Also
+    default-OFF, and gated in the same place, so the three flags share one
+    byte-identity guarantee."""
     tool_search_enabled: bool = False
     delegation_enabled: bool = False
     delegation_max_depth: int = Field(default=1, ge=0, le=3)
     delegation_max_iterations: int = Field(default=5, ge=1, le=25)
     delegation_tier: str = "standard"
+    oracle_query_enabled: bool = False  # AD-1139
 
 
 class DmMeshSynthesisConfig(BaseModel):  # BF-629
@@ -6293,6 +6387,10 @@ class SystemConfig(BaseModel):
     native_swe_harness: NativeSWEHarnessConfig = Field(
         default_factory=NativeSWEHarnessConfig,
         description="AD-549: Native SWE agentic harness configuration.",
+    )
+    agentic_loop: AgenticLoopConfig = Field(
+        default_factory=AgenticLoopConfig,
+        description="AD-1146: AgenticLoop wire-protocol configuration.",
     )
     ward_room: WardRoomConfig = WardRoomConfig()
     group_chat: GroupChatConfig = GroupChatConfig()  # AD-915

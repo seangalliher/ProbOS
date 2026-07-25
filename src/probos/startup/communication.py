@@ -75,6 +75,54 @@ def _register_event_log_query_tool(
     )
 
 
+def _register_oracle_query_tool(
+    *,
+    tool_registry: "ToolRegistry",
+    enabled: bool,
+    oracle: Any,
+) -> None:
+    """AD-1139: register the read-only Oracle consult tool (default-OFF).
+
+    Mirrors :func:`_register_event_log_query_tool` in shape. Two differences,
+    both deliberate: the grant covers **all six departments** — a commons that
+    excludes half the ship is not a commons, and a narrower grant would
+    silently starve some crew children of Σ — and ``ensign`` holds ``read``
+    upward, because the crew children this exists for are ensigns.
+    """
+    if (
+        not enabled
+        or oracle is None
+        or tool_registry.get("oracle_query") is not None
+    ):
+        return
+    from probos.tools.oracle_query_tool import OracleQueryTool
+
+    tool_registry.register(
+        OracleQueryTool(oracle=oracle),
+        provider="oracle",
+        tags=[
+            "oracle_query",
+            "oracle",
+            "knowledge",
+            "read_only",
+        ],
+        allowed_departments=(
+            "engineering",
+            "science",
+            "medical",
+            "security",
+            "operations",
+            "bridge",
+        ),
+        default_permissions={
+            "ensign": "read",
+            "lieutenant": "read",
+            "commander": "read",
+            "senior_officer": "read",
+        },
+    )
+
+
 async def init_communication(
     *,
     config: "SystemConfig",
@@ -92,6 +140,7 @@ async def init_communication(
     event_log_audit_sink: "EventLogQueryAuditSink | None",
     background_register: Callable[[asyncio.Task], None] | None = None,
     nats_bus: Any = None,  # AD-637c: NATS event bus for JetStream ward room dispatch
+    oracle: Any = None,  # AD-1139: OracleService for the read-only consult tool
 ) -> CommunicationResult:
     """Start communication services, scheduling, and identity commissioning.
 
@@ -532,6 +581,11 @@ async def init_communication(
         enabled=config.agentic_dispatch.orchestrator_enabled,
         event_log_reader=event_log_reader,
         event_log_audit_sink=event_log_audit_sink,
+    )
+    _register_oracle_query_tool(
+        tool_registry=tool_registry,
+        enabled=config.agentic_tools.oracle_query_enabled,
+        oracle=oracle,
     )
     logger.info("tool-permission-store started")
 

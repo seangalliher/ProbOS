@@ -11,20 +11,121 @@ relevance score.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
 from typing import Any
 
+from probos.knowledge.records_store import _CLASSIFICATION_LEVELS
+
 logger = logging.getLogger(__name__)
+
+# AD-1138: Ship's Records semantic index tuning.
+_RECORD_DOC_CHARS = 4000          # Body text embedded per record.
+_RECORD_SNIPPET_CHARS = 200       # Mirrors RecordsStore.search's snippet width.
+_RECORD_FRONTMATTER_CHARS = 4000  # Cap on the serialised frontmatter sidecar.
+_RECORDS_BACKFILL_LIMIT = 500     # Bound on a single backfill pass.
+
+# AD-1138: classifications whose visibility depends on reader identity rather
+# than on scope level alone (mirrors RecordsStore.read_entry).
+_IDENTITY_GATED_CLASSIFICATIONS = frozenset({"private", "department"})
+
+# AD-1138: reader id with unrestricted read access (mirrors RecordsStore.read_entry).
+_UNRESTRICTED_READER = "captain"
+
+# AD-1138: level assumed when a scope label is unknown. Matches the
+# ``_CLASSIFICATION_LEVELS.get(scope, 2)`` default in RecordsStore.search.
+_DEFAULT_SCOPE = "ship"
+
+
+def build_records_scope_filter(
+    scope: str,
+    *,
+    reader_id: str = "",
+    reader_department: str = "",
+) -> dict[str, Any] | None:
+    """AD-1138: build the ChromaDB ``where`` clause for a records query.
+
+    Classification is enforced *at query time* rather than by post-filtering,
+    so ``limit`` stays meaningful: post-filtering can return an empty page
+    while matching records exist further down the result set. Skipping this
+    filter would make semantic retrieval a bypass around the scope check in
+    ``RecordsStore.search``.
+
+    Two enforcement layers compose:
+
+    * **Scope level** (always applied) — mirrors ``RecordsStore.search``:
+      a record is admissible when ``level(classification) <= level(scope)``.
+      Expressed as ``$in`` over the permitted labels because ChromaDB has no
+      ordinal comparison over strings.
+    * **Reader identity** (applied only when ``reader_id`` is supplied) —
+      mirrors ``RecordsStore.read_entry``: ``private`` needs authorship and
+      ``department`` needs a matching department or authorship. This is
+      strictly *stricter* than the scope level alone, never looser, so it can
+      never widen disclosure beyond the keyword path.
+
+    ``reader_id == "captain"`` skips the identity layer, matching
+    ``RecordsStore.read_entry``'s unrestricted-Captain rule.
+
+    ChromaDB 1.5.8 shape rules this function respects (both verified against
+    the installed version): a flat multi-key ``where`` raises ``Expected where
+    to have exactly one operator``, and ``$and``/``$or`` require **at least
+    two** expressions. So a lone predicate is always emitted flat.
+
+    Returns:
+        A ``where`` dict, or ``None`` when the scope admits nothing — callers
+        must skip the query entirely rather than send an empty filter.
+    """
+    scope_level = _CLASSIFICATION_LEVELS.get(
+        scope, _CLASSIFICATION_LEVELS[_DEFAULT_SCOPE],
+    )
+    permitted = [
+        label for label, level in _CLASSIFICATION_LEVELS.items()
+        if level <= scope_level
+    ]
+    if not permitted:
+        return None
+
+    if not reader_id or reader_id == _UNRESTRICTED_READER:
+        return {"classification": {"$in": permitted}}
+
+    open_labels = [
+        label for label in permitted
+        if label not in _IDENTITY_GATED_CLASSIFICATIONS
+    ]
+    gated_labels = [
+        label for label in permitted
+        if label in _IDENTITY_GATED_CLASSIFICATIONS
+    ]
+
+    clauses: list[dict[str, Any]] = []
+    if open_labels:
+        clauses.append({"classification": {"$in": open_labels}})
+    if gated_labels:
+        clauses.append({"$and": [
+            {"classification": {"$in": gated_labels}},
+            {"author": reader_id},
+        ]})
+    if "department" in gated_labels and reader_department:
+        clauses.append({"$and": [
+            {"classification": "department"},
+            {"department": reader_department},
+        ]})
+
+    if not clauses:
+        return None
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$or": clauses}
 
 
 class SemanticKnowledgeLayer:
     """Unified semantic search across all ProbOS knowledge types.
 
     Manages ChromaDB collections for non-episode knowledge (agents, skills,
-    workflows, QA reports, system events). Episodes are queried via the
-    existing EpisodicMemory — no duplicate episode collection.
+    workflows, QA reports, system events, ship's records). Episodes are
+    queried via the existing EpisodicMemory — no duplicate episode collection.
 
     Each collection stores documents with typed metadata enabling
     both semantic search and structured filtering.
@@ -37,6 +138,7 @@ class SemanticKnowledgeLayer:
         "workflows": "sk_workflows",
         "qa_reports": "sk_qa_reports",
         "events": "sk_events",
+        "records": "sk_records",  # AD-1138 (Ship's Records / Σ)
     }
 
     def __init__(
@@ -252,6 +354,85 @@ class SemanticKnowledgeLayer:
             }],
         )
 
+    async def index_record(
+        self,
+        path: str,
+        content: str,
+        *,
+        classification: str = "ship",
+        author: str = "",
+        department: str = "",
+        topic: str = "",
+        tags: list[str] | None = None,
+        frontmatter: dict[str, Any] | None = None,
+        source_node: str = "",
+    ) -> None:
+        """AD-1138: Index a Ship's Records document for semantic search.
+
+        ``classification`` travels into ChromaDB metadata so retrieval can
+        enforce scope in the query itself (see
+        :func:`build_records_scope_filter`). An unrecognised classification is
+        normalised to ``\"private\"`` \u2014 level 0, matching the
+        ``_CLASSIFICATION_LEVELS.get(doc_class, 0)`` default in
+        ``RecordsStore.search`` \u2014 so an odd label is never silently treated as
+        broadly readable.
+
+        The document ID is derived from ``path``, so re-writing a record
+        upserts in place rather than accumulating stale copies.
+        """
+        col = self._collections.get("records")
+        if col is None:
+            return
+
+        if classification not in _CLASSIFICATION_LEVELS:
+            logger.warning(
+                "AD-1138: record %s has unknown classification %r; indexing it as "
+                "'private' so scope filtering stays conservative",
+                path, classification,
+            )
+            classification = "private"
+
+        header = path
+        if topic:
+            header += f" \u2014 {topic}"
+        if tags:
+            header += f" [{', '.join(tags)}]"
+        doc = f"{header}\n{content[:_RECORD_DOC_CHARS]}"
+
+        try:
+            frontmatter_json = json.dumps(frontmatter or {}, default=str)
+            if len(frontmatter_json) > _RECORD_FRONTMATTER_CHARS:
+                logger.debug(
+                    "AD-1138: frontmatter for %s exceeds %d chars; storing empty "
+                    "sidecar (Tier 2 will surface the record without frontmatter)",
+                    path, _RECORD_FRONTMATTER_CHARS,
+                )
+                frontmatter_json = "{}"
+        except (TypeError, ValueError):
+            logger.warning(
+                "AD-1138: frontmatter for %s is not JSON-serialisable; storing an "
+                "empty sidecar so the record stays discoverable",
+                path, exc_info=True,
+            )
+            frontmatter_json = "{}"
+
+        col.upsert(
+            ids=[f"record_{path}"],
+            documents=[doc],
+            metadatas=[{
+                "type": "record",
+                "path": path,
+                "classification": classification,
+                "author": author,
+                "department": department,
+                "topic": topic,
+                "snippet": content[:_RECORD_SNIPPET_CHARS],
+                "frontmatter_json": frontmatter_json,
+                "source_node": source_node,
+                "indexed_at": time.time(),
+            }],
+        )
+
     # ------------------------------------------------------------------
     # Search
     # ------------------------------------------------------------------
@@ -261,6 +442,11 @@ class SemanticKnowledgeLayer:
         query: str,
         types: list[str] | None = None,
         limit: int = 10,
+        *,
+        include_episodes: bool = True,
+        records_scope: str | None = None,
+        reader_id: str = "",
+        reader_department: str = "",
     ) -> list[dict]:
         """Semantic search across knowledge types.
 
@@ -269,6 +455,26 @@ class SemanticKnowledgeLayer:
             types: Filter to specific types (e.g., ["agents", "skills"]).
                    None = search all types including episodes.
             limit: Maximum results to return
+            include_episodes: BF-675 — when False, episode recall is skipped
+                   entirely regardless of ``types``. Episodes are sovereign
+                   per-agent shards (AD-397) and this layer recalls them
+                   globally, so any agent-facing caller must opt out. The
+                   default ``True`` preserves the prior behaviour byte-for-byte
+                   for every existing caller.
+            records_scope: AD-1138 — classification scope for the ``records``
+                   collection (``"private"`` / ``"department"`` / ``"ship"`` /
+                   ``"fleet"``). **The records collection is skipped entirely
+                   when this is ``None``**, even if ``types`` names it. Records
+                   carry classification and there is no safe default scope, so
+                   they are opt-in: an existing caller that passes
+                   ``types=None`` keeps its exact prior result set and can
+                   never receive unfiltered records.
+            reader_id: AD-1138 — optional reader identity. When supplied, the
+                   records filter additionally applies
+                   ``RecordsStore.read_entry``'s authorship/department rules,
+                   which are strictly stricter than the scope level alone.
+            reader_department: AD-1138 — reader's department, used only
+                   alongside ``reader_id`` to admit same-department records.
 
         Returns:
             List of result dicts, sorted by relevance:
@@ -277,19 +483,39 @@ class SemanticKnowledgeLayer:
         results: list[dict] = []
 
         # Search ChromaDB collections
-        search_collections = self.COLLECTIONS.keys() if types is None else [
+        search_collections = list(self.COLLECTIONS.keys()) if types is None else [
             t for t in types if t in self.COLLECTIONS
         ]
+
+        # AD-1138: records are classification-scoped and fail closed. Without an
+        # explicit scope there is nothing to enforce against, so the collection
+        # is dropped rather than queried unfiltered.
+        if records_scope is None:
+            search_collections = [n for n in search_collections if n != "records"]
 
         for name in search_collections:
             col = self._collections.get(name)
             if col is None or col.count() == 0:
                 continue
             try:
-                response = col.query(
-                    query_texts=[query],
-                    n_results=min(limit, col.count()),
-                )
+                query_kwargs: dict[str, Any] = {
+                    "query_texts": [query],
+                    "n_results": min(limit, col.count()),
+                }
+                if name == "records":
+                    where = build_records_scope_filter(
+                        records_scope or _DEFAULT_SCOPE,
+                        reader_id=reader_id,
+                        reader_department=reader_department,
+                    )
+                    if where is None:
+                        logger.debug(
+                            "AD-1138: scope %r admits no classification; skipping "
+                            "the records collection", records_scope,
+                        )
+                        continue
+                    query_kwargs["where"] = where
+                response = col.query(**query_kwargs)
                 if response and response.get("ids") and response["ids"][0]:
                     ids = response["ids"][0]
                     documents = response["documents"][0] if response.get("documents") else [""] * len(ids)
@@ -309,7 +535,7 @@ class SemanticKnowledgeLayer:
                 logger.debug("Search failed for collection %s: %s", name, e)
 
         # Include episodes if episodic memory available
-        include_episodes = types is None or "episodes" in types
+        include_episodes = include_episodes and (types is None or "episodes" in types)
         if include_episodes and self._episodic_memory:
             try:
                 episodes = await self._episodic_memory.recall(query, k=limit)
@@ -425,3 +651,79 @@ class SemanticKnowledgeLayer:
 
         logger.info("SemanticKnowledgeLayer reindexed: %s", counts)
         return counts
+
+    async def reindex_records(
+        self,
+        records_store: Any,
+        *,
+        limit: int = _RECORDS_BACKFILL_LIMIT,
+    ) -> int:
+        """AD-1138: Backfill Ship's Records written before the index existed.
+
+        Records created before this collection existed are otherwise invisible
+        to semantic retrieval until they are next rewritten. Reads through
+        ``read_entry`` as the Captain so the indexer sees every classification
+        — the classification itself is stored in metadata and enforced at
+        query time by :func:`build_records_scope_filter`.
+
+        Bounded by ``limit`` so a large repository cannot stall startup, and
+        honest-degrades per entry: one unreadable record does not abort the
+        pass.
+
+        Returns:
+            Number of records successfully indexed.
+        """
+        col = self._collections.get("records")
+        if col is None:
+            logger.debug(
+                "AD-1138: records collection unavailable; skipping backfill",
+            )
+            return 0
+
+        try:
+            entries = await records_store.list_entries()
+        except Exception:
+            logger.warning(
+                "AD-1138: could not enumerate Ship's Records; semantic backfill "
+                "skipped and Tier 2 continues on the keyword path",
+                exc_info=True,
+            )
+            return 0
+
+        if len(entries) > limit:
+            logger.warning(
+                "AD-1138: %d records exceed the %d-record backfill budget; "
+                "indexing the first %d, the remainder index on next write",
+                len(entries), limit, limit,
+            )
+
+        indexed = 0
+        for entry in entries[:limit]:
+            path = entry.get("path", "")
+            if not path:
+                continue
+            try:
+                doc = await records_store.read_entry(path, reader_id=_UNRESTRICTED_READER)
+                if doc is None:
+                    continue
+                frontmatter = doc.get("frontmatter") or {}
+                tags = frontmatter.get("tags")
+                await self.index_record(
+                    path=path,
+                    content=doc.get("content", "") or "",
+                    classification=frontmatter.get("classification", "ship"),
+                    author=frontmatter.get("author", "") or "",
+                    department=frontmatter.get("department", "") or "",
+                    topic=frontmatter.get("topic", "") or "",
+                    tags=tags if isinstance(tags, list) else None,
+                    frontmatter=frontmatter,
+                )
+                indexed += 1
+            except Exception:
+                logger.warning(
+                    "AD-1138: failed to backfill record %s; it stays keyword-only "
+                    "until its next write", path, exc_info=True,
+                )
+
+        logger.info("AD-1138: semantic records backfill indexed %d record(s)", indexed)
+        return indexed

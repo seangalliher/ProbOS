@@ -5,7 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Any, TYPE_CHECKING
 
-from probos.cognitive.swe_harness.agentic_loop import AgenticLoop, AgenticResult
+from probos.cognitive.swe_harness.agentic_loop import (
+    PARALLEL_TOOL_CALLS_DEFAULT,
+    TOOL_RESULT_HEAD_CHARS,
+    TOOL_RESULT_TAIL_CHARS,
+    AgenticLoop,
+    AgenticResult,
+)
 from probos.cognitive.swe_harness.tool_call import (
     tool_registration_to_llm_definition,
 )
@@ -47,6 +53,12 @@ class NativeBuilderHarness:
         token_budget: int | None = None,
         compactor: Any | None = None,
         compaction_threshold: int | None = None,
+        structured_tool_messages: bool = False,
+        tool_result_max_chars: int = 0,
+        tool_result_head_chars: int = TOOL_RESULT_HEAD_CHARS,
+        tool_result_tail_chars: int = TOOL_RESULT_TAIL_CHARS,
+        parallel_tool_calls_enabled: bool = False,
+        max_parallel_tool_calls: int = PARALLEL_TOOL_CALLS_DEFAULT,
     ) -> None:
         self._runtime = runtime
         self._llm = llm_client
@@ -57,6 +69,18 @@ class NativeBuilderHarness:
         self._budget = token_budget
         self._compactor = compactor
         self._compaction_threshold = compaction_threshold
+        # AD-1146: forwarded to AgenticLoop. Default-OFF keeps the AD-545
+        # flattened prompt shape byte-identical.
+        self._structured_tool_messages = structured_tool_messages
+        # AD-1148: forwarded to AgenticLoop. 0 = unbounded (default-OFF).
+        self._tool_result_max_chars = tool_result_max_chars
+        self._tool_result_head_chars = tool_result_head_chars
+        self._tool_result_tail_chars = tool_result_tail_chars
+        # AD-1147: forwarded to AgenticLoop. Default-OFF keeps every build tool
+        # sequential; note that none of _HARNESS_TOOL_IDS_BUILD is on the
+        # read-only allowlist, so the build path stays sequential either way.
+        self._parallel_tool_calls_enabled = parallel_tool_calls_enabled
+        self._max_parallel_tool_calls = max_parallel_tool_calls
 
     async def run_build(
         self,
@@ -80,6 +104,12 @@ class NativeBuilderHarness:
             event_emit_fn=getattr(self._runtime, "emit_event", None),
             compactor=self._compactor,
             compaction_threshold=self._compaction_threshold,
+            structured_tool_messages=self._structured_tool_messages,
+            tool_result_max_chars=self._tool_result_max_chars,
+            tool_result_head_chars=self._tool_result_head_chars,
+            tool_result_tail_chars=self._tool_result_tail_chars,
+            parallel_tool_calls_enabled=self._parallel_tool_calls_enabled,
+            max_parallel_tool_calls=self._max_parallel_tool_calls,
         )
 
         agentic_result: AgenticResult = await loop.run(

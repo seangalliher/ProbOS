@@ -21,9 +21,20 @@ class _StubSemanticLayer:
         self.calls: list[dict] = []
 
     async def search(
-        self, query: str, types: list[str] | None = None, limit: int = 10,
+        self,
+        query: str,
+        types: list[str] | None = None,
+        limit: int = 10,
+        *,
+        include_episodes: bool = True,
     ) -> list[dict]:
-        self.calls.append({"query": query, "types": types, "limit": limit})
+        # BF-675: signature repointed to accept the new keyword-only gate.
+        self.calls.append({
+            "query": query,
+            "types": types,
+            "limit": limit,
+            "include_episodes": include_episodes,
+        })
         return list(self._results)
 
 
@@ -244,7 +255,9 @@ async def test_cmd_search_uses_oracle_and_keeps_stats_panel() -> None:
     await cmd_search(runtime, console, "foo")
     oracle.query.assert_awaited_once()
     kwargs = oracle.query.call_args.kwargs
-    assert kwargs.get("tiers") == ["semantic"]
+    # BF-675 (DD-4): Tier 5 no longer carries episodes, so /search requests the
+    # episodic tier explicitly to keep the Captain's results unchanged.
+    assert kwargs.get("tiers") == ["semantic", "episodic"]
     layer.stats.assert_called_once()
     console.print.assert_called()
 

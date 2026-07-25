@@ -109,12 +109,15 @@ class TestSemanticKnowledgeLayerLifecycle:
     async def test_start_creates_collections(self, layer) -> None:
         await layer.start()
         try:
-            assert len(layer._collections) == 5
+            # AD-1138 added "records"; assert against the registry so the test
+            # tracks COLLECTIONS instead of freezing a count.
+            assert set(layer._collections) == set(SemanticKnowledgeLayer.COLLECTIONS)
             assert "agents" in layer._collections
             assert "skills" in layer._collections
             assert "workflows" in layer._collections
             assert "qa_reports" in layer._collections
             assert "events" in layer._collections
+            assert "records" in layer._collections
         finally:
             await layer.stop()
 

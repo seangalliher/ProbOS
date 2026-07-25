@@ -2747,6 +2747,11 @@ class ProbOSRuntime:
                     "Tier 5 semantic queries will return [] until restart",
                     exc_info=True,
                 )
+        # AD-1138: index Ship's Records semantically. Same seam as AD-686 — this
+        # is the first point where both the records store (cognitive phase) and
+        # the semantic layer (structural phase) exist. Default-OFF; when off,
+        # nothing is attached and Tier 2 stays on the keyword path.
+        await self._wire_records_semantic_index(semantic_layer)
         self.sif = struct.sif
         self.initiative = struct.initiative
         self.build_queue = struct.build_queue
@@ -2774,6 +2779,7 @@ class ProbOSRuntime:
             event_log_audit_sink=self.event_log,
             background_register=self._background_tasks.add,
             nats_bus=self.nats_bus,  # AD-637c: NATS JetStream for Ward Room events
+            oracle=self.oracle,  # AD-1139: read-only Oracle consult tool
         )
         self.persistent_task_store = comm.persistent_task_store
         self.work_item_store = comm.work_item_store
@@ -3159,6 +3165,67 @@ class ProbOSRuntime:
                     "AD-750: semantic M365 sync failed; continuing without M365 hydration",
                     exc_info=True,
                 )
+
+    async def _wire_records_semantic_index(self, semantic_layer: Any) -> None:
+        """AD-1138: attach the records semantic indexer and backfill if empty.
+
+        Default-OFF via ``records.semantic_index_enabled``. When off, nothing is
+        attached, so ``RecordsStore.write_entry`` and Oracle Tier 2 both stay on
+        their pre-AD-1138 paths byte-for-byte.
+
+        When on, live writes index through the store's late-bound hook, and any
+        records written before the collection existed are backfilled once — but
+        only when the collection is empty, so a restart does not re-walk the
+        whole repository. Every failure degrades to the keyword path.
+        """
+        if semantic_layer is None:
+            return
+        if not getattr(self.config.records, "semantic_index_enabled", False):
+            return
+        records_store = self._records_store
+        if records_store is None:
+            logger.debug(
+                "AD-1138: semantic record index enabled but Ship's Records is "
+                "unavailable; Tier 2 stays on the keyword path",
+            )
+            return
+
+        try:
+            records_store.set_semantic_indexer(semantic_layer)
+        except Exception:
+            logger.warning(
+                "AD-1138: failed to attach the semantic indexer to Ship's Records; "
+                "new records stay keyword-only until restart",
+                exc_info=True,
+            )
+            return
+
+        try:
+            already_indexed = semantic_layer.stats().get("records", 0)
+        except Exception:
+            logger.warning(
+                "AD-1138: could not read semantic collection stats; skipping "
+                "backfill and relying on index-on-write",
+                exc_info=True,
+            )
+            return
+
+        if already_indexed:
+            logger.debug(
+                "AD-1138: records collection already holds %d document(s); "
+                "skipping backfill", already_indexed,
+            )
+            return
+
+        try:
+            indexed = await semantic_layer.reindex_records(records_store)
+            logger.info("AD-1138: backfilled %d record(s) into the semantic index", indexed)
+        except Exception:
+            logger.warning(
+                "AD-1138: semantic records backfill failed; pre-existing records "
+                "stay keyword-only until their next write",
+                exc_info=True,
+            )
 
     def _collect_m365_connectors_for_semantic_sync(self) -> list[Any]:
         """AD-750: collect runtime connector agents that expose list_changes()."""
