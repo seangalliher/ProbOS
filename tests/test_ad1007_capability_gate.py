@@ -290,7 +290,12 @@ async def test_agentic_loop_filters_restricted_mesh_tool(monkeypatch):
     captured: dict = {}
 
     class _CaptureLoop:
-        def __init__(self, *, llm_client, tool_executor, event_emit_fn):
+        # This test asserts on the tool set handed to ``run``; how the loop is
+        # CONSTRUCTED is incidental to it. ``WorkItemAgenticExecutor`` passes a
+        # growing set of behaviour kwargs (AD-1146 structured_tool_messages,
+        # AD-1147 parallel_tool_calls_*, AD-1148 tool_result_*), so accept and
+        # ignore them rather than pinning a signature this test does not test.
+        def __init__(self, *, llm_client, tool_executor, event_emit_fn, **_loop_kwargs):
             pass
 
         async def run(self, *, system_prompt, user_message, tools, context):
