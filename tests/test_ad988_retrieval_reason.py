@@ -88,7 +88,9 @@ class _FakeRecordsStore:
 
     rows: list[dict]
 
-    async def search(self, query_text, scope="ship") -> list[dict]:
+    async def search(self, query_text, scope="ship", **_reader) -> list[dict]:
+        # BF-679 threads reader_id / reader_department; this double is about
+        # match_reason, so it accepts and ignores them.
         return list(self.rows)
 
 

@@ -129,9 +129,18 @@ class _FakeRecordsStore:
 
     def __init__(self) -> None:
         self.scopes: list[Any] = []
+        self.readers: list[tuple[Any, Any]] = []
 
-    async def search(self, _query: str, *, scope: Any = None) -> list[dict[str, Any]]:
+    async def search(
+        self,
+        _query: str,
+        *,
+        scope: Any = None,
+        reader_id: Any = None,
+        reader_department: Any = "",
+    ) -> list[dict[str, Any]]:
         self.scopes.append(scope)
+        self.readers.append((reader_id, reader_department))
         return [
             {
                 "path": "records/eng/deck12.md",
@@ -155,6 +164,8 @@ class _FakeSemanticLayer:
         limit: int = 5,
         include_episodes: bool = True,
         records_scope: str | None = None,
+        reader_id: str | None = None,
+        reader_department: str = "",
     ) -> list[dict[str, Any]]:
         if types != ["records"]:
             return []
@@ -163,6 +174,8 @@ class _FakeSemanticLayer:
                 "types": types,
                 "include_episodes": include_episodes,
                 "records_scope": records_scope,
+                "reader_id": reader_id,
+                "reader_department": reader_department,
             }
         )
         if records_scope is None:
@@ -495,6 +508,10 @@ async def test_tier_two_records_survive_the_ad1138_scope_gate(
     this tool inherits the scope and Tier 2 keeps returning records. Asserted
     against a real ``OracleService`` rather than a stub oracle, because the
     scope is applied inside the service, not by the tool.
+
+    BF-679: the invocation carries no ``context``, so there is no actor to
+    resolve — both paths therefore receive the anonymous reader (``""``), which
+    is the documented fail-closed state.
     """
     records_store = _FakeRecordsStore()
     semantic_layer = _FakeSemanticLayer()
@@ -517,12 +534,15 @@ async def test_tier_two_records_survive_the_ad1138_scope_gate(
                 "types": ["records"],
                 "include_episodes": False,
                 "records_scope": "ship",
+                "reader_id": "",
+                "reader_department": "",
             }
         ]
         assert "SEMANTIC deck twelve entry" in result.output
         assert records_store.scopes == []
     else:
         assert records_store.scopes == ["ship"]
+        assert records_store.readers == [("", "")]
         assert "KEYWORD deck twelve entry" in result.output
         assert semantic_layer.calls == []
 
@@ -723,8 +743,12 @@ async def test_crew_child_reads_the_framed_commons_in_a_later_turn() -> None:
         assert _ORACLE_DISPOSITION in llm.requests[1].prompt
         assert "[source:records" in llm.requests[1].prompt
         assert oracle.calls[0]["tiers"] == list(SIGMA_TIERS)
-        # DD-1: the loop's identity never reaches the Oracle as a shard scope.
-        assert oracle.calls[0].get("agent_id", "") == ""
+        # BF-679: the loop's identity now reaches the Oracle, because Tier 2
+        # resolves Ship's Records classification against it. DD-1's actual
+        # invariant is unchanged and asserted alongside it: the sovereign tier
+        # is still never requested, so identity can only narrow the result.
+        assert oracle.calls[0].get("agent_id", "") == "crewman-1"
+        assert SOVEREIGN_TIER not in oracle.calls[0]["tiers"]
     finally:
         await permission_store.stop()
 

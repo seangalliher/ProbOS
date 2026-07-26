@@ -32,6 +32,89 @@ _CLASSIFICATION_LEVELS = {
     "fleet": 3,
 }
 
+# BF-679: classifications whose visibility depends on *who is reading* rather
+# than on the scope level alone. Mirrors the gate in :meth:`RecordsStore.read_entry`.
+# Owned here (the store defines the rule); ``knowledge.semantic`` imports it so
+# the ChromaDB filter and this predicate cannot drift apart.
+_IDENTITY_GATED_CLASSIFICATIONS = frozenset({"private", "department"})
+
+# BF-679: the one reader id with unrestricted read access (``read_entry``'s rule).
+_UNRESTRICTED_READER = "captain"
+
+
+def record_is_readable(
+    frontmatter: dict[str, Any],
+    *,
+    scope: str = "ship",
+    reader_id: str | None = None,
+    reader_department: str = "",
+) -> bool:
+    """BF-679: may this record be read at ``scope`` by this reader?
+
+    The single source of truth for records admissibility on the *keyword*
+    retrieval path. :func:`probos.knowledge.semantic.build_records_scope_filter`
+    is its declarative twin — the same rule expressed as a ChromaDB ``where``
+    clause so the semantic path enforces it at query time rather than by
+    post-filtering. Both are exercised against each other by the BF-679 parity
+    tests; change one and you must change the other.
+
+    Two layers compose:
+
+    * **Scope level** (always applied) — a record is admissible when
+      ``level(classification) <= level(scope)``. An unrecognised record
+      classification defaults to level ``0`` and an unrecognised ``scope`` to
+      level ``2``, exactly as :meth:`RecordsStore.search` has always done.
+    * **Reader identity** — mirrors :meth:`RecordsStore.read_entry`:
+      ``private`` needs authorship, ``department`` needs a matching department
+      or authorship. Strictly stricter than the scope level, never looser.
+
+    ``reader_id`` is deliberately tri-state, because "no reader was supplied"
+    and "an anonymous reader asked" are different questions:
+
+    * ``None`` — **identity not specified**. Scope level only; the pre-BF-679
+      behaviour, kept so existing callers of :meth:`RecordsStore.search` (the
+      ``/records/search`` endpoint, self-monitoring's notebook pull) are
+      byte-identical.
+    * ``""`` — **anonymous reader**. The identity layer runs with an empty
+      author, so identity-gated classifications are withheld. This is the
+      fail-closed state the Oracle uses for a caller it cannot identify.
+    * ``"captain"`` — unrestricted, per ``read_entry``.
+    * anything else — an author/department identity, matched against the
+      record's ``author`` / ``department`` frontmatter.
+
+    One deliberate departure from ``read_entry``: a ``department`` record that
+    carries **no** ``department`` frontmatter is readable only by its author,
+    not by every reader who also has no department. ``read_entry`` compares
+    ``reader_department != doc_dept`` and so admits the empty-matches-empty
+    case; ``build_records_scope_filter`` omits the department clause entirely
+    when the reader has no department. Parity between the two Oracle retrieval
+    paths is the BF-679 requirement, and of the two behaviours the closed one
+    is the safe one to converge on.
+    """
+    doc_class = frontmatter.get("classification", "ship")
+    # A non-str classification takes the same level-0 default ``search`` has
+    # always applied; the explicit type check additionally survives an
+    # unhashable value rather than raising out of the scan, and keeps such a
+    # record out of the identity-gated set (it is not one of the four labels).
+    is_labelled = type(doc_class) is str
+    doc_level = _CLASSIFICATION_LEVELS.get(doc_class, 0) if is_labelled else 0
+    if doc_level > _CLASSIFICATION_LEVELS.get(scope, 2):
+        return False
+
+    if reader_id is None or reader_id == _UNRESTRICTED_READER:
+        return True
+    if not is_labelled or doc_class not in _IDENTITY_GATED_CLASSIFICATIONS:
+        return True
+
+    doc_author = frontmatter.get("author", "")
+    if reader_id == doc_author:
+        return True
+    if doc_class == "department":
+        return bool(reader_department) and reader_department == frontmatter.get(
+            "department", "",
+        )
+    return False
+
 
 def _jaccard_similarity(text_a: str, text_b: str) -> float:
     """Word-level Jaccard similarity between two texts."""
@@ -851,10 +934,24 @@ class RecordsStore:
             await self._git("add", path)
             await self._commit(f"[records] Published: {path} — by {author}")
 
-    async def search(self, query: str, scope: str = "ship") -> list[dict]:
+    async def search(
+        self,
+        query: str,
+        scope: str = "ship",
+        *,
+        reader_id: str | None = None,
+        reader_department: str = "",
+    ) -> list[dict]:
         """Keyword search across records.
 
         Simple word-matching against frontmatter fields and content.
+
+        BF-679: ``reader_id`` / ``reader_department`` add the identity layer
+        :meth:`read_entry` applies, so a caller that knows who is asking no
+        longer receives another crew member's ``private`` or out-of-department
+        records. The default ``reader_id=None`` means *identity not specified*
+        and leaves the scope-level-only behaviour byte-identical; see
+        :func:`record_is_readable` for the full tri-state contract.
         """
         query_words = set(query.lower().split())
         results = []
@@ -873,9 +970,13 @@ class RecordsStore:
             matches = sum(1 for w in query_words if w in raw_lower)
             if matches > 0:
                 fm, content_text = self._parse_document(raw)
-                # Classification scope check
-                doc_class = fm.get("classification", "ship")
-                if _CLASSIFICATION_LEVELS.get(doc_class, 0) > _CLASSIFICATION_LEVELS.get(scope, 2):
+                # Classification scope + reader-identity check (BF-679)
+                if not record_is_readable(
+                    fm,
+                    scope=scope,
+                    reader_id=reader_id,
+                    reader_department=reader_department,
+                ):
                     continue
                 results.append({
                     "path": rel_path,

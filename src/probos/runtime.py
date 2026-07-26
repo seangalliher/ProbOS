@@ -2897,6 +2897,30 @@ class ProbOSRuntime:
         self.acm = comm.acm
         self.ontology = comm.ontology
 
+        # BF-679: Stitch the Tier 2 reader-identity resolver onto Oracle now
+        # that the ontology exists. Ship's Records classification is
+        # reader-relative, and until this lands every Oracle caller is
+        # anonymous to Tier 2 — which withholds identity-gated records rather
+        # than disclosing them, so a failure here degrades closed.
+        if self._oracle_service is not None and self.ontology is not None:
+            try:
+                from probos.cognitive.oracle_service import (
+                    make_reader_identity_resolver,
+                )
+
+                self._oracle_service.attach_reader_identity_resolver(
+                    make_reader_identity_resolver(
+                        registry=self.registry, ontology=self.ontology,
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "BF-679: failed to attach the reader-identity resolver to "
+                    "OracleService; Tier 2 stays anonymous, so agents keep the "
+                    "ship-wide commons but not their own private records",
+                    exc_info=True,
+                )
+
         # AD-637: Update NATS subject prefix after ship commissioning assigns DID
         if self.nats_bus and self.identity_registry:
             cert = self.identity_registry.get_ship_certificate()

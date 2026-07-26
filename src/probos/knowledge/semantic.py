@@ -17,7 +17,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from probos.knowledge.records_store import _CLASSIFICATION_LEVELS
+from probos.knowledge.records_store import (
+    _CLASSIFICATION_LEVELS,
+    _IDENTITY_GATED_CLASSIFICATIONS,  # BF-679: owned by the store
+    _UNRESTRICTED_READER,  # BF-679: owned by the store
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +31,6 @@ _RECORD_SNIPPET_CHARS = 200       # Mirrors RecordsStore.search's snippet width.
 _RECORD_FRONTMATTER_CHARS = 4000  # Cap on the serialised frontmatter sidecar.
 _RECORDS_BACKFILL_LIMIT = 500     # Bound on a single backfill pass.
 
-# AD-1138: classifications whose visibility depends on reader identity rather
-# than on scope level alone (mirrors RecordsStore.read_entry).
-_IDENTITY_GATED_CLASSIFICATIONS = frozenset({"private", "department"})
-
-# AD-1138: reader id with unrestricted read access (mirrors RecordsStore.read_entry).
-_UNRESTRICTED_READER = "captain"
-
 # AD-1138: level assumed when a scope label is unknown. Matches the
 # ``_CLASSIFICATION_LEVELS.get(scope, 2)`` default in RecordsStore.search.
 _DEFAULT_SCOPE = "ship"
@@ -42,11 +39,13 @@ _DEFAULT_SCOPE = "ship"
 def build_records_scope_filter(
     scope: str,
     *,
-    reader_id: str = "",
+    reader_id: str | None = None,
     reader_department: str = "",
 ) -> dict[str, Any] | None:
     """AD-1138: build the ChromaDB ``where`` clause for a records query.
 
+    The declarative twin of :func:`probos.knowledge.records_store.record_is_readable`
+    — the same admissibility rule, expressed so ChromaDB can enforce it.
     Classification is enforced *at query time* rather than by post-filtering,
     so ``limit`` stays meaningful: post-filtering can return an empty page
     while matching records exist further down the result set. Skipping this
@@ -59,11 +58,19 @@ def build_records_scope_filter(
       a record is admissible when ``level(classification) <= level(scope)``.
       Expressed as ``$in`` over the permitted labels because ChromaDB has no
       ordinal comparison over strings.
-    * **Reader identity** (applied only when ``reader_id`` is supplied) —
+    * **Reader identity** (applied whenever ``reader_id`` is not ``None``) —
       mirrors ``RecordsStore.read_entry``: ``private`` needs authorship and
       ``department`` needs a matching department or authorship. This is
       strictly *stricter* than the scope level alone, never looser, so it can
       never widen disclosure beyond the keyword path.
+
+    BF-679: ``reader_id`` is tri-state and the distinction is load-bearing.
+    ``None`` means *identity not specified* and applies the scope level only;
+    ``""`` means an **anonymous** reader and runs the identity layer with an
+    empty author, so the identity-gated classifications are withheld. Before
+    BF-679 an empty string took the ``None`` branch, which is how
+    ``build_records_scope_filter("ship")`` came to hand every agent's
+    ``private`` notebook to every other agent through Oracle Tier 2.
 
     ``reader_id == "captain"`` skips the identity layer, matching
     ``RecordsStore.read_entry``'s unrestricted-Captain rule.
@@ -87,7 +94,7 @@ def build_records_scope_filter(
     if not permitted:
         return None
 
-    if not reader_id or reader_id == _UNRESTRICTED_READER:
+    if reader_id is None or reader_id == _UNRESTRICTED_READER:
         return {"classification": {"$in": permitted}}
 
     open_labels = [
@@ -445,7 +452,7 @@ class SemanticKnowledgeLayer:
         *,
         include_episodes: bool = True,
         records_scope: str | None = None,
-        reader_id: str = "",
+        reader_id: str | None = None,
         reader_department: str = "",
     ) -> list[dict]:
         """Semantic search across knowledge types.
@@ -473,6 +480,10 @@ class SemanticKnowledgeLayer:
                    records filter additionally applies
                    ``RecordsStore.read_entry``'s authorship/department rules,
                    which are strictly stricter than the scope level alone.
+                   BF-679 — tri-state: ``None`` (default) applies the scope
+                   level only, ``""`` is an *anonymous* reader and withholds
+                   the identity-gated classifications, and ``"captain"`` reads
+                   unrestricted.
             reader_department: AD-1138 — reader's department, used only
                    alongside ``reader_id`` to admit same-department records.
 

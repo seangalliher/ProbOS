@@ -300,8 +300,16 @@ class OracleQueryTool:
         import or the projection raises, so the caller always receives a list
         and the framed empty result carries the honest outcome.
 
-        ``agent_id`` is deliberately not forwarded: it scopes Tier 1 recall
-        only, and Tier 1 is never queried here (Minimal Authority).
+        BF-679: ``agent_id`` **is** forwarded. It was withheld on the grounds
+        that it scopes Tier 1 recall only — true until BF-679, where it also
+        became the reader identity Tier 2 resolves Ship's Records
+        classification against. Withholding it now would not reduce privilege,
+        it would make the tool anonymous to the records tier and hide an
+        agent's own ``private`` and department records from it. DD-1 is
+        unaffected: ``tiers`` never contains :data:`SOVEREIGN_TIER`, so no
+        episodic shard is queried, and the filter below still drops any
+        episode-derived row. Minimal Authority is preserved in the direction
+        that matters — identity here can only *narrow* what comes back.
         """
         try:
             from probos.cognitive.provenance import query_with_provenance
@@ -309,6 +317,7 @@ class OracleQueryTool:
             envelopes = await query_with_provenance(
                 self._oracle,
                 query_text=query,
+                agent_id=actor,
                 k_per_tier=_K_PER_TIER,
                 tiers=tiers,
             )

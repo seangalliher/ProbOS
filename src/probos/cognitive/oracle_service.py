@@ -16,7 +16,7 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from probos.types import (  # AD-462f (types.py has no reverse dep on oracle_service)
     MemoryRef,
@@ -65,6 +65,71 @@ _FORMAT_REFS_LINE_CHAR_CAP = 120      # per-line cap inside format_refs()
 # AD-1138: scope Tier 2 queries Ship's Records under. Shared by the keyword and
 # semantic paths so both admit exactly the same classifications.
 _RECORDS_QUERY_SCOPE = "ship"
+
+# BF-679: the reader identity used when the Oracle cannot establish who is
+# asking. Empty string = *anonymous*, not *unspecified* — both records paths
+# then run their identity layer with an empty author, so ``private`` and
+# out-of-department ``department`` records are withheld. Fail closed: an
+# identity-less caller sees the commons, never another crew member's notebook.
+_RECORDS_ANONYMOUS_READER = ""
+
+# BF-679: reader id that reads Ship's Records unrestricted, per
+# ``RecordsStore.read_entry``. Recognised without a registry lookup so the
+# Captain's surfaces (``GET /oracle?agent_id=captain``) keep their reach even
+# when no identity resolver is attached.
+_RECORDS_UNRESTRICTED_READER = "captain"
+
+
+def make_reader_identity_resolver(
+    *, registry: Any, ontology: Any,
+) -> "Callable[[str], tuple[str, str]]":
+    """BF-679: build the ``agent_id -> (reader_id, reader_department)`` resolver.
+
+    Ship's Records are authored under an agent's **callsign** (``write_notebook``
+    sets ``author=callsign``; ``proactive`` reads them back with
+    ``reader_id=callsign``), while the Oracle is handed the agent *id*. Without
+    this translation an agent could never match the ``author`` clause and would
+    lose its own records, so resolution mirrors the write side exactly:
+    ``agent.callsign or agent.agent_type``, and the department comes from the
+    ontology the way :func:`probos.cognitive.agentic_dispatch._resolve_agentic_identity`
+    resolves it.
+
+    Args:
+        registry: duck-typed ``AgentRegistry`` — needs ``get(agent_id)`` and
+            ``all()``.
+        ontology: duck-typed ontology — needs ``get_agent_department(agent_type)``.
+
+    Returns:
+        A callable returning ``("", "")`` for any agent it cannot resolve, which
+        the Oracle treats as the anonymous (fail-closed) reader.
+    """
+
+    def _resolve(agent_id: str) -> tuple[str, str]:
+        agent = registry.get(agent_id)
+        if agent is None:
+            # AD-441: episodic-facing callers pass ``sovereign_id or id``; the
+            # registry is keyed on ``id`` alone, so fall back to a scan rather
+            # than silently demoting a known agent to anonymous.
+            for candidate in registry.all():
+                if getattr(candidate, "sovereign_id", "") == agent_id:
+                    agent = candidate
+                    break
+        if agent is None:
+            return "", ""
+
+        agent_type = getattr(agent, "agent_type", "")
+        callsign = getattr(agent, "callsign", "") or agent_type
+        if type(callsign) is not str or not callsign:
+            return "", ""
+
+        department = ""
+        if type(agent_type) is str and agent_type:
+            resolved = ontology.get_agent_department(agent_type)
+            if type(resolved) is str:
+                department = resolved
+        return callsign, department
+
+    return _resolve
 
 
 def _decode_record_frontmatter(raw: Any) -> dict[str, Any]:
@@ -207,6 +272,7 @@ class OracleService:
         health_provider: Any = None,  # AD-695 (Tier 7)
         match_reason_enabled: bool = False,  # AD-988 (default-OFF)
         records_semantic_enabled: bool = False,  # AD-1138 (default-OFF)
+        reader_identity_resolver: "Callable[[str], tuple[str, str]] | None" = None,  # BF-679
     ) -> None:
         self._episodic_memory = episodic_memory
         self._records_store = records_store
@@ -225,6 +291,10 @@ class OracleService:
         # AD-1138: gate for semantic retrieval over Ship's Records (Tier 2).
         # When False (default) Tier 2 runs the keyword path verbatim.
         self._records_semantic_enabled = records_semantic_enabled
+        # BF-679: agent_id -> (reader_id, reader_department) for Tier 2. None
+        # (the default) means every caller is anonymous to the records tier,
+        # which is the fail-closed state — see _resolve_records_reader.
+        self._reader_identity_resolver = reader_identity_resolver
         self._callsign_registry: Any = None  # BF-264 (callsign→agent_type expansion)
         # AD-462f: Instance-scoped LRU for resolve_ref(). Bounded by
         # _MEMORY_REF_CACHE_SIZE; OrderedDict eviction (oldest first).
@@ -274,6 +344,80 @@ class OracleService:
         which are keyed by agent_type. Idempotent — last write wins.
         """
         self._callsign_registry = callsign_registry
+
+    def attach_reader_identity_resolver(
+        self, resolver: "Callable[[str], tuple[str, str]] | None",
+    ) -> None:
+        """BF-679: Late-bind the Tier 2 reader-identity resolver.
+
+        Used by the runtime because the agent registry and the ontology are
+        both wired after the cognitive phase that builds OracleService.
+        Idempotent — last write wins. Mirrors ``attach_callsign_registry``
+        shape exactly. Until this is attached every caller is anonymous to the
+        records tier, so identity-gated records are withheld rather than
+        disclosed.
+        """
+        self._reader_identity_resolver = resolver
+
+    def _resolve_records_reader(self, agent_id: str) -> tuple[str, str]:
+        """BF-679: map the calling ``agent_id`` onto a Ship's Records reader.
+
+        Returns ``(reader_id, reader_department)`` for
+        :func:`probos.knowledge.records_store.record_is_readable` and
+        :func:`probos.knowledge.semantic.build_records_scope_filter`.
+
+        **An unresolvable caller is anonymous, not privileged.** The Oracle
+        deliberately fails closed here: an empty ``agent_id``, a missing
+        resolver, or a resolver that raises all yield
+        :data:`_RECORDS_ANONYMOUS_READER`, which withholds ``private`` and
+        out-of-department ``department`` records while leaving ``ship`` records
+        untouched. Choosing "system sees everything" instead would mean any
+        future caller that forgets to pass identity silently re-opens BF-679;
+        this way forgetting narrows disclosure, which is safe and visible.
+
+        ``"captain"`` is honoured without a registry lookup so the Captain's
+        surfaces keep the unrestricted read ``RecordsStore.read_entry`` already
+        grants them, even before the resolver is attached.
+        """
+        if type(agent_id) is not str or not agent_id:
+            return _RECORDS_ANONYMOUS_READER, ""
+        if agent_id == _RECORDS_UNRESTRICTED_READER:
+            return _RECORDS_UNRESTRICTED_READER, ""
+
+        resolver = self._reader_identity_resolver
+        if resolver is None:
+            logger.debug(
+                "BF-679: no reader-identity resolver attached; Tier 2 treats "
+                "agent %s as anonymous and withholds identity-gated records",
+                agent_id,
+            )
+            return _RECORDS_ANONYMOUS_READER, ""
+
+        try:
+            resolved = resolver(agent_id)
+        except Exception:
+            logger.warning(
+                "BF-679: reader-identity resolution failed for agent %s; Tier 2 "
+                "falls back to the anonymous reader, so identity-gated records "
+                "are withheld for this query",
+                agent_id, exc_info=True,
+            )
+            return _RECORDS_ANONYMOUS_READER, ""
+
+        if (
+            type(resolved) is not tuple
+            or len(resolved) != 2
+            or type(resolved[0]) is not str
+            or type(resolved[1]) is not str
+        ):
+            logger.warning(
+                "BF-679: reader-identity resolver returned %r for agent %s "
+                "instead of (reader_id, reader_department); Tier 2 falls back "
+                "to the anonymous reader",
+                resolved, agent_id,
+            )
+            return _RECORDS_ANONYMOUS_READER, ""
+        return resolved
 
     def attach_health_provider(self, health_provider: Any) -> None:
         """AD-695: Late-bind the runtime health provider.
@@ -390,7 +534,14 @@ class OracleService:
         # Tier 2: Ship's Records
         if self._records_store and "records" in active_tiers:
             try:
-                tier_results = await self._query_records(query_text, k=k_per_tier)
+                # BF-679: classification is reader-relative. Resolve who is
+                # asking once and hand the same identity to both retrieval
+                # paths so neither can be looser than the other.
+                reader_id, reader_department = self._resolve_records_reader(agent_id)
+                tier_results = await self._query_records(
+                    query_text, k=k_per_tier,
+                    reader_id=reader_id, reader_department=reader_department,
+                )
                 all_results.extend(tier_results)
             except Exception:
                 logger.debug("Oracle: Tier 2 (records) query failed", exc_info=True)
@@ -723,7 +874,14 @@ class OracleService:
 
         return results[:k]
 
-    async def _query_records(self, query_text: str, *, k: int) -> list[OracleResult]:
+    async def _query_records(
+        self,
+        query_text: str,
+        *,
+        k: int,
+        reader_id: str = _RECORDS_ANONYMOUS_READER,
+        reader_department: str = "",
+    ) -> list[OracleResult]:
         """Tier 2: Ship's Records.
 
         AD-1138: when the semantic index is enabled and a layer is attached,
@@ -736,10 +894,19 @@ class OracleService:
 
         The ``OracleResult`` shape is identical on both paths; only the
         retrieval mechanism and the score differ.
+
+        BF-679: ``reader_id`` / ``reader_department`` are applied identically
+        on both paths, so the fallback can never disclose more than the path
+        it replaces. The default is the anonymous reader, which withholds the
+        identity-gated classifications — a caller that supplies no identity
+        gets the commons, not everyone's notebooks.
         """
         if self._records_semantic_enabled and self._semantic_layer is not None:
             try:
-                semantic_results = await self._query_records_semantic(query_text, k=k)
+                semantic_results = await self._query_records_semantic(
+                    query_text, k=k,
+                    reader_id=reader_id, reader_department=reader_department,
+                )
             except Exception:
                 logger.warning(
                     "AD-1138: semantic records retrieval failed; falling back to "
@@ -753,12 +920,25 @@ class OracleService:
                 "AD-1138: semantic records retrieval returned nothing; falling "
                 "back to the keyword path",
             )
-        return await self._query_records_keyword(query_text, k=k)
+        return await self._query_records_keyword(
+            query_text, k=k,
+            reader_id=reader_id, reader_department=reader_department,
+        )
 
     async def _query_records_keyword(
-        self, query_text: str, *, k: int,
+        self,
+        query_text: str,
+        *,
+        k: int,
+        reader_id: str = _RECORDS_ANONYMOUS_READER,
+        reader_department: str = "",
     ) -> list[OracleResult]:
-        raw = await self._records_store.search(query_text, scope=_RECORDS_QUERY_SCOPE)
+        raw = await self._records_store.search(
+            query_text,
+            scope=_RECORDS_QUERY_SCOPE,
+            reader_id=reader_id,
+            reader_department=reader_department,
+        )
         results: list[OracleResult] = []
         for r in raw[:k]:
             score = min(r.get("score", 0) / 10.0, 1.0)
@@ -775,16 +955,26 @@ class OracleService:
         return results
 
     async def _query_records_semantic(
-        self, query_text: str, *, k: int,
+        self,
+        query_text: str,
+        *,
+        k: int,
+        reader_id: str = _RECORDS_ANONYMOUS_READER,
+        reader_department: str = "",
     ) -> list[OracleResult]:
         """AD-1138: semantic retrieval over the records collection.
 
         ``records_scope`` matches the scope the keyword path has always used,
         so the set of admissible classifications is the same on both paths —
         semantic retrieval is not a way around ``RecordsStore.search``'s
-        enforcement. Reader identity is deliberately not applied here: the
-        keyword path Tier 2 replaces applies none either, and adding it would
-        hide an agent's own department records rather than close a hole.
+        enforcement.
+
+        BF-679: reader identity is now applied here too, and on the keyword
+        path, from the same resolved pair. Tier 2 previously passed no reader,
+        which handed every agent's ``private`` and out-of-department records to
+        every other agent. An agent still sees its own records at any
+        classification — the identity layer admits authorship — so closing the
+        hole does not hide an agent's own department notebooks from it.
         """
         raw = await self._semantic_layer.search(
             query_text,
@@ -792,6 +982,8 @@ class OracleService:
             limit=k,
             include_episodes=False,
             records_scope=_RECORDS_QUERY_SCOPE,
+            reader_id=reader_id,
+            reader_department=reader_department,
         )
         results: list[OracleResult] = []
         for r in raw[:k]:
