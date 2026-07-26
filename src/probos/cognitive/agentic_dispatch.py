@@ -617,6 +617,21 @@ class WorkItemAgenticOutcome:
     tool_trace_ref: str | None = None
     total_tokens: int = 0
     artifact_refs: list[dict[str, Any]] = field(default_factory=list)
+    # BF-680: provenance of ``total_tokens`` — ``measured`` / ``estimated`` /
+    # ``mixed`` (see ``agentic_loop.TOKEN_SOURCE_*``). ``total_tokens`` becomes
+    # ``crew_execution.tokens_used``, whose 14-key record is frozen and cannot
+    # carry a companion field, so the provenance rides HERE instead: a caller
+    # holding the outcome can always tell whether the number it is about to
+    # persist was measured or estimated. Appended last and defaulted, so every
+    # existing construction site is untouched.
+    #
+    # The default is spelled out rather than importing
+    # ``agentic_loop.TOKEN_SOURCE_MEASURED``: this module imports that one
+    # lazily inside ``run()``, and a class-body default needs the value at
+    # import time. Same duplication convention as ``AGENTIC_MAX_ITERATIONS`` <->
+    # ``NativeSWEHarnessConfig``; a drift guard in tests/test_bf680_token_usage_
+    # fallback.py keeps the two in step.
+    token_source: str = "measured"
 
 
 class WorkItemAgenticExecutor:
@@ -667,6 +682,7 @@ class WorkItemAgenticExecutor:
         ``runtime.attachment_store`` and returns a :class:`WorkItemAgenticOutcome`.
         """
         from probos.cognitive.swe_harness.agentic_loop import (
+            TOKEN_SOURCE_MEASURED,
             AgenticLoop,
             resolve_parallel_tool_settings,
             resolve_tool_result_bounds,
@@ -1050,6 +1066,23 @@ class WorkItemAgenticExecutor:
                 "total; recording zero so downstream evidence remains bounded",
                 agent_id,
             )
+        # BF-680: the loop substitutes a client-side estimate when the provider
+        # reports no usage. Surface that here, correlated to the agent and
+        # thread, because the ``crew_execution`` record this total lands in is a
+        # frozen 14-key set with nowhere to say it.
+        token_source = getattr(
+            agentic_result, "token_source", TOKEN_SOURCE_MEASURED
+        )
+        if token_source != TOKEN_SOURCE_MEASURED:
+            logger.warning(
+                "BF-680: token total %d for agent %s in thread %s is %s, not a "
+                "provider measurement; downstream cost evidence records it as "
+                "a bare int and cannot distinguish the two",
+                total_tokens,
+                agent_id,
+                thread_id or "<none>",
+                token_source,
+            )
 
         return WorkItemAgenticOutcome(
             final_text=agentic_result.final_text or "",
@@ -1058,6 +1091,7 @@ class WorkItemAgenticExecutor:
             tool_trace_ref=tool_trace_ref,
             total_tokens=total_tokens,
             artifact_refs=artifact_refs,
+            token_source=token_source,
         )
 
     async def _persist_tool_trace(

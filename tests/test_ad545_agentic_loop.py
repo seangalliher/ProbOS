@@ -304,7 +304,20 @@ async def test_loop_compactor_invoked_when_threshold_reached() -> None:
             compaction_calls.append(len(messages))
             return messages
 
-    # First response is a tool_use with many tokens; second is text-only.
+    # AD-1142 repointed this trigger from CUMULATIVE SPEND to WORKING-CONTEXT
+    # OCCUPANCY. The original version of this test drove it with
+    # ``tokens_used=200`` and a two-character prompt, which no longer compacts:
+    # spend is irrelevant now, and "s"/"u"/"thinking" occupy almost nothing.
+    # Worse, the old trigger latched permanently once cumulative spend crossed
+    # the threshold, so it fired every remaining iteration.
+    #
+    # The test's intent is unchanged -- the compactor IS invoked once the
+    # threshold is reached -- so the history is now genuinely large enough to
+    # cross it. ``tokens_used`` is left at 200 deliberately: it must NOT be
+    # what drives the trigger, and a run that compacts on occupancy alone
+    # proves that.
+    bulky_user_message = "context line that occupies real space. " * 60
+
     big = LLMResponse(
         content="thinking",
         tokens_used=200,
@@ -323,11 +336,10 @@ async def test_loop_compactor_invoked_when_threshold_reached() -> None:
     )
     await loop.run(
         system_prompt="s",
-        user_message="u",
+        user_message=bulky_user_message,
         tools=[],
         context={"agent_id": "a"},
     )
-    # First iteration: total_tokens=0, no compact. Second: total_tokens>=100, compact.
     assert len(compaction_calls) >= 1
 
 

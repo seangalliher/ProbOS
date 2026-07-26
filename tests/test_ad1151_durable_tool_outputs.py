@@ -337,8 +337,19 @@ def test_agentic_result_still_constructs_with_no_arguments() -> None:
     assert r.tool_results == []
     assert r.tool_calls == []
     assert r.error == ""
-    # DD-1: appended last, so existing positional/field ordering is untouched.
-    assert [f.name for f in fields(AgenticResult)][-1] == "tool_results"
+    # DD-1: appended after the AD-545 fields, so existing positional/field
+    # ordering is untouched. BF-680 later appended ``token_source`` behind it
+    # under the same rule, so this pins the PREFIX — which is what DD-1 actually
+    # promised — rather than which field happens to be last.
+    assert [f.name for f in fields(AgenticResult)][:7] == [
+        "final_text",
+        "tool_calls",
+        "iterations",
+        "total_tokens",
+        "stopped_reason",
+        "error",
+        "tool_results",
+    ]
 
 
 # ------------------------------------------------------------ SHAPE / CONTRACT

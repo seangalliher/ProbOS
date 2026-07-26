@@ -592,6 +592,100 @@ def _largest_group_tokens(messages: list[dict]) -> int:
     return max(largest, current)
 
 
+# BF-680: provenance labels for ``AgenticResult.total_tokens``. The label
+# answers exactly one question — "does this total contain any client-side
+# estimate?" — so no reader can mistake an estimate for a provider measurement.
+TOKEN_SOURCE_MEASURED = "measured"
+TOKEN_SOURCE_ESTIMATED = "estimated"
+TOKEN_SOURCE_MIXED = "mixed"
+
+
+def _completion_is_non_empty(response: Any) -> bool:
+    """BF-680: did this completion actually produce output?
+
+    ``LLMResponse`` carries no "usage was present" flag, so ``tokens_used``
+    collapses BOTH "the provider reported 0" and "the provider reported
+    nothing" onto the same ``0``. The two are therefore indistinguishable at
+    this boundary, and the disambiguation rule is stated HERE rather than left
+    to fall out of the arithmetic:
+
+        **A zero that accompanies a completion which produced output is an
+        ABSENT measurement, not a measurement of zero.**
+
+    No provider emits text or a tool call for free, so the pairing is only
+    reachable when the field was never populated. The live Copilot proxy at
+    ``127.0.0.1:8080`` is exactly this case: HTTP 200, real content,
+    ``usage.total_tokens == 0``.
+
+    "Produced output" deliberately includes a tool-call-only turn. Those carry
+    no text, but they are the turns the agentic loop exists for, so scoring
+    them as empty would leave the budget inert on precisely the path it is
+    meant to bound.
+
+    A completion with neither text nor tool calls is left alone: its reported
+    zero is plausible, and substituting an estimate there would invent spend
+    for a turn that produced nothing.
+    """
+    blocks = list(response.content_blocks or [])
+    if any(isinstance(b, ToolUseBlock) for b in blocks):
+        return True
+    text = "".join(b.text for b in blocks if isinstance(b, TextBlock))
+    return bool((text or response.content or "").strip())
+
+
+def _estimate_call_tokens(outbound: list[dict], response: Any) -> int:
+    """BF-680: client-side stand-in for one call's ``prompt + completion`` usage.
+
+    Reuses the AD-1142 estimator on both halves rather than taking a tokenizer
+    dependency: ``outbound`` is the history the request was assembled from, and
+    the completion is measured through the same pseudo-message shape so a
+    tool-calling turn's serialised arguments are counted too.
+
+    Summing this per iteration mirrors how a provider bills an uncached
+    multi-turn loop — every turn re-sends the whole history — so the running
+    total stays structurally faithful even though each term is approximate.
+
+    Its inaccuracy (``len(text) // 4``; AD-547b still owns the exact tokenizer,
+    and this does NOT discharge its forcing function) is acceptable for a
+    budget STOP, which only has to fire in the right order of magnitude. It is
+    NOT acceptable as billing, which is why every substitution is labelled.
+    """
+    blocks = list(response.content_blocks or [])
+    text = "\n".join(b.text for b in blocks if isinstance(b, TextBlock))
+    completion = {
+        "content": text or response.content or "",
+        # Plain dicts rather than the AD-1146 wire shape: this is a size
+        # estimate, not a message, and ``_estimate_context_tokens`` already
+        # serialises ``tool_calls`` defensively.
+        "tool_calls": [
+            {
+                "id": b.tool_call.id,
+                "name": b.tool_call.name,
+                "arguments": b.tool_call.arguments,
+            }
+            for b in blocks
+            if isinstance(b, ToolUseBlock)
+        ],
+    }
+    return _estimate_context_tokens(outbound) + _estimate_context_tokens(
+        [completion]
+    )
+
+
+def _token_source_label(sources: set[str]) -> str:
+    """BF-680: collapse one run's per-iteration sources into a single label.
+
+    An empty set means nothing was ever accumulated (the first LLM call
+    failed), which reports as ``measured`` — the label states that no estimate
+    contaminates the total, not that a provider was successfully consulted.
+    """
+    if TOKEN_SOURCE_ESTIMATED not in sources:
+        return TOKEN_SOURCE_MEASURED
+    if TOKEN_SOURCE_MEASURED in sources:
+        return TOKEN_SOURCE_MIXED
+    return TOKEN_SOURCE_ESTIMATED
+
+
 @dataclass
 class AgenticResult:
     """AD-545: Outcome of an agentic loop run."""
@@ -609,6 +703,14 @@ class AgenticResult:
     # what lands here is what the tool actually returned. Appended last and
     # defaulted so the two zero-argument construction sites keep working.
     tool_results: list[ToolCallResult] = field(default_factory=list)
+    # BF-680: provenance of ``total_tokens`` — ``measured`` when every
+    # accumulation came from provider-reported usage, ``estimated`` when every
+    # one was a client-side substitute for an absent report, ``mixed`` when both
+    # occurred in the same run. An estimate must never be read as a
+    # measurement, and ``total_tokens`` is a single int with no room to say so.
+    # Appended last and defaulted, under the same rule AD-1151 used, so existing
+    # field ordering and both zero-argument construction sites are untouched.
+    token_source: str = TOKEN_SOURCE_MEASURED
 
 
 class AgenticLoop:
@@ -688,6 +790,11 @@ class AgenticLoop:
         ]
         agent_id = str(context.get("agent_id", "<unknown>"))
         tool_id_history: list[str] = []
+        # BF-680: every accumulation records where its number came from, so the
+        # run can report one honest label instead of silently blending a
+        # provider measurement with a client-side estimate.
+        token_sources: set[str] = set()
+        estimated_iterations = 0
 
         for iteration in range(1, self._max_iter + 1):
             result.iterations = iteration
@@ -771,7 +878,39 @@ class AgenticLoop:
                 result.error = str(exc)
                 return result
 
-            result.total_tokens += int(response.tokens_used or 0)
+            # BF-680: a provider-reported usage figure is TRUSTED verbatim; an
+            # ABSENT one is substituted with a client-side estimate. See
+            # ``_completion_is_non_empty`` for why "absent" reaches this line
+            # indistinguishable from "zero", and why the rule is written out
+            # rather than inferred. When the provider does report usage this
+            # branch is byte-identical to the AD-545 accumulation it replaced.
+            reported = int(response.tokens_used or 0)
+            if reported == 0 and _completion_is_non_empty(response):
+                charged = _estimate_call_tokens(messages, response)
+                token_sources.add(TOKEN_SOURCE_ESTIMATED)
+                if estimated_iterations == 0:
+                    # Once per run, not once per iteration: the provider either
+                    # populates ``usage`` or it does not, so repeating this
+                    # would be noise rather than signal.
+                    logger.warning(
+                        "BF-680: provider on tier=%s reported no token usage "
+                        "for a non-empty completion at iteration=%d agent=%s; "
+                        "charging a client-side estimate of %d tokens so "
+                        "token_budget stays enforceable. This run's "
+                        "total_tokens is an ESTIMATE (token_source=%s), not a "
+                        "measurement, and must not be read as billing.",
+                        self._tier,
+                        iteration,
+                        agent_id[:12],
+                        charged,
+                        TOKEN_SOURCE_ESTIMATED,
+                    )
+                estimated_iterations += 1
+            else:
+                charged = reported
+                token_sources.add(TOKEN_SOURCE_MEASURED)
+            result.total_tokens += charged
+            result.token_source = _token_source_label(token_sources)
 
             if self._budget is not None and result.total_tokens >= self._budget:
                 result.stopped_reason = "token_budget"

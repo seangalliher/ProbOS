@@ -138,6 +138,11 @@ class NativeBuilderHarness:
                 "compactions": 0,
                 "stopped_reason": agentic_result.stopped_reason,
                 "total_tokens": agentic_result.total_tokens,
+                # BF-680: qualifies the figure directly above it. Reported as
+                # ``measured`` / ``estimated`` / ``mixed`` — the loop charges a
+                # client-side estimate when the provider populates no ``usage``,
+                # and this telemetry must not present that as a measurement.
+                "token_source": agentic_result.token_source,
             },
         }
 
