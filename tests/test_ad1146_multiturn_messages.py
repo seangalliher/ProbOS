@@ -484,10 +484,16 @@ async def test_compact_over_budget_recompaction_keeps_pairing_intact() -> None:
     llm = _SummaryLLM(summary="a very long summary " * 50)
     history = _tool_history()
     out = await sc.compact(history, preserve_count=3, budget_tokens=10, fast_llm=llm)
-    # Re-compaction ran: head + summary + a group-aligned tail.
+    # Re-compaction ran: head + summary + a group-aligned tail. AD-1142 (DD-6)
+    # widened the head from ``[compacted[0]]`` to the system message AND the
+    # original user task — the old splice kept only the system message, so the
+    # summary used to land at index 1 and the task the agent was given was
+    # silently discarded on this second pass.
     assert out[0]["role"] == "system"
-    assert "CONTEXT SUMMARY" in out[1]["content"]
-    assert out[2]["role"] == "assistant"
+    assert out[0] is history[0]
+    assert out[1] is history[1]
+    assert "CONTEXT SUMMARY" in out[2]["content"]
+    assert out[3]["role"] == "assistant"
     assert len(out) < len(history)
     _assert_pairing_intact(out)
 

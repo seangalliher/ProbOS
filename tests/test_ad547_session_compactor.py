@@ -140,3 +140,140 @@ async def test_compact_preserves_original_user_task() -> None:
     out = await sc.compact(msgs, preserve_count=2, fast_llm=llm)
     contents = [m.get("content", "") for m in out]
     assert any(original_task in c for c in contents)
+
+
+# ---------------------------------------------------------------------------
+# AD-1142 / DD-6 — Defect A regressions.
+#
+# The re-compaction splice used to keep ``[compacted[0]]``. With both a system
+# message and an original-user message in the head that is the SYSTEM message,
+# so the second pass silently discarded the task the agent was given. Neither
+# existing test reached the branch: ``test_compact_preserves_original_user_task``
+# passes no ``budget_tokens`` (first pass only) and
+# ``test_compact_re_compacts_when_over_budget`` asserts only ``len(out) <= 5``.
+# Every test below forces the second pass with a low ``budget_tokens`` and a
+# summary long enough that the first pass cannot fit it.
+# ---------------------------------------------------------------------------
+
+def _over_budget_history() -> list[dict]:
+    msgs = [
+        {"role": "system", "content": "SYSTEM_PROMPT_MARKER"},
+        {"role": "user", "content": "ORIGINAL_TASK_MARKER"},
+    ]
+    for i in range(10):
+        msgs.append({"role": "assistant", "content": f"a{i}"})
+        msgs.append({"role": "user", "content": f"r{i}"})
+    return msgs
+
+
+@pytest.mark.asyncio
+async def test_re_compaction_preserves_the_original_user_task_by_identity() -> None:
+    """THE DEFECT A REGRESSION. Before AD-1142 this returned
+    ``[system, summary, *tail]`` and the original task was gone."""
+    sc = SessionCompactor()
+    llm = _StubFastLLM(summary="a very long summary " * 50)
+    msgs = _over_budget_history()
+
+    out = await sc.compact(msgs, preserve_count=3, budget_tokens=10, fast_llm=llm)
+
+    assert any(m is msgs[1] for m in out), "the original user task was dropped"
+    assert any("ORIGINAL_TASK_MARKER" in m.get("content", "") for m in out)
+
+
+@pytest.mark.asyncio
+async def test_re_compaction_preserves_the_system_prompt_by_identity() -> None:
+    sc = SessionCompactor()
+    llm = _StubFastLLM(summary="a very long summary " * 50)
+    msgs = _over_budget_history()
+
+    out = await sc.compact(msgs, preserve_count=3, budget_tokens=10, fast_llm=llm)
+
+    assert out[0] is msgs[0]
+
+
+@pytest.mark.asyncio
+async def test_re_compaction_order_is_system_then_task_then_summary_then_tail() -> None:
+    sc = SessionCompactor()
+    llm = _StubFastLLM(summary="a very long summary " * 50)
+    msgs = _over_budget_history()
+
+    out = await sc.compact(msgs, preserve_count=3, budget_tokens=10, fast_llm=llm)
+
+    assert out[0] is msgs[0]
+    assert out[1] is msgs[1]
+    assert out[2]["role"] == "user"
+    assert out[2]["content"].startswith("[CONTEXT SUMMARY")
+    # The rest is the group-aligned trailing slice, in original order.
+    assert out[3:] == msgs[len(msgs) - len(out[3:]):]
+
+
+@pytest.mark.asyncio
+async def test_re_compaction_emits_exactly_one_summary() -> None:
+    sc = SessionCompactor()
+    llm = _StubFastLLM(summary="a very long summary " * 50)
+    msgs = _over_budget_history()
+
+    out = await sc.compact(msgs, preserve_count=3, budget_tokens=10, fast_llm=llm)
+
+    summaries = [
+        m for m in out if str(m.get("content", "")).startswith("[CONTEXT SUMMARY")
+    ]
+    assert len(summaries) == 1
+
+
+@pytest.mark.asyncio
+async def test_re_compaction_never_repeats_a_message_object() -> None:
+    """The head is de-duplicated by identity.
+
+    ``system_msg is original_user`` cannot be produced through ``compact()`` —
+    the first requires ``role == "system"`` at index 0 and the second requires
+    ``role == "user"`` later, and one dict cannot report both — so the guard is
+    defensive. What IS observable, and what the guard protects, is that no
+    message object appears twice in the returned list.
+    """
+    sc = SessionCompactor()
+    llm = _StubFastLLM(summary="a very long summary " * 50)
+    msgs = _over_budget_history()
+
+    out = await sc.compact(msgs, preserve_count=3, budget_tokens=10, fast_llm=llm)
+
+    assert len({id(m) for m in out}) == len(out)
+
+
+@pytest.mark.asyncio
+async def test_re_compaction_without_a_system_message_keeps_the_task() -> None:
+    """``head`` is ``[original_user]`` alone — the branch where ``compacted[0]``
+    already WAS the original user task and the old splice happened to work."""
+    sc = SessionCompactor()
+    llm = _StubFastLLM(summary="a very long summary " * 50)
+    msgs: list[dict] = [{"role": "assistant", "content": "preamble"}]
+    msgs.append({"role": "user", "content": "ORIGINAL_TASK_MARKER"})
+    for i in range(10):
+        msgs.append({"role": "assistant", "content": f"a{i}"})
+        msgs.append({"role": "user", "content": f"r{i}"})
+
+    out = await sc.compact(msgs, preserve_count=3, budget_tokens=10, fast_llm=llm)
+
+    assert out[0] is msgs[1]
+    assert out[1]["content"].startswith("[CONTEXT SUMMARY")
+    assert len({id(m) for m in out}) == len(out)
+
+
+@pytest.mark.asyncio
+async def test_re_compaction_with_no_head_does_not_duplicate_the_summary() -> None:
+    """Neither a system message nor a user turn exists, so ``head`` is empty and
+    ``compacted[0]`` IS the summary."""
+    sc = SessionCompactor()
+    llm = _StubFastLLM(summary="a very long summary " * 50)
+    msgs = [
+        {"role": "assistant", "content": f"a{i}"} for i in range(14)
+    ]
+
+    out = await sc.compact(msgs, preserve_count=3, budget_tokens=10, fast_llm=llm)
+
+    summaries = [
+        m for m in out if str(m.get("content", "")).startswith("[CONTEXT SUMMARY")
+    ]
+    assert len(summaries) == 1
+    assert out[0]["content"].startswith("[CONTEXT SUMMARY")
+    assert len({id(m) for m in out}) == len(out)

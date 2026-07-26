@@ -529,6 +529,69 @@ def build_tool_result_messages(
     ]
 
 
+def _estimate_context_tokens(messages: list[dict]) -> int:
+    """AD-1142 / DD-3: approximate the tokens currently OCCUPYING the context.
+
+    Same ``len(text) // 4`` approximation as
+    ``session_compactor.estimate_tokens`` — AD-547b still owns the exact
+    tokenizer and this AD does NOT discharge its forcing function (the first
+    compaction false-trip whose len/4 estimate diverges >25% from real model
+    context counting) — but this one ALSO counts the serialised ``tool_calls``
+    payload an AD-1146 assistant turn carries. ``estimate_messages_tokens``
+    reads ``content`` only, which undercounts a structured history by the whole
+    tool-call array.
+
+    Deliberately module-local rather than imported from ``session_compactor``:
+    the loop has no dependency on that module today (the compactor arrives
+    injected as ``Any``), and DD-3 keeps it that way.
+
+    Non-dict entries are skipped rather than raising. The compactor is an
+    injected ``Any``, so what comes back from it is a module boundary, and this
+    function is called from the loop's hot path OUTSIDE the ``try`` that
+    absorbs compaction failures — a raise here would escape ``run()``, which
+    promises never to raise.
+    """
+    total = 0
+    for message in messages:
+        if type(message) is not dict:
+            continue
+        text = str(message.get("content", "") or "")
+        tool_calls = message.get("tool_calls")
+        if tool_calls:
+            try:
+                text += json.dumps(
+                    tool_calls, separators=(",", ":"), default=str
+                )
+            except Exception:
+                text += str(tool_calls)
+        total += max(1, len(text) // 4)
+    return total
+
+
+def _largest_group_tokens(messages: list[dict]) -> int:
+    """AD-1142 / DD-4: estimated size of the largest single tool-call group.
+
+    ``session_compactor.align_to_group_start`` preserves an AD-1146 group
+    WHOLE, so the largest group is the floor below which compaction cannot
+    shrink the tail. Reported in the still-over-threshold warning so an
+    operator can tell whether the configured threshold is reachable at all or
+    whether one turn's fan-out (up to ``PARALLEL_TOOL_CALLS_MAX`` results, each
+    unbounded while ``tool_result_max_chars`` is 0) has made it unreachable.
+    """
+    largest = 0
+    current = 0
+    for message in messages:
+        if type(message) is not dict:
+            continue
+        size = _estimate_context_tokens([message])
+        if message.get("role") == "tool":
+            current += size
+        else:
+            largest = max(largest, current)
+            current = size
+    return max(largest, current)
+
+
 @dataclass
 class AgenticResult:
     """AD-545: Outcome of an agentic loop run."""
@@ -639,27 +702,26 @@ class AgenticLoop:
             )
 
             # Optional compaction (AD-547) before LLM call.
+            #
+            # AD-1142 / DD-3 — the trigger measures the WORKING-CONTEXT
+            # OCCUPANCY of ``messages``, not ``result.total_tokens``. Cumulative
+            # spend is never reset (it only ever accumulates, below), so
+            # comparing it against the threshold LATCHED the trigger on
+            # permanently: past the first crossing, every remaining iteration
+            # paid an extra fast-tier call to re-summarise an already-summarised
+            # list. Occupancy falls after a successful compaction, so the next
+            # iteration does not re-fire. It is also the quantity the threshold
+            # always meant — ``NativeSWEHarnessConfig.compaction_threshold_pct``
+            # is wired as ``int(0.8 * 100_000)``, i.e. "80% of a 100K window".
             if (
                 self._compactor is not None
                 and self._compaction_threshold is not None
-                and result.total_tokens >= self._compaction_threshold
+                and _estimate_context_tokens(messages)
+                >= self._compaction_threshold
             ):
-                try:
-                    messages = await self._compactor.compact(
-                        messages,
-                        budget_tokens=self._compaction_threshold,
-                        fast_llm=self._llm,
-                    )
-                    logger.info(
-                        "AD-547: Compacted message list at iteration=%d total_tokens=%d",
-                        iteration,
-                        result.total_tokens,
-                    )
-                except Exception:
-                    logger.warning(
-                        "AD-547: SessionCompactor.compact failed; continuing without compaction",
-                        exc_info=True,
-                    )
+                messages = await self._compact_messages(
+                    messages, iteration=iteration, agent_id=agent_id
+                )
 
             # AD-1146: when structured tool messages are enabled, hand the real
             # multi-turn array to the client (which posts it verbatim). The
@@ -790,6 +852,89 @@ class AgenticLoop:
 
         result.stopped_reason = "max_iterations"
         return result
+
+    async def _compact_messages(
+        self,
+        messages: list[dict],
+        *,
+        iteration: int,
+        agent_id: str,
+    ) -> list[dict]:
+        """AD-547 / AD-1142 (DD-4): compact the history — best-effort.
+
+        Returns the compacted history, or ``messages`` unchanged. **Compaction
+        is best-effort, not a guarantee**, and this method never raises and
+        never retries. Every failure mode degrades to a contextual warning and a
+        usable history:
+
+        * the compactor raising,
+        * the compactor returning something that is not a non-empty ``list``
+          (it is injected as ``Any``, so its return value is a module boundary
+          and Defense in Depth applies), or
+        * the compactor returning a list whose occupancy is still at or above
+          the threshold.
+
+        The last case is legitimate rather than a bug: ``align_to_group_start``
+        preserves an AD-1146 tool-call group WHOLE, so one turn carrying up to
+        ``PARALLEL_TOOL_CALLS_MAX`` results — each unbounded while
+        ``tool_result_max_chars`` is 0 — can exceed any threshold on its own. No
+        amount of re-compaction converges on that, which is exactly why there is
+        no retry loop here. The run continues and may still hit the provider's
+        limit; that is honest degradation rather than silent degradation.
+        """
+        threshold = self._compaction_threshold
+        try:
+            compacted = await self._compactor.compact(
+                messages,
+                budget_tokens=threshold,
+                fast_llm=self._llm,
+            )
+        except Exception:
+            logger.warning(
+                "AD-547: SessionCompactor.compact failed at iteration=%d "
+                "agent=%s; keeping the uncompacted history and continuing, so "
+                "the run may still reach the provider's context limit",
+                iteration,
+                agent_id[:12],
+                exc_info=True,
+            )
+            return messages
+
+        if type(compacted) is not list or not compacted:
+            logger.warning(
+                "AD-1142: compactor returned %s rather than a non-empty list "
+                "at iteration=%d agent=%s; keeping the uncompacted history and "
+                "continuing without compaction",
+                type(compacted).__name__,
+                iteration,
+                agent_id[:12],
+            )
+            return messages
+
+        occupancy = _estimate_context_tokens(compacted)
+        logger.info(
+            "AD-547: Compacted message list at iteration=%d messages=%d->%d "
+            "estimated_tokens=%d threshold=%d",
+            iteration,
+            len(messages),
+            len(compacted),
+            occupancy,
+            threshold if threshold is not None else -1,
+        )
+        if threshold is not None and occupancy >= threshold:
+            logger.warning(
+                "AD-1142: compaction could not bring the working context under "
+                "the threshold at iteration=%d agent=%s (estimated=%d "
+                "threshold=%d largest_tool_call_group=%d); a single tool-call "
+                "group is preserved whole, so the run continues with an "
+                "over-threshold context and may still hit the provider limit",
+                iteration,
+                agent_id[:12],
+                occupancy,
+                threshold,
+                _largest_group_tokens(compacted),
+            )
+        return compacted
 
     async def _execute_tool_uses(
         self,

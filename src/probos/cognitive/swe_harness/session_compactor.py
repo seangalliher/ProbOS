@@ -163,16 +163,34 @@ class SessionCompactor:
                     # floored at the start of the preserved tail (already a group
                     # boundary) so it can never reach back into the head/summary
                     # region and duplicate an entry.
+                    #
+                    # ``tail_floor`` is derived from the FIRST-PASS ``compacted``
+                    # and is consumed before the rebind below, so the AD-1142
+                    # head change cannot move it.
                     tail_floor = len(compacted) - len(tail)
                     start = max(
                         tail_floor,
                         align_to_group_start(compacted, len(compacted) - 2),
                     )
-                    # When neither a system nor an original-user message
-                    # survived, ``compacted[0]`` IS the summary; splicing it
-                    # alongside ``summary_msg`` would duplicate it.
-                    head = (
-                        [compacted[0]] if compacted[0] is not summary_msg else []
-                    )
+                    # AD-1142 (DD-6) — Defect A. This previously spliced
+                    # ``[compacted[0]]``. When both a system message and an
+                    # original-user message survived the first pass,
+                    # ``compacted[0]`` is the SYSTEM message, so the original
+                    # task the agent was given — at index 1 — was silently
+                    # discarded on the second pass. Rebuild the head PAIR by
+                    # identity instead, exactly mirroring the first-pass head
+                    # construction above: the summary itself is excluded (when
+                    # neither a system nor an original-user message survived,
+                    # ``compacted[0]`` IS the summary and splicing it alongside
+                    # ``summary_msg`` would duplicate it), and a degenerate
+                    # input where the two are the same object contributes one
+                    # entry, not two.
+                    head: list[dict] = []
+                    for candidate in (system_msg, original_user):
+                        if candidate is None or candidate is summary_msg:
+                            continue
+                        if any(kept is candidate for kept in head):
+                            continue
+                        head.append(candidate)
                     compacted = head + [summary_msg] + compacted[start:]
         return compacted

@@ -28,6 +28,7 @@ import math
 import re
 import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable
 
 from probos.crew_utils import is_crew_agent
@@ -143,6 +144,124 @@ _EMPTY_CONSULT_NOTE: str = (
     "(The ship's shared knowledge stores returned nothing above the relevance "
     "bar for this subtask. Work from the task itself.)"
 )
+
+# ── AD-1142: crew-child working-context compaction + spend ceiling ──────────
+#
+# WHY THIS EXISTS — context-window economics, and nothing else.
+#
+# A crew child's working context is unbounded. ``max_iterations`` (25) bounds
+# TURNS, not bytes; ``agentic_loop.tool_result_max_chars`` ships at 0, so each
+# tool result is unbounded; and AD-1147 lets ONE turn carry up to
+# ``max_parallel_tool_calls`` results (default 3, ceiling 16). Twenty-four
+# turns of unbounded ``read_page`` / ``http_fetch`` output exhaust any provider
+# window, at which point ``llm_client.complete()`` raises and the loop returns
+# ``stopped_reason="error"`` — the child fails, its dependents stay blocked,
+# and the failure reads as an LLM error rather than as a design gap.
+# Compaction bounds the working context. That is the whole claim.
+#
+# IT IS NOT A TRANSPARENCY MECHANISM AND DOES NOT CLAIM TO BE ONE. What
+# compaction can drop from ``messages``, and what actually retains it:
+#
+#   role:"tool" content (tool outputs)   PARTIALLY — AD-1151 ``_persist_tool_trace``,
+#                                        bounded by tool_trace_output_max_chars
+#                                        (8192/output) and tool_trace_max_bytes
+#                                        (256 KiB/blob)
+#   assistant reasoning text             NOWHERE
+#   assistant.tool_calls as the model    id / name / arguments only
+#     saw it
+#   the flattened prompt actually sent   NOWHERE
+#   the compaction summary itself        NOWHERE
+#   the original user task after a       NOWHERE (the AD-1142 Defect A fix keeps
+#     second compaction pass             it IN the working context instead)
+#
+# The durable trace is not a superset of the transcript either:
+# ``tool_result_max_chars`` ships at 0 (unbounded transcript) and
+# ``resolve_tool_trace_bounds`` only clamps the durable cap UP to a NON-ZERO
+# context cap, so on shipped defaults the trace records LESS than the model
+# saw. Any wording that credits the durable trace with what compaction drops is
+# wrong; this AD stands on context-window economics alone.
+#
+# Two knobs, two different mechanisms:
+#   crew_compaction_threshold_tokens — working-context ceiling. Cross it =>
+#       shrink and continue. Compaction does NOT grant extra iterations, so it
+#       cannot turn a ``max_iterations`` stop into a completion; it addresses
+#       window exhaustion (``stopped_reason="error"``) only.
+#   crew_token_budget — cumulative-spend ceiling. Cross it => stop, with
+#       ``stopped_reason="token_budget"`` mapping to ``status="failed"``, so
+#       dependents stay blocked. That is why it defaults to None.
+_CREW_COMPACTION_THRESHOLD_TOKENS = 60_000
+_MIN_CREW_TOKEN_BUDGET = 1024
+
+
+def _normalize_compaction_threshold(value: Any) -> int:
+    """Clamp the working-context ceiling, never raise (DD-8 / DD-10).
+
+    ``type(...) is int`` also rejects ``bool``, matching
+    ``resolve_tool_result_bounds``. Mirrors the ``ge``/``le`` bounds on
+    ``AgenticDispatchConfig.crew_compaction_threshold_tokens`` so a value that
+    reached this executor by a route that skipped Pydantic validation
+    (``model_copy(update=...)``, a synthetic runtime, a stub config) degrades to
+    the module default rather than failing every child.
+    """
+    if type(value) is not int or not (1_000 <= value <= 1_000_000):
+        return _CREW_COMPACTION_THRESHOLD_TOKENS
+    return value
+
+
+def _normalize_token_budget(value: Any) -> int | None:
+    """Clamp the cumulative-spend ceiling to ``None`` or a valid int.
+
+    ``None`` means *no budget*, which is today's behaviour, so a malformed
+    value degrades to ``None`` rather than to a number: silently inventing a
+    spend ceiling would fail children that succeed today.
+    """
+    if value is None or type(value) is not int or value < _MIN_CREW_TOKEN_BUDGET:
+        return None
+    return value
+
+
+def resolve_crew_compaction_settings(cfg: Any) -> dict[str, Any]:
+    """AD-1142 / DD-8: the compaction kwargs for ONE crew child.
+
+    Returns exactly the ``{compactor, compaction_threshold, token_budget}``
+    keyword subset :class:`WorkItemAgenticExecutor` forwards to
+    :class:`AgenticLoop`, in that order, omitting every key that is not
+    configured — so with the gate off and no budget it returns ``{}`` and the
+    child's ``_loop_kwargs`` is byte-identical to pre-AD-1142.
+
+    A clamp, never a validator (the AD-1151 ``resolve_tool_trace_bounds``
+    precedent). ``routers/config.py`` writes config by ``model_dump()`` ->
+    ``_deep_merge`` -> ``SystemConfig(**merged)``, which marks every field
+    explicitly set, so a raise here would turn an unrelated ``POST /config``
+    into a 422 and could then persist a combination that refuses to boot;
+    ``model_copy(update=...)`` skips validators outright. **This function must
+    not raise** — a crew child must never fail because a compaction knob was
+    mistyped.
+
+    DD-2 — a **fresh** :class:`SessionCompactor` per call, so callers get one
+    per child. ``SessionCompactor`` is stateless at HEAD, but that is an
+    accident of the current implementation rather than a declared contract, and
+    crew children run concurrently under ``asyncio.Semaphore(max_parallel)``.
+    Any future instance state on it would become a silent cross-child race with
+    no test to catch it, so the instance is never shared.
+
+    DD-7 — ``crew_token_budget`` is deliberately NOT gated on
+    ``crew_compaction_enabled``. They are independent mechanisms, and gating the
+    budget on the compaction flag would mean enabling compaction silently
+    introduced a new failure mode.
+    """
+    from probos.cognitive.swe_harness.session_compactor import SessionCompactor
+
+    settings: dict[str, Any] = {}
+    if getattr(cfg, "crew_compaction_enabled", False) is True:
+        settings["compactor"] = SessionCompactor()
+        settings["compaction_threshold"] = _normalize_compaction_threshold(
+            getattr(cfg, "crew_compaction_threshold_tokens", None)
+        )
+    budget = _normalize_token_budget(getattr(cfg, "crew_token_budget", None))
+    if budget is not None:
+        settings["token_budget"] = budget
+    return settings
 
 
 def _format_consult_age(timestamp: Any) -> str:
@@ -582,6 +701,9 @@ class CrewTaskExecutor:
         crew_sigma_max_chars: int = 2000,
         crew_sigma_max_entries: int = 4,
         crew_sigma_min_score: float = 0.35,
+        crew_compaction_enabled: bool = False,
+        crew_compaction_threshold_tokens: int = _CREW_COMPACTION_THRESHOLD_TOKENS,
+        crew_token_budget: int | None = None,
     ) -> None:
         self._store = work_item_store
         self._registry = agent_registry
@@ -605,6 +727,20 @@ class CrewTaskExecutor:
         self._sigma_max_chars = int(crew_sigma_max_chars)
         self._sigma_max_entries = int(crew_sigma_max_entries)
         self._sigma_min_score = float(crew_sigma_min_score)
+        # AD-1142 / DD-10: the compaction knobs are NORMALISED HERE, in
+        # ``__init__`` and OUTSIDE the try in ``_run_child`` that persists
+        # ``stopped_reason="execution_exception"``. A mistyped knob must not be
+        # able to fail every child of every session (AD-1141 DD-8 precedent).
+        # Only the SCALARS are settled now: DD-2 requires a fresh
+        # ``SessionCompactor`` per child, so the instance is built at the call
+        # site by ``resolve_crew_compaction_settings`` reading this view.
+        self._compaction_config = SimpleNamespace(
+            crew_compaction_enabled=crew_compaction_enabled is True,
+            crew_compaction_threshold_tokens=_normalize_compaction_threshold(
+                crew_compaction_threshold_tokens
+            ),
+            crew_token_budget=_normalize_token_budget(crew_token_budget),
+        )
 
     async def run(self, parent_id: str) -> list[SubtaskResult]:
         """Run all child sub-tasks of ``parent_id`` and return their results.
@@ -1278,6 +1414,11 @@ class CrewTaskExecutor:
                     "_crew_session_id": parent_id,
                     "_crew_work_item_id": child_id,
                 },
+                # AD-1142 / DD-2: a FRESH compactor for THIS child. Children run
+                # concurrently under the fan-out semaphore, so the instance is
+                # never shared. Spreads to nothing when the gate is off and no
+                # budget is set, leaving the call byte-identical to AD-1141.
+                **resolve_crew_compaction_settings(self._compaction_config),
             )
         except Exception:
             logger.warning(

@@ -6350,6 +6350,99 @@ class AgenticDispatchConfig(BaseModel):
         le=86_400.0,
     )
 
+    # ── AD-1142: crew-child working-context compaction + token budget ───────
+    #
+    # JUSTIFICATION IS CONTEXT-WINDOW ECONOMICS, NOT TRANSPARENCY. A crew
+    # child's working context is unbounded today: ``max_iterations`` bounds
+    # TURNS, ``agentic_loop.tool_result_max_chars`` ships at 0 (each tool
+    # result unbounded), and one AD-1147 turn can append up to
+    # ``agentic_loop.max_parallel_tool_calls`` results. Enough turns of
+    # unbounded output exhaust the provider window, ``llm_client.complete()``
+    # raises, and the child returns ``stopped_reason="error"`` — its dependents
+    # stay blocked and the failure reads as an LLM fault rather than a design
+    # gap. Compaction bounds the working context. That is its entire claim.
+    #
+    # It is NOT an observability mechanism and does not claim to be one. What
+    # compaction drops is retained as follows:
+    #
+    #   tool outputs (role:"tool")  -> PARTIALLY, via AD-1151
+    #                                  tool_trace_output_max_chars (8192/output)
+    #                                  and tool_trace_max_bytes (256 KiB/blob)
+    #   assistant reasoning text    -> NOWHERE
+    #   assistant/tool correlation  -> id, name and arguments only
+    #   the flattened prompt sent   -> NOWHERE
+    #   the compaction summary      -> NOWHERE
+    #
+    # and the durable trace is not a superset of the transcript either:
+    # ``tool_result_max_chars`` ships at 0, and no finite durable cap beats an
+    # unbounded transcript, so on shipped defaults the trace records LESS than
+    # the model saw.
+    crew_compaction_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1142: compact a crew child's working context when it crosses "
+            "crew_compaction_threshold_tokens, instead of letting it grow "
+            "until the provider rejects the request. Default-OFF per "
+            "convention #14 — with the gate off no compactor is threaded to "
+            "the child's AgenticLoop at all and the run is byte-identical to "
+            "pre-AD-1142. Compaction is BEST-EFFORT: a single AD-1147 "
+            "tool-call group is preserved whole, so one turn's fan-out can "
+            "exceed any threshold, in which case the loop warns and continues "
+            "rather than retrying. Compaction is a context-window mechanism, "
+            "NOT a transparency one: it drops assistant reasoning text, the "
+            "flattened prompt and the summary itself, and NONE of those are "
+            "recorded in any durable store. Only tool OUTPUTS survive, "
+            "bounded, via the AD-1151 tool trace."
+        ),
+    )
+    crew_compaction_threshold_tokens: int = Field(
+        default=60_000,
+        ge=1_000,
+        le=1_000_000,
+        description=(
+            "AD-1142: the crew child's working-context ceiling, in estimated "
+            "tokens. Measures OCCUPANCY of the message list (content plus the "
+            "serialised tool_calls array), not cumulative spend — see "
+            "crew_token_budget for the spend ceiling. Crossing it shrinks the "
+            "history and continues. 60000 is a STARTING VALUE, NOT A DERIVED "
+            "ONE: the SWE harness compacts at 0.8 x 100000, and crew children "
+            "run up to max_parallel_subtasks concurrently (default 3), so 60000 "
+            "is 180000 of simultaneous provider load at the default fan-out. It "
+            "is the first knob to tune if children still fail with "
+            "stopped_reason='error'. AD-1147 interaction: one turn appends up "
+            "to agentic_loop.max_parallel_tool_calls results, so with "
+            "agentic_loop.tool_result_max_chars at 0 (unbounded, the shipped "
+            "default) a SINGLE turn can cross any threshold and compaction "
+            "cannot converge. With a non-zero tool_result_max_chars the "
+            "per-turn ceiling is max_parallel_tool_calls x "
+            "tool_result_max_chars characters, which must stay comfortably "
+            "under crew_compaction_threshold_tokens x 4 for compaction to "
+            "converge; at the AD-1147 ceiling of 16 that is 16 x the cap. "
+            "There is deliberately no validator relating them — the relation "
+            "is stated here and asserted in tests. Only consulted when "
+            "crew_compaction_enabled is True."
+        ),
+    )
+    crew_token_budget: int | None = Field(
+        default=None,
+        ge=1024,
+        description=(
+            "AD-1142: cumulative-spend ceiling for one crew child, in tokens. "
+            "None (the default) means no budget, which is today's behaviour. "
+            "This is a HARD STOP, not a shrink: crossing it returns "
+            "stopped_reason='token_budget', which crew_executor maps to "
+            "status='failed', so the child's DEPENDENTS STAY BLOCKED and no "
+            "partial output is persisted as done. That consequence is why it "
+            "defaults to None. It is INDEPENDENT of crew_compaction_enabled — "
+            "a Safety Budget ceiling is useful with or without compaction, and "
+            "gating it on the compaction flag would mean enabling compaction "
+            "silently introduced a new failure mode. The two knobs are "
+            "different mechanisms: crew_compaction_threshold_tokens is a "
+            "working-context ceiling (cross it, shrink and continue); this is "
+            "a spend ceiling (cross it, stop and fail)."
+        ),
+    )
+
     @model_validator(mode="after")
     def _validate_crew_recovery_backoff(self) -> "AgenticDispatchConfig":
         if self.crew_ingress_semantic_call_limit > self.crew_ingress_scan_limit:

@@ -97,7 +97,14 @@ FORBIDDEN_REPORT_SUBSTRINGS: tuple[str, ...] = (
 )
 
 #: DD-5 pinning. Every ``agentic_loop`` field AD-1146/1147/1148/1151 added is
-#: pinned explicitly — defaults are not inherited.
+#: pinned explicitly — defaults are not inherited. AD-1142 additionally pins the
+#: three ``agentic_dispatch`` crew-compaction knobs here rather than in
+#: ``sigma_flags``: only this dict reaches ``config_fingerprint``, so the
+#: artifact records the compaction posture, and ``apply_flags`` requires every
+#: path to resolve to a ``bool``, which the int/``None`` knobs are not.
+#: Compaction is NOT a Σ treatment — a key carrying the same value in both
+#: ``SIGMA_ON`` and ``SIGMA_OFF`` would misrepresent a non-Σ knob as an arm
+#: dimension.
 PINNED_AGENTIC_LOOP: dict[str, Any] = {
     "agentic_loop.structured_tool_messages": False,
     "agentic_loop.tool_result_max_chars": 0,
@@ -107,6 +114,9 @@ PINNED_AGENTIC_LOOP: dict[str, Any] = {
     "agentic_loop.max_parallel_tool_calls": 3,
     "agentic_loop.tool_trace_output_max_chars": 8192,
     "agentic_loop.tool_trace_max_bytes": 262144,
+    "agentic_dispatch.crew_compaction_enabled": False,
+    "agentic_dispatch.crew_compaction_threshold_tokens": 60000,
+    "agentic_dispatch.crew_token_budget": None,
 }
 
 #: Every key DD-7 requires in a results artifact.

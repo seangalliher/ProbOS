@@ -650,6 +650,14 @@ class WorkItemAgenticExecutor:
         max_iterations: int | None = None,
         tier: str | None = None,
         extra_context: dict | None = None,
+        # AD-1142: crew-child working-context compaction + spend ceiling.
+        # PURE PASS-THROUGH — this method also serves the AD-839 conversational
+        # path and the AD-1072 delegation path, so it deliberately reads NO
+        # config for these. The crew executor owns the policy and resolves
+        # them; every other caller leaves them None and gets today's loop.
+        compactor: Any = None,
+        compaction_threshold: int | None = None,
+        token_budget: int | None = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -962,6 +970,15 @@ class WorkItemAgenticExecutor:
             _loop_kwargs["max_iterations"] = max_iterations
         if tier is not None:
             _loop_kwargs["tier"] = tier
+        # AD-1142: threaded the same way, so a caller that passes none of them
+        # (every non-crew caller, and the crew path with the gate off) builds a
+        # byte-identical kwarg dict — same keys, same order.
+        if compactor is not None:
+            _loop_kwargs["compactor"] = compactor
+        if compaction_threshold is not None:
+            _loop_kwargs["compaction_threshold"] = compaction_threshold
+        if token_budget is not None:
+            _loop_kwargs["token_budget"] = token_budget
         # AD-1146: opt into the provider's real multi-turn message array
         # (assistant.tool_calls + role:"tool" results). Default-OFF — with the
         # flag off the loop builds the AD-545 flattened prompt verbatim. Read

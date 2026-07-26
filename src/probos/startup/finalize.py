@@ -1892,6 +1892,14 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         crew_sigma_max_chars=agentic_tools_cfg.crew_sigma_max_chars,
         crew_sigma_max_entries=agentic_tools_cfg.crew_sigma_max_entries,
         crew_sigma_min_score=agentic_tools_cfg.crew_sigma_min_score,
+        # AD-1142: the crew child's working-context ceiling and spend ceiling.
+        # Both default-OFF/None, so an unconfigured runtime threads nothing to
+        # the loop and the child runs exactly as it did before AD-1142.
+        crew_compaction_enabled=getattr(cfg, "crew_compaction_enabled", False),
+        crew_compaction_threshold_tokens=getattr(
+            cfg, "crew_compaction_threshold_tokens", 60_000
+        ),
+        crew_token_budget=getattr(cfg, "crew_token_budget", None),
     )
     verifier = SubtaskVerifier(
         llm_client=llm_client,
