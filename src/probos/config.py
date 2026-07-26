@@ -4375,8 +4375,22 @@ class AgenticLoopConfig(BaseModel):
     section rather than under either caller's config. Both read the same keys,
     which keeps the two paths from diverging.
 
-    Holds the AD-1146 wire-protocol flag, the AD-1148 tool-result bounds and
-    the AD-1147 parallel-tool-execution settings.
+    Holds the AD-1146 wire-protocol flag, the AD-1148 tool-result bounds, the
+    AD-1147 parallel-tool-execution settings and the AD-1151 durable-trace
+    bounds. The AD-1148 and AD-1151 bounds are separate concerns — the former
+    caps what reaches the model, the latter caps what reaches the audit trail.
+
+    There is deliberately NO cross-field validator relating the two. A
+    validator cannot express "the durable cap must be at least the context
+    cap" soundly here: ``routers/config.py`` writes config by
+    ``model_dump() -> _deep_merge -> SystemConfig(**merged)``, which marks
+    every field explicitly set, so a ``model_fields_set``-scoped raise turns
+    any unrelated ``POST /config`` into a 422 and can then materialise a
+    combination that refuses to boot. ``model_copy(update=...)`` skips
+    validators outright, so the guarantee would not even hold. The invariant
+    is enforced instead by an upward clamp in ``resolve_tool_trace_bounds``
+    (``swe_harness/agentic_loop.py``), which is monotone, survives a
+    dump/revalidate round trip, and cannot brick a config.
     """
 
     structured_tool_messages: bool = Field(
@@ -4446,6 +4460,52 @@ class AgenticLoopConfig(BaseModel):
             "AgenticDispatchConfig.max_parallel_subtasks default — fan-out is "
             "a Safety Budget concern, so it is bounded rather than unlimited. "
             "Only consulted once parallel_tool_calls_enabled is True."
+        ),
+    )
+    tool_trace_output_max_chars: int = Field(
+        default=8192,
+        ge=0,
+        description=(
+            "AD-1151: maximum characters of a single tool OUTPUT persisted into "
+            "the durable tool trace. 0 = do not persist outputs at all, which "
+            "yields a blob byte-identical to the pre-AD-1151 trace. Mirrors "
+            "TOOL_TRACE_OUTPUT_MAX_CHARS in swe_harness/agentic_loop.py. The "
+            "durable head/tail split is derived from THIS cap (2:1, the AD-1148 "
+            "ratio), not from tool_result_head_chars / tool_result_tail_chars, "
+            "so raising this value really does retain more. "
+            "resolve_tool_trace_bounds clamps the effective value UP to "
+            "tool_result_max_chars when a non-zero context cap exceeds it, so "
+            "the trace is never bounded tighter than the transcript the model "
+            "already saw. The clamp is skipped when this field is 0, which "
+            "stays an explicit opt-out rather than being silently re-enabled. "
+            "HONEST SCOPE: this closes the gap only against a BOUNDED context. "
+            "tool_result_max_chars ships at 0 (unbounded), and no finite "
+            "durable cap can retain more than an unbounded transcript — so on "
+            "the shipped defaults the trace still records LESS than the model "
+            "saw. What it does guarantee is that the output survives the "
+            "conversation at all, which is what did not happen before. "
+            "DEFAULT-ON: an explicit, documented carve-out from convention #14 "
+            "(default-OFF on transitional flags), granted on the same grounds as "
+            "warm_boot.enabled — an audit trail that is off by default does not "
+            "audit. The carve-out is NOT precedent for a non-guarantee feature: "
+            "the cost is bounded by tool_trace_max_bytes and the array shape "
+            "plus every legacy key are preserved either way, so nothing breaks "
+            "when it is on."
+        ),
+    )
+    tool_trace_max_bytes: int = Field(
+        default=262_144,
+        ge=0,
+        description=(
+            "AD-1151: ceiling on the whole encoded tool-trace blob, in bytes "
+            "(256 KiB). 0 = no total cap. Mirrors TOOL_TRACE_MAX_BYTES in "
+            "swe_harness/agentic_loop.py. Deliberately conservative against the "
+            "5 GiB attachments.max_store_bytes default: AttachmentStore.write "
+            "can raise AttachmentStoreFullError, which honest-degrades the WHOLE "
+            "trace to None, call records included — so a smaller blob protects "
+            "the request records this AD must not regress. When the cap binds, "
+            "later outputs are elided whole and marked; call records are never "
+            "dropped."
         ),
     )
 

@@ -18,9 +18,7 @@ execute a dispatched work item:
 
 from __future__ import annotations
 
-import dataclasses
 import hashlib
-import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -1031,11 +1029,19 @@ class WorkItemAgenticExecutor:
         runtime: Any,
         agent_id: str,
     ) -> str | None:
-        """Persist the loop's tool_calls to AttachmentStore; return the SHA ref.
+        """Persist the loop's tool calls AND their outputs; return the SHA ref.
+
+        AD-1151: the blob records what each tool actually returned, not just
+        that it was called, so the durable trace matches the Nooplex §3.3
+        Transparency guarantee that AD-1142 and AD-1148 both cited. The shape is
+        unchanged for existing readers — still a bare JSON array, still carrying
+        every ``ToolCallRequest`` key — so versioning is by key presence.
 
         Honest-degrade to ``None`` (log a warning) when the store is unwired or
         the write fails — the trace ref is provenance, not correctness, so a
         missing store must not fail the dispatch (AD-731 / log-and-degrade tier).
+        The payload shaping sits inside the same ``try`` so a malformed result
+        degrades identically rather than failing the dispatch.
         """
         try:
             store = getattr(runtime, "attachment_store", None)
@@ -1049,10 +1055,36 @@ class WorkItemAgenticExecutor:
         if store is None:
             return None
         try:
-            payload = [
-                dataclasses.asdict(tc) for tc in getattr(agentic_result, "tool_calls", [])
-            ]
-            blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+            # Function-local, matching the AgenticLoop import at the top of
+            # ``run``. There is no module cycle to work around here, but the
+            # locality is load-bearing anyway: tests monkeypatch names on
+            # ``swe_harness.agentic_loop`` itself, which only takes effect when
+            # this module resolves them at call time.
+            from probos.cognitive.swe_harness.agentic_loop import (
+                build_tool_trace_payload,
+                resolve_tool_trace_bounds,
+            )
+
+            bounds = resolve_tool_trace_bounds(
+                getattr(getattr(runtime, "config", None), "agentic_loop", None)
+            )
+            _entries, blob = build_tool_trace_payload(
+                getattr(agentic_result, "tool_calls", []),
+                getattr(agentic_result, "tool_results", []),
+                **bounds,
+            )
+            blob_max_bytes = bounds["blob_max_bytes"]
+            if blob_max_bytes and len(blob) > blob_max_bytes:
+                # AD-1151 / DD-5: every output has already been elided and the
+                # call records alone still exceed the cap. Persist them anyway —
+                # dropping request records to save bytes would regress the
+                # guarantee this trace exists to provide.
+                logger.warning(
+                    "AD-1151: tool trace for agent %s is %d bytes after eliding "
+                    "every output, over the %d-byte cap; persisting the call "
+                    "records anyway so the provenance record is not lost",
+                    agent_id, len(blob), blob_max_bytes,
+                )
             content_hash = hashlib.sha256(blob).hexdigest()
             await store.write(
                 content_hash=content_hash,

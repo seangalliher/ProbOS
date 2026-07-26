@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, TYPE_CHECKING
 
 from probos.cognitive.swe_harness.tool_call import (
@@ -38,6 +38,22 @@ AGENTIC_DEFAULT_TIER = "deep"
 # guard in tests/test_ad1148_tool_result_bounds.py keeps the two in step.
 TOOL_RESULT_HEAD_CHARS = 4000
 TOOL_RESULT_TAIL_CHARS = 2000
+
+# AD-1151: bounds on the DURABLE tool trace, which is a different concern from
+# the AD-1148 working-context bounds above. Mirrored by ``AgenticLoopConfig``
+# in ``probos.config`` (same duplication convention as TOOL_RESULT_HEAD_CHARS);
+# a drift guard in tests/test_ad1151_durable_tool_outputs.py keeps them in step.
+#
+# DD-4 — this cap is larger than the AD-1148 context default (4000 + 2000), and
+# ``resolve_tool_trace_bounds`` additionally clamps it UP to a larger non-zero
+# ``tool_result_max_chars``, so the trace is never bounded tighter than the
+# transcript the model saw. That is the only comparison the clamp guarantees:
+# ``tool_result_max_chars`` ships at 0 (UNBOUNDED context), and no finite
+# durable cap beats an unbounded transcript — on the shipped defaults the trace
+# records LESS than the model saw. What it does guarantee is that the output
+# survives the conversation at all, which it did not before this AD.
+TOOL_TRACE_OUTPUT_MAX_CHARS = 8192
+TOOL_TRACE_MAX_BYTES = 262_144
 
 # AD-1147 / DD-1: the ONLY tool ids allowed to run concurrently.
 #
@@ -160,6 +176,235 @@ def resolve_tool_result_bounds(cfg: Any) -> dict[str, int]:
         value = getattr(cfg, name, default)
         bounds[name] = value if type(value) is int and value >= 0 else default
     return bounds
+
+
+# AD-1151 / DD-5: (builder kwarg, ``AgenticLoopConfig`` field, module default).
+#
+# Head/tail are deliberately ABSENT. The durable head/tail split is derived
+# inside :func:`build_tool_trace_payload` from the durable cap itself. An
+# earlier revision reused the AD-1148 ``tool_result_head_chars`` /
+# ``tool_result_tail_chars`` fields here, which pinned durable retention at
+# head + tail (~6155 chars) no matter how large the durable cap was — raising
+# the cap bought literally nothing, and at a 20 000-char context cap the
+# context and durable renderings came out byte-identical.
+_TOOL_TRACE_BOUND_FIELDS: tuple[tuple[str, str, int], ...] = (
+    ("output_max_chars", "tool_trace_output_max_chars", TOOL_TRACE_OUTPUT_MAX_CHARS),
+    ("blob_max_bytes", "tool_trace_max_bytes", TOOL_TRACE_MAX_BYTES),
+)
+
+
+def resolve_tool_trace_bounds(cfg: Any) -> dict[str, int]:
+    """AD-1151: read the DURABLE tool-trace bounds off an ``AgenticLoopConfig``.
+
+    Returns exactly the keyword set accepted by :func:`build_tool_trace_payload`,
+    so the config field names and the builder's parameter names cannot drift
+    apart. Mirrors :func:`resolve_tool_result_bounds`, including the
+    ``type(...) is int`` guard that also rejects ``bool``.
+
+    DD-6 — this feature is default-**ON**, so a missing, non-integer or negative
+    value degrades to the MODULE DEFAULT rather than to zero. Synthetic and
+    event-neutral runtimes build no real ``SystemConfig``, and silently dropping
+    the outputs for them would reintroduce the transparency gap this AD closes.
+
+    DD-4 — "the durable trace is never bounded tighter than the transcript" is
+    enforced HERE, by clamping the effective durable cap UP to a larger non-zero
+    ``tool_result_max_chars``. It is deliberately not a config validator:
+    ``routers/config.py`` writes config by ``model_dump()`` -> ``_deep_merge``
+    -> ``SystemConfig(**merged)``, which marks every field explicitly set, so a
+    validator raise turns an unrelated ``POST /config`` into a 422 and can then
+    persist a combination that refuses to boot; ``model_copy(update=...)`` skips
+    validators entirely, so the guarantee would not even hold. A clamp is
+    monotone, survives a dump/revalidate round trip and cannot brick a config.
+
+    The clamp is skipped when the durable cap is ``0``. That value is an
+    explicit "do not persist outputs" opt-out, not an inversion, and silently
+    re-enabling persistence against it would be the exact silent-override the
+    OFF-path byte-identity guarantee forbids.
+    """
+    bounds: dict[str, int] = {}
+    for kwarg, field_name, default in _TOOL_TRACE_BOUND_FIELDS:
+        value = getattr(cfg, field_name, default)
+        bounds[kwarg] = value if type(value) is int and value >= 0 else default
+
+    if bounds["output_max_chars"] > 0:
+        context_cap = getattr(cfg, "tool_result_max_chars", 0)
+        if type(context_cap) is not int or context_cap < 0:
+            context_cap = 0
+        bounds["output_max_chars"] = max(bounds["output_max_chars"], context_cap)
+    return bounds
+
+
+def _durable_head_tail(output_max_chars: int, original_chars: int) -> tuple[int, int]:
+    """AD-1151 / DD-5: split the DURABLE cap into head and tail slices.
+
+    ``truncate_tool_output`` treats ``max_chars`` as a keep-whole *trigger*, not
+    a ceiling on retention: it only shrinks ``head_chars``/``tail_chars`` when
+    they do not fit, so passing the AD-1148 context slices pinned durable
+    retention at head + tail forever. Deriving the slices from the durable cap
+    instead makes retention monotone in that cap, which is the whole point of
+    having one.
+
+    The 2:1 head:tail ratio is the AD-1148 default (4000 / 2000) carried
+    forward, so the durable rendering keeps the same shape as the context one —
+    just wider. Returns ``(0, 0)`` when the cap cannot even hold the elision
+    marker; ``truncate_tool_output`` renders as much of the marker as fits and
+    never consults the slices in that case.
+    """
+    budget = output_max_chars - len(_ELISION_MARKER.format(omitted=original_chars))
+    if budget <= 0:
+        return 0, 0
+    head = budget * 2 // 3
+    return head, budget - head
+
+
+def build_tool_trace_payload(
+    tool_calls: list[ToolCallRequest],
+    tool_results: list[ToolCallResult],
+    *,
+    output_max_chars: int,
+    blob_max_bytes: int,
+) -> tuple[list[dict[str, Any]], bytes]:
+    """AD-1151: render the durable tool trace — call requests AND their outputs.
+
+    Returns ``(entries, blob)``; the blob is the encoded JSON the caller hashes
+    and writes, returned here so the caller does not re-serialize. Pure: no I/O,
+    no logging, no clock.
+
+    **Shape (DD-2).** The blob stays a bare JSON *array*. Each element carries
+    the four ``ToolCallRequest`` keys exactly as ``dataclasses.asdict`` renders
+    them — this AD never removes information that exists today — and gains
+    ``output`` / ``is_error`` / ``output_chars`` / ``output_truncated`` when a
+    matching result exists. There is no envelope and no version field: readers
+    version by **key presence** (feature detection), which is what a bare array
+    admits.
+
+    Entries are joined on ``ToolCallResult.id == ToolCallRequest.id``, never by
+    list index. A request with no matching result emits the legacy keys only.
+
+    **DD-3 — ``duration_ms`` is deliberately absent.** It is wall-clock, so
+    persisting it would make two otherwise-identical runs produce different
+    blobs. The timing is already observable on the ``AGENTIC_TOOL_CALL_COMPLETED``
+    event, so recording it a second time would buy nothing and cost determinism.
+
+    **Bounds (DD-5).** Each output is head+tail truncated by
+    :func:`truncate_tool_output` (reused unchanged — the AD-1148 boundary holds)
+    at ``output_max_chars``, with the slices derived from that cap by
+    :func:`_durable_head_tail` so retention is monotone in it.
+
+    The whole blob is then shrunk from the tail: the LAST entries that still
+    have a non-empty output have those outputs elided whole and marked. The
+    elision *set* is chosen by arithmetic — each output's encoded size is
+    measured once and subtracted from the overage — so the blob is re-serialized
+    twice rather than once per elision. An exact one-at-a-time residual loop
+    follows as a belt-and-braces backstop; it normally runs zero iterations.
+    Both phases always take the last entry with a truthy output first, so the
+    outcome is byte-identical to eliding one at a time, and earlier calls keep
+    their outputs so a reader can see exactly where the budget ran out.
+
+    ``output_chars`` is always the ORIGINAL length and ``output_truncated`` is a
+    bool, so all three cases are machine-distinguishable: a tool that returned
+    nothing (``""`` / ``0`` / ``False``), a truncated output (marker / ``N`` /
+    ``True``) and an elided output (``""`` / ``N`` / ``True``).
+
+    **Requests are never dropped.** If a fully-elided blob still exceeds
+    ``blob_max_bytes`` it is returned anyway; losing call records to save bytes
+    would regress the guarantee this AD is protecting. The caller inspects the
+    returned length and logs.
+
+    ``output_max_chars == 0`` disables output persistence entirely and yields a
+    blob byte-identical to the pre-AD-1151 trace. ``blob_max_bytes == 0``
+    disables the total cap.
+    """
+    results_by_id: dict[str, ToolCallResult] = {}
+    if output_max_chars > 0:
+        for tcr in tool_results:
+            # First result wins, so a (non-reachable) duplicate id resolves
+            # deterministically to the earlier request's outcome.
+            results_by_id.setdefault(tcr.id, tcr)
+
+    entries: list[dict[str, Any]] = []
+    for call in tool_calls:
+        entry: dict[str, Any] = asdict(call)
+        tcr = results_by_id.get(call.id)
+        if tcr is not None:
+            # Coerce exactly as ``ToolCallResult.from_tool_result`` does. A
+            # hand-built or adapter-bypassing result carrying ``None`` would
+            # otherwise raise inside ``len()``, and the caller's outer
+            # ``except`` would degrade the WHOLE trace to ``None`` — losing
+            # every call record, which is precisely what "requests are never
+            # dropped" forbids.
+            raw = tcr.output
+            original = raw if isinstance(raw, str) else str(raw) if raw is not None else ""
+            head_chars, tail_chars = _durable_head_tail(output_max_chars, len(original))
+            bounded = truncate_tool_output(
+                original,
+                max_chars=output_max_chars,
+                head_chars=head_chars,
+                tail_chars=tail_chars,
+            )
+            entry["output"] = bounded
+            entry["is_error"] = tcr.is_error
+            entry["output_chars"] = len(original)
+            entry["output_truncated"] = bounded != original
+        entries.append(entry)
+
+    blob = _encode_tool_trace(entries)
+    if blob_max_bytes <= 0 or len(blob) <= blob_max_bytes:
+        return entries, blob
+
+    # DD-5: pick the elision set arithmetically. Eliding an entry replaces its
+    # encoded ``output`` value with ``""`` (saving its encoded length minus the
+    # two surviving quotes) and, when ``output_truncated`` was ``false``, flips
+    # it to ``true`` (``false`` is one byte longer than ``true``). The encoder
+    # is ASCII-only, so encoded character counts are byte counts and the
+    # accounting is exact rather than approximate.
+    #
+    # Sizing each output once is O(total output chars); the previous
+    # re-serialise-per-elision loop was O(calls x total chars) and blocked the
+    # event loop for seconds at call counts reachable within the documented
+    # ``max_iterations`` (<= 200) x ``PARALLEL_TOOL_CALLS_MAX`` (16) bounds.
+    excess = len(blob) - blob_max_bytes
+    victims: list[dict[str, Any]] = []
+    saved = 0
+    for entry in reversed(entries):
+        if saved >= excess:
+            break
+        if not entry.get("output"):
+            continue
+        victims.append(entry)
+        saved += len(json.dumps(entry["output"], default=str)) - 2
+        if entry.get("output_truncated") is False:
+            saved += 1
+
+    if victims:
+        for entry in victims:
+            entry["output"] = ""
+            entry["output_truncated"] = True
+        blob = _encode_tool_trace(entries)
+
+    # Residual backstop: exact, one at a time, same tail-first order. Normally
+    # zero iterations — the accounting above is exact — but it keeps the byte
+    # guarantee independent of that arithmetic staying exact.
+    while len(blob) > blob_max_bytes:
+        victim = next(
+            (e for e in reversed(entries) if e.get("output")),
+            None,
+        )
+        if victim is None:
+            break
+        victim["output"] = ""
+        victim["output_truncated"] = True
+        blob = _encode_tool_trace(entries)
+    return entries, blob
+
+
+def _encode_tool_trace(entries: list[dict[str, Any]]) -> bytes:
+    """AD-1151: the one serialisation expression, shared by build + shrink.
+
+    Byte-identical to the pre-AD-1151 expression in ``_persist_tool_trace`` so
+    the ``output_max_chars == 0`` path stays a no-op on the wire.
+    """
+    return json.dumps(entries, sort_keys=True, default=str).encode("utf-8")
 
 
 def partition_tool_uses(
@@ -294,6 +539,13 @@ class AgenticResult:
     total_tokens: int = 0
     stopped_reason: str = "complete"  # complete|max_iterations|token_budget|error
     error: str = ""
+    # AD-1151 / DD-1: the FULL untruncated outputs, in REQUEST order, correlated
+    # to ``tool_calls`` by ``ToolCallResult.id``. Captured at the loop so both
+    # construction sites (agentic_dispatch and native_builder) can reach them;
+    # AD-1148 bounding is applied strictly later and only to message content, so
+    # what lands here is what the tool actually returned. Appended last and
+    # defaulted so the two zero-argument construction sites keep working.
+    tool_results: list[ToolCallResult] = field(default_factory=list)
 
 
 class AgenticLoop:
@@ -509,6 +761,10 @@ class AgenticLoop:
             for use in tool_uses:
                 result.tool_calls.append(use.tool_call)
                 tool_id_history.append(use.tool_call.name)
+            # AD-1151 / DD-1: capture the FULL outputs alongside the requests,
+            # before AD-1148 bounding is applied to message content below, so
+            # the durable trace can record what the tool actually returned.
+            result.tool_results.extend(tool_results)
 
             # AD-1146: structured results are individually correlated by
             # ``tool_call_id``; the legacy path folds them into one user turn.
