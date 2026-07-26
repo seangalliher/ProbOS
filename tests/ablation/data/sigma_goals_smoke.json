@@ -1,0 +1,31 @@
+{
+  "goalset_version": "smoke-v1",
+  "header": "AD-1143 structural-mode smoke goal set. Two goals, used only by PROBOS_ABLATION=structural to exercise the harness against a deterministic scripted client. It burns zero LLM calls and proves nothing about the effect of shared knowledge flow. It is NOT the measurement goal set and must never be used to produce a live baseline.",
+  "why_twelve": "Not applicable. See sigma_goals_v1.json for the measurement set and the reason it is 12 goals rather than the 100 Nooplex 8.5 asks for.",
+  "versioning": "Versioned by filename and by goalset_version, same rule as the measurement set: a change is a new file and a new version, never an edit in place.",
+  "goals": [
+    {
+      "id": "s01",
+      "goal": "Define a compact record layout for a device heartbeat, then deliver a writer and a reader that agree exactly on the field names and the required-field set.",
+      "children_hint": 2,
+      "discriminator": "cross_child",
+      "discriminator_note": "The reader child must bind to the layout the writer child derives; two independent guesses do not agree on the required-field set.",
+      "solo_solvable": false,
+      "seed_records": []
+    },
+    {
+      "id": "s02",
+      "goal": "State the current retention window for the device heartbeat feed and explain what an integrator must change because of it.",
+      "children_hint": 2,
+      "discriminator": "cross_session",
+      "discriminator_note": "The retention window was decided in an earlier session and is absent from the goal text, so an agent without that record can only invent a number.",
+      "solo_solvable": false,
+      "seed_records": [
+        {
+          "title": "Heartbeat retention decision",
+          "body": "The device heartbeat retention window was set to 72 hours because the replay tooling reads at most the last 48 hours. Integrators relying on multi-day replay must switch to the archive export endpoint."
+        }
+      ]
+    }
+  ]
+}

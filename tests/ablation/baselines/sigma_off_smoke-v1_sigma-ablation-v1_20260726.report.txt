@@ -1,0 +1,17 @@
+AD-1143 Nooplex 8.3 shared-knowledge ablation
+direction=favours_control d_z=-0.55 ci95=[-0.55, -0.55] n_pairs=2 power_note="n=12 -> ~70% power for d_z=0.8; directional only"
+mean[sigma_on]=0.429 mean[sigma_off]=0.534 between_arm_delta=0.105 between_trial_sd=unmeasured
+mode=structural embeddings=local judge_tier=deep goals=2 trials_per_goal=1 judge_failures=0
+note: trial-to-trial noise was NOT measured - no goal/arm cell had two or more usable trials. It is unknown, not zero, and the variance veto could not be evaluated against a real estimate.
+note: only 2 usable pairs; a resampled interval at this n is degenerate and carries no information about the uncertainty of the effect
+blind presentation order (arm -> slot):
+  s01: sigma_on@1, sigma_off@2
+  s02: sigma_off@1, sigma_on@2
+caveat: Judge and system under test share a model family. A human-evaluation panel (Nooplex 8.4) is out of scope for this AD. Blinding, a fixed temperature and per-row judge model/tier recording are the affordable mitigations.
+caveat: PROBOS_EMBEDDINGS=local makes the embedding function lexical, not semantic, so AD-1138's index is measurably weaker here than it would be with real embeddings. That biases the run against the treatment arm: a positive result under local embeddings is a floor, not a ceiling.
+note: STRUCTURAL MODE. Scores come from a deterministic scripted client and mean nothing about the effect of shared knowledge flow. This artifact proves the harness, not a result.
+note: synthesis=deterministic_transcript_v1: accepted child outputs are concatenated in a stable order rather than folded by an LLM, so the coordination seams survive to the judge.
+note: measured crew LLM calls per goal (B-2), summed over both arms and all 1 trial(s), judge calls excluded: {"s01": 4, "s02": 4}
+note: judge LLM calls: 4 (one per scored artifact).
+note: blind presentation order is seeded at 1143 and recorded per goal so the unblinding is auditable.
+Directional signal, not a publishable effect size. The goal set is 12 items, not the >=100 Nooplex 8.5 asks for, because each item costs a full live crew run. Cohen's d_z and its interval show direction and rough magnitude only. No hypothesis test is performed and no statistical claim is made. Nooplex 8.5 compliance is NOT claimed.

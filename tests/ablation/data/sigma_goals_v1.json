@@ -1,0 +1,136 @@
+{
+  "goalset_version": "v1",
+  "header": "AD-1143 Nooplex 8.3 ablation goal set v1. Twelve goals, each of which a single competent agent cannot complete alone. Every goal declares a discriminator from the closed vocabulary {cross_child, cross_session, redundancy} and a note saying why it discriminates. A goal one agent could solve alone would measure general capability rather than cross-agent knowledge flow, dilute the effect toward zero, and make the harness measure the wrong thing.",
+  "why_twelve": "One goal is one full crew run: planner decomposition, children_hint children each running a full multi-turn AgenticLoop with tool calls, verification, and synthesis. That is roughly 15-40 live LLM calls per run. At 2 arms x 3 trials that is 6 runs, roughly 90-240 calls per goal, so 12 goals is roughly 1.1k-2.9k live calls. One hundred goals would be 9k-24k calls, which is not affordable and is not made affordable by any design choice available here. Nooplex 8.5 asks for at least 100; this set does not meet that bar and does not claim to.",
+  "versioning": "This file is versioned by filename and by goalset_version. A new goal set is a NEW FILE and a NEW VERSION. Never edit this file in place: every committed baseline is content-hashed against these exact bytes, and an in-place edit silently invalidates all of them.",
+  "goals": [
+    {
+      "id": "g01",
+      "goal": "Define a compact JSON event envelope for a sensor telemetry feed, then deliver both a producer module that emits events in that envelope and a consumer module that validates and unpacks them. The producer and consumer must agree exactly on field names, types, and the required-field set.",
+      "children_hint": 3,
+      "discriminator": "cross_child",
+      "discriminator_note": "The consumer child must bind to the exact envelope the schema child derives. Neither child can produce a matching pair alone, and two independent guesses at an envelope will not agree on field names or the required-field set.",
+      "solo_solvable": false,
+      "seed_records": []
+    },
+    {
+      "id": "g02",
+      "goal": "A supplier feed delivers customer addresses with inconsistent casing, abbreviations, and whitespace. Derive one normalisation rule set for those addresses, then apply that rule set to produce a deduplication key routine and a human-readable display formatter. Both outputs must use the same rules.",
+      "children_hint": 3,
+      "discriminator": "cross_child",
+      "discriminator_note": "The dedup key and the display formatter are only correct relative to one another if both consume the same derived rule set. Independently derived rule sets diverge on abbreviation handling and the keys stop matching the displayed values.",
+      "solo_solvable": false,
+      "seed_records": []
+    },
+    {
+      "id": "g03",
+      "goal": "Write the migration note explaining to integrators how the ingest queue retention window changed, why it changed, and what an integrator must do about it. State the current retention window and the reason it was chosen.",
+      "children_hint": 2,
+      "discriminator": "cross_session",
+      "discriminator_note": "The current retention window and its rationale were decided in an earlier session and exist only in the ship's records. The goal text deliberately omits both, so an agent without access to that earlier record can only invent a number.",
+      "solo_solvable": false,
+      "seed_records": [
+        {
+          "title": "Ingest queue retention decision",
+          "body": "The ingest queue retention window was reduced from 14 days to 72 hours. Reason: the replay tooling reads at most the last 48 hours, so retention beyond 72 hours carried storage cost with no recovery benefit. Integrators who relied on multi-day replay must switch to the archive export endpoint. Decision owner: operations. Effective from release 4.2."
+        }
+      ]
+    },
+    {
+      "id": "g04",
+      "goal": "Produce two analyses of the regional order book: a monthly revenue trend narrative and a top-customer concentration summary. Both must be computed from the same reconciled order table, and the reconciliation rules must be stated once and applied identically to both.",
+      "children_hint": 3,
+      "discriminator": "redundancy",
+      "discriminator_note": "Both analyses require the same expensive reconciliation of the raw order book. Without a way to reuse the first derivation the second child repeats it, and two independent reconciliations disagree on refunds and partial shipments, so the two analyses stop being comparable.",
+      "solo_solvable": false,
+      "seed_records": []
+    },
+    {
+      "id": "g05",
+      "goal": "For a public file-upload endpoint, enumerate the credible abuse scenarios, then deliver a mitigation plan in which every mitigation is traceable to a specific enumerated scenario and every enumerated scenario has at least one mitigation.",
+      "children_hint": 3,
+      "discriminator": "cross_child",
+      "discriminator_note": "The mitigation child must map onto the exact scenario list the enumeration child produced. If it enumerates its own list the traceability requirement is unverifiable, and coverage of the real list cannot be shown.",
+      "solo_solvable": false,
+      "seed_records": []
+    },
+    {
+      "id": "g06",
+      "goal": "Draft the schema migration that adds per-tenant soft-delete to the subscription tables, using the project's established naming convention for the new columns and indexes. State the convention you are following.",
+      "children_hint": 3,
+      "discriminator": "cross_session",
+      "discriminator_note": "The naming convention was agreed in an earlier session and recorded, not restated in the goal. Without it the migration invents plausible-looking names that do not match the rest of the schema and the reviewer rejects it.",
+      "solo_solvable": false,
+      "seed_records": [
+        {
+          "title": "Database naming convention",
+          "body": "Agreed naming convention for this project. Soft-delete columns are named deleted_at and are nullable timestamps; never is_deleted, never a boolean. Tenant scoping columns are named tenant_id. Partial indexes for soft-deleted rows are named ix_<table>_active and are declared WHERE deleted_at IS NULL. Foreign keys are named fk_<table>_<referenced_table>. Migration files are prefixed with a zero-padded four digit sequence."
+        }
+      ]
+    },
+    {
+      "id": "g07",
+      "goal": "From the release changelog for versions 3.0 through 3.9, produce both an upgrade-risk brief for operators and a customer-facing highlights note. Both must rest on the same extracted list of behaviour-changing entries.",
+      "children_hint": 2,
+      "discriminator": "redundancy",
+      "discriminator_note": "Extracting the behaviour-changing entries from a long changelog is the expensive step and both deliverables need it. Without reuse the second child re-extracts, and the two documents then disagree about which changes are breaking.",
+      "solo_solvable": false,
+      "seed_records": []
+    },
+    {
+      "id": "g08",
+      "goal": "Specify a small HTTP contract for a job-submission service, then deliver a client wrapper, a server request handler, and a contract test suite. The client, the handler, and the tests must all bind to the same specified contract including status codes and error payload shape.",
+      "children_hint": 4,
+      "discriminator": "cross_child",
+      "discriminator_note": "Three siblings must all bind to one contract produced by a fourth. Independently invented contracts will not agree on the error payload shape or the status-code mapping, and the contract tests will not exercise the handler that was actually written.",
+      "solo_solvable": false,
+      "seed_records": []
+    },
+    {
+      "id": "g09",
+      "goal": "Write the follow-up action plan for the recurring checkout latency incident. Reference the established root cause, say which previously agreed remediation was not completed, and propose what to do now.",
+      "children_hint": 2,
+      "discriminator": "cross_session",
+      "discriminator_note": "The root cause and the incomplete remediation were recorded in an earlier session. The goal text names neither, so an agent without that record has to speculate about the cause and cannot say which remediation was left undone.",
+      "solo_solvable": false,
+      "seed_records": [
+        {
+          "title": "Checkout latency incident root cause",
+          "body": "Root cause of the recurring checkout latency incident: the pricing service opens a new database connection per request because connection pooling was disabled during a prior debugging session and never re-enabled. Agreed remediation was two-part: re-enable pooling with a maximum of 20 connections, and add an alert on connection-open rate. Pooling was re-enabled in release 4.0. The connection-open-rate alert was never added, which is why the third recurrence was detected by a customer rather than by monitoring."
+        }
+      ]
+    },
+    {
+      "id": "g10",
+      "goal": "Evaluate two candidate deployment shapes for the batch scoring pipeline: always-on workers, and on-demand workers per batch. Produce a recommendation memo and a twelve-month budget projection. Both must use one shared unit-cost model, stated once.",
+      "children_hint": 3,
+      "discriminator": "redundancy",
+      "discriminator_note": "Building the unit-cost model is the expensive derivation and both deliverables depend on it. If each child builds its own, the memo recommends one shape while the projection prices a different set of assumptions, and the pair is internally inconsistent.",
+      "solo_solvable": false,
+      "seed_records": []
+    },
+    {
+      "id": "g11",
+      "goal": "For a claims-processing domain, settle the terminology first, then write an onboarding explainer and a set of validation rules that both use the settled terms exactly. Ambiguous words such as claim, case, and submission must each have exactly one agreed meaning.",
+      "children_hint": 3,
+      "discriminator": "cross_child",
+      "discriminator_note": "Two siblings must consume one settled glossary. Without it each child fixes its own meaning for claim and case, and the validation rules then describe a different object from the one the explainer teaches.",
+      "solo_solvable": false,
+      "seed_records": []
+    },
+    {
+      "id": "g12",
+      "goal": "Write the on-call handbook section covering who may approve an emergency production change out of hours, what evidence they must capture, and how long it must be retained. Follow the standing policy.",
+      "children_hint": 3,
+      "discriminator": "cross_session",
+      "discriminator_note": "The standing approval policy, the required evidence, and the retention period were recorded in an earlier session and are not in the goal text. Without that record the handbook invents an approval chain that contradicts the real one.",
+      "solo_solvable": false,
+      "seed_records": [
+        {
+          "title": "Emergency change approval policy",
+          "body": "Standing policy for emergency production changes outside business hours. Approval requires two people: the on-call engineer plus any senior officer from a department other than the one making the change. Required evidence is the incident identifier, a before-and-after description, the exact commands run, and the name of the second approver. Evidence is retained for 400 days to satisfy the annual audit window. A single-person emergency change is permitted only when life-safety systems are affected and must be reviewed within 24 hours."
+        }
+      ]
+    }
+  ]
+}
