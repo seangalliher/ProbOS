@@ -113,8 +113,26 @@ class _Registry:
             return None
         return self._agents.get(agent_id)
 
+    def all(self) -> list[_Agent]:
+        """AD-1141 DD-12: BF-679's identity resolver falls back to a scan."""
+        return list(self._agents.values())
+
     def get_by_pool(self, agent_type: str) -> list[_Agent]:
         return [a for a in self._agents.values() if a.agent_type == agent_type]
+
+
+class _Ontology:
+    """AD-1141 DD-12: the one ontology method the Σ write path resolves through.
+
+    ``_register_publish_finding_tool`` skips registration without an ontology,
+    because there would be no authoritative ``agent_type -> department``
+    translation and a record would be authored under an unproven identity.
+    Every rig agent is ``_AGENT_TYPE`` in ``_DEPARTMENT``.
+    """
+
+    @staticmethod
+    def get_agent_department(agent_type: str) -> str:
+        return _DEPARTMENT if agent_type == _AGENT_TYPE else ""
 
 
 @dataclass
@@ -286,6 +304,8 @@ async def _wire_sigma(
     config: SystemConfig,
     runtime: _Runtime,
     seed_records: tuple[dict[str, str], ...],
+    registry: _Registry,
+    ontology: _Ontology,
 ) -> tuple[str, ...]:
     """Wire the Σ surface exactly as production startup does, and report it.
 
@@ -357,6 +377,39 @@ async def _wire_sigma(
             "second control arm, so live mode will refuse this arm",
             exc_info=True,
         )
+
+    # AD-1141 DD-12: the write half. Without this the rig registered nothing
+    # for ``publish_finding_enabled``, so no child could publish in the
+    # treatment arm and SIGMA_ON silently degraded into a second control arm.
+    try:
+        from probos.startup.communication import _register_publish_finding_tool
+
+        _register_publish_finding_tool(
+            tool_registry=runtime.tool_registry,
+            enabled=config.agentic_tools.publish_finding_enabled,
+            records_store=runtime.records_store,
+            registry=registry,
+            ontology=ontology,
+            source_node=config.federation.node_id,
+            max_per_hour=config.agentic_tools.publish_finding_max_per_hour,
+            max_per_hour_ship=(
+                config.agentic_tools.publish_finding_max_per_hour_ship
+            ),
+            max_content_chars=(
+                config.agentic_tools.publish_finding_max_content_chars
+            ),
+            similarity_threshold=config.records.notebook_similarity_threshold,
+            staleness_hours=config.records.notebook_staleness_hours,
+            max_scan_entries=config.records.notebook_max_scan_entries,
+        )
+        if runtime.tool_registry.get("publish_finding") is not None:
+            wired.append("publish_finding_tool")
+    except Exception:
+        logger.warning(
+            "AD-1143: publish_finding wiring failed; the treatment arm would "
+            "have no write half, so live mode will refuse this arm",
+            exc_info=True,
+        )
     return tuple(wired)
 
 
@@ -373,6 +426,15 @@ def sigma_reachability_problems(rig: CrewRig) -> tuple[str, ...]:
             problems.append("oracle_service_unavailable")
         if rig.runtime.tool_registry.get("oracle_query") is None:
             problems.append("oracle_query_tool_not_registered")
+    # AD-1141 DD-12: the crew-Σ arm. A treatment arm whose executor holds no
+    # Oracle injects nothing, which is exactly the invisible degradation this
+    # function exists to refuse.
+    if rig.config.agentic_tools.crew_sigma_context_enabled:
+        if rig.runtime.oracle is None:
+            problems.append("crew_sigma_oracle_unavailable")
+    if rig.config.agentic_tools.publish_finding_enabled:
+        if rig.runtime.tool_registry.get("publish_finding") is None:
+            problems.append("publish_finding_tool_not_registered")
     if rig.config.records.semantic_index_enabled and rig.runtime.records_store is None:
         problems.append("records_store_unavailable")
     return tuple(problems)
@@ -428,14 +490,22 @@ async def crew_rig(
             emit_event=emit,
             llm_client=llm_client,
         )
-        wiring = await _wire_sigma(
-            config=config, runtime=runtime, seed_records=seed_records,
-        )
+        # AD-1141 DD-12: the registry and ontology must exist before Σ wiring —
+        # ``_register_publish_finding_tool`` resolves an author identity
+        # through both and skips registration without them.
         agents = {
             f"ablation-agent-{index}": _Agent(f"ablation-agent-{index}")
             for index in range(max(1, agent_count))
         }
         registry = _Registry(agents)
+        ontology = _Ontology()
+        wiring = await _wire_sigma(
+            config=config,
+            runtime=runtime,
+            seed_records=seed_records,
+            registry=registry,
+            ontology=ontology,
+        )
         crew_executor = CrewTaskExecutor(
             work_item_store=work_store,
             agent_registry=registry,
@@ -443,6 +513,13 @@ async def crew_rig(
             runtime=runtime,
             max_parallel_subtasks=max_parallel,
             emit_fn=emit,
+            oracle=runtime.oracle,
+            crew_sigma_context_enabled=(
+                config.agentic_tools.crew_sigma_context_enabled
+            ),
+            crew_sigma_max_chars=config.agentic_tools.crew_sigma_max_chars,
+            crew_sigma_max_entries=config.agentic_tools.crew_sigma_max_entries,
+            crew_sigma_min_score=config.agentic_tools.crew_sigma_min_score,
         )
         synthesizer = _TranscriptSynthesizer()
         orchestrator = CrewOrchestrator(

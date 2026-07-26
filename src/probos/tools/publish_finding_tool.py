@@ -171,6 +171,16 @@ _RATE_LIMITED_DISPOSITION: str = (
     "matters.)"
 )
 
+# AD-1141 DD-6: the ship-wide refusal. Distinct wording from the per-author
+# refusal above because telling an agent it hit its *personal* limit when the
+# ship budget refused it is simply false, and a false explanation is what sends
+# an agent into the retry loop the limiter exists to absorb.
+_SHIP_RATE_LIMITED_DISPOSITION: str = (
+    "(The ship has reached its publication budget for the current hour. Keep "
+    "the finding in your output; record it in a later session if it still "
+    "matters.)"
+)
+
 _TOOL_DESCRIPTION: str = (
     "Record a finding you have worked out into Ship's Records, so other crew "
     "reach it in a later session through a commons query. Supply the claim "
@@ -205,6 +215,15 @@ class PublishFindingTool:
             the field a later fleet transport routes on; nothing in this AD
             reads it back.
         max_per_hour: DD-7 per-author publication budget.
+        max_per_hour_ship: AD-1141 DD-6 ship-wide publication budget, checked
+            **before** the per-author budget. Per-author limiting does not
+            bound ship-wide write volume at all, and AD-1141 is what creates a
+            fan-out of concurrent authors. The registry holds one tool
+            instance, so this instance's window *is* the ship's window.
+            **This bounds the write RATE, not the near-duplicate scan's window
+            population**: 40/hr against a 72-hour staleness window admits far
+            more entries than ``max_scan_entries`` examines, so it does not
+            make AD-550 dedup sound and must not be read as doing so.
         max_content_chars: DD-7 claim-body cap. Matches ``semantic._RECORD_DOC_CHARS``
             so "what you publish is what is discoverable" is true rather than
             approximately true.
@@ -221,6 +240,7 @@ class PublishFindingTool:
         callsign_resolver: Any,
         source_node: str = "",
         max_per_hour: int = 12,
+        max_per_hour_ship: int = 40,
         max_content_chars: int = 4000,
         quality_engine: Any = None,
         similarity_threshold: float = 0.8,
@@ -231,6 +251,7 @@ class PublishFindingTool:
         self._resolve_callsign = callsign_resolver
         self._source_node = source_node if type(source_node) is str else ""
         self._max_per_hour = max_per_hour
+        self._max_per_hour_ship = max_per_hour_ship
         self._max_content_chars = max_content_chars
         self._quality = quality_engine
         self._similarity_threshold = similarity_threshold
@@ -239,6 +260,10 @@ class PublishFindingTool:
         # DD-7: per-author monotonic publication timestamps. The registry holds
         # one tool instance, so this is the process-wide budget.
         self._publications: dict[str, deque[float]] = {}
+        # AD-1141 DD-6: the ship-wide window, on the same instance and
+        # therefore the same process-wide scope. ``maxlen`` keeps a burst from
+        # growing it without bound.
+        self._ship_publications: deque[float] = deque(maxlen=max(1, max_per_hour_ship))
 
     # ── Tool protocol ─────────────────────────────────────────────
     @property
@@ -353,10 +378,21 @@ class PublishFindingTool:
             return self._invalid("author", started)
         callsign, department = identity
 
+        # AD-1141 DD-6: the ship budget is checked BEFORE the per-author one.
+        # Reversing them would tell a single author it had hit its *personal*
+        # limit when the ship's budget is what refused it — a false explanation,
+        # and the retry loop the limiter exists to absorb.
+        if not self._admit_ship_publication():
+            return self._refused(
+                _SHIP_RATE_LIMITED_DISPOSITION, "ship_rate_limited", started,
+            )
+
         if not self._admit_publication(callsign):
             return self._refused(
                 _RATE_LIMITED_DISPOSITION, "rate_limited", started,
             )
+
+        self._record_ship_publication()
 
         return await self._publish(
             fields=fields,
@@ -504,6 +540,36 @@ class PublishFindingTool:
         return callsign, department
 
     # ── DD-7: rate limiting ───────────────────────────────────────
+    def _admit_ship_publication(self) -> bool:
+        """AD-1141 DD-6: prune the ship window and test capacity. Records nothing.
+
+        Split from :meth:`_record_ship_publication` deliberately. The ship
+        budget is tested first, but a call that then fails the per-author
+        budget never happened, so it must not consume ship capacity — the
+        timestamp is appended only once both budgets have admitted the call.
+
+        Honest bound: this limits the ship's publication **rate**. It does not
+        bound how many entries sit inside the AD-550 staleness window, so it
+        does not make near-duplicate suppression sound.
+        """
+        now = time.monotonic()
+        cutoff = now - _RATE_WINDOW_SECONDS
+        while self._ship_publications and self._ship_publications[0] <= cutoff:
+            self._ship_publications.popleft()
+        if len(self._ship_publications) >= self._max_per_hour_ship:
+            logger.info(
+                "AD-1141: the ship reached its publication budget of %d per "
+                "hour; the finding is refused without a write and stays in the "
+                "agent's working context",
+                self._max_per_hour_ship,
+            )
+            return False
+        return True
+
+    def _record_ship_publication(self) -> None:
+        """AD-1141 DD-6: consume one slot of the ship-wide hourly budget."""
+        self._ship_publications.append(time.monotonic())
+
     def _admit_publication(self, callsign: str) -> bool:
         """Prune the author's window and admit the call if it fits the budget.
 

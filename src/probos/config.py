@@ -6058,7 +6058,36 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
     every publish is a git commit and an embedding upsert.
     ``max_content_chars`` defaults to 4000 to match ``semantic._RECORD_DOC_CHARS``,
     the amount of a record that is actually embedded, so what an agent publishes
-    is what stays discoverable."""
+    is what stays discoverable.
+
+    AD-1141 wires both halves into the crew loop and adds five fields.
+    ``crew_sigma_context_enabled`` is the single ablation gate: OFF (default)
+    means a crew child's ``task_text`` is byte-identical to pre-AD-1141, which
+    is what preserves the Nooplex §8.3 control arm. The other four are bounds,
+    not gates, and each carries a caveat worth stating plainly:
+
+    * ``crew_sigma_min_score`` (0.35) is a **starting value, not a derived
+      one** — it is the first knob to tune if the ablation's ON arm shows a
+      null effect.
+    * That floor is applied to ``OracleResult.score``, which is **not
+      normalised across tiers**. ``OracleService.query`` merges six tiers whose
+      scores are computed six different ways — keyword-hits/10 (records),
+      embedding similarity (records-semantic, semantic), word-overlap/5
+      (operational), ``weight x confidence x hop_proximity`` (graph),
+      token-overlap fraction (health) — and ``archive`` is scored by **recency
+      alone** (``1/(1 + age_days*0.01)``), carrying no relevance term at all,
+      so a recent archive entry clears any sane floor regardless of relevance.
+      A single floor is therefore biased toward whichever tier happens to score
+      highest, and it is a blunt volume control rather than a principled
+      relevance threshold. Normalising the tiers is the real fix and is not in
+      this AD's scope.
+    * ``publish_finding_max_per_hour_ship`` (40) bounds the ship-wide write
+      **rate**; per-author ``max_per_hour`` does not bound ship-wide volume at
+      all. It does **not** make the AD-550 near-duplicate scan sound: 40/hr
+      against a 72-hour staleness window admits far more entries than that
+      scan's 20-entry cap examines, so duplicates can still slip past. This
+      bound limits how fast the commons grows, not what the dedup window
+      sees."""
     tool_search_enabled: bool = False
     delegation_enabled: bool = False
     delegation_max_depth: int = Field(default=1, ge=0, le=3)
@@ -6068,6 +6097,16 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
     publish_finding_enabled: bool = False  # AD-1140
     publish_finding_max_per_hour: int = Field(default=12, ge=1, le=100)
     publish_finding_max_content_chars: int = Field(default=4000, ge=200, le=20000)
+    # AD-1141 DD-6: ship-wide publication budget, checked before the per-author
+    # limiter so a single author cannot be told it hit its personal limit when
+    # the ship budget is what actually refused it.
+    publish_finding_max_per_hour_ship: int = Field(default=40, ge=1, le=500)
+    # AD-1141: Σ into the crew loop. The bool is the ablation gate; the three
+    # bounds below only ever narrow what an already-enabled consult injects.
+    crew_sigma_context_enabled: bool = False  # AD-1141
+    crew_sigma_max_chars: int = Field(default=2000, ge=200, le=8000)
+    crew_sigma_max_entries: int = Field(default=4, ge=1, le=12)
+    crew_sigma_min_score: float = Field(default=0.35, ge=0.0, le=1.0)
 
 
 class DmMeshSynthesisConfig(BaseModel):  # BF-629

@@ -808,6 +808,12 @@ def test_the_constructor_accepts_no_memory_surface() -> None:
         "self", "records_store", "callsign_resolver", "source_node",
         "max_per_hour", "max_content_chars", "quality_engine",
         "similarity_threshold", "staleness_hours", "max_scan_entries",
+        # AD-1141 DD-6: the ship-wide publication budget. An int bound, like
+        # ``max_per_hour`` beside it — the sovereignty property this test
+        # guards is that no *memory surface* (runtime, episodic shard,
+        # oracle) is reachable through the constructor, and a scalar budget
+        # does not open one.
+        "max_per_hour_ship",
     }
 
 

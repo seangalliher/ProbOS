@@ -32,16 +32,26 @@ from probos.config import SystemConfig
 #   config.py:6522  agentic_tools: AgenticToolsConfig
 #   config.py:6067  oracle_query_enabled: bool = False          # AD-1139
 #   config.py:6068  publish_finding_enabled: bool = False       # AD-1140
+# Verified at HEAD 9e8b8264:
+#   config.py:6078  crew_sigma_context_enabled: bool = False    # AD-1141
+# AD-1141 adds exactly ONE path. Its other four knobs
+# (``crew_sigma_max_chars`` / ``_max_entries`` / ``_min_score`` and
+# ``publish_finding_max_per_hour_ship``) are ints/floats and deliberately stay
+# out: ``apply_flags`` requires every path to resolve to a ``bool``, so adding
+# one would turn the structural guard red. That guard is working correctly —
+# it is not to be loosened to admit them.
 SIGMA_OFF: dict[str, Any] = {
     "records.semantic_index_enabled": False,
     "agentic_tools.oracle_query_enabled": False,
     "agentic_tools.publish_finding_enabled": False,
+    "agentic_tools.crew_sigma_context_enabled": False,
 }
 
 SIGMA_ON: dict[str, Any] = {
     "records.semantic_index_enabled": True,
     "agentic_tools.oracle_query_enabled": True,
     "agentic_tools.publish_finding_enabled": True,
+    "agentic_tools.crew_sigma_context_enabled": True,
 }
 
 ARMS: dict[str, dict[str, Any]] = {

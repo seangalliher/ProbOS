@@ -80,6 +80,237 @@ _MAX_DEPENDENCY_IDS = 64
 _MAX_OUTPUT_BYTES = 1_048_576
 _SUMMARY_TRUNCATION_MARKER = "...[truncated]"
 
+# ── AD-1141: Σ (commons) context injected into a crew child's task text ──────
+#
+# DD-1: the injection point is ``task_text``, not ``extra_context``.
+# ``extra_context`` is the *tool-invocation* context — ``AgenticLoop`` builds
+# ``messages`` from ``system_prompt`` + ``user_message`` only, so a payload
+# placed in ``extra_context`` reaches tools and never reaches the model.
+# ``task_text`` becomes ``user_message`` and is **never persisted**: the durable
+# value is ``WorkItem.description``, which is inside the plan-identity hash and
+# which this module does not touch.
+#
+# DD-10 bounds. Deliberately smaller than ``oracle_query``'s 6000-char budget:
+# that budget is for a lookup the agent *asked for*, while this injection is
+# unrequested and is paid on every child whether or not it helps.
+_MIN_CONSULT_QUERY_CHARS = 24
+_MAX_CONSULT_QUERY_CHARS = 512
+_MAX_ENTRY_CHARS = 400
+_MAX_EXPECTED_OUTPUT_CHARS = 1000
+_CONSULT_K_PER_TIER = 3
+_ENTRY_ELISION = " ...[entry shortened]"
+
+# DD-4: framing travels inline. ``AgenticLoop`` renders a bare user message and
+# has no consumer-side wrapper, so anything unframed "just appears" to the
+# agent. Every string below is asserted against the real imported
+# ``decomposer._CAPABILITY_GAP_RE`` in tests — ``lack`` is a bare substring in
+# that pattern, so "black hole" and "slack" trip it.
+_COMMONS_HEADER = "## What the ship already knows about this"
+
+_COMMONS_DISPOSITION: str = (
+    "(These entries come from the ship's shared knowledge stores — work other "
+    "crew recorded in earlier sessions. Treat them as reference material "
+    "rather than as something you lived through. Each entry carries its source "
+    "tier, a confidence score and an age, so weigh a low-confidence or STALE "
+    "entry lightly. Build on an entry and cite it; otherwise do not narrate "
+    "this consultation.)"
+)
+
+_EXPECTED_OUTPUT_HEADER = "## What this subtask will be judged against"
+
+_EXPECTED_OUTPUT_DISPOSITION: str = (
+    "(This is the acceptance criterion the verifier applies to your output. "
+    "Meet it directly.)"
+)
+
+_PUBLISH_NUDGE: str = (
+    "(If this subtask produces a durable finding that a different crew member "
+    "would want in a later session, record it with the publish_finding tool "
+    "before you finish. Publish a conclusion with its basis, not a status "
+    "update.)"
+)
+
+_BUDGET_NOTE: str = (
+    "(Some commons entries were held back to stay inside this subtask's "
+    "context budget.)"
+)
+
+# DD-3: defined so a later AD does not re-derive the wording, and asserted
+# clean — but **never emitted by this AD**. AD-1139's empty body exists because
+# an agent that *asked* deserves an answer; a crew child never asked, so
+# telling it the commons was silent is pure overhead on the majority path.
+_EMPTY_CONSULT_NOTE: str = (
+    "(The ship's shared knowledge stores returned nothing above the relevance "
+    "bar for this subtask. Work from the task itself.)"
+)
+
+
+def _format_consult_age(timestamp: Any) -> str:
+    """Render an entry age, mirroring ``oracle_service._format_age``'s shape.
+
+    Local rather than imported: that helper is private to its module, and a
+    provenance marker that degrades to no age is preferable to a consult that
+    raises on a malformed timestamp (DD-8).
+    """
+    if type(timestamp) not in (int, float):
+        return ""
+    delta = time.time() - float(timestamp)
+    if not math.isfinite(delta) or delta < 0:
+        return ""
+    if delta < 3600:
+        return f"{int(delta / 60)}m ago"
+    if delta < 86400:
+        return f"{int(delta / 3600)}h ago"
+    return f"{int(delta / 86400)}d ago"
+
+
+def _render_commons_entry(result: Any) -> str:
+    """Render one ``OracleResult`` with its AD-1139-shaped provenance marker.
+
+    Marker carries source tier, confidence and age, so a low-confidence or
+    aged entry is visibly weightable. Bounded at ``_MAX_ENTRY_CHARS`` with the
+    marker preserved — the marker is what makes the entry weightable, so it is
+    never the part that gets cut.
+    """
+    provenance = getattr(result, "provenance", "") or ""
+    if type(provenance) is not str or not provenance:
+        provenance = f"[{getattr(result, 'source_tier', '') or 'commons'}]"
+    try:
+        score = float(getattr(result, "score", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        score = 0.0
+    metadata = getattr(result, "metadata", None)
+    age = ""
+    if type(metadata) is dict:
+        age = _format_consult_age(metadata.get("timestamp"))
+    marker = f"{provenance} (confidence {score:.2f}"
+    if age:
+        marker += f", {age}"
+    marker += ")"
+
+    content = getattr(result, "content", "") or ""
+    if type(content) is not str:
+        content = ""
+    content = " ".join(content.split())
+    entry = f"- {marker} {content}".rstrip()
+    if len(entry) <= _MAX_ENTRY_CHARS:
+        return entry
+    keep = max(0, _MAX_ENTRY_CHARS - len(_ENTRY_ELISION))
+    return entry[:keep] + _ENTRY_ELISION
+
+
+def _render_commons_block(
+    results: Any,
+    *,
+    max_chars: int,
+    max_entries: int,
+    min_score: float,
+) -> str:
+    """DD-3: render the commons block, or ``""`` when nothing clears the floor.
+
+    **The zero-character empty path is the load-bearing property.** When no
+    result scores at or above ``min_score`` this returns the empty string — no
+    header, no note, no whitespace — so a pointless consult costs one local
+    Oracle call and *zero* prompt characters. The injection only ever adds
+    tokens when it found something that cleared a floor.
+
+    ``min_score`` is applied to ``OracleResult.score``, which is **not
+    normalised across tiers** (see ``AgenticToolsConfig``): it is a volume
+    control, not a principled relevance threshold.
+    """
+    if not isinstance(results, list) or max_entries < 1 or max_chars < 1:
+        return ""
+    admitted: list[tuple[float, Any]] = []
+    for result in results:
+        try:
+            score = float(getattr(result, "score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(score) or score < min_score:
+            continue
+        admitted.append((score, result))
+    if not admitted:
+        return ""
+
+    admitted.sort(key=lambda pair: pair[0], reverse=True)
+    selected = admitted[:max_entries]
+    dropped = len(admitted) - len(selected)
+
+    lines = [_COMMONS_HEADER, "", _COMMONS_DISPOSITION, ""]
+    used = sum(len(line) + 1 for line in lines)
+    rendered: list[str] = []
+    for _score, result in selected:
+        entry = _render_commons_entry(result)
+        if not entry:
+            dropped += 1
+            continue
+        # Hold room for the budget note so the elision stays visible.
+        if used + len(entry) + 1 + len(_BUDGET_NOTE) + 2 > max_chars:
+            dropped += 1
+            continue
+        rendered.append(entry)
+        used += len(entry) + 1
+    if not rendered:
+        return ""
+    lines.extend(rendered)
+    if dropped:
+        lines.extend(["", _BUDGET_NOTE])
+    return "\n".join(lines)
+
+
+def _render_expected_output_block(raw: Any) -> str:
+    """DD-9: surface the acceptance criterion the verifier will apply.
+
+    Already persisted into child metadata by ``crew_session`` and already read
+    by the verifier — the producer simply never saw it. Reading it here is
+    free, additive, and touches no schema.
+    """
+    if type(raw) is not str:
+        return ""
+    text = raw.strip()
+    if not text:
+        return ""
+    if len(text) > _MAX_EXPECTED_OUTPUT_CHARS:
+        text = text[:_MAX_EXPECTED_OUTPUT_CHARS].rstrip() + _SUMMARY_TRUNCATION_MARKER
+    return "\n".join(
+        [_EXPECTED_OUTPUT_HEADER, "", _EXPECTED_OUTPUT_DISPOSITION, "", text]
+    )
+
+
+def _compose_child_task_text(
+    base_task_text: str,
+    *,
+    commons_block: str = "",
+    expected_output_block: str = "",
+    publish_nudge: str = "",
+) -> str:
+    """DD-1: compose a crew child's user message. Pure; no I/O.
+
+    **Every optional argument empty returns ``base_task_text`` by identity.**
+    That is criterion #1 of AD-1141: with ``crew_sigma_context_enabled`` off
+    the OFF path is provably a no-op rather than a re-render that happens to
+    match, which is what preserves the Nooplex §8.3 ablation control arm.
+
+    Order — task, then acceptance criterion, then commons, then nudge. The task
+    comes first so a long commons block cannot push the actual instruction out
+    of the model's attention; the nudge comes last because it is about what to
+    do *after* the work.
+    """
+    if not commons_block and not expected_output_block and not publish_nudge:
+        return base_task_text
+    sections = [
+        section
+        for section in (
+            base_task_text,
+            expected_output_block,
+            commons_block,
+            publish_nudge,
+        )
+        if section
+    ]
+    return "\n\n".join(sections)
+
+
 
 def _compact_json_bytes(value: dict[str, Any]) -> bytes:
     return json.dumps(
@@ -346,6 +577,11 @@ class CrewTaskExecutor:
         emit_fn: Callable[[EventType, dict[str, Any]], None] | None = None,
         crew_session_service: CrewSessionService | None = None,
         attachment_store: AttachmentStore | None = None,
+        oracle: Any = None,
+        crew_sigma_context_enabled: bool = False,
+        crew_sigma_max_chars: int = 2000,
+        crew_sigma_max_entries: int = 4,
+        crew_sigma_min_score: float = 0.35,
     ) -> None:
         self._store = work_item_store
         self._registry = agent_registry
@@ -361,6 +597,14 @@ class CrewTaskExecutor:
             if attachment_store is not None
             else getattr(runtime, "attachment_store", None)
         )
+        # AD-1141: constructor-injected (DIP) rather than reached for through
+        # ``runtime`` in the hot path. Defaults match ``AgenticToolsConfig`` so
+        # every existing construction site keeps its pre-AD-1141 behaviour.
+        self._oracle = oracle
+        self._sigma_enabled = bool(crew_sigma_context_enabled)
+        self._sigma_max_chars = int(crew_sigma_max_chars)
+        self._sigma_max_entries = int(crew_sigma_max_entries)
+        self._sigma_min_score = float(crew_sigma_min_score)
 
     async def run(self, parent_id: str) -> list[SubtaskResult]:
         """Run all child sub-tasks of ``parent_id`` and return their results.
@@ -753,6 +997,133 @@ class CrewTaskExecutor:
             for dependency_id in _exact_dependency_ids(child.depends_on)
         )
 
+    # ── AD-1141: Σ context injection ──────────────────────────────────
+    async def _augment_task_text(
+        self,
+        base_task_text: str,
+        *,
+        child: WorkItem,
+        agent_id: str,
+    ) -> str:
+        """Compose the child's user message, injecting Σ context when enabled.
+
+        Returns ``base_task_text`` **by identity** when the gate is off, which
+        is AD-1141's criterion #1: flags off must be byte-identical to
+        pre-AD-1141 crew behaviour, because today's isolated-children
+        behaviour is the ablation's control arm.
+
+        DD-8 — the whole body degrades rather than propagates. Nothing here may
+        raise into the caller's ``try``, which persists
+        ``stopped_reason="execution_exception"``.
+        """
+        if not self._sigma_enabled:
+            return base_task_text
+        commons_block = ""
+        expected_output_block = ""
+        publish_nudge = ""
+        try:
+            commons_block = await self._consult_commons(child, agent_id=agent_id)
+            expected_output_block = _render_expected_output_block(
+                (child.metadata or {}).get("expected_output")
+            )
+            publish_nudge = _PUBLISH_NUDGE if self._publish_tool_available() else ""
+            composed = _compose_child_task_text(
+                base_task_text,
+                commons_block=commons_block,
+                expected_output_block=expected_output_block,
+                publish_nudge=publish_nudge,
+            )
+        except Exception:
+            logger.warning(
+                "AD-1141: Σ task-text composition failed for crew child %s; "
+                "continuing with the unaugmented task text so the child still "
+                "runs",
+                child.id,
+                exc_info=True,
+            )
+            return base_task_text
+        if composed is not base_task_text:
+            # DD-10: recorded as a metric so the ablation can attribute context
+            # growth. Deliberately NOT written into ``crew_execution`` evidence
+            # — that set is an exact 14 keys and one extra breaks recovery.
+            logger.info(
+                "AD-1141: injected %d Σ characters into crew child %s "
+                "(commons=%d, expected_output=%d, nudge=%d)",
+                len(composed) - len(base_task_text),
+                child.id,
+                len(commons_block),
+                len(expected_output_block),
+                len(publish_nudge),
+            )
+        return composed
+
+    def _publish_tool_available(self) -> bool:
+        """True when ``publish_finding`` is registered on the runtime registry.
+
+        DD-5: do not nudge an agent toward a verb it does not hold. Registration
+        is dynamic runtime state rather than a construction-time dependency, so
+        it is read at consult time; every access is guarded because an absent or
+        unusual registry must degrade, never raise (DD-8).
+        """
+        try:
+            registry = getattr(self._runtime, "tool_registry", None)
+            if registry is None:
+                return False
+            return registry.get("publish_finding") is not None
+        except Exception:
+            logger.warning(
+                "AD-1141: tool-registry lookup for publish_finding raised; "
+                "omitting the publish nudge so no agent is pointed at a verb "
+                "whose availability could not be confirmed",
+                exc_info=True,
+            )
+            return False
+
+    async def _consult_commons(self, child: WorkItem, *, agent_id: str) -> str:
+        """DD-2/DD-3: one bounded commons lookup per child, before execution.
+
+        Three gates, cheapest first: a query floor (under
+        ``_MIN_CONSULT_QUERY_CHARS`` after strip ⇒ **no Oracle call at all**), a
+        score floor, then an entry cap. When nothing clears the score floor the
+        renderer returns ``""`` and **zero characters** are injected — a
+        pointless consult therefore costs one local Oracle call and no context.
+
+        Tiers come from the imported :data:`SIGMA_TIERS`; ``episodic`` is the
+        sovereign per-agent shard and is never queried here.
+        """
+        if self._oracle is None:
+            return ""
+        title = child.title if type(child.title) is str else ""
+        description = child.description if type(child.description) is str else ""
+        query_text = f"{title}\n{description}".strip()
+        if len(query_text) < _MIN_CONSULT_QUERY_CHARS:
+            return ""
+        query_text = query_text[:_MAX_CONSULT_QUERY_CHARS]
+
+        from probos.tools.oracle_query_tool import SIGMA_TIERS
+
+        try:
+            results = await self._oracle.query(
+                query_text,
+                agent_id=agent_id,
+                k_per_tier=_CONSULT_K_PER_TIER,
+                tiers=list(SIGMA_TIERS),
+            )
+        except Exception:
+            logger.warning(
+                "AD-1141: commons consult failed for crew child %s; continuing "
+                "with the unaugmented task text",
+                child.id,
+                exc_info=True,
+            )
+            return ""
+        return _render_commons_block(
+            results,
+            max_chars=self._sigma_max_chars,
+            max_entries=self._sigma_max_entries,
+            min_score=self._sigma_min_score,
+        )
+
     async def _run_child(
         self,
         parent_id: str,
@@ -888,6 +1259,14 @@ class CrewTaskExecutor:
             )
 
         task_text = active_child.description or active_child.title or ""
+        # AD-1141 DD-1/DD-8: Σ composition happens HERE, outside the try below.
+        # That try persists ``stopped_reason="execution_exception"``; a consult
+        # raising into it would fail every child of every session on a commons
+        # outage. ``_augment_task_text`` absorbs its own failures and returns
+        # the base string by identity when the gate is off.
+        task_text = await self._augment_task_text(
+            task_text, child=active_child, agent_id=agent.id,
+        )
         try:
             outcome = await self._executor.run(
                 agent_id=agent.id,

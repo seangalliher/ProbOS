@@ -1871,6 +1871,13 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         order_manager=order_manager,
         agent_registry=registry,
     )
+    # AD-1141: constructor-inject the Oracle and the Σ bounds (DIP) rather than
+    # reaching through ``runtime`` in the executor's hot path. ``runtime.oracle``
+    # is assigned in ``ProbOSRuntime.start`` before ``finalize_startup`` is
+    # called, so the instance exists here; Tier 5/6/7 are attached to that same
+    # instance later in finalize, which is why the object reference (rather than
+    # a provider callable) is correct.
+    agentic_tools_cfg = config.agentic_tools
     crew_executor = CrewTaskExecutor(
         work_item_store=work_item_store,
         agent_registry=registry,
@@ -1880,6 +1887,11 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         emit_fn=emit_fn,
         crew_session_service=crew_session_service,
         attachment_store=attachment_store,
+        oracle=getattr(runtime, "oracle", None),
+        crew_sigma_context_enabled=agentic_tools_cfg.crew_sigma_context_enabled,
+        crew_sigma_max_chars=agentic_tools_cfg.crew_sigma_max_chars,
+        crew_sigma_max_entries=agentic_tools_cfg.crew_sigma_max_entries,
+        crew_sigma_min_score=agentic_tools_cfg.crew_sigma_min_score,
     )
     verifier = SubtaskVerifier(
         llm_client=llm_client,
