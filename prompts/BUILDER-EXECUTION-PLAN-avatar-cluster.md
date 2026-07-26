@@ -8,6 +8,12 @@
 
 This plan supersedes `prompts/BUILDER-EXECUTION-PLAN.md` for the avatar self-image build cluster.
 
+**Current workflow override (2026-07-24):** this cluster inherits the Current
+Performance Addendum in `prompts/BUILDER-EXECUTION-PLAN.md`. Where this older
+plan conflicts, use focused changed-slice checks during coding, completed-build
+Architect review, then one consolidated 16-worker Python gate plus full
+Vitest/build/affected Playwright after review.
+
 ---
 
 ## Theme — close the loop Ezri can already feel a dim light through
@@ -30,10 +36,10 @@ AD-722 shipped the **presence** axis (the agent has *some* telemetry signal). Th
 ## Standing Rules (carry forward from prior plan, with this-cluster amendments)
 
 - **Working tree:** if you encounter tracked-file modifications you didn't make, surface them. Do NOT `git stash` / `git reset --hard`.
-- **Test gate (full):** `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 8 --dist=loadfile` (8 workers — verified ceiling on this codebase post-AD-682; do NOT use `-n auto`).
+- **Test gate (full):** run once after completed-build Architect review: `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 16 --dist=loadfile` (matches the Captain host's 16 physical cores; do NOT use local `-n auto`, which maps to 32 logical processors).
 - **Test gate (focused per-prompt):** `pytest tests/test_<adNNN>_*.py -v -n 0` (serial, deterministic).
-- **UI test gate:** `cd ui && npx vitest run` for any wave touching `ui/src/`.
-- **Per-commit gate failure interpretation:** failures under the parallel full gate that do NOT reproduce under `-n 0` are environmental — document and continue. Only blockers are real failures that reproduce serially in files you changed.
+- **UI test gate:** changed Vitest files during coding; full `cd ui && npx vitest run` plus `npm run build` once after review. Run affected Playwright scenarios for changed user workflows.
+- **Wave-close gate failure interpretation:** failures under the consolidated parallel gate that do NOT reproduce under `-n 0` are environmental — document and continue. Only blockers are real failures that reproduce serially in files you changed.
 - **Pre-build SEARCH/REPLACE:** every prompt is its own delta. Do not assume the live code matches what the prompt asserts will exist *after* its SEARCH/REPLACE. The prompt IS the migration.
 - **License policy:** ProbOS OSS is Apache 2.0. Never absorb anything in the OSS repo that requires a paid license. Strong preference: MIT / Apache 2.0 / BSD / CC0 / MPL-2.0. Avoid: AGPL / GPL.
 - **AD-722 / AD-727 inheritance:** every wave in this cluster carries the AD-727 safety axis where applicable. Specifically, AD-722a's trust wiring inherits the read-only-on-aesthetic-judgment rule from AD-727 (#585) — divergence-detector trust deltas are about the AGENT'S REASONING, not her appearance.
@@ -45,11 +51,11 @@ AD-722 shipped the **presence** axis (the agent has *some* telemetry signal). Th
 
 ```pwsh
 git status --short                                                   # must be empty (or only untracked runtime artifacts)
-d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 8 --dist=loadfile    # parallel full gate; ~7 min — record baseline test count
-cd ui; npx vitest run; cd ..                                         # vitest baseline (only if wave touches ui/)
+Get-FileHash -Algorithm SHA256 <wave prompt paths>                    # freeze approved prompt inputs
+d:/ProbOS/.venv/Scripts/pytest.exe <focused baseline files> -q -n 0  # only when a changed-slice baseline is needed
 ```
 
-Record the baseline. After each prompt, expect the test count to grow by the prompt's documented test count.
+Record prompt hashes and the focused baseline. After each prompt, expect its documented focused test count to grow; defer broad Python/UI gates until the code-complete review is approved.
 
 ---
 
@@ -239,8 +245,8 @@ Record the baseline. After each prompt, expect the test count to grow by the pro
 Each wave proceeds through these stages. Architect / Builder / Captain (the user) responsibilities at each gate are explicit:
 
 ```
-draft ─────────► precheck ─────► review_1 ─► revision ─► review_2 ─► gate_1 ────► build ───────► verify_build ─► gate_2 ──► push ────► gate_3 ──► close ───────► retrospective
-[Architect]    [Architect/Captain]  [Architect]   [Architect]   [Architect]  [Captain advance]  [Builder]    [Builder]      [Captain advance]    [Builder]   [Captain advance]   [Captain]      [Architect]
+draft ─► precheck ─► review_1 ─► revision ─► review_2 ─► gate_1 ─► build ─► review_build ─► verify_build ─► gate_2 ─► push ─► gate_3 ─► close ─► retrospective
+[Architect]      [Architect]      [Architect]      [Captain]      [Builder]   [Architect]       [Builder]      [Captain]    [Builder]  [Captain]   [Builder]  [Architect]
 ```
 
 - **draft:** Architect produces the prompt files listed in `prompt_paths`.
@@ -248,7 +254,8 @@ draft ─────────► precheck ─────► review_1 ─►
 - **review_1 / revision / review_2:** three-pass review per Architect Standing Order. Pass 1 surfaces Required/Recommended/Nits/Verified; revision applies fixes; pass 2 confirms.
 - **gate_1:** Captain advances. Failure here means revision continues.
 - **build:** Builder executes prompts, one commit per AD.
-- **verify_build:** Builder runs full + focused test gates, vitest if applicable, and reports test counts.
+- **review_build:** Architect reviews the completed code stack and Builder repairs findings using focused checks.
+- **verify_build:** Builder runs one consolidated 16-worker Python gate, full Vitest/build if applicable, and affected Playwright scenarios.
 - **gate_2:** Captain advances. Failure here means Builder continues.
 - **push:** Builder pushes to main.
 - **gate_3:** Captain advances. Failure here is the safety net before close.

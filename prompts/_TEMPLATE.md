@@ -51,11 +51,24 @@ new agents; instructions-first for CognitiveAgents. -->
 <!-- Every build item maps to ≥1 criterion here. Include: test expectations
 (named tests + counts), default-OFF byte-identity, BF-287 real-fixture rule,
 real-DB (tmp_path) test for any new SQLite store, a gate/consensus test for any
-new tier/destructive intent, and the compliance line. -->
+new tier/destructive intent, clean-checkout portability, and the compliance
+line. Separate focused coding checks from the consolidated wave-close gate. -->
 - <criterion with named test(s)>
 - Default-OFF (`config.<flag>=False`) ⇒ byte-identical; existing tests unchanged.
 - Real-fixture tests per BF-287 (no MagicMock at substrate/store/bridge boundaries); real-DB `tmp_path` test for any new store (cache-only `db_path=""` masks the real path).
+- Clean-checkout portable: no assertion depends on operator-local/skip-worktree config, caches, generated bundles, wall-clock ordering, or machine uptime. For non-mutation, snapshot bytes before the operation and compare afterward.
+- Ownership: identify the single durable state owner, lifecycle owner, and event-emission owner; assert no duplicate event/delivery/trust/metric side effect across retry or restart.
 - Verify compliance with `.github/copilot-instructions.md` (async hygiene, layer discipline, IntentBus fan-out, type annotations, logging context).
+
+## Validation plan
+<!-- The Builder runs focused checks as each logical coding slice completes.
+The Architect reviews the complete diff BEFORE the broad gate. Only after
+review repairs land and source/tests/prompts are frozen does the wave run the
+consolidated gates. A later shared-code/test change invalidates that evidence. -->
+- **Focused coding gate:** `<exact changed test files/node ids>` using `-n 0` when deterministic diagnosis is needed.
+- **Adjacent regression gate:** `<small importer/caller/test set>`.
+- **Wave-close gate (after code review):** Python `-n 16 --dist=loadfile` on the 16-core Windows host; full Vitest + production build for UI; Playwright scenarios required by the accumulated user-facing blast radius.
+- **Clean-checkout gate:** CI uses repository HEAD, not local config/caches; all required checks must be green before issue/epic closure.
 
 ## Do NOT build here
 <!-- Name SPECIFIC adjacent features that are tempting to add, by name. This is
@@ -71,7 +84,7 @@ The Builder verifies each exists (or is genuinely new) before editing. -->
 - `tests/test_adXXXX_*.py` (NEW) — <coverage>.
 
 ## Done-when
-All acceptance green; gate `-k "<selectors>"` green (prior-AD count unchanged + new); default-OFF byte-identical; full type annotations on new public methods; async hygiene verified; **verify compliance with `.github/copilot-instructions.md`.**
+All acceptance green; focused changed-slice gates green; Architect review findings repaired; consolidated wave-close and clean-checkout CI gates green on the frozen stack; default-OFF byte-identical; full type annotations on new public methods; async hygiene verified; **verify compliance with `.github/copilot-instructions.md`.**
 
 ---
 
@@ -101,6 +114,11 @@ All acceptance green; gate `-k "<selectors>"` green (prior-AD count unchanged + 
 - [ ] Every new tier / gate / destructive intent has a gate test; destructive ops set `requires_consensus=True` (or route through the existing quorum) — and a test asserts the gate actually blocks.
 - [ ] Default-OFF transitional flag specified, defaulting False, with a byte-identical assertion.
 - [ ] Any unsettled design sub-question is FLAGGED with a recommended option (not silently left to the Builder).
+- [ ] State, lifecycle, event emission, terminal delivery, trust, metrics, and publication each have one named owner; retries/restarts cannot duplicate side effects.
+- [ ] Any hostile wire boundary specifies exact trusted type/value validation and rejection tests for string/subclass spoofing.
+- [ ] Snapshot and live/reconnect projections have parity criteria where the feature has an HXI live surface.
+- [ ] Portability criteria avoid local config hashes, caches, generated files, machine uptime, and nondeterministic clock ordering.
+- [ ] Validation is phased: focused coding checks → code review → one consolidated wave-close gate on frozen code → clean-checkout CI.
 
 **Discipline**
 - [ ] "Do NOT build" names specific adjacent features by name (not just "stay in scope").
@@ -108,3 +126,4 @@ All acceptance green; gate `-k "<selectors>"` green (prior-AD count unchanged + 
 - [ ] Layer discipline respected (lower layers don't import higher; cross-cutting via runtime API).
 - [ ] Hard-stop conditions for the Builder are explicit and narrow (phantom API in impl · sealed-protocol change · unresolved design fork).
 - [ ] The compliance line (`verify compliance with .github/copilot-instructions.md`) is in the Acceptance criteria.
+- [ ] Prompt hash/freeze point and explicit-path/partial-hunk staging requirements are stated for multi-AD waves or dirty shared tracker files.

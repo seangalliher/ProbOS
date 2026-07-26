@@ -8,6 +8,17 @@
 
 This plan supersedes `prompts/archive/BUILDER-EXECUTION-PLAN-bf247-bf246-ad680.md` (completed sweep).
 
+## Current Performance Addendum (2026-07-24)
+
+This addendum supersedes any conflicting test cadence below.
+
+- **Plan and freeze first:** Architect completes verify-first review for the dependency group, records approved prompt hashes, and freezes prompt text before Builder dispatch.
+- **Code with focused evidence:** after each logical coding slice, run only the exact changed tests and a small adjacent caller/importer gate. Do not run the full repository suite while the wave is still changing.
+- **Review before broad testing:** once coding is complete, stop edits and run Architect/code-review validation across ownership, dependency direction, hostile wire types, duplicate events, restart idempotency, and worktree scope. Repair findings before spending the broad-gate budget.
+- **One consolidated broad gate:** after review repairs land and source/tests/prompts are frozen, run full Python once with `-n 16 --dist=loadfile` on the Captain's 16-physical-core host. Run full Vitest + production build for UI changes and the required Playwright scenarios for user-facing workflows. A later shared-code or test change invalidates the relevant broad evidence.
+- **Clean-checkout CI is distinct evidence:** local config, caches, skip-worktree files, and generated assets cannot be test oracles. Required remote CI checks must be green before closing the issue/epic.
+- **Preserve unrelated work:** use explicit-path or partial-hunk staging, inspect `git diff --cached`, and never use `git add -A` in a dirty worktree.
+
 ---
 
 ## Inputs
@@ -24,14 +35,14 @@ Read these in full **before** writing any code:
 ## Standing Rules (carry forward from prior sweep)
 
 - **Working tree:** if you encounter tracked-file modifications you didn't make, surface them. Do NOT `git stash` / `git reset --hard`. If they are clearly architect-authored prompt/review/doc artifacts, commit them on the architect's behalf with a descriptive message and continue.
-- **Test gate:** the **full gate** uses `pytest tests/ -q -n 16 --dist=loadfile` (16 workers — verified ceiling on this codebase post-AD-682; `-n auto` exceeds xdist's scheduler limits at high CPU counts and produces `KeyError: WorkerController` internal errors). The **focused per-prompt gate** uses `pytest tests/test_<adNNN>_*.py -v -n 0` (serial, deterministic). If `-n 16` regresses on a specific machine, fall back to `-n 8 --dist=loadfile` or `-n 4 --dist=loadfile` and file a BF.
-- **Per-commit gate failure interpretation:** failures under the parallel full gate that do NOT reproduce under `-n 0` are environmental (heavy concurrent fixture boots) and accepted — document them and continue. The only blockers are real failures that reproduce serially in files you changed.
+- **Test gate:** the **consolidated wave-close gate** uses `pytest tests/ -q -n 16 --dist=loadfile` (16 workers — the stable ceiling matching the Captain host's physical cores; `-n auto` maps to 32 logical processors and oversubscribes SQLite/Chroma). The **focused per-prompt gate** uses the exact changed nodes/files, with `-n 0` for deterministic diagnosis. Do not run the full gate per prompt. CI uses `-n auto` to match the hosted runner's assigned cores.
+- **Wave-close gate failure interpretation:** failures under the consolidated parallel gate that do NOT reproduce under `-n 0` are environmental (heavy concurrent fixture boots) and accepted — document them and continue. The only blockers are real failures that reproduce serially in files you changed.
 - **Triage step on full-gate red:** rerun the failing files at `-n 0`. If they pass, mark environmental, continue. If they fail, stop.
 - **Quarantine threshold:** if you hit a pre-existing serial failure unrelated to your changes, file a BF, quarantine, and continue. Surface only if more than 3 quarantines accumulate during a single sweep.
 - **Gate/build log location (2026-06-27):** write pytest / vitest / build gate captures to `logs/` (e.g. `logs/adNNN_gate.txt`, `logs/adNNN_vitest.txt`), **not** the repo root. `logs/` is gitignored except `.gitkeep`; the root `/*_gate.txt` etc. patterns in `.gitignore` remain a back-compat safety net. Keeps the repo root clean — the prior root-dump convention accumulated ~110 stray captures.
 - **Pre-build SEARCH/REPLACE:** every prompt is its own delta. Do not assume `events.py`, `governance/`, or any file matches what the prompt asserts will exist *after* its SEARCH/REPLACE. The prompt IS the migration.
 - **License policy (Captain rule, 2026-05-09):** ProbOS OSS is Apache 2.0 and free; **never absorb anything in the OSS repo that requires a paid license.** Users only bring their own LLM models. Strong preference: MIT. Acceptable: Apache 2.0 / BSD / CC0 / MPL-2.0 / CC-BY-4.0 (case-by-case for code/models). Avoid: AGPL / GPL (copyleft propagates into Apache 2.0 — even at subprocess level, prefer permissive alternatives). When the upstream is license-ambiguous, AGPL-tainted, or paid: **absorb the PATTERN, write our own code.** Cite upstream as research inspiration; don't import the code. Mixed-license repos: check every component (e.g. OmniParser repo is CC-BY-4.0 but `icon_detect` weights are AGPL — architecture only). Files with embedded licensing (VRM, GLB, etc.) never ship in OSS even if the file format is fine — operators bring files locally; gitignore the directory. Commercial-overlay (private repo): paid-license deps allowed but operator-facing — bring-your-own-license or pass-through pricing; default still pattern-absorption. **Architect must surface a license disposition for every external-absorption prompt before drafting deliverables.** Reviewer pass-1 must include a license-check tier; Builder must verify before adding any new dependency to `pyproject.toml` / `package.json`.
-- **UI gate (BF-279, 2026-05-13):** any wave touching `ui/src/**` (or any file matched by `git diff --name-only origin/main..HEAD -- ui/src/`) MUST run BOTH UI verification steps before the per-prompt commit:
+- **UI gate (BF-279, 2026-05-13):** any wave touching `ui/src/**` (or any file matched by `git diff --name-only origin/main..HEAD -- ui/src/`) runs changed Vitest files during coding, then MUST run BOTH full UI verification steps once after completed-build review and before push:
   1. `cd ui; npx vitest run` — logic correctness for the UI changes.
   2. `cd ui; npm run build` — TypeScript strict + Vite production bundle health.
   Vitest skips `tsc -b` strict checks. A test suite can be 100% green while `vite build` errors. BF-279 (commit `2d685bc5`) is the canonical case study: Wave 156's `MicPermissionHint.tsx` introduced `JSX.Element` (unresolved under React 19 + bundler-mode tsconfig), `vite build` errored, `ui/dist/` stayed frozen for ~32 hours, and three waves' user-visible work never reached the operator's browser despite all Vitest tests passing.
@@ -48,14 +59,14 @@ Read these in full **before** writing any code:
 
 ```pwsh
 git status --short                                         # must be empty (or only untracked runtime artifacts)
-d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 16 --dist=loadfile   # parallel full gate; ~7 min
+d:/ProbOS/.venv/Scripts/pytest.exe <focused baseline files> -q -n 0  # changed-slice baseline
 ```
 
-Record the baseline. After each prompt, expect the test count to grow by the prompt's documented test count.
+Record the focused baseline. Do not spend a full-suite run before coding unless the incoming baseline is already suspect or the Architect explicitly requires it to distinguish pre-existing failures.
 
 ## Wave-close pre-flight gate
 
-Run this gate at every wave close, and on any commit that touches:
+Run this gate once after completed-build review at every wave close where the accumulated wave touches:
 
 - `package.json` or `ui/package-lock.json`
 - `pyproject.toml`
@@ -128,12 +139,11 @@ For each prompt, repeat:
 3. **Implement section by section** in the order the prompt specifies. Some prompts (notably AD-674, AD-470) have inter-section dependencies (the Section 2 enum/import must land before Section 3 code references it).
 4. **Run the prompt's own tests** in serial: `pytest tests/test_<adNNN>_*.py -v -n 0`. All must pass before continuing.
 5. **Run the focused gate** for nearby files (the prompt's adjacent test areas) in serial.
-6. **Run the full gate** at `pytest tests/ -q -n 16 --dist=loadfile`. Test count must be non-decreasing vs baseline + previously-added tests in this sweep. If `-n 16` regresses on a specific machine, fall back to `-n 8` or `-n 4 --dist=loadfile` and file a BF.
-7. **Update trackers** as the prompt's Tracking section specifies (PROGRESS.md, roadmap.md, DECISIONS.md where called out).
-8. **Write a build report** at `prompts/build-reports/<ad-NNN>-build.md` matching the format in `prompts/build-reports/archive/`.
-9. **Commit** with format: `AD-NNN: <one-line summary>`.
+6. **Update trackers** as the prompt's Tracking section specifies (PROGRESS.md, roadmap.md, DECISIONS.md where called out).
+7. **Write a build report** at `prompts/build-reports/<ad-NNN>-build.md` matching the format in `prompts/build-reports/archive/`.
+8. **Commit** with format: `AD-NNN: <one-line summary>`.
 
-After a Group completes, run the full gate one extra time as a Group integration check before starting the next Group.
+After a Group completes, run Architect/code-review validation. Continue coding after focused repairs; reserve the full gate for the code-complete wave unless a group changes a shared contract needed to make later work trustworthy.
 
 ---
 
@@ -141,8 +151,8 @@ After a Group completes, run the full gate one extra time as a Group integration
 
 Every commit must pass:
 
-- `pytest tests/ -q -n 16 --dist=loadfile` exits 0 (or only environmental flakes that pass serially — judge per the standing rule).
-- Test count is non-decreasing vs the running baseline.
+- Its prompt-specific and adjacent focused tests exit 0.
+- New/changed test counts match the prompt's acceptance criteria.
 - No new files outside what the prompt specifies (especially: no test scaffolding committed under `data/` or `tools/`).
 - No `print()` calls added (use `logger`).
 - All new public methods have type annotations.
@@ -215,7 +225,7 @@ Match the existing format in `prompts/build-reports/archive/`.
 
 After the 19 prompts are committed:
 
-1. Run the full gate one final time: `pytest tests/ -q -n 16 --dist=loadfile`. If any file fails under parallel, rerun it with `-n 0` to confirm environmental.
+1. Freeze prompt/source/test inputs after Architect review, then run the full gate once: `pytest tests/ -q -n 16 --dist=loadfile`. If any file fails under parallel, read the short summary and rerun the actual failing node with `-n 0`; do not mistake secondary aiosqlite `Event loop is closed` annotations for the root failure.
 2. Confirm the test count grew by the documented total.
 3. Move all 19 completed prompts to `prompts/archive/` (matches prior sweep convention).
 4. Move per-prompt review files to `prompts/Reviews/archive/`.
@@ -229,7 +239,9 @@ After the 19 prompts are committed:
 
 - One prompt = one commit. No batched commits.
 - Continuous-build mode works for batches up to ~20.
-- xdist on Windows defaults to `-n 16 --dist=loadfile` for the full gate post-AD-682. `-n auto` is forbidden — it crashes xdist's internal scheduler at high worker counts (`KeyError: WorkerController`). Use `-n 0` for focused per-prompt verification and to triage suspected flakes. If `-n 16` regresses on a specific machine, fall back to `-n 8` or `-n 4 --dist=loadfile` and file a BF.
+- xdist on the Captain's Windows host uses `-n 16 --dist=loadfile` for the single wave-close full gate. `-n auto` is forbidden locally because it maps to 32 logical processors and destabilizes SQLite/Chroma; CI uses `-n auto` to match its smaller assigned core count. Use `-n 0` for focused diagnosis. If `-n 16` regresses, fall back to `-n 8` or `-n 4 --dist=loadfile` and file a BF.
+- Review the complete code stack before the full gate. Prompt/source/test changes after the gate invalidate the affected evidence.
+- Tests must pass from clean HEAD. Never hard-code a digest from local `config/system.yaml`; snapshot and compare non-mutation instead.
 - The "Verified Against Codebase" section in each prompt is binding — trust it for the post-build state.
 - Minor architect-authored modifications under `prompts/` are routine; commit on the architect's behalf and continue.
 - Do not re-litigate the false-positive items listed in `README-wave-1-4-fourth-pass.md` § "Final Status."

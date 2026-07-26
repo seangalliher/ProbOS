@@ -294,6 +294,15 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 
 ### Backlog (queued, awaiting wave-plan slot)
 
+**User Experience & Adoption (Phase 35 + Phase 24) — install, onboarding, channels, getting-started stability (2026-07-23 decomposition):**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-1134 | PyPI release + lightweight install path (core install; heavy vision/episodic deps → extras) | [#1053](https://github.com/seangalliher/ProbOS/issues/1053) | 2 |
+| AD-1135 | `probos setup` provider wizard — BYO OpenAI-compatible model (Copilot proxy optional, not required) | [#1054](https://github.com/seangalliher/ProbOS/issues/1054) | 2 |
+| AD-1136 | First-class chat channel adapter — finish Discord/Slack gateway (Phase 24) | [#1055](https://github.com/seangalliher/ProbOS/issues/1055) | 3 |
+| AD-1137 | Quickstart + Alpha→Beta getting-started stability (`probos doctor`) — depends on AD-1134/1135 | [#1056](https://github.com/seangalliher/ProbOS/issues/1056) | 2 |
+
 **From the original AD backlog:**
 
 | AD | Title | Issue |

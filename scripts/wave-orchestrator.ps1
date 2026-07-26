@@ -15,7 +15,8 @@
 #   - Dispatch architect subagent (revision pass)
 #   - Dispatch architect subagent (review pass-2)
 #   - Dispatch builder subagent (continuous build)
-#   - Run full pytest gate
+#   - Dispatch architect subagent (completed-build review)
+#   - Run one consolidated verification gate
 #   - Close GH issues + archive prompts + commit
 #
 # This script does NOT itself invoke subagents — it produces dispatch
@@ -93,7 +94,8 @@ $MAIN_STAGES = @(
     'review_2',        # Architect pass-2 review
     'gate_1',          # ARCHITECT GATE: approve Builder dispatch
     'build',           # Builder executes
-    'verify_build',    # Run full pytest gate
+    'review_build',    # Architect reviews the completed code before broad tests
+    'verify_build',    # Run consolidated Python/UI/E2E gates
     'gate_2',          # ARCHITECT GATE: approve push
     'push',            # git push
     'gate_3',          # ARCHITECT GATE: approve issue closure
@@ -284,28 +286,57 @@ DISPATCH (paste to Builder):
   Pre-flight:
     git pull
     git status --short                                                # must be clean
-    d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 8 --dist=loadfile  # green baseline
+    Get-FileHash -Algorithm SHA256 <wave prompt paths>                 # freeze approved prompts
 
   Per-prompt: read prompt + review (apply non-blocking nits at code-review),
   implement section by section, run focused gate at -n 0, update trackers,
-  commit with `AD-NNN: <one-line>` format, push.
+  commit with `AD-NNN: <one-line>` format. Do not push until gate_2.
 
-  Per-commit gate: full pytest passes, test count non-decreasing,
-  pre-commit deletion sanity check.
+  Per-commit gate: prompt-specific + adjacent changed-slice tests pass,
+  expected new test count matches, pre-commit deletion sanity check.
 
-  UI gate (AD-738b / BF-279): if the prompt touches any file under
-  ``ui/src/**``, run BOTH ``cd ui; npx vitest run`` AND ``cd ui; npm run build``
-  before the commit. Vitest alone does NOT exercise ``tsc -b`` strict checks;
-  ``npm run build`` is the only signal that the production bundle compiles.
-  Detection: ``git diff --name-only HEAD~1..HEAD -- ui/src/`` after the
-  per-prompt edits; if non-empty, run both. The standing rule lives in
-  ``prompts/BUILDER-EXECUTION-PLAN.md`` Standing Rules section.
+  UI coding gate: run the exact changed Vitest files while implementing.
+  Full Vitest + ``npm run build`` run once in verify_build after Architect
+  reviews the complete code stack. Playwright scenarios run there when the
+  wave changes a user-facing workflow.
 
   Begin in dependency order; surface only on hard-stop conditions per
   BUILDER-EXECUTION-PLAN.md.
 
 When Builder reports complete, run:
   ./scripts/wave-orchestrator.ps1 advance
+"@
+}
+
+function Format-ReviewBuild {
+    param([hashtable]$wave)
+    @"
+============================================================
+WAVE $($wave.id) — STAGE: review_build
+============================================================
+
+ACTION: Invoke Architect subagent (runSubagent agentName='Architect') for a
+completed-build code review BEFORE broad tests.
+
+Review ``origin/main..HEAD`` against the frozen prompts and live code. Lead
+with findings and inspect:
+  - scope and prompt-hash drift
+  - single durable-state, lifecycle, and event-emission ownership
+  - dependency direction and public contract placement
+  - hostile wire-boundary exact type/value validation
+  - retry/restart idempotency for delivery, trust, metrics, and publication
+  - snapshot/live/reconnect projection parity
+  - clean-checkout portability and unrelated-work preservation
+
+Do not run the full repository gate in this stage. Use a narrow executable
+check only when needed to falsify a specific review finding.
+
+If APPROVED (or after Builder repairs all Required findings), run:
+  ./scripts/wave-orchestrator.ps1 advance
+
+If REJECTED:
+  Re-dispatch Builder with the exact findings, rerun focused affected tests,
+  and repeat this review before advancing.
 "@
 }
 
@@ -316,13 +347,26 @@ function Format-VerifyBuild {
 WAVE $($wave.id) — STAGE: verify_build
 ============================================================
 
-ACTION: Run full test gate to confirm Builder commits are green.
+ACTION: Run one consolidated gate on the reviewed, frozen wave stack.
 
-COMMAND:
-  d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 8 --dist=loadfile
+PYTHON:
+  d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 16 --dist=loadfile
+
+IF UI CHANGED:
+  cd ui
+  npx vitest run
+  npm run build
+
+IF A USER-FACING WORKFLOW CHANGED:
+  cd ui
+  npx playwright test <affected scenarios>
 
 Expected: 0 failures (environmental flakes acceptable per standing rule —
-re-run flaked test at -n 0 to confirm).
+read the short summary and re-run the actual failing node at -n 0 to confirm;
+secondary aiosqlite ``Event loop is closed`` annotations are not the root node).
+
+Any shared source/test repair invalidates this gate. Return to review_build,
+review the repair, then rerun the affected consolidated gate.
 
 When green, run:
   ./scripts/wave-orchestrator.ps1 advance
@@ -484,6 +528,7 @@ function Format-StageDispatch {
         'review_2'      { return Format-ReviewDispatch $wave '2' }
         'gate_1'        { return Format-Gate1 $wave }
         'build'         { return Format-BuildDispatch $wave }
+        'review_build'  { return Format-ReviewBuild $wave }
         'verify_build'  { return Format-VerifyBuild $wave }
         'gate_2'        { return Format-Gate2 $wave }
         'push'          { return Format-PushAction $wave }
@@ -693,7 +738,7 @@ function Cmd-Verify {
         }
         'verify_build' {
             $py = Join-Path $repoRoot '.venv/Scripts/pytest.exe'
-            & $py 'tests/' '-q' '-n' '8' '--dist=loadfile'
+          & $py 'tests/' '-q' '-n' '16' '--dist=loadfile'
         }
         'verify_outputs' {
             $missing = @()

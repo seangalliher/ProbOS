@@ -9,6 +9,15 @@ This file is read by the reviewer agent when auditing a build prompt before it g
 - **Who owns the constraint?** If a fix sanitizes, validates, or transforms data, does it happen at the boundary that owns the constraint (e.g., NATSBus owns NATS subject rules, not callers)?
 - **Future callers protected?** Would a new caller passing unsanitized input silently break, or does the boundary enforce safety automatically?
 - **Caller audit:** For every changed function, list all callers. Verify the change is safe for each. State the count explicitly ("4 callers: ...").
+- **Hostile type boundary:** If input crosses HTTP/WebSocket/NATS/plugin boundaries, does validation require the exact trusted enum/contract and canonical value? Flag permissive `isinstance` checks where `str`/`StrEnum` subclasses or lookalike objects can spoof the wire type.
+
+## 1a. Ownership and Exactly-Once Effects
+
+- **Durable authority:** Name the single store/service that owns each state transition. Flag split-brain writes across route, service, and store layers.
+- **Lifecycle owner:** Name the sole owner of start, task references, retry, restart recovery, drain, and stop. Flag duplicate startup wiring or unowned background tasks.
+- **Event owner:** A mutation must emit from one source only. If the store/service emits, routes/adapters must not mirror the same event. Require a count assertion proving exactly once.
+- **Replay safety:** Delivery, trust application, metrics, terminal notification, and artifact publication need durable idempotency before externally visible effects.
+- **Projection parity:** Initial bounded snapshots, live reducers, reconnect/resync, and stale-response rejection must converge on the same visible state.
 
 ## 2. Silent Failure Audit
 
@@ -53,6 +62,9 @@ This file is read by the reviewer agent when auditing a build prompt before it g
 - **Boundary tests:** Happy path + error/edge case + empty/None where applicable.
 - **Regression tests:** Existing tests that touch the changed area should be listed. Any needed assertion updates called out.
 - **Mock consistency:** If using MockNATSBus or similar, verify the mock receives the same fix as the real class.
+- **Clean-checkout portability:** Reject tests tied to an operator-local or skip-worktree config hash, local cache/model availability, generated UI bundle, machine uptime, or nondeterministic timestamp ordering. Non-mutation tests snapshot before and compare after.
+- **Evidence freshness:** If source/tests/prompts changed after a reported gate, require the narrow affected gate again; require the consolidated gate again for shared behavior or collection changes.
+- **Gate economy:** During coding, require focused changed-slice and adjacent regression checks. Require Architect review before the single broad wave-close gate; do not demand a full repository run after every prompt in a batch.
 
 ## 8. Design Choices
 
@@ -66,6 +78,8 @@ This file is read by the reviewer agent when auditing a build prompt before it g
 - **Current vs new code blocks:** For modifications, show the current code (what the builder will search for) and the new code (what replaces it). Current code must match the live file.
 - **Verification section:** The prompt should end with specific test commands the builder should run.
 - **Tracking section:** List which files to update (PROGRESS.md, roadmap.md, DECISIONS.md) and what to write.
+- **Freeze point:** Multi-AD waves record approved prompt hashes and freeze prompt/source/test inputs before the consolidated gate.
+- **Worktree safety:** Prompts name shared dirty files and require explicit-path or partial-hunk staging plus cached-diff inspection; `git add -A` is never prescribed.
 
 ## 10. Startup Phase Ordering (BF-259/260/261/262 lesson)
 
