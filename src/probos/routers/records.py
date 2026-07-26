@@ -8,11 +8,15 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from probos.knowledge.provo import project_record_frontmatter
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/records", tags=["records"])
+
+# AD-1145 DD-7: the only accepted value of the opt-in ``format`` parameter.
+_PROV_JSONLD_FORMAT = "prov-jsonld"
 
 
 @router.get("/stats")
@@ -44,16 +48,36 @@ async def list_records(
 
 
 @router.get("/documents/{path:path}")
-async def read_record(path: str, reader: str = "captain", runtime: Any = Depends(get_runtime)) -> Any:
-    """Read a specific document from Ship's Records."""
+async def read_record(
+    path: str,
+    reader: str = "captain",
+    format: str = "",
+    runtime: Any = Depends(get_runtime),
+) -> Any:
+    """Read a specific document from Ship's Records.
+
+    AD-1145 DD-7: ``?format=prov-jsonld`` opts in to a read-only W3C PROV-O
+    projection of the document's provenance frontmatter. The parameter is
+    default-OFF -- absent it, the response body is byte-identical to what this
+    endpoint has always returned, and the projection is never invoked.
+    """
     if not runtime._records_store:
         return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+    if format and format != _PROV_JSONLD_FORMAT:
+        return JSONResponse(
+            {"error": f"Unsupported format; expected '{_PROV_JSONLD_FORMAT}'"},
+            status_code=400,
+        )
     try:
         entry = await runtime._records_store.read_entry(path, reader_id=reader)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     if entry is None:
         return JSONResponse({"error": "Not found or access denied"}, status_code=404)
+    if format == _PROV_JSONLD_FORMAT:
+        return project_record_frontmatter(
+            entry.get("path") or path, entry.get("frontmatter") or {}
+        )
     return entry
 
 
