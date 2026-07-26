@@ -6048,13 +6048,26 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
     consult tool that lets an agent reach the ship's shared knowledge commons
     (Σ tiers only, never the sovereign episodic shard) *during* a task. Also
     default-OFF, and gated in the same place, so the three flags share one
-    byte-identity guarantee."""
+    byte-identity guarantee.
+
+    AD-1140 adds ``publish_finding_enabled`` and its two bounds: the write half
+    of Σ, letting a crew agent record a finding into Ship's Records so a
+    different agent in a different session reaches it through ``oracle_query``.
+    There is no consensus gate on the native-tool path, so ``max_per_hour`` and
+    ``max_content_chars`` are the governance instrument rather than decoration —
+    every publish is a git commit and an embedding upsert.
+    ``max_content_chars`` defaults to 4000 to match ``semantic._RECORD_DOC_CHARS``,
+    the amount of a record that is actually embedded, so what an agent publishes
+    is what stays discoverable."""
     tool_search_enabled: bool = False
     delegation_enabled: bool = False
     delegation_max_depth: int = Field(default=1, ge=0, le=3)
     delegation_max_iterations: int = Field(default=5, ge=1, le=25)
     delegation_tier: str = "standard"
     oracle_query_enabled: bool = False  # AD-1139
+    publish_finding_enabled: bool = False  # AD-1140
+    publish_finding_max_per_hour: int = Field(default=12, ge=1, le=100)
+    publish_finding_max_content_chars: int = Field(default=4000, ge=200, le=20000)
 
 
 class DmMeshSynthesisConfig(BaseModel):  # BF-629

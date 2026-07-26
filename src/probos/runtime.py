@@ -2780,6 +2780,8 @@ class ProbOSRuntime:
             background_register=self._background_tasks.add,
             nats_bus=self.nats_bus,  # AD-637c: NATS JetStream for Ward Room events
             oracle=self.oracle,  # AD-1139: read-only Oracle consult tool
+            records_store=self._records_store,  # AD-1140: commons-write tool
+            notebook_quality_engine=self._notebook_quality_engine,  # AD-1140
         )
         self.persistent_task_store = comm.persistent_task_store
         self.work_item_store = comm.work_item_store

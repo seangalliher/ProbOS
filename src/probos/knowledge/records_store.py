@@ -24,6 +24,22 @@ _SUBDIRS = (
     "_archived",
 )
 
+# AD-1140: frontmatter keys ``write_entry`` owns. A caller supplying one of
+# these through ``extra_frontmatter`` is rejected rather than silently dropped —
+# dropping would let the caller believe it stamped provenance that is not there.
+_RESERVED_FRONTMATTER_KEYS = frozenset({
+    "author",
+    "classification",
+    "status",
+    "created",
+    "updated",
+    "revision",
+    "department",
+    "topic",
+    "tags",
+    "metrics",
+})
+
 # Classification hierarchy (higher index = broader access)
 _CLASSIFICATION_LEVELS = {
     "private": 0,
@@ -184,15 +200,37 @@ class RecordsStore:
         topic: str = "",
         tags: list[str] | None = None,
         metrics: dict[str, Any] | None = None,  # AD-553
+        extra_frontmatter: dict[str, Any] | None = None,  # AD-1140
     ) -> str:
         """Write a document to Ship's Records.
 
         Generates YAML frontmatter, writes file, git add + commit.
         Returns the relative path of the created file.
+
+        AD-1140: ``extra_frontmatter`` merges caller-owned envelope fields into
+        the frontmatter **before** ``yaml.dump``, so they round-trip through
+        ``_parse_document`` and land whole in the AD-1138 ``frontmatter_json``
+        sidecar. Any key in :data:`_RESERVED_FRONTMATTER_KEYS` raises
+        ``ValueError`` — this is the fail-fast tier, because silently dropping a
+        reserved key would let a caller believe it stamped provenance that is
+        not there. ``None`` (the default) leaves the written bytes identical.
         """
         # Validate classification
         if classification not in _CLASSIFICATION_LEVELS:
             raise ValueError(f"Invalid classification: {classification}")
+
+        if extra_frontmatter is not None:
+            if type(extra_frontmatter) is not dict:
+                raise ValueError("extra_frontmatter must be a dict")
+            collisions = sorted(
+                key for key in extra_frontmatter
+                if key in _RESERVED_FRONTMATTER_KEYS
+            )
+            if collisions:
+                raise ValueError(
+                    "extra_frontmatter may not set store-owned keys: "
+                    + ", ".join(collisions)
+                )
 
         # Build frontmatter
         now = datetime.now(timezone.utc).isoformat()
@@ -227,6 +265,12 @@ class RecordsStore:
         # AD-553: Attach metrics snapshot
         if metrics:
             frontmatter["metrics"] = metrics
+
+        # AD-1140: caller-owned envelope fields. Reserved-key collisions were
+        # already rejected above, so this can only add keys the store does not
+        # own.
+        if extra_frontmatter:
+            frontmatter.update(extra_frontmatter)
 
         # Compose full document
         fm_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
@@ -373,10 +417,14 @@ class RecordsStore:
         tags: list[str] | None = None,
         classification: str = "department",
         metrics: dict[str, Any] | None = None,  # AD-553
+        extra_frontmatter: dict[str, Any] | None = None,  # AD-1140
     ) -> str:
         """Write to an agent's notebook.
 
         Creates or updates notebooks/{callsign}/{topic_slug}.md
+
+        AD-1140: ``extra_frontmatter`` is passed straight through to
+        :meth:`write_entry`; see its docstring for the reserved-key contract.
         """
         if not callsign or not callsign.strip():  # BF-218: guard against empty callsign
             raise ValueError("callsign must not be empty for notebook writes")
@@ -393,6 +441,7 @@ class RecordsStore:
             topic=topic_slug,
             tags=tags,
             metrics=metrics,
+            extra_frontmatter=extra_frontmatter,
         )
 
     async def write_bill(

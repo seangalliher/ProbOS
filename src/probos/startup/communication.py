@@ -123,6 +123,87 @@ def _register_oracle_query_tool(
     )
 
 
+def _register_publish_finding_tool(
+    *,
+    tool_registry: "ToolRegistry",
+    enabled: bool,
+    records_store: Any,
+    registry: "AgentRegistry",
+    ontology: Any,
+    source_node: str,
+    max_per_hour: int,
+    max_content_chars: int,
+    quality_engine: Any = None,
+    similarity_threshold: float = 0.8,
+    staleness_hours: float = 72.0,
+    max_scan_entries: int = 20,
+) -> None:
+    """AD-1140: register the governed commons-write tool (default-OFF).
+
+    Mirrors :func:`_register_oracle_query_tool` — the same six departments, for
+    the same two reasons: a commons that excludes half the ship is not a
+    commons, and a narrower grant would corrupt the AD-1143 ablation by
+    measuring "some agents had Σ" instead of "Σ vs no Σ". ``ensign`` holds
+    ``write`` upward because the crew children this exists for are ensigns; the
+    DD-7 bounds carried in the constructor are the actual governance
+    instrument.
+
+    The callsign resolver is BF-679's
+    :func:`probos.cognitive.oracle_service.make_reader_identity_resolver`,
+    reused rather than duplicated so an agent authors a record under exactly the
+    identity Oracle Tier 2 later resolves it back to. Without an ontology there
+    is no authoritative ``agent_id -> callsign`` translation, so registration is
+    skipped rather than authoring records under an unproven identity.
+    """
+    if (
+        not enabled
+        or records_store is None
+        or registry is None
+        or ontology is None
+        or tool_registry.get("publish_finding") is not None
+    ):
+        return
+    from probos.cognitive.oracle_service import make_reader_identity_resolver
+    from probos.tools.publish_finding_tool import PublishFindingTool
+
+    tool_registry.register(
+        PublishFindingTool(
+            records_store=records_store,
+            callsign_resolver=make_reader_identity_resolver(
+                registry=registry, ontology=ontology,
+            ),
+            source_node=source_node,
+            max_per_hour=max_per_hour,
+            max_content_chars=max_content_chars,
+            quality_engine=quality_engine,
+            similarity_threshold=similarity_threshold,
+            staleness_hours=staleness_hours,
+            max_scan_entries=max_scan_entries,
+        ),
+        provider="records",
+        tags=[
+            "publish_finding",
+            "records",
+            "knowledge",
+            "write",
+        ],
+        allowed_departments=(
+            "engineering",
+            "science",
+            "medical",
+            "security",
+            "operations",
+            "bridge",
+        ),
+        default_permissions={
+            "ensign": "write",
+            "lieutenant": "write",
+            "commander": "write",
+            "senior_officer": "write",
+        },
+    )
+
+
 async def init_communication(
     *,
     config: "SystemConfig",
@@ -141,6 +222,8 @@ async def init_communication(
     background_register: Callable[[asyncio.Task], None] | None = None,
     nats_bus: Any = None,  # AD-637c: NATS event bus for JetStream ward room dispatch
     oracle: Any = None,  # AD-1139: OracleService for the read-only consult tool
+    records_store: Any = None,  # AD-1140: RecordsStore for the commons-write tool
+    notebook_quality_engine: Any = None,  # AD-1140: AD-555 quality metrics sink
 ) -> CommunicationResult:
     """Start communication services, scheduling, and identity commissioning.
 
@@ -586,6 +669,20 @@ async def init_communication(
         tool_registry=tool_registry,
         enabled=config.agentic_tools.oracle_query_enabled,
         oracle=oracle,
+    )
+    _register_publish_finding_tool(
+        tool_registry=tool_registry,
+        enabled=config.agentic_tools.publish_finding_enabled,
+        records_store=records_store,
+        registry=registry,
+        ontology=ontology,
+        source_node=config.federation.node_id,
+        max_per_hour=config.agentic_tools.publish_finding_max_per_hour,
+        max_content_chars=config.agentic_tools.publish_finding_max_content_chars,
+        quality_engine=notebook_quality_engine,
+        similarity_threshold=config.records.notebook_similarity_threshold,
+        staleness_hours=config.records.notebook_staleness_hours,
+        max_scan_entries=config.records.notebook_max_scan_entries,
     )
     logger.info("tool-permission-store started")
 

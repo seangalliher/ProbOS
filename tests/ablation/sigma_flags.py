@@ -26,19 +26,22 @@ from typing import Any
 
 from probos.config import SystemConfig
 
-# Dotted paths against ``SystemConfig``. Verified at HEAD b4e4fc93:
-#   config.py:6428  records: RecordsConfig
+# Dotted paths against ``SystemConfig``. Verified at HEAD 50e38ecb:
+#   config.py:6441  records: RecordsConfig
 #   config.py:3400  semantic_index_enabled: bool = False        # AD-1138
-#   config.py:6509  agentic_tools: AgenticToolsConfig
-#   config.py:6057  oracle_query_enabled: bool = False          # AD-1139
+#   config.py:6522  agentic_tools: AgenticToolsConfig
+#   config.py:6067  oracle_query_enabled: bool = False          # AD-1139
+#   config.py:6068  publish_finding_enabled: bool = False       # AD-1140
 SIGMA_OFF: dict[str, Any] = {
     "records.semantic_index_enabled": False,
     "agentic_tools.oracle_query_enabled": False,
+    "agentic_tools.publish_finding_enabled": False,
 }
 
 SIGMA_ON: dict[str, Any] = {
     "records.semantic_index_enabled": True,
     "agentic_tools.oracle_query_enabled": True,
+    "agentic_tools.publish_finding_enabled": True,
 }
 
 ARMS: dict[str, dict[str, Any]] = {

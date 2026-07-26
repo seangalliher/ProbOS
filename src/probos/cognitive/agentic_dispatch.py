@@ -70,13 +70,15 @@ _AGENTIC_EXTRA_CONTEXT_KEYS = frozenset(
 _AGENTIC_RANKS = frozenset(
     {"ensign", "lieutenant", "commander", "senior_officer"}
 )
-# AD-1129 / AD-1139: tools whose availability is decided ONLY by the
+# AD-1129 / AD-1139 / AD-1140: tools whose availability is decided ONLY by the
 # department + rank gate on their registration. A raw Captain grant is dropped
 # from ``granted_ids`` for these so it cannot route around
 # ``ToolRegistry.resolve_permission``'s scope layer, which returns NONE for an
 # out-of-scope department *before* grants are ever considered. Each id is
 # re-offered below through an explicit ``check_permission`` call.
-_GATED_TOOL_IDS = frozenset({"event_log_query", "oracle_query"})
+_GATED_TOOL_IDS = frozenset(
+    {"event_log_query", "oracle_query", "publish_finding"}
+)
 
 
 def _resolve_agentic_identity(
@@ -918,10 +920,28 @@ class WorkItemAgenticExecutor:
             ):
                 oracle_ids = ["oracle_query"]
 
+        # AD-1140: offer the commons-write tool when startup registered it
+        # (default-OFF via config.agentic_tools). It is the write half of Σ —
+        # the agent records a finding into Ship's Records so a different agent
+        # in a later session reaches it through ``oracle_query``. WRITE-level,
+        # and an agent whose department/rank is denied simply does not see the
+        # tool (silent honest-degrade, mirroring the two blocks above).
+        publish_ids: list[str] = []
+        if registry is not None and registry.get("publish_finding") is not None:
+            if registry.check_permission(
+                agent_id,
+                "publish_finding",
+                ToolPermission.WRITE,
+                agent_department=department,
+                agent_rank=rank,
+            ):
+                publish_ids = ["publish_finding"]
+
         tool_ids = list(
             dict.fromkeys([
                 *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
                 *search_ids, *delegate_ids, *event_log_ids, *oracle_ids,
+                *publish_ids,
             ])
         )
 
