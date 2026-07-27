@@ -78,7 +78,7 @@ class _ScriptedLLM:
         self.last_tools: list[dict] | None = None
         self.calls = 0
 
-    async def complete(self, req: Any) -> _FakeLLMResponse:
+    async def complete(self, req: Any, **_kwargs: Any) -> _FakeLLMResponse:
         self.calls += 1
         self.last_tools = list(req.tools or [])
         if self._responses:
@@ -93,7 +93,7 @@ class _AlwaysToolLLM:
     def __init__(self, tool_id: str) -> None:
         self._tool_id = tool_id
 
-    async def complete(self, req: Any) -> _FakeLLMResponse:
+    async def complete(self, req: Any, **_kwargs: Any) -> _FakeLLMResponse:
         from probos.cognitive.swe_harness.tool_call import (
             ToolCallRequest,
             ToolUseBlock,

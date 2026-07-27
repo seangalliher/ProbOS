@@ -45,7 +45,7 @@ class _MockLLMClient:
     def __init__(self, score_text: str = "0.6"):
         self._score_text = score_text
 
-    async def complete(self, request):
+    async def complete(self, request, **_kwargs):
         resp = MagicMock()
         resp.content = self._score_text
         resp.text = self._score_text

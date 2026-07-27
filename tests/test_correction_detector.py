@@ -21,7 +21,7 @@ class _FakeLLMClient:
         self._response = response
         self.calls: list[str] = []
 
-    async def complete(self, request):
+    async def complete(self, request, **_kwargs):
         self.calls.append(request.prompt if hasattr(request, "prompt") else str(request))
         return self._response
 
@@ -230,7 +230,7 @@ class TestCorrectionDetection:
     async def test_llm_call_failure_returns_none(self):
         """LLM exception → returns None gracefully."""
         class _FailingClient:
-            async def complete(self, req):
+            async def complete(self, req, **_kwargs):
                 raise RuntimeError("LLM down")
 
         detector = CorrectionDetector(llm_client=_FailingClient())

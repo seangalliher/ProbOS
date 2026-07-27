@@ -123,7 +123,7 @@ class TestResearchPhase:
         from probos.types import LLMResponse
 
         class BadLLMClient(MockLLMClient):
-            async def complete(self, request):
+            async def complete(self, request, **_kwargs):
                 return LLMResponse(content="not valid json", model="mock")
 
         config = _make_config()
@@ -233,7 +233,7 @@ class TestResearchPhase:
         from probos.types import LLMResponse
 
         class NoDocsLLMClient(MockLLMClient):
-            async def complete(self, request):
+            async def complete(self, request, **_kwargs):
                 if "DOCUMENTATION FETCHED:" in request.prompt:
                     return LLMResponse(content="No useful documentation found.", model="mock")
                 return await super().complete(request)

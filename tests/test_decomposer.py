@@ -586,7 +586,7 @@ class TestReflectHardeningExtended:
         import asyncio
 
         class SlowLLM(MockLLMClient):
-            async def complete(self, request):
+            async def complete(self, request, **_kwargs):
                 await asyncio.Event().wait()  # blocks until timeout cancels
                 return await super().complete(request)
 
@@ -613,7 +613,7 @@ class TestReflectHardeningExtended:
                 super().__init__()
                 self._call_count = 0
 
-            async def complete(self, request):
+            async def complete(self, request, **_kwargs):
                 self._call_count += 1
                 # Explode on reflect call (identified by "Original request:" prefix)
                 prompt = getattr(request, 'prompt', '') or ''

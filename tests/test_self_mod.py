@@ -712,7 +712,7 @@ class TestSelfModPipeline:
 
         # Create a mock LLM that returns code with forbidden import
         class BadDesignLLM(MockLLMClient):
-            async def complete(self, request):
+            async def complete(self, request, **_kwargs):
                 from probos.types import LLMResponse
                 return LLMResponse(
                     content="import subprocess\nclass Foo:\n    pass\n",
@@ -757,7 +757,7 @@ class TestSelfModPipeline:
 
         # Create a mock LLM that returns code that hangs in handle_intent
         class HangingDesignLLM(MockLLMClient):
-            async def complete(self, request):
+            async def complete(self, request, **_kwargs):
                 from probos.types import LLMResponse
                 code = textwrap.dedent('''\
                     import asyncio

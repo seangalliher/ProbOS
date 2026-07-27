@@ -71,7 +71,7 @@ class _FakeLLMClient:
         self._call_count = 0
         self.requests: list[LLMRequest] = []
 
-    async def complete(self, request: LLMRequest) -> LLMResponse:
+    async def complete(self, request: LLMRequest, **_kwargs: Any) -> LLMResponse:
         self.requests.append(request)
         resp = self._responses[self._call_count]
         self._call_count += 1

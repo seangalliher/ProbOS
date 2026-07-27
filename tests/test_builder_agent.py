@@ -357,7 +357,7 @@ class _MockLLM:
         self._text = response_text
         self._error = error
 
-    async def complete(self, request):
+    async def complete(self, request, **_kwargs):
         from probos.types import LLMResponse
         if self._error:
             return LLMResponse(content="", error=self._error)
@@ -653,7 +653,7 @@ class TestExecuteSingleChunk:
         from probos.types import LLMResponse
 
         class _SlowLLM:
-            async def complete(self, request):
+            async def complete(self, request, **_kwargs):
                 await asyncio.Event().wait()  # blocks until timeout cancels
                 return LLMResponse(content="")
 
@@ -673,7 +673,7 @@ class TestExecuteSingleChunk:
         class _RetryLLM:
             def __init__(self):
                 self.calls = 0
-            async def complete(self, request):
+            async def complete(self, request, **_kwargs):
                 self.calls += 1
                 if self.calls == 1:
                     return LLMResponse(content="", error="rate_limit")
@@ -723,7 +723,7 @@ class TestExecuteChunks:
         class _AlternatingLLM:
             def __init__(self):
                 self.calls = 0
-            async def complete(self, request):
+            async def complete(self, request, **_kwargs):
                 self.calls += 1
                 if self.calls == 1:
                     return LLMResponse(content=_VALID_FILE_BLOCK, tokens_used=100)

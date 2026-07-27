@@ -89,7 +89,7 @@ class _ScriptedLLM:
         self.last_tools: list[dict] | None = None
         self.calls = 0
 
-    async def complete(self, req: Any) -> _FakeLLMResponse:
+    async def complete(self, req: Any, **_kwargs: Any) -> _FakeLLMResponse:
         self.calls += 1
         self.last_tools = list(req.tools or [])
         if self._responses:

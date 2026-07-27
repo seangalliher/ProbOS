@@ -33,7 +33,7 @@ class _StubLLM:
         self.calls = 0
         self.requests: list[Any] = []
 
-    async def complete(self, req: Any) -> LLMResponse:
+    async def complete(self, req: Any, **_kwargs: Any) -> LLMResponse:
         self.calls += 1
         self.requests.append(req)
         content = self._responses.pop(0) if self._responses else ""

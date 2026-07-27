@@ -220,7 +220,7 @@ class TestD1Sessions:
         llm = AsyncMock()
         # LLM returns recall text, then score
         call_count = [0]
-        async def _complete(req):
+        async def _complete(req, **_kwargs):
             call_count[0] += 1
             resp = MagicMock()
             if "recall" in getattr(req, 'prompt', '').lower() or "what happened" in getattr(req, 'prompt', '').lower():
@@ -254,7 +254,7 @@ class TestD1Sessions:
                              agent_ids=["a1"]) for i in range(4)]
         call_index = [0]
 
-        async def _llm_complete(req):
+        async def _llm_complete(req, **_kwargs):
             call_index[0] += 1
             resp = MagicMock()
             prompt_text = getattr(req, 'prompt', '')

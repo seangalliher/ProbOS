@@ -24,7 +24,7 @@ class _FakeLLM:
         self.output = output
         self.calls = 0
 
-    async def complete(self, req):
+    async def complete(self, req, **_kwargs):
         self.calls += 1
         return _FakeResponse(content=self.output)
 

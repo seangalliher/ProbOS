@@ -59,7 +59,7 @@ class MockLLMClient:
     def __init__(self, response_json: str) -> None:
         self._response_json = response_json
 
-    async def complete(self, request: object) -> MagicMock:
+    async def complete(self, request: object, **_kwargs: object) -> MagicMock:
         return _mock_llm_response(self._response_json)
 
 

@@ -24,7 +24,7 @@ class _FakeLLMClient:
         self._error = error
         self.requests: list[LLMRequest] = []
 
-    async def complete(self, request: LLMRequest) -> LLMResponse:
+    async def complete(self, request: LLMRequest, **_kwargs: Any) -> LLMResponse:
         self.requests.append(request)
         return LLMResponse(content=self._content, error=self._error)
 

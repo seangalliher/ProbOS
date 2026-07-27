@@ -113,7 +113,7 @@ def test_render_brief_includes_all_five_assessable_fields():
 async def test_brief_alignment_in_prompt_when_brief_present():
     captured: dict[str, str] = {}
 
-    async def fake_complete(req):
+    async def fake_complete(req, **_kwargs):
         captured["system"] = req.system_prompt
         captured["user"] = req.prompt
         return SimpleNamespace(
@@ -175,7 +175,7 @@ async def test_brief_alignment_in_prompt_when_brief_present():
 async def test_brief_absent_post_fills_neutral_brief_alignment():
     captured: dict[str, str] = {}
 
-    async def fake_complete(req):
+    async def fake_complete(req, **_kwargs):
         captured["system"] = req.system_prompt
         captured["user"] = req.prompt
         return SimpleNamespace(
@@ -218,7 +218,7 @@ async def test_brief_absent_post_fills_neutral_brief_alignment():
 
 @pytest.mark.asyncio
 async def test_brief_present_but_llm_omits_criterion_post_fills_with_distinct_reason():
-    async def fake_complete(req):
+    async def fake_complete(req, **_kwargs):
         return SimpleNamespace(
             content=json.dumps(
                 {

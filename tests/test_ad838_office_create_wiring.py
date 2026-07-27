@@ -18,7 +18,7 @@ from probos.types import IntentMessage
 class _SlideLLMClient:
     """Returns a strict-JSON slide array for synthesis."""
 
-    async def complete(self, prompt: str) -> str:
+    async def complete(self, prompt: str, **_kwargs: Any) -> str:
         return json.dumps(
             [
                 {"title": "Findings", "bullets": ["Revenue up", "Churn down"]},

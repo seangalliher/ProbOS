@@ -32,7 +32,7 @@ class _StubLLM:
         self._responses = list(responses)
         self.calls = 0
 
-    async def complete(self, req: Any) -> LLMResponse:
+    async def complete(self, req: Any, **_kwargs: Any) -> LLMResponse:
         self.calls += 1
         if self._responses:
             content = self._responses.pop(0)

@@ -612,7 +612,7 @@ class TestAgentDesignerExecutionContext:
         class _MockLLM:
             def __init__(self):
                 self.prompts = []
-            async def complete(self, req):
+            async def complete(self, req, **_kwargs):
                 self.prompts.append(req.prompt)
                 class _R:
                     content = "class TestAgent(CognitiveAgent): pass"
@@ -642,7 +642,7 @@ class TestAgentDesignerExecutionContext:
         class _MockLLM:
             def __init__(self):
                 self.prompts = []
-            async def complete(self, req):
+            async def complete(self, req, **_kwargs):
                 self.prompts.append(req.prompt)
                 class _R:
                     content = "class TestAgent(CognitiveAgent): pass"

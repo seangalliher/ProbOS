@@ -65,7 +65,7 @@ def test_helper_catches_llmclient_chat_phantom(tmp_path):
     src = _make_src_tree(tmp_path, {
         "cognitive/llm_client.py": (
             "class LLMClient:\n"
-            "    async def complete(self, request): pass\n"
+            "    async def complete(self, request, **_kwargs): pass\n"
         ),
         "runtime.py": (
             "class ProbOSRuntime:\n"

@@ -29,7 +29,7 @@ class _FakeLLMClient:
         self._error = error
         self.requests: list[LLMRequest] = []
 
-    async def complete(self, request: LLMRequest) -> LLMResponse:
+    async def complete(self, request: LLMRequest, **_kwargs: Any) -> LLMResponse:
         self.requests.append(request)
         return LLMResponse(content=self._content, error=self._error)
 
@@ -37,7 +37,7 @@ class _FakeLLMClient:
 class _RaisingLLMClient:
     """Raises inside ``complete`` to exercise the honest-degrade path."""
 
-    async def complete(self, request: LLMRequest) -> LLMResponse:  # noqa: ARG002
+    async def complete(self, request: LLMRequest, **_kwargs: Any) -> LLMResponse:  # noqa: ARG002
         raise RuntimeError("boom")
 
 

@@ -131,7 +131,7 @@ class TestBaseLLMClientHealth:
         from probos.cognitive.llm_client import BaseLLMClient
 
         class TestClient(BaseLLMClient):
-            async def complete(self, request):
+            async def complete(self, request, **_kwargs):
                 pass
 
         client = TestClient()

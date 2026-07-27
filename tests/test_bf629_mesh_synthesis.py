@@ -50,7 +50,7 @@ class _CapturingLLM:
         self._raises = raises
         self.calls: list = []
 
-    async def complete(self, req):
+    async def complete(self, req, **_kwargs):
         self.calls.append(req)
         if self._raises:
             raise RuntimeError("proxy down")

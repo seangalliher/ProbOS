@@ -51,7 +51,7 @@ class _FakeLLM:
         self._response = response
         self.calls: list = []
 
-    async def complete(self, request):
+    async def complete(self, request, **_kwargs):
         self.calls.append(request)
         return self._response
 
@@ -170,7 +170,7 @@ class TestAgentPatcher:
     async def test_llm_failure_returns_error(self):
         """LLM exception → PatchResult(success=False)."""
         class _FailLLM:
-            async def complete(self, req):
+            async def complete(self, req, **_kwargs):
                 raise RuntimeError("LLM error")
 
         patcher = AgentPatcher(

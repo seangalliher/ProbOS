@@ -14,7 +14,7 @@ from probos.skill_framework import DocxAgent, PptxAgent, XlsxAgent
 
 
 class _FakeLLMClient:
-    async def complete(self, prompt: str) -> str:
+    async def complete(self, prompt: str, **_kwargs: Any) -> str:
         return "- Summary A\n- Summary B\n- Summary C"
 
 

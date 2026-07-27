@@ -707,7 +707,7 @@ async def test_bf314_moondream_gets_short_single_clause_prompt(tmp_path: Path) -
 
     captured: dict[str, Any] = {}
 
-    async def _capture(req: LLMRequest) -> Any:
+    async def _capture(req: LLMRequest, **_kwargs: Any) -> Any:
         captured["tier"] = req.tier
         captured["messages"] = req.messages
         captured["temperature"] = req.temperature
@@ -758,7 +758,7 @@ async def test_bf314_vision_keeps_multiclause_prompt(tmp_path: Path) -> None:
 
     captured: dict[str, Any] = {}
 
-    async def _capture(req: LLMRequest) -> Any:
+    async def _capture(req: LLMRequest, **_kwargs: Any) -> Any:
         captured["tier"] = req.tier
         captured["temperature"] = req.temperature
         captured["max_tokens"] = req.max_tokens
