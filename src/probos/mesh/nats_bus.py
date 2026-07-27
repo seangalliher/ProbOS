@@ -13,6 +13,7 @@ import json
 import logging
 import re
 from collections.abc import Iterable
+from functools import lru_cache
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,44 @@ def _subscription_tombstones(bus: Any) -> set[str]:
         tombstones = set()
         bus._removed_subscription_subjects = tombstones
     return tombstones
+
+
+@lru_cache(maxsize=1)
+def _already_removed_exc_types() -> tuple[type[BaseException], ...]:
+    """BF-685: unsubscribe failures that already satisfy the removal contract.
+
+    ``nats-py``'s ``Subscription.unsubscribe`` raises ``BadSubscriptionError``
+    when the handle is already closed and ``ConnectionClosedError`` when the
+    whole transport is gone. Both mean the invariant removal exists to
+    establish — that this subscription delivers no further messages — already
+    holds, so treating either as a failure asks teardown to undo something
+    that is already undone.
+
+    ``_recover_jetstream`` has always taken this view (it swallows a stale
+    handle's unsubscribe at debug level and re-subscribes), and its docstring
+    names the condition as expected. Teardown took the opposite view on the
+    identical condition, and a single stale handle left behind by a partial
+    recovery would surface at shutdown as *every* pool failing to stop,
+    burying any genuine teardown fault in the noise.
+
+    Resolved lazily, and to an empty tuple when ``nats`` is absent, because
+    this module imports without the package so ``MockNATSBus`` stays usable.
+    ``except ()`` is valid and never matches, which is the correct degrade: no
+    real subscription objects exist on that path.
+    """
+    try:
+        from nats import errors as nats_errors
+    except Exception:  # pragma: no cover - exercised only without nats
+        return ()
+    candidates = (
+        getattr(nats_errors, "BadSubscriptionError", None),
+        getattr(nats_errors, "ConnectionClosedError", None),
+    )
+    return tuple(
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, type) and issubclass(candidate, BaseException)
+    )
 
 
 def _subscription_mutation_lock(bus: Any) -> asyncio.Lock:
@@ -272,6 +311,17 @@ class NATSBus:
             if sub is not None:
                 try:
                     await sub.unsubscribe()
+                except _already_removed_exc_types() as exc:
+                    # BF-685: already torn down. Fall through to drop the
+                    # handle from tracking rather than restoring it — a
+                    # retained dead handle would raise again on every
+                    # subsequent attempt, which is how one stale subscription
+                    # became a shutdown-wide failure.
+                    logger.debug(
+                        "BF-685: subscription for %s was already removed "
+                        "(%s); treating teardown as complete",
+                        entry["subject"], type(exc).__name__,
+                    )
                 except BaseException as exc:
                     failed_entries.append(entry)
                     failures.append(exc)
