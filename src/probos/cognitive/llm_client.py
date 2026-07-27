@@ -297,6 +297,13 @@ class OpenAICompatibleClient(BaseLLMClient):
         self._endpoint_failure_states: dict[str, _EndpointFailureState] = {
             key: _EndpointFailureState() for key in self._clients
         }
+        # BF-686: endpoint key -> the breaker epoch whose first refusal has
+        # already been reported, plus a running total of calls that
+        # honest-degraded because the breaker was open. The counter is the
+        # volume the log no longer carries, so it is surfaced in
+        # ``get_health_status`` rather than lost.
+        self._reported_exhaustion_epochs: dict[str, int] = {}
+        self._breaker_suppressed_exhaustions: int = 0
 
     # Backward-compat properties
     @property
@@ -1259,6 +1266,12 @@ class OpenAICompatibleClient(BaseLLMClient):
         # tiers cannot rebuild the same observed generation twice.
         _refreshed_generations: set[tuple[str, int]] = set()
         stopped_endpoint_keys: set[str] = set()
+        # BF-686: endpoint keys whose breaker refused this call outright, and
+        # whether any tier got far enough to actually attempt transport. An
+        # exhaustion where nothing was attempted is the BF-674 breaker doing
+        # exactly its job, not a new fault.
+        breaker_refused_keys: set[str] = set()
+        attempted_transport = False
         for attempt_tier in fallback_tiers:
             tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
             endpoint_key = self._client_key(attempt_tier)
@@ -1311,7 +1324,9 @@ class OpenAICompatibleClient(BaseLLMClient):
                         f"{endpoint_admission.cooldown_remaining_seconds:.1f}s "
                         f"at {self._client_key(attempt_tier)}"
                     )
+                    breaker_refused_keys.add(endpoint_key)  # BF-686
                     continue
+                attempted_transport = True  # BF-686
                 # AD-617: Inner retry loop for 429 backpressure (stays on same tier)
                 _max_429_retries = 5
                 for _429_attempt in range(_max_429_retries):
@@ -1629,7 +1644,26 @@ class OpenAICompatibleClient(BaseLLMClient):
                 )
 
         # Final fallback: error response
-        logger.error("All LLM tiers unavailable and no cached response for request %s", request.id[:8])
+        # BF-686: severity follows attribution, not outcome. When no tier ever
+        # reached transport because the BF-674 breaker refused every one, this
+        # exhaustion *is* the breaker working — the endpoint condition was
+        # already reported in full when the cooldown opened, and repeating it
+        # per call says nothing new. On the reference vessel that produced
+        # 2,025 ERROR lines describing 19 endpoint events (a ~107:1
+        # amplification) which drowned every other ERROR in the log, including
+        # the ones worth reading.
+        #
+        # Reported once per breaker epoch rather than suppressed outright: the
+        # epoch already exists on ``_EndpointFailureState`` and increments on
+        # each new cooldown, so it bounds the volume at one line per real
+        # event while keeping every distinct outage visible. Anything that
+        # actually attempted transport and failed keeps ERROR.
+        if breaker_refused_keys and not attempted_transport:
+            self._report_breaker_suppressed_exhaustion(
+                breaker_refused_keys, request.id[:8], last_error,
+            )
+        else:
+            logger.error("All LLM tiers unavailable and no cached response for request %s", request.id[:8])
         return LLMResponse(
             content="",
             model="",
@@ -1637,6 +1671,64 @@ class OpenAICompatibleClient(BaseLLMClient):
             error=f"All LLM tiers unavailable ({last_error})",
             request_id=request.id,
         )
+
+    def _report_breaker_suppressed_exhaustion(
+        self,
+        endpoint_keys: set[str],
+        request_id: str,
+        last_error: str,
+    ) -> None:
+        """BF-686: log one WARNING per breaker epoch, DEBUG for the rest.
+
+        The first call refused by a given cooldown carries the WARNING and the
+        running suppressed count; every later call in that same epoch is DEBUG.
+        A new cooldown bumps the epoch and earns a fresh line, so the operator
+        sees one entry per outage instead of one per queued background call.
+
+        Never raises: this sits on the honest-degrade path, and a failure to
+        *describe* an outage must not become a second outage.
+        """
+        try:
+            # BF-686: defensive reads. Several suites build this client
+            # bypassing ``__init__`` (``object.__new__``), so new instance
+            # attributes are absent there. Same idiom as the BF-241
+            # ``_knowledge_edges`` read — a diagnostics counter must not be the
+            # thing that breaks a client that is otherwise fine.
+            self._breaker_suppressed_exhaustions = (
+                getattr(self, "_breaker_suppressed_exhaustions", 0) + 1
+            )
+            reported = getattr(self, "_reported_exhaustion_epochs", None)
+            if not isinstance(reported, dict):
+                reported = {}
+                self._reported_exhaustion_epochs = reported
+            states = getattr(self, "_endpoint_failure_states", {}) or {}
+            newly_reported: list[str] = []
+            for key in sorted(endpoint_keys):
+                state = states.get(key)
+                epoch = state.epoch if state is not None else -1
+                if reported.get(key) != epoch:
+                    reported[key] = epoch
+                    newly_reported.append(f"{key}@epoch{epoch}")
+            if newly_reported:
+                logger.warning(
+                    "BF-674 breaker is refusing background LLM calls at %s; "
+                    "callers honest-degrade until the endpoint recovers. "
+                    "Further refusals in this epoch log at DEBUG "
+                    "(%d suppressed since start). Last: %s",
+                    ", ".join(newly_reported),
+                    self._breaker_suppressed_exhaustions,
+                    last_error,
+                )
+            else:
+                logger.debug(
+                    "BF-674 breaker refused request %s (%s)",
+                    request_id, last_error,
+                )
+        except Exception:  # pragma: no cover - diagnostics must not escalate
+            logger.debug(
+                "BF-686: failed to report a breaker-suppressed exhaustion",
+                exc_info=True,
+            )
 
     async def _call_api(
         self, request: LLMRequest, model: str, client: httpx.AsyncClient,
@@ -2065,7 +2157,18 @@ class OpenAICompatibleClient(BaseLLMClient):
         else:
             overall = "degraded"
 
-        return {"tiers": tiers, "overall": overall}
+        return {
+            "tiers": tiers,
+            "overall": overall,
+            # BF-686: calls that honest-degraded because the BF-674 breaker was
+            # open. These no longer emit one ERROR each, so the volume is
+            # surfaced here instead of being lost with the log lines.
+            # Defensive read: suites that bypass ``__init__`` still get a
+            # well-formed health payload.
+            "breaker_suppressed_exhaustions": getattr(
+                self, "_breaker_suppressed_exhaustions", 0
+            ),
+        }
 
     async def close(self) -> None:
         """Drain pooled-client generations and cancel background tasks."""
