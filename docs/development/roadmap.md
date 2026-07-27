@@ -379,6 +379,8 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 | AD | Title | Issue | Priority |
 |----|-------|-------|----------|
 | AD-1151 | Persist tool OUTPUTS in the durable trace — corrects the superseded §3.3 Transparency claim in AD-1148 DD-2 / AD-1142; default-ON convention-#14 carve-out — SHIPPED 2026-07-25 / [#1076](https://github.com/seangalliher/ProbOS/issues/1076) CLOSES ON PUSH | Epic [#1068](https://github.com/seangalliher/ProbOS/issues/1068) / issue [#1076](https://github.com/seangalliher/ProbOS/issues/1076) | 1 |
+| AD-1153 | Browser offered to the agentic loop, **read-only** — the six offered actions (`goto`/`state`/`extract_text`/`back`/`forward`/`wait`) provably cannot reach tier 3, which matters because the tier-3 gate returns a **success-shaped no-op** (`error=None`) that an unattended model reads as completion. Corrects three claims in #1080: `goto` is unconditionally tier 2 so a payment-URL navigation is **ungated** (not auto-approved); `destructive_url_patterns` is a DM-path guardrail, not a `BrowserTool` one; a per-action permission split is not expressible through `check_permission` (no action dimension, loop invokes at READ). Enforced at `DispatchToolExecutor` — zero edits under `src/probos/tools/browser/` — and armed only when the tool came through the new offer AND is not already Captain-granted, so Layer-4 grant-up is not inverted. `ensign: none` retained; `PARALLEL_SAFE_TOOL_IDS` deliberately unextended. Default-OFF — SHIPPED 2026-07-26 / [#1080](https://github.com/seangalliher/ProbOS/issues/1080) CLOSES ON PUSH | Epic [#1068](https://github.com/seangalliher/ProbOS/issues/1068) / issue [#1080](https://github.com/seangalliher/ProbOS/issues/1080) | 1 |
+| AD-1154 | Mutating browser actions (`click` / `type` / `scroll`) + a working tier-3 approval inbox — blocked on the success-shaped `intervention_required` no-op and `_pending_confirmations` growth, both of which AD-1153 routes around rather than fixes. **BF-682 is a precondition.** | Epic [#1068](https://github.com/seangalliher/ProbOS/issues/1068) / issue [#1081](https://github.com/seangalliher/ProbOS/issues/1081) | 2 |
 
 **Σ Cognitive Mesh wave (epic [#1057](https://github.com/seangalliher/ProbOS/issues/1057)) — a knowledge commons a crew agent can both read and contribute to, so a finding survives the session that produced it. Earlier members (BF-675 Tier 5 sovereignty, AD-1138 records semantic index, AD-1139 governed `oracle_query`, AD-1143 Σ ablation harness) shipped without roadmap rows; only work still tabled appears below.**
 
@@ -884,6 +886,12 @@ OSS bugs are tracked as GitHub issues with the `bug` label:
 
 Closed bug-fix history (BF-001 through BF-247) is preserved in
 [roadmap-era-5-completed.md](roadmap-era-5-completed.md#bug-tracker).
+
+**Open, filed but deliberately not fixed:**
+
+| BF | Title | Filed by | Severity |
+|----|-------|----------|----------|
+| BF-682 | Raw `confirmation_token` in the `TOOL_INTERVENTION_REQUIRED` event payload — `event_log_query`'s `_wire_json` recurses dicts without redaction and `_consume_confirmation_token` reads the token from `params`, so the theoretical chain is trigger-gate → query-own-log → replay. **Middle link is broken today**: no `emit_event`-sourced tool event reaches the queryable `EventLog` (verified — zero such rows in the live 82 MB `events.db`), so this is a hardening note, not a live exploit. Unreachable in AD-1153 v1 by construction (no offered action classifies tier 3). **Becomes load-bearing at AD-1154.** Fix: emit a non-secret `confirmation_id`; known blast radius at `tests/test_ad706_browser_tool.py:279`. | AD-1153 / DD-8 | Precondition for AD-1154 |
 
 ----
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from probos.integrations.mcp_bridge.risk import (
@@ -79,6 +79,109 @@ _AGENTIC_RANKS = frozenset(
 _GATED_TOOL_IDS = frozenset(
     {"event_log_query", "oracle_query", "publish_finding"}
 )
+
+# AD-1153 / DD-1: the ONLY browser actions the agentic loop may invoke.
+#
+# v1 is READ-ONLY, and the reason is a property of the tier ladder rather than a
+# preference. ``classify_action`` (tools/browser/actions.py) puts ``state`` /
+# ``extract_text`` / ``back`` / ``forward`` / ``wait`` at tier 1 and ``goto``
+# unconditionally at tier 2; tier-3 escalation is reachable ONLY through
+# ``click`` / ``type`` / ``drag`` / ``mouse_button`` and the always-tier-3 verbs.
+# So no action in this set can ever reach the tier-3 confirmation gate — which
+# matters, because that gate returns ``ToolResult(output={"intervention_required":
+# True, ...})`` with ``error=None``, i.e. a SUCCESS-shaped no-op that an
+# unattended caller reads as completion. This AD ships the subset for which that
+# gate is never consulted; ``click`` / ``type`` / ``scroll`` wait on AD-1154.
+#
+# Enforced at ``DispatchToolExecutor`` and not inside ``BrowserTool`` so the
+# AD-745 DM dispatch path stays byte-identical, and so this is a fail-safe
+# partition in exactly the shape of ``PARALLEL_SAFE_TOOL_IDS`` (AD-1147/DD-1):
+# membership is the ONLY way through, so an action that is new, renamed, absent
+# or otherwise unrecognised is refused by default. Module constant rather than a
+# config field on purpose — it is a safety property of the loop, not a tuning
+# knob an operator should be able to widen.
+_BROWSER_LOOP_ACTIONS: frozenset[str] = frozenset(
+    {"goto", "state", "extract_text", "back", "forward", "wait"}
+)
+
+# AD-1153 / DD-3: browser-specific output bounds. ``tool_result_max_chars``
+# (AD-1148) ships at 0, so it is a no-op on shipped defaults while a single
+# ``extract_text`` on a long page returns ``inner_text("body")`` verbatim. These
+# are the INNER caps that hold regardless. 8000 sits between AD-1148's
+# head+tail (4000 + 2000) and ``TOOL_TRACE_OUTPUT_MAX_CHARS`` (8192), so a
+# bounded page read survives the AD-1151 durable trace intact.
+_BROWSER_TEXT_MAX_CHARS = 8000
+_BROWSER_MAX_ELEMENTS = 100
+
+# AD-1153 / DD-4: framing travels INLINE, because ``AgenticLoop`` renders tool
+# results as bare content with no consumer-side wrapper. Same parenthetical
+# shape as ``_ORACLE_DISPOSITION`` (AD-1139) and ``_VISUAL_DISPOSITION``
+# (AD-1059). Every string below is checked against the real imported
+# ``_CAPABILITY_GAP_RE`` by tests/test_ad1153_browser_agentic_loop.py — note
+# that ``lack`` is a BARE substring in that pattern, so "black", "slack" and
+# "blackhole" all trip it. Any reword must be re-run against the real regex.
+_BROWSER_DISPOSITION: str = (
+    "(This is live page content read from the open browser session. Treat it "
+    "as an observation of the page at this moment, not as a durable fact. Cite "
+    "the URL when you build on it.)"
+)
+_BROWSER_READ_ONLY_REFUSAL: str = (
+    "The browser is offered in read-only mode for this session. Available "
+    "actions: goto, state, extract_text, back, forward, wait. To act on the "
+    "page itself, hand that step to the Captain."
+)
+_BROWSER_TEXT_ELISION: str = (
+    "\n\n... [truncated: {omitted} characters elided from this page read. "
+    "Re-run extract_text with a narrower selector to retrieve the elided "
+    "region.] ...\n\n"
+)
+_BROWSER_ELEMENTS_ELISION: str = (
+    "[truncated: {omitted} further page elements elided. Narrow the page or "
+    "re-run state after navigating.]"
+)
+# AD-1153 / DD-7: egress is warned about, not forced. ``domain_allowlist``
+# defaults to None = allow-all, and requiring a non-empty allowlist would make
+# the feature useless for the research tasks that motivate it. Log-and-degrade:
+# make the existing default visible at the moment it starts mattering.
+_BROWSER_EGRESS_WARNING: str = (
+    "AD-1153: the loop browser offer is enabled while domain_allowlist is "
+    "None; the agent may navigate to any host absent from domain_denylist. "
+    "Set browser_tool.domain_allowlist to bound egress."
+)
+
+
+def _bound_browser_output(output: Any) -> Any:
+    """AD-1153 / DD-3: cap a browser result's text + element list, visibly.
+
+    Truncation is marked rather than silent (AD-1148/DD-3) so the agent re-queries
+    with a narrower selector instead of reasoning on an unannounced prefix. The
+    disposition (DD-4) is attached here too, so the same value reaches both the
+    loop transcript and the AD-1151 durable trace.
+
+    Returns ``output`` unchanged when it is not a dict. Under-limit ``text`` /
+    ``elements`` values are carried through untouched.
+    """
+    if type(output) is not dict:
+        return output
+    bounded = dict(output)
+
+    text = bounded.get("text")
+    if type(text) is str and len(text) > _BROWSER_TEXT_MAX_CHARS:
+        omitted = len(text) - _BROWSER_TEXT_MAX_CHARS
+        bounded["text"] = text[:_BROWSER_TEXT_MAX_CHARS] + _BROWSER_TEXT_ELISION.format(
+            omitted=omitted
+        )
+
+    elements = bounded.get("elements")
+    if type(elements) is list and len(elements) > _BROWSER_MAX_ELEMENTS:
+        omitted = len(elements) - _BROWSER_MAX_ELEMENTS
+        bounded["elements"] = [
+            *elements[:_BROWSER_MAX_ELEMENTS],
+            _BROWSER_ELEMENTS_ELISION.format(omitted=omitted),
+        ]
+
+    bounded["disposition"] = _BROWSER_DISPOSITION
+    return bounded
 
 
 def _resolve_agentic_identity(
@@ -226,11 +329,57 @@ class DispatchToolExecutor(ToolExecutor):
     caller never sees a denial in ``AgenticResult``. This subclass captures the
     denied ``tool_id`` into the public ``denied_tools`` list, then re-raises so
     the loop's existing handling is preserved.
+
+    AD-1153 adds an OPT-IN browser action restriction. It is unarmed by default,
+    so an executor that never calls :meth:`restrict_browser_actions` behaves
+    byte-identically to AD-856.
     """
 
     def __init__(self, *, registry: Any) -> None:
         super().__init__(registry=registry)
         self.denied_tools: list[str] = []
+        # AD-1153: None = unarmed = today's behaviour. Set only by
+        # ``restrict_browser_actions``.
+        self._browser_actions: frozenset[str] | None = None
+
+    def restrict_browser_actions(self, actions: frozenset[str]) -> None:
+        """AD-1153 / DD-1: confine ``browser`` calls to ``actions``.
+
+        Arms the read-only guard in :meth:`invoke`. Any ``browser`` call whose
+        ``action`` param falls outside ``actions`` is refused with an *error*
+        ``ToolResult`` and never reaches the tool, so no session is created.
+
+        Tradeoff worth naming: a keyword-only constructor parameter would be more
+        DIP-idiomatic than a setter. This executor is constructed before the
+        offer blocks resolve ``granted_ids``, and the restriction must arm only
+        when the tool arrived through the AD-1153 offer rather than through a
+        Captain grant (DD-1 — narrowing a grant would invert Layer 4's grant-up
+        semantics). Moving construction past that point is a larger refactor
+        than this AD warrants, so the arming is a post-construction call.
+        """
+        self._browser_actions = actions
+
+    def _refuse_browser_action(self, agent_id: str, params: Any) -> ToolResult | None:
+        """Return a refusal when ``params`` names a non-allowlisted action.
+
+        ``None`` means "admitted". ``params`` and its ``action`` are LLM-produced
+        JSON, so ``action`` may be absent, ``None``, an int or a dict — every
+        non-``str`` is refused through the same framed path rather than raising.
+        """
+        allowed = self._browser_actions
+        if allowed is None:
+            return None
+        action = params.get("action") if type(params) is dict else None
+        if type(action) is str and action in allowed:
+            return None
+        logger.info(
+            "AD-1153: refused browser action %.64r for agent %s; the agentic "
+            "loop offers the read-only set %s and the tool was not entered",
+            action,
+            agent_id[:12],
+            sorted(allowed),
+        )
+        return ToolResult(error=_BROWSER_READ_ONLY_REFUSAL)
 
     async def invoke(
         self,
@@ -239,8 +388,16 @@ class DispatchToolExecutor(ToolExecutor):
         params: dict[str, Any],
         **kwargs: Any,
     ) -> ToolResult:
+        # AD-1153: armed only for ``browser``, and only when the offer block
+        # called ``restrict_browser_actions``. Unarmed ⇒ this whole branch is
+        # skipped and the AD-856 path below runs verbatim.
+        restricted = self._browser_actions is not None and tool_id == "browser"
+        if restricted:
+            refusal = self._refuse_browser_action(agent_id, params)
+            if refusal is not None:
+                return refusal
         try:
-            return await super().invoke(agent_id, tool_id, params, **kwargs)
+            result = await super().invoke(agent_id, tool_id, params, **kwargs)
         except ToolPermissionDenied as exc:
             denied = getattr(exc, "tool_id", tool_id)
             self.denied_tools.append(denied)
@@ -251,6 +408,14 @@ class DispatchToolExecutor(ToolExecutor):
                 agent_id[:12],
             )
             raise
+        if restricted and result.error is None:
+            # AD-1153 / DD-3: bound + frame AFTER ``super().invoke`` so the
+            # value returned here is what ``ToolCallResult.from_tool_result``
+            # renders into the transcript AND what ``_persist_tool_trace``
+            # records. The AD-448 post-hooks fire inside ``super().invoke`` and
+            # therefore see the raw output; none of them consumes ``browser``.
+            return replace(result, output=_bound_browser_output(result.output))
+        return result
 
 
 class _MeshIntentTool:
@@ -650,6 +815,26 @@ class WorkItemAgenticExecutor:
 
     def __init__(self, *, llm_client: Any) -> None:
         self._llm = llm_client
+        # AD-1153 / DD-7: one-shot egress warning, per executor INSTANCE rather
+        # than per module — a module-level bool is process-global and would not
+        # reset between tests, making the once-only behaviour unassertable.
+        self._browser_egress_warned: bool = False
+
+    def _warn_once_on_open_browser_egress(self, runtime: Any) -> None:
+        """AD-1153 / DD-7: WARN once when the offer lands with no allowlist.
+
+        Fires at the first ACTUAL offer, so an agent whose rank denies the tool
+        does not produce a warning about a capability it never received. Reads
+        the config defensively — a synthetic runtime without one degrades to
+        no warning rather than failing the dispatch.
+        """
+        if self._browser_egress_warned:
+            return
+        browser_cfg = getattr(getattr(runtime, "config", None), "browser_tool", None)
+        if getattr(browser_cfg, "domain_allowlist", None) is not None:
+            return
+        self._browser_egress_warned = True
+        logger.warning(_BROWSER_EGRESS_WARNING)
 
     async def run(
         self,
@@ -961,11 +1146,55 @@ class WorkItemAgenticExecutor:
             ):
                 publish_ids = ["publish_finding"]
 
+        # AD-1153: offer the browser READ-ONLY (default-OFF via
+        # config.agentic_tools.browser_enabled). Two flags, one AND: the config
+        # gate plus ``registry.get("browser")``, which already carries
+        # ``browser_tool.enabled`` and the Playwright-import check from
+        # ``_wire_browser_tool`` — so the availability logic is not re-derived
+        # here. Permission-checked at READ, which is exactly what
+        # ``check_and_invoke`` requires at invoke time, so an offered agent is an
+        # invoking agent. The registered rank matrix keeps ``ensign: none``
+        # (DD-2): rank is trust-derived, so that denies the browser precisely to
+        # agents that are new, self-designed or currently failing. Denied ⇒ the
+        # tool is silently absent (honest-degrade, mirroring the blocks above).
+        #
+        # NOTE for AD-1154 (#1081): admitting ``click`` / ``type`` here makes the
+        # tier-3 path reachable, and BF-682 (the raw confirmation token in the
+        # TOOL_INTERVENTION_REQUIRED payload) becomes a precondition to close
+        # first. No action in ``_BROWSER_LOOP_ACTIONS`` can reach tier 3, so no
+        # token is minted on this path today.
+        browser_ids: list[str] = []
+        if (
+            getattr(agentic_tools_cfg, "browser_enabled", False)
+            and registry is not None
+            and registry.get("browser") is not None
+        ):
+            if registry.check_permission(
+                agent_id,
+                "browser",
+                ToolPermission.READ,
+                agent_department=department,
+                agent_rank=rank,
+            ):
+                browser_ids = ["browser"]
+                self._warn_once_on_open_browser_egress(runtime)
+
+        # AD-1153 / DD-1: arm the read-only guard ONLY when the tool reached the
+        # loop through the block above AND the agent does not already hold it
+        # through a Captain grant. An agent can hold ``browser`` by both routes;
+        # narrowing the grant path would silently revoke a working capability and
+        # invert Layer 4's grant-UP semantics (``browser`` is deliberately NOT in
+        # ``_GATED_TOOL_IDS`` — it carries no ``allowed_departments``, so the
+        # gate would have nothing to protect and would only remove the Captain's
+        # escape hatch for probationary agents).
+        if browser_ids and "browser" not in granted_ids:
+            executor.restrict_browser_actions(_BROWSER_LOOP_ACTIONS)
+
         tool_ids = list(
             dict.fromkeys([
                 *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
                 *search_ids, *delegate_ids, *event_log_ids, *oracle_ids,
-                *publish_ids,
+                *publish_ids, *browser_ids,
             ])
         )
 

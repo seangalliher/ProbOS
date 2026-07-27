@@ -6087,7 +6087,37 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
       against a 72-hour staleness window admits far more entries than that
       scan's 20-entry cap examines, so duplicates can still slip past. This
       bound limits how fast the commons grows, not what the dedup window
-      sees."""
+      sees.
+
+    AD-1153 adds ``browser_enabled``: offer the already-registered
+    ``BrowserTool`` to the agentic loop so a task that needs a real
+    application's rendered state reads the live page instead of degrading to
+    ``http_fetch``. Also default-OFF, and gated on ``browser_tool.enabled``
+    as well, so the availability logic is not duplicated.
+
+    v1 is **read-only**, and that is a property of the tier ladder rather than
+    a preference. ``classify_action`` puts ``state`` / ``extract_text`` /
+    ``back`` / ``forward`` / ``wait`` at tier 1 and ``goto`` unconditionally at
+    tier 2; only ``click`` / ``type`` / ``drag`` / ``mouse_button`` and the
+    always-tier-3 verbs can escalate. So the offered set provably never reaches
+    the tier-3 confirmation gate — which matters, because that gate returns a
+    SUCCESS-shaped ``intervention_required`` payload (``error=None``) that an
+    unattended caller reads as completion. ``click`` / ``type`` / ``scroll``
+    wait on AD-1154 and its approval inbox.
+
+    Two consequences worth stating plainly:
+
+    * ``browser_tool.domain_allowlist`` defaults to ``None`` = allow-all, so on
+      shipped defaults an agent granted the browser may navigate to any host
+      absent from ``domain_denylist``. Requiring an allowlist would make the
+      feature useless for the research tasks that motivate it, so the executor
+      WARNs once at first offer instead. Set an allowlist to bound egress.
+    * ``browser_tool.destructive_url_patterns`` is **not** a ``BrowserTool``
+      guardrail — its only reader is the AD-745 DM dispatch stage, which this
+      path does not use. An agentic-loop caller gets the domain allow/denylist,
+      ``classify_action`` tiering, per-domain rate limiting and the session
+      duration cap."""
+
     tool_search_enabled: bool = False
     delegation_enabled: bool = False
     delegation_max_depth: int = Field(default=1, ge=0, le=3)
@@ -6101,6 +6131,21 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
     # limiter so a single author cannot be told it hit its personal limit when
     # the ship budget is what actually refused it.
     publish_finding_max_per_hour_ship: int = Field(default=40, ge=1, le=500)
+    # AD-1153: offer the registered BrowserTool to the agentic loop, read-only.
+    browser_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1153: offer the registered BrowserTool to the agentic loop. "
+            "v1 is READ-ONLY — the loop admits only goto, state, extract_text, "
+            "back, forward and wait, which are exactly the actions that stay "
+            "below the tier-3 confirmation gate; click/type/scroll wait on "
+            "AD-1154. Also requires browser_tool.enabled plus an importable "
+            "Playwright. Egress consequence: browser_tool.domain_allowlist "
+            "defaults to None, which permits every host absent from "
+            "domain_denylist — set an allowlist to bound where an agent may "
+            "navigate."
+        ),
+    )
     # AD-1141: Σ into the crew loop. The bool is the ablation gate; the three
     # bounds below only ever narrow what an already-enabled consult injects.
     crew_sigma_context_enabled: bool = False  # AD-1141

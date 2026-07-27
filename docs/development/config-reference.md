@@ -1726,6 +1726,7 @@ AD-1072: conversational-loop discovery + delegation tools (default-OFF).
 | `publish_finding_max_per_hour` | `int` | `12` | ≥ 1, ≤ 100 |  |
 | `publish_finding_max_content_chars` | `int` | `4000` | ≥ 200, ≤ 20000 |  |
 | `publish_finding_max_per_hour_ship` | `int` | `40` | ≥ 1, ≤ 500 |  |
+| `browser_enabled` | `bool` | `False` | — | AD-1153: offer the registered BrowserTool to the agentic loop. v1 is READ-ONLY — the loop admits only goto, state, extract_text, back, forward and wait, which are exactly the actions that stay below the tier-3 confirmation gate; click/type/scroll wait on AD-1154. Also requires browser_tool.enabled plus an importable Playwright. Egress consequence: browser_tool.domain_allowlist defaults to None, which permits every host absent from domain_denylist — set an allowlist to bound where an agent may navigate. |
 | `crew_sigma_context_enabled` | `bool` | `False` | — |  |
 | `crew_sigma_max_chars` | `int` | `2000` | ≥ 200, ≤ 8000 |  |
 | `crew_sigma_max_entries` | `int` | `4` | ≥ 1, ≤ 12 |  |
