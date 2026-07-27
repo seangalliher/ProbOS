@@ -33,6 +33,7 @@ from probos.types import (
     Priority,
     Skill,
 )
+from probos.cognitive.sub_task import CHAIN_PRIORITY_KEY  # BF-688
 from probos.utils import format_duration
 
 if TYPE_CHECKING:
@@ -3820,6 +3821,16 @@ class CognitiveAgent(BaseAgent):
         observation["_from_captain"] = _params.get("author_id", "") == "captain"
         observation["_was_mentioned"] = _params.get("was_mentioned", False)
 
+        # BF-688: every step of this chain inherits the priority the single-call
+        # path would have used. Classified from the same inputs and by the same
+        # function as the ``_decide_via_llm`` call, so a chain and a single call
+        # for one observation can never land in different scheduling lanes.
+        observation[CHAIN_PRIORITY_KEY] = Priority.classify(
+            intent=observation.get("intent", ""),
+            is_captain=observation["_from_captain"],
+            was_mentioned=observation["_was_mentioned"],
+        )
+
         # BF-187: DM social obligation — DM recipients must always respond
         observation["_is_dm"] = _params.get("is_dm_channel", False)
 
@@ -4000,6 +4011,14 @@ class CognitiveAgent(BaseAgent):
         observation["_from_captain"] = _params.get("author_id", "") == "captain"
         observation["_was_mentioned"] = _params.get("was_mentioned", False)
         observation["_is_dm"] = _params.get("is_dm_channel", False)
+
+        # BF-688: see the note in ``_execute_sub_task_chain`` — the two-phase
+        # chain runs the same handlers and needs the same inherited lane.
+        observation[CHAIN_PRIORITY_KEY] = Priority.classify(
+            intent=intent,
+            is_captain=observation["_from_captain"],
+            was_mentioned=observation["_was_mentioned"],
+        )
 
         # BF-210: Wire DM conversation partner for compose register adaptation
         if observation["_is_dm"]:

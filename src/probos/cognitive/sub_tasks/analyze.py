@@ -15,7 +15,12 @@ import time
 from typing import Any
 
 from probos.cognitive.standing_orders import get_step_instructions
-from probos.cognitive.sub_task import SubTaskResult, SubTaskSpec, SubTaskType
+from probos.cognitive.sub_task import (
+    SubTaskResult,
+    SubTaskSpec,
+    SubTaskType,
+    resolve_chain_priority,
+)
 from probos.types import LLMRequest
 from probos.utils.json_extract import extract_json
 
@@ -585,7 +590,9 @@ class AnalyzeHandler:
         )
 
         try:
-            response = await self._llm_client.complete(request)
+            response = await self._llm_client.complete(
+                request, priority=resolve_chain_priority(context),  # BF-688
+            )
         except Exception as exc:
             duration = (time.monotonic() - start) * 1000
             logger.warning("AD-632c: LLM call failed: %s", exc)

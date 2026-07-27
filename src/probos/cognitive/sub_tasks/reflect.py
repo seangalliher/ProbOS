@@ -14,7 +14,12 @@ import logging
 import time
 from typing import Any
 
-from probos.cognitive.sub_task import SubTaskResult, SubTaskSpec, SubTaskType
+from probos.cognitive.sub_task import (
+    SubTaskResult,
+    SubTaskSpec,
+    SubTaskType,
+    resolve_chain_priority,
+)
 from probos.types import LLMRequest
 from probos.utils.json_extract import extract_json
 
@@ -513,7 +518,9 @@ class ReflectHandler:
                 temperature=0.1,
                 max_tokens=2048,
             )
-            response = await self._llm_client.complete(request)
+            response = await self._llm_client.complete(
+                request, priority=resolve_chain_priority(context),  # BF-688
+            )
         except Exception as exc:
             duration = int((time.monotonic() - start) * 1000)
             logger.warning(

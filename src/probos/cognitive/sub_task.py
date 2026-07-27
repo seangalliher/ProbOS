@@ -19,7 +19,37 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Protocol, runtime_checkable
 
+from probos.types import Priority
+
 logger = logging.getLogger(__name__)
+
+# BF-688: the context key carrying the originating request's scheduling
+# priority into a chain. Underscore-prefixed so it survives the
+# ``spec.context_keys`` filter in ``_execute_step``, which keeps every key
+# starting with ``_`` — the same mechanism ``_callsign`` and ``_department``
+# already rely on.
+CHAIN_PRIORITY_KEY = "_priority"
+
+
+def resolve_chain_priority(context: dict) -> Priority:
+    """BF-688: the LLM scheduling priority for a sub-task's own LLM call.
+
+    A chain step inherits the priority of the request that started the chain.
+    Without this every step defaults to ``Priority.NORMAL`` and competes in the
+    background lane, so a Captain DM that triages into QUERY -> ANALYZE ->
+    COMPOSE -> EVALUATE -> REFLECT ran one call in the reserved interactive
+    lane (the ``decide()`` call, which classifies correctly) and the remaining
+    four alongside every agent's proactive thinking. Observed live: a Captain
+    DM to Anvil was still in ``evaluate``/``reflect`` 88s after arrival,
+    against a 60s ``ttl_seconds`` (AD-636), and returned "Agent did not respond
+    in time."
+
+    Falls back to ``NORMAL`` for an absent or non-``Priority`` value rather
+    than raising: a chain that cannot determine its priority must still run,
+    and inheriting the old default is the pre-BF-688 behaviour.
+    """
+    value = context.get(CHAIN_PRIORITY_KEY)
+    return value if isinstance(value, Priority) else Priority.NORMAL
 
 
 # ---------------------------------------------------------------------------

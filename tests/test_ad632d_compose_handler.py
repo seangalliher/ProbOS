@@ -51,7 +51,7 @@ class MockLLMClient:
         self.raise_exc = raise_exc
         self.last_request = None
 
-    async def complete(self, request: Any) -> Any:
+    async def complete(self, request: Any, **_kwargs: Any) -> Any:
         self.last_request = request
         if self.raise_exc:
             raise self.raise_exc

@@ -46,7 +46,7 @@ class MockLLMClient:
         self._raise_exc = raise_exc
         self.last_request = None
 
-    async def complete(self, request: Any) -> LLMResponse:
+    async def complete(self, request: Any, **_kwargs: Any) -> LLMResponse:
         self.last_request = request
         # Yield to event loop — ensures duration_ms is measurably > 0 on
         # platforms with coarse monotonic clock resolution (Windows).
