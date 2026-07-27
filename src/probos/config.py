@@ -6484,7 +6484,88 @@ class AgenticDispatchConfig(BaseModel):
             "silently introduced a new failure mode. The two knobs are "
             "different mechanisms: crew_compaction_threshold_tokens is a "
             "working-context ceiling (cross it, shrink and continue); this is "
-            "a spend ceiling (cross it, stop and fail)."
+            "a spend ceiling (cross it, stop and fail). AD-1155 interaction: "
+            "when crew_loop_until_done_enabled is True this budget is SHARED "
+            "across the outer iterations and carried forward as a remainder, "
+            "never reset per iteration, so iterations 2+ run with LESS room "
+            "than the first one. It is a ceiling, not an allowance."
+        ),
+    )
+    crew_loop_until_done_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1155: re-invoke a crew child that stopped without finishing, "
+            "with a fresh independently governed run each time, bounded by "
+            "crew_loop_until_done_max_iterations. Default-OFF per convention "
+            "#14 \u2014 with the gate off the child runs exactly once and the call "
+            "is byte-identical to pre-AD-1155. This does NOT replace "
+            "SubtaskVerifier.converge_for_session, which is a separate LIVE "
+            "outer loop driven by an LLM judge on the finalizer path; the two "
+            "compose, and the four-way worst case in "
+            "crew_loop_until_done_max_iterations assumes they do. Only a "
+            "stopped_reason the executor classifies as re-invokable is ever "
+            "re-run, which today is max_iterations ALONE: token_budget is a "
+            "spend ceiling the operator set, error is usually provider-window "
+            "exhaustion that a longer prompt makes worse, and complete means "
+            "the model chose to stop."
+        ),
+    )
+    crew_loop_until_done_max_iterations: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        description=(
+            "AD-1155: the hard outer cap on how many times ONE crew child is "
+            "run. 1 means no re-invocation, identical to today; the cap is a "
+            "bound, never an enable \u2014 crew_loop_until_done_enabled is what "
+            "turns the feature on. WORST CASE, STATED PLAINLY: per outer "
+            "iteration a child gets AGENTIC_MAX_ITERATIONS (25) turns, and one "
+            "turn can carry up to agentic_loop.max_parallel_tool_calls "
+            "(ceiling 16) concurrent tool calls, so at this ceiling of 5 that "
+            "is 5 x 25 x 16 = 2000 tool invocations FOR ONE CHILD \u2014 before "
+            "max_parallel_subtasks (default 3, ceiling 64) multiplies it "
+            "across siblings and before converge_for_session adds up to 8 "
+            "correction rounds on the finalizer path. That is the four-way "
+            "product: convergence x outer x inner x parallel. There is "
+            "deliberately no validator relating these fields \u2014 the relation is "
+            "stated here and asserted in tests, because a cross-field "
+            "validator would turn an unrelated POST /config into a 422."
+        ),
+    )
+    crew_loop_until_done_predicate: str = Field(
+        default="stopped_reason",
+        description=(
+            "AD-1155: which completion predicate decides whether to re-invoke. "
+            "An enum string, never an operator-supplied callable, which would "
+            "be an arbitrary-code seam on the crew hot path. 'stopped_reason' "
+            "(the default) continues only when the run was cut off by the turn "
+            "counter \u2014 the one unambiguous signal. 'completion_marker' "
+            "continues while crew_loop_until_done_completion_marker is absent "
+            "from the trailing output; its weakness is that nothing teaches "
+            "the agent to emit the marker on the FIRST pass, so a "
+            "single-iteration run can never satisfy it. 'open_todos' continues "
+            "while the PARENT work item has a checklist step in pending / "
+            "in_progress / rejected; it is OPT-IN and INAPPLICABLE to the crew "
+            "path as shipped \u2014 the crew fan-out never writes WorkItem.steps "
+            "(steps move through the DM reply pipeline's [TODO_*] tags, which a "
+            "crew child never enters), so a child with no checklist STOPS "
+            "rather than being re-invoked forever. 'submitted' steps are "
+            "excluded from 'actionable' because closing one needs rank >= "
+            "communications.room_todos_min_rank, which the modal crew agent "
+            "does not hold. An unknown value degrades to 'stopped_reason'."
+        ),
+    )
+    crew_loop_until_done_completion_marker: str = Field(
+        default="TASK COMPLETE",
+        description=(
+            "AD-1155: the exact line the 'completion_marker' predicate looks "
+            "for in the trailing 200 characters of a child's output. Only "
+            "consulted when crew_loop_until_done_predicate is "
+            "'completion_marker', in which case the continuation block tells "
+            "the agent to emit it. An empty or malformed value degrades to the "
+            "default rather than to '', because an empty marker is contained "
+            "in every string and would silently disable the predicate the "
+            "operator just armed."
         ),
     )
 

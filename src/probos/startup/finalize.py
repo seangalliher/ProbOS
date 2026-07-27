@@ -1900,6 +1900,21 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
             cfg, "crew_compaction_threshold_tokens", 60_000
         ),
         crew_token_budget=getattr(cfg, "crew_token_budget", None),
+        # AD-1155: re-invoke a child that stopped without finishing. Default-OFF,
+        # so an unconfigured runtime runs each child exactly once and the call is
+        # byte-identical to pre-AD-1155.
+        crew_loop_until_done_enabled=getattr(
+            cfg, "crew_loop_until_done_enabled", False
+        ),
+        crew_loop_until_done_max_iterations=getattr(
+            cfg, "crew_loop_until_done_max_iterations", 2
+        ),
+        crew_loop_until_done_predicate=getattr(
+            cfg, "crew_loop_until_done_predicate", "stopped_reason"
+        ),
+        crew_loop_until_done_completion_marker=getattr(
+            cfg, "crew_loop_until_done_completion_marker", "TASK COMPLETE"
+        ),
     )
     verifier = SubtaskVerifier(
         llm_client=llm_client,

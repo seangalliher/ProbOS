@@ -192,6 +192,148 @@ _EMPTY_CONSULT_NOTE: str = (
 _CREW_COMPACTION_THRESHOLD_TOKENS = 60_000
 _MIN_CREW_TOKEN_BUDGET = 1024
 
+# ── AD-1155: loop-until-done — an outer completion evaluator ────────────────
+#
+# READ THIS BEFORE ADDING A THIRD OUTER LOOP. **One already exists.**
+# ``SubtaskVerifier.converge_for_session`` (``crew_verifier.py:1301``) is a
+# complete, governed, bounded outer loop over ``WorkItemAgenticExecutor.run``,
+# called from ``crew_finalizer.py`` on the LIVE crew-session path. It re-invokes
+# with an LLM-judge critique for up to ``min(max_convergence_rounds, 8)`` rounds.
+# This AD does NOT replace it and does NOT touch it.
+#
+# The gap it leaves is narrow and deterministic: its only predicate is that
+# judge, and ``_classify_correction_terminal`` routes ``max_iterations`` into
+# ``correction_execution_defect`` — so a child cut off mid-work BY A COUNTER is
+# recorded as a defect rather than as unfinished work. This AD adds a cheap
+# deterministic predicate and a ``max_iterations`` continuation at the fan-out
+# seam, and nothing else.
+#
+# It wraps ``CrewTaskExecutor._run_child``, NOT ``WorkItemAgenticExecutor.run``.
+# ``.run`` has six call sites, including the AD-839 conversational path and the
+# AD-1072 delegation path — both of which have a HUMAN present who can say
+# "keep going" — and ``converge_for_session`` itself. Wrapping ``.run`` would
+# nest this loop inside those correction rounds, multiplying convergence x outer
+# x inner x parallel. Wrapping here makes every other caller byte-identical **by
+# construction rather than by flag**.
+#
+# Fail-safe direction, following AD-1147/DD-1 (``PARALLEL_SAFE_TOOL_IDS``) and
+# AD-1153/DD-1 (``_BROWSER_LOOP_ACTIONS``): membership sets ADMIT, they do not
+# EXCLUDE. A stop reason that nobody has classified is not re-invoked.
+_REINVOKABLE_STOPPED_REASONS = frozenset({"max_iterations"})
+
+# Predicate ids. A config ENUM STRING, never an operator-supplied callable — a
+# callable knob here would be an arbitrary-code seam on the crew hot path.
+_LOOP_PREDICATE_STOP_REASON = "stopped_reason"
+_LOOP_PREDICATE_COMPLETION_MARKER = "completion_marker"
+_LOOP_PREDICATE_OPEN_TODOS = "open_todos"
+_LOOP_PREDICATES = frozenset(
+    {
+        _LOOP_PREDICATE_STOP_REASON,
+        _LOOP_PREDICATE_COMPLETION_MARKER,
+        _LOOP_PREDICATE_OPEN_TODOS,
+    }
+)
+
+_LOOP_UNTIL_DONE_MAX_ITERATIONS = 2
+_MAX_LOOP_UNTIL_DONE_ITERATIONS = 5
+_DEFAULT_COMPLETION_MARKER = "TASK COMPLETE"
+_MAX_COMPLETION_MARKER_CHARS = 120
+_COMPLETION_MARKER_TAIL_CHARS = 200
+
+# ``open_todos`` step statuses that a re-invoked child can actually MOVE.
+# ``submitted`` is deliberately absent: ``_apply_room_todos`` gates
+# ``submitted -> done`` on rank >= ``communications.room_todos_min_rank``
+# (default ``commander`` => trust >= 0.7), and built-in agents seed at
+# Beta(2,2) = 0.50 => ``lieutenant``. The modal crew agent is structurally
+# incapable of closing its own submitted step, so counting it as open would
+# guarantee futile re-invocation. ``done`` is excluded for the obvious reason.
+_ACTIONABLE_STEP_STATUSES = frozenset({"pending", "in_progress", "rejected"})
+
+_MAX_CONTINUATION_CHARS = 3_000
+_MAX_CONTINUATION_OUTPUT_CHARS = 2_000
+_MAX_CONTINUATION_TODOS = 20
+_MAX_CONTINUATION_TODO_CHARS = 120
+
+# DD-4: every string below is asserted clean against the REAL imported
+# ``decomposer._CAPABILITY_GAP_RE``. The natural English for "you didn't
+# finish" is a minefield there — "you were unable to complete" trips it twice,
+# and ``lack`` is a bare substring, so "slack" and "black hole" trip it too.
+_CONTINUATION_HEADER = "## Continue this task"
+
+_CONTINUATION_STOP_REASON_NOTE: str = (
+    "You reached this task's turn limit before finishing. Continue from where "
+    "you stopped. Your previous output is below — build on it, do not start "
+    "over."
+)
+
+_CONTINUATION_OUTPUT_HEADER = "## What you produced on the previous pass"
+
+_CONTINUATION_OUTPUT_ELISION = (
+    "\n... [truncated: {omitted} characters elided from your previous output.] ...\n"
+)
+
+_CONTINUATION_TODO_HEADER = "## Checklist items still open"
+
+_CONTINUATION_MARKER_INSTRUCTION: str = (
+    "When the task is genuinely finished, end your final message with the "
+    "exact line: {marker}"
+)
+
+
+def _normalize_loop_until_done_enabled(value: Any) -> bool:
+    """Clamp the AD-1155 gate, never raise (the DD-8 / DD-10 convention).
+
+    ``is True`` rather than ``bool(...)``: a truthy non-bool that reached this
+    executor by a route that skipped Pydantic (``model_copy(update=...)``, a
+    synthetic runtime, a stub config) must NOT silently arm re-invocation.
+    """
+    return value is True
+
+
+def _normalize_loop_until_done_max_iterations(value: Any) -> int:
+    """Clamp the outer cap to ``[1, 5]``, never raise.
+
+    ``type(...) is not int`` also rejects ``bool`` (``True`` is not an outer
+    cap of 1). Mirrors the ``ge``/``le`` bounds on
+    ``AgenticDispatchConfig.crew_loop_until_done_max_iterations`` so a value
+    that skipped validation degrades to the module default rather than failing
+    every child.
+    """
+    if type(value) is not int or not (
+        1 <= value <= _MAX_LOOP_UNTIL_DONE_ITERATIONS
+    ):
+        return _LOOP_UNTIL_DONE_MAX_ITERATIONS
+    return value
+
+
+def _normalize_loop_until_done_predicate(value: Any) -> str:
+    """Clamp the predicate id to a known member, never raise.
+
+    An unknown id degrades to ``stopped_reason`` — the only predicate whose
+    signal is unambiguous — rather than to the opt-in ``open_todos``, whose
+    inapplicability guard exists precisely because it is wrong for most
+    children (C-2).
+    """
+    if type(value) is not str or value not in _LOOP_PREDICATES:
+        return _LOOP_PREDICATE_STOP_REASON
+    return value
+
+
+def _normalize_completion_marker(value: Any) -> str:
+    """Clamp the completion marker, never raise.
+
+    Empty/malformed degrades to the module default rather than to ``""``: an
+    empty marker is contained in every string, so it would make the
+    ``completion_marker`` predicate stop unconditionally and silently disable
+    the feature the operator just armed.
+    """
+    if type(value) is not str:
+        return _DEFAULT_COMPLETION_MARKER
+    marker = value.strip()
+    if not marker:
+        return _DEFAULT_COMPLETION_MARKER
+    return marker[:_MAX_COMPLETION_MARKER_CHARS]
+
 
 def _normalize_compaction_threshold(value: Any) -> int:
     """Clamp the working-context ceiling, never raise (DD-8 / DD-10).
@@ -262,6 +404,250 @@ def resolve_crew_compaction_settings(cfg: Any) -> dict[str, Any]:
     if budget is not None:
         settings["token_budget"] = budget
     return settings
+
+
+# ── AD-1155: predicates, progress detection and the continuation block ──────
+
+def _actionable_step_labels(steps: Any, *, child_id: str = "") -> list[str] | None:
+    """AD-1155 / DD-2: the labels of the steps a re-invoked child could MOVE.
+
+    Returns ``None`` — meaning **inapplicable, therefore stop** — for every
+    shape this predicate cannot reason about: a non-list, an EMPTY list, a
+    non-dict member, or a member whose ``status`` is outside
+    :data:`workforce.STEP_STATUSES`. Returns a possibly-empty list otherwise.
+
+    **The empty-list case is the load-bearing one.** ``workforce._all_steps_done``
+    is ``bool(steps) and all(...)``, so the literal ``not _all_steps_done(steps)``
+    is ``True`` for an empty checklist — and the crew fan-out NEVER writes
+    ``WorkItem.steps`` (steps move through the ``[TODO_*]`` tags of the DM reply
+    pipeline, which a crew child never enters). Treating "no checklist" as
+    "unfinished" would re-invoke every crew child to the cap, always. Hence
+    ``None``, and hence this function rather than a call to ``_all_steps_done``,
+    whose empty-list semantics are correct for its own single caller and wrong
+    here.
+
+    Pure apart from a WARNING on the malformed paths; never raises (DD-8).
+    """
+    from probos.workforce import STEP_STATUSES
+
+    if type(steps) is not list:
+        if steps is not None:
+            logger.warning(
+                "AD-1155: crew child %s has a non-list steps value (%s); the "
+                "open_todos predicate is inapplicable, so the outer loop stops "
+                "rather than re-invoking on an unreadable checklist",
+                child_id,
+                type(steps).__name__,
+            )
+        return None
+    if not steps:
+        return None
+    labels: list[str] = []
+    for step in steps:
+        if type(step) is not dict:
+            logger.warning(
+                "AD-1155: crew child %s has a non-dict checklist step (%s); the "
+                "open_todos predicate is inapplicable, so the outer loop stops",
+                child_id,
+                type(step).__name__,
+            )
+            return None
+        status = str(step.get("status", "pending"))
+        if status not in STEP_STATUSES:
+            logger.warning(
+                "AD-1155: crew child %s has a checklist step with an unknown "
+                "status %r; the open_todos predicate is inapplicable, so the "
+                "outer loop stops rather than guessing at the state machine",
+                child_id,
+                status,
+            )
+            return None
+        if status in _ACTIONABLE_STEP_STATUSES:
+            label = step.get("label")
+            labels.append(label if type(label) is str else "")
+    return labels
+
+
+def _iteration_made_progress(
+    outcome: Any,
+    *,
+    previous_text_hash: str | None,
+    previous_actionable_count: int | None,
+    actionable_count: int | None,
+) -> bool:
+    """AD-1155 / DD-5: did this iteration achieve anything measurable?
+
+    An iteration made NO progress iff it produced no artifacts, its
+    ``final_text`` hashes identically to the previous iteration's, and — when
+    ``open_todos`` is armed and applicable — its actionable-step count did not
+    fall.
+
+    **This is a backstop against the pathological case, not a general
+    early-exit, and it is weak on purpose.** Byte-identical ``final_text``
+    across two LLM calls at non-zero temperature is rare, so the artifact clause
+    carries almost all the weight, and a task whose output is prose rather than
+    a file will rarely trip it at all. The DD-3 cap is the real bound. A
+    semantic-similarity check would be stronger and is deliberately rejected: it
+    is an LLM call per iteration, which is DD-2's rejected AI-judge cost wearing
+    a different hat.
+    """
+    if getattr(outcome, "artifact_refs", None):
+        return True
+    if previous_text_hash is None:
+        return True
+    if _text_hash(getattr(outcome, "final_text", "") or "") != previous_text_hash:
+        return True
+    if (
+        actionable_count is not None
+        and previous_actionable_count is not None
+        and actionable_count < previous_actionable_count
+    ):
+        return True
+    return False
+
+
+def _text_hash(text: Any) -> str:
+    """SHA-256 of ``text``, used only to compare two iterations' final output."""
+    if type(text) is not str:
+        text = ""
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+
+def _bounded_spend(value: Any) -> int:
+    """AD-1155 / DD-3: one iteration's token spend, clamped and NEVER raising.
+
+    Deliberately not :func:`_normalize_tokens`, which raises: this runs inside
+    the ``_run_child`` try that persists ``stopped_reason="execution_exception"``,
+    so a malformed ``total_tokens`` must degrade the budget arithmetic (to 0,
+    the conservative direction — it can only cause MORE re-invocation to be
+    permitted, which the DD-3 cap still bounds) rather than fail the child.
+    """
+    if type(value) is not int or not 0 <= value <= _MAX_ACTUAL_TOKENS:
+        return 0
+    return value
+
+
+def _should_continue(
+    outcome: Any,
+    *,
+    iteration: int,
+    max_iterations: int,
+    predicate: str,
+    completion_marker: str,
+    no_progress_streak: int,
+    actionable_labels: list[str] | None,
+) -> tuple[bool, str]:
+    """AD-1155 / DD-2 + DD-5 + DD-6: continue the outer loop, or stop and why.
+
+    Pure dispatch over the module predicate ids; returns ``(continue, reason)``
+    where ``reason`` is a short log token, never surfaced to the agent.
+
+    ``iteration`` is 1-based and counts the run that just finished.
+    ``actionable_labels`` is :func:`_actionable_step_labels`' output, which the
+    caller loads only when ``open_todos`` is armed (the other predicates must
+    not pay a parent round-trip). ``no_progress_streak`` counts consecutive
+    no-progress iterations including this one — see
+    :func:`_iteration_made_progress`, which consumes the previous ``final_text``
+    hash on the caller's behalf.
+
+    **Order matters.** The cap binds first, then DD-6's re-invokability
+    precondition, then no-progress, and only then the predicate. The
+    precondition binds for EVERY predicate, including ``completion_marker`` and
+    ``open_todos``: a ``complete`` stop with no marker still stops, because the
+    model choosing to stop is not the failure this AD addresses.
+    """
+    if iteration >= max_iterations:
+        return False, "max_outer_iterations"
+
+    stopped_reason = getattr(outcome, "stopped_reason", "") or ""
+    if stopped_reason not in _REINVOKABLE_STOPPED_REASONS:
+        # DD-6, decided explicitly per value:
+        #   token_budget — a hard spend ceiling the operator set; re-invoking
+        #     after it defeats its purpose and would silently reverse AD-1142's
+        #     deliberate ``-> status="failed"`` mapping.
+        #   error — most often provider-window exhaustion, and the continuation
+        #     block makes ``task_text`` LONGER. Compaction, not looping, is the
+        #     mechanism for that reason.
+        #   complete — the model chose to stop.
+        # An unknown reason lands here too, which is the fail-safe direction.
+        return False, f"stopped_reason_terminal:{stopped_reason}"
+
+    if no_progress_streak >= 2:
+        return False, "no_progress"
+
+    if predicate == _LOOP_PREDICATE_COMPLETION_MARKER:
+        tail = (getattr(outcome, "final_text", "") or "")[
+            -_COMPLETION_MARKER_TAIL_CHARS:
+        ]
+        if completion_marker in tail:
+            return False, "completion_marker_present"
+        return True, "completion_marker_absent"
+
+    if predicate == _LOOP_PREDICATE_OPEN_TODOS:
+        if actionable_labels is None:
+            return False, "todos_inapplicable"
+        if not actionable_labels:
+            return False, "todos_none_actionable"
+        return True, f"todos_open:{len(actionable_labels)}"
+
+    return True, "stopped_reason_reinvokable"
+
+
+def _render_continuation(
+    *,
+    previous_output: Any,
+    todo_labels: list[str] | None,
+    completion_marker: str | None,
+) -> str:
+    """AD-1155 / DD-4: the continuation block appended to ``task_text``.
+
+    Returns ``""`` when it cannot compose anything useful; the caller treats
+    that as "stop the loop", never as a failed child. **Never persisted** — the
+    durable value is ``WorkItem.description``, which is inside the plan-identity
+    hash and which this AD does not touch (the AD-1141 rule).
+
+    Bounded at :data:`_MAX_CONTINUATION_CHARS` overall. The prior output is the
+    load-bearing part — without it the agent restarts from zero and repeats the
+    work, which is the failure this AD exists to fix — so it is sized last,
+    against whatever the fixed sections leave.
+    """
+    parts: list[str] = [_CONTINUATION_HEADER, "", _CONTINUATION_STOP_REASON_NOTE]
+
+    if todo_labels:
+        rendered = [
+            f"- {label[:_MAX_CONTINUATION_TODO_CHARS]}"
+            for label in todo_labels[:_MAX_CONTINUATION_TODOS]
+            if type(label) is str and label.strip()
+        ]
+        if rendered:
+            parts.extend(["", _CONTINUATION_TODO_HEADER, *rendered])
+
+    if completion_marker:
+        parts.extend(
+            ["", _CONTINUATION_MARKER_INSTRUCTION.format(marker=completion_marker)]
+        )
+
+    fixed = "\n".join(parts)
+    text = previous_output if type(previous_output) is str else ""
+    text = text.strip()
+    if text:
+        overhead = len(fixed) + len(_CONTINUATION_OUTPUT_HEADER) + 4
+        budget = min(
+            _MAX_CONTINUATION_OUTPUT_CHARS,
+            _MAX_CONTINUATION_CHARS - overhead - len(_CONTINUATION_OUTPUT_ELISION),
+        )
+        if budget > 0:
+            if len(text) > budget:
+                omitted = len(text) - budget
+                text = text[:budget] + _CONTINUATION_OUTPUT_ELISION.format(
+                    omitted=omitted
+                )
+            fixed = "\n".join([fixed, "", _CONTINUATION_OUTPUT_HEADER, "", text])
+
+    block = "\n\n" + fixed.strip()
+    if len(block) > _MAX_CONTINUATION_CHARS:
+        block = block[:_MAX_CONTINUATION_CHARS]
+    return block
 
 
 def _format_consult_age(timestamp: Any) -> str:
@@ -704,6 +1090,10 @@ class CrewTaskExecutor:
         crew_compaction_enabled: bool = False,
         crew_compaction_threshold_tokens: int = _CREW_COMPACTION_THRESHOLD_TOKENS,
         crew_token_budget: int | None = None,
+        crew_loop_until_done_enabled: bool = False,
+        crew_loop_until_done_max_iterations: int = _LOOP_UNTIL_DONE_MAX_ITERATIONS,
+        crew_loop_until_done_predicate: str = _LOOP_PREDICATE_STOP_REASON,
+        crew_loop_until_done_completion_marker: str = _DEFAULT_COMPLETION_MARKER,
     ) -> None:
         self._store = work_item_store
         self._registry = agent_registry
@@ -740,6 +1130,24 @@ class CrewTaskExecutor:
                 crew_compaction_threshold_tokens
             ),
             crew_token_budget=_normalize_token_budget(crew_token_budget),
+        )
+        # AD-1155 / DD-7: same rule, same reason — normalised HERE, outside the
+        # ``_run_child`` try that persists ``stopped_reason="execution_exception"``.
+        # A mistyped predicate id or a malformed cap must degrade to the shipped
+        # default, never fail a child. A sibling namespace rather than more keys
+        # on ``_compaction_config``: the two features are independent knobs, and
+        # ``resolve_crew_compaction_settings`` reads that view by attribute name.
+        self._loop_until_done = SimpleNamespace(
+            enabled=_normalize_loop_until_done_enabled(crew_loop_until_done_enabled),
+            max_iterations=_normalize_loop_until_done_max_iterations(
+                crew_loop_until_done_max_iterations
+            ),
+            predicate=_normalize_loop_until_done_predicate(
+                crew_loop_until_done_predicate
+            ),
+            completion_marker=_normalize_completion_marker(
+                crew_loop_until_done_completion_marker
+            ),
         )
 
     async def run(self, parent_id: str) -> list[SubtaskResult]:
@@ -1260,6 +1668,238 @@ class CrewTaskExecutor:
             min_score=self._sigma_min_score,
         )
 
+    # ── AD-1155: loop-until-done ──────────────────────────────────────
+    async def _load_actionable_steps(
+        self, parent_id: str, child_id: str
+    ) -> list[str] | None:
+        """DD-2: the parent's actionable checklist labels, or ``None``.
+
+        A store round-trip, so it is paid ONLY when the ``open_todos`` predicate
+        is armed and only when another iteration is still possible. Steps live
+        on the PARENT (``_run_child`` receives ``parent_id``, not the row), and
+        the DM reply pipeline can rewrite the same list concurrently — which is
+        why the read happens once per outer iteration rather than once per child.
+        Degrades to ``None`` (⇒ stop) on any failure.
+        """
+        try:
+            parent = await self._store.get_work_item(parent_id)
+        except Exception:
+            logger.warning(
+                "AD-1155: loading parent %s for the open_todos predicate failed; "
+                "the outer loop stops rather than re-invoking crew child %s on "
+                "an unreadable checklist",
+                parent_id,
+                child_id,
+                exc_info=True,
+            )
+            return None
+        if parent is None:
+            return None
+        return _actionable_step_labels(
+            getattr(parent, "steps", None), child_id=child_id
+        )
+
+    async def _run_agentic_with_outer_loop(
+        self,
+        *,
+        agent: Any,
+        task_text: str,
+        thread_id: str,
+        parent_id: str,
+        child_id: str,
+    ) -> Any:
+        """AD-1155 / DD-1: run the child, and re-invoke it while it is unfinished.
+
+        Iteration 1 is EXACTLY today's call — the same kwargs, in the same
+        order, with ``task_text`` passed by identity — so with the gate off this
+        method is one ``self._executor.run(...)`` and a return. The five other
+        callers of :meth:`WorkItemAgenticExecutor.run` are untouched **by
+        construction**: the wrap is here, not in the executor.
+
+        Every iteration is an INDEPENDENTLY GOVERNED run. That is free at this
+        seam and worth stating: each ``run`` builds a fresh
+        ``DispatchToolExecutor``, re-resolves department/rank through live
+        ``trust_network.get_score``, re-runs every ``check_permission`` offer
+        gate, re-arms the AD-1153 browser guard and persists its own AD-1151
+        trace. An agent whose trust falls between iterations therefore LOSES
+        tools on the next one — Minimal Authority working correctly.
+
+        **Only the final iteration's ``tool_trace_ref`` reaches the 14-key
+        ``crew_execution`` record.** That set is frozen and cannot carry a list,
+        and inventing a companion key is the "one extra breaks recovery" hazard.
+        Intermediate traces are therefore NOT durably linked from the evidence
+        record; they are logged at INFO with their iteration index and are
+        recoverable from the log alone.
+        """
+        base_kwargs: dict[str, Any] = {
+            "agent_id": agent.id,
+            "instructions": str(getattr(agent, "instructions", "") or ""),
+            "task_text": task_text,
+            "runtime": self._runtime,
+            "thread_id": thread_id,
+            "extra_context": {
+                "_crew_session_id": parent_id,
+                "_crew_work_item_id": child_id,
+            },
+        }
+        gate = self._loop_until_done
+        max_outer = gate.max_iterations if gate.enabled else 1
+        # DD-3: the budget is SHARED across iterations and carried forward as a
+        # remainder, never reset. ``AgenticLoop`` measures its budget against a
+        # counter local to one ``AgenticResult`` and the executor builds a new
+        # loop per call, so passing the full figure each time would multiply the
+        # operator's spend ceiling by the outer cap — nobody setting
+        # ``crew_token_budget=50000`` expects 250 000.
+        #
+        # BF-683: ``SubtaskVerifier.converge_for_session``'s correction re-runs
+        # pass NO budget and NO compactor at all, so they run entirely outside
+        # this ceiling. Pre-existing and deliberately not fixed here; the
+        # arithmetic below does not depend on those rounds being budgeted.
+        configured_budget = self._compaction_config.crew_token_budget
+
+        outcome: Any = None
+        spent = 0
+        previous_text_hash: str | None = None
+        previous_actionable: int | None = None
+        no_progress_streak = 0
+        current_task_text = task_text
+
+        for iteration in range(1, max_outer + 1):
+            # AD-1142 / DD-2: a FRESH compactor for THIS iteration. Children run
+            # concurrently under the fan-out semaphore, so the instance is never
+            # shared. Spreads to nothing when the gate is off and no budget is
+            # set, leaving iteration 1 byte-identical to AD-1141/AD-1142.
+            settings = resolve_crew_compaction_settings(self._compaction_config)
+            if configured_budget is not None:
+                settings["token_budget"] = configured_budget - spent
+            kwargs = dict(base_kwargs)
+            kwargs["task_text"] = current_task_text
+            outcome = await self._executor.run(**kwargs, **settings)
+            spent += _bounded_spend(getattr(outcome, "total_tokens", 0))
+
+            if iteration >= max_outer:
+                break
+
+            actionable: list[str] | None = None
+            if gate.predicate == _LOOP_PREDICATE_OPEN_TODOS:
+                actionable = await self._load_actionable_steps(parent_id, child_id)
+            actionable_count = None if actionable is None else len(actionable)
+
+            no_progress_streak = (
+                0
+                if _iteration_made_progress(
+                    outcome,
+                    previous_text_hash=previous_text_hash,
+                    previous_actionable_count=previous_actionable,
+                    actionable_count=actionable_count,
+                )
+                else no_progress_streak + 1
+            )
+            previous_text_hash = _text_hash(getattr(outcome, "final_text", "") or "")
+            previous_actionable = actionable_count
+
+            proceed, reason = _should_continue(
+                outcome,
+                iteration=iteration,
+                max_iterations=max_outer,
+                predicate=gate.predicate,
+                completion_marker=gate.completion_marker,
+                no_progress_streak=no_progress_streak,
+                actionable_labels=actionable,
+            )
+            if not proceed:
+                logger.info(
+                    "AD-1155: crew child %s stops after iteration %d/%d (%s)",
+                    child_id,
+                    iteration,
+                    max_outer,
+                    reason,
+                )
+                break
+
+            if configured_budget is not None:
+                remaining = configured_budget - spent
+                if remaining < _MIN_CREW_TOKEN_BUDGET:
+                    logger.info(
+                        "AD-1155: crew child %s stops after iteration %d/%d "
+                        "(budget_exhausted: %d of %d tokens remain, below the "
+                        "%d floor, so a re-invocation would only buy one call "
+                        "before hitting the ceiling)",
+                        child_id,
+                        iteration,
+                        max_outer,
+                        remaining,
+                        configured_budget,
+                        _MIN_CREW_TOKEN_BUDGET,
+                    )
+                    break
+
+            # DD-4 — composed at runtime into ``task_text`` and NEVER persisted;
+            # the durable value is ``WorkItem.description``, which is inside the
+            # plan-identity hash. Always rebuilt from the BASE text so the block
+            # cannot stack across iterations. A composition failure degrades to
+            # "stop the loop", never to a failed child: this whole method runs
+            # inside the ``_run_child`` try that persists
+            # ``stopped_reason="execution_exception"``, and an unfinished child
+            # must not be recorded as an exception.
+            try:
+                block = _render_continuation(
+                    previous_output=getattr(outcome, "final_text", "") or "",
+                    todo_labels=(
+                        actionable
+                        if gate.predicate == _LOOP_PREDICATE_OPEN_TODOS
+                        else None
+                    ),
+                    completion_marker=(
+                        gate.completion_marker
+                        if gate.predicate == _LOOP_PREDICATE_COMPLETION_MARKER
+                        else None
+                    ),
+                )
+            except Exception:
+                logger.warning(
+                    "AD-1155: continuation composition raised for crew child "
+                    "%s after iteration %d; the outer loop stops and the last "
+                    "real outcome is persisted",
+                    child_id,
+                    iteration,
+                    exc_info=True,
+                )
+                block = ""
+            if not block:
+                logger.info(
+                    "AD-1155: crew child %s stops after iteration %d/%d "
+                    "(continuation_failed)",
+                    child_id,
+                    iteration,
+                    max_outer,
+                )
+                break
+
+            superseded_ref = getattr(outcome, "tool_trace_ref", None)
+            if superseded_ref:
+                logger.info(
+                    "AD-1155: crew child %s iteration %d produced tool trace "
+                    "%s; it is superseded by the next iteration and is NOT "
+                    "durably linked from the 14-key crew_execution record, so "
+                    "this log line is the only route back to it",
+                    child_id,
+                    iteration,
+                    superseded_ref,
+                )
+            current_task_text = task_text + block
+            logger.info(
+                "AD-1155: re-invoking crew child %s (iteration %d/%d, %s, "
+                "+%d continuation characters)",
+                child_id,
+                iteration + 1,
+                max_outer,
+                reason,
+                len(block),
+            )
+
+        return outcome
+
     async def _run_child(
         self,
         parent_id: str,
@@ -1404,21 +2044,12 @@ class CrewTaskExecutor:
             task_text, child=active_child, agent_id=agent.id,
         )
         try:
-            outcome = await self._executor.run(
-                agent_id=agent.id,
-                instructions=str(getattr(agent, "instructions", "") or ""),
+            outcome = await self._run_agentic_with_outer_loop(
+                agent=agent,
                 task_text=task_text,
-                runtime=self._runtime,
                 thread_id=thread_id,
-                extra_context={
-                    "_crew_session_id": parent_id,
-                    "_crew_work_item_id": child_id,
-                },
-                # AD-1142 / DD-2: a FRESH compactor for THIS child. Children run
-                # concurrently under the fan-out semaphore, so the instance is
-                # never shared. Spreads to nothing when the gate is off and no
-                # budget is set, leaving the call byte-identical to AD-1141.
-                **resolve_crew_compaction_settings(self._compaction_config),
+                parent_id=parent_id,
+                child_id=child_id,
             )
         except Exception:
             logger.warning(
