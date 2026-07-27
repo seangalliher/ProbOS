@@ -1867,6 +1867,65 @@ agentic_dispatch:
   max_parallel_subtasks: 3
   max_convergence_rounds: 2
   orchestrator_enabled: true
+
+  # --- AD-1142: crew-child context compaction (all values are the defaults) ---
+  # Crew children previously had no compaction at all. max_iterations bounds
+  # TURNS, not BYTES, so with tool_result_max_chars at 0 a single turn is
+  # unbounded and ~24 of them will exhaust any context window.
+  # Compaction is best-effort: it warns once if still over and never raises.
+  crew_compaction_enabled: false
+  crew_compaction_threshold_tokens: 60000
+  # crew_token_budget: null
+  #   A HARD stop, and a different mechanism from the threshold above. Crossing
+  #   the threshold shrinks history; crossing the BUDGET fails the child and
+  #   leaves its dependents blocked. Unset by default.
+
+# ---------------------------------------------------------------------------
+# Agentic-loop conversation mechanics (epic #1068).
+#
+# Every value below is the SHIPPED DEFAULT -- this block changes nothing. It
+# exists because these knobs were previously discoverable only by reading
+# src/probos/config.py, and one of them (tool_result_max_chars) carries real
+# exposure at its default. Edit to opt in.
+#
+# Full generated reference: docs/development/config-reference.md
+# ---------------------------------------------------------------------------
+agentic_loop:
+  # AD-1146: send the provider a REAL multi-turn message array --
+  # assistant.tool_calls followed by role:"tool" entries keyed by tool_call_id.
+  # OFF re-flattens the whole transcript into one user prompt every iteration
+  # and returns tool results as untagged user text.
+  structured_tool_messages: false
+
+  # AD-1147: run the read-only allowlisted tool calls of one response
+  # concurrently. Mutating and unrecognised tools stay sequential -- an unknown
+  # tool is assumed unsafe. Results return in REQUEST order regardless of
+  # completion order, so the assistant turn stays aligned with its replies.
+  parallel_tool_calls_enabled: false
+  max_parallel_tool_calls: 3
+
+  # AD-1148: bound each tool result before it enters the message history.
+  #
+  # NOTE: 0 means UNBOUNDED. Combined with the turn-not-byte bound above, one
+  # large tool result can exhaust the context window. Setting this to 6000 caps
+  # the worst case at roughly 24 x 3 x 6000 = 108K tokens -- inside a 200K
+  # window, with no compaction LLM calls required. Head AND tail are preserved
+  # (many tools print their header first and their summary last), with a marker
+  # reporting how many characters were elided.
+  tool_result_max_chars: 0
+  tool_result_head_chars: 4000
+  tool_result_tail_chars: 2000
+
+  # AD-1151: durable tool-output trace. DEFAULT-ON -- a documented carve-out
+  # from the default-OFF convention, because an audit trail that is off by
+  # default does not audit. 0 disables output persistence and yields a blob
+  # byte-identical to the pre-AD-1151 trace.
+  #
+  # This is clamped upward to at least tool_result_max_chars at resolve time,
+  # so the durable record can never hold less than the model already saw.
+  tool_trace_output_max_chars: 8192
+  tool_trace_max_bytes: 262144
+
 group_chat:
   # AD-925: operator opt-in. With the crew orchestrator enabled (above), when
   # CrewTaskExecutor fans a parent task out to >=2 distinct crew it auto-creates

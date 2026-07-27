@@ -78,6 +78,7 @@ nav:
     - Roadmap: development/roadmap.md
     - Project Structure: development/structure.md
     - Design Principles: development/design-principles.md
+    - Configuration Reference: development/config-reference.md
     - Contributing: development/contributing.md
   - Research:
     - Cognitive JIT & Procedural Learning: research/cognitive-jit-procedural-learning-research.md
