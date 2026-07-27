@@ -41,6 +41,9 @@ def _serialize(req: CapabilityRequest) -> dict[str, Any]:
         "decided_at": req.decided_at,
         "decided_by": req.decided_by,
         "decision_reason": req.decision_reason,
+        # AD-1154: the action shape for kind="action"; None for every other
+        # kind. Without it the Captain sees a bare ``target`` and nothing else.
+        "payload": req.payload,
     }
 
 
@@ -91,4 +94,111 @@ async def decide_capability_request(
     )
     if decided is None:  # pragma: no cover - guarded above, defensive only
         raise HTTPException(status_code=404, detail="capability request not found")
-    return {"request": _serialize(decided)}
+    standing = await _maybe_issue_standing_rule(runtime, decided, req)
+    return {"request": _serialize(decided), "standing_rule": standing}
+
+
+async def _maybe_issue_standing_rule(
+    runtime: Any,
+    decided: CapabilityRequest,
+    req: CapabilityRequestDecideRequest,
+) -> dict[str, Any] | None:
+    """AD-1154: convert an approval into a scoped, expiring standing rule.
+
+    Returns the issued rule, or ``None`` when one was not issued for any reason.
+    Honest-degrade throughout — a missing store, a disabled flag or a failed
+    write yields ``None`` with HTTP 200, never a 500. The decision itself is
+    already durably recorded by ``decide()``; failing the whole request because
+    an *optional* convenience could not be granted would discard it.
+
+    Deliberately narrow, in four ways:
+
+    * Only ``kind == "action"`` — ``grant`` / ``install`` / ``build`` have no
+      action shape to scope a rule to, so ``grant_standing`` is logged and
+      ignored rather than rejected.
+    * Only on ``approve=True``. A denial issues nothing even when
+      ``grant_standing`` is set.
+    * Only when ``approval_inbox.standing_rules_enabled`` is on.
+    * TTL clamped to ``standing_rule_max_ttl_hours``; omitted TTL falls back to
+      ``standing_rule_default_ttl_hours``, itself clamped, so an operator whose
+      default exceeds their max still gets the max rather than a 422.
+
+    It does NOT re-execute the parked action and does NOT re-dispatch the
+    originating work item: the recorded browser session is almost certainly
+    reaped (session TTL 1800s vs human latency), and re-running the agentic loop
+    from a REST handler would put an unbudgeted LLM run behind a button.
+    """
+    if not req.grant_standing:
+        return None
+    if decided.kind != "action":
+        logger.info(
+            "AD-1154: grant_standing ignored for capability request %s — kind "
+            "'%s' has no action shape to scope a standing rule to; the "
+            "decision itself was recorded normally",
+            decided.id[:12],
+            decided.kind,
+        )
+        return None
+    if not req.approve:
+        logger.info(
+            "AD-1154: grant_standing ignored for denied request %s — a denial "
+            "never issues a standing rule",
+            decided.id[:12],
+        )
+        return None
+
+    config = getattr(getattr(runtime, "config", None), "approval_inbox", None)
+    if not getattr(config, "standing_rules_enabled", False):
+        logger.info(
+            "AD-1154: grant_standing requested for %s but "
+            "approval_inbox.standing_rules_enabled is off; the approval stands "
+            "and no durable privilege was granted",
+            decided.id[:12],
+        )
+        return None
+
+    store = getattr(runtime, "action_approval_store", None)
+    payload = decided.payload
+    if store is None or type(payload) is not dict:
+        logger.warning(
+            "AD-1154: cannot issue a standing rule for %s — %s. The approval "
+            "itself is recorded; the Captain will be asked again next run",
+            decided.id[:12],
+            "no action-approval store is wired" if store is None
+            else "the request carries no decoded action payload",
+        )
+        return None
+
+    max_hours = int(getattr(config, "standing_rule_max_ttl_hours", 168))
+    default_hours = int(getattr(config, "standing_rule_default_ttl_hours", 24))
+    requested = req.standing_ttl_hours
+    hours = default_hours if requested is None else int(requested)
+    hours = max(1, min(hours, max_hours))
+
+    try:
+        approval = await store.issue_approval(
+            decided.agent_id,
+            str(payload.get("tool_id", "")),
+            str(payload.get("action", "")),
+            scope_key=str(payload.get("scope_key", "")),
+            ttl_seconds=hours * 3600.0,
+            reason=req.reason,
+            issued_by="captain",
+        )
+    except Exception:
+        logger.warning(
+            "AD-1154: issuing a standing rule for %s failed; the approval "
+            "itself is recorded and the Captain will be asked again next run",
+            decided.id[:12],
+            exc_info=True,
+        )
+        return None
+    return {
+        "id": approval.id,
+        "agent_id": approval.agent_id,
+        "tool_id": approval.tool_id,
+        "action": approval.action,
+        "scope_key": approval.scope_key,
+        "issued_at": approval.issued_at,
+        "expires_at": approval.expires_at,
+    }

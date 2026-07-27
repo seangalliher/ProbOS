@@ -280,6 +280,13 @@ class BrowserTool:
             and not self._consume_confirmation_token(params, session.session_id, action)
         ):
             token = self._generate_confirmation_token(session.session_id, action, params)
+            # BF-682 (closed by AD-1154): emit a NON-REDEEMABLE correlator, not the
+            # bearer token. ``_consume_confirmation_token`` matches the full key, so
+            # an 8-hex prefix identifies the pending confirmation in a log line or an
+            # event stream without being spendable. This mattered little while no
+            # unattended path could reach tier 3 (AD-1153 offers a read-only set);
+            # AD-1154 makes the gate routinely reachable, so the raw token stops
+            # being theoretically exposed and starts being routinely emitted.
             self._safe_emit(
                 EventType.TOOL_INTERVENTION_REQUIRED,
                 {
@@ -287,7 +294,7 @@ class BrowserTool:
                     "action": action,
                     "tier": 3,
                     "agent_id": agent_id,
-                    "confirmation_token": token,
+                    "confirmation_id": token[:8],
                 },
             )
             elapsed_ms = (time.monotonic() - t0) * 1000.0

@@ -1732,6 +1732,19 @@ AD-1072: conversational-loop discovery + delegation tools (default-OFF).
 | `crew_sigma_max_entries` | `int` | `4` | ≥ 1, ≤ 12 |  |
 | `crew_sigma_min_score` | `float` | `0.35` | ≥ 0.0, ≤ 1.0 |  |
 
+## `approval_inbox`
+
+AD-1154: park an unattended consequential action instead of performing it.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `False` | — | AD-1154: park a tier-3 unattended tool action as a durable capability request (kind='action') instead of letting the tier-3 gate return its success-shaped intervention_required no-op. The agent is told in an ERROR-shaped result that the step did not run, and the run continues. Approval does NOT replay the parked action — the browser session TTL (1800s) is far shorter than human decision latency, so replaying a page-relative selector against a changed page would be a different act. Off by default; off means the dispatch path is byte-identical to AD-1153. |
+| `standing_rules_enabled` | `bool` | `False` | — | AD-1154: additionally permit the Captain to convert an approval into a standing, scoped, mandatorily-expiring rule that answers the same ask on the next run. Separate from 'enabled' so an operator can take the audit trail without the durable privilege grant. Rules match (agent_id, tool_id, action, scope_key) exactly — there is no wildcard, and scope_key='' matches only an ask whose scope is also ''. No HXI affordance ships with this: grant_standing is API-only on POST /api/capability-requests/{id}/decide, and the capability-request panel has no Approve-with-standing control until a follow-up adds one. |
+| `standing_rule_max_ttl_hours` | `int` | `168` | ≥ 1, ≤ 720 | AD-1154: hard ceiling on a standing rule's lifetime. A requested TTL above this is clamped, not rejected. expires_at is NOT NULL in the action_approvals schema, so no standing rule can be issued without an expiry. |
+| `standing_rule_default_ttl_hours` | `int` | `24` | ≥ 1, ≤ 720 | AD-1154: TTL applied when the Captain approves with grant_standing but names no duration. Deliberately far below standing_rule_max_ttl_hours so the low-effort path is the short-lived one. Should be <= the max; clamped at issue time rather than validated, so an out-of-order pair cannot 422 an unrelated config write. |
+| `max_pending_per_agent` | `int` | `20` | ≥ 1, ≤ 200 | AD-1154: per-agent cap on undecided action asks. At the cap the wrapper REFUSES without filing and logs at WARNING with the agent id and count — a neglected inbox becomes an honest refusal within this many asks per agent rather than an unbounded queue that looks like progress. |
+| `pending_ask_ttl_hours` | `int` | `72` | ≥ 1, ≤ 720 | AD-1154: age at which an undecided ask is treated as stale. Stale asks are excluded from the max_pending_per_agent count but are NEITHER auto-approved NOR auto-denied — they keep status='pending' and keep appearing in the pending list, because auto-approving on timeout would make walking away the approval mechanism. |
+
 ## `dm_mesh_synthesis`
 
 BF-629: after a requires_reflect inline mesh read (web_search / read_page)     on the conversational path, make ONE LLM pass so the originating agent     REASONS over the result in its own voice (search -> reason -> answer), like an     agentic tool-use loop, instead of pasting raw links/page dumps verbatim.

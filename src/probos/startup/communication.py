@@ -581,6 +581,21 @@ async def init_communication(
     await intent_grant_store.start()
     logger.info("intent-grant-store started")
 
+    # --- Action Approval Store (AD-1154) — standing, TTL-bounded approvals for
+    #     a specific tool ACTION shape, scoped to (agent, tool, action, scope).
+    #     Neither ToolPermissionStore nor IntentGrantStore can express this: both
+    #     key on a CAPABILITY (may this agent hold this tool / intent) and have
+    #     no action or scope column. Read only by the AD-1154 approval-inbox
+    #     wrapper; started unconditionally so a config flag flipped at runtime
+    #     finds a live store, and empty ⇒ no rule matches ⇒ no behaviour change.
+    from probos.tools.action_approvals import ActionApprovalStore
+
+    action_approval_store = ActionApprovalStore(
+        db_path=str(data_dir / "action_approvals.db"),
+    )
+    await action_approval_store.start()
+    logger.info("action-approval-store started")
+
     # --- Lifecycle-hook bus (AD-1004 substrate / AD-1012 wiring) ---
     # Off by default (config.hooks.enabled=False) -> hook_bus stays None and the
     # dispatch path keeps its inline AD-1007 capability gate (byte-identical).
@@ -774,5 +789,6 @@ async def init_communication(
         cognitive_skill_catalog=cognitive_catalog,
         skill_grant_store=skill_grant_store,
         intent_grant_store=intent_grant_store,
+        action_approval_store=action_approval_store,
         hook_bus=hook_bus,
     )

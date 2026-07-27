@@ -919,6 +919,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         runtime.intent_grant_store = None
         runtime.hook_bus = None  # AD-1012
 
+    # AD-1154: Action approval store (standing, TTL-bounded action approvals)
+    if getattr(runtime, 'action_approval_store', None):
+        await runtime.action_approval_store.stop()
+        runtime.action_approval_store = None
+
     # AD-1015: MCP server registration store (runtime-mutable MCP registrations)
     if getattr(runtime, 'mcp_server_store', None):
         await runtime.mcp_server_store.stop()

@@ -6154,6 +6154,146 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
     crew_sigma_min_score: float = Field(default=0.35, ge=0.0, le=1.0)
 
 
+class ApprovalInboxConfig(BaseModel):  # AD-1154
+    """AD-1154: park an unattended consequential action instead of performing it.
+
+    An unattended agent that reaches a tier-3 browser action currently has two
+    outcomes: perform it, or receive the ``intervention_required`` payload the
+    tier-3 gate returns with ``error=None`` — a SUCCESS-shaped no-op the model
+    reads as completion. This config turns on the third: file a durable,
+    reviewable record on the existing AD-853 approval queue (as a fourth
+    ``kind="action"``), tell the agent honestly that the step did not happen, and
+    carry on with the rest of the task.
+
+    **Approval does not replay the parked action, and this is the design's honest
+    limitation.** ``browser_tool.session_max_duration_seconds`` is 1800 s while a
+    human decision takes minutes to days, so the session named in a parked ask is
+    almost certainly reaped by the time the Captain looks. Creating a fresh
+    session and replaying a page-relative selector against whatever that page
+    looks like now is a *different act* from the one the Captain approved. What
+    approval buys is a durable record, a trust signal, and — when
+    ``standing_rules_enabled`` — a scoped, expiring rule that lets the NEXT run
+    proceed without asking. It does not rescue the run that raised the ask, and
+    the originating work item is not re-dispatched.
+
+    **Two flags, not one.** ``enabled`` turns on parking. ``standing_rules_enabled``
+    additionally permits a durable privilege grant. An operator who wants the
+    audit trail without the "don't ask again" lever gets exactly that, and the
+    riskier half stays off until asked for. Both default OFF; with ``enabled``
+    off the dispatch path is byte-identical to AD-1153.
+
+    **The inbox is bounded, and a full inbox degrades to a refusal.** An approval
+    queue with no cap is a memory leak wearing a governance costume — and worse,
+    400 pending asks is indistinguishable from 0 to a human. At
+    ``max_pending_per_agent`` the wrapper refuses WITHOUT filing and logs at
+    WARNING with the agent id and the count, so the operator learns the inbox is
+    saturated from the log rather than from a panel silently growing. That bounds
+    the damage when the human is absent; it does not solve the attention problem.
+
+    ``pending_ask_ttl_hours`` marks an undecided ask stale. Stale means excluded
+    from the per-agent cap count and rendered as stale — **not** auto-approved
+    (which would make walking away the approval mechanism) and **not**
+    auto-denied (which would silently discard a decision still worth making).
+
+    **A standing rule must expire.** ``ActionApprovalStore`` declares
+    ``expires_at NOT NULL`` in its schema, not merely in its method signature,
+    because a standing rule with no TTL is a permanent privilege escalation
+    nobody remembers granting. ``standing_rule_default_ttl_hours`` (24 h) sits
+    deliberately far below ``standing_rule_max_ttl_hours`` (168 h) so the
+    low-effort path is the short-lived one; a request above the max is clamped,
+    not rejected.
+
+    **No HXI affordance ships with this.** The existing capability-request panel
+    renders the fourth kind unchanged (it will show ``kind: action`` and the
+    target), but there is no Approve-with-standing checkbox. ``grant_standing`` on
+    ``POST /api/capability-requests/{id}/decide`` is API-only until a follow-up
+    adds the control. Heuristic auto-approval is deliberately deferred.
+
+    Cross-field relation documented rather than validated (AD-1142 precedent):
+    ``standing_rule_default_ttl_hours`` should be ``<=
+    standing_rule_max_ttl_hours``. It is clamped at issue time; a
+    ``@model_validator`` here would turn an unrelated ``POST /config`` into a 422.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1154: park a tier-3 unattended tool action as a durable "
+            "capability request (kind='action') instead of letting the tier-3 "
+            "gate return its success-shaped intervention_required no-op. The "
+            "agent is told in an ERROR-shaped result that the step did not run, "
+            "and the run continues. Approval does NOT replay the parked action "
+            "— the browser session TTL (1800s) is far shorter than human "
+            "decision latency, so replaying a page-relative selector against a "
+            "changed page would be a different act. Off by default; off means "
+            "the dispatch path is byte-identical to AD-1153."
+        ),
+    )
+    standing_rules_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1154: additionally permit the Captain to convert an approval "
+            "into a standing, scoped, mandatorily-expiring rule that answers "
+            "the same ask on the next run. Separate from 'enabled' so an "
+            "operator can take the audit trail without the durable privilege "
+            "grant. Rules match (agent_id, tool_id, action, scope_key) exactly "
+            "— there is no wildcard, and scope_key='' matches only an ask whose "
+            "scope is also ''. No HXI affordance ships with this: grant_standing "
+            "is API-only on POST /api/capability-requests/{id}/decide, and the "
+            "capability-request panel has no Approve-with-standing control until "
+            "a follow-up adds one."
+        ),
+    )
+    standing_rule_max_ttl_hours: int = Field(
+        default=168,
+        ge=1,
+        le=720,
+        description=(
+            "AD-1154: hard ceiling on a standing rule's lifetime. A requested "
+            "TTL above this is clamped, not rejected. expires_at is NOT NULL in "
+            "the action_approvals schema, so no standing rule can be issued "
+            "without an expiry."
+        ),
+    )
+    standing_rule_default_ttl_hours: int = Field(
+        default=24,
+        ge=1,
+        le=720,
+        description=(
+            "AD-1154: TTL applied when the Captain approves with grant_standing "
+            "but names no duration. Deliberately far below "
+            "standing_rule_max_ttl_hours so the low-effort path is the "
+            "short-lived one. Should be <= the max; clamped at issue time "
+            "rather than validated, so an out-of-order pair cannot 422 an "
+            "unrelated config write."
+        ),
+    )
+    max_pending_per_agent: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description=(
+            "AD-1154: per-agent cap on undecided action asks. At the cap the "
+            "wrapper REFUSES without filing and logs at WARNING with the agent "
+            "id and count — a neglected inbox becomes an honest refusal within "
+            "this many asks per agent rather than an unbounded queue that looks "
+            "like progress."
+        ),
+    )
+    pending_ask_ttl_hours: int = Field(
+        default=72,
+        ge=1,
+        le=720,
+        description=(
+            "AD-1154: age at which an undecided ask is treated as stale. Stale "
+            "asks are excluded from the max_pending_per_agent count but are "
+            "NEITHER auto-approved NOR auto-denied — they keep status='pending' "
+            "and keep appearing in the pending list, because auto-approving on "
+            "timeout would make walking away the approval mechanism."
+        ),
+    )
+
+
 class DmMeshSynthesisConfig(BaseModel):  # BF-629
     """BF-629: after a requires_reflect inline mesh read (web_search / read_page)
     on the conversational path, make ONE LLM pass so the originating agent
@@ -6778,6 +6918,7 @@ class SystemConfig(BaseModel):
     dm_deliberate: DmDeliberateConfig = Field(default_factory=DmDeliberateConfig)  # AD-934
     dm_agentic: DmAgenticConfig = Field(default_factory=DmAgenticConfig)  # AD-1065
     agentic_tools: AgenticToolsConfig = Field(default_factory=AgenticToolsConfig)  # AD-1072
+    approval_inbox: ApprovalInboxConfig = Field(default_factory=ApprovalInboxConfig)  # AD-1154
     dm_mesh_synthesis: DmMeshSynthesisConfig = Field(default_factory=DmMeshSynthesisConfig)  # BF-629
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720
     cloud_pickers: CloudPickersConfig = Field(default_factory=CloudPickersConfig)  # AD-720c

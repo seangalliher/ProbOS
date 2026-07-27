@@ -264,9 +264,21 @@ class CapabilityRequestDecideRequest(BaseModel):
 
     A deny (``approve=False``) requires a non-empty ``reason`` so the
     requesting agent gets actionable feedback; an approve may omit it.
+
+    AD-1154 adds two OPTIONAL standing-rule fields, both defaulted so every
+    existing caller and every existing test sends a byte-identical body. They
+    are honoured only for ``kind="action"`` requests and only when
+    ``approval_inbox.standing_rules_enabled`` is on; on any other kind the
+    router logs at INFO and ignores them rather than returning 400.
+
+    Approving does NOT replay the parked action — the browser session named in
+    an action ask is almost certainly reaped by the time a human decides. A
+    standing rule buys the NEXT run, not this one.
     """
     approve: bool
     reason: str = ""
+    grant_standing: bool = False  # AD-1154
+    standing_ttl_hours: int | None = None  # AD-1154 — None -> config default
 
     @model_validator(mode="after")
     def _require_reason_on_deny(self) -> "CapabilityRequestDecideRequest":

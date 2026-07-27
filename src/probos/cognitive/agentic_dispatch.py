@@ -18,9 +18,11 @@ execute a dispatched work item:
 
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import logging
 import re
+import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -149,6 +151,82 @@ _BROWSER_EGRESS_WARNING: str = (
     "Set browser_tool.domain_allowlist to bound egress."
 )
 
+# AD-1154: the approval-inbox partition. Every set below is a FAIL-SAFE
+# allowlist in the same shape as ``_BROWSER_LOOP_ACTIONS`` (AD-1153/DD-1) and
+# ``PARALLEL_SAFE_TOOL_IDS`` (AD-1147/DD-1): membership is the ONLY way in, so a
+# tool or action that is new, renamed or unrecognised is NOT parked and takes its
+# existing path unchanged. That direction matters for consensus — a tool whose
+# dispatch is consensus-gated (``_MeshIntentTool``, ``_McpTool`` at CONSENSUS
+# tier) is simply absent from ``_APPROVAL_INBOX_TOOL_IDS``, so this AD cannot
+# become a second, weaker path around the quorum.
+_APPROVAL_INBOX_TOOL_IDS: frozenset[str] = frozenset({"browser"})
+
+# Verbs ``classify_action`` short-circuits to tier 3 with NO session inspection.
+# They are the only actions the wrapper can classify when it cannot reach a
+# session without creating one (DD-10 step 2). Asserted as a subset of the real
+# classifier's always-3 set by tests/test_ad1154_approval_inbox.py, since
+# ``classify_action`` lives in a module this one deliberately does not import at
+# module scope.
+_ALWAYS_TIER_3_ACTIONS: frozenset[str] = frozenset(
+    {"compute_use_click", "upload_file", "eval_js", "fill_credential"}
+)
+
+# AD-1154 / DD-1: never parked, and never covered by a standing rule.
+# ``fill_credential`` is always tier 3 by design precisely because the Captain
+# ACKs every credential read; turning that into a durable record plus a
+# "don't ask again" rule would convert a per-call human gate into a stored
+# credential-access grant.
+_NEVER_PARK_ACTIONS: frozenset[str] = frozenset({"fill_credential"})
+
+_APPROVAL_PARAM_STRIP_KEYS: frozenset[str] = frozenset({"confirmation_token"})
+
+# AD-1154 / DD-2: the agent is told the truth, in an ERROR-shaped result, once.
+# Three constraints bind simultaneously: the text must not read as a CAPABILITY
+# GAP (``decomposer._CAPABILITY_GAP_RE`` — note ``lack`` is a BARE substring, so
+# "black", "slack", "blacklist" and "blackhole" all trip it, and "blacklist" is a
+# plausible word in a browser refusal), must not read as SUCCESS, and must not
+# invite a retry. Dedup makes a retry harmless to the store, but a retry loop
+# still burns iterations against the loop's cap. Every string is checked against
+# the REAL imported regex by the test suite; any reword must be re-run there.
+_APPROVAL_PARKED_REFUSAL: str = (
+    "This step needs the Captain's approval before it runs. It was filed for "
+    "review as request {request_id} and the page was left as it was. Do not "
+    "repeat this call — a repeat is folded into the same request. Continue with "
+    "the rest of your task and report what remains open."
+)
+_APPROVAL_PARKED_REFUSAL_NO_ID: str = (
+    "This step needs the Captain's approval before it runs. It was held for "
+    "review and the page was left as it was. Do not repeat this call. Continue "
+    "with the rest of your task and report what remains open."
+)
+_APPROVAL_INBOX_FULL_REFUSAL: str = (
+    "This step needs the Captain's approval before it runs. Too many of your "
+    "requests are already awaiting review, so it was refused rather than filed. "
+    "Continue with the rest of your task and report what remains open."
+)
+_APPROVAL_CREDENTIAL_REFUSAL: str = (
+    "Credential entry stays a per-use Captain decision and was refused here. "
+    "Continue with the rest of your task and report what remains open."
+)
+_APPROVAL_STANDING_DISPOSITION: str = (
+    "(This action ran under a standing approval issued by the Captain, valid "
+    "until {expiry}.)"
+)
+
+
+@dataclass(frozen=True)
+class _ApprovalInboxArming:
+    """AD-1154: the three collaborators the wrapper needs, bound at arming time.
+
+    ``approval_store`` may be ``None`` — standing rules are a separate flag, and
+    an absent store means no standing rule can match, which is the fail-closed
+    direction.
+    """
+
+    request_store: Any
+    approval_store: Any
+    config: Any
+
 
 def _bound_browser_output(output: Any) -> Any:
     """AD-1153 / DD-3: cap a browser result's text + element list, visibly.
@@ -182,6 +260,48 @@ def _bound_browser_output(output: Any) -> Any:
 
     bounded["disposition"] = _BROWSER_DISPOSITION
     return bounded
+
+
+def _describe_standing_expiry(
+    store: Any,
+    agent_id: str,
+    tool_id: str,
+    action: str,
+    scope_key: str,
+) -> str:
+    """AD-1154: a human-readable expiry for the standing-rule disposition.
+
+    Best-effort: the informational note is worth degrading to ``"its expiry"``
+    rather than failing an already-approved admission, so every lookup failure
+    logs at DEBUG and returns the neutral phrase.
+    """
+    try:
+        expires_at = store.get_active_expiry_sync(
+            agent_id, tool_id, action, scope_key
+        )
+        if expires_at is not None:
+            return _dt.datetime.fromtimestamp(
+                float(expires_at), tz=_dt.timezone.utc
+            ).strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        logger.debug(
+            "AD-1154: could not render the standing-rule expiry", exc_info=True
+        )
+    return "its expiry"
+
+
+def _with_disposition(output: Any, note: str) -> Any:
+    """Attach ``note`` to a tool result's ``disposition``, mirroring AD-1153.
+
+    A non-dict output is wrapped so the note is never silently dropped; an
+    existing disposition is preserved and the note appended.
+    """
+    if type(output) is not dict:
+        return {"result": output, "disposition": note}
+    merged = dict(output)
+    existing = merged.get("disposition")
+    merged["disposition"] = f"{existing} {note}" if type(existing) is str else note
+    return merged
 
 
 def _resolve_agentic_identity(
@@ -333,6 +453,10 @@ class DispatchToolExecutor(ToolExecutor):
     AD-1153 adds an OPT-IN browser action restriction. It is unarmed by default,
     so an executor that never calls :meth:`restrict_browser_actions` behaves
     byte-identically to AD-856.
+
+    AD-1154 adds an OPT-IN approval inbox on the same seam. Also unarmed by
+    default: an executor that never calls :meth:`arm_approval_inbox` behaves
+    byte-identically to AD-1153.
     """
 
     def __init__(self, *, registry: Any) -> None:
@@ -341,6 +465,33 @@ class DispatchToolExecutor(ToolExecutor):
         # AD-1153: None = unarmed = today's behaviour. Set only by
         # ``restrict_browser_actions``.
         self._browser_actions: frozenset[str] | None = None
+        # AD-1154: None = unarmed = AD-1153 behaviour. Set only by
+        # ``arm_approval_inbox``.
+        self._approval_inbox: Any = None
+
+    def arm_approval_inbox(
+        self,
+        *,
+        request_store: Any,
+        approval_store: Any,
+        config: Any,
+    ) -> None:
+        """AD-1154 / DD-10: arm the park-and-refuse wrapper in :meth:`invoke`.
+
+        Post-construction for the same reason as :meth:`restrict_browser_actions`
+        — the executor is built before the offer blocks resolve which tools this
+        agent actually received, and the inbox must arm only when the loop is
+        genuinely unattended and the config flag is on.
+
+        ``approval_store`` may be ``None``: standing rules are a separate flag,
+        and an absent store means "no standing rule can match", which is the
+        fail-closed direction.
+        """
+        self._approval_inbox = _ApprovalInboxArming(
+            request_store=request_store,
+            approval_store=approval_store,
+            config=config,
+        )
 
     def restrict_browser_actions(self, actions: frozenset[str]) -> None:
         """AD-1153 / DD-1: confine ``browser`` calls to ``actions``.
@@ -381,6 +532,325 @@ class DispatchToolExecutor(ToolExecutor):
         )
         return ToolResult(error=_BROWSER_READ_ONLY_REFUSAL)
 
+    def _resolve_scope_key(self, action: str, params: Any, session: Any) -> str:
+        """AD-1154 / DD-4: producer-computed scope. The STORE never parses a URL.
+
+        For ``browser`` this is the lowercased hostname of the URL the action
+        acts against — ``params["url"]`` for ``goto``, otherwise the session's
+        ``last_url``. Everything else is ``""``. Keeping the parse here means a
+        browser standing rule is ALWAYS domain-scoped: the operator cannot
+        accidentally issue a global one.
+        """
+        url: Any = params.get("url") if type(params) is dict else None
+        if type(url) is not str or not url:
+            url = getattr(session, "last_url", "") if session is not None else ""
+        if type(url) is not str or not url:
+            return ""
+        try:
+            from urllib.parse import urlparse
+
+            return (urlparse(url).hostname or "").lower()
+        except Exception:
+            logger.warning(
+                "AD-1154: could not parse a scope host from %.128r for action "
+                "%.32r; scoping the ask to the empty scope, which no wildcard "
+                "rule can satisfy",
+                url,
+                action,
+            )
+            return ""
+
+    def _resolve_browser_session(self, params: Any) -> Any:
+        """Return an EXISTING browser session for ``params``, or ``None``.
+
+        Never creates one. ``BrowserTool._get_or_create_session`` has a side
+        effect (it launches a browser context and emits
+        ``BROWSER_SESSION_OPENED``), and allocating a resource to answer a policy
+        question is the wrong shape — a gate must be able to say "I cannot
+        classify this" without changing the world. ``get_session`` is the tool's
+        public non-creating lookup.
+        """
+        session_id = params.get("session_id") if type(params) is dict else None
+        if type(session_id) is not str or not session_id:
+            return None
+        try:
+            tool = self._registry.get_tool("browser") if self._registry else None
+            getter = getattr(tool, "get_session", None)
+            if getter is None:
+                return None
+            return getter(session_id)
+        except Exception:
+            logger.warning(
+                "AD-1154: could not resolve browser session %.64r without "
+                "creating one; classifying with the always-tier-3 set only",
+                session_id,
+                exc_info=True,
+            )
+            return None
+
+    def _is_tier_3(self, action: str, params: Any, session: Any) -> bool:
+        """AD-1154 / DD-10 step 2: is this action consequential enough to park?
+
+        Deliberately ASYMMETRIC, and the asymmetry is the difference between a
+        wrapper and a second tier classifier. With a session in hand the real
+        ``classify_action`` decides. WITHOUT one — because resolving a session
+        has a side effect and this method refuses to cause one — only the
+        always-tier-3 verbs are treated as tier 3; ``click`` / ``type`` fall
+        through to ``BrowserTool``, whose own gate then runs exactly as it does
+        today. Nothing is admitted that HEAD would have refused.
+        """
+        if action in _ALWAYS_TIER_3_ACTIONS:
+            return True
+        if session is None:
+            return False
+        try:
+            from probos.tools.browser.actions import classify_action
+
+            return classify_action(session, action, params if type(params) is dict else {}) == 3
+        except Exception:
+            logger.warning(
+                "AD-1154: tier classification raised for action %.32r; treating "
+                "it as tier 3 so the action is parked rather than admitted",
+                action,
+                exc_info=True,
+            )
+            return True
+
+    async def _park_or_admit(
+        self,
+        agent_id: str,
+        tool_id: str,
+        params: dict[str, Any],
+        *,
+        disposition_sink: list[str] | None = None,
+    ) -> ToolResult | None:
+        """AD-1154 / DD-10: file a durable ask instead of acting, or admit.
+
+        ``None`` means "admit — take the normal path". A ``ToolResult`` means
+        "refused; the tool was never entered".
+
+        ``disposition_sink`` is a CALLER-OWNED list, created fresh per
+        :meth:`invoke` call, into which step 4 appends the informational note for
+        a standing-rule admission. It is an out-channel rather than executor
+        state because ``AgenticLoop`` may run tool calls in parallel against one
+        executor, so per-instance scratch state would cross-talk between
+        concurrent invocations.
+
+        The order of the six steps is load-bearing:
+
+        1. Not armed for this ``tool_id`` ⇒ admit.
+        2. Not tier 3 ⇒ admit (see :meth:`_is_tier_3` for the session asymmetry).
+        3. ``fill_credential`` ⇒ refuse WITHOUT filing.
+        4. A live standing rule covers it ⇒ admit.
+        5. The agent's pending cap is reached ⇒ refuse WITHOUT filing.
+        6. File (or dedup onto) the ask ⇒ refuse, carrying the request id.
+
+        **Every step absorbs its own exceptions and fails toward REFUSAL, never
+        toward admission.** A store that is down, a payload that will not
+        serialise, a cache read that raises — each produces the parked refusal
+        with the request id omitted, logged at WARNING. The failure that must
+        never happen is a swallowed error skipping step 6 and letting the action
+        proceed: that would invert the whole feature. This is the Safety Budget
+        axiom — a gate that cannot determine the answer assumes the maximum.
+        """
+        arming = self._approval_inbox
+        if arming is None or tool_id not in _APPROVAL_INBOX_TOOL_IDS:
+            return None
+
+        action = params.get("action") if type(params) is dict else None
+        if type(action) is not str or not action:
+            return None
+
+        session = self._resolve_browser_session(params)
+        if not self._is_tier_3(action, params, session):
+            return None
+
+        if action in _NEVER_PARK_ACTIONS:
+            logger.info(
+                "AD-1154: refused %s for agent %s without filing — credential "
+                "entry stays a per-use Captain decision and is never converted "
+                "into a durable record or a standing rule",
+                action,
+                agent_id[:12],
+            )
+            return ToolResult(error=_APPROVAL_CREDENTIAL_REFUSAL)
+
+        scope_key = self._resolve_scope_key(action, params, session)
+
+        expiry = self._standing_rule_expiry(
+            arming, agent_id, tool_id, action, scope_key
+        )
+        if expiry is not None:
+            logger.info(
+                "AD-1154: admitted tier-3 %s.%s for agent %s under a standing "
+                "approval in scope %r; no ask was filed",
+                tool_id,
+                action,
+                agent_id[:12],
+                scope_key,
+            )
+            if disposition_sink is not None:
+                disposition_sink.append(
+                    _APPROVAL_STANDING_DISPOSITION.format(expiry=expiry)
+                )
+            return None
+
+        request_store = arming.request_store
+        if request_store is None:
+            logger.warning(
+                "AD-1154: no capability-request store is wired, so the tier-3 "
+                "action %s for agent %s could not be filed; refusing rather "
+                "than admitting it",
+                action,
+                agent_id[:12],
+            )
+            return ToolResult(error=_APPROVAL_PARKED_REFUSAL_NO_ID)
+
+        if self._pending_cap_reached(arming, agent_id):
+            return ToolResult(error=_APPROVAL_INBOX_FULL_REFUSAL)
+
+        payload = self._build_action_payload(
+            tool_id=tool_id, action=action, params=params, scope_key=scope_key
+        )
+        try:
+            request = await request_store.file_action_request(
+                agent_id,
+                payload,
+                rationale=f"unattended tier-3 {tool_id}.{action}",
+                work_item_id=None,
+            )
+        except Exception:
+            logger.warning(
+                "AD-1154: filing the tier-3 action ask for agent %s failed; "
+                "refusing the action so a store outage cannot become an "
+                "admission",
+                agent_id[:12],
+                exc_info=True,
+            )
+            return ToolResult(error=_APPROVAL_PARKED_REFUSAL_NO_ID)
+
+        if request is None or not getattr(request, "id", ""):
+            return ToolResult(error=_APPROVAL_PARKED_REFUSAL_NO_ID)
+        logger.info(
+            "AD-1154: parked tier-3 %s.%s for agent %s as request %s "
+            "(scope=%r); the tool was not entered and the run continues",
+            tool_id,
+            action,
+            agent_id[:12],
+            request.id[:12],
+            scope_key,
+        )
+        return ToolResult(
+            error=_APPROVAL_PARKED_REFUSAL.format(request_id=request.id)
+        )
+
+    @staticmethod
+    def _build_action_payload(
+        *,
+        tool_id: str,
+        action: str,
+        params: Any,
+        scope_key: str,
+    ) -> dict[str, Any]:
+        """Build the DD-1 six-key payload, stripping the bearer token.
+
+        ``confirmation_token`` is removed before serialisation: durably
+        persisting a token that ``BrowserTool._consume_confirmation_token`` will
+        honour is BF-682 with a longer half-life.
+        """
+        raw = params if type(params) is dict else {}
+        bounded = {
+            key: value
+            for key, value in raw.items()
+            if type(key) is str
+            and key not in _APPROVAL_PARAM_STRIP_KEYS
+            and key != "action"
+        }
+        session_id = raw.get("session_id")
+        thread_id = raw.get("thread_id")
+        return {
+            "tool_id": tool_id,
+            "action": action,
+            "params": bounded,
+            "scope_key": scope_key,
+            "session_id": session_id if type(session_id) is str else None,
+            "thread_id": thread_id if type(thread_id) is str else "",
+        }
+
+    @staticmethod
+    def _standing_rule_expiry(
+        arming: "_ApprovalInboxArming",
+        agent_id: str,
+        tool_id: str,
+        action: str,
+        scope_key: str,
+    ) -> str | None:
+        """The expiry of a live standing rule covering this shape, else ``None``.
+
+        Fails CLOSED: a raising cache read returns ``None`` (park), because
+        failing open here would admit precisely the action the Captain has not
+        approved — the single inversion this feature cannot survive.
+        """
+        if not getattr(arming.config, "standing_rules_enabled", False):
+            return None
+        store = arming.approval_store
+        if store is None:
+            return None
+        if action in _NEVER_PARK_ACTIONS:
+            return None
+        try:
+            if not store.is_approved_sync(agent_id, tool_id, action, scope_key):
+                return None
+        except Exception:
+            logger.warning(
+                "AD-1154: the standing-approval lookup for %s on %s.%s raised; "
+                "treating it as NOT approved so the action is parked rather "
+                "than admitted",
+                agent_id[:12],
+                tool_id,
+                action,
+                exc_info=True,
+            )
+            return None
+        return _describe_standing_expiry(
+            store, agent_id, tool_id, action, scope_key
+        )
+
+    @staticmethod
+    def _pending_cap_reached(arming: "_ApprovalInboxArming", agent_id: str) -> bool:
+        """AD-1154 / DD-6: is this agent's approval inbox saturated?
+
+        Fails CLOSED (``True`` = refuse) when the count cannot be taken, for the
+        same reason as the standing-rule read.
+        """
+        cap = getattr(arming.config, "max_pending_per_agent", 20)
+        stale_hours = getattr(arming.config, "pending_ask_ttl_hours", 72)
+        try:
+            cap_int = int(cap)
+            stale_before = time.time() - (float(stale_hours) * 3600.0)
+            pending = arming.request_store.count_pending_sync(
+                agent_id, stale_before=stale_before
+            )
+        except Exception:
+            logger.warning(
+                "AD-1154: could not count pending asks for agent %s; refusing "
+                "the action rather than filing into an unbounded inbox",
+                agent_id[:12],
+                exc_info=True,
+            )
+            return True
+        if pending < cap_int:
+            return False
+        logger.warning(
+            "AD-1154: approval inbox saturated for agent %s — %d undecided "
+            "asks at a cap of %d. The action was REFUSED without filing; "
+            "decide or revoke pending requests to free a slot",
+            agent_id[:12],
+            pending,
+            cap_int,
+        )
+        return True
+
     async def invoke(
         self,
         agent_id: str,
@@ -396,6 +866,15 @@ class DispatchToolExecutor(ToolExecutor):
             refusal = self._refuse_browser_action(agent_id, params)
             if refusal is not None:
                 return refusal
+        # AD-1154: park AFTER the AD-1153 refusal, so an action already refused
+        # as non-allowlisted is never also filed as an ask — a refusal is not a
+        # request. Unarmed ⇒ ``_park_or_admit`` returns None on its first line.
+        dispositions: list[str] = []
+        parked = await self._park_or_admit(
+            agent_id, tool_id, params, disposition_sink=dispositions
+        )
+        if parked is not None:
+            return parked
         try:
             result = await super().invoke(agent_id, tool_id, params, **kwargs)
         except ToolPermissionDenied as exc:
@@ -414,7 +893,15 @@ class DispatchToolExecutor(ToolExecutor):
             # renders into the transcript AND what ``_persist_tool_trace``
             # records. The AD-448 post-hooks fire inside ``super().invoke`` and
             # therefore see the raw output; none of them consumes ``browser``.
-            return replace(result, output=_bound_browser_output(result.output))
+            result = replace(result, output=_bound_browser_output(result.output))
+        if dispositions and result.error is None:
+            # AD-1154 / DD-2: tell the agent, inline, that this ran under a
+            # standing rule rather than a fresh decision. Appended to whatever
+            # disposition the AD-1153 framing already set, so neither is lost.
+            return replace(
+                result,
+                output=_with_disposition(result.output, " ".join(dispositions)),
+            )
         return result
 
 
@@ -1189,6 +1676,28 @@ class WorkItemAgenticExecutor:
         # escape hatch for probationary agents).
         if browser_ids and "browser" not in granted_ids:
             executor.restrict_browser_actions(_BROWSER_LOOP_ACTIONS)
+
+        # AD-1154: arm the approval inbox on the same seam. Default-OFF via
+        # ``config.approval_inbox.enabled``; off ⇒ ``_approval_inbox`` stays
+        # None and ``invoke`` is byte-identical to AD-1153. Armed only when the
+        # request store is actually wired, because an inbox with nowhere to file
+        # would refuse every tier-3 action without recording it — a strictly
+        # worse outcome than today's gate. ``action_approval_store`` may be None:
+        # standing rules are a separate flag and an absent store simply means no
+        # rule can match, which is the fail-closed direction.
+        approval_cfg = getattr(
+            getattr(runtime, "config", None), "approval_inbox", None
+        )
+        capability_request_store = getattr(runtime, "capability_request_store", None)
+        if (
+            getattr(approval_cfg, "enabled", False)
+            and capability_request_store is not None
+        ):
+            executor.arm_approval_inbox(
+                request_store=capability_request_store,
+                approval_store=getattr(runtime, "action_approval_store", None),
+                config=approval_cfg,
+            )
 
         tool_ids = list(
             dict.fromkeys([

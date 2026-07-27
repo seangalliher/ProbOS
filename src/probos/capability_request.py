@@ -10,10 +10,29 @@ SQLite-backed with an in-memory cache, following the ConnectionFactory pattern
 for cloud-ready storage (mirrors ``ClearanceGrantStore``). Emits lifecycle
 events via ``EventEmitterMixin`` and, on decision, records a trust outcome for
 the requesting agent when a trust network is wired.
+
+AD-1154 adds a FOURTH kind, ``"action"``: an ask about *performing* a specific
+tool action, rather than about *acquiring* a capability. It is a fourth kind on
+this store rather than a fifth store because everything an approval inbox needs
+already exists here and is already wired — the AD-857 REST decision surface, the
+AD-857 Captain-DM notifier, the AD-855 resume driver, and a kind-agnostic HXI
+panel that renders a new kind with no UI change. A parallel store would have put
+the ask on a surface nobody polls.
+
+The ``payload`` column carries the action shape (``tool_id`` / ``action`` /
+``params`` / ``scope_key`` / ``session_id`` / ``thread_id``) because ``target``
+is a bare string. It is NULL for every ``grant`` / ``install`` / ``build`` row,
+so those paths are byte-identical.
+
+**Approval of an ``action`` request does NOT replay the parked action** — see
+:meth:`file_action_request`. The recorded ``session_id`` is forensic only.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -29,6 +48,20 @@ logger = logging.getLogger(__name__)
 
 _RATIONALE_MAX = 280
 
+# AD-1154 / DD-1: exact-key validation for a ``kind="action"`` payload, applied
+# on write AND on read. A hand-edited DB row is an untrusted input, so the read
+# side re-validates rather than trusting what the write side once accepted.
+_ACTION_PAYLOAD_MAX_CHARS = 4000
+_ACTION_PAYLOAD_KEYS: frozenset[str] = frozenset(
+    {"tool_id", "action", "params", "scope_key", "session_id", "thread_id"}
+)
+_TOOL_ID_RE = re.compile(r"^[a-z0-9_:.-]{1,64}$")
+_ACTION_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+_MAX_ACTION_PARAM_KEYS = 20
+_SCOPE_KEY_MAX = 253
+_SESSION_ID_MAX = 64
+_THREAD_ID_MAX = 64
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS capability_requests (
     id TEXT PRIMARY KEY,
@@ -41,14 +74,130 @@ CREATE TABLE IF NOT EXISTS capability_requests (
     created_at REAL NOT NULL,
     decided_at REAL,
     decided_by TEXT NOT NULL DEFAULT '',
-    decision_reason TEXT NOT NULL DEFAULT ''
+    decision_reason TEXT NOT NULL DEFAULT '',
+    payload TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_caprequests_status ON capability_requests(status);
 CREATE INDEX IF NOT EXISTS idx_caprequests_agent ON capability_requests(agent_id);
 """
 
-RequestKind = Literal["grant", "install", "build"]
+RequestKind = Literal["grant", "install", "build", "action"]
 RequestStatus = Literal["pending", "approved", "denied", "fulfilled", "failed"]
+
+
+def _canonical_json(value: Any) -> str:
+    """Deterministic JSON for hashing and storage. Raises on unserialisable input."""
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def validate_action_payload(payload: Any) -> dict[str, Any] | None:
+    """Return ``payload`` when it is a well-formed AD-1154 action payload, else None.
+
+    Exact-key validation in both directions (DD-1): the decoded value must be a
+    dict with EXACTLY the six keys, each within its declared bound, and the whole
+    thing must serialise to at most ``_ACTION_PAYLOAD_MAX_CHARS``. Returns None
+    rather than raising so a corrupt row degrades to ``payload=None`` instead of
+    preventing the store from starting.
+    """
+    if type(payload) is not dict:
+        return None
+    if set(payload) != _ACTION_PAYLOAD_KEYS:
+        return None
+
+    tool_id = payload["tool_id"]
+    action = payload["action"]
+    params = payload["params"]
+    scope_key = payload["scope_key"]
+    session_id = payload["session_id"]
+    thread_id = payload["thread_id"]
+
+    if type(tool_id) is not str or _TOOL_ID_RE.fullmatch(tool_id) is None:
+        return None
+    if type(action) is not str or _ACTION_RE.fullmatch(action) is None:
+        return None
+    if type(params) is not dict or len(params) > _MAX_ACTION_PARAM_KEYS:
+        return None
+    if any(type(key) is not str for key in params):
+        return None
+    if type(scope_key) is not str or len(scope_key) > _SCOPE_KEY_MAX:
+        return None
+    if session_id is not None and (
+        type(session_id) is not str or len(session_id) > _SESSION_ID_MAX
+    ):
+        return None
+    if type(thread_id) is not str or len(thread_id) > _THREAD_ID_MAX:
+        return None
+
+    try:
+        encoded = _canonical_json(payload)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if len(encoded) > _ACTION_PAYLOAD_MAX_CHARS:
+        return None
+    return payload
+
+
+def _decode_payload(raw: Any) -> dict[str, Any] | None:
+    """Decode + re-validate a stored ``payload`` column. Never raises."""
+    if raw is None:
+        return None
+    if type(raw) is not str:
+        logger.warning(
+            "AD-1154: capability_requests.payload is %s, not TEXT; "
+            "loading the row with payload=None",
+            type(raw).__name__,
+        )
+        return None
+    try:
+        decoded = json.loads(raw)
+    except (ValueError, TypeError):
+        logger.warning(
+            "AD-1154: capability_requests.payload is not valid JSON; "
+            "loading the row with payload=None"
+        )
+        return None
+    validated = validate_action_payload(decoded)
+    if validated is None:
+        logger.warning(
+            "AD-1154: capability_requests.payload failed exact-key validation; "
+            "loading the row with payload=None"
+        )
+    return validated
+
+
+def action_dedup_key(
+    *,
+    agent_id: str,
+    payload: dict[str, Any],
+    work_item_id: str | None,
+) -> str:
+    """AD-1154 / DD-1: stable identity of an action ask, recomputed from the row.
+
+    Deliberately NOT a twelfth column — recomputing it on cache load keeps the
+    schema at one added column and needs no second index. A model that retries a
+    refused call three times therefore files ONE ask, not three.
+    """
+    try:
+        canonical_params = _canonical_json(payload.get("params"))
+    except (TypeError, ValueError, OverflowError):
+        canonical_params = "\ufffd"
+    material = "|".join(
+        [
+            agent_id,
+            str(payload.get("tool_id", "")),
+            str(payload.get("action", "")),
+            str(payload.get("scope_key", "")),
+            work_item_id or "",
+            canonical_params,
+        ]
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -66,6 +215,9 @@ class CapabilityRequest:
     decided_at: float | None = None
     decided_by: str = ""
     decision_reason: str = ""
+    # AD-1154 / DD-1: appended LAST so no existing positional index shifts.
+    # NULL for kind in (grant, install, build).
+    payload: dict[str, Any] | None = None
 
 
 class CapabilityRequestStore(EventEmitterMixin):
@@ -103,8 +255,34 @@ class CapabilityRequestStore(EventEmitterMixin):
             await self._db.execute("PRAGMA synchronous=NORMAL")
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
+            await self._migrate_payload_column()
             await self._refresh_cache()
             logger.info("CapabilityRequestStore started (db=%s)", self.db_path)
+
+    async def _migrate_payload_column(self) -> None:
+        """AD-1154 / DD-1: add ``payload`` to a pre-AD-1154 11-column table.
+
+        ``CREATE TABLE IF NOT EXISTS`` is a no-op against an existing table, so an
+        operator upgrading in place would otherwise hit ``table has no column named
+        payload`` on the first INSERT. Guarded on ``PRAGMA table_info`` so a
+        fresh DB (already 12 columns) skips it and a restart is idempotent.
+        """
+        if not self._db:
+            return
+        async with self._db.execute(
+            "PRAGMA table_info(capability_requests)"
+        ) as cursor:
+            columns = {row[1] async for row in cursor}
+        if "payload" in columns:
+            return
+        await self._db.execute(
+            "ALTER TABLE capability_requests ADD COLUMN payload TEXT"
+        )
+        await self._db.commit()
+        logger.info(
+            "AD-1154: migrated capability_requests to 12 columns "
+            "(added payload); existing rows load with payload=None"
+        )
 
     async def stop(self) -> None:
         if self._db:
@@ -118,7 +296,8 @@ class CapabilityRequestStore(EventEmitterMixin):
             return
         async with self._db.execute(
             "SELECT id, agent_id, kind, target, rationale, work_item_id, "
-            "status, created_at, decided_at, decided_by, decision_reason "
+            "status, created_at, decided_at, decided_by, decision_reason, "
+            "payload "
             "FROM capability_requests"
         ) as cursor:
             async for row in cursor:
@@ -132,8 +311,16 @@ class CapabilityRequestStore(EventEmitterMixin):
         target: str,
         rationale: str = "",
         work_item_id: str | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> CapabilityRequest:
-        """File a new pending capability request. Writes DB + cache, emits FILED."""
+        """File a new pending capability request. Writes DB + cache, emits FILED.
+
+        ``payload`` (AD-1154) is the ``kind="action"`` action shape; existing
+        callers pass nothing and the column is written NULL.
+        """
+        encoded_payload: str | None = None
+        if payload is not None:
+            encoded_payload = _canonical_json(payload)
         req = CapabilityRequest(
             id=str(uuid.uuid4()),
             agent_id=agent_id,
@@ -143,15 +330,17 @@ class CapabilityRequestStore(EventEmitterMixin):
             work_item_id=work_item_id,
             status="pending",
             created_at=time.time(),
+            payload=payload,
         )
         if self._db:
             await self._db.execute(
                 "INSERT INTO capability_requests "
                 "(id, agent_id, kind, target, rationale, work_item_id, "
-                "status, created_at, decided_at, decided_by, decision_reason) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '', '')",
+                "status, created_at, decided_at, decided_by, decision_reason, "
+                "payload) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '', '', ?)",
                 (req.id, req.agent_id, req.kind, req.target, req.rationale,
-                 req.work_item_id, req.status, req.created_at),
+                 req.work_item_id, req.status, req.created_at, encoded_payload),
             )
             await self._db.commit()
         self._cache[req.id] = req
@@ -167,6 +356,101 @@ class CapabilityRequestStore(EventEmitterMixin):
             agent_id[:12], kind, target, req.id[:12],
         )
         return req
+
+    async def file_action_request(
+        self,
+        agent_id: str,
+        payload: dict[str, Any],
+        *,
+        rationale: str = "",
+        work_item_id: str | None = None,
+    ) -> CapabilityRequest | None:
+        """AD-1154: file (or dedup onto) a ``kind="action"`` ask.
+
+        The ask records that an unattended agent reached a consequential tool
+        action and did NOT perform it. Returns the request, or ``None`` when the
+        payload fails DD-1 validation (the caller refuses either way — a payload
+        that cannot be recorded must never become an admission).
+
+        **Approval does not replay the action.** ``BrowserToolConfig.
+        session_max_duration_seconds`` is 1800 s and a human decision takes
+        minutes to days, so the ``session_id`` in the payload almost certainly
+        names a reaped session; replaying a page-relative selector against a
+        fresh session and a changed page is a different act from the one the
+        Captain approved. The ``session_id`` is retained for forensics and is
+        never passed to a browser API. What approval buys is a durable record, a
+        trust signal and — optionally — a standing rule that lets the NEXT run
+        proceed without asking.
+
+        Idempotent on ``sha256(agent_id | tool_id | action | scope_key |
+        work_item_id | canonical_params)``: an existing PENDING ask with the same
+        key is returned unchanged rather than inserted again, so a model that
+        retries a refused call files one ask.
+        """
+        validated = validate_action_payload(payload)
+        if validated is None:
+            logger.warning(
+                "AD-1154: rejected an action payload from %s that failed "
+                "exact-key validation; no request was filed and the caller "
+                "refuses the action",
+                agent_id[:12],
+            )
+            return None
+        key = action_dedup_key(
+            agent_id=agent_id, payload=validated, work_item_id=work_item_id
+        )
+        existing = self._find_pending_action(key)
+        if existing is not None:
+            logger.info(
+                "AD-1154: action ask from %s deduped onto pending request %s "
+                "(same agent/tool/action/scope/work-item/params)",
+                agent_id[:12], existing.id[:12],
+            )
+            return existing
+        target = f"{validated['tool_id']}.{validated['action']}"
+        if validated["scope_key"]:
+            target = f"{target} @ {validated['scope_key']}"
+        return await self.file_request(
+            agent_id=agent_id,
+            kind="action",
+            target=target,
+            rationale=rationale,
+            work_item_id=work_item_id,
+            payload=validated,
+        )
+
+    def _find_pending_action(self, key: str) -> CapabilityRequest | None:
+        """Return the pending ``action`` request whose dedup key matches, if any."""
+        for req in self._cache.values():
+            if req.status != "pending" or req.kind != "action" or req.payload is None:
+                continue
+            if (
+                action_dedup_key(
+                    agent_id=req.agent_id,
+                    payload=req.payload,
+                    work_item_id=req.work_item_id,
+                )
+                == key
+            ):
+                return req
+        return None
+
+    def count_pending_sync(self, agent_id: str, *, stale_before: float = 0.0) -> int:
+        """AD-1154 / DD-6: pending asks for ``agent_id``, excluding stale ones.
+
+        Zero-I/O cache read. A stale ask (``created_at <= stale_before``) is
+        excluded from the COUNT only — it keeps ``status="pending"`` and keeps
+        appearing in :meth:`list_pending`, because auto-approving on timeout
+        would make walking away the approval mechanism and auto-denying would
+        silently discard a decision the Captain may still want to make.
+        """
+        return sum(
+            1
+            for req in self._cache.values()
+            if req.agent_id == agent_id
+            and req.status == "pending"
+            and req.created_at > stale_before
+        )
 
     async def decide(
         self,
@@ -283,4 +567,6 @@ class CapabilityRequestStore(EventEmitterMixin):
             decided_at=row[8],
             decided_by=row[9],
             decision_reason=row[10],
+            # AD-1154: appended LAST, matching the schema / dataclass / SELECT.
+            payload=_decode_payload(row[11]),
         )

@@ -270,13 +270,19 @@ async def test_tier_3_action_emits_intervention_required() -> None:
     assert res.output["tier"] == 3
     # Token must NOT be surfaced in agent-visible output (D6 #2).
     assert "confirmation_token" not in res.output
-    # Event must carry the confirmation token (Captain-visible surface).
+    # BF-682: the event carries a NON-REDEEMABLE 8-hex correlator, never the
+    # bearer token — possession of the log line must not be possession of the
+    # approval.
     intervention_events = [
         (et, data) for et, data in events if et == EventType.TOOL_INTERVENTION_REQUIRED
     ]
     assert intervention_events
     payload = intervention_events[0][1]
-    assert "confirmation_token" in payload
+    assert "confirmation_token" not in payload
+    minted = [t for t in tool._pending_confirmations if t.startswith(payload["confirmation_id"])]
+    assert len(minted) == 1
+    assert payload["confirmation_id"] == minted[0][:8]
+    assert len(payload["confirmation_id"]) == 8
     assert payload["session_id"] == sid
     assert payload["tier"] == 3
     await tool.stop()
