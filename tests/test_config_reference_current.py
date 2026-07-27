@@ -66,6 +66,31 @@ def test_the_doc_is_marked_generated() -> None:
     assert "gen_config_reference.py" in text
 
 
+def test_the_doc_contains_no_platform_dependent_reprs() -> None:
+    """The generated doc must be byte-identical on Windows and Linux.
+
+    ``repr()`` of a ``pathlib.Path`` is ``WindowsPath('data')`` on Windows and
+    ``PosixPath('data')`` on Linux. Three such defaults shipped in the first
+    version of this doc, which made ``--check`` pass locally and fail in CI --
+    red on main for three consecutive commits before it was caught.
+
+    The generator now renders paths as POSIX strings. This guard fails fast if
+    any future field reintroduces a platform-dependent value, rather than
+    letting it surface as an unexplained CI failure on the other OS.
+    """
+    text = _DOC.read_text(encoding="utf-8")
+    offenders = [
+        token for token in ("WindowsPath", "PosixPath", "\\\\Users\\\\", "/home/runner")
+        if token in text
+    ]
+    assert not offenders, (
+        f"platform-dependent value(s) in the generated config reference: {offenders}. "
+        "Render it platform-independently in scripts/gen_config_reference.py "
+        "(see _render_value) rather than committing a doc that can only ever be "
+        "current on one operating system."
+    )
+
+
 @pytest.mark.parametrize(
     "section",
     ["agentic_loop", "agentic_tools", "records", "consensus", "memory"],

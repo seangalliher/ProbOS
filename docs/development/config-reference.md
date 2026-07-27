@@ -2951,7 +2951,7 @@ Captain's Log daily-narrative configuration (AD-477).
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
 | `enabled` | `bool` | `True` | — |  |
-| `output_dir` | `pathlib.Path` | `WindowsPath('data/captains_log')` | — |  |
+| `output_dir` | `pathlib.Path` | `'data/captains_log'` | — |  |
 | `end_of_day_hour` | `int` | `23` | — |  |
 | `top_episodes_count` | `int` | `5` | — |  |
 | `importance_threshold` | `int` | `5` | — |  |
@@ -2963,7 +2963,7 @@ Plan of the Day morning-summary configuration (AD-477).
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
 | `enabled` | `bool` | `True` | — |  |
-| `output_dir` | `pathlib.Path` | `WindowsPath('data/plan_of_day')` | — |  |
+| `output_dir` | `pathlib.Path` | `'data/plan_of_day'` | — |  |
 | `start_of_day_hour` | `int` | `8` | — |  |
 | `include_alert_conditions` | `bool` | `True` | — |  |
 
@@ -2977,7 +2977,7 @@ Configuration for AD-487 self-distillation v1 (Map step only).
 | `rate_limit_hours` | `int` | `24` | — |  |
 | `llm_timeout_seconds` | `float` | `30.0` | — |  |
 | `max_sub_topics` | `int` | `5` | — |  |
-| `db_path` | `pathlib.Path` | `WindowsPath('data/agent_probes.db')` | — |  |
+| `db_path` | `pathlib.Path` | `'data/agent_probes.db'` | — |  |
 
 ## `spc`
 

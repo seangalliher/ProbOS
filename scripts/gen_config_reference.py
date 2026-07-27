@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -70,6 +70,32 @@ def _type_name(annotation: Any) -> str:
     return text.replace("NoneType", "None")
 
 
+def _render_value(value: Any) -> str:
+    """Render a default value platform-independently.
+
+    ``repr()`` of a ``pathlib.Path`` is ``WindowsPath('data')`` on Windows and
+    ``PosixPath('data')`` on Linux, so a doc generated on one platform is
+    permanently "stale" on the other. That turned CI red three commits running
+    while ``--check`` passed locally. Paths render as their POSIX string form,
+    which is stable everywhere and is also what an operator would write in YAML.
+
+    Applied recursively so a ``list[Path]`` or ``dict[str, Path]`` default is
+    normalised too -- the top-level type is not a reliable guard.
+    """
+    if isinstance(value, PurePath):
+        return repr(value.as_posix())
+    if isinstance(value, list):
+        return "[" + ", ".join(_render_value(v) for v in value) + "]"
+    if isinstance(value, tuple):
+        inner = ", ".join(_render_value(v) for v in value)
+        return f"({inner},)" if len(value) == 1 else f"({inner})"
+    if isinstance(value, dict):
+        return "{" + ", ".join(
+            f"{_render_value(k)}: {_render_value(v)}" for k, v in value.items()
+        ) + "}"
+    return repr(value)
+
+
 def _format_default(field: Any) -> str:
     """Render a field default, distinguishing 'no default' from ``None``."""
     from pydantic_core import PydanticUndefined
@@ -79,13 +105,13 @@ def _format_default(field: Any) -> str:
         factory = getattr(field, "default_factory", None)
         if factory is not None:
             try:
-                return f"`{factory()!r}`"
+                return f"`{_render_value(factory())}`"
             except Exception:
                 # A factory that needs arguments or touches the environment is
                 # not worth crashing the generator over.
                 return "_(computed)_"
         return "**required**"
-    return f"`{default!r}`"
+    return f"`{_render_value(default)}`"
 
 
 def _constraints(field: Any) -> str:
