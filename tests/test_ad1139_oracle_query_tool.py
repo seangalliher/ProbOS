@@ -512,6 +512,14 @@ async def test_tier_two_records_survive_the_ad1138_scope_gate(
     BF-679: the invocation carries no ``context``, so there is no actor to
     resolve — both paths therefore receive the anonymous reader (``""``), which
     is the documented fail-closed state.
+
+    BF-684: both axes now run on every query and are fused by reciprocal rank,
+    rather than keyword being a fallback entered only when semantic returned
+    nothing. That makes the scope assertion below *stronger*: the gate is
+    proven on both paths simultaneously, not on whichever one happened to
+    serve. Both fakes return the same ``path``, so fusion dedupes to a single
+    result and the semantic payload wins — hence one result and the SEMANTIC
+    body in both branches.
     """
     records_store = _FakeRecordsStore()
     semantic_layer = _FakeSemanticLayer()
@@ -528,6 +536,10 @@ async def test_tier_two_records_survive_the_ad1138_scope_gate(
     assert result.error is None
     assert "[source:records" in result.output
     assert result.metadata["returned_count"] == 1
+    # The keyword axis runs either way, always scoped and always with the
+    # anonymous reader.
+    assert records_store.scopes == ["ship"]
+    assert records_store.readers == [("", "")]
     if records_semantic_enabled:
         assert semantic_layer.calls == [
             {
@@ -539,10 +551,7 @@ async def test_tier_two_records_survive_the_ad1138_scope_gate(
             }
         ]
         assert "SEMANTIC deck twelve entry" in result.output
-        assert records_store.scopes == []
     else:
-        assert records_store.scopes == ["ship"]
-        assert records_store.readers == [("", "")]
         assert "KEYWORD deck twelve entry" in result.output
         assert semantic_layer.calls == []
 

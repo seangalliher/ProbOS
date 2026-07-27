@@ -3237,16 +3237,31 @@ class ProbOSRuntime:
             )
             return
 
-        if already_indexed:
-            logger.debug(
-                "AD-1138: records collection already holds %d document(s); "
-                "skipping backfill", already_indexed,
-            )
-            return
-
+        # BF-684: a non-empty collection is NOT proof of a complete one.
+        # ``reindex_records`` is bounded per pass, so the first boot of a large
+        # repository indexes its budget and stops. This early-out then made
+        # every later boot skip the backfill entirely, and index-on-write only
+        # covers records that are subsequently rewritten — so the remainder was
+        # unreachable permanently, not merely slowly. On the reference vessel
+        # that stranded 1,955 of 2,455 records (80%) behind a warning that read
+        # like a deferral.
+        #
+        # The pass is now resumable and skips what is already indexed, so
+        # calling it unconditionally is cheap when there is nothing to do and
+        # makes progress when there is.
         try:
             indexed = await semantic_layer.reindex_records(records_store)
-            logger.info("AD-1138: backfilled %d record(s) into the semantic index", indexed)
+            if indexed:
+                logger.info(
+                    "AD-1138: backfilled %d record(s) into the semantic index "
+                    "(collection held %d before this pass)",
+                    indexed, already_indexed,
+                )
+            else:
+                logger.debug(
+                    "AD-1138: semantic record index is current (%d document(s))",
+                    already_indexed,
+                )
         except Exception:
             logger.warning(
                 "AD-1138: semantic records backfill failed; pre-existing records "

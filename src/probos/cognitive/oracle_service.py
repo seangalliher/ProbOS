@@ -18,6 +18,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from probos.cognitive.episodic import reciprocal_rank_fusion  # AD-979c / BF-684
 from probos.types import (  # AD-462f (types.py has no reverse dep on oracle_service)
     MemoryRef,
     dominant_match_reason,  # AD-988
@@ -147,6 +148,79 @@ def _decode_record_frontmatter(raw: Any) -> dict[str, Any]:
         logger.debug("AD-1138: unparseable frontmatter sidecar; using {}", exc_info=True)
         return {}
     return decoded if isinstance(decoded, dict) else {}
+
+
+def _fuse_record_results(
+    semantic: list[OracleResult],
+    keyword: list[OracleResult],
+    *,
+    k: int,
+) -> list[OracleResult]:
+    """BF-684: merge the two records retrieval axes by reciprocal rank.
+
+    Dense similarity and keyword matching disagree usefully — one finds
+    paraphrase, the other finds exact identifiers — so the union ranked by
+    AD-979c reciprocal rank fusion beats either alone. RRF is rank-based, which
+    is what makes it valid here: the two axes' scores are on different scales
+    (cosine similarity vs a ``/10`` keyword heuristic) and were never
+    calibrated against each other.
+
+    Two properties are deliberate:
+
+    * **Deduplicated by ``path``**, which is the records identity. The same
+      record found on both axes is one result that ranks *higher* for the
+      agreement, not two competing entries.
+    * **The emitted score is the maximum source score, never the RRF score.**
+      Fusion orders; the score field keeps the meaning downstream already
+      relies on. AD-1141's Sigma-context floor defaults to 0.35 and a
+      rank-1-in-both RRF score is about 0.033, so emitting fused scores would
+      filter out every record while appearing to work.
+
+    Degenerate inputs are the common case on a fresh vessel and must be exact:
+    with one empty axis this returns the other axis's own order unchanged
+    (RRF over a single ranking is order-preserving), so nothing regresses when
+    the semantic index is disabled, empty, or failed.
+    """
+    if not semantic:
+        return keyword[:k]
+    if not keyword:
+        return semantic[:k]
+
+    by_path: dict[str, OracleResult] = {}
+    best_score: dict[str, float] = {}
+    rankings: list[list[str]] = []
+
+    for axis in (semantic, keyword):
+        ranking: list[str] = []
+        for result in axis:
+            path = str((result.metadata or {}).get("path", "") or "")
+            if not path:
+                continue
+            if path not in ranking:  # an axis must not vote twice for one path
+                ranking.append(path)
+            prior = best_score.get(path)
+            if prior is None or result.score > prior:
+                best_score[path] = result.score
+            # First writer wins the payload: the semantic axis carries the
+            # frontmatter sidecar, which is richer than the keyword snippet.
+            by_path.setdefault(path, result)
+        rankings.append(ranking)
+
+    fused: list[OracleResult] = []
+    for path, _rrf in reciprocal_rank_fusion(rankings):
+        source = by_path.get(path)
+        if source is None:
+            continue
+        fused.append(OracleResult(
+            source_tier=source.source_tier,
+            content=source.content,
+            score=best_score.get(path, source.score),
+            metadata=source.metadata,
+            provenance=source.provenance,
+        ))
+        if len(fused) >= k:
+            break
+    return fused
 
 # Small inline stopword set — keeps _extract_entity_tokens self-contained
 # (no nltk / no external corpus). Lowercase only.
@@ -884,23 +958,35 @@ class OracleService:
     ) -> list[OracleResult]:
         """Tier 2: Ship's Records.
 
-        AD-1138: when the semantic index is enabled and a layer is attached,
-        retrieval runs through ChromaDB with classification enforced in the
-        query. Otherwise — and whenever semantic retrieval yields nothing or
-        raises — the original keyword path runs. The layer may be unattached
-        or its collection empty (fresh boot, backfill not yet run), so an
-        empty semantic result must degrade to keyword rather than report the
-        commons as empty.
+        AD-1138 ran semantic retrieval and treated the keyword path as a
+        *fallback*, entered only when semantic raised or returned nothing.
 
-        The ``OracleResult`` shape is identical on both paths; only the
-        retrieval mechanism and the score differ.
+        BF-684: that made the keyword index dead code in practice. The three
+        seeded ``ship``-classified manuals match essentially any query, so the
+        semantic result was never empty, so the fallback never ran — and
+        because the semantic collection only held whatever the bounded backfill
+        had reached, enabling AD-1138 *reduced* reachable recall from the whole
+        repository to the indexed subset.
+
+        The two paths are different retrieval axes, not alternatives: dense
+        embedding similarity finds paraphrase and concept, keyword/BM25 finds
+        exact identifiers, callsigns and rare terms. Both now run and are
+        merged with the AD-979c :func:`reciprocal_rank_fusion`, which is
+        rank-based and therefore needs no score-scale calibration between two
+        differently-scaled axes.
+
+        **The reported score stays the source score, not the RRF score.**
+        Fusion decides *order*; the score field keeps its existing meaning
+        because downstream consumers threshold on it — AD-1141's Sigma-context
+        floor defaults to 0.35, while a rank-1-in-both RRF score is ~0.033, so
+        emitting fused scores would silently filter out every record.
 
         BF-679: ``reader_id`` / ``reader_department`` are applied identically
-        on both paths, so the fallback can never disclose more than the path
-        it replaces. The default is the anonymous reader, which withholds the
-        identity-gated classifications — a caller that supplies no identity
-        gets the commons, not everyone's notebooks.
+        on both paths, so fusing them cannot disclose more than either path
+        alone. The default is the anonymous reader, which withholds the
+        identity-gated classifications.
         """
+        semantic_results: list[OracleResult] = []
         if self._records_semantic_enabled and self._semantic_layer is not None:
             try:
                 semantic_results = await self._query_records_semantic(
@@ -909,21 +995,28 @@ class OracleService:
                 )
             except Exception:
                 logger.warning(
-                    "AD-1138: semantic records retrieval failed; falling back to "
-                    "the keyword path for this query",
+                    "AD-1138: semantic records retrieval failed; this query is "
+                    "served by the keyword path alone",
                     exc_info=True,
                 )
                 semantic_results = []
-            if semantic_results:
-                return semantic_results
-            logger.debug(
-                "AD-1138: semantic records retrieval returned nothing; falling "
-                "back to the keyword path",
+
+        try:
+            keyword_results = await self._query_records_keyword(
+                query_text, k=k,
+                reader_id=reader_id, reader_department=reader_department,
             )
-        return await self._query_records_keyword(
-            query_text, k=k,
-            reader_id=reader_id, reader_department=reader_department,
-        )
+        except Exception:
+            if not semantic_results:
+                raise
+            logger.warning(
+                "BF-684: keyword records retrieval failed; this query is served "
+                "by the semantic path alone",
+                exc_info=True,
+            )
+            keyword_results = []
+
+        return _fuse_record_results(semantic_results, keyword_results, k=k)
 
     async def _query_records_keyword(
         self,

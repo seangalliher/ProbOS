@@ -681,8 +681,21 @@ class SemanticKnowledgeLayer:
         honest-degrades per entry: one unreadable record does not abort the
         pass.
 
+        BF-684: **resumable.** The pass skips records the collection already
+        holds and spends its budget on ones it does not, so successive boots
+        converge on full coverage instead of re-walking the same prefix.
+        Previously ``entries[:limit]`` took the first ``limit`` of a
+        deterministically sorted list every time, which — combined with the
+        caller's "collection is non-empty, skip" early-out — left everything
+        past the budget unreachable permanently. Index-on-write does not close
+        that gap: it only covers records that are written *again*.
+
+        Already-indexed records are not re-read or re-embedded, so a pass with
+        nothing to do costs one bulk id lookup. Content changes are handled by
+        index-on-write inside ``write_entry``, not here.
+
         Returns:
-            Number of records successfully indexed.
+            Number of records successfully indexed by this pass.
         """
         col = self._collections.get("records")
         if col is None:
@@ -701,18 +714,26 @@ class SemanticKnowledgeLayer:
             )
             return 0
 
-        if len(entries) > limit:
-            logger.warning(
-                "AD-1138: %d records exceed the %d-record backfill budget; "
-                "indexing the first %d, the remainder index on next write",
-                len(entries), limit, limit,
+        paths = [e.get("path", "") for e in entries if e.get("path", "")]
+        already = self._indexed_record_paths(paths)
+        pending = [p for p in paths if p not in already]
+
+        if not pending:
+            logger.debug(
+                "AD-1138: all %d record(s) are already in the semantic index",
+                len(paths),
+            )
+            return 0
+
+        if len(pending) > limit:
+            logger.info(
+                "AD-1138: %d of %d record(s) are not yet indexed; this pass "
+                "indexes %d and the next boot resumes with the remaining %d",
+                len(pending), len(paths), limit, len(pending) - limit,
             )
 
         indexed = 0
-        for entry in entries[:limit]:
-            path = entry.get("path", "")
-            if not path:
-                continue
+        for path in pending[:limit]:
             try:
                 doc = await records_store.read_entry(path, reader_id=_UNRESTRICTED_READER)
                 if doc is None:
@@ -738,3 +759,31 @@ class SemanticKnowledgeLayer:
 
         logger.info("AD-1138: semantic records backfill indexed %d record(s)", indexed)
         return indexed
+
+    def _indexed_record_paths(self, paths: list[str]) -> set[str]:
+        """BF-684: which of ``paths`` the records collection already holds.
+
+        One bulk lookup keyed by the same deterministic ``record_{path}`` id
+        :meth:`index_record` upserts under. A failure here returns the empty
+        set, which degrades to re-indexing rather than to skipping — an upsert
+        is idempotent, so the cost of being wrong in that direction is wasted
+        work, while the other direction silently strands records.
+        """
+        col = self._collections.get("records")
+        if col is None or not paths:
+            return set()
+        try:
+            existing = col.get(ids=[f"record_{p}" for p in paths], include=[])
+        except Exception:
+            logger.warning(
+                "AD-1138: could not read existing record ids; the backfill pass "
+                "will re-index rather than skip (upsert makes this safe)",
+                exc_info=True,
+            )
+            return set()
+        found = (existing or {}).get("ids") or []
+        return {
+            str(i)[len("record_"):]
+            for i in found
+            if str(i).startswith("record_")
+        }
