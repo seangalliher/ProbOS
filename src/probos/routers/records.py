@@ -133,7 +133,9 @@ async def write_notebook_entry(callsign: str, request: Request, runtime: Any = D
             content=content,
             department=body.get("department", ""),
             tags=body.get("tags", []),
-            classification=body.get("classification", "department"),
+            # AD-1157a: absent means no preference — default on create, keep
+            # the existing classification on update.
+            classification=body.get("classification"),
         )
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)

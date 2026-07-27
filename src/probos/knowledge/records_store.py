@@ -48,6 +48,25 @@ _CLASSIFICATION_LEVELS = {
     "fleet": 3,
 }
 
+# AD-1157: the default classification for an agent notebook entry.
+#
+# The authority for this value is the records ontology — ``config/ontology/
+# records.yaml``, document class ``notebook``, ``classification_default:
+# private``, with the stated rule "Private by default — agent can explicitly
+# publish entries". The code shipped ``department`` instead and the divergence
+# went unnoticed for the life of the corpus: 2,453 of 2,453 notebook entries on
+# the reference vessel were written at ``department``, none at ``private`` and
+# none at ``ship``, because the ``[NOTEBOOK]`` action tag had no syntax for the
+# choice and neither proactive write site passed one. The default was therefore
+# the only classification any notebook could ever receive.
+#
+# Named rather than inlined so the ontology and the code have a single
+# comparison point, and guarded by a test that parses ``records.yaml`` and
+# asserts the two still agree — a silent redefinition here is the exact defect
+# this constant exists to close, so a comment alone would be the same
+# unenforced promise that produced it.
+NOTEBOOK_DEFAULT_CLASSIFICATION = "private"
+
 # BF-679: classifications whose visibility depends on *who is reading* rather
 # than on the scope level alone. Mirrors the gate in :meth:`RecordsStore.read_entry`.
 # Owned here (the store defines the rule); ``knowledge.semantic`` imports it so
@@ -201,6 +220,7 @@ class RecordsStore:
         tags: list[str] | None = None,
         metrics: dict[str, Any] | None = None,  # AD-553
         extra_frontmatter: dict[str, Any] | None = None,  # AD-1140
+        preserve_classification_on_update: bool = False,  # AD-1157a
     ) -> str:
         """Write a document to Ship's Records.
 
@@ -214,6 +234,15 @@ class RecordsStore:
         ``ValueError`` — this is the fail-fast tier, because silently dropping a
         reserved key would let a caller believe it stamped provenance that is
         not there. ``None`` (the default) leaves the written bytes identical.
+
+        AD-1157a: ``preserve_classification_on_update`` keeps an existing
+        document's classification when rewriting it, for callers that supplied
+        no preference of their own. Update-in-place otherwise re-stamps every
+        rewrite with the caller's default, so a routine AD-550 revision
+        silently reclassifies a document nobody asked to reclassify — and
+        because the write path is the same for a first draft and a revision,
+        that default is applied to documents authored long before it existed.
+        Ignored on create, where there is nothing to preserve.
         """
         # Validate classification
         if classification not in _CLASSIFICATION_LEVELS:
@@ -252,6 +281,15 @@ class RecordsStore:
                     frontmatter["created"] = existing_fm["created"]
                 existing_rev = existing_fm.get("revision", 1)
                 frontmatter["revision"] = existing_rev + 1
+                # AD-1157a: the caller expressed no preference, so the author's
+                # standing choice on this document outranks the caller default.
+                # An unrecognised stored value is left to the default rather
+                # than carried forward — it would fail the write validation
+                # that already ran, turning a revision into a hard error.
+                if preserve_classification_on_update:
+                    existing_class = existing_fm.get("classification")
+                    if existing_class in _CLASSIFICATION_LEVELS:
+                        frontmatter["classification"] = existing_class
             except Exception:
                 logger.debug("AD-550: Could not read existing frontmatter for update-in-place", exc_info=True)
 
@@ -415,7 +453,7 @@ class RecordsStore:
         *,
         department: str = "",
         tags: list[str] | None = None,
-        classification: str = "department",
+        classification: str | None = None,
         metrics: dict[str, Any] | None = None,  # AD-553
         extra_frontmatter: dict[str, Any] | None = None,  # AD-1140
     ) -> str:
@@ -425,6 +463,24 @@ class RecordsStore:
 
         AD-1140: ``extra_frontmatter`` is passed straight through to
         :meth:`write_entry`; see its docstring for the reserved-key contract.
+
+        AD-1157: ``classification`` of ``None`` means *the author expressed no
+        preference*, and is not the same as passing the default explicitly. A
+        new entry takes :data:`NOTEBOOK_DEFAULT_CLASSIFICATION` (``private``),
+        matching the records ontology; an existing entry keeps whatever it
+        already has. A concrete value is the author's own choice and is applied
+        either way — an agent that tags ``[NOTEBOOK slug ship]`` on a note it
+        wrote last week means to widen that note, and an agent that tags it
+        ``private`` means to pull it back.
+
+        A notebook is an agent's own working surface; the governed route into
+        the shared commons is ``publish_finding`` (AD-1140), which writes at
+        ``ship`` and always passes its classification explicitly.
+
+        Note that ``private`` binds on the *query* path only (BF-679). The
+        AD-550 dedup gate and the AD-554 cross-agent convergence scan both read
+        notebook files directly off disk and are unaffected, so curation and
+        convergence continue to see the full corpus.
         """
         if not callsign or not callsign.strip():  # BF-218: guard against empty callsign
             raise ValueError("callsign must not be empty for notebook writes")
@@ -435,7 +491,12 @@ class RecordsStore:
             path=path,
             content=content,
             message=f"{callsign} notebook: {topic_slug}",
-            classification=classification,
+            classification=(
+                NOTEBOOK_DEFAULT_CLASSIFICATION
+                if classification is None
+                else classification
+            ),
+            preserve_classification_on_update=(classification is None),
             status="draft",
             department=department,
             topic=topic_slug,

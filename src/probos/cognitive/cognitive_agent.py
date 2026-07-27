@@ -2264,7 +2264,10 @@ class CognitiveAgent(BaseAgent):
             "and the tag is removed before the Captain sees your reply, so "
             "confirm conversationally that you have saved it. Only claim a "
             "note is saved when you actually emit this tag — never say you "
-            "saved something without it."
+            "saved something without it. The note is private to you by "
+            "default; write [NOTEBOOK topic-slug department] or [NOTEBOOK "
+            "topic-slug ship] when the Captain asks for something the crew "
+            "should see."
         )
 
     def _conversational_artifact_block(self, observation: dict) -> str:
@@ -3098,7 +3101,12 @@ class CognitiveAgent(BaseAgent):
                     "Your extended analysis, research findings, or diagnostic report here.\n"
                     "[/NOTEBOOK]\n"
                     "Use for: research findings, pattern analysis, baseline readings, diagnostic reports. "
-                    "This writes to your personal notebook in Ship's Records (AD-434).\n\n"
+                    "This writes to your personal notebook in Ship's Records (AD-434).\n"
+                    "Your notebook is private by default — yours alone. Add a scope after the "
+                    "topic slug to widen it: [NOTEBOOK topic-slug department] when your "
+                    "department should see it, [NOTEBOOK topic-slug ship] when any crew "
+                    "member could act on it. Widen when you can name who else needs the "
+                    "entry and why; otherwise leave it private (AD-1157).\n\n"
                 )
                 composed += self._compose_dm_instructions()
 

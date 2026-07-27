@@ -55,6 +55,7 @@ from probos.tools.publish_finding_tool import (
     FINDING_TAG,
     _ALLOWED_KEYS,
     _CALLSIGN_RE,
+    _CLASSIFICATION_GUIDANCE,
     _DUPLICATE_DISPOSITION,
     _FLEET_DISPOSITION,
     _HEADER,
@@ -211,7 +212,12 @@ def test_every_module_authored_string_is_clean_under_the_real_gap_regex() -> Non
         if type(value) is str and not name.startswith("__")
     }
     # Sanity: the scan actually reaches the strings it claims to.
-    assert {"_SUCCESS_DISPOSITION", "_FLEET_DISPOSITION", "_HEADER"} <= set(authored)
+    assert {
+        "_SUCCESS_DISPOSITION",
+        "_FLEET_DISPOSITION",
+        "_HEADER",
+        "_CLASSIFICATION_GUIDANCE",
+    } <= set(authored)
     offenders = {
         name: _CAPABILITY_GAP_RE.search(value).group(0)  # type: ignore[union-attr]
         for name, value in authored.items()
@@ -235,6 +241,76 @@ def test_tool_description_is_framed_and_names_the_durable_outcome() -> None:
     assert _CAPABILITY_GAP_RE.search(_TOOL_DESCRIPTION) is None
     assert "Ship's Records" in _TOOL_DESCRIPTION
     assert "later session" in _TOOL_DESCRIPTION
+
+
+# ---------------------------------------------------------------------------
+# DD-10 — the scope-selection rule travels on the parameter
+# ---------------------------------------------------------------------------
+
+def _classification_schema() -> dict[str, Any]:
+    """The schema property reads bounds only, so it needs no store."""
+    return _tool(None).input_schema["properties"]["classification"]
+
+
+def test_classification_description_is_the_shared_guidance_constant() -> None:
+    """The schema must not carry its own copy of the rule.
+
+    Inline text would sit outside the DD-2 gap-regex sweep, which collects
+    module-level strings only — so a drifted copy could ship a phrase that
+    reads to the decomposer as a capability gap.
+    """
+    assert _classification_schema()["description"] is _CLASSIFICATION_GUIDANCE
+
+
+def test_guidance_gives_a_test_for_every_value_the_enum_accepts() -> None:
+    """An accepted scope with no stated rule is a scope chosen by guess."""
+    schema = _classification_schema()
+    for value in schema["enum"]:
+        assert f"'{value}'" in _CLASSIFICATION_GUIDANCE, value
+
+
+def test_guidance_defaults_wide_and_resolves_an_unclear_choice_to_ship() -> None:
+    """DD-10 property 1: the burden of proof runs toward narrowing.
+
+    The schema default alone is silent under ambiguity — a model weighing an
+    unclear case needs the tie broken in the text, or caution breaks it toward
+    the narrower scope and the commons quietly empties out.
+    """
+    assert _classification_schema()["default"] == "ship"
+    assert "Default to 'ship'" in _CLASSIFICATION_GUIDANCE
+    assert "when the choice is unclear, this is the answer" in _CLASSIFICATION_GUIDANCE
+
+
+def test_guidance_routes_uncertainty_to_confidence_not_to_scope() -> None:
+    """DD-10 property 2: the two fields must not collapse into one.
+
+    Both are hedges an unsure agent can reach for, and only one is correct;
+    an unhedged tentative finding filed 'private' costs the crew exactly the
+    calibration signal that made it worth publishing.
+    """
+    assert "Carry uncertainty in 'confidence'" in _CLASSIFICATION_GUIDANCE
+    assert "never by narrowing the scope" in _CLASSIFICATION_GUIDANCE
+
+
+def test_guidance_admits_department_by_a_test_not_by_ownership() -> None:
+    """'Arose from my duty' is true of every finding an agent ever publishes.
+
+    Left as the admitting condition it would narrow the whole corpus, which is
+    the live shape of the notebook silo this rule exists to keep out of Sigma.
+    """
+    assert "another department would misread" in _CLASSIFICATION_GUIDANCE
+    assert "never merely because the finding arose from your own duty" in (
+        _CLASSIFICATION_GUIDANCE
+    )
+
+
+@pytest.mark.asyncio
+async def test_omitted_classification_still_publishes_at_ship_scope(records) -> None:
+    """The rule is advisory to the model; the default is what actually binds."""
+    tool = _tool(records)
+    result = await tool.invoke(_params(), _ctx())
+    entry = await _read_written(records, result.metadata["path"])
+    assert entry["frontmatter"]["classification"] == "ship"
 
 
 @pytest.mark.asyncio

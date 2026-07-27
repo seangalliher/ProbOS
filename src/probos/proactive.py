@@ -93,6 +93,75 @@ _STATUS_PATTERN = re.compile(
 )
 
 
+# AD-1157: the [NOTEBOOK] action tag, with the classification an agent selects.
+# Matches [NOTEBOOK topic-slug] body [/NOTEBOOK] and the newer
+# [NOTEBOOK topic-slug private|department|ship] body [/NOTEBOOK].
+# group(1)=topic slug, group(2)=optional classification token, group(3)=body.
+#
+# One compiled pattern because the literal previously existed twice — the
+# proactive path and the DM path each carried their own copy, which is how the
+# two could accept different syntax without anything failing.
+#
+# group(2) matches any word rather than an alternation of the valid
+# classifications on purpose. An alternation would make an unrecognised token
+# fail the *whole* tag match, so `[NOTEBOOK notes fleeet]` would parse as no
+# notebook at all and the agent's entry would be silently discarded along with
+# its content. Accepting any token and validating it afterwards costs the
+# classification (which falls back to the default) and never the entry.
+#
+# No IGNORECASE: the previous literal had none, and the surrounding action-tag
+# vocabulary is upper-case by convention.
+_NOTEBOOK_PATTERN = re.compile(
+    r'\[NOTEBOOK\s+([\w-]+)'      # 1=topic slug
+    r'(?:\s+([\w-]+))?\]'         # 2=optional classification token
+    r'(.*?)'                      # 3=body
+    r'\[/NOTEBOOK\]',
+    re.DOTALL,
+)
+
+# AD-1157: what an agent may select on the tag. ``fleet`` is deliberately
+# absent — a fleet-classified record is level 3 against the ``ship`` scope every
+# query on this node uses, so it would be durable, committed and reachable by
+# nobody including its author. AD-1140 reached the same conclusion for
+# ``publish_finding`` and routes fleet intent to a ship-scope write; a notebook
+# tag has no such envelope to record the request in, so the value is simply not
+# offered.
+_NOTEBOOK_CLASSIFICATIONS = frozenset({"private", "department", "ship"})
+
+
+def _resolve_notebook_classification(
+    token: str | None, *, callsign: str, topic_slug: str,
+) -> str | None:
+    """AD-1157: map a ``[NOTEBOOK]`` classification token to a stored value.
+
+    Returns ``None`` for *the agent expressed no preference*, which
+    :meth:`RecordsStore.write_notebook` reads as "default on create, keep what
+    is there on update" (AD-1157a). A recognised token is the agent's own
+    choice and is returned as-is, so tagging an existing note re-scopes it in
+    either direction.
+
+    An unrecognised token yields ``None`` and a warning naming the offender.
+    It is deliberately treated as *no preference* rather than as the default:
+    the agent did intend something, we simply could not read it, and acting on
+    an unreadable intent by re-scoping an existing note would be a guess
+    applied to a document nobody asked to change. The entry is always written
+    either way — losing an agent's analysis over a misspelled scope would be a
+    far worse outcome than filing it narrowly.
+    """
+    if not token:
+        return None
+    if token in _NOTEBOOK_CLASSIFICATIONS:
+        return token
+    logger.warning(
+        "AD-1157: %s tagged notebook %r with unrecognised classification %r; "
+        "leaving the entry's classification to the store default. Valid "
+        "values are %s.",
+        callsign, topic_slug, token,
+        ", ".join(sorted(_NOTEBOOK_CLASSIFICATIONS)),
+    )
+    return None
+
+
 def _parse_hhmm(value: str) -> tuple[int, int]:
     """Parse HH:MM into (hour, minute) for schedule threshold checks."""
     parts = value.split(":", 1)
@@ -2895,14 +2964,16 @@ class ProactiveCognitiveLoop:
             actions_executed.extend(status_actions)
 
         # --- Notebook writes (AD-434) ---
-        notebook_pattern = r'\[NOTEBOOK\s+([\w-]+)\](.*?)\[/NOTEBOOK\]'
-        notebook_matches = re.findall(notebook_pattern, text, re.DOTALL)
-        for topic_slug, notebook_content in notebook_matches:
+        notebook_matches = _NOTEBOOK_PATTERN.findall(text)
+        for topic_slug, class_token, notebook_content in notebook_matches:
             notebook_content = notebook_content.strip()
             if not notebook_content or not self._runtime._records_store:
                 continue
             try:
                 callsign = getattr(agent, 'callsign', '') or agent.agent_type  # BF-218
+                notebook_classification = _resolve_notebook_classification(
+                    class_token, callsign=callsign, topic_slug=topic_slug,
+                )
                 department = ""
                 if self._runtime.ontology:
                     dept = self._runtime.ontology.get_agent_department(agent.agent_type)
@@ -3050,6 +3121,7 @@ class ProactiveCognitiveLoop:
                     content=notebook_content,
                     department=department,
                     tags=[topic_slug],
+                    classification=notebook_classification,  # AD-1157
                     metrics=_nb_metrics if _nb_metrics else None,  # AD-553
                 )
                 actions_executed.append({
@@ -3189,7 +3261,7 @@ class ProactiveCognitiveLoop:
 
         # BF-060: Strip ALL notebook blocks from text using regex (not string replace)
         # text.replace() failed because .strip() on captured content caused whitespace mismatch
-        text = re.sub(notebook_pattern, '', text, flags=re.DOTALL).strip()
+        text = _NOTEBOOK_PATTERN.sub('', text).strip()
 
         # AD-504: [READ_NOTEBOOK topic-slug] — queue for next cycle injection
         read_nb_pattern = r'\[READ_NOTEBOOK\s+([\w-]+)\]'
@@ -4003,15 +4075,17 @@ class ProactiveCognitiveLoop:
         if records_store is None:
             return text, actions
 
-        notebook_pattern = r'\[NOTEBOOK\s+([\w-]+)\](.*?)\[/NOTEBOOK\]'
-        for topic_slug, notebook_content in re.findall(
-            notebook_pattern, text, re.DOTALL,
+        for topic_slug, class_token, notebook_content in (
+            _NOTEBOOK_PATTERN.findall(text)
         ):
             notebook_content = notebook_content.strip()
             if not notebook_content:
                 continue
             try:
                 callsign = getattr(agent, "callsign", "") or agent.agent_type
+                notebook_classification = _resolve_notebook_classification(
+                    class_token, callsign=callsign, topic_slug=topic_slug,
+                )
                 department = ""
                 if getattr(self._runtime, "ontology", None):
                     dept = self._runtime.ontology.get_agent_department(
@@ -4079,6 +4153,7 @@ class ProactiveCognitiveLoop:
                     content=notebook_content,
                     department=department,
                     tags=[topic_slug],
+                    classification=notebook_classification,  # AD-1157
                 )
                 actions.append({
                     "type": "notebook_write",
@@ -4096,9 +4171,7 @@ class ProactiveCognitiveLoop:
                     exc_info=True,
                 )
 
-        cleaned = re.sub(
-            notebook_pattern, "", text, flags=re.DOTALL,
-        ).strip()
+        cleaned = _NOTEBOOK_PATTERN.sub("", text).strip()
         return cleaned, actions
 
     async def _extract_and_execute_group_chats(

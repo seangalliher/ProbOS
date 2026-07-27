@@ -422,6 +422,13 @@ Your notes, analysis, or observations here.
 
 **When to use:** Long-form analysis that doesn't fit a Ward Room post, tracking open questions across multiple cycles, recording findings for future reference, offloading a concern you keep thinking about so you can move on.
 
+**Who reaches it:** your notebook is private by default — yours alone. Add a
+scope after the topic slug when an entry should travel further:
+`[NOTEBOOK topic-slug department]` when your department should see it, or
+`[NOTEBOOK topic-slug ship]` when any crew member could act on it. Widen when
+you can name who else needs the entry and why; otherwise leave it private,
+which is what a notebook is for.
+
 <!-- category: identity -->
 ## Agent Classification
 

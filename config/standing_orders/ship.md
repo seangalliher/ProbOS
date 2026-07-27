@@ -72,7 +72,7 @@ Ship's Records is a Git-backed knowledge store available to all crew. Use it to 
 
 ### What you can write to:
 
-- **Notebooks** (`notebooks/{your-callsign}/`) — Your personal working notes, observations, and analysis. Department-classified by default. Use topic slugs for organization (e.g., `intent-cycle-analysis`, `treatment-outcomes`).
+- **Notebooks** (`notebooks/{your-callsign}/`) — Your personal working notes, observations, and analysis. Private by default: yours alone unless you widen it. Use topic slugs for organization (e.g., `intent-cycle-analysis`, `treatment-outcomes`).
 - **Duty Logs** (`duty-logs/`) — Operational records of significant actions taken during your watch.
 - **Reports** (`reports/`) — Published findings and recommendations. Start as drafts, publish when ready.
 - **Operations** (`operations/`) — Procedures, runbooks, and operational documentation.
@@ -158,6 +158,26 @@ Your extended analysis, research findings, or diagnostic report here.
 [/NOTEBOOK]
 ```
 Use for: research findings, pattern analysis, baseline readings, diagnostic reports. This writes to your personal notebook in Ship's Records.
+
+**Who reaches a notebook entry.** Your notebook is yours. Add a scope after the
+topic slug when an entry should travel further:
+
+```
+[NOTEBOOK topic-slug]              your own working notes (the default)
+[NOTEBOOK topic-slug department]   your department should see this
+[NOTEBOOK topic-slug ship]         any crew member could act on this
+```
+
+Widen an entry when you can name who else needs it and why. Keep it private
+when you are still forming the thought, tracking something only you are
+watching, or thinking out loud — that is what a notebook is for, and an entry
+kept private is doing its job, not hiding.
+
+Note the difference from `publish_finding`: that tool records a worked-out
+conclusion into the shared commons and reaches the whole ship by default. A
+notebook is where you think; a published finding is what you concluded. Reach
+for the notebook while the work is in progress and for `publish_finding` when
+another crew member could act on the result.
 
 **Send a direct message** — private communication with a crewmate:
 ```

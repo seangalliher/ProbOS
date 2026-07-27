@@ -188,7 +188,55 @@ _TOOL_DESCRIPTION: str = (
     "Authorship, department, timestamps and the claim identity are stamped by "
     "the ship. Publish a durable, reusable conclusion — a restatement of the "
     "task, or a step-by-step narration of what you just did, belongs in your "
-    "answer instead."
+    "answer instead. A finding reaches the whole ship by default; narrow its "
+    "classification only when that finding genuinely calls for it."
+)
+
+# AD-1140/DD-10: the scope-selection rule, carried on the parameter itself.
+#
+# ``input_schema`` is handed to the provider verbatim as the ``parameters``
+# block (``swe_harness.tool_call.tool_registration_to_llm_definition``), so a
+# parameter description is read by the model at the moment it fills the call
+# in. That is the only surface guaranteed to be present at the point of
+# decision: standing orders are composed per agent and a manual has to be
+# *retrieved*, which makes policy compliance depend on a retrieval hit.
+#
+# Two properties are load-bearing:
+#
+# 1. **The burden of proof runs toward narrowing, not broadening.** A commons
+#    that defaults to a private scope is a commons in name only, and the cost
+#    of the mistake is asymmetric — a finding filed too wide is noise a reader
+#    skips, while a finding filed too narrow is invisible to the crew member
+#    who needed it and stays invisible forever. So each narrower value states
+#    the *test* that admits it rather than describing the audience, because an
+#    audience description invites an agent to reason about who might care
+#    (unbounded, unfalsifiable) instead of whether a stated condition holds.
+#
+# 2. **Uncertainty is routed to ``confidence``, explicitly.** The two fields
+#    are orthogonal — one is how strongly the claim is held, the other is who
+#    retrieves it — but they collapse under an agent that feels unsure and
+#    reaches for the nearest instrument of caution. Left unstated, the reliable
+#    failure is a well-founded tentative finding filed ``private``, where the
+#    calibration signal it carries is worth the most and reaches nobody.
+#
+# Module-level by construction: the DD-2 gap-regex sweep in the AD-1140 tests
+# collects module-level ``str`` values, so text left inline in the schema
+# property would sit outside that guard.
+_CLASSIFICATION_GUIDANCE: str = (
+    "Who should reach this finding. Default to 'ship'; choose a narrower "
+    "scope only when one of these tests actually holds, because a finding "
+    "filed narrow is one the rest of the crew never sees. "
+    "'ship' — any crew member could act on it, or read it without your "
+    "department's context; when the choice is unclear, this is the answer. "
+    "'department' — reading it correctly depends on department-specific "
+    "context, instruments or duty, such that another department would misread "
+    "it; choose this for that reason, never merely because the finding arose "
+    "from your own duty. "
+    "'private' — a working note you are still forming, rather than a finding "
+    "another crew member should build on. "
+    "'fleet' — it concerns other vessels rather than this one. "
+    "Carry uncertainty in 'confidence', never by narrowing the scope: a "
+    "tentative finding belongs at ship scope with a low confidence."
 )
 
 
@@ -324,10 +372,7 @@ class PublishFindingTool:
                     "type": "string",
                     "enum": ["private", "department", "ship", "fleet"],
                     "default": _DEFAULT_CLASSIFICATION,
-                    "description": (
-                        "Who should reach this. 'ship' is the default and the "
-                        "widest scope this vessel retrieves today."
-                    ),
+                    "description": _CLASSIFICATION_GUIDANCE,
                 },
                 "tags": {
                     "type": "array",
