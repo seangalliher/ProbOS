@@ -6292,6 +6292,57 @@ class ApprovalInboxConfig(BaseModel):  # AD-1154
             "timeout would make walking away the approval mechanism."
         ),
     )
+    # AD-1159: work permits. Sited here rather than on agentic_tools because
+    # this model already holds the ship's TTL-bounded tool-governance settings
+    # (the AD-1154 standing-rule ceiling/default pair), and a permit is the same
+    # class of thing one layer up: an expiring authority over an act. The
+    # standing-rule fields' prefix convention is reused verbatim. Nothing reads
+    # these three in AD-1159 — WorkPermitStore is constructed by tests only, and
+    # AD-1160 is what wires it — so all three are inert on shipped defaults.
+    work_permits_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1159: issue single-holder, expiring work permits over a "
+            "workstation within a crew session, so at most one agent holds "
+            "(session_id, workstation_id) at a time and its hazard ceiling is "
+            "explicit rather than implied. A permit's issuing authority must "
+            "differ from its holder — the officer who authorizes never performs "
+            "— and every permit carries a mandatory expiry (expires_at is NOT "
+            "NULL in the work_permits schema). Off by default; off means the "
+            "dispatch path is byte-identical to AD-1158. Nothing consumes the "
+            "store in AD-1159: it lands with tests and no callers so its first "
+            "exercise is not in production. AD-1160 wires it."
+        ),
+    )
+    work_permit_default_ttl_seconds: float = Field(
+        default=3600.0,
+        gt=0.0,
+        le=86400.0,
+        description=(
+            "AD-1159: lifetime applied to a work permit whose issuer names no "
+            "duration. One hour, deliberately short: a permit is authority to "
+            "act on a live workstation, and the cost of an expiry that is too "
+            "short is a reissue, while the cost of one that is too long is an "
+            "authority nobody remembers granting. Expiry is lazy — a lapsed "
+            "permit answers as absent on the next read rather than being reaped "
+            "— so a stale row is inert, not active."
+        ),
+    )
+    work_permit_max_tier_ceiling: int = Field(
+        default=2,
+        ge=1,
+        le=3,
+        description=(
+            "AD-1159: highest classify_action hazard tier a work permit may "
+            "authorize by default. 2 covers observation plus ordinary "
+            "click/type/goto; tier 3 (eval_js, upload_file, fill_credential, "
+            "checkout and payment paths) is excluded so reaching it needs an "
+            "explicit Captain-issued permit rather than an inherited default. "
+            "Bounded 1-3 because that is the whole tier ladder classify_action "
+            "returns; a ceiling outside it is unrepresentable rather than "
+            "merely discouraged."
+        ),
+    )
 
 
 class DmMeshSynthesisConfig(BaseModel):  # BF-629
