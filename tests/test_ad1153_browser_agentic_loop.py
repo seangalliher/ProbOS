@@ -47,7 +47,12 @@ from probos.types import LLMResponse
 from tests.test_ad706_browser_tool import _FakePage, _make_session_factory
 
 _ALL_SIX = ("goto", "state", "extract_text", "back", "forward", "wait")
-_EXCLUDED_FIVE = ("click", "type", "scroll", "screenshot", "verify")
+# The complement of ``_BROWSER_LOOP_ACTIONS`` within ``BrowserTool``'s own
+# action enum. Named without a count (AD-1160 added ``key_type``, and the
+# previous ``_EXCLUDED_FIVE`` would have had to be renamed with every such
+# addition — the same stale-count drift BF-690 filed against the tool
+# description).
+_EXCLUDED_ACTIONS = ("click", "type", "key_type", "scroll", "screenshot", "verify")
 
 
 # -- Harness --------------------------------------------------------------
@@ -286,7 +291,7 @@ async def test_each_offered_action_reaches_the_tool(action: str) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", _EXCLUDED_FIVE)
+@pytest.mark.parametrize("action", _EXCLUDED_ACTIONS)
 async def test_each_mutating_action_is_refused_before_the_tool(action: str) -> None:
     executor, tool, page = await _armed_executor()
     try:
@@ -824,7 +829,7 @@ def test_the_allowlist_is_a_subset_of_the_tools_own_action_enum() -> None:
     enum = set(tool.input_schema["properties"]["action"]["enum"])
     assert _BROWSER_LOOP_ACTIONS <= enum
     assert _BROWSER_LOOP_ACTIONS == frozenset(_ALL_SIX)
-    assert enum - _BROWSER_LOOP_ACTIONS == set(_EXCLUDED_FIVE)
+    assert enum - _BROWSER_LOOP_ACTIONS == set(_EXCLUDED_ACTIONS)
 
 
 # -- HEADLINE -------------------------------------------------------------

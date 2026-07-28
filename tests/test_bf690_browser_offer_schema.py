@@ -39,7 +39,7 @@ from probos.types import LLMResponse
 
 from tests.test_ad1153_browser_agentic_loop import (
     _ALL_SIX,
-    _EXCLUDED_FIVE,
+    _EXCLUDED_ACTIONS,
     _agentic_runtime,
     _make_browser_tool,
     _registry_with_browser,
@@ -156,7 +156,7 @@ async def test_no_refused_action_is_advertised_to_a_restricted_agent() -> None:
     """The five the guard refuses must not appear in the offer at all."""
     definition = await _offered_browser_definition()
     assert definition is not None
-    assert not set(_enum_of(definition)) & set(_EXCLUDED_FIVE)
+    assert not set(_enum_of(definition)) & set(_EXCLUDED_ACTIONS)
 
 
 @pytest.mark.asyncio
@@ -305,7 +305,7 @@ def test_the_refusal_string_still_lists_exactly_the_permitted_actions() -> None:
     refusal text drifting out of sync with it."""
     for action in _BROWSER_LOOP_ACTIONS:
         assert action in _BROWSER_READ_ONLY_REFUSAL
-    for action in _EXCLUDED_FIVE:
+    for action in _EXCLUDED_ACTIONS:
         assert action not in _BROWSER_READ_ONLY_REFUSAL
 
 

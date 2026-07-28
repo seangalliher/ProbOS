@@ -14,6 +14,8 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from probos.tools.browser.session import _FORWARD_TEXT_MAX  # noqa: SLF001 — same package
+
 if TYPE_CHECKING:
     from probos.tools.browser.session import BrowserSession
 
@@ -32,6 +34,13 @@ _DOWNLOAD_TIER_3_SUFFIXES: tuple[str, ...] = (".exe", ".dll", ".dmg", ".msi")
 
 # AD-706e: eval_js script length cap (chars). Captain-supervised escape hatch.
 _EVAL_JS_MAX_SCRIPT_LEN: int = 4096
+
+# AD-1160: ceiling on ``key_type``'s inter-keystroke delay (ms). Playwright's
+# ``keyboard.type(delay=...)`` sleeps between every character, so the wall time
+# is delay x len(text); at the ``_FORWARD_TEXT_MAX`` bound 250 ms already means
+# ~17 minutes of a held event loop. Anything above this is a malformed value,
+# not a slow-typing preference.
+_KEY_TYPE_MAX_DELAY_MS: int = 250
 
 _TIER_3_PATH_TOKENS: tuple[str, ...] = (
     "checkout", "payment", "transfer", "subscribe", "signup", "register",
@@ -391,6 +400,87 @@ async def _action_key_combo(session: BrowserSession, params: dict[str, Any]) -> 
     return {"session_id": session.session_id, "combo": combo}
 
 
+def _resolve_key_type_delay(raw: Any) -> int | None:
+    """AD-1160: validate ``key_type``'s ``delay_ms``. ``None`` means no delay.
+
+    Log-and-degrade rather than raise: the delay only tunes typing cadence, so
+    a malformed value should still land the keystrokes — refusing the whole
+    action over it would be the less honest outcome. ``bool`` is rejected
+    explicitly because ``isinstance(True, int)`` is ``True`` in Python, and
+    ``delay=True`` would reach Playwright as a silent 1 ms delay.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        logger.warning(
+            "AD-1160: key_type 'delay_ms' must be an int, got %r (%s); typing "
+            "with no inter-key delay. A canvas app may drop keystrokes typed "
+            "at full speed — re-issue with an int delay_ms if text is lost.",
+            raw, type(raw).__name__,
+        )
+        return None
+    if raw < 0 or raw > _KEY_TYPE_MAX_DELAY_MS:
+        logger.warning(
+            "AD-1160: key_type 'delay_ms'=%d is outside 0..%d; typing with no "
+            "inter-key delay. A delay above the ceiling would hold the event "
+            "loop for delay x len(text) — minutes on a long string.",
+            raw, _KEY_TYPE_MAX_DELAY_MS,
+        )
+        return None
+    if raw == 0:
+        return None
+    return raw
+
+
+async def _action_key_type(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
+    """AD-1160: type free text at the current keyboard focus. No selector.
+
+    This is the only typing path that reaches a canvas-rendered app. Word
+    Online draws its document into ``<div id="WACViewPanel">``: there is no
+    ``contenteditable`` and no input element, so ``_action_type``'s
+    ``page.fill(selector, text)`` has nothing to target. Mirrors the
+    ``kind == "type"`` branch of :meth:`BrowserSession.forward_input`, which is
+    the AD-1052c *human* path through the same Playwright primitive.
+
+    ``delay_ms`` is load-bearing for such apps — they drop keystrokes typed
+    with no inter-key delay — but is validated and bounded by
+    :func:`_resolve_key_type_delay`.
+    """
+    page = session.page
+    if page is None:
+        raise RuntimeError("browser session is not started")
+    text = params.get("text")
+    if text is None:
+        raise ValueError("key_type requires 'text'")
+    if not isinstance(text, str):
+        raise ValueError("'text' must be string")
+    keyboard = getattr(page, "keyboard", None)
+    if keyboard is None:
+        raise RuntimeError("page has no keyboard handle")
+    truncated = len(text) > _FORWARD_TEXT_MAX
+    if truncated:
+        logger.warning(
+            "AD-1160: key_type text is %d chars, over the %d-char bound; "
+            "typing the leading %d only. The result reports truncated=True — "
+            "re-issue key_type with the remainder to finish the string.",
+            len(text), _FORWARD_TEXT_MAX, _FORWARD_TEXT_MAX,
+        )
+        text = text[:_FORWARD_TEXT_MAX]
+    delay_ms = _resolve_key_type_delay(params.get("delay_ms"))
+    if delay_ms is None:
+        await keyboard.type(text)
+    else:
+        await keyboard.type(text, delay=delay_ms)
+    result: dict[str, Any] = {
+        "session_id": session.session_id,
+        "url": session.last_url,
+        "typed": len(text),
+    }
+    if truncated:
+        result["truncated"] = True
+    return result
+
+
 async def _action_mouse_move(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
     """Move the mouse cursor to (x, y) without clicking. Silent observation."""
     page = session.page
@@ -426,7 +516,14 @@ async def _action_mouse_button(session: BrowserSession, params: dict[str, Any]) 
     elif action == "up":
         await mouse.up(button=button)
     else:
-        await mouse.click(0, 0, button=button) if not hasattr(mouse, "click_button") else await mouse.click_button(button)
+        # BF-693: this used to be ``mouse.click(0, 0, ...)`` behind a
+        # ``hasattr(mouse, "click_button")`` guard. Playwright's ``Mouse`` has
+        # no such method, so the guard never fired and every click landed at
+        # viewport (0, 0) instead of the current cursor position the docstring
+        # promises — a mouse_move followed by a click hit the top-left corner.
+        # down+up is the correct coordinate-free idiom and needs no state.
+        await mouse.down(button=button)
+        await mouse.up(button=button)
     return {"session_id": session.session_id, "button": button, "action": action}
 
 
@@ -794,6 +891,11 @@ _HANDLERS["eval_js"] = _action_eval_js
 from probos.tools.browser.credentials import action_fill_credential  # noqa: E402
 _HANDLERS["fill_credential"] = action_fill_credential
 
+# AD-1160: focus-scoped typing. Registered here rather than in the literal
+# above so the AD-706 block stays byte-identical, matching the AD-706e/706f
+# late-bind convention.
+_HANDLERS["key_type"] = _action_key_type
+
 
 def classify_action(
     session: BrowserSession,
@@ -804,12 +906,12 @@ def classify_action(
 
     * Tier 1 (silent): ``state``, ``screenshot``, ``wait``, ``extract_text``,
       ``scroll``, ``back``, ``forward`` — observation only.
-    * Tier 2 (logged-and-proceed): ``goto``, ``click``, ``type`` against
-      ordinary domains.
-    * Tier 3 (Captain ACK required): ``click`` or ``type`` when host matches
-      ``BrowserToolConfig.tier_3_domain_patterns``, OR URL path contains
-      checkout/payment/transfer/subscribe/signup/register, OR the clicked
-      element's text matches the tier-3 text regex.
+    * Tier 2 (logged-and-proceed): ``goto``, ``click``, ``type``, ``key_type``
+      against ordinary domains.
+    * Tier 3 (Captain ACK required): ``click``, ``type`` or ``key_type`` when
+      host matches ``BrowserToolConfig.tier_3_domain_patterns``, OR URL path
+      contains checkout/payment/transfer/subscribe/signup/register, OR the
+      clicked element's text matches the tier-3 text regex.
     """
     # AD-706c-2: coordinate-aware click is always tier-3 (destructive click
     # at an unverified pixel coordinate). Captain ACK required every call.
@@ -849,7 +951,9 @@ def classify_action(
             return 3
         return 2
     # AD-706e: drag + mouse_button join click/type for the URL/text checks.
-    if action not in {"click", "type", "drag", "mouse_button"}:
+    # AD-1160: key_type mutates page state exactly as ``type`` does, so it
+    # joins the same branch rather than getting a parallel one.
+    if action not in {"click", "type", "key_type", "drag", "mouse_button"}:
         return 2
 
     # Click / type: inspect URL + element text for tier-3 indicators.

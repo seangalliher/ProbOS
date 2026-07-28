@@ -108,8 +108,9 @@ class BrowserTool:
     @property
     def description(self) -> str:
         return (
-            "Drive a Chromium browser. 10-action vocabulary: "
-            "goto, state, click, type, scroll, screenshot, wait, back, forward, extract_text. "
+            "Drive a Chromium browser. 12-action vocabulary: "
+            "goto, state, click, type, key_type, scroll, screenshot, wait, back, "
+            "forward, extract_text, verify. "
             "Use state() to get an indexed list of clickable elements, then click/type by index."
         )
 
@@ -124,7 +125,7 @@ class BrowserTool:
                     "enum": [
                         "goto", "state", "click", "type", "scroll",
                         "screenshot", "wait", "back", "forward", "extract_text",
-                        "verify",
+                        "verify", "key_type",
                     ],
                 },
                 "session_id": {"type": "string", "description": "Reuse an existing session, or omit to create a fresh one."},
@@ -132,6 +133,7 @@ class BrowserTool:
                 "index": {"type": "integer"},
                 "selector": {"type": "string"},
                 "text": {"type": "string"},
+                "delay_ms": {"type": "integer", "description": "AD-1160: 'key_type' action — milliseconds between keystrokes (0-250). Omit for none. Canvas apps such as Word Online drop text typed at full speed."},
                 "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
                 "amount": {"type": "integer"},
                 "milliseconds": {"type": "integer"},
