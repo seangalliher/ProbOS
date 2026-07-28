@@ -102,7 +102,9 @@ describe('AD-1052a BrowserWorkstation watch mode', () => {
     fireEvent.click(screen.getByTestId('browser-mode-watch'));
     expect((screen.getByTestId('browser-mode-watch') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
     await screen.findByTestId('browser-watch-empty');
-    expect(fetchSessions).toHaveBeenCalledTimes(1);
+    // AD-1161 added a mount probe that reuses this same fetch to pick the
+    // default mode, so watch-enter is the SECOND call, not the first.
+    expect(fetchSessions).toHaveBeenCalledTimes(2);
   });
 
   it('renders the session list and selecting one mounts the stream <img> with NO token (DD-1)', async () => {
@@ -161,9 +163,12 @@ describe('AD-1052a BrowserWorkstation watch mode', () => {
     render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />);
     fireEvent.click(screen.getByTestId('browser-mode-watch'));
     await screen.findByTestId('browser-watch-empty');
-    expect(fetchSessions).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByTestId('browser-watch-refresh'));
+    // AD-1161 mount probe + watch-enter = 2; the point of this test is that
+    // nothing FURTHER fetches until the Captain clicks Refresh.
     await waitFor(() => expect(fetchSessions).toHaveBeenCalledTimes(2));
+    const settled = fetchSessions.mock.calls.length;
+    fireEvent.click(screen.getByTestId('browser-watch-refresh'));
+    await waitFor(() => expect(fetchSessions).toHaveBeenCalledTimes(settled + 1));
   });
 
   it('the watch surface uses no emoji (HXI #3) and exposes its data-testids', async () => {
@@ -310,6 +315,153 @@ describe('AD-1052c BrowserWorkstation drive toggle', () => {
     fireEvent.click(screen.getByTestId('browser-mode-watch'));
     await screen.findByTestId('browser-watch-empty');
     expect(screen.getByTestId('browser-watch-drive')).toBeTruthy();
+    expect(EMOJI.test(container.textContent ?? '')).toBe(false);
+  });
+});
+
+type _Open = {
+  opened: boolean;
+  reason?: string | null;
+  session_id?: string | null;
+  streaming_url?: string | null;
+  url?: string | null;
+  page_title?: string | null;
+};
+
+/** AD-1161: the Captain opens the browser, signs in by hand, and only then hands
+ *  the session to an agent. Before this, nothing CREATED a session. */
+describe('AD-1161 BrowserWorkstation Captain-opened session', () => {
+  const _row = (id: string) => ({
+    session_id: id, agent_id: 'captain',
+    streaming_url: `/api/browser/sessions/${id}/stream`, last_url: 'https://x.test',
+  });
+
+  it('defaults to watch mode when the backend reports the tool enabled', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({ enabled: true, sessions: [] }));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />);
+    await waitFor(() =>
+      expect((screen.getByTestId('browser-mode-watch') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true'),
+    );
+    expect((screen.getByTestId('browser-mode-embedded') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('false');
+    // The X-Frame-Options iframe is NOT what the Captain lands on.
+    expect(screen.queryByTestId('browser-frame')).toBeNull();
+  });
+
+  it('stays on embedded mode when the backend reports the tool disabled', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({ enabled: false, sessions: [] }));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />);
+    await waitFor(() => expect(fetchSessions).toHaveBeenCalled());
+    expect((screen.getByTestId('browser-mode-embedded') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('browser-empty')).toBeTruthy();
+  });
+
+  it('stays on embedded mode when the sessions probe rejects (honest-degrade)', async () => {
+    const fetchSessions = vi.fn(() => Promise.reject(new Error('boom')));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />);
+    await waitFor(() => expect(fetchSessions).toHaveBeenCalled());
+    expect((screen.getByTestId('browser-mode-embedded') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('Open posts the normalized URL and auto-selects the returned session', async () => {
+    let opened = false;
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({
+      enabled: true, sessions: opened ? [_row('s7')] : [],
+    }));
+    const openSession = vi.fn(async (): Promise<_Open> => {
+      opened = true;
+      return { opened: true, session_id: 's7', streaming_url: '/api/browser/sessions/s7/stream', url: 'https://word.test' };
+    });
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} openSession={openSession} />);
+    await screen.findByTestId('browser-watch-open');
+
+    fireEvent.change(screen.getByTestId('browser-watch-open-url'), { target: { value: 'word.test' } });
+    fireEvent.click(screen.getByTestId('browser-watch-open'));
+
+    // Auto-selected: the stream appears with NO second click on the picker row.
+    const img = await screen.findByTestId('browser-stream-panel-img');
+    expect(img.getAttribute('src')).toBe('/api/browser/sessions/s7/stream');
+    expect(openSession).toHaveBeenCalledWith('https://word.test'); // scheme prepended
+    expect(screen.queryByTestId('browser-watch-open-reason')).toBeNull();
+  });
+
+  it('Open is reachable from the empty state (the state it exists to fix)', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({ enabled: true, sessions: [] }));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />);
+    await screen.findByTestId('browser-watch-empty');
+    expect(screen.getByTestId('browser-watch-open')).toBeTruthy();
+    expect(screen.getByTestId('browser-watch-open-url')).toBeTruthy();
+  });
+
+  it('{opened:false} renders the backend reason and selects nothing', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({ enabled: true, sessions: [] }));
+    const openSession = vi.fn(async (): Promise<_Open> => ({
+      opened: false, reason: 'Domain policy denied: in denylist',
+    }));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} openSession={openSession} />);
+    await screen.findByTestId('browser-watch-open');
+
+    fireEvent.change(screen.getByTestId('browser-watch-open-url'), { target: { value: 'https://evil.test' } });
+    fireEvent.click(screen.getByTestId('browser-watch-open'));
+
+    const reason = await screen.findByTestId('browser-watch-open-reason');
+    expect(reason.textContent).toContain('in denylist');
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+    // No spinner left running.
+    expect((screen.getByTestId('browser-watch-open') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('openSession rejecting degrades honestly instead of throwing', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({ enabled: true, sessions: [] }));
+    const openSession = vi.fn(() => Promise.reject(new Error('boom')));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} openSession={openSession} />);
+    await screen.findByTestId('browser-watch-open');
+
+    fireEvent.change(screen.getByTestId('browser-watch-open-url'), { target: { value: 'https://x.test' } });
+    fireEvent.click(screen.getByTestId('browser-watch-open'));
+
+    const reason = await screen.findByTestId('browser-watch-open-reason');
+    expect(reason.textContent).toContain('Could not open');
+    expect((screen.getByTestId('browser-watch-open') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('rejects a dangerous scheme locally without calling openSession', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({ enabled: true, sessions: [] }));
+    const openSession = vi.fn(async (): Promise<_Open> => ({ opened: true, session_id: 's1' }));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} openSession={openSession} />);
+    await screen.findByTestId('browser-watch-open');
+
+    fireEvent.change(screen.getByTestId('browser-watch-open-url'), { target: { value: 'javascript:alert(1)' } });
+    fireEvent.click(screen.getByTestId('browser-watch-open'));
+
+    expect(screen.getByTestId('browser-watch-open-reason').textContent).toContain('http(s)');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('an empty URL degrades locally without calling openSession', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({ enabled: true, sessions: [] }));
+    const openSession = vi.fn(async (): Promise<_Open> => ({ opened: true, session_id: 's1' }));
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} openSession={openSession} />);
+    await screen.findByTestId('browser-watch-open');
+
+    fireEvent.click(screen.getByTestId('browser-watch-open'));
+
+    expect(screen.getByTestId('browser-watch-open-reason')).toBeTruthy();
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('Enter in the URL field opens, and the affordance uses no emoji (HXI #3)', async () => {
+    const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({ enabled: true, sessions: [] }));
+    const openSession = vi.fn(async (): Promise<_Open> => ({ opened: true, session_id: 's3' }));
+    const { container } = render(
+      <BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} openSession={openSession} />,
+    );
+    await screen.findByTestId('browser-watch-open');
+
+    const input = screen.getByTestId('browser-watch-open-url');
+    fireEvent.change(input, { target: { value: 'https://x.test' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(openSession).toHaveBeenCalledWith('https://x.test'));
     expect(EMOJI.test(container.textContent ?? '')).toBe(false);
   });
 });

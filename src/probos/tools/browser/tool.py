@@ -571,6 +571,104 @@ class BrowserTool:
             "streaming_url": session.get_streaming_url(),
         }
 
+    async def _discard_session(self, session_id: str, *, reason: str) -> None:
+        """AD-1161: close and forget one session (no-op when already gone).
+
+        Used when a session was created before the work it was created FOR was
+        refused. Mirrors ``reap_expired``'s close-then-pop-then-emit ordering so
+        a discarded session is indistinguishable from an expired one to any
+        BROWSER_SESSION_CLOSED consumer.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        try:
+            await session.stop()
+        except Exception:
+            logger.debug(
+                "AD-1161: stop of discarded session %s failed; dropping it anyway",
+                session_id,
+                exc_info=True,
+            )
+        self._sessions.pop(session_id, None)
+        self._safe_emit(
+            EventType.BROWSER_SESSION_CLOSED,
+            {"session_id": session_id, "reason": reason},
+        )
+
+    async def open_captain_session(
+        self, url: str, *, agent_id: str = "captain",
+    ) -> dict[str, Any]:
+        """AD-1161: open a fresh browser session at ``url`` for the Captain.
+
+        ``GET /api/browser/sessions`` lists sessions but nothing CREATED one —
+        a session only came into existence when an agent called ``goto``. This
+        is the Captain-initiated counterpart: open the page first, sign in by
+        hand, and only then hand the session to an agent.
+
+        Navigation goes through ``invoke({"action": "goto"})`` rather than a
+        private path, so ``domain_allowlist`` / ``domain_denylist``, the tier
+        classification and the AD-706 audit row all bind here exactly as they
+        do for an agent. Nothing about this entry point is exempt from browser
+        policy; only the *initiator* differs.
+
+        There is deliberately NO ``confirm`` parameter. ``connect_bridge_session``
+        needs one because it attaches to an already-authenticated browser the
+        Captain did not open for this purpose, so the consent is about handing
+        over existing credentials. Opening a fresh session is the Captain acting
+        on their own surface with nothing yet in it — a confirmation there is
+        friction with no matching risk. Do not add one by analogy to the bridge.
+
+        Honest-degrade: returns ``{"opened": False, "reason": ...}`` and never
+        raises. A refused navigation leaves NO live session behind — the session
+        ``invoke`` created before the refusal is discarded before returning.
+        """
+        if not getattr(self._config, "enabled", False):
+            return {"opened": False, "reason": "Browser tool is disabled."}
+        target = url.strip() if isinstance(url, str) else ""
+        if not target:
+            return {"opened": False, "reason": "A URL is required."}
+
+        # ``invoke`` creates the session BEFORE its own try block, so a failure
+        # to launch Chromium (missing binary, sandbox refusal) propagates out of
+        # it. Contain it here: this method's whole contract is that the Captain
+        # gets a reason back, never an exception through the router.
+        try:
+            result = await self.invoke(
+                {"action": "goto", "url": target}, {"agent_id": agent_id},
+            )
+        except Exception as exc:  # noqa: BLE001 - Tier-2 log-and-degrade
+            logger.warning(
+                "AD-1161: opening a Captain session for %s failed before "
+                "navigation: %s; no session was registered",
+                self._sanitize_url(target), exc, exc_info=True,
+            )
+            return {"opened": False, "reason": f"Could not open a browser: {exc}"}
+        session_id = str((result.metadata or {}).get("session_id") or "")
+
+        if result.error is not None:
+            await self._discard_session(session_id, reason="open_failed")
+            return {"opened": False, "reason": result.error}
+
+        output = result.output if isinstance(result.output, dict) else {}
+        # ``goto`` classifies as tier 2 today, so the confirmation gate cannot
+        # fire here. Handle it anyway: ``invoke`` documents this shape as a
+        # non-error, non-navigated return, and reporting opened=True for a page
+        # that was never loaded would be a false success claim if the tier ever
+        # changes. The gate is NOT auto-satisfied — the Captain is told why.
+        if output.get("intervention_required"):
+            await self._discard_session(session_id, reason="open_refused")
+            return {"opened": False, "reason": "Navigation requires confirmation."}
+
+        session = self._sessions.get(session_id)
+        return {
+            "opened": True,
+            "session_id": session_id,
+            "streaming_url": session.get_streaming_url() if session is not None else None,
+            "url": str(output.get("url") or target),
+            "page_title": str(output.get("page_title") or ""),
+        }
+
     async def forward_input(
         self, session_id: str, event: dict[str, Any], *, agent_id: str,
     ) -> dict[str, Any]:

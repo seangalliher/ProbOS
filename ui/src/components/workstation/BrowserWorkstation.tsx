@@ -33,6 +33,12 @@ type BridgeConnectResponse = {
 };
 /** AD-1052c: POST /api/browser/sessions/{id}/input response. */
 type ForwardInputResponse = { forwarded: boolean; reason?: string | null };
+/** AD-1161: POST /api/browser/sessions response. */
+type OpenSessionResponse = {
+  opened: boolean; reason?: string | null;
+  session_id?: string | null; streaming_url?: string | null;
+  url?: string | null; page_title?: string | null;
+};
 type Props = NativeWorkstationProps & {
   /** Injectable for deterministic tests; defaults to the same-origin fetch (no token — DD-1). */
   fetchSessions?: () => Promise<SessionsResponse>;
@@ -40,6 +46,8 @@ type Props = NativeWorkstationProps & {
   connectBridge?: (endpoint: string) => Promise<BridgeConnectResponse>;
   /** AD-1052c: injectable for tests; defaults to the same-origin POST (no token — DD-1). */
   forwardInput?: (sessionId: string, evt: ForwardInputEvent) => Promise<ForwardInputResponse>;
+  /** AD-1161: injectable for tests; defaults to the same-origin POST (no token — DD-1). */
+  openSession?: (url: string) => Promise<OpenSessionResponse>;
 };
 
 /** AD-1052a / DD-1: same-origin fetch with NO token. The HXI calls require_crew_scope
@@ -80,6 +88,20 @@ const _defaultForwardInput = async (
     body: JSON.stringify(body),
   });
   if (!res.ok) return { forwarded: false, reason: `input ${res.status}` };
+  return res.json();
+};
+
+/** AD-1161 / DD-1: same-origin POST with NO token. Opens a browser session ON THE
+ *  CAPTAIN'S BEHALF — the counterpart to a session that only ever existed once an
+ *  agent called goto. Honest-degrades to {opened:false} on a non-2xx so the Open
+ *  button never throws and never strands a spinner. */
+const _defaultOpenSession = async (url: string): Promise<OpenSessionResponse> => {
+  const res = await fetch('/api/browser/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) return { opened: false, reason: `open ${res.status}` };
   return res.json();
 };
 
@@ -171,10 +193,16 @@ const _MODES: { id: BrowserMode; label: string; title?: string; disabled: boolea
   { id: 'bridge', label: 'Bridge', disabled: false },
 ];
 
-export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBridge, forwardInput }: Props): React.ReactElement {
+export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBridge, forwardInput, openSession }: Props): React.ReactElement {
   const _fetchSessions = fetchSessions ?? _defaultFetchSessions;
   const _connectBridge = connectBridge ?? _defaultConnectBridge;
   const _forwardInput = forwardInput ?? _defaultForwardInput;
+  const _openSession = openSession ?? _defaultOpenSession;
+  // AD-1161: `embedded` is an iframe, and every interesting target (Word Online,
+  // OneDrive, most SaaS) sends X-Frame-Options/frame-ancestors and refuses to
+  // render in one. Landing the Captain on a mode that cannot show the thing they
+  // came for is the wrong default, so the mount probe below flips this to
+  // 'watch' whenever the backend reports the browser tool enabled.
   const [mode, setMode] = useState<BrowserMode>('embedded');
   const [urlInput, setUrlInput] = useState<string>('');
   const [committedUrl, setCommittedUrl] = useState<string | null>(null);
@@ -192,12 +220,42 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
   const [inputForwardingEnabled, setInputForwardingEnabled] = useState<boolean>(false);
   const [driveEnabled, setDriveEnabled] = useState<boolean>(false);
 
+  // AD-1161: watch-mode "open a page for me" state. `openState` drives the
+  // button's disabled/label; `openReason` carries the backend honest-degrade
+  // string and renders where bridge mode renders `bridgeReason`.
+  const [openUrlInput, setOpenUrlInput] = useState<string>('');
+  const [openState, setOpenState] = useState<'idle' | 'opening'>('idle');
+  const [openReason, setOpenReason] = useState<string | null>(null);
+
   // AD-1052b: bridge-mode state. The endpoint defaults to the canonical local
   // CDP port; `bridgeState` drives the honest-degrade chain.
   const [bridgeEndpoint, setBridgeEndpoint] = useState<string>(_INITIAL_BRIDGE);
   const [bridgeState, setBridgeState] = useState<'idle' | 'connecting' | 'connected' | 'refused'>('idle');
   const [bridgeReason, setBridgeReason] = useState<string | null>(null);
   const [bridgeSession, setBridgeSession] = useState<{ session_id: string; streaming_url: string | null } | null>(null);
+
+  // AD-1161: resolve the initial mode from the SAME /api/browser/sessions probe
+  // the watch surface already uses (no second endpoint). Mount-only: once the
+  // Captain picks a mode by hand, nothing may move it under them.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await _fetchSessions();
+        if (cancelled) return;
+        setEnabled(data.enabled);
+        setInputForwardingEnabled(data.input_forwarding_enabled ?? false);
+        if (data.enabled) setMode('watch');
+      } catch {
+        // Honest-degrade: no backend answer means no browser tool, so the
+        // iframe-based embedded mode stays the default. Nothing to surface.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (mode !== 'watch') return;
@@ -233,6 +291,45 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
     }
     setUrlError(null);
     setCommittedUrl(normalized);
+  };
+
+  // AD-1161: the Captain's "open a page for me" gesture. Nothing else CREATES a
+  // session — before this, one existed only once an agent called goto. On
+  // opened:true refresh the picker and auto-select the new session so the
+  // stream appears without a second click; else surface the backend reason.
+  const onOpen = (): void => {
+    const normalized = _normalizeUrl(openUrlInput);
+    if (normalized === null) {
+      setOpenReason('Only http(s) URLs are supported.');
+      return;
+    }
+    setOpenState('opening');
+    setOpenReason(null);
+    _openSession(normalized)
+      .then((res) => {
+        if (!res.opened) {
+          setOpenReason(res.reason ?? 'Could not open that URL.');
+          return;
+        }
+        const sid = res.session_id ?? '';
+        if (sid) setSelectedId(sid);
+        // A refresh failure must NOT be reported as an open failure — the
+        // session is open either way; the list just stays stale until Refresh.
+        return _fetchSessions()
+          .then((data) => {
+            setSessions(data.sessions);
+            setEnabled(data.enabled);
+            setInputForwardingEnabled(data.input_forwarding_enabled ?? false);
+            setSessionsState('ready');
+          })
+          .catch(() => undefined);
+      })
+      .catch(() => {
+        setOpenReason('Could not open that URL.');
+      })
+      .finally(() => {
+        setOpenState('idle');
+      });
   };
 
   // AD-1052b: the Captain's explicit Connect gesture. `_connectBridge` sends
@@ -287,6 +384,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
   // AD-1052a: the watch surface — a privacy note + Refresh, then the honest-degrade
   // chain (loading -> unavailable -> disabled -> empty -> session list + live MJPEG).
   const renderWatch = (): React.ReactElement => {
+    const opening = openState === 'opening';
     const body = ((): React.ReactElement => {
       if (sessionsState === 'loading' || sessionsState === 'idle') {
         return (
@@ -374,6 +472,37 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
           </button>
           {renderDriveToggle()}
         </div>
+        {/* AD-1161: the Captain opens the page, signs in by hand, and only then
+            hands the session to an agent. Lives in the header (not the body) so
+            it is reachable from the empty state — the state it exists to fix. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          <IconGlobe color={opening ? _AMBER : _DIM} />
+          <input
+            data-testid="browser-watch-open-url"
+            type="text"
+            value={openUrlInput}
+            onChange={(e) => setOpenUrlInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !opening) onOpen(); }}
+            placeholder="Open a page (https://…)"
+            aria-label="URL to open"
+            style={{ flex: 1, minWidth: 140, padding: '4px 8px', border: '1px solid #33334a', borderRadius: 4, background: 'transparent', color: _TEXT, fontSize: 12 }}
+          />
+          <button
+            data-testid="browser-watch-open"
+            onClick={onOpen}
+            disabled={opening}
+            aria-label="Open a browser session"
+            title="Open a browser session you can sign into, then hand to an agent"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', border: '1px solid #33334a', borderRadius: 4, background: 'transparent', color: opening ? _DIM : _AMBER, cursor: opening ? 'not-allowed' : 'pointer', fontSize: 11 }}
+          >
+            <IconGo color={opening ? _DIM : _AMBER} />{opening ? 'Opening…' : 'Open'}
+          </button>
+        </div>
+        {openReason !== null && (
+          <div data-testid="browser-watch-open-reason" style={{ padding: '6px 12px', color: _DIM, fontSize: 12, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            {openReason}
+          </div>
+        )}
         {body}
       </div>
     );

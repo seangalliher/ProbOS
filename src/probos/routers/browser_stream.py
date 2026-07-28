@@ -156,6 +156,28 @@ class BridgeConnectRequest(BaseModel):
     confirm: bool = False
 
 
+class OpenSessionRequest(BaseModel):
+    """AD-1161: body for POST /api/browser/sessions."""
+    url: str
+
+
+@router.post("/sessions", dependencies=[Depends(require_crew_scope)])
+async def open_browser_session(
+    body: OpenSessionRequest, runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1161: open a browser session on the Captain's behalf.
+
+    Honest-degrade: returns {"opened": False, "reason": "Browser tool is
+    disabled."} when the tool is off (runtime.browser_tool unset). All policy
+    (enabled / domain allow-denylist / tier) lives in BrowserTool — this is a
+    thin adapter. Same require_crew_scope posture as the sessions list it feeds.
+    """
+    browser_tool = getattr(runtime, "browser_tool", None)
+    if browser_tool is None:
+        return {"opened": False, "reason": "Browser tool is disabled."}
+    return await browser_tool.open_captain_session(body.url)
+
+
 @router.post("/bridge/connect", dependencies=[Depends(require_crew_scope)])
 async def connect_browser_bridge(
     body: BridgeConnectRequest, runtime: Any = Depends(get_runtime),
