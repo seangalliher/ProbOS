@@ -226,6 +226,27 @@ class BrowserTool:
         agent_id = (context or {}).get("agent_id", "")
         session_id_param = params.get("session_id")
 
+        # AD-1158: a workstation-bound invocation targets the session the
+        # Captain is already watching. The binding lives in ``context`` (which
+        # the runtime owns) rather than in the agent's prompt, because a
+        # prompt-supplied id is guidance: the agent may use it, ignore it, or
+        # invent one, and any of those silently opens a session the Captain
+        # cannot see. AD-1157 and BF-688 were both this same defect — a
+        # mechanism that existed but was never wired to the caller.
+        #
+        # An explicit ``session_id`` in ``params`` still wins: the agent may be
+        # working several sessions and naming one is a deliberate act. The
+        # binding only supplies the default the agent would otherwise leave
+        # empty, which is exactly the case that creates a fresh hidden session.
+        if not session_id_param:
+            bound = (context or {}).get("browser_session_id")
+            if isinstance(bound, str) and bound:
+                session_id_param = bound
+                logger.debug(
+                    "AD-1158: binding browser call to workstation session %s "
+                    "for agent %s", bound[:12], agent_id or "<unknown>",
+                )
+
         if action not in {
             "goto", "state", "click", "type", "scroll",
             "screenshot", "wait", "back", "forward", "extract_text",
