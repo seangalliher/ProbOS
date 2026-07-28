@@ -441,6 +441,89 @@ def _extract_artifact_refs(
     return refs, ignored
 
 
+def _browser_read_only_description(actions: list[str]) -> str:
+    """BF-690: the offer description for a read-only browser, built from ``actions``.
+
+    Generated rather than written out so it cannot drift from the enum it
+    accompanies. Phrased in the same voice as ``_BROWSER_READ_ONLY_REFUSAL`` and
+    checked against the real ``_CAPABILITY_GAP_RE`` by
+    tests/test_bf690_browser_offer_schema.py — the shipped tool description ends
+    "then click/type by index", which would instruct a read-only agent to use
+    the two actions the guard refuses.
+    """
+    return (
+        "Read a Chromium browser session. This session is offered in read-only "
+        f"mode, with these actions: {', '.join(actions)}. Use state() for an "
+        "indexed view of the page. To act on the page itself, hand that step to "
+        "the Captain."
+    )
+
+
+def _narrow_browser_offer(
+    definition: dict[str, Any], actions: frozenset[str]
+) -> dict[str, Any]:
+    """BF-690: narrow an offered ``browser`` definition to ``actions``.
+
+    AD-1153 armed a read-only guard inside :meth:`DispatchToolExecutor.invoke`
+    but left the offer untouched, so the agent was shown all eleven actions and
+    then refused five of them by a rule it was never told. Worse, the shipped
+    description names ``click``/``type`` explicitly. This narrows both the
+    advertised enum and the description, so the offer and the enforcement derive
+    from one decision instead of two that can disagree.
+
+    Returns a NEW definition; the caller's dict and ``BrowserTool.input_schema``
+    are left unmodified. The enum is the INTERSECTION of the schema's declared
+    actions with ``actions``, in schema order — fail-safe in the same direction
+    as ``_BROWSER_LOOP_ACTIONS`` itself (AD-1153/DD-1), so an action named in the
+    restriction but absent from the schema is never advertised.
+
+    Log-and-degrade: an unexpected schema shape or an empty intersection returns
+    the definition unchanged. The invoke-time guard still refuses every
+    non-member, so that path is AD-1153 behaviour, not an authority hole.
+    """
+    fn = definition.get("function")
+    params = fn.get("parameters") if isinstance(fn, dict) else None
+    properties = params.get("properties") if isinstance(params, dict) else None
+    action_spec = (
+        properties.get("action") if isinstance(properties, dict) else None
+    )
+    declared = (
+        action_spec.get("enum") if isinstance(action_spec, dict) else None
+    )
+    if not isinstance(declared, list):
+        logger.warning(
+            "BF-690: browser offer has no action enum to narrow (shape %s); "
+            "offering the schema verbatim. The agent may attempt actions the "
+            "AD-1153 guard will refuse at invoke time.",
+            type(declared).__name__,
+        )
+        return definition
+
+    narrowed = [a for a in declared if a in actions]
+    if not narrowed:
+        logger.warning(
+            "BF-690: the armed browser restriction %s shares no action with the "
+            "tool schema %s; offering the schema verbatim. The guard still "
+            "refuses every action, so the browser is effectively unusable in "
+            "this loop — the two action sets have drifted apart.",
+            sorted(actions), declared,
+        )
+        return definition
+
+    narrowed_action = dict(action_spec)
+    narrowed_action["enum"] = narrowed
+    narrowed_properties = dict(properties)
+    narrowed_properties["action"] = narrowed_action
+    narrowed_params = dict(params)
+    narrowed_params["properties"] = narrowed_properties
+    narrowed_fn = dict(fn)
+    narrowed_fn["parameters"] = narrowed_params
+    narrowed_fn["description"] = _browser_read_only_description(narrowed)
+    narrowed_definition = dict(definition)
+    narrowed_definition["function"] = narrowed_fn
+    return narrowed_definition
+
+
 class DispatchToolExecutor(ToolExecutor):
     """ToolExecutor that records permission-denied tool ids (AD-856).
 
@@ -1674,7 +1757,13 @@ class WorkItemAgenticExecutor:
         # ``_GATED_TOOL_IDS`` — it carries no ``allowed_departments``, so the
         # gate would have nothing to protect and would only remove the Captain's
         # escape hatch for probationary agents).
+        # BF-690: one decision, two consequences. The condition that arms the
+        # invoke-time guard also narrows the schema the agent is offered, so the
+        # advertised action set and the permitted action set cannot disagree.
+        # ``None`` = unarmed = the offer is passed through verbatim.
+        restricted_browser_actions: frozenset[str] | None = None
         if browser_ids and "browser" not in granted_ids:
+            restricted_browser_actions = _BROWSER_LOOP_ACTIONS
             executor.restrict_browser_actions(_BROWSER_LOOP_ACTIONS)
 
         # AD-1154: arm the approval inbox on the same seam. Default-OFF via
@@ -1713,7 +1802,14 @@ class WorkItemAgenticExecutor:
                 reg = registry.get(tid)
                 if reg is None:
                     continue
-                tools.append(tool_registration_to_llm_definition(reg))
+                definition = tool_registration_to_llm_definition(reg)
+                # BF-690: only the restricted browser offer is rewritten; every
+                # other tool, and an unarmed browser, is byte-identical.
+                if tid == "browser" and restricted_browser_actions is not None:
+                    definition = _narrow_browser_offer(
+                        definition, restricted_browser_actions
+                    )
+                tools.append(definition)
 
         # AD-1065: the conversational chat path passes a lower iteration cap +
         # a faster tier than the task-path defaults (25 / deep). When both are
