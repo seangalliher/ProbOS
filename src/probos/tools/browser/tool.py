@@ -602,6 +602,44 @@ class BrowserTool:
             {"session_id": session_id, "reason": reason},
         )
 
+    @property
+    def captain_session_id(self) -> str | None:
+        """AD-1162: the live session the Captain opened, for ambient binding.
+
+        AD-1158 taught ``invoke`` to read ``context["browser_session_id"]`` so an
+        agent acts on the session the Captain is watching rather than spawning a
+        fresh, signed-out browser. Nothing ever *supplied* that key outside
+        tests, so the mechanism was inert and every agent call created a new
+        session — the "built, tested, and never wired to a producer" shape that
+        also produced AD-1157, BF-688, BF-690, BF-692 and BF-695. This is the
+        producer.
+
+        Reads the public :meth:`list_sessions` rather than ``self._sessions`` so
+        the ownership rule stays expressed in one place. ``agent_id == "captain"``
+        is set by :meth:`open_captain_session` (AD-1161); agent-opened sessions
+        carry the agent's own id and are deliberately NOT bindable this way —
+        an agent should not silently inherit another agent's browser.
+
+        Returns ``None`` when the Captain has no live session, which is the
+        honest answer: the agent then creates its own, exactly as before.
+        """
+        captain_rows = [
+            row for row in self.list_sessions()
+            if row.get("agent_id") == "captain"
+        ]
+        if not captain_rows:
+            return None
+        if len(captain_rows) > 1:
+            logger.warning(
+                "AD-1162: the Captain has %d live browser sessions; binding the "
+                "agent to the most recent (%s). Close the older ones to remove "
+                "the ambiguity — the agent acts on one browser, not all of them.",
+                len(captain_rows),
+                str(captain_rows[-1].get("session_id"))[:12],
+            )
+        session_id = captain_rows[-1].get("session_id")
+        return session_id if isinstance(session_id, str) and session_id else None
+
     async def open_captain_session(
         self, url: str, *, agent_id: str = "captain",
     ) -> dict[str, Any]:

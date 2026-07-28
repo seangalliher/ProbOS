@@ -16,6 +16,22 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 >
 > **The forcing question is: name the real caller. Not the test — the production path.** Four of these seven die on it immediately. The rest need: does the double implement something the real object does not, and has this path ever executed on a live runtime? A unit test of a mechanism structurally cannot see this class of bug.
 
+### AD-1162 (2026-07-28) - the producer for the session binding AD-1158 reads
+
+AD-1158 taught `BrowserTool.invoke` to read `context["browser_session_id"]` so an agent acts on the session the Captain is watching rather than spawning a fresh, signed-out browser. **Nothing outside tests ever supplied that key.** The mechanism was inert: every agent browser call created a new session while the Captain watched a different one, and the demo it was built for would have silently typed into an invisible browser.
+
+This is the same defect this era's preamble names — and it is the most instructive instance, because AD-1158's own test suite passed while the feature did nothing. Those tests construct the context dict themselves and assert `invoke` reads it. That proves the *reader*. It cannot prove a *producer* exists, and no amount of strengthening it would have. A test that supplies the very input it is meant to verify arrives from elsewhere is structurally incapable of detecting that nothing sends it.
+
+`BrowserTool.captain_session_id` is the producer, and `WorkItemAgenticExecutor.run` supplies it into the loop context. Three decisions worth keeping:
+
+**Only Captain-owned sessions bind.** `agent_id == "captain"` is set by `open_captain_session` (AD-1161); agent-opened sessions carry the agent's own id and are deliberately not bindable this way. An agent silently inheriting *another agent's* browser is a capability leak, not a convenience.
+
+**It reads the public `list_sessions()`, not `self._sessions`.** The ownership rule then lives in exactly one place, and the property cannot drift from what the sessions API reports.
+
+**Every failure direction degrades to `None`** — no browser tool, an older build without the property, a raising property. `None` restores AD-1158's behaviour exactly: the agent creates its own session. An ambient convenience must never be able to fail a run that would otherwise succeed.
+
+Multiple live Captain sessions bind the most recent and warn, naming the count. Ambiguity there is real (the agent acts on one browser, not all of them) and silently picking is worse than saying so.
+
 ### BF-696 (2026-07-28) - a concurrent subscribe during the dispatch-consumer drain killed the boot
 
 `IntentBus.create_dispatch_consumers` iterated `self._subscribers.items()` while awaiting `_js_subscribe_agent_dispatch` **inside** the loop. Every await yields to the event loop, so a concurrent `subscribe()` mutated the dict mid-iteration and raised `RuntimeError: dictionary changed size during iteration` — which propagates out of `finalize_startup` and takes the entire boot down. Observed live at `finalize.py:4507`.

@@ -524,6 +524,30 @@ def _narrow_browser_offer(
     return narrowed_definition
 
 
+def _captain_browser_session_id(runtime: Any) -> str | None:
+    """AD-1162: the Captain's live browser session id, or ``None``.
+
+    Log-and-degrade in every direction: a runtime without a browser tool, a tool
+    without the property (an older build), or a raising property all yield
+    ``None``, which restores AD-1158's behaviour exactly — the agent creates its
+    own session. An ambient convenience must never be able to fail a run.
+    """
+    tool = getattr(runtime, "browser_tool", None)
+    if tool is None:
+        return None
+    try:
+        session_id = tool.captain_session_id
+    except Exception:
+        logger.warning(
+            "AD-1162: reading the Captain's browser session failed; the agent "
+            "will create its own session instead of acting on the Captain's "
+            "page. Browser work still functions, just not on the shared view.",
+            exc_info=True,
+        )
+        return None
+    return session_id if isinstance(session_id, str) and session_id else None
+
+
 class DispatchToolExecutor(ToolExecutor):
     """ToolExecutor that records permission-denied tool ids (AD-856).
 
@@ -1864,6 +1888,19 @@ class WorkItemAgenticExecutor:
                 "thread_id": thread_id,
             }
         )
+        # AD-1162: supply the key AD-1158 reads. Without a producer, every agent
+        # browser call created a fresh signed-out session while the Captain
+        # watched a different one. Bound only when the Captain actually has a
+        # live session; absent, the key is omitted and behaviour is AD-1158's.
+        _captain_session = _captain_browser_session_id(runtime)
+        if _captain_session is not None:
+            _context["browser_session_id"] = _captain_session
+            logger.info(
+                "AD-1162: binding agent %s to the Captain's browser session %s; "
+                "browser calls without an explicit session_id will act on the "
+                "page the Captain is watching.",
+                agent_id, _captain_session[:12],
+            )
         agentic_result = await loop.run(
             system_prompt=instructions or "",
             user_message=task_text,
