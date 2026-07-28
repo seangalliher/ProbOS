@@ -7,16 +7,27 @@ must not crash startup.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+
+from probos.tools.browser.loop_host import (
+    PlaywrightLoopHost,
+    get_playwright_host,
+    loop_supports_subprocess,
+    wrap_host_object,
+)
 
 if TYPE_CHECKING:
     from probos.config import BrowserToolConfig
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 @dataclass
@@ -98,6 +109,12 @@ class BrowserSession:
         self._browser: Any = None
         self._context: Any = None
         self._page: Any = None
+        # BF-695: set when this session's Playwright objects live on the
+        # dedicated host loop. None means the running loop can spawn
+        # subprocesses and every call goes straight through, unchanged.
+        self._host: PlaywrightLoopHost | None = None
+        self._host_checked: bool = False
+        self._page_proxy: Any = None
         # AD-1052b: True when this session attached to an EXTERNAL browser via
         # connect_over_cdp. A connected session must NOT close the user's page/
         # context/browser on stop() — only disconnect.
@@ -118,8 +135,63 @@ class BrowserSession:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def _ensure_host(self) -> None:
+        """BF-695: decide ONCE whether Playwright needs the dedicated host loop.
+
+        Evaluated on the loop that is about to own the session. When that loop
+        can spawn subprocesses — every non-Windows platform, and Windows still
+        on Proactor — nothing is started and every later call runs inline, so
+        the behaviour is exactly what it was before BF-695.
+        """
+        if self._host_checked:
+            return
+        self._host_checked = True
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if loop_supports_subprocess(loop):
+            return
+        host = get_playwright_host()
+        host.start()
+        self._host = host
+        logger.info(
+            "BF-695: %s cannot spawn subprocesses, so browser session %s runs "
+            "Playwright on the dedicated host loop; page calls marshal across "
+            "the thread boundary.",
+            type(loop).__name__, self.session_id,
+        )
+
+    async def _run_hosted(
+        self, factory: Callable[[], Coroutine[Any, Any, _T]],
+    ) -> _T:
+        """Run ``factory()`` wherever this session's Playwright objects live."""
+        host = self._host
+        if host is None:
+            return await factory()
+        return await host.run(factory)
+
     async def start(self) -> None:
-        """Launch Chromium and open a fresh BrowserContext.
+        """Launch Chromium and open a fresh BrowserContext."""
+        self._ensure_host()
+        try:
+            await self._run_hosted(self._start_impl)
+        finally:
+            # BF-695: emitted here rather than inside ``_start_impl`` so the
+            # runtime's event bus is always touched from the caller's loop,
+            # never from the Playwright host thread. The ``finally`` keeps
+            # STARTED paired with the STOPPED/FAILED that ``stop()`` emits off
+            # the same ``_recording_path``: recording begins the moment the
+            # video-enabled context exists, so a later failure while opening
+            # the page must not leave a STOPPED with no STARTED.
+            if self._recording_path is not None:
+                self._emit_recording_event(
+                    "BROWSER_RECORDING_STARTED",
+                    {"session_id": self.session_id, "path": str(self._recording_path)},
+                )
+
+    async def _start_impl(self) -> None:
+        """Playwright half of ``start()``. Runs on whichever loop owns the objects.
 
         Lazy import — ``playwright`` is an optional dependency. The default
         install must not crash on missing playwright.
@@ -127,6 +199,7 @@ class BrowserSession:
         # Lazy import — see class docstring.
         from playwright.async_api import async_playwright  # type: ignore[import-not-found]
 
+        self._page_proxy = None
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(headless=self._config.headless)
         # AD-706b: opt-in video recording via Playwright record_video_dir.
@@ -139,10 +212,6 @@ class BrowserSession:
             self._context = await self._browser.new_context(
                 record_video_dir=str(recording_path),
             )
-            self._emit_recording_event(
-                "BROWSER_RECORDING_STARTED",
-                {"session_id": self.session_id, "path": str(recording_path)},
-            )
         else:
             self._context = await self._browser.new_context()
         self._page = await self._context.new_page()
@@ -152,15 +221,21 @@ class BrowserSession:
             logger.debug("AD-706: set_default_timeout failed", exc_info=True)
 
     async def connect(self, endpoint: str) -> None:
-        """AD-1052b: attach to an EXTERNAL user-launched browser over CDP.
+        """AD-1052b: attach to an EXTERNAL user-launched browser over CDP."""
+        self._ensure_host()
+        await self._run_hosted(lambda: self._connect_impl(endpoint))
 
-        Mirrors ``start()`` but uses ``connect_over_cdp(endpoint)`` instead of
-        ``launch()``. Reuses the browser's EXISTING default context + page
+    async def _connect_impl(self, endpoint: str) -> None:
+        """Playwright half of ``connect()``.
+
+        Mirrors ``_start_impl`` but uses ``connect_over_cdp(endpoint)`` instead
+        of ``launch()``. Reuses the browser's EXISTING default context + page
         (``contexts[0]`` / ``pages[0]``) so the agent drives the user's real
         logged-in session — a fresh ``new_context()`` would have no cookies.
         """
         from playwright.async_api import async_playwright  # type: ignore[import-not-found]
 
+        self._page_proxy = None
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.connect_over_cdp(endpoint)
         contexts = self._browser.contexts
@@ -174,7 +249,64 @@ class BrowserSession:
             logger.debug("AD-1052b: set_default_timeout failed on connected page", exc_info=True)
 
     async def stop(self) -> None:
-        """Close everything in reverse order. Idempotent."""
+        """Close everything in reverse order. Idempotent.
+
+        BF-695: the Playwright teardown runs wherever the objects live; every
+        event emit stays on the caller's loop.
+        """
+        was_bridge = self._connected
+        recording_path = self._recording_path
+        recording_failed = await self._run_hosted(self._close_playwright)
+
+        if was_bridge:
+            if self._emit_event is not None:
+                try:
+                    from probos.events import EventType
+                    self._emit_event(EventType.BROWSER_BRIDGE_DISCONNECTED, {"session_id": self.session_id})
+                except Exception:
+                    logger.debug("AD-1052b: disconnect event emit failed", exc_info=True)
+            return
+
+        # AD-706b: emit recording lifecycle event after context.close() finalizes
+        # the .webm file. Tier-2: failures never raise.
+        if recording_path is not None:
+            if recording_failed:
+                self._emit_recording_event(
+                    "BROWSER_RECORDING_FAILED",
+                    {
+                        "session_id": self.session_id,
+                        "path": str(recording_path),
+                    },
+                )
+            else:
+                size = 0
+                try:
+                    for webm in recording_path.glob("*.webm"):
+                        size += webm.stat().st_size
+                except Exception:
+                    logger.warning(
+                        "AD-706b: failed to compute recording size for %s",
+                        recording_path,
+                        exc_info=True,
+                    )
+                self._emit_recording_event(
+                    "BROWSER_RECORDING_STOPPED",
+                    {
+                        "session_id": self.session_id,
+                        "path": str(recording_path),
+                        "size_bytes": size,
+                    },
+                )
+            self._recording_path = None
+
+    async def _close_playwright(self) -> bool:
+        """Playwright half of ``stop()``. Returns True when recording finalize failed.
+
+        Runs wherever this session's Playwright objects live. Emits nothing —
+        ``stop()`` owns every event so the runtime's bus is only ever touched
+        from the caller's loop.
+        """
+        self._page_proxy = None
         # AD-1052b: a bridge session attaches to the user's REAL browser. NEVER
         # close the user's page/context (their tabs/session). browser.close() over
         # connect_over_cdp DISCONNECTS from the browser server (Playwright docs) —
@@ -190,15 +322,10 @@ class BrowserSession:
                     await self._playwright.stop()
                 except Exception:
                     logger.debug("AD-1052b: playwright.stop failed (bridge)", exc_info=True)
-            if self._emit_event is not None:
-                try:
-                    from probos.events import EventType
-                    self._emit_event(EventType.BROWSER_BRIDGE_DISCONNECTED, {"session_id": self.session_id})
-                except Exception:
-                    logger.debug("AD-1052b: disconnect event emit failed", exc_info=True)
             self._page = self._context = self._browser = self._playwright = None
             self._connected = False
-            return
+            return False
+
         recording_failed = False
         for closer, attr in [
             (self._page, "_page"),
@@ -220,38 +347,7 @@ class BrowserSession:
             except Exception:
                 logger.debug("AD-706: playwright.stop failed", exc_info=True)
         self._page = self._context = self._browser = self._playwright = None
-
-        # AD-706b: emit recording lifecycle event after context.close() finalizes
-        # the .webm file. Tier-2: failures never raise.
-        if self._recording_path is not None:
-            if recording_failed:
-                self._emit_recording_event(
-                    "BROWSER_RECORDING_FAILED",
-                    {
-                        "session_id": self.session_id,
-                        "path": str(self._recording_path),
-                    },
-                )
-            else:
-                size = 0
-                try:
-                    for webm in self._recording_path.glob("*.webm"):
-                        size += webm.stat().st_size
-                except Exception:
-                    logger.warning(
-                        "AD-706b: failed to compute recording size for %s",
-                        self._recording_path,
-                        exc_info=True,
-                    )
-                self._emit_recording_event(
-                    "BROWSER_RECORDING_STOPPED",
-                    {
-                        "session_id": self.session_id,
-                        "path": str(self._recording_path),
-                        "size_bytes": size,
-                    },
-                )
-            self._recording_path = None
+        return recording_failed
 
     def _emit_recording_event(self, event_name: str, payload: dict[str, Any]) -> None:
         """AD-706b: best-effort event emit (Tier-2 log-and-degrade)."""
@@ -305,8 +401,26 @@ class BrowserSession:
 
     @property
     def page(self) -> Any:
-        """Active Playwright Page handle (or test fake)."""
-        return self._page
+        """Active Playwright Page handle (or test fake).
+
+        BF-695: when this session's Playwright objects live on the dedicated
+        host loop, this returns a marshalling proxy instead of the raw page.
+        Every async call, every sub-object (``page.mouse``, ``page.keyboard``)
+        and every ``async with page.expect_*()`` then crosses to that loop;
+        inert data such as ``page.url`` passes through untouched. This is the
+        only seam that hands a Playwright object to a caller, so covering it
+        covers every touch — actions, compute_use, credentials and the MJPEG
+        streamer alike — without a single call-site edit.
+        """
+        page = self._page
+        host = self._host
+        if page is None or host is None:
+            return page
+        proxy = self._page_proxy
+        if proxy is None:
+            proxy = wrap_host_object(page, host)
+            self._page_proxy = proxy
+        return proxy
 
     @property
     def agent_id(self) -> str:
@@ -335,7 +449,7 @@ class BrowserSession:
         page.viewport_size is a Playwright Page PROPERTY (dict|None), not a
         coroutine. None for many connect_over_cdp pages -> config fallback.
         """
-        page = self._page
+        page = self.page
         vp = getattr(page, "viewport_size", None) if page is not None else None
         if isinstance(vp, dict):
             w = int(vp.get("width") or 0)

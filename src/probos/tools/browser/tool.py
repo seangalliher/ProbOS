@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 
 from probos.events import EventType
 from probos.tools.browser.actions import action_verify, classify_action, dispatch_action
+from probos.tools.browser.loop_host import shutdown_playwright_host
 from probos.tools.browser.session import BrowserSession
 from probos.tools.protocol import ToolResult, ToolType
 
@@ -184,6 +185,11 @@ class BrowserTool:
                     await session.stop()
                 except Exception:
                     logger.debug("AD-706: session %s stop failed", sid, exc_info=True)
+        # BF-695: every session is closed, so the Playwright host thread (if one
+        # was ever needed) has no owner left. Closing it here pairs the lazy
+        # start in ``BrowserSession.start``. The host is process-wide and
+        # restartable, so a later session simply builds a fresh thread.
+        await shutdown_playwright_host()
 
     async def reap_expired(self) -> int:
         """One-shot expiry sweep — closes any expired sessions. Returns count.
