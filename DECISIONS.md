@@ -10,6 +10,50 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+> **A recurring defect shape, named once here because it appeared three times in a single day (2026-07-27): AD-1157, BF-688 and BF-690 are all "the mechanism exists but the caller never passes the value."** A classification field with no producer; a priority parameter every handler omitted; an action allowlist the offer never reflected. In each case both halves were individually correct and tested, and the wiring between them was absent — so the tests passed, the feature was "shipped", and the behaviour was the default. When reviewing a mechanism, verify a real caller supplies the value; a unit test of the mechanism cannot see this class of bug.
+
+### BF-690 (2026-07-27) - the browser offer advertised actions the guard refuses (#1091)
+
+AD-1153 armed a read-only guard inside `DispatchToolExecutor.invoke` but left the *offer* untouched. `tool_registration_to_llm_definition` passes `reg.tool.input_schema` verbatim, so a restricted agent was shown all eleven actions and then refused five by a rule it had never been given — failed attempts burning loop iterations, not absent ones. The description was the sharper half: it ends "then click/type by index", so a read-only agent was *actively instructed* to use the two actions the guard would refuse. Narrowing the enum alone would have left that intact.
+
+The arming condition now produces both consequences. `_narrow_browser_offer` rewrites the enum **and** generates a matching description from the same frozenset that arms the guard. The narrowed enum is the **intersection** of the schema's declared actions with the armed set, in schema order — fail-safe in the same direction as `_BROWSER_LOOP_ACTIONS` itself, so an action named in the restriction but absent from the schema is never advertised. New dicts at every level leave `BrowserTool.input_schema` intact for the AD-745 DM path. An unexpected shape or empty intersection logs and returns the definition unchanged: the invoke-time guard still refuses, so that path degrades to AD-1153 behaviour rather than opening an authority hole. Unarmed paths are byte-identical — a Captain-granted agent keeps the full surface (DD-2 grant-UP semantics).
+
+**Why AD-1153's suite missed it:** its capture harness (`_ToolIdCapturingLLM`) records only `function.name`. The defect lived in `function.parameters` and `function.description`, which nothing inspected. A capture double that discards most of the payload cannot regress the payload.
+
+The description had been a *third* hand-written copy of the action list, beside the enum and `_BROWSER_READ_ONLY_REFUSAL`; it is generated now, and a drift guard asserts the refusal string still lists exactly `_BROWSER_LOOP_ACTIONS`. **Not fixed here:** `verify` is in the enum but absent from the description's own "10-action vocabulary" count — same defect class, left out so the unrestricted path stays byte-identical.
+
+### AD-1158 (2026-07-27) - bind a browser call to the workstation session the Captain is watching
+
+An agent invoking `browser` without a `session_id` created a *fresh* session, so the Captain could be watching one browser while the agent acted in another. The obvious fix — telling the agent the id in its prompt — makes correctness depend on the model copying a UUID accurately, which is not a property worth resting a governance surface on.
+
+`BrowserTool.invoke` now reads `context["browser_session_id"]` when `params["session_id"]` is absent. Precedence is deliberate: an **explicit param always wins**, because an agent that names a session has stated an intent the ambient binding must not override; a non-`str` binding degrades to prior behaviour rather than raising. The binding travels through the call context, so no prompt text and no model accuracy is involved.
+
+### BF-688 / BF-688a (2026-07-27) - four sub-task handlers dropped the priority the scheduler needed (#1089)
+
+Every sub-task handler called `complete(request)` with no priority, so Captain DMs competed on equal footing with proactive background work. Observed: Anvil taking 88 s against a 60 s TTL, timing out a Captain-facing reply behind speculative work. The priority parameter existed and was honoured — nothing passed it. Fixed with `CHAIN_PRIORITY_KEY = "_priority"` and `resolve_chain_priority(context)` so the chain carries its own urgency.
+
+**BF-688a** is the CI repair and the more durable lesson: 28 test files' LLM doubles did not accept `priority`, so a name-filtered test run went green while the full suite failed. **Changing a signature on an interface that test doubles implement requires the full suite — a filtered run cannot prove blast radius.**
+
+### BF-686 (2026-07-27) - 2,025 ERROR lines for 19 breaker events (#1086)
+
+Endpoint-failure logging keyed severity to *attribution* (an upstream fault is an error) rather than to *outcome* (the system compensated and continued). A ~107:1 amplification buried genuine faults and made the log unreadable during exactly the incidents it existed to explain. Now one WARNING per `_EndpointFailureState.epoch`: the transition is logged, not every request that observes it. Log level should describe what happened to the *work*, not whose fault it was.
+
+### BF-685 (2026-07-27) - a stale JetStream handle failed every pool (#1085)
+
+`BadSubscriptionError` / `ConnectionClosedError` were treated as fatal on one path while `_recover_jetstream` already handled them correctly on another — two paths disagreeing about whether the same exception is recoverable. One stale handle therefore failed pools that were otherwise healthy. The recovery logic was never wrong; the classification was, in one of two places.
+
+### BF-684 (2026-07-27) - three compounding defects hid a records backfill that never ran (#1084)
+
+Warm boot's `if already_indexed: return` meant the records backfill ran exactly once, ever — so any record added afterwards was never indexed. `entries[:limit]` then re-walked the same prefix on each pass, so even a forced re-run made no progress past the first 500. Finally `if semantic_results:` short-circuited the keyword index into dead code, with the perverse consequence that **enabling AD-1138 reduced recall**. Each defect alone was survivable; together they presented as "search is a bit weak" rather than as three bugs. Resumability now comes from `_indexed_record_paths()` and the keyword index is consulted unconditionally.
+
+### AD-1157 / AD-1157a (2026-07-27) - notebook classification: honour the ontology, and let the author choose scope (#1088)
+
+The ontology declared notebooks `private`; the code defaulted them to `department`; and the `[NOTEBOOK]` tag carried neither, because its regex had a single capture group with nowhere to put a classification. The result was unanimous: **2,453 of 2,453 records took the default.** A classification field existed, was validated, and was never once supplied by a caller.
+
+The tag now carries the classification, and the crew agent selects scope contextually against a stated policy rather than inheriting a constant — notebooks default `private` (honouring the ontology), findings published through `publish_finding` default `ship`. Verified live end-to-end, including the first cross-department retrieval in the system's history: Anvil (engineering) recalled a finding Ezri (bridge) had published.
+
+**AD-1157a** is the follow-on the first fix exposed: update-in-place re-stamped classification on every write, so three records silently drifted scope in production. `classification=None` now means *no preference stated* — preserve on update, apply the default only on create. Absent and default are different facts, and a field that cannot distinguish them will overwrite deliberate choices with defaults.
+
 ### AD-1154 (2026-07-26) - the approval inbox: park an unattended ask instead of acting, and let a standing rule answer it once (#1081)
 
 An unattended agent reaching a consequential action had two outcomes: perform it, or receive the tier-3 gate's `ToolResult(output={"intervention_required": True, ...})` with **`error=None`** — a success-shaped no-op that `ToolCallResult.from_tool_result` renders as `is_error=False` and the model reads as completion. This AD adds the third: file a durable, reviewable record; tell the agent honestly that the step did not happen; carry on. A standing, TTL-bounded rule answers the same ask on the next run without asking again. Two flags, both default-OFF (`approval_inbox.enabled`, `.standing_rules_enabled`); off ⇒ `DispatchToolExecutor.invoke` is byte-identical to AD-1153.
