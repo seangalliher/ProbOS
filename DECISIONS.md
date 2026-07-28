@@ -10,7 +10,19 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
-> **A recurring defect shape, named once here because it appeared three times in a single day (2026-07-27): AD-1157, BF-688 and BF-690 are all "the mechanism exists but the caller never passes the value."** A classification field with no producer; a priority parameter every handler omitted; an action allowlist the offer never reflected. In each case both halves were individually correct and tested, and the wiring between them was absent — so the tests passed, the feature was "shipped", and the behaviour was the default. When reviewing a mechanism, verify a real caller supplies the value; a unit test of the mechanism cannot see this class of bug.
+> **A recurring defect shape, named once here because it appeared SEVEN times in two days (2026-07-27/28): a mechanism is built and tested, and the thing that would exercise it never does.** AD-1157 (a classification field no caller supplied — 2,453/2,453 records took the default), BF-688 (a priority parameter every handler omitted), BF-690 (a guard armed while the offered schema still advertised the refused actions), BF-692 (element discovery guarding a Playwright method that does not exist), BF-695 (the entire browser tool could not start on Windows), AD-1162 (AD-1158's session binding read a context key nothing produced), BF-696 (a boot race needing two things to interleave).
+>
+> In every case the tests passed, because **the test double was more capable than production** — a fake `page` implementing `list_elements`, a test supplying the very key it was meant to prove arrives from elsewhere. BF-695 was worse than invisible: `asyncio_mode="auto"` runs the suite on `ProactorEventLoop` while production runs on `WindowsSelectorEventLoopPolicy`, so the suite was exercising the opposite loop from the one that ships.
+>
+> **The forcing question is: name the real caller. Not the test — the production path.** Four of these seven die on it immediately. The rest need: does the double implement something the real object does not, and has this path ever executed on a live runtime? A unit test of a mechanism structurally cannot see this class of bug.
+
+### BF-696 (2026-07-28) - a concurrent subscribe during the dispatch-consumer drain killed the boot
+
+`IntentBus.create_dispatch_consumers` iterated `self._subscribers.items()` while awaiting `_js_subscribe_agent_dispatch` **inside** the loop. Every await yields to the event loop, so a concurrent `subscribe()` mutated the dict mid-iteration and raised `RuntimeError: dictionary changed size during iteration` — which propagates out of `finalize_startup` and takes the entire boot down. Observed live at `finalize.py:4507`.
+
+The live producer is the JetStream retry loop: `perception.vision_aggregator` re-subscribing after `nats: timeout` on a 0.5s/1.0s backoff. That failure has sat in every boot log for weeks as a recurring warning; what was not appreciated is that its retry can land inside the drain window and take the process with it. "Noisy warning" and "can kill startup" turned out to be the same defect wearing different clothes.
+
+Fixed by snapshotting with `tuple(...)` before iterating. The snapshot is **complete**, not merely safe, and that distinction is the whole argument: `_defer_dispatch_consumers` is cleared at the top of the method with no intervening await, so any agent subscribing after that point creates its own dispatch consumer through the normal `subscribe()` path. Nobody is missed and nobody is created twice. A test pins that ordering specifically, because it is the property that makes the snapshot correct rather than merely non-crashing — reorder those two statements and the fix silently starts dropping consumers instead of raising.
 
 ### AD-1161 (2026-07-28) - the Captain can open a browser session
 

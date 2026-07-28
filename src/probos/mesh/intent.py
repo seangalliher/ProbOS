@@ -461,7 +461,20 @@ class IntentBus:
             return
 
         count = 0
-        for agent_id, handler in self._subscribers.items():
+        # BF-696: snapshot before iterating. ``_js_subscribe_agent_dispatch`` is
+        # awaited inside this loop, so every iteration yields to the event loop
+        # and a concurrent ``subscribe()`` mutates ``_subscribers`` mid-iteration
+        # -> ``RuntimeError: dictionary changed size during iteration``, which
+        # aborts ``finalize_startup`` and takes the whole boot down. The
+        # perception.vision_aggregator JetStream retry loop is one live producer
+        # of exactly that concurrent subscribe, which is why it presented
+        # intermittently rather than every boot.
+        #
+        # A snapshot is COMPLETE here, not merely safe: ``_defer_dispatch_consumers``
+        # is cleared above with no intervening await, so an agent subscribing
+        # after that point creates its own dispatch consumer through the normal
+        # ``subscribe()`` path. Nobody is missed, and nobody is created twice.
+        for agent_id, handler in tuple(self._subscribers.items()):
             try:
                 await self._js_subscribe_agent_dispatch(agent_id, handler)
                 count += 1
