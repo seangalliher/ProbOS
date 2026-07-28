@@ -607,29 +607,38 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
           })}
         </div>
 
-        {/* URL entry (embedded mode) */}
-        <input
-          data-testid="browser-url-input"
-          type="text"
-          value={urlInput}
-          onChange={(e) => setUrlInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') onGo(); }}
-          placeholder="Enter a URL (https://…)"
-          aria-label="URL"
-          style={{ flex: 1, minWidth: 140, padding: '4px 8px', border: '1px solid #33334a', borderRadius: 4, background: 'transparent', color: _TEXT, fontSize: 12 }}
-        />
-        <button
-          data-testid="browser-go"
-          onClick={onGo}
-          aria-label="Load URL"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', border: '1px solid #33334a', borderRadius: 4, background: 'transparent', color: _DIM, cursor: 'pointer', fontSize: 11 }}
-        >
-          <IconGo />Go
-        </button>
+        {/* BF-694: URL entry belongs to EMBEDDED mode only. It was rendered
+            unconditionally, which was invisible while 'embedded' was the default
+            mode — AD-1161 made 'watch' the default and the Captain saw two
+            address bars stacked (this one, plus watch's own "Open a page"). */}
+        {mode === 'embedded' && (
+          <>
+            <input
+              data-testid="browser-url-input"
+              type="text"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onGo(); }}
+              placeholder="Enter a URL (https://…)"
+              aria-label="URL"
+              style={{ flex: 1, minWidth: 140, padding: '4px 8px', border: '1px solid #33334a', borderRadius: 4, background: 'transparent', color: _TEXT, fontSize: 12 }}
+            />
+            <button
+              data-testid="browser-go"
+              onClick={onGo}
+              aria-label="Load URL"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', border: '1px solid #33334a', borderRadius: 4, background: 'transparent', color: _DIM, cursor: 'pointer', fontSize: 11 }}
+            >
+              <IconGo />Go
+            </button>
+          </>
+        )}
       </div>
 
-      {/* URL validation notice (defense-in-depth) */}
-      {urlError !== null && (
+      {/* URL validation notice (defense-in-depth). BF-694: scoped to embedded
+          mode with the input that produces it, so a stale error cannot outlive
+          a mode switch. */}
+      {mode === 'embedded' && urlError !== null && (
         <div data-testid="browser-url-error" style={{ padding: '6px 12px', color: _AMBER, fontSize: 11, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
           {urlError}
         </div>

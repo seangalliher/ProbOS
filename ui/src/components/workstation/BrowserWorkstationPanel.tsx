@@ -72,7 +72,7 @@ export function BrowserWorkstationPanel(): React.ReactElement | null {
           <div>
             <div style={{ fontSize: 14, color: _AMBER, letterSpacing: 1 }}>BROWSER WORKSTATION</div>
             <div style={{ fontSize: 10, color: _DIM, marginTop: 2 }}>
-              Load a web page in a sandboxed frame (embedded mode).
+              Open a page, watch an agent's session, or bridge to your own browser.
             </div>
           </div>
         </div>

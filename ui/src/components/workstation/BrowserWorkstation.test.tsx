@@ -95,6 +95,55 @@ type _Sessions = {
   input_forwarding_enabled?: boolean;
 };
 
+describe('BF-694 the embedded URL bar is scoped to embedded mode', () => {
+  /* The embedded URL input rendered unconditionally. That was invisible while
+     'embedded' was the default mode; AD-1161 made 'watch' the default and the
+     Captain saw TWO address bars stacked — this one plus watch's own "Open a
+     page". These fail against the pre-fix component. */
+
+  it('hides the embedded URL bar and Go button in watch mode', () => {
+    render(<BrowserWorkstation typeId="browser" />);
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    expect(screen.queryByTestId('browser-url-input')).toBeNull();
+    expect(screen.queryByTestId('browser-go')).toBeNull();
+  });
+
+  it('hides the embedded URL bar and Go button in bridge mode', () => {
+    render(<BrowserWorkstation typeId="browser" />);
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    expect(screen.queryByTestId('browser-url-input')).toBeNull();
+    expect(screen.queryByTestId('browser-go')).toBeNull();
+  });
+
+  it('keeps exactly one URL entry field in watch mode (the Open field)', () => {
+    render(<BrowserWorkstation typeId="browser" />);
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    // The regression the Captain reported: two stacked address bars.
+    const textInputs = screen
+      .getAllByRole('textbox')
+      .filter((el) => (el as HTMLInputElement).type !== 'hidden');
+    expect(textInputs.length).toBe(1);
+  });
+
+  it('restores the embedded URL bar when switching back to embedded', () => {
+    render(<BrowserWorkstation typeId="browser" />);
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    expect(screen.queryByTestId('browser-url-input')).toBeNull();
+    fireEvent.click(screen.getByTestId('browser-mode-embedded'));
+    expect(screen.getByTestId('browser-url-input')).toBeTruthy();
+    expect(screen.getByTestId('browser-go')).toBeTruthy();
+  });
+
+  it('does not carry a stale URL error across a mode switch', () => {
+    render(<BrowserWorkstation typeId="browser" />);
+    fireEvent.change(screen.getByTestId('browser-url-input'), { target: { value: 'javascript:alert(1)' } });
+    fireEvent.click(screen.getByTestId('browser-go'));
+    expect(screen.getByTestId('browser-url-error')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    expect(screen.queryByTestId('browser-url-error')).toBeNull();
+  });
+});
+
 describe('AD-1052a BrowserWorkstation watch mode', () => {
   it('clicking Watch sets aria-pressed and calls fetchSessions (DD-1 same-origin)', async () => {
     const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({ enabled: true, sessions: [] }));
