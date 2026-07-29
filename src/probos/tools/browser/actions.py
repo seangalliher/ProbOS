@@ -42,6 +42,193 @@ _EVAL_JS_MAX_SCRIPT_LEN: int = 4096
 # not a slow-typing preference.
 _KEY_TYPE_MAX_DELAY_MS: int = 250
 
+# BF-692: bounds on ``state``'s element discovery.
+#
+# ``_STATE_MAX_ELEMENTS`` and ``_STATE_ELEMENTS_ELISION`` mirror
+# ``agentic_dispatch._BROWSER_MAX_ELEMENTS`` / ``_BROWSER_ELEMENTS_ELISION``
+# (AD-1153/DD-3), which bound the same list again on its way out to the agentic
+# loop. They are duplicated rather than imported because ``tools`` must not
+# import from ``cognitive``; tests/test_bf692_state_element_discovery.py imports
+# both pairs and asserts they agree, so the duplication cannot silently drift.
+_STATE_MAX_ELEMENTS: int = 100
+_STATE_ELEMENTS_ELISION: str = (
+    "[truncated: {omitted} further page elements elided. Narrow the page or "
+    "re-run state after navigating.]"
+)
+
+# BF-692: ceiling on how many DOM nodes the walk INSPECTS, independent of how
+# many it returns. The output cap alone does not bound the work: a page with a
+# million matching nodes would still pay per-node layout + style reads before
+# the 100th record is accepted, blocking the Playwright loop.
+_STATE_MAX_SCAN_NODES: int = 2000
+
+# BF-692: the real element walk. Runs entirely in page context and returns
+# ``{"elements": [...], "matched": int, "truncated": bool}``.
+#
+# ``selector`` is load-bearing — ``_resolve_target_selector`` turns ``index`` N
+# straight into ``page.click(record["selector"])``, so a selector matching more
+# than one node clicks the wrong thing. Uniqueness is therefore *proved* inside
+# the page rather than assumed: every candidate selector is re-queried with
+# ``querySelectorAll`` and kept only when it matches exactly one node and that
+# node is the element it was built for. An element whose selector cannot be
+# proved unique is dropped, because an unaddressable entry in the snapshot only
+# costs the agent an iteration.
+_STATE_DOM_WALK_JS: str = """
+() => {
+  const MAX_RECORDS = %(max_records)d;
+  const MAX_SCAN = %(max_scan)d;
+  const TEXT_MAX = 120;
+  const DEPTH_MAX = 25;
+  const SELECTOR = [
+    'a[href]', 'button', 'input', 'textarea', 'select',
+    '[role]', '[onclick]', '[contenteditable]:not([contenteditable="false"])'
+  ].join(',');
+
+  const esc = (s) => {
+    if (window.CSS && typeof CSS.escape === 'function') { return CSS.escape(s); }
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, '\\\\$&');
+  };
+
+  const isVisible = (el) => {
+    if (el.hidden) { return false; }
+    let r = null;
+    try { r = el.getBoundingClientRect(); } catch (e) { return false; }
+    if (!r || r.width <= 0 || r.height <= 0) { return false; }
+    let st = null;
+    try { st = window.getComputedStyle(el); } catch (e) { st = null; }
+    if (!st) { return true; }
+    if (st.display === 'none') { return false; }
+    if (st.visibility === 'hidden' || st.visibility === 'collapse') { return false; }
+    if (parseFloat(st.opacity || '1') === 0) { return false; }
+    return true;
+  };
+
+  const uniqueSelector = (el) => {
+    if (el.id) {
+      const byId = '#' + esc(el.id);
+      try {
+        if (document.querySelectorAll(byId).length === 1) { return byId; }
+      } catch (e) { /* malformed id, fall through to the path walk */ }
+    }
+    const parts = [];
+    let node = el;
+    let depth = 0;
+    while (node && node.nodeType === 1 && depth < DEPTH_MAX) {
+      const tag = (node.localName || '').toLowerCase();
+      if (!tag) { return null; }
+      if (node !== el && node.id) {
+        const anchor = '#' + esc(node.id);
+        let unique = false;
+        try { unique = document.querySelectorAll(anchor).length === 1; } catch (e) { unique = false; }
+        if (unique) { parts.unshift(anchor); node = null; break; }
+      }
+      const parent = node.parentElement;
+      if (!parent) { parts.unshift(tag); node = null; break; }
+      let k = 0;
+      for (let i = 0; i < parent.children.length; i++) {
+        const sib = parent.children[i];
+        if ((sib.localName || '').toLowerCase() === tag) {
+          k++;
+          if (sib === node) { break; }
+        }
+      }
+      parts.unshift(tag + ':nth-of-type(' + k + ')');
+      node = parent;
+      depth++;
+    }
+    if (node) { return null; }
+    const sel = parts.join(' > ');
+    if (!sel) { return null; }
+    try {
+      const hits = document.querySelectorAll(sel);
+      if (hits.length !== 1 || hits[0] !== el) { return null; }
+    } catch (e) { return null; }
+    return sel;
+  };
+
+  const roleOf = (el, tag) => {
+    const explicit = el.getAttribute('role');
+    if (explicit && explicit.trim()) { return explicit.trim().split(/\\s+/)[0]; }
+    if (tag === 'a') { return 'link'; }
+    if (tag === 'button') { return 'button'; }
+    if (tag === 'select') { return 'combobox'; }
+    if (tag === 'textarea') { return 'textbox'; }
+    if (tag === 'input') {
+      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      if (t === 'checkbox') { return 'checkbox'; }
+      if (t === 'radio') { return 'radio'; }
+      if (t === 'submit' || t === 'button' || t === 'reset' || t === 'image') { return 'button'; }
+      return 'textbox';
+    }
+    if (el.isContentEditable) { return 'textbox'; }
+    return '';
+  };
+
+  const textOf = (el) => {
+    let t = '';
+    try { t = el.innerText || ''; } catch (e) { t = ''; }
+    if (!t) { try { t = el.textContent || ''; } catch (e) { t = ''; } }
+    return String(t).slice(0, TEXT_MAX * 8).replace(/\\s+/g, ' ').trim().slice(0, TEXT_MAX);
+  };
+
+  const nameOf = (el) => {
+    const keys = ['aria-label', 'name', 'placeholder', 'title', 'alt'];
+    for (let i = 0; i < keys.length; i++) {
+      const v = el.getAttribute(keys[i]);
+      if (v && String(v).trim()) { return String(v).trim().slice(0, TEXT_MAX); }
+    }
+    return '';
+  };
+
+  const valueOf = (el, tag) => {
+    if (tag === 'input') {
+      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      // Never surface a password field's contents: this list is forwarded to
+      // the model and persisted in the durable tool trace.
+      if (t === 'password') { return ''; }
+      if (t === 'checkbox' || t === 'radio') { return el.checked ? 'checked' : ''; }
+    }
+    if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') { return ''; }
+    const v = el.value;
+    return typeof v === 'string' ? v.slice(0, TEXT_MAX) : '';
+  };
+
+  let nodes = null;
+  try { nodes = document.querySelectorAll(SELECTOR); } catch (e) { nodes = null; }
+  if (!nodes) { return {elements: [], matched: 0, truncated: false}; }
+
+  const out = [];
+  let matched = 0;
+  let truncated = nodes.length > MAX_SCAN;
+  const limit = Math.min(nodes.length, MAX_SCAN);
+  for (let i = 0; i < limit; i++) {
+    const el = nodes[i];
+    if (!el || el.nodeType !== 1) { continue; }
+    if (!isVisible(el)) { continue; }
+    matched++;
+    if (out.length >= MAX_RECORDS) { truncated = true; continue; }
+    const sel = uniqueSelector(el);
+    if (!sel) { continue; }
+    const tag = (el.localName || '').toLowerCase();
+    const rec = {tag: tag, selector: sel};
+    const role = roleOf(el, tag);
+    if (role) { rec.role = role; }
+    const text = textOf(el);
+    if (text) { rec.text = text; }
+    const name = nameOf(el);
+    if (name) { rec.name = name; }
+    const value = valueOf(el, tag);
+    if (value) { rec.value = value; }
+    if (tag === 'a') {
+      const href = el.getAttribute('href');
+      if (href) { rec.href = String(href).slice(0, TEXT_MAX * 4); }
+    }
+    out.push(rec);
+  }
+  return {elements: out, matched: matched, truncated: truncated};
+}
+""" % {"max_records": _STATE_MAX_ELEMENTS, "max_scan": _STATE_MAX_SCAN_NODES}
+
 _TIER_3_PATH_TOKENS: tuple[str, ...] = (
     "checkout", "payment", "transfer", "subscribe", "signup", "register",
 )
@@ -92,6 +279,75 @@ async def _action_goto(session: BrowserSession, params: dict[str, Any]) -> dict[
     }
 
 
+def _index_element_records(raw: Any) -> list[dict[str, Any]]:
+    """Normalise raw element records into the indexed snapshot shape.
+
+    Shared by both ``state`` discovery paths so the fake seam and the real DOM
+    walk cannot drift apart in what they propagate. Non-dict entries are
+    skipped; the ``index`` is the position in ``raw``, which is what
+    ``BrowserSession.resolve_index`` looks up.
+    """
+    elements: list[dict[str, Any]] = []
+    for i, rec in enumerate(raw or []):
+        if not isinstance(rec, dict):
+            continue
+        entry: dict[str, Any] = {"index": i}
+        for key in ("role", "text", "tag", "href", "name", "value", "selector"):
+            if key in rec:
+                entry[key] = rec[key]
+        elements.append(entry)
+    return elements
+
+
+async def _discover_elements(page: Any) -> tuple[list[dict[str, Any]], int]:
+    """BF-692: walk the live DOM for interactable elements.
+
+    Returns ``(records, omitted)``. ``omitted`` is the number of visible
+    candidates the caps dropped, and is 0 when nothing was truncated.
+
+    Log-and-degrade throughout: ``state`` is the action an agent runs FIRST to
+    orient itself, and ``_action_state`` has always absorbed discovery failures
+    rather than raising. A page whose scripts break ``evaluate`` must still
+    yield an empty snapshot, not a failed tool call.
+    """
+    try:
+        raw = await page.evaluate(_STATE_DOM_WALK_JS)
+    except Exception:
+        logger.warning(
+            "BF-692: DOM element walk failed on the open page; 'state' returns "
+            "an empty element list this call, so the agent has nothing to "
+            "address by index and should fall back to screenshot/coordinates.",
+            exc_info=True,
+        )
+        return [], 0
+    if not isinstance(raw, dict):
+        logger.warning(
+            "BF-692: DOM element walk returned %s, expected dict; treating the "
+            "page as having no addressable elements this call.",
+            type(raw).__name__,
+        )
+        return [], 0
+    found = raw.get("elements")
+    if not isinstance(found, list):
+        logger.warning(
+            "BF-692: DOM element walk returned no 'elements' list (got %s); "
+            "treating the page as having no addressable elements this call.",
+            type(found).__name__,
+        )
+        return [], 0
+    records = [rec for rec in found if isinstance(rec, dict)]
+    # Defence in depth: the JS already caps, but the cap is the contract and is
+    # re-imposed here so a fake/proxy that returns more cannot widen it.
+    if len(records) > _STATE_MAX_ELEMENTS:
+        records = records[:_STATE_MAX_ELEMENTS]
+    matched = raw.get("matched")
+    omitted = 0
+    if raw.get("truncated") is True:
+        omitted = matched - len(records) if isinstance(matched, int) else 0
+        omitted = max(omitted, 1)
+    return records, omitted
+
+
 async def _action_state(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
     """Return an indexed list of clickable/interactable elements.
 
@@ -99,28 +355,37 @@ async def _action_state(session: BrowserSession, params: dict[str, Any]) -> dict
     ``index`` so the LLM can say ``click 5`` instead of synthesizing CSS.
     The session keeps the most recent snapshot so subsequent click/type calls
     can resolve the index back to a selector.
+
+    BF-692: a real Playwright ``Page`` has no ``list_elements``, so before this
+    fix every live session fell through that branch to ``[]`` and the snapshot
+    was always empty — an agent that ran ``state`` first, as the tool
+    description tells it to, learned nothing and spent its remaining iterations
+    clicking blind. The ``list_elements`` branch is kept FIRST as the test seam
+    the existing suites inject; the real DOM walk sits beneath it.
     """
     page = session.page
     if page is None:
         raise RuntimeError("browser session is not started")
-    elements: list[dict[str, Any]] = []
+    omitted = 0
     if hasattr(page, "list_elements"):
-        # Test fake or future deterministic DOM-walk helper.
+        # Test fake or deterministic DOM-walk helper.
         try:
-            raw = await page.list_elements()
+            raw: Any = await page.list_elements()
         except Exception:
             logger.debug("AD-706: page.list_elements failed", exc_info=True)
             raw = []
-        for i, rec in enumerate(raw or []):
-            if not isinstance(rec, dict):
-                continue
-            entry = {"index": i}
-            for key in ("role", "text", "tag", "href", "name", "value", "selector"):
-                if key in rec:
-                    entry[key] = rec[key]
-            elements.append(entry)
+        records: list[Any] = list(raw or [])
+    else:
+        records, omitted = await _discover_elements(page)
+    elements = _index_element_records(records)
     session.record_state_snapshot(elements)
-    return {"session_id": session.session_id, "elements": elements}
+    out: list[Any] = list(elements)
+    if omitted > 0:
+        # Same in-list marker shape agentic_dispatch._bound_browser_output uses.
+        # Deliberately NOT in the snapshot: resolve_index must only ever hand
+        # _resolve_target_selector a dict.
+        out.append(_STATE_ELEMENTS_ELISION.format(omitted=omitted))
+    return {"session_id": session.session_id, "elements": out}
 
 
 def _resolve_target_selector(

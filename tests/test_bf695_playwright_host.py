@@ -810,6 +810,10 @@ _PLAYWRIGHT_TOUCH_SITES: tuple[str, ...] = (
     "actions.py::_action_type::page.type",
     "actions.py::_action_upload_file::page.set_input_files",
     "actions.py::_action_wait::page.wait_for_selector",
+    # BF-692: the real DOM element walk behind _action_state's list_elements
+    # seam. page.evaluate is an async method the proxy already marshals for
+    # _action_scroll and _action_eval_js.
+    "actions.py::_discover_elements::page.evaluate",
     "actions.py::action_verify::page.screenshot",
     "browser_stream.py::_generate::page.screenshot",
     "compute_use.py::action_compute_use_click::getattr(page, mouse)",
