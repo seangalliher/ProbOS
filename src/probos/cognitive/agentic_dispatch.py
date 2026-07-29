@@ -1902,6 +1902,17 @@ class WorkItemAgenticExecutor:
                     )
                 if tid == "browser" and _captain_row is not None:
                     definition = _announce_shared_session(definition, _captain_row)
+                    # AD-1163a: record what the agent was ACTUALLY told. Twice
+                    # now the binding logged as present while the agent made
+                    # zero tool calls, and the gap between "we wired it" and
+                    # "the model saw it" was unobservable. Log the offered
+                    # description verbatim so that gap is readable instead of
+                    # inferred.
+                    logger.info(
+                        "AD-1163: browser offered to %s with description: %s",
+                        agent_id,
+                        (definition.get("function") or {}).get("description", ""),
+                    )
                 tools.append(definition)
 
         # AD-1065: the conversational chat path passes a lower iteration cap +

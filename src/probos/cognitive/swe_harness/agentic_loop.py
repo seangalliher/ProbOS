@@ -795,6 +795,13 @@ class AgenticLoop:
         # provider measurement with a client-side estimate.
         token_sources: set[str] = set()
         estimated_iterations = 0
+        # BF-697: the newest assistant turn that actually said something. The
+        # ``max_iterations`` exit below is the only one that can be reached
+        # after real work, and it has no ``response`` in scope to recover text
+        # from, so it is carried here. Initialised before the loop because
+        # ``self._max_iter`` may be 0, in which case the exit is reached without
+        # a single pass.
+        last_assistant_text = ""
 
         for iteration in range(1, self._max_iter + 1):
             result.iterations = iteration
@@ -931,6 +938,13 @@ class AgenticLoop:
                 b.text for b in blocks if isinstance(b, TextBlock)
             )
             assistant_content = assistant_text or response.content or ""
+            # BF-697: retain the last turn that produced text. A tool-calling
+            # turn often carries none, and overwriting with "" there would erase
+            # the reasoning the agent last stated — the very thing the exit
+            # needs to report. Never substituted: a run in which the model never
+            # spoke reports nothing rather than inventing a closing line.
+            if assistant_content:
+                last_assistant_text = assistant_content
             # AD-1146: an assistant turn that made tool calls must carry them so
             # the provider can correlate the role:"tool" results that follow.
             if self._structured_tool_messages and tool_uses:
@@ -989,7 +1003,19 @@ class AgenticLoop:
                 )
                 messages.append({"role": "user", "content": tool_result_text})
 
+        # BF-697: report the work. This exit is reached ONLY after the loop has
+        # executed tool calls (a turn without them exits ``complete`` above), so
+        # leaving ``final_text`` empty described a productive run as a silent
+        # one. Every caller reads emptiness as "the loop did not run":
+        # ``CognitiveAgent._maybe_run_conversational_agentic`` returns ``None``
+        # and drops the turn through to the single-pass, tool-less reply path.
+        # On the reference vessel (2026-07-28 23:03) that path told the Captain
+        # "Still can't reach your screen from here" in the same second the
+        # AD-1151 trace recorded five successful ``browser`` calls against the
+        # document he was watching. Matches the ``token_budget`` exit, which has
+        # always reported its text.
         result.stopped_reason = "max_iterations"
+        result.final_text = last_assistant_text
         return result
 
     async def _compact_messages(
