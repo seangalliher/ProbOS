@@ -16,6 +16,18 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 >
 > **The forcing question is: name the real caller. Not the test — the production path.** Four of these seven die on it immediately. The rest need: does the double implement something the real object does not, and has this path ever executed on a live runtime? A unit test of a mechanism structurally cannot see this class of bug.
 
+### AD-1163 (2026-07-28) - tell the agent the Captain's browser session exists
+
+AD-1158 bound the session through the call context; AD-1162 supplied the binding. Both correct, both tested. Live result: Ezri, holding a `write` grant on `browser`, offered the tool, and bound to the Captain's exact session, made **zero tool calls** and replied that she could not interact with applications on the Captain's machine.
+
+She was reasoning correctly from what she knew. AD-1158's own entry states the design intent: *"The binding travels through the call context, so no prompt text and no model accuracy is involved."* That was right for reliability — no UUID has to survive a model copying it — but invisible to the plumbing turned out to mean invisible to the agent. She saw a tool described as "drive a Chromium browser" and a request about "the document I have open", and nothing connected them.
+
+So the offered description now names the page: *"A browser session is already open and shared with the Captain showing 'Document 5.docx'. When the Captain refers to a page or document they have open, that is this session. Omit session_id and your call acts on it."* Same fix shape as BF-690 — make the offer honest about what is actually available. It composes with BF-690's read-only narrowing (both only rewrite `function.description`), and the text is checked against the real `_CAPABILITY_GAP_RE`, since phrasing that reads as a capability gap would defeat the purpose.
+
+**This extends the defect family in a way the existing forcing question would not have caught.** "Name the real caller" was satisfied — AD-1162 *is* the caller. Producer and reader were both wired and both correct. What was missing is that the **consumer who must decide to invoke the capability was never told it existed.** For anything an agent chooses to use rather than something the runtime calls on its behalf, wiring the mechanism is necessary and not sufficient; the agent has to be able to know it is there.
+
+Also adds the line whose absence cost two diagnostic cycles: when the browser is offered and **no** Captain session is bound, that now logs explicitly. Previously the only evidence was a *missing* INFO line, which is invisible unless you already suspect it — and reading a missing line as a second failed run is exactly the mistake that sent this investigation down two dead ends.
+
 ### AD-1162 (2026-07-28) - the producer for the session binding AD-1158 reads
 
 AD-1158 taught `BrowserTool.invoke` to read `context["browser_session_id"]` so an agent acts on the session the Captain is watching rather than spawning a fresh, signed-out browser. **Nothing outside tests ever supplied that key.** The mechanism was inert: every agent browser call created a new session while the Captain watched a different one, and the demo it was built for would have silently typed into an invisible browser.

@@ -603,25 +603,18 @@ class BrowserTool:
         )
 
     @property
-    def captain_session_id(self) -> str | None:
-        """AD-1162: the live session the Captain opened, for ambient binding.
+    def captain_session(self) -> dict[str, Any] | None:
+        """AD-1163: the Captain's live session row, or ``None``.
 
-        AD-1158 taught ``invoke`` to read ``context["browser_session_id"]`` so an
-        agent acts on the session the Captain is watching rather than spawning a
-        fresh, signed-out browser. Nothing ever *supplied* that key outside
-        tests, so the mechanism was inert and every agent call created a new
-        session — the "built, tested, and never wired to a producer" shape that
-        also produced AD-1157, BF-688, BF-690, BF-692 and BF-695. This is the
-        producer.
-
-        Reads the public :meth:`list_sessions` rather than ``self._sessions`` so
-        the ownership rule stays expressed in one place. ``agent_id == "captain"``
-        is set by :meth:`open_captain_session` (AD-1161); agent-opened sessions
-        carry the agent's own id and are deliberately NOT bindable this way —
-        an agent should not silently inherit another agent's browser.
-
-        Returns ``None`` when the Captain has no live session, which is the
-        honest answer: the agent then creates its own, exactly as before.
+        Carries ``url`` and ``page_title`` as well as the id, because an agent
+        needs to be *told* the session exists before it will use it. AD-1158/1162
+        made the binding work invisibly through the call context — deliberately,
+        so no UUID has to survive a model copying it — but invisible to the
+        plumbing turned out to mean invisible to the agent too: offered the
+        browser and asked to type into "the document I have open", the agent
+        made ZERO tool calls and answered that it could not control the
+        Captain's screen. Correct reasoning from what it knew. This is what it
+        needs to know.
         """
         captain_rows = [
             row for row in self.list_sessions()
@@ -637,7 +630,28 @@ class BrowserTool:
                 len(captain_rows),
                 str(captain_rows[-1].get("session_id"))[:12],
             )
-        session_id = captain_rows[-1].get("session_id")
+        row = captain_rows[-1]
+        session_id = row.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        return row
+
+    @property
+    def captain_session_id(self) -> str | None:
+        """AD-1162: the live session the Captain opened, for ambient binding.
+
+        ``agent_id == "captain"`` is set by :meth:`open_captain_session`
+        (AD-1161); agent-opened sessions carry the agent's own id and are
+        deliberately NOT bindable this way — an agent should not silently
+        inherit another agent's browser.
+
+        Returns ``None`` when the Captain has no live session, which is the
+        honest answer: the agent then creates its own, exactly as before.
+        """
+        row = self.captain_session
+        if row is None:
+            return None
+        session_id = row.get("session_id")
         return session_id if isinstance(session_id, str) and session_id else None
 
     async def open_captain_session(

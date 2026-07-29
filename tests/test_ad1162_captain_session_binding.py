@@ -28,13 +28,25 @@ from probos.cognitive.agentic_dispatch import _captain_browser_session_id
 
 class _FakeTool:
     """Minimal stand-in exposing only ``list_sessions`` -- the public surface
-    ``captain_session_id`` is built on."""
+    ``captain_session`` is built on.
+
+    ``captain_session`` delegates to the REAL implementation so
+    ``captain_session_id`` (which reads it) exercises shipped code rather than a
+    reimplementation. AD-1163 split the row lookup out of the id lookup; this
+    keeps both under test through one stub.
+    """
 
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
 
     def list_sessions(self) -> list[dict[str, Any]]:
         return list(self._rows)
+
+    @property
+    def captain_session(self) -> dict[str, Any] | None:
+        from probos.tools.browser.tool import BrowserTool
+
+        return BrowserTool.captain_session.fget(self)  # type: ignore[attr-defined]
 
 
 def _real_property(rows: list[dict[str, Any]]) -> str | None:
@@ -110,7 +122,7 @@ def test_resolver_returns_none_without_a_browser_tool() -> None:
 
 
 def test_resolver_returns_the_bound_session() -> None:
-    tool = SimpleNamespace(captain_session_id="sess-cap")
+    tool = SimpleNamespace(captain_session={"session_id": "sess-cap"})
     assert _captain_browser_session_id(SimpleNamespace(browser_tool=tool)) == "sess-cap"
 
 
@@ -122,18 +134,18 @@ def test_resolver_degrades_when_the_property_raises(
 
     class _Raising:
         @property
-        def captain_session_id(self) -> str:
+        def captain_session(self) -> dict[str, Any]:
             raise RuntimeError("session table corrupt")
 
     with caplog.at_level(logging.WARNING):
         result = _captain_browser_session_id(SimpleNamespace(browser_tool=_Raising()))
     assert result is None
-    assert "AD-1162" in caplog.text
+    assert "AD-1163" in caplog.text
 
 
 @pytest.mark.parametrize("bad", [None, "", 7, object()])
 def test_resolver_rejects_a_non_str_binding(bad: Any) -> None:
-    tool = SimpleNamespace(captain_session_id=bad)
+    tool = SimpleNamespace(captain_session={"session_id": bad})
     assert _captain_browser_session_id(SimpleNamespace(browser_tool=tool)) is None
 
 

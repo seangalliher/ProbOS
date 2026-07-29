@@ -524,8 +524,8 @@ def _narrow_browser_offer(
     return narrowed_definition
 
 
-def _captain_browser_session_id(runtime: Any) -> str | None:
-    """AD-1162: the Captain's live browser session id, or ``None``.
+def _captain_browser_session(runtime: Any) -> dict[str, Any] | None:
+    """AD-1163: the Captain's live browser session row, or ``None``.
 
     Log-and-degrade in every direction: a runtime without a browser tool, a tool
     without the property (an older build), or a raising property all yield
@@ -536,16 +536,79 @@ def _captain_browser_session_id(runtime: Any) -> str | None:
     if tool is None:
         return None
     try:
-        session_id = tool.captain_session_id
+        row = tool.captain_session
     except Exception:
         logger.warning(
-            "AD-1162: reading the Captain's browser session failed; the agent "
+            "AD-1163: reading the Captain's browser session failed; the agent "
             "will create its own session instead of acting on the Captain's "
             "page. Browser work still functions, just not on the shared view.",
             exc_info=True,
         )
         return None
+    return row if isinstance(row, dict) else None
+
+
+def _captain_browser_session_id(runtime: Any) -> str | None:
+    """AD-1162: the Captain's live browser session id, or ``None``."""
+    row = _captain_browser_session(runtime)
+    if row is None:
+        return None
+    session_id = row.get("session_id")
     return session_id if isinstance(session_id, str) and session_id else None
+
+
+def _shared_session_note(row: dict[str, Any]) -> str:
+    """AD-1163: the sentence that tells an agent the Captain's page is reachable.
+
+    Without it the binding is invisible: offered a tool described as "drive a
+    Chromium browser" and asked to type into "the document I have open", the
+    agent concluded those were unrelated and made zero tool calls. It was right,
+    given what it knew. Naming the page closes the gap between the request and
+    the capability.
+
+    Checked against the real ``_CAPABILITY_GAP_RE`` by tests — phrasing that
+    reads as a capability gap here would undo the whole point.
+    """
+    url = row.get("url") or row.get("last_url") or ""
+    title = row.get("page_title") or ""
+    where = ""
+    if isinstance(title, str) and title.strip():
+        where = f" showing \"{title.strip()[:80]}\""
+    elif isinstance(url, str) and url.strip():
+        where = f" at {url.strip()[:120]}"
+    return (
+        " A browser session is already open and shared with the Captain"
+        f"{where}. When the Captain refers to a page or document they have open, "
+        "that is this session. Omit session_id and your call acts on it — this is "
+        "how you work on what the Captain is looking at."
+    )
+
+
+def _announce_shared_session(
+    definition: dict[str, Any], row: dict[str, Any]
+) -> dict[str, Any]:
+    """AD-1163: append the shared-session note to an offered browser definition.
+
+    Returns a NEW definition. Composes with :func:`_narrow_browser_offer` in
+    either order, since both only rewrite ``function.description``.
+    """
+    fn = definition.get("function")
+    if not isinstance(fn, dict):
+        logger.warning(
+            "AD-1163: browser offer has no function block to annotate (shape %s); "
+            "the agent will not be told the Captain's session exists and may "
+            "decline browser work it is able to perform.",
+            type(fn).__name__,
+        )
+        return definition
+    description = fn.get("description")
+    if not isinstance(description, str):
+        description = ""
+    annotated_fn = dict(fn)
+    annotated_fn["description"] = description + _shared_session_note(row)
+    annotated = dict(definition)
+    annotated["function"] = annotated_fn
+    return annotated
 
 
 class DispatchToolExecutor(ToolExecutor):
@@ -1821,6 +1884,10 @@ class WorkItemAgenticExecutor:
         )
 
         tools: list[dict] = []
+        # AD-1163: resolved once, before the loop, so the browser offer can name
+        # the Captain's open page. AD-1158/1162 made the binding WORK; this is
+        # what makes the agent aware it exists.
+        _captain_row = _captain_browser_session(runtime)
         if registry is not None:
             for tid in tool_ids:
                 reg = registry.get(tid)
@@ -1833,6 +1900,8 @@ class WorkItemAgenticExecutor:
                     definition = _narrow_browser_offer(
                         definition, restricted_browser_actions
                     )
+                if tid == "browser" and _captain_row is not None:
+                    definition = _announce_shared_session(definition, _captain_row)
                 tools.append(definition)
 
         # AD-1065: the conversational chat path passes a lower iteration cap +
@@ -1900,6 +1969,19 @@ class WorkItemAgenticExecutor:
                 "browser calls without an explicit session_id will act on the "
                 "page the Captain is watching.",
                 agent_id, _captain_session[:12],
+            )
+        elif browser_ids:
+            # AD-1163: the ABSENCE is the diagnostic. Without this line the only
+            # evidence is a missing INFO, which is invisible unless you already
+            # suspect it. If the Captain says "the document I have open" and no
+            # session is bound, the agent works on a page the Captain cannot see.
+            logger.info(
+                "AD-1162: agent %s was offered the browser with NO Captain "
+                "session bound; calls without an explicit session_id will create "
+                "a fresh, signed-out browser rather than acting on the Captain's "
+                "page. Expected when the Captain has not opened one; unexpected "
+                "if they are watching a session right now.",
+                agent_id,
             )
         agentic_result = await loop.run(
             system_prompt=instructions or "",
