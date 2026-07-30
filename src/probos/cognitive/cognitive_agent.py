@@ -3514,7 +3514,13 @@ class CognitiveAgent(BaseAgent):
         must never drop the Captain's turn). Reuses
         :class:`WorkItemAgenticExecutor` (the task-path loop) so governance
         (grants / restrictions), tool assembly, and tool-trace persistence are
-        shared - one agentic substrate, DRY."""
+        shared - one agentic substrate, DRY.
+
+        AD-1164: when ``config.dm_agentic.continue_or_ask_enabled`` is on and the
+        loop stopped at its iteration cap, the returned text is resolved by
+        :func:`~probos.cognitive.continue_or_ask.resolve_exhausted_turn`, which
+        either re-invokes under a standing rule or appends an explicit
+        cut-off statement. With that flag off the return value is unchanged."""
         if not self._conversational_agentic_will_run(observation):
             return None
         runtime = getattr(self, "_runtime", None)
@@ -3523,17 +3529,40 @@ class CognitiveAgent(BaseAgent):
             from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 
             executor = WorkItemAgenticExecutor(llm_client=self._llm_client)
-            outcome = await executor.run(
-                agent_id=self.id,
-                instructions=system_prompt,
-                task_text=user_message,
-                runtime=runtime,
-                thread_id=str(observation.get("thread_id", "") or ""),
-                max_iterations=getattr(cfg, "max_iterations", 5),
-                tier=getattr(cfg, "tier", "standard"),
-            )
-            text = (getattr(outcome, "final_text", "") or "").strip()
-            return text or None
+            thread_id = str(observation.get("thread_id", "") or "")
+            max_iterations = getattr(cfg, "max_iterations", 5)
+            tier = getattr(cfg, "tier", "standard")
+
+            async def _run_pass(task_text: str) -> Any:
+                return await executor.run(
+                    agent_id=self.id,
+                    instructions=system_prompt,
+                    task_text=task_text,
+                    runtime=runtime,
+                    thread_id=thread_id,
+                    max_iterations=max_iterations,
+                    tier=tier,
+                )
+
+            outcome = await _run_pass(user_message)
+            text = getattr(outcome, "final_text", "") or ""
+            # AD-1164: a turn that hit the step limit continues under a standing
+            # rule or files an ask, and says so either way. Gated inline so the
+            # default-OFF path costs one ``getattr`` and does not even import the
+            # module (the AD-1154 arming-site convention).
+            if getattr(cfg, "continue_or_ask_enabled", False) is True:
+                from probos.cognitive.continue_or_ask import resolve_exhausted_turn
+
+                text = await resolve_exhausted_turn(
+                    outcome,
+                    reinvoke=_run_pass,
+                    runtime=runtime,
+                    agent_id=self.id,
+                    base_task_text=user_message,
+                    thread_id=thread_id,
+                    config=cfg,
+                )
+            return text.strip() or None
         except Exception:
             logger.warning(
                 "AD-1065: conversational agentic loop failed for agent=%s; "

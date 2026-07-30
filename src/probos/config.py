@@ -6031,6 +6031,47 @@ class DmAgenticConfig(BaseModel):  # AD-1065
     enabled: bool = False
     max_iterations: int = Field(default=5, ge=1, le=25)
     tier: str = "standard"
+    continue_or_ask_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1164: when a conversational turn exhausts max_iterations, "
+            "continue it or ask the Captain, instead of stopping silently. "
+            "BF-697 stopped the partial work being DISCARDED; this stops it "
+            "being reported as though the turn had finished. With the gate on, "
+            "a turn that hits the step limit either (a) re-invokes with a fresh "
+            "max_iterations allowance when a standing rule from AD-1154's "
+            "ActionApprovalStore covers this agent, bounded by "
+            "continue_or_ask_max_passes, or (b) files a kind='continue' request "
+            "into the AD-853 approval queue and returns the partial work with an "
+            "explicit statement that it stopped mid-task. Default-OFF per "
+            "convention #14 \u2014 with the gate off the turn behaves exactly as it "
+            "does today. Only max_iterations is ever continued: token_budget is "
+            "a spend ceiling the operator set, error is usually provider-window "
+            "exhaustion that a longer prompt makes worse, and complete means the "
+            "model chose to stop. Every failure path (absent store, raising "
+            "cache read, failed re-invocation) degrades to today's behaviour, so "
+            "arming this can cost you an unnecessary question but never a turn."
+        ),
+    )
+    continue_or_ask_max_passes: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        description=(
+            "AD-1164: the hard cap on how many times ONE conversational turn's "
+            "agentic loop is run, COUNTING THE FIRST. 1 means no re-invocation, "
+            "identical to today; the cap is a bound, never an enable \u2014 "
+            "continue_or_ask_enabled is what turns the feature on. Mirrors "
+            "agentic_dispatch.crew_loop_until_done_max_iterations, which is the "
+            "same bound on the crew fan-out. WORST CASE: each pass gets a fresh "
+            "max_iterations (default 5, ceiling 25) turns and one turn can carry "
+            "up to agentic_loop.max_parallel_tool_calls (ceiling 16) concurrent "
+            "tool calls, so at this ceiling of 5 that is 5 x 25 x 16 = 2000 tool "
+            "invocations for a single chat turn. A pass only happens while a "
+            "live standing rule permits it, so reaching that ceiling requires "
+            "the Captain to have issued one."
+        ),
+    )
 
 
 class AgenticToolsConfig(BaseModel):  # AD-1072
