@@ -302,6 +302,49 @@ def _classify_concurrency_priority(intent: IntentMessage) -> int:
     return 5
 
 
+def _coerce_promotion_budget(raw: Any) -> float:
+    """AD-1165: read ``dm_agentic.promote_to_task_after_seconds`` defensively.
+
+    The config object reaches this path as ``Any`` — every synthetic-runtime
+    test builds it as a ``SimpleNamespace`` or a ``MagicMock``, and a MagicMock
+    auto-creates the attribute as a truthy proxy whose comparisons return
+    another MagicMock rather than a bool. Reading the budget with a bare
+    ``getattr`` and comparing it would therefore make the arming decision on a
+    value that is not a number at all. An exact ``type`` check (which also
+    excludes ``bool``, a numeric subclass) is the boundary: anything that is not
+    a real finite positive number means OFF, which is the byte-identical path.
+    """
+    if type(raw) not in (int, float):
+        return 0.0
+    value = float(raw)
+    if not math.isfinite(value) or value <= 0.0:
+        return 0.0
+    return value
+
+
+def _promotion_request_text(observation: dict[str, Any], fallback: str) -> str:
+    """AD-1165: the text a promoted turn's work item records as the request.
+
+    Prefers the Captain's RAW message over the assembled prompt. ``fallback`` is
+    the fully composed ``user_message``, which carries working memory, episodic
+    recall and session history — thousands of characters of context that would
+    make a board row unreadable. ``captain_message`` is set by the DM router
+    (``routers/agents.py``) precisely so downstream consumers can recover what
+    was actually said; ``text`` is the same message after any visual-scene
+    prefix, so it is the second choice rather than the first.
+    """
+    params = observation.get("params")
+    sources = (
+        (params or {}).get("captain_message") if type(params) is dict else None,
+        (params or {}).get("text") if type(params) is dict else None,
+        observation.get("captain_message"),
+    )
+    for candidate in sources:
+        if type(candidate) is str and candidate.strip():
+            return candidate
+    return fallback
+
+
 class CognitiveAgent(BaseAgent):
     # AD-647b v1: agents that own a registered ProcessChainDefinition set
     # this to the chain_id ("name" of the definition). When set, the
@@ -612,6 +655,15 @@ class CognitiveAgent(BaseAgent):
 
         # AD-534b: near-miss/failure context for fallback learning
         self._last_fallback_info: dict[str, Any] | None = None
+
+        # AD-1165: live references to conversational turns that outgrew a reply
+        # and were promoted to background tasks, plus their reporters. Held so
+        # neither is garbage-collected mid-flight (Async Discipline); each entry
+        # discards itself on completion. Deliberately NOT cancelled by ``stop()``
+        # — a promoted turn is the Captain's work, and a pool rescale must not
+        # kill it. It is bounded by ``max_iterations`` and the LLM timeouts, so
+        # it always terminates on its own.
+        self._promoted_turn_tasks: set[asyncio.Task[Any]] = set()
 
         # AD-423c: ToolContext, set during onboarding
         self.tool_context: Any = None
@@ -3520,7 +3572,14 @@ class CognitiveAgent(BaseAgent):
         loop stopped at its iteration cap, the returned text is resolved by
         :func:`~probos.cognitive.continue_or_ask.resolve_exhausted_turn`, which
         either re-invokes under a standing rule or appends an explicit
-        cut-off statement. With that flag off the return value is unchanged."""
+        cut-off statement. With that flag off the return value is unchanged.
+
+        AD-1165: when ``config.dm_agentic.promote_to_task_after_seconds`` is
+        positive and the run outlives it, the run is NOT cancelled — it keeps
+        going as a background task with a work item opened for it, and this
+        method returns an acknowledgement so the turn lands inside the 60s chat
+        TTL instead of being cancelled mid-flight. With that value at its 0
+        default the run is awaited inline exactly as before."""
         if not self._conversational_agentic_will_run(observation):
             return None
         runtime = getattr(self, "_runtime", None)
@@ -3544,23 +3603,47 @@ class CognitiveAgent(BaseAgent):
                     tier=tier,
                 )
 
-            outcome = await _run_pass(user_message)
-            text = getattr(outcome, "final_text", "") or ""
-            # AD-1164: a turn that hit the step limit continues under a standing
-            # rule or files an ask, and says so either way. Gated inline so the
-            # default-OFF path costs one ``getattr`` and does not even import the
-            # module (the AD-1154 arming-site convention).
-            if getattr(cfg, "continue_or_ask_enabled", False) is True:
-                from probos.cognitive.continue_or_ask import resolve_exhausted_turn
+            async def _agentic_turn() -> str:
+                outcome = await _run_pass(user_message)
+                turn_text = getattr(outcome, "final_text", "") or ""
+                # AD-1164: a turn that hit the step limit continues under a
+                # standing rule or files an ask, and says so either way. Gated
+                # inline so the default-OFF path costs one ``getattr`` and does
+                # not even import the module (the AD-1154 arming-site convention).
+                if getattr(cfg, "continue_or_ask_enabled", False) is True:
+                    from probos.cognitive.continue_or_ask import resolve_exhausted_turn
 
-                text = await resolve_exhausted_turn(
-                    outcome,
-                    reinvoke=_run_pass,
+                    turn_text = await resolve_exhausted_turn(
+                        outcome,
+                        reinvoke=_run_pass,
+                        runtime=runtime,
+                        agent_id=self.id,
+                        base_task_text=user_message,
+                        thread_id=thread_id,
+                        config=cfg,
+                    )
+                return turn_text
+
+            # AD-1165: same arming-site convention — a non-positive budget skips
+            # the import entirely and awaits the turn inline, byte-identical to
+            # AD-1164. ``_promotion_request_text`` is the Captain's RAW message,
+            # not the assembled prompt, so the board row reads as what was asked.
+            promote_after = _coerce_promotion_budget(
+                getattr(cfg, "promote_to_task_after_seconds", 0.0)
+            )
+            if promote_after <= 0.0:
+                text = await _agentic_turn()
+            else:
+                from probos.cognitive.turn_promotion import run_with_promotion
+
+                text = await run_with_promotion(
+                    _agentic_turn,
+                    promote_after_seconds=promote_after,
                     runtime=runtime,
                     agent_id=self.id,
-                    base_task_text=user_message,
                     thread_id=thread_id,
-                    config=cfg,
+                    request_text=_promotion_request_text(observation, user_message),
+                    hold=self._promoted_turn_tasks,
                 )
             return text.strip() or None
         except Exception:

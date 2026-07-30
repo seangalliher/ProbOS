@@ -6072,6 +6072,29 @@ class DmAgenticConfig(BaseModel):  # AD-1065
             "the Captain to have issued one."
         ),
     )
+    promote_to_task_after_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=600.0,
+        description=(
+            "AD-1165: seconds a conversational agentic turn may run before it "
+            "stops being a reply and becomes a background task. A Captain DM is "
+            "dispatched with a 60s intent TTL, so a turn that does real work "
+            "(driving a browser, producing a document) is cancelled mid-flight "
+            "and the Captain is told the agent did not respond \u2014 for a turn "
+            "in which it was working correctly. Past this budget the run is NOT "
+            "cancelled or restarted: the same in-flight loop keeps going, a "
+            "work item is opened for it, the turn returns an acknowledgement "
+            "inside the TTL, and the result is posted into the same thread when "
+            "it lands. Set it BELOW the 60s chat TTL with room for one more "
+            "loop iteration \u2014 35 is a reasonable starting value. 0 disables "
+            "promotion, which is the default and is byte-identical to AD-1164: "
+            "the turn is awaited inline and a long one still trips the TTL. "
+            "Promotion needs a chat thread and a work-item store; without "
+            "either it degrades to that same inline wait rather than promising "
+            "a report nothing would deliver."
+        ),
+    )
 
 
 class AgenticToolsConfig(BaseModel):  # AD-1072
