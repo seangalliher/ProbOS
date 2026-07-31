@@ -62,6 +62,52 @@ _STATE_ELEMENTS_ELISION: str = (
 # the 100th record is accepted, blocking the Playwright loop.
 _STATE_MAX_SCAN_NODES: int = 2000
 
+# BF-699: the accessibility-tree discovery path, tried BEFORE the DOM walk.
+#
+# BF-692 gave ``state`` a real DOM walk, and it works — on the TOP FRAME ONLY.
+# ``page.evaluate`` runs in the main frame's context, so an application that
+# hosts its editor in an iframe returns exactly one record: the ``<iframe>``
+# element itself. Measured 2026-07-31 against the reference vessel's Word
+# Online document: the walk returned a single node while the accessibility tree
+# held 700+, every one of them behind one frame boundary.
+#
+# That is not a Word quirk. Word, Excel, PowerPoint, Google Docs and most
+# embedded SaaS editors are iframe-hosted, so the entire category of
+# application an operator most wants an agent to drive was unreachable, and the
+# failure was SILENT — an empty list reads as "nothing here", not "I cannot see
+# through this boundary". The agent on the reference vessel concluded the
+# document was "rendered as a canvas/image" and spent its budget accordingly.
+#
+# ``Locator.aria_snapshot(mode="ai")`` crosses frames on its own and returns
+# frame-qualified refs (``f1e4`` = frame 1, element 4). Crucially
+# ``aria-ref=f1e4`` is itself a valid Playwright selector, so it drops into the
+# existing record shape and ``_resolve_target_selector`` -> ``page.click(...)``
+# reaches the in-frame element with NO change to click / type / key_type. All
+# four facts were verified against real Chromium before this was written.
+#
+# Roles are filtered to things worth addressing by index. The tree is
+# semantic, so this is a role allowlist rather than the DOM walk's tag/handler
+# heuristics; ``document``/``application``/``main`` are included because an
+# editing surface is a click target even though it is not a control.
+_A11Y_INTERACTIVE_ROLES: frozenset[str] = frozenset({
+    "button", "checkbox", "combobox", "link", "listbox", "menuitem",
+    "menuitemcheckbox", "menuitemradio", "option", "radio", "searchbox",
+    "slider", "spinbutton", "switch", "tab", "textbox", "treeitem",
+})
+_A11Y_SURFACE_ROLES: frozenset[str] = frozenset({
+    "application", "document", "main",
+})
+
+# Matches one ``aria_snapshot`` line, e.g.
+#   - textbox "Document body" [ref=f1e4]
+#   - button "Outer Button" [ref=e3]
+# The name is optional; the ref is not (a node without one cannot be addressed).
+_A11Y_NODE_RE = re.compile(
+    r'^\s*-\s+(?P<role>[a-zA-Z]+)'
+    r'(?:\s+"(?P<name>(?:[^"\\]|\\.)*)")?'
+    r'.*?\[ref=(?P<ref>[A-Za-z0-9]+)\]'
+)
+
 # BF-692: the real element walk. Runs entirely in page context and returns
 # ``{"elements": [...], "matched": int, "truncated": bool}``.
 #
@@ -292,14 +338,106 @@ def _index_element_records(raw: Any) -> list[dict[str, Any]]:
         if not isinstance(rec, dict):
             continue
         entry: dict[str, Any] = {"index": i}
-        for key in ("role", "text", "tag", "href", "name", "value", "selector"):
+        for key in ("role", "text", "tag", "href", "name", "value", "selector", "frame"):
             if key in rec:
                 entry[key] = rec[key]
         elements.append(entry)
     return elements
 
 
+def _parse_a11y_snapshot(snapshot: str) -> tuple[list[dict[str, Any]], int]:
+    """BF-699: turn an ``aria_snapshot(mode="ai")`` string into element records.
+
+    Returns ``(records, omitted)`` in the same shape ``_discover_elements``
+    produces, so the caller cannot tell which source it got and nothing
+    downstream changes.
+
+    ``selector`` is set to ``aria-ref=<ref>``, which Playwright resolves
+    directly — including across a frame boundary, which is the entire point.
+    Verified against real Chromium: ``page.locator("aria-ref=f1e4")`` matched
+    the in-frame input and typing into it worked.
+    """
+    records: list[dict[str, Any]] = []
+    matched = 0
+    for line in snapshot.splitlines():
+        m = _A11Y_NODE_RE.match(line)
+        if m is None:
+            continue
+        role = m.group("role").lower()
+        if role not in _A11Y_INTERACTIVE_ROLES and role not in _A11Y_SURFACE_ROLES:
+            continue
+        matched += 1
+        if len(records) >= _STATE_MAX_ELEMENTS:
+            continue
+        name = (m.group("name") or "").replace('\\"', '"')
+        records.append({
+            "role": role,
+            "name": name,
+            "text": name,
+            "selector": f"aria-ref={m.group('ref')}",
+            # ``f<N>e<M>`` means frame N; a bare ``eM`` is the main frame. Kept
+            # so an agent can tell that an element lives inside an embedded
+            # application rather than the page chrome around it.
+            "frame": m.group("ref").split("e")[0] if m.group("ref")[0] == "f" else "",
+        })
+    return records, max(matched - len(records), 0)
+
+
+async def _a11y_discover_elements(page: Any) -> tuple[list[dict[str, Any]], int] | None:
+    """BF-699: discover elements through the accessibility tree.
+
+    Returns ``None`` when this path is unavailable or yields nothing, which
+    means "fall through to the BF-692 DOM walk" — so a page with no ARIA
+    semantics, an older Playwright without ``aria_snapshot``, or any failure at
+    all behaves exactly as it did before this fix.
+    """
+    locator_factory = getattr(page, "locator", None)
+    if not callable(locator_factory):
+        return None
+    try:
+        root = locator_factory("body")
+        snapshot_fn = getattr(root, "aria_snapshot", None)
+        if not callable(snapshot_fn):
+            return None
+        snapshot = await snapshot_fn(mode="ai")
+    except Exception:
+        logger.warning(
+            "BF-699: accessibility snapshot failed on the open page; falling "
+            "back to the BF-692 DOM walk, which cannot see inside iframes. If "
+            "this page hosts its editor in a frame the element list will be "
+            "empty and the agent should use screenshot/coordinates instead.",
+            exc_info=True,
+        )
+        return None
+    if not isinstance(snapshot, str) or not snapshot.strip():
+        return None
+    records, omitted = _parse_a11y_snapshot(snapshot)
+    if not records:
+        return None
+    return records, omitted
+
+
 async def _discover_elements(page: Any) -> tuple[list[dict[str, Any]], int]:
+    """BF-699: choose a discovery strategy for ``state``.
+
+    The accessibility tree is tried FIRST because it crosses frame boundaries
+    and the DOM walk does not. The walk remains the fallback: it sees elements
+    carrying no ARIA semantics at all, and keeping it preserves the BF-692
+    contract (proved-unique CSS selectors, path selectors, never surfacing a
+    password value) on every page where the tree is empty or unavailable.
+
+    The two strategies are separate named functions rather than one branchy
+    body so each one's contract can be tested against real Chromium on its own
+    terms — the DOM walk's guarantees are about CSS selectors, and the tree's
+    are about frames and roles.
+    """
+    a11y = await _a11y_discover_elements(page)
+    if a11y is not None:
+        return a11y
+    return await _dom_discover_elements(page)
+
+
+async def _dom_discover_elements(page: Any) -> tuple[list[dict[str, Any]], int]:
     """BF-692: walk the live DOM for interactable elements.
 
     Returns ``(records, omitted)``. ``omitted`` is the number of visible
@@ -309,6 +447,9 @@ async def _discover_elements(page: Any) -> tuple[list[dict[str, Any]], int]:
     orient itself, and ``_action_state`` has always absorbed discovery failures
     rather than raising. A page whose scripts break ``evaluate`` must still
     yield an empty snapshot, not a failed tool call.
+
+    TOP FRAME ONLY — ``page.evaluate`` runs in the main frame's context. That
+    limit is why BF-699 put the accessibility tree in front of this.
     """
     try:
         raw = await page.evaluate(_STATE_DOM_WALK_JS)

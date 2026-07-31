@@ -26,8 +26,17 @@ from probos.tools.browser.actions import (
     _STATE_ELEMENTS_ELISION,
     _STATE_MAX_ELEMENTS,
     _STATE_MAX_SCAN_NODES,
-    _discover_elements,
     dispatch_action,
+)
+
+# BF-699 put the accessibility tree in front of this walk, so ``_discover_
+# elements`` is now a strategy chooser. Everything in THIS file asserts the
+# DOM walk's own contract — proved-unique CSS selectors, path selectors when
+# ids are absent, never surfacing a password value — so it binds directly to
+# the walk. The chooser and the tree are covered in
+# tests/test_bf699_frame_aware_state.py.
+from probos.tools.browser.actions import (  # noqa: E402
+    _dom_discover_elements as _discover_elements,
 )
 from probos.tools.browser.session import BrowserSession
 
@@ -520,8 +529,17 @@ async def test_real_chromium_state_then_click_by_index_hits_the_right_node(
 
         out = await dispatch_action(sess, "state", {})
         elements = out["elements"]
-        target = [e for e in elements if e.get("selector") == "#go"]
-        assert target, "the Go button was not in the snapshot"
+        # BF-699: the LIVE pipeline now discovers through the accessibility
+        # tree, so a selector here is ``aria-ref=eN`` rather than ``#go``.
+        # This test's subject is the pipeline contract — state, then click by
+        # index, lands on the right node — not the selector dialect, so the
+        # target is picked by what the agent actually reasons about: its label.
+        target = [
+            e for e in elements
+            if e.get("selector") == "#go"
+            or (e.get("role") == "button" and e.get("name") == "Go")
+        ]
+        assert target, f"the Go button was not in the snapshot: {elements}"
 
         await dispatch_action(sess, "click", {"index": target[0]["index"]})
 

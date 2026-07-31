@@ -813,7 +813,15 @@ _PLAYWRIGHT_TOUCH_SITES: tuple[str, ...] = (
     # BF-692: the real DOM element walk behind _action_state's list_elements
     # seam. page.evaluate is an async method the proxy already marshals for
     # _action_scroll and _action_eval_js.
-    "actions.py::_discover_elements::page.evaluate",
+    # BF-699: renamed from _discover_elements when the accessibility tree was
+    # put in front of the DOM walk. Same call, same frame limitation.
+    "actions.py::_dom_discover_elements::page.evaluate",
+    # BF-699: ``locator`` is already in _INLINE_SYNC_CALLABLES (a pure
+    # constructor), so it is called inline and its Locator comes back through
+    # _wrap_result as a _HostBoundProxy. ``aria_snapshot`` on that proxy is a
+    # coroutine function, so it marshals onto the host loop like any other
+    # async method — verified by reading _make_inline_call -> _wrap_result.
+    "actions.py::_a11y_discover_elements::getattr(page, locator)",
     "actions.py::action_verify::page.screenshot",
     "browser_stream.py::_generate::page.screenshot",
     "compute_use.py::action_compute_use_click::getattr(page, mouse)",
