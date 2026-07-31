@@ -244,7 +244,24 @@ async def _finish_promoted_turn(
             work_item_id, exc_info=True,
         )
 
-    body = (str(text or "").strip() or _REPORT_EMPTY) if not failed else _REPORT_FAILED
+    if failed:
+        body = _REPORT_FAILED
+    else:
+        # BF-702: a promoted run returns the agentic loop's text directly, so it
+        # never passes through ``DmReplyPipeline.step_7_divergence_check`` --
+        # the step whose own comment reads "never leak the tag to the Captain".
+        # A report ending in ``<intent emotion=warm>`` is exactly that leak, and
+        # it was visible in the reference vessel's transcript.
+        #
+        # Stripping here rather than teaching the pipeline about promotion keeps
+        # the fix where the bypass is. The helper is idempotent, removes the tag
+        # from any position, and returns untagged text unchanged, so it is safe
+        # whether or not divergence detection is enabled -- and if the tag was
+        # the entire reply, the empty result correctly falls through to the
+        # empty-report wording instead of posting a bare tag.
+        from probos.avatars.divergence_detector import strip_intent_self_tag
+
+        body = strip_intent_self_tag(str(text or "")) or _REPORT_EMPTY
     _post_report(
         runtime=runtime,
         agent_id=agent_id,

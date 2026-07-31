@@ -391,6 +391,111 @@ async def test_a_silent_promoted_run_still_reports() -> None:
     assert store.transitions[-1][1] == "done"
 
 
+# ── BF-702: the intent self-tag must not reach the Captain ────────
+
+
+async def test_the_intent_self_tag_is_stripped_from_a_report() -> None:
+    """THE BF-702 regression, taken verbatim from the live transcript.
+
+    A promoted run returns the agentic loop's text directly and never passes
+    through ``DmReplyPipeline.step_7_divergence_check``, the step that parses
+    and strips this tag precisely so it "never leaks to the Captain". The
+    reference vessel's chat showed one.
+    """
+    store = _FakeWorkItemStore()
+    threads = _FakeThreadStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        return (
+            'Done — "Hello from Ezri" has been typed into the document. '
+            "I can see the text has been entered.\n\n<intent emotion=warm>"
+        )
+
+    await _promote(
+        _work, runtime=_runtime(work_items=store, threads=threads), hold=hold,
+    )
+    release.set()
+    await _drain(hold)
+
+    body = threads.appended[0]["body"]
+    assert "<intent" not in body
+    assert "emotion=warm" not in body
+    assert body.startswith('Done — "Hello from Ezri" has been typed')
+    assert body.endswith("the text has been entered.")
+
+
+async def test_a_report_that_is_only_a_tag_reads_as_empty() -> None:
+    """Stripping must not post a blank message.
+
+    If the tag was the whole reply, the result is silence -- and the Captain
+    was promised a report, so it takes the empty-report wording instead.
+    """
+    store = _FakeWorkItemStore()
+    threads = _FakeThreadStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        return "<intent emotion=warm>"
+
+    await _promote(
+        _work, runtime=_runtime(work_items=store, threads=threads), hold=hold,
+    )
+    release.set()
+    await _drain(hold)
+
+    assert [m["body"] for m in threads.appended] == [_REPORT_EMPTY]
+    assert store.transitions[-1][1] == "done"
+
+
+async def test_an_untagged_report_is_unchanged() -> None:
+    """The strip is a no-op on ordinary text -- no truncation, no reflow."""
+    store = _FakeWorkItemStore()
+    threads = _FakeThreadStore()
+    release = asyncio.Event()
+    hold: set = set()
+    original = "Filed the summary in the ship's records. Two sections, no gaps."
+
+    async def _work() -> str:
+        await release.wait()
+        return original
+
+    await _promote(
+        _work, runtime=_runtime(work_items=store, threads=threads), hold=hold,
+    )
+    release.set()
+    await _drain(hold)
+
+    assert [m["body"] for m in threads.appended] == [original]
+
+
+async def test_an_inline_tag_does_not_merge_adjacent_words() -> None:
+    """BF-603's collapse-to-one-space behaviour must survive this path."""
+    store = _FakeWorkItemStore()
+    threads = _FakeThreadStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        return "Typed it in.<intent emotion=warm>Anything else?"
+
+    await _promote(
+        _work, runtime=_runtime(work_items=store, threads=threads), hold=hold,
+    )
+    release.set()
+    await _drain(hold)
+
+    body = threads.appended[0]["body"]
+    assert "<intent" not in body
+    assert "in.Anything" not in body, "words merged where the tag was removed"
+    assert "Typed it in. Anything else?" == body
+
+
 async def test_a_cancelled_promoted_run_leaves_the_item_in_progress() -> None:
     """Cancellation means unfinished, not finished. The board must say so."""
     store = _FakeWorkItemStore()
