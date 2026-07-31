@@ -699,6 +699,8 @@ def _agent(runtime):
         _runtime=runtime,
         _llm_client=object(),
         id="agentezri",
+        callsign="Ezri",
+        agent_type="counselor",
         department="science",
         rank="lieutenant",
         _promoted_turn_tasks=set(),

@@ -345,6 +345,104 @@ def _promotion_request_text(observation: dict[str, Any], fallback: str) -> str:
     return fallback
 
 
+def _conversational_thread_id(
+    observation: dict[str, Any],
+    runtime: Any,
+    *,
+    agent_id: str,
+    title: str,
+) -> str:
+    """BF-698: the chat thread a 1:1 turn belongs to, from three sources.
+
+    Measured on the reference vessel 2026-07-30: the DM router resolved the
+    thread, wrote the Captain's message into it, and set
+    ``IntentMessage.thread_id`` — and the value still arrived here as ``""``.
+    Everything downstream that needs it reads one dict key: AD-809 resolves the
+    per-thread personality overlay from it, AD-1066 binds produced artifacts
+    with it, AD-1165 promotes a long turn with it. Each degrades to a silent
+    no-op against an absent key, so one path that loses it takes three
+    capabilities with it and reports nothing.
+
+    The agent's canonical thread is a fact the **store** owns. Deriving it there
+    is strictly more robust than trusting the key, so the key becomes a
+    preference rather than a dependency:
+
+    1. ``observation["thread_id"]`` — set by ``perceive`` from the intent.
+    2. ``observation["params"]["thread_id"]`` — the convention several other
+       handlers use (ward-room self-post, BF-239), checked before falling back
+       because it is still *this turn's* thread.
+    3. ``get_or_create_default_for_agent`` — the same race-safe
+       (``BEGIN IMMEDIATE``) call the DM router itself makes.
+
+    **Known imprecision, stated rather than hidden.** Source 3 returns the
+    agent's *default* thread. If the Captain were in a second, explicitly
+    created thread with the same agent and the first two sources were both
+    empty, a promoted report would land in the default thread instead. That is a
+    worse outcome than getting it right and a better one than losing the work,
+    and the WARNING below names the agent every time it happens, so the case is
+    visible rather than silent.
+
+    Module-level rather than a method on purpose: it takes no agent state beyond
+    an id and a display title, and every synthetic-runtime test harness builds
+    its agent as a ``SimpleNamespace``, so a new method call on that path breaks
+    each harness until it is individually taught to bind it. A free function
+    with explicit inputs is both testable in isolation and inert to that class
+    of breakage.
+
+    Returns ``""`` when no thread can be resolved — no store, or a store that
+    raises. Callers treat that exactly as they treat today's empty value, so
+    this can only ever add a destination, never remove one.
+    """
+    from_observation = str(observation.get("thread_id", "") or "")
+    if from_observation:
+        return from_observation
+
+    params = observation.get("params")
+    if type(params) is dict:
+        from_params = str(params.get("thread_id", "") or "")
+        if from_params:
+            logger.info(
+                "BF-698: observation carried no thread_id for agent=%s; using "
+                "the params thread %s",
+                agent_id, from_params,
+            )
+            return from_params
+
+    store = getattr(runtime, "chat_thread_store", None)
+    if store is None:
+        return ""
+    try:
+        thread = store.get_or_create_default_for_agent(agent_id, title or agent_id)
+    except Exception:
+        logger.warning(
+            "BF-698: could not resolve a canonical thread for agent=%s; the "
+            "turn proceeds without thread provenance, so produced artifacts "
+            "stay unbound and a long turn cannot be promoted",
+            agent_id, exc_info=True,
+        )
+        return ""
+
+    resolved = getattr(thread, "id", None)
+    # An exact ``str`` check, not ``str(...)``. Every synthetic-runtime test
+    # builds ``runtime`` as a MagicMock, whose ``chat_thread_store`` attribute
+    # auto-creates as a truthy proxy and whose ``get_or_create_default_for_agent``
+    # returns another proxy. Coercing that with ``str()`` yields a plausible-
+    # looking "<MagicMock id=...>" and hands it downstream as a thread id. The
+    # same phantom-attribute trap AD-1062 hit with ``system_trigger``.
+    if type(resolved) is not str or not resolved:
+        return ""
+    # WARNING, not INFO: the system compensated, but something upstream dropped
+    # provenance it was handed, and that is the signal that finds the root
+    # cause. If this fires on every turn, that is information.
+    logger.warning(
+        "BF-698: neither observation nor params carried a thread_id for "
+        "agent=%s; resolved the canonical thread %s from the store. The "
+        "producer that should have supplied it is still unidentified",
+        agent_id, resolved,
+    )
+    return resolved
+
+
 class CognitiveAgent(BaseAgent):
     # AD-647b v1: agents that own a registered ProcessChainDefinition set
     # this to the chain_id ("name" of the definition). When set, the
@@ -2072,13 +2170,38 @@ class CognitiveAgent(BaseAgent):
                 "thread_id": getattr(intent, "thread_id", None),
             }
         else:
-            # Dict fallback (for compatibility with BaseAgent contract)
+            # Dict fallback (for compatibility with BaseAgent contract).
+            #
+            # BF-698: this branch used to drop ``intent_id`` and ``thread_id``
+            # unconditionally. Roughly fifteen agents reach it by calling
+            # ``self.perceive(intent.__dict__)`` — converting the IntentMessage
+            # to a dict defeats the ``isinstance`` check above — so every one of
+            # them silently lost chat-thread provenance. Downstream that is not
+            # cosmetic: AD-809 resolves the per-thread personality overlay from
+            # ``observation["thread_id"]``, AD-1066 binds produced artifacts to
+            # the thread with it, and AD-1165 needs it to promote a long turn to
+            # a task. All three degrade to a no-op against an absent key rather
+            # than failing loudly, which is why it went unnoticed.
+            #
+            # The keys are added ONLY when the source dict actually carries
+            # them. ``IntentMessage`` is a dataclass, so ``__dict__`` has ``id``
+            # and ``thread_id`` and the fifteen callers above are fixed; a
+            # hand-built dict has neither and is untouched, which preserves the
+            # deliberate AD-432 contract that the fallback does not invent an
+            # ``intent_id`` it was never given (test_cognitive_journal.py
+            # ``TestPerceiveIntentId``). Absent and None are indistinguishable
+            # to every real consumer, since they all read through ``.get()``.
+            _as_dict = intent if isinstance(intent, dict) else {}
             observation = {
-                "intent": intent.get("intent", "unknown") if isinstance(intent, dict) else "unknown",
-                "params": intent.get("params", {}) if isinstance(intent, dict) else {},
-                "context": intent.get("context", "") if isinstance(intent, dict) else "",
+                "intent": _as_dict.get("intent", "unknown"),
+                "params": _as_dict.get("params", {}),
+                "context": _as_dict.get("context", ""),
                 "correlation_id": correlation_id,  # AD-492
             }
+            if "id" in _as_dict:  # BF-698
+                observation["intent_id"] = _as_dict["id"]
+            if "thread_id" in _as_dict:  # BF-698
+                observation["thread_id"] = _as_dict["thread_id"]
 
         # AD-492: Store correlation_id on working memory for cross-reference
         _wm = getattr(self, '_working_memory', None)
@@ -3588,7 +3711,19 @@ class CognitiveAgent(BaseAgent):
             from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 
             executor = WorkItemAgenticExecutor(llm_client=self._llm_client)
-            thread_id = str(observation.get("thread_id", "") or "")
+            # BF-698: resolved once and used for BOTH the executor (AD-1066
+            # binds produced artifacts to it) and AD-1165 promotion, so a single
+            # fix restores both capabilities.
+            thread_id = _conversational_thread_id(
+                observation,
+                runtime,
+                agent_id=self.id,
+                title=(
+                    getattr(self, "callsign", "")
+                    or getattr(self, "agent_type", "")
+                    or self.id
+                ),
+            )
             max_iterations = getattr(cfg, "max_iterations", 5)
             tier = getattr(cfg, "tier", "standard")
 
