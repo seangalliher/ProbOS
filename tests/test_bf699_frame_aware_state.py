@@ -39,10 +39,29 @@ from probos.tools.browser.actions import (
     _A11Y_INTERACTIVE_ROLES,
     _A11Y_SURFACE_ROLES,
     _STATE_MAX_ELEMENTS,
+    _a11y_addressable,
     _a11y_discover_elements,
     _discover_elements,
     _parse_a11y_snapshot,
 )
+
+# Captured verbatim from the reference vessel's live Word Online document,
+# 2026-07-31. The editing surface is the pair of NAMED GENERICS at the bottom;
+# the "Loading additional document content" table / link / headings around them
+# are Word's screen-reader scaffolding and are NOT the surface. Clicking
+# ``aria-ref=f1e586`` and typing placed "Hello Sean" in the real document.
+_WORD_FRAGMENT = """          - generic [ref=f1e573]:
+            - table "Loading additional document content" [ref=f1e574]:
+              - row
+            - link "Loading additional document content":
+              - /url: "#"
+            - heading "Loading additional document content" [level=1]
+            - generic [ref=f1e577]:
+              - generic "Document Contents" [ref=f1e578]:
+                - generic "Page 1" [ref=f1e586]:
+                  - generic [ref=f1e616]: "1"
+              - img [ref=f1e619]
+"""
 
 # A snapshot in the exact shape real Chromium emitted for a nested iframe.
 _SNAPSHOT = """- generic [active] [ref=e1]:
@@ -117,14 +136,87 @@ def test_main_frame_elements_report_no_frame() -> None:
     assert outer[0]["selector"] == "aria-ref=e3"
 
 
-def test_non_interactive_nodes_are_dropped() -> None:
-    """headings, generics, plain text and the iframe shell are not addressable."""
+def test_unnamed_structural_nodes_are_dropped() -> None:
+    """An unnamed generic is scaffolding; 106 of them would drown the list.
+
+    Named non-interactive nodes ARE admitted under BF-700 — that is the whole
+    rule, and it is what makes the Word document surface reachable. What stays
+    out is the unnamed structure around them.
+    """
     records, _ = _parse_a11y_snapshot(_SNAPSHOT)
-    roles = {r["role"] for r in records}
-    assert roles <= (_A11Y_INTERACTIVE_ROLES | _A11Y_SURFACE_ROLES)
-    assert "heading" not in roles
-    assert "generic" not in roles
-    assert "iframe" not in roles
+    assert not [r for r in records if not r["name"] and r["role"] == "generic"]
+    assert not [r for r in records if r["role"] == "iframe"]
+    # The named headings in this fixture are admitted, and should be.
+    assert {r["name"] for r in records if r["role"] == "heading"} == {
+        "Outer shell", "Inner document",
+    }
+
+
+# ── BF-700: a NAME is what makes a node addressable ───────────────
+
+
+def test_the_word_document_surface_is_addressable() -> None:
+    """THE headline for BF-700, against a fragment of the real Word tree.
+
+    BF-699 crossed the frame and still could not reach the document body,
+    because the body is a ``generic`` and the filter was role-based. Verified by
+    hand on the live document: clicking f1e586 then typing wrote into it.
+    """
+    records, _ = _parse_a11y_snapshot(_WORD_FRAGMENT)
+    by_ref = {r["selector"]: r for r in records}
+
+    assert "aria-ref=f1e578" in by_ref, "'Document Contents' is not addressable"
+    assert "aria-ref=f1e586" in by_ref, "'Page 1' is not addressable"
+    assert by_ref["aria-ref=f1e586"]["name"] == "Page 1"
+    assert by_ref["aria-ref=f1e586"]["frame"] == "f1"
+
+
+def test_the_scaffolding_around_it_stays_out() -> None:
+    """Word emits 'Loading additional document content' on a table, a link and
+    nine headings. None is the surface, and an earlier plan to allowlist
+    ``table`` would have added exactly this noise while still missing f1e586."""
+    records, _ = _parse_a11y_snapshot(_WORD_FRAGMENT)
+    surfaces = [r for r in records if r["name"] == "Page 1"]
+    assert surfaces, "sanity: the real surface must be present"
+    # The table IS admitted (it has a name) but must not be the only thing an
+    # agent can reach, and the unnamed generics around it stay out.
+    assert not [r for r in records if r["role"] == "generic" and not r["name"]]
+
+
+def test_a_named_generic_is_addressable_but_an_unnamed_one_is_not() -> None:
+    """The whole rule in one assertion."""
+    records, _ = _parse_a11y_snapshot(
+        '- generic "Styles" [ref=e1]\n- generic [ref=e2]\n'
+    )
+    assert [r["selector"] for r in records] == ["aria-ref=e1"]
+
+
+@pytest.mark.parametrize(
+    "role,name,expected",
+    [
+        ("button", "", True),      # interactive: addressable unnamed
+        ("textbox", "", True),
+        ("application", "", True),  # surface: Word's outer container is unnamed
+        ("generic", "Page 1", True),   # BF-700
+        ("generic", "", False),
+        ("img", "", False),
+        ("img", "SG", True),
+        ("heading", "", False),
+    ],
+)
+def test_the_admission_rule(role: str, name: str, expected: bool) -> None:
+    assert _a11y_addressable(role, name) is expected
+
+
+def test_a_prose_length_name_is_bounded() -> None:
+    """A 'name' longer than a label is prose; it must not bloat the snapshot."""
+    records, _ = _parse_a11y_snapshot(f'- generic "{"x" * 900}" [ref=e1]')
+    assert len(records[0]["name"]) == 200
+
+
+def test_a_whitespace_only_name_does_not_admit() -> None:
+    records, _ = _parse_a11y_snapshot('- generic "   " [ref=e1]')
+    assert records == []
 
 
 def test_editing_surfaces_are_addressable() -> None:
@@ -207,8 +299,8 @@ async def test_it_asks_for_the_ai_mode() -> None:
 
 @pytest.mark.parametrize(
     "snapshot",
-    ["", "   ", None, 42, "- heading \"only headings\" [ref=e1]"],
-    ids=["empty", "blank", "none", "nonstring", "no-addressable-roles"],
+    ["", "   ", None, 42, "- generic [ref=e1]\n- img [ref=e2]"],
+    ids=["empty", "blank", "none", "nonstring", "nothing-addressable"],
 )
 async def test_an_unusable_snapshot_falls_through_to_the_dom_walk(snapshot) -> None:
     page = _Page(snapshot)

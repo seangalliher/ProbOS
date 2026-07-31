@@ -85,10 +85,10 @@ _STATE_MAX_SCAN_NODES: int = 2000
 # reaches the in-frame element with NO change to click / type / key_type. All
 # four facts were verified against real Chromium before this was written.
 #
-# Roles are filtered to things worth addressing by index. The tree is
-# semantic, so this is a role allowlist rather than the DOM walk's tag/handler
-# heuristics; ``document``/``application``/``main`` are included because an
-# editing surface is a click target even though it is not a control.
+# Roles that are addressable regardless of whether they carry a name. Interactive
+# controls are self-evidently worth an index; ``application``/``document``/``main``
+# are included because an editing surface is a click target even though it is not
+# a control, and Word's outer container is an unnamed ``application``.
 _A11Y_INTERACTIVE_ROLES: frozenset[str] = frozenset({
     "button", "checkbox", "combobox", "link", "listbox", "menuitem",
     "menuitemcheckbox", "menuitemradio", "option", "radio", "searchbox",
@@ -97,6 +97,42 @@ _A11Y_INTERACTIVE_ROLES: frozenset[str] = frozenset({
 _A11Y_SURFACE_ROLES: frozenset[str] = frozenset({
     "application", "document", "main",
 })
+
+# BF-700: an accessible NAME is what makes a node worth addressing, not its role.
+#
+# BF-699 filtered on role alone and therefore still could not reach Word's
+# document body. Measured against the reference vessel's live document: the
+# editing surface is neither a control nor one of the surface roles above — it is
+#
+#     generic "Document Contents" [ref=f1e578]
+#       generic "Page 1"          [ref=f1e586]
+#
+# a ``generic``, the single most common role in the tree (106 of them) and the
+# one a role allowlist drops hardest. The ``table "Loading additional document
+# content"`` sitting beside it is a decoy: Word emits that string on a table, a
+# link and nine headings as screen-reader scaffolding, and none of them is the
+# surface. An earlier plan to allowlist ``table`` would have added noise and
+# still missed the target.
+#
+# A name is the signal. Something the page bothered to label is something a user
+# — or an agent — can mean. Measured on that same document the rule moves the
+# element list from 64 to 85 (cap 100) and admits exactly five named generics:
+# Rename file, Ribbon Tabs, Styles, Document Contents, Page 1. All five are
+# meaningful; the 106 unnamed generics and 48 unnamed images stay dropped.
+#
+# Verified end to end before this was written: clicking ``aria-ref=f1e586`` and
+# then typing placed "Hello Sean" in the Captain's document, with the typing
+# going to the FOCUSED element rather than a targeted one — which is what
+# ``_action_key_type``'s ``keyboard.type`` already does.
+_A11Y_NAME_MAX: int = 200
+
+
+def _a11y_addressable(role: str, name: str) -> bool:
+    """BF-700: is this accessibility node worth an index?"""
+    if role in _A11Y_INTERACTIVE_ROLES or role in _A11Y_SURFACE_ROLES:
+        return True
+    return bool(name)
+
 
 # Matches one ``aria_snapshot`` line, e.g.
 #   - textbox "Document body" [ref=f1e4]
@@ -364,12 +400,14 @@ def _parse_a11y_snapshot(snapshot: str) -> tuple[list[dict[str, Any]], int]:
         if m is None:
             continue
         role = m.group("role").lower()
-        if role not in _A11Y_INTERACTIVE_ROLES and role not in _A11Y_SURFACE_ROLES:
+        # BF-700: the name is read BEFORE the admission test, because for a
+        # ``generic`` it IS the admission test.
+        name = (m.group("name") or "").replace('\\"', '"').strip()[:_A11Y_NAME_MAX]
+        if not _a11y_addressable(role, name):
             continue
         matched += 1
         if len(records) >= _STATE_MAX_ELEMENTS:
             continue
-        name = (m.group("name") or "").replace('\\"', '"')
         records.append({
             "role": role,
             "name": name,
