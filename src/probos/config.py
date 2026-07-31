@@ -6095,6 +6095,36 @@ class DmAgenticConfig(BaseModel):  # AD-1065
             "a report nothing would deliver."
         ),
     )
+    compaction_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1167: compact the working context of a long conversational "
+            "turn. The agentic loop re-flattens its entire message history "
+            "into one prompt every iteration, so without compaction each added "
+            "step re-pays for every step before it. Measured on a live "
+            "instance: raising max_iterations from 10 to 20 took one turn from "
+            "218,957 to 474,736 tokens \u2014 more than double for twice the steps "
+            "\u2014 and produced a WORSE answer, because the early tool result that "
+            "had located the target was buried under twenty rounds of "
+            "re-flattened history. Compaction summarises older messages "
+            "through the fast tier and preserves the most recent ones. The "
+            "durable tool trace is unaffected: it is persisted after the loop "
+            "finishes, so transparency is retained. Off by default; when off "
+            "the loop is constructed exactly as before. Turn this on before "
+            "raising max_iterations, not after."
+        ),
+    )
+    compaction_threshold_tokens: int = Field(
+        default=60_000,
+        ge=0,
+        description=(
+            "AD-1167: estimated working-context size, in tokens, at which "
+            "compaction runs. Only consulted when compaction_enabled is true; "
+            "0 disables compaction even then. The default leaves generous room "
+            "below a 200k context window while still engaging well before the "
+            "runaway growth measured above."
+        ),
+    )
 
 
 class AgenticToolsConfig(BaseModel):  # AD-1072

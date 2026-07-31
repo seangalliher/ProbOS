@@ -107,6 +107,22 @@ _REPORT_FAILED: str = (
     "ship's log and the task is marked so it shows on the board."
 )
 
+# BF-704: ``AgenticResult.stopped_reason`` values that mean the run STOPPED
+# rather than finished. A turn that exhausted its step budget produced partial
+# work and said so; closing its work item ``done`` tells the board a completed
+# story about work that is still open. Observed on the reference vessel: item
+# ``fa516242ed24`` read ``status='done'`` beside its own report, "I stopped here
+# because this turn reached its step limit... the task is still open."
+#
+# There is no ``paused``/``incomplete`` status in the AD-498 state machine
+# (``open|in_progress|done|failed``), and inventing one to carry this is a
+# larger change than the defect warrants. So an incomplete run performs NO
+# terminal transition and the row stays ``in_progress`` — which is exactly the
+# judgement the cancellation branch below already makes, for the same reason.
+_INCOMPLETE_STOP_REASONS: frozenset[str] = frozenset({
+    "max_iterations", "token_budget",
+})
+
 
 def _shorten(text: str, limit: int) -> str:
     """Collapse ``text`` to a single bounded line."""
@@ -209,6 +225,106 @@ def _post_report(
         )
 
 
+async def _store_promoted_episode(
+    *,
+    runtime: Any,
+    agent_id: str,
+    thread_id: str,
+    work_item_id: str,
+    request_text: str,
+    body: str,
+    complete: bool,
+    failed: bool,
+) -> None:
+    """AD-1166: put a promoted run's REAL outcome into episodic memory.
+
+    ``DmReplyPipeline.step_5_episodic_store`` runs when the turn returns, and
+    for a promoted turn what it returns is the acknowledgement. So the episode
+    recorded for this interaction says "I've started on that, I opened task X"
+    — and what the agent actually did, and whether it worked, reached neither
+    recall nor dreaming nor trust nor Hebbian routing.
+
+    Promoted turns are by construction the *hard* ones. They were the only ones
+    the system learned nothing from.
+
+    A second episode is stored rather than the first amended, because there is
+    no amend API: ``EpisodicMemory`` exposes only ``update_episode_validity``,
+    which moves a validity window and cannot touch content. Inventing a
+    content-mutation path to fix a reporting gap would be the larger change and
+    the riskier one. The two are linked by ``correlation_id`` = the work item,
+    so a later consolidation can pair them.
+
+    Log-and-degrade throughout: an episode that fails to store must never turn
+    a delivered report into a failed one.
+    """
+    memory = getattr(runtime, "episodic_memory", None)
+    if memory is None:
+        return
+    try:
+        import time as _time
+
+        from probos.cognitive.episodic import resolve_sovereign_id
+        from probos.types import AnchorFrame, Episode
+
+        # Sovereignty: episode ``agent_ids`` must carry the sovereign id, not
+        # the pool id. ``resolve_sovereign_id`` already falls back to
+        # ``agent.id``, so a registry miss degrades to the same value the
+        # caller holds rather than to something wrong.
+        sovereign_id = agent_id
+        try:
+            registry = getattr(runtime, "registry", None)
+            agent = registry.get(agent_id) if registry is not None else None
+            if agent is not None:
+                sovereign_id = resolve_sovereign_id(agent)
+        except Exception:
+            logger.debug(
+                "AD-1166: could not resolve a sovereign id for %s; the episode "
+                "is stored under the pool id",
+                agent_id, exc_info=True,
+            )
+
+        await memory.store(Episode(
+            user_input=f"[1:1 background task] Captain: {request_text}",
+            timestamp=_time.time(),
+            agent_ids=[sovereign_id],
+            correlation_id=work_item_id,
+            outcomes=[{
+                "intent": "direct_message",
+                # A run that stopped at its step limit did partial work. It is
+                # neither a success nor a failure, and recording it as either
+                # would teach the wrong lesson.
+                "success": bool(complete and not failed),
+                "complete": bool(complete),
+                "response": body[:500],
+                "session_type": "1:1",
+                "source": PROMOTION_SOURCE,
+                "work_item_id": work_item_id,
+            }],
+            reflection=(
+                f"Captain asked for work that outgrew a reply; it ran as "
+                f"background task {work_item_id} and "
+                + (
+                    "finished." if complete and not failed
+                    else "stopped before finishing."
+                )
+            ),
+            source="direct",
+            anchors=AnchorFrame(
+                channel="dm",
+                trigger_type="direct_message",
+                trigger_agent="captain",
+                participants=["captain", agent_id],
+                chat_thread_id=thread_id,
+            ),
+        ))
+    except Exception:
+        logger.warning(
+            "AD-1166: could not store the episode for work item %s; the report "
+            "was delivered and only the learning signal is lost",
+            work_item_id, exc_info=True,
+        )
+
+
 async def _finish_promoted_turn(
     task: "asyncio.Task[str]",
     *,
@@ -216,6 +332,8 @@ async def _finish_promoted_turn(
     agent_id: str,
     thread_id: str,
     work_item_id: str,
+    request_text: str = "",
+    completed_probe: Callable[[], bool] | None = None,
 ) -> None:
     """Await a promoted run, report it into the thread, close the work item.
 
@@ -270,8 +388,44 @@ async def _finish_promoted_turn(
         body=body,
     )
 
+    # BF-704: did the run finish, or did it stop? ``completed_probe`` is the
+    # caller's view of the LAST pass's ``stopped_reason`` -- the awaited task
+    # returns a plain string, so the reason cannot be recovered here. Absent a
+    # probe the answer is "finished", which is exactly today's behaviour.
+    complete = True
+    if not failed and completed_probe is not None:
+        try:
+            complete = bool(completed_probe())
+        except Exception:
+            logger.debug(
+                "AD-1165: completion probe for work item %s raised; treating "
+                "the run as finished",
+                work_item_id, exc_info=True,
+            )
+
+    await _store_promoted_episode(
+        runtime=runtime,
+        agent_id=agent_id,
+        thread_id=thread_id,
+        work_item_id=work_item_id,
+        request_text=request_text,
+        body=body,
+        complete=complete,
+        failed=failed,
+    )
+
     store = getattr(runtime, "work_item_store", None)
     if store is None:
+        return
+    if not failed and not complete:
+        # Partial work, still open. No terminal transition: the row stays
+        # ``in_progress``, which is the honest state and the one the Captain
+        # can act on -- AD-1164 has already filed the ask about continuing.
+        logger.info(
+            "BF-704: promoted turn for work item %s stopped before finishing; "
+            "it stays in_progress rather than closing done",
+            work_item_id,
+        )
         return
     try:
         await store.transition_work_item(
@@ -294,6 +448,7 @@ async def run_with_promotion(
     thread_id: str,
     request_text: str,
     hold: set["asyncio.Task[Any]"],
+    completed_probe: Callable[[], bool] | None = None,
 ) -> str:
     """Run ``work``; promote it to a background task if it outlives the budget.
 
@@ -315,6 +470,13 @@ async def run_with_promotion(
     finishes, unreported. Losing a report is a smaller harm than killing work
     the Captain asked for, which is the same judgement rule 6 of the control
     lease was written under.
+
+    ``completed_probe`` (BF-704) is consulted only after a PROMOTED run
+    finishes, and answers one question: did it finish, or did it stop? The
+    awaited task returns a plain string, so a run that exhausted its step
+    budget is otherwise indistinguishable from one that completed, and the work
+    item closes ``done`` either way. Omitting it preserves that behaviour
+    exactly, which is why it is optional.
     """
     if promote_after_seconds <= 0.0:
         return await work()
@@ -358,6 +520,8 @@ async def run_with_promotion(
             agent_id=agent_id,
             thread_id=thread_id,
             work_item_id=work_item.id,
+            request_text=request_text,
+            completed_probe=completed_probe,
         ),
         name=f"ad1165-report-{work_item.id[:8]}",
     )

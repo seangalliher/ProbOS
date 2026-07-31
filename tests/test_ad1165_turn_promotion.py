@@ -42,6 +42,7 @@ from probos.cognitive.turn_promotion import (
     PROMOTION_SOURCE,
     PROMOTION_TAG,
     _ACK_TEMPLATE,
+    _INCOMPLETE_STOP_REASONS,
     _REPORT_EMPTY,
     _REPORT_FAILED,
     run_with_promotion,
@@ -122,6 +123,7 @@ async def _promote(
     request_text="type Hello World into my document",
     hold=None,
     promote_after=0.01,
+    completed_probe=None,
 ):
     return await run_with_promotion(
         work,
@@ -131,6 +133,7 @@ async def _promote(
         thread_id=thread_id,
         request_text=request_text,
         hold=hold if hold is not None else set(),
+        completed_probe=completed_probe,
     )
 
 
@@ -494,6 +497,295 @@ async def test_an_inline_tag_does_not_merge_adjacent_words() -> None:
     assert "<intent" not in body
     assert "in.Anything" not in body, "words merged where the tag was removed"
     assert "Typed it in. Anything else?" == body
+
+
+# ── BF-704: a run that STOPPED must not close `done` ───────────────
+
+
+async def test_a_run_that_stopped_early_does_not_close_done() -> None:
+    """THE BF-704 regression.
+
+    Observed on the live instance: work item ``fa516242ed24`` read
+    ``status='done'`` beside its own report, "I stopped here because this turn
+    reached its step limit... the task is still open." The board told a
+    completed story about work that had stopped.
+    """
+    store = _FakeWorkItemStore()
+    threads = _FakeThreadStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        return "Partial work. I stopped at my step limit."
+
+    await _promote(
+        _work,
+        runtime=_runtime(work_items=store, threads=threads),
+        hold=hold,
+        completed_probe=lambda: False,
+    )
+    release.set()
+    await _drain(hold)
+
+    item = store.created[0]
+    assert store.transitions == [(item.id, "in_progress", "agent-ezri")], (
+        "a run that stopped early must perform no terminal transition; the row "
+        "stays in_progress, which is the state the Captain can act on"
+    )
+    # The partial work still reaches the Captain.
+    assert threads.appended[0]["body"].startswith("Partial work.")
+
+
+async def test_a_run_that_finished_still_closes_done() -> None:
+    store = _FakeWorkItemStore()
+    threads = _FakeThreadStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        return "Typed it in."
+
+    await _promote(
+        _work,
+        runtime=_runtime(work_items=store, threads=threads),
+        hold=hold,
+        completed_probe=lambda: True,
+    )
+    release.set()
+    await _drain(hold)
+
+    assert store.transitions[-1][1] == "done"
+
+
+async def test_without_a_probe_the_behaviour_is_unchanged() -> None:
+    """The probe is optional; omitting it preserves AD-1165 exactly."""
+    store = _FakeWorkItemStore()
+    threads = _FakeThreadStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        return "done thing"
+
+    await _promote(
+        _work, runtime=_runtime(work_items=store, threads=threads), hold=hold,
+    )
+    release.set()
+    await _drain(hold)
+
+    assert store.transitions[-1][1] == "done"
+
+
+async def test_a_failed_run_is_failed_even_if_the_probe_says_incomplete() -> None:
+    """A raise is a failure, not an unfinished run. Failure wins."""
+    store = _FakeWorkItemStore()
+    threads = _FakeThreadStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        raise RuntimeError("the browser went away")
+
+    await _promote(
+        _work,
+        runtime=_runtime(work_items=store, threads=threads),
+        hold=hold,
+        completed_probe=lambda: False,
+    )
+    release.set()
+    await _drain(hold)
+
+    assert store.transitions[-1][1] == "failed"
+
+
+async def test_a_raising_probe_degrades_to_finished() -> None:
+    """A broken probe must not strand every promoted item in_progress."""
+    store = _FakeWorkItemStore()
+    threads = _FakeThreadStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    def _boom() -> bool:
+        raise RuntimeError("probe exploded")
+
+    async def _work() -> str:
+        await release.wait()
+        return "text"
+
+    await _promote(
+        _work,
+        runtime=_runtime(work_items=store, threads=threads),
+        hold=hold,
+        completed_probe=_boom,
+    )
+    release.set()
+    await _drain(hold)
+
+    assert store.transitions[-1][1] == "done"
+
+
+def test_the_incomplete_reasons_match_the_loop_vocabulary() -> None:
+    """Drift guard: these strings are produced by AgenticResult, not invented.
+
+    ``stopped_reason`` is ``complete|max_iterations|token_budget|error``. If a
+    new stopping reason is added to the loop, this test is where the promotion
+    path is reminded to classify it.
+    """
+    from probos.cognitive.swe_harness.agentic_loop import AgenticResult
+
+    assert AgenticResult().stopped_reason == "complete"
+    assert "complete" not in _INCOMPLETE_STOP_REASONS
+    assert _INCOMPLETE_STOP_REASONS == {"max_iterations", "token_budget"}
+
+
+# ── AD-1166: the real outcome reaches episodic memory ─────────────
+
+
+class _FakeEpisodicMemory:
+    def __init__(self) -> None:
+        self.stored: list = []
+        self.error: Exception | None = None
+
+    async def store(self, episode, **_kwargs):
+        if self.error is not None:
+            raise self.error
+        self.stored.append(episode)
+        return None
+
+
+def _runtime_with_memory(*, work_items=None, threads=None, memory=None):
+    return SimpleNamespace(
+        work_item_store=work_items,
+        chat_thread_store=threads,
+        episodic_memory=memory,
+        registry=None,
+    )
+
+
+async def test_a_promoted_run_stores_its_real_outcome() -> None:
+    """THE AD-1166 regression.
+
+    ``step_5_episodic_store`` runs when the turn returns, and a promoted turn
+    returns the acknowledgement. So memory recorded "I've started on that" as
+    the outcome, and what the agent actually did never reached recall,
+    dreaming, trust or Hebbian routing.
+    """
+    memory = _FakeEpisodicMemory()
+    store = _FakeWorkItemStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        return 'Done — "Hello from Ezri" has been typed into the document.'
+
+    await _promote(
+        _work,
+        runtime=_runtime_with_memory(
+            work_items=store, threads=_FakeThreadStore(), memory=memory,
+        ),
+        request_text="Type \"Hello from Ezri\" in the document I have open",
+        hold=hold,
+        completed_probe=lambda: True,
+    )
+    release.set()
+    await _drain(hold)
+
+    assert len(memory.stored) == 1, "the real outcome was not recorded"
+    ep = memory.stored[0]
+    # The Captain's actual request, not the acknowledgement.
+    assert "Type \"Hello from Ezri\"" in ep.user_input
+    outcome = ep.outcomes[0]
+    assert outcome["success"] is True
+    assert outcome["complete"] is True
+    assert "Hello from Ezri" in outcome["response"]
+    assert outcome["source"] == "dm_agentic_promotion"
+    # Linked to the work item so the two episodes can be paired later.
+    assert ep.correlation_id == store.created[0].id
+    assert ep.anchors.chat_thread_id == "thread-1"
+
+
+async def test_a_stopped_run_is_not_recorded_as_a_success() -> None:
+    """Partial work is neither success nor failure. Recording it as either
+    teaches the wrong lesson."""
+    memory = _FakeEpisodicMemory()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        return "Partial."
+
+    await _promote(
+        _work,
+        runtime=_runtime_with_memory(
+            work_items=_FakeWorkItemStore(),
+            threads=_FakeThreadStore(),
+            memory=memory,
+        ),
+        hold=hold,
+        completed_probe=lambda: False,
+    )
+    release.set()
+    await _drain(hold)
+
+    outcome = memory.stored[0].outcomes[0]
+    assert outcome["success"] is False
+    assert outcome["complete"] is False
+
+
+async def test_a_failing_episode_store_still_delivers_the_report() -> None:
+    """Losing the learning signal must never cost the Captain the report."""
+    memory = _FakeEpisodicMemory()
+    memory.error = RuntimeError("chroma is down")
+    threads = _FakeThreadStore()
+    store = _FakeWorkItemStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        return "It is done."
+
+    await _promote(
+        _work,
+        runtime=_runtime_with_memory(
+            work_items=store, threads=threads, memory=memory,
+        ),
+        hold=hold,
+        completed_probe=lambda: True,
+    )
+    release.set()
+    await _drain(hold)
+
+    assert [m["body"] for m in threads.appended] == ["It is done."]
+    assert store.transitions[-1][1] == "done"
+
+
+async def test_no_episodic_memory_degrades_quietly() -> None:
+    threads = _FakeThreadStore()
+    release = asyncio.Event()
+    hold: set = set()
+
+    async def _work() -> str:
+        await release.wait()
+        return "It is done."
+
+    await _promote(
+        _work,
+        runtime=_runtime_with_memory(
+            work_items=_FakeWorkItemStore(), threads=threads, memory=None,
+        ),
+        hold=hold,
+    )
+    release.set()
+    await _drain(hold)
+
+    assert [m["body"] for m in threads.appended] == ["It is done."]
 
 
 async def test_a_cancelled_promoted_run_leaves_the_item_in_progress() -> None:

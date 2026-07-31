@@ -3727,8 +3727,43 @@ class CognitiveAgent(BaseAgent):
             max_iterations = getattr(cfg, "max_iterations", 5)
             tier = getattr(cfg, "tier", "standard")
 
+            # BF-704: the awaited turn returns a plain string, so a run that
+            # exhausted its step budget is indistinguishable downstream from
+            # one that finished, and its work item closes ``done`` either way.
+            # Recording each pass's ``stopped_reason`` here is the one place
+            # the outcome object is in hand. The LAST value is the answer:
+            # AD-1164 re-invokes through this same function, so a turn that
+            # was exhausted on pass 1 and completed on pass 2 correctly reads
+            # as complete.
+            _last_stop: dict[str, str] = {"reason": ""}
+
+            # AD-1167: compaction for this path. ``AgenticLoop`` re-flattens the
+            # entire message history into one prompt every iteration, and no
+            # compactor was ever wired here -- so each added step re-paid for
+            # every step before it. Measured on the reference vessel: raising
+            # max_iterations 10 -> 20 took one turn from 218,957 to 474,736
+            # tokens (2.17x, superlinear) and made the outcome WORSE, because
+            # the early state() result that had located the target was buried
+            # under twenty rounds of re-flattened history.
+            #
+            # Default-OFF, so an operator who has not opted in gets a
+            # byte-identical kwarg dict (the executor only forwards these when
+            # they are not None). ``SessionCompactor`` is stateless and
+            # zero-argument, so constructing one per turn costs nothing.
+            _compactor = None
+            _compaction_threshold = None
+            if getattr(cfg, "compaction_enabled", False) is True:
+                threshold = getattr(cfg, "compaction_threshold_tokens", 0)
+                if isinstance(threshold, int) and threshold > 0:
+                    from probos.cognitive.swe_harness.session_compactor import (
+                        SessionCompactor,
+                    )
+
+                    _compactor = SessionCompactor()
+                    _compaction_threshold = threshold
+
             async def _run_pass(task_text: str) -> Any:
-                return await executor.run(
+                outcome = await executor.run(
                     agent_id=self.id,
                     instructions=system_prompt,
                     task_text=task_text,
@@ -3736,7 +3771,13 @@ class CognitiveAgent(BaseAgent):
                     thread_id=thread_id,
                     max_iterations=max_iterations,
                     tier=tier,
+                    compactor=_compactor,
+                    compaction_threshold=_compaction_threshold,
                 )
+                _last_stop["reason"] = str(
+                    getattr(outcome, "stopped_reason", "") or ""
+                )
+                return outcome
 
             async def _agentic_turn() -> str:
                 outcome = await _run_pass(user_message)
@@ -3769,7 +3810,10 @@ class CognitiveAgent(BaseAgent):
             if promote_after <= 0.0:
                 text = await _agentic_turn()
             else:
-                from probos.cognitive.turn_promotion import run_with_promotion
+                from probos.cognitive.turn_promotion import (
+                    _INCOMPLETE_STOP_REASONS,
+                    run_with_promotion,
+                )
 
                 text = await run_with_promotion(
                     _agentic_turn,
@@ -3779,6 +3823,9 @@ class CognitiveAgent(BaseAgent):
                     thread_id=thread_id,
                     request_text=_promotion_request_text(observation, user_message),
                     hold=self._promoted_turn_tasks,
+                    completed_probe=(
+                        lambda: _last_stop["reason"] not in _INCOMPLETE_STOP_REASONS
+                    ),
                 )
             return text.strip() or None
         except Exception:
