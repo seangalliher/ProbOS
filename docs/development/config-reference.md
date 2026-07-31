@@ -1737,6 +1737,16 @@ AD-1072: conversational-loop discovery + delegation tools (default-OFF).
 | `crew_sigma_max_entries` | `int` | `4` | ≥ 1, ≤ 12 |  |
 | `crew_sigma_min_score` | `float` | `0.35` | ≥ 0.0, ≤ 1.0 |  |
 
+## `repair`
+
+Dispatching a reported fault to a harness of the Captain's choosing.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `False` | — | AD-1172: propose a repair when a fault is reported. Off by default. When on, a fault that reaches propose_after_occurrences raises an approval asking the Captain whether to dispatch it and to which harness. Approval is required before anything is spent: an Architect run costs deep-tier tokens, and a tool failing in a loop must not be able to spend them on its own. |
+| `targets` | `list[str]` | `['architect']` | — | AD-1172: harnesses this instance can dispatch a repair brief to, in the order they are offered. 'architect' is the internal crew (ArchitectAgent then BuilderAgent). Any other name is an external harness — GitHub Copilot, Claude Code, a person — reached by rendering the brief for the Captain to carry across. External targets need no code: the brief IS the interface, which is what keeps them first-class rather than a degraded path. |
+| `propose_after_occurrences` | `int` | `2` | ≥ 1 | AD-1172: how many times a fault must recur before a repair is proposed. Matches the AD-1168/1170/1171 threshold: once is a transient, twice is the tool. |
+
 ## `approval_inbox`
 
 AD-1154: park an unattended consequential action instead of performing it.

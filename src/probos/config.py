@@ -6127,6 +6127,52 @@ class DmAgenticConfig(BaseModel):  # AD-1065
     )
 
 
+class RepairConfig(BaseModel):  # AD-1172
+    """Dispatching a reported fault to a harness of the Captain's choosing.
+
+    A fault report (AD-1169) plus its trace summary (AD-1171) becomes a
+    harness-neutral repair brief. The Captain approves the dispatch AND picks
+    the target; nothing is spent and nothing is written without that.
+
+    Targets are declared here rather than registered in code because dispatching
+    to an external harness means rendering the brief and saying so — adding
+    ``copilot`` to this list is the whole integration.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1172: propose a repair when a fault is reported. Off by "
+            "default. When on, a fault that reaches propose_after_occurrences "
+            "raises an approval asking the Captain whether to dispatch it and "
+            "to which harness. Approval is required before anything is spent: "
+            "an Architect run costs deep-tier tokens, and a tool failing in a "
+            "loop must not be able to spend them on its own."
+        ),
+    )
+    targets: list[str] = Field(
+        default_factory=lambda: ["architect"],
+        description=(
+            "AD-1172: harnesses this instance can dispatch a repair brief to, "
+            "in the order they are offered. 'architect' is the internal crew "
+            "(ArchitectAgent then BuilderAgent). Any other name is an external "
+            "harness — GitHub Copilot, Claude Code, a person — reached by "
+            "rendering the brief for the Captain to carry across. External "
+            "targets need no code: the brief IS the interface, which is what "
+            "keeps them first-class rather than a degraded path."
+        ),
+    )
+    propose_after_occurrences: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "AD-1172: how many times a fault must recur before a repair is "
+            "proposed. Matches the AD-1168/1170/1171 threshold: once is a "
+            "transient, twice is the tool."
+        ),
+    )
+
+
 class AgenticToolsConfig(BaseModel):  # AD-1072
     """AD-1072: conversational-loop discovery + delegation tools (default-OFF).
 
@@ -7063,6 +7109,7 @@ class SystemConfig(BaseModel):
     dm_deliberate: DmDeliberateConfig = Field(default_factory=DmDeliberateConfig)  # AD-934
     dm_agentic: DmAgenticConfig = Field(default_factory=DmAgenticConfig)  # AD-1065
     agentic_tools: AgenticToolsConfig = Field(default_factory=AgenticToolsConfig)  # AD-1072
+    repair: RepairConfig = Field(default_factory=RepairConfig)  # AD-1172
     approval_inbox: ApprovalInboxConfig = Field(default_factory=ApprovalInboxConfig)  # AD-1154
     dm_mesh_synthesis: DmMeshSynthesisConfig = Field(default_factory=DmMeshSynthesisConfig)  # BF-629
     attachments: AttachmentsConfig = Field(default_factory=AttachmentsConfig)  # AD-720

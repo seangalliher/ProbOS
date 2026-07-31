@@ -2554,6 +2554,36 @@ def _wire_capability_gap_driver(*, runtime: Any, config: "SystemConfig") -> bool
     return True
 
 
+def _wire_repair_dispatcher(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-1172: let a reported fault reach a repair harness the Captain picks.
+
+    ArchitectAgent and BuilderAgent have always been reachable only by the
+    Captain typing ``/design`` — no system signal could summon them. This is the
+    path from a fault (AD-1169) to a decision about repairing it.
+
+    The dispatcher only ever PROPOSES. It builds a harness-neutral brief and
+    files one approval; the Captain approves the dispatch and chooses the
+    target. Nothing is spent and nothing is written without that, which is why
+    it is safe to wire unconditionally — with ``repair.enabled`` false (the
+    default) the listener returns on its first branch.
+
+    The dispatcher is retained on the runtime because listener removal is
+    identity-based: dropping the reference would strand the subscription.
+    """
+    from probos.cognitive.repair_dispatch import wire_repair_dispatcher
+
+    dispatcher = wire_repair_dispatcher(runtime, config)
+    if dispatcher is None:
+        return False
+    runtime.repair_dispatcher = dispatcher  # public attr; holds the listener
+    logger.info(
+        "AD-1172: repair dispatcher wired (enabled=%s, targets=%s)",
+        getattr(getattr(config, "repair", None), "enabled", False),
+        ", ".join(dispatcher.targets),
+    )
+    return True
+
+
 def _wire_capability_request_notifier(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-857: Wire the capability-request Captain-DM notifier.
 
@@ -4473,6 +4503,13 @@ async def finalize_startup(
             if _wire_capability_gap_driver(runtime=runtime, config=config):
                 logger.info("AD-855: CapabilityGapDriver wired during finalization")
 
+            # AD-1172: repair dispatcher -- a reported fault (AD-1169) becomes a
+            # harness-neutral brief and ONE approval asking the Captain whether
+            # to dispatch it and to which harness. Proposes only; spends nothing
+            # and writes nothing without that approval. Tier-2 log-and-degrade.
+            if _wire_repair_dispatcher(runtime=runtime, config=config):
+                logger.info("AD-1172: repair dispatcher wired during finalization")
+
             # AD-857: capability-request Captain-DM notifier -- chat half of the
             # dual-surface decision surface. Tier-2 log-and-degrade.
             if _wire_capability_request_notifier(runtime=runtime, config=config):
@@ -4558,7 +4595,6 @@ async def finalize_startup(
         )
         runtime._tool_executor = tool_executor
         logger.info("AD-448: ToolExecutor initialized with %d hooks", tool_executor.hook_count)
-
         # AD-543/544/548/549: Wire native SWE harness (tools + blocked-paths hook + harness)
         _wire_native_swe_harness(runtime=runtime, config=config, tool_executor=tool_executor)
 
