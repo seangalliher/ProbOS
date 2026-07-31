@@ -2851,6 +2851,9 @@ class ProbOSRuntime:
         self.clearance_grant_store = comm.clearance_grant_store
         self.clinical_notes_store = comm.clinical_notes_store
         self.capability_request_store = comm.capability_request_store
+        # AD-1169: where "what I have is broken" lands, as distinct from
+        # capability_request_store's "I need something I do not have".
+        self.fault_report_store = comm.fault_report_store
         self.skill_request_store = comm.skill_request_store
         self.tool_registry = comm.tool_registry
         self.tool_permission_store = comm.tool_permission_store

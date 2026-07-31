@@ -491,6 +491,19 @@ async def init_communication(
     await capability_request_store.start()
     logger.info("capability-request-store started")
 
+    # --- Fault Report Store (AD-1169) ---
+    # The crew could already say "I need a capability I don't have"; this is
+    # where "what I have is broken" lands. Unconditional and cheap: an empty
+    # store costs one SQLite file and no work until a fault is filed.
+    from probos.fault_report import FaultReportStore
+
+    fault_report_store = FaultReportStore(
+        db_path=str(data_dir / "fault_reports.db"),
+        emit_event=emit_event_fn,
+    )
+    await fault_report_store.start()
+    logger.info("fault-report-store started")
+
     # --- Skill Request Store (AD-906) ---
     # Gated dark behind config.skill_requests.enabled (Pydantic default False):
     # when off, no store is constructed and the router returns 503.
@@ -783,6 +796,7 @@ async def init_communication(
         clearance_grant_store=clearance_grant_store,
         clinical_notes_store=clinical_notes_store,
         capability_request_store=capability_request_store,
+        fault_report_store=fault_report_store,
         skill_request_store=skill_request_store,
         tool_registry=tool_registry,
         tool_permission_store=tool_permission_store,

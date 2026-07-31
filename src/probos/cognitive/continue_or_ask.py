@@ -135,6 +135,147 @@ _CONTINUE_RATIONALE: str = (
     "with the task still open. Approving records that this turn should carry on."
 )
 
+# AD-1170: a stalled turn has more than one possible cause, and until now the
+# system only modelled one of them.
+#
+# AD-1164 asks "do you want me to keep going?", which is the right question when
+# the turn simply needed more room. It is the wrong question when a tool is
+# broken -- more room buys more attempts at something that will keep failing.
+#
+# BF-701 is the case. The agent asked the browser tool for ``key_type`` at step
+# 2, was told ``unknown browser action: 'key_type'``, asked again at step 15,
+# got the same answer, and burned the steps between on workarounds. It then
+# filed a continue request, because that was the only verdict available. The
+# diagnosis was sitting in its own results the whole time.
+#
+# Two occurrences is the threshold. Once is a transient -- a timeout, a race, a
+# page that had not settled -- and retrying is the correct response. Twice is a
+# pattern: the same tool answered the same way, and the agent already tried the
+# obvious thing in between.
+#
+# The detection reads the outcome's OWN ``tool_calls``/``tool_results``, joined
+# on request id. No classifier, no extra model call, no re-reading the persisted
+# trace -- the same discipline as AD-1165 promoting on elapsed time. Evidence
+# the turn already produced cannot be wrong about what it measures.
+_DEFECT_MIN_OCCURRENCES: int = 2
+
+_DEFECT_LEAD_WITH_WORK: str = (
+    "I stopped here because the same call kept coming back the same way. The "
+    "work above is partial and the task is still open."
+)
+_DEFECT_LEAD_NO_WORK: str = (
+    "I stopped because the same call kept coming back the same way before I had "
+    "anything to report. The task is still open."
+)
+_DEFECT_DETAIL: str = (
+    " The {tool_id} tool answered {count} times with: {error}"
+)
+_DEFECT_TAIL_WITH_FAULT: str = (
+    " I filed fault report {fault_id} so it gets looked at rather than retried."
+)
+_DEFECT_TAIL: str = (
+    " Retrying looks like it would land in the same place."
+)
+# Bound on the error text quoted back to the Captain. The full text is on the
+# fault report; the reply needs enough to recognise it, not all of it.
+_DEFECT_ERROR_QUOTE_MAX: int = 200
+
+
+def detect_tool_defect(outcome: Any) -> tuple[str, str, int] | None:
+    """AD-1170: find a tool that failed the same way more than once.
+
+    Returns ``(tool_id, error_text, count)`` for the most-repeated failing
+    (tool, error) pair when it reaches the threshold, else ``None``.
+
+    ``ToolCallResult`` carries the request id and the error text but not the
+    tool name, and ``ToolCallRequest`` carries the id and the name -- so the two
+    are joined on id. Both lists live on the outcome the caller already holds.
+
+    Never raises: a malformed outcome yields ``None`` and the caller takes the
+    ordinary step-limit path, which is exactly today's behaviour.
+    """
+    try:
+        from probos.fault_report import normalise_error
+
+        calls = getattr(outcome, "tool_calls", None) or []
+        results = getattr(outcome, "tool_results", None) or []
+        if not calls or not results:
+            return None
+
+        name_by_id: dict[str, str] = {}
+        for call in calls:
+            call_id = getattr(call, "id", None)
+            name = getattr(call, "name", None)
+            if type(call_id) is str and type(name) is str and name:
+                name_by_id[call_id] = name
+
+        # (tool, normalised error) -> [count, first raw error text]
+        tally: dict[tuple[str, str], list[Any]] = {}
+        for result in results:
+            if getattr(result, "is_error", False) is not True:
+                continue
+            tool_id = name_by_id.get(getattr(result, "id", ""), "")
+            if not tool_id:
+                continue
+            raw = getattr(result, "output", "")
+            raw_text = raw if type(raw) is str else str(raw)
+            key = (tool_id, normalise_error(raw_text))
+            entry = tally.get(key)
+            if entry is None:
+                tally[key] = [1, raw_text]
+            else:
+                entry[0] += 1
+
+        if not tally:
+            return None
+        (tool_id, _sig), (count, raw_text) = max(
+            tally.items(), key=lambda kv: kv[1][0],
+        )
+        if count < _DEFECT_MIN_OCCURRENCES:
+            return None
+        return tool_id, raw_text, count
+    except Exception:
+        logger.debug(
+            "AD-1170: defect detection raised; the turn takes the ordinary "
+            "step-limit path", exc_info=True,
+        )
+        return None
+
+
+async def file_fault_from_turn(
+    runtime: Any,
+    *,
+    agent_id: str,
+    thread_id: str,
+    tool_id: str,
+    error_text: str,
+    attempted: str,
+) -> str:
+    """File an AD-1169 fault report for a defect this turn ran into.
+
+    Returns the fault id, or ``""`` when there is nowhere to file. Never
+    raises: a turn must finish even when the reporting channel is missing.
+    """
+    store = getattr(runtime, "fault_report_store", None)
+    if store is None:
+        return ""
+    try:
+        report = await store.file_fault(
+            tool_id=tool_id,
+            error_text=error_text,
+            attempted=attempted,
+            agent_id=agent_id,
+            thread_id=thread_id,
+        )
+    except Exception:
+        logger.warning(
+            "AD-1170: could not file a fault report against %r for agent %s",
+            tool_id, agent_id[:12], exc_info=True,
+        )
+        return ""
+    fault_id = getattr(report, "id", "") if report is not None else ""
+    return fault_id if type(fault_id) is str else ""
+
 
 def _final_text(outcome: Any) -> str:
     """The outcome's reply text, defensively. Never raises, never strips.
@@ -145,6 +286,19 @@ def _final_text(outcome: Any) -> str:
     """
     text = getattr(outcome, "final_text", "")
     return text if type(text) is str else ""
+
+
+def _final_error_quote(error_text: Any) -> str:
+    """One bounded line of the error, for quoting back to the Captain.
+
+    The full text lives on the fault report; the reply needs only enough to be
+    recognisable. Collapsed to a single line so a multi-line Playwright call log
+    does not turn the chat reply into a stack trace.
+    """
+    flat = " ".join(str(error_text or "").split())
+    if len(flat) <= _DEFECT_ERROR_QUOTE_MAX:
+        return flat
+    return flat[: _DEFECT_ERROR_QUOTE_MAX - 1].rstrip() + "\u2026"
 
 
 def _is_cut_off(outcome: Any) -> bool:
@@ -434,6 +588,39 @@ async def resolve_exhausted_turn(
             max_passes,
         )
 
+    partial = _final_text(current).rstrip()
+
+    # AD-1170: before asking whether to keep going, ask whether going on would
+    # help. A tool that answered the same way twice will answer that way again.
+    defect = detect_tool_defect(current)
+    if defect is not None:
+        tool_id, error_text, count = defect
+        fault_id = await file_fault_from_turn(
+            runtime,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            tool_id=tool_id,
+            error_text=error_text,
+            attempted=base_task_text,
+        )
+        logger.info(
+            "AD-1170: agent %s stopped against a repeated failure of tool %r "
+            "(%d occurrences); filed fault %s instead of a continue request",
+            agent_id[:12], tool_id, count, fault_id[:12] or "<none>",
+        )
+        lead = _DEFECT_LEAD_WITH_WORK if partial else _DEFECT_LEAD_NO_WORK
+        detail = _DEFECT_DETAIL.format(
+            tool_id=tool_id,
+            count=count,
+            error=_final_error_quote(error_text),
+        )
+        tail = (
+            _DEFECT_TAIL_WITH_FAULT.format(fault_id=fault_id)
+            if fault_id else _DEFECT_TAIL
+        )
+        note = lead + detail + tail
+        return partial + _CUT_OFF_SEPARATOR + note if partial else note
+
     request_id = await file_continue_request(
         runtime,
         agent_id=agent_id,
@@ -441,7 +628,6 @@ async def resolve_exhausted_turn(
         base_task_text=base_task_text,
         passes=passes,
     )
-    partial = _final_text(current).rstrip()
     lead = _CUT_OFF_LEAD_WITH_WORK if partial else _CUT_OFF_LEAD_NO_WORK
     tail = (
         _CUT_OFF_TAIL_WITH_REQUEST.format(request_id=request_id)

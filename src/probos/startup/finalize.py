@@ -4542,6 +4542,20 @@ async def finalize_startup(
             emit_fn=runtime.emit_event,
         )
         tool_executor.add_post_hook(audit_hook)
+        # AD-1168: count failures by (tool, error signature) so a tool that is
+        # broken for EVERY caller stops reading as several agents having a bad
+        # day. Sits on the same post-hook seam as the audit hook; the success
+        # path costs one attribute read.
+        from probos.tools.failure_telemetry import (
+            ToolFailureTelemetry,
+            make_failure_telemetry_hook,
+        )
+        runtime.tool_failure_telemetry = ToolFailureTelemetry(
+            emit_fn=runtime.emit_event,
+        )
+        tool_executor.add_post_hook(
+            make_failure_telemetry_hook(runtime.tool_failure_telemetry)
+        )
         runtime._tool_executor = tool_executor
         logger.info("AD-448: ToolExecutor initialized with %d hooks", tool_executor.hook_count)
 

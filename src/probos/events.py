@@ -235,6 +235,9 @@ class EventType(str, Enum):
     TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
     TOOL_INVOKED = "tool_invoked"  # AD-448
     TOOL_INTERVENTION_REQUIRED = "tool_intervention_required"  # AD-706: tier-3 action awaits Captain ACK
+    TOOL_FAILURE_PATTERN = "tool_failure_pattern"  # AD-1168: one tool failing the same way repeatedly
+    FAULT_REPORTED = "fault_reported"  # AD-1169: a crew agent reports a tool behaving other than as advertised
+    FAULT_RESOLVED = "fault_resolved"  # AD-1169: a reported fault is repaired or dismissed
     BROWSER_ACTION_EXECUTED = "browser_action_executed"        # AD-706: per-action telemetry
     BROWSER_SESSION_OPENED = "browser_session_opened"          # AD-706
     BROWSER_VERIFY_OBSERVED = "browser_verify_observed"        # AD-706c-1: vision-LLM verification result

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from probos.build_dispatcher import BuildDispatcher
     from probos.build_queue import BuildQueue
     from probos.capability_request import CapabilityRequestStore
+    from probos.fault_report import FaultReportStore
     from probos.clearance_grants import ClearanceGrantStore
     from probos.cognitive.agent_patcher import AgentPatcher
     from probos.cognitive.behavioral_monitor import BehavioralMonitor
@@ -171,6 +172,7 @@ class CommunicationResult:
     clearance_grant_store: "ClearanceGrantStore | None"
     clinical_notes_store: "ClinicalNotesStore | None"  # AD-904
     capability_request_store: "CapabilityRequestStore | None"  # AD-853
+    fault_report_store: "FaultReportStore | None"  # AD-1169
     skill_request_store: "SkillRequestStore | None"  # AD-906
     tool_registry: "ToolRegistry | None"
     tool_permission_store: "ToolPermissionStore | None"
