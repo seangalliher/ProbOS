@@ -2608,14 +2608,36 @@ export const useStore = create<HXIState>((set, get) => ({
             last_active_at: Math.max(thread.last_active_at, message.created_at),
           });
         }
-        const activeThread = current.activeProfileAgent === null
+        // BF-703: there are TWO shells, and this gate only knew about one.
+        //
+        // AgentProfilePanel opens a chat through ``openAgentProfile``, which
+        // sets ``activeProfileAgent``. CompactApp does not: it reads
+        // ``activeThreadId``, derives the agent FROM the thread, and never
+        // touches the profile fields. So in CompactApp ``activeProfileAgent``
+        // is null, the profile branch below short-circuits to null, and a
+        // background message could never match an open transcript.
+        //
+        // The effect on the reference vessel: a promoted turn's report was
+        // persisted, served by the transcript endpoint, emitted, and delivered
+        // over the websocket -- and still never appeared, because this
+        // comparison had nothing to compare against. Reopening the chat showed
+        // it, which is what made it read like a rendering problem rather than a
+        // refresh one.
+        //
+        // Matching EITHER shell is strictly more permissive than before, so the
+        // profile path keeps its exact behaviour; a message for a thread that
+        // is not open still matches neither and is still ignored.
+        const profileThread = current.activeProfileAgent === null
           ? null
           : current.activeProfileThreadId
             ?? current.threadIdByAgent.get(current.activeProfileAgent)
             ?? null;
+        const shellThread = current.activeThreadId ?? null;
+        const isOpen = message.thread_id === profileThread
+          || message.thread_id === shellThread;
         set({
           chatThreads,
-          ...(activeThread === message.thread_id
+          ...(isOpen
             ? {
                 liveThreadRefresh: {
                   threadId: message.thread_id,
