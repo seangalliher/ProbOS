@@ -56,6 +56,38 @@ _AUDIT_DETAIL_ALLOWLIST: frozenset[str] = frozenset({
     "url_sanitized",
 })
 
+# BF-701: the agent-facing action vocabulary, declared ONCE.
+#
+# This used to be written out three times — in ``description``, in
+# ``input_schema``'s enum, and again as a set literal inside ``invoke()``. AD-1160
+# added ``key_type`` to the first two and missed the third, so the tool spent its
+# entire life advertising an action it then refused: the description promised a
+# "12-action vocabulary", the schema enum listed twelve, and the gate admitted
+# eleven. An agent that read the documentation and called ``key_type`` was told
+# ``unknown browser action: 'key_type'``.
+#
+# That is exactly what happened on the reference vessel. The trace shows the
+# agent do the right thing in three calls — ``state``, ``click`` the document
+# surface, then ``key_type`` — get refused, and spend the remaining seventeen
+# steps guessing at CSS selectors and canvas coordinates before a ``goto``
+# reloaded the page and discarded the work.
+#
+# Ordered because the schema enum and the description read better in a stable
+# order; the gate uses the frozenset below. Deriving both from one tuple is the
+# point: the gate can no longer disagree with what the agent was told.
+#
+# This tuple is the AGENT-facing surface only. ``actions._HANDLERS`` also
+# registers privileged verbs (``eval_js``, ``fill_credential``, ``upload_file``,
+# ``download``, ``drag``, ``key_combo``, ``mouse_move``, ``mouse_button``,
+# ``compute_use_click``) which are deliberately NOT offered here and reach the
+# tool through their own entry points. Adding a verb to this tuple exposes it to
+# every agent — confirm ``classify_action`` assigns it a tier first.
+_AGENT_ACTIONS: tuple[str, ...] = (
+    "goto", "state", "click", "type", "key_type", "scroll",
+    "screenshot", "wait", "back", "forward", "extract_text", "verify",
+)
+_AGENT_ACTION_SET: frozenset[str] = frozenset(_AGENT_ACTIONS)
+
 
 class BrowserTool:
     """AD-706 Tool implementation. Tool Protocol structural subtype."""
@@ -109,10 +141,12 @@ class BrowserTool:
     @property
     def description(self) -> str:
         return (
-            "Drive a Chromium browser. 12-action vocabulary: "
-            "goto, state, click, type, key_type, scroll, screenshot, wait, back, "
-            "forward, extract_text, verify. "
-            "Use state() to get an indexed list of clickable elements, then click/type by index."
+            f"Drive a Chromium browser. {len(_AGENT_ACTIONS)}-action vocabulary: "
+            + ", ".join(_AGENT_ACTIONS)
+            + ". Use state() to get an indexed list of clickable elements, then "
+            "click by index. To enter text into an editing surface that is not a "
+            "form field — a document body, a canvas editor — click it first, then "
+            "use key_type, which types into whatever now has focus."
         )
 
     @property
@@ -123,11 +157,7 @@ class BrowserTool:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": [
-                        "goto", "state", "click", "type", "scroll",
-                        "screenshot", "wait", "back", "forward", "extract_text",
-                        "verify", "key_type",
-                    ],
+                    "enum": list(_AGENT_ACTIONS),
                 },
                 "session_id": {"type": "string", "description": "Reuse an existing session, or omit to create a fresh one."},
                 "url": {"type": "string"},
@@ -255,11 +285,7 @@ class BrowserTool:
                     "for agent %s", bound[:12], agent_id or "<unknown>",
                 )
 
-        if action not in {
-            "goto", "state", "click", "type", "scroll",
-            "screenshot", "wait", "back", "forward", "extract_text",
-            "verify",
-        }:
+        if action not in _AGENT_ACTION_SET:
             elapsed_ms = (time.monotonic() - t0) * 1000.0
             self._audit(
                 action=str(action or ""),
