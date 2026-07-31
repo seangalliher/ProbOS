@@ -97,6 +97,30 @@ async def decide_capability_request(
     standing = await _maybe_issue_standing_rule(runtime, decided, req)
     return {"request": _serialize(decided), "standing_rule": standing}
 
+# AD-1175: request kinds a standing rule can be scoped to.
+#
+# A standing rule is keyed on (agent, tool_id, action, scope_key), all of which
+# come from the request's action payload. So the real precondition is "carries a
+# valid action payload", and the kind is how that is declared.
+#
+# ``continue`` (AD-1164) was the omission this constant exists to correct. Its
+# payload is the same validated six-key shape as an ``action`` request --
+# ``tool_id="dm_agentic"``, ``action="continue"`` -- so it has always had an
+# action shape to scope a rule to. But the guard tested the kind LABEL rather
+# than the shape, and refused it.
+#
+# The consequence was circular and total: AD-1164's second pass re-invokes an
+# exhausted turn only while a live standing rule permits it, the only way to get
+# that rule is approving a continue request with ``grant_standing``, and that
+# path refused the only kind that needed it. Every exhausted turn stopped at
+# pass 1 to ask, forever, and the reference vessel's log says so on every run:
+# "reached its step limit on pass 1/2 and no standing rule covers continuation".
+#
+# An explicit allowlist rather than "any kind with a payload", per Minimal
+# Authority: a future kind gets a standing rule when someone decides it should,
+# not by inheriting one.
+_STANDING_RULE_KINDS: frozenset[str] = frozenset({"action", "continue"})
+
 
 async def _maybe_issue_standing_rule(
     runtime: Any,
@@ -113,9 +137,10 @@ async def _maybe_issue_standing_rule(
 
     Deliberately narrow, in four ways:
 
-    * Only ``kind == "action"`` — ``grant`` / ``install`` / ``build`` have no
-      action shape to scope a rule to, so ``grant_standing`` is logged and
-      ignored rather than rejected.
+    * Only kinds carrying an action shape to scope a rule to — ``action``
+      (AD-1154) and ``continue`` (AD-1164). ``grant`` / ``install`` / ``build``
+      describe a capability to acquire rather than an operation to repeat, so
+      ``grant_standing`` is logged and ignored rather than rejected.
     * Only on ``approve=True``. A denial issues nothing even when
       ``grant_standing`` is set.
     * Only when ``approval_inbox.standing_rules_enabled`` is on.
@@ -130,7 +155,7 @@ async def _maybe_issue_standing_rule(
     """
     if not req.grant_standing:
         return None
-    if decided.kind != "action":
+    if decided.kind not in _STANDING_RULE_KINDS:
         logger.info(
             "AD-1154: grant_standing ignored for capability request %s — kind "
             "'%s' has no action shape to scope a standing rule to; the "
