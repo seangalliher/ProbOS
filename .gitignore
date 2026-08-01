@@ -94,6 +94,14 @@ meta.inf
 
 prompts/wave-orchestrator-state.json
 
+# Audit methodology is a working instrument, not a repository artifact. The
+# findings it produces become GitHub issues, and the work those issues drive is
+# tracked in the normal way -- but the prompt itself carries a running list of
+# this repository's own weak spots and belongs beside whoever is running it, not
+# in the tree. Committed by accident in 32c973d7 via `git add -A prompts`, which
+# is the reason the house rule is to stage explicit paths.
+prompts/audit-*.md
+
 # AD-721i-1: operator-fetched avatar assets (license-audited per data/avatar-assets/MANIFEST.md)
 !data/avatar-assets/
 data/avatar-assets/*
