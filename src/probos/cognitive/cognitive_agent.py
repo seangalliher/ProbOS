@@ -2364,14 +2364,27 @@ class CognitiveAgent(BaseAgent):
         When ``_conversational_agentic_will_run(observation)`` is True (the single
         source of truth: a wired runtime, ``config.dm_agentic.enabled``, a 1:1
         ``direct_message``, no group / no vision) the AD-1065 loop assembles real
-        tools this turn -- ``run_python`` (AD-1066: execute code / produce a real
-        downloadable file), ``search_capabilities`` (AD-1072: discover tools /
-        skills / mesh intents), ``use_skill`` (AD-1068: load + run a cognitive
-        skill), and ``delegate_task`` (AD-1072: hand a bounded subtask to a crew
-        peer). Those tools supersede the scattered single-pass reply-tag teaching
-        (the AD-869 ``[MESH ...]`` read seam, the AD-1064 ``<artifact>`` tag), so
-        this hook unifies the per-tag grounding into one affirmative block that
-        appears only when the loop runs.
+        tools this turn. Those tools supersede the scattered single-pass reply-tag
+        teaching (the AD-869 ``[MESH ...]`` read seam, the AD-1064 ``<artifact>``
+        tag), so this hook unifies the per-tag grounding into one affirmative
+        block that appears only when the loop runs.
+
+        AD-1177: the block no longer enumerates a fixed tool subset. AD-1070
+        named exactly four (``run_python`` / ``search_capabilities`` /
+        ``use_skill`` / ``delegate_task``) and then went stale as the assembly in
+        ``agentic_dispatch`` grew to eleven groups (mesh reads, MCP, event log,
+        oracle, publish, browser, Captain grants) -- the same hand-maintained
+        vocabulary drift as BF-701 / BF-706, and the narration is what sets
+        disposition. So the prose now DEFERS to the tool array the model already
+        receives as the authoritative list, which retires the drift class instead
+        of refreshing a list that would go stale again. Two things stay named
+        because each is an *act* the model must know to perform, not merely a
+        schema to read: ``search_capabilities`` (discovering what is reachable)
+        and ``run_python`` (the general-purpose instrument for whatever the other
+        tools do not cover, file production included). The block also tells the
+        agent to state plainly what is needed when something is absent (the
+        acquisition half is AD-1178, out of scope here) and states the
+        chain-of-command boundary in the same breath as the resourcefulness.
 
         Default-OFF / byte-identical guarantee: returns "" whenever the loop will
         NOT run (flag off / group / vision / no runtime), so the composed prompt
@@ -2384,19 +2397,25 @@ class CognitiveAgent(BaseAgent):
         return (
             "\n\nActing directly this turn: you have a working loop that runs real "
             "tools before you reply, so do the work and report the result rather "
-            "than only describing how it might be done. The tools you have this "
-            "turn:\n"
-            "- run_python: execute Python to compute, transform data, or produce a "
-            "real downloadable file (a .docx, .xlsx, .pdf, chart, or archive) the "
-            "Captain can open -- write and run the code, then hand back the result.\n"
-            "- search_capabilities: discover the tools, skills, and mesh intents "
-            "reachable right now, so your reply is grounded in what the ship truly "
-            "offers this turn.\n"
-            "- use_skill: load and run a saved cognitive skill to carry a "
-            "specialized task through end to end.\n"
-            "- delegate_task: hand a bounded subtask to another crew agent by "
-            "callsign and fold their result into your reply.\n"
-            "Prefer these tools to finish the task within this turn; describe an "
+            "than only describing how it might be done. The tool schemas you were "
+            "handed this turn are the authoritative list of what you hold -- read "
+            "them and reach for whichever one fits the task, instead of assuming a "
+            "narrower set than you were given. When you are unsure what the ship "
+            "offers right now, search_capabilities is itself a move worth making: "
+            "discovering what is reachable grounds your reply in what is truly "
+            "there this turn. run_python is your general-purpose instrument -- when "
+            "a task fits none of the other tools, write and run Python to carry it: "
+            "compute, transform data, drive a library, or produce a real "
+            "downloadable file (a .docx, .xlsx, .pdf, chart, or archive) the "
+            "Captain can open, then hand back the result. Be resourceful: take the "
+            "direct route first, and when an attempt falls short, adjust it and go "
+            "again before settling for an explanation. If something you need is "
+            "missing -- a library, a file, a detail only the Captain holds -- say "
+            "plainly what is needed and why, then carry the task as far as the "
+            "tools at hand allow. All of this sits inside your orders and your "
+            "granted authority: act freely within them, and bring anything that "
+            "would exceed them to the Captain for approval rather than routing "
+            "around it. Prefer finishing the task within this turn; describe an "
             "approach only when the Captain asks for the plan itself."
         )
 

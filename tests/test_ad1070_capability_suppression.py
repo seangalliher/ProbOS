@@ -9,7 +9,8 @@ Two teaching-side changes (mirrors ``test_ad1070a_artifact_suppression.py``):
    ``search_capabilities`` tools supersede the read teaching.
 2. A new ``_conversational_agentic_self_description`` block unifies the per-tag
    grounding into ONE affirmative block that appears ONLY when the loop runs
-   (teaching run_python / search_capabilities / use_skill / delegate_task).
+   (AD-1070 taught a fixed four-tool list; AD-1177 replaced that enumeration
+   with deference to the model's tool array -- see test_ad1177_crew_agency.py).
 
 Default-OFF guarantee (load-bearing): with ``dm_agentic.enabled=False`` (the
 default) the gate ``_conversational_agentic_will_run`` returns False, so the new
@@ -145,7 +146,7 @@ def test_capability_block_taught_for_vision_even_when_flag_on() -> None:
     assert "[MESH" in _compose_capability(fake_self, obs)
 
 
-# ── (c) unified self-description: "" when off, teaches 4 tools when on ──────
+# ── (c) unified self-description: "" when off, teaches the loop when on ─────
 def test_self_description_empty_when_loop_off() -> None:
     assert _self_desc(_self(enabled=False), _obs()) == ""
 
@@ -161,11 +162,17 @@ def test_self_description_empty_for_vision_even_when_flag_on() -> None:
 
 
 def test_self_description_teaches_loop_native_tools_when_loop_will_run() -> None:
+    # AD-1177: the block no longer enumerates a fixed tool subset -- AD-1070's
+    # four-name list drifted as the assembly grew to eleven groups, so the prose
+    # now defers to the model's tool array. ``run_python`` and
+    # ``search_capabilities`` stay named because each is an *act* the model must
+    # know to perform. The full drift guard lives in test_ad1177_crew_agency.py.
     fake_self = _self(enabled=True)
     desc = _self_desc(fake_self, _obs())
     assert desc != ""
-    for tool in ("run_python", "search_capabilities", "use_skill", "delegate_task"):
+    for tool in ("run_python", "search_capabilities"):
         assert tool in desc
+    assert "authoritative list of what you hold" in desc
 
 
 # ── (d) self-description text is gap-regex clean (AD-957 / AD-596) ──────────
