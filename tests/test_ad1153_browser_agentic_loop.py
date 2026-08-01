@@ -52,7 +52,20 @@ _ALL_SIX = ("goto", "state", "extract_text", "back", "forward", "wait")
 # previous ``_EXCLUDED_FIVE`` would have had to be renamed with every such
 # addition — the same stale-count drift BF-690 filed against the tool
 # description).
-_EXCLUDED_ACTIONS = ("click", "type", "key_type", "scroll", "screenshot", "verify")
+#
+# BF-706 added ``key_combo``, ``drag``, ``mouse_move`` and ``mouse_button`` to
+# the tool's surface. They belong HERE, not in the loop set: that set is
+# deliberately read-only, and all four act on the page exactly as ``click`` and
+# ``key_type`` do. An agent reaches them only by holding ``browser`` through a
+# Captain grant, which leaves ``restricted_browser_actions`` unarmed.
+#
+# This test is why the list is maintained by hand — it fails loudly the moment
+# the tool's enum and this complement disagree, which is what caught BF-706's
+# first draft before it shipped a half-wired fix.
+_EXCLUDED_ACTIONS = (
+    "click", "type", "key_type", "key_combo", "drag", "mouse_move",
+    "mouse_button", "scroll", "screenshot", "verify",
+)
 
 
 # -- Harness --------------------------------------------------------------

@@ -76,14 +76,34 @@ _AUDIT_DETAIL_ALLOWLIST: frozenset[str] = frozenset({
 # order; the gate uses the frozenset below. Deriving both from one tuple is the
 # point: the gate can no longer disagree with what the agent was told.
 #
-# This tuple is the AGENT-facing surface only. ``actions._HANDLERS`` also
-# registers privileged verbs (``eval_js``, ``fill_credential``, ``upload_file``,
-# ``download``, ``drag``, ``key_combo``, ``mouse_move``, ``mouse_button``,
-# ``compute_use_click``) which are deliberately NOT offered here and reach the
-# tool through their own entry points. Adding a verb to this tuple exposes it to
-# every agent — confirm ``classify_action`` assigns it a tier first.
+# This tuple is the AGENT-facing surface only. ``actions._HANDLERS`` registers
+# twenty actions; the ones NOT here reach outside the page or outside the tier
+# model: ``eval_js``, ``fill_credential``, ``upload_file`` and
+# ``compute_use_click`` are always tier 3, and ``download`` writes to the HOST
+# filesystem, which nothing on this surface does.
+#
+# BF-706: ``key_combo``, ``drag``, ``mouse_move`` and ``mouse_button`` were held
+# back in BF-701 and should not have been. That change was written to avoid
+# opening ``eval_js`` and ``fill_credential``, and swept up four verbs beside
+# them without checking how they are governed. They are governed identically to
+# verbs already offered: ``drag`` and ``mouse_button`` share the exact
+# click/type tier branch, ``mouse_move`` is tier 1 alongside ``screenshot``, and
+# ``key_combo`` is tier 2 escalating to 3 on ``Control+W``/``Alt+F4`` -- the same
+# shape ``download`` uses for executables.
+#
+# The cost of holding them was observed directly. Asked to bold a word, the
+# agent needed Ctrl+F, had no verb for it, and typed the literal text
+# "Control+f" into the Captain's document -- then "ctrl+f" on the next attempt.
+# Exactly the BF-701 shape: the verb exists, it is governed, and nobody offered
+# it, so the agent reaches for the nearest thing that is offered.
+#
+# The rule this is now held to, and which a test enforces: a verb belongs here
+# when it acts INSIDE the page and ``classify_action`` gives it the same tier
+# treatment as verbs already here. Always-tier-3 and host-side effects stay off.
+# Adding one is a deliberate act, not an inheritance.
 _AGENT_ACTIONS: tuple[str, ...] = (
-    "goto", "state", "click", "type", "key_type", "scroll",
+    "goto", "state", "click", "type", "key_type", "key_combo",
+    "drag", "mouse_move", "mouse_button", "scroll",
     "screenshot", "wait", "back", "forward", "extract_text", "verify",
 )
 _AGENT_ACTION_SET: frozenset[str] = frozenset(_AGENT_ACTIONS)
@@ -146,7 +166,9 @@ class BrowserTool:
             + ". Use state() to get an indexed list of clickable elements, then "
             "click by index. To enter text into an editing surface that is not a "
             "form field — a document body, a canvas editor — click it first, then "
-            "use key_type, which types into whatever now has focus."
+            "use key_type, which types into whatever now has focus. Use key_combo "
+            "for shortcuts such as Ctrl+F, Ctrl+B or Ctrl+A; typing the name of a "
+            "shortcut with key_type enters it as literal text instead."
         )
 
     @property
@@ -165,6 +187,22 @@ class BrowserTool:
                 "selector": {"type": "string"},
                 "text": {"type": "string"},
                 "delay_ms": {"type": "integer", "description": "AD-1160: 'key_type' action — milliseconds between keystrokes (0-250). Omit for none. Canvas apps such as Word Online drop text typed at full speed."},
+                # BF-706: the parameters the newly-offered verbs read. Exposing
+                # an action without the arguments it requires is the same defect
+                # one layer down — the agent would be told the verb exists and
+                # still have no way to call it.
+                "keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "BF-706: 'key_combo' action — key names to press together, e.g. [\"Control\",\"f\"] for find, [\"Control\",\"b\"] for bold, [\"Control\",\"a\"] to select all. Use this for shortcuts; typing a shortcut's name with key_type enters it as literal text.",
+                },
+                "from_index": {"type": "integer", "description": "BF-706: 'drag' action — source element index from the last state() snapshot."},
+                "to_index": {"type": "integer", "description": "BF-706: 'drag' action — destination element index."},
+                "from_selector": {"type": "string", "description": "BF-706: 'drag' action — source selector when no index is available."},
+                "to_selector": {"type": "string", "description": "BF-706: 'drag' action — destination selector."},
+                "x": {"type": "integer", "description": "BF-706: 'mouse_move' action — viewport x coordinate."},
+                "y": {"type": "integer", "description": "BF-706: 'mouse_move' action — viewport y coordinate."},
+                "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "BF-706: 'mouse_button' action — which button. Defaults to left."},
                 "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
                 "amount": {"type": "integer"},
                 "milliseconds": {"type": "integer"},
