@@ -381,7 +381,13 @@ async def test_gate_off_instantiates_zero_session_compactors(
 
 
 async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
-    """The five other callers of ``run`` must be untouched BY CONSTRUCTION."""
+    """The five other callers of ``run`` must be untouched BY CONSTRUCTION.
+
+    AD-1180 added ``compose_disposition`` here — an authorized additive change,
+    repointed rather than removed so this stays a drift guard. It does not
+    weaken what AD-1155 pinned: the assertion below is the load-bearing half,
+    and no outer-loop / continuation parameter has appeared.
+    """
     params = inspect.signature(WorkItemAgenticExecutor.run).parameters
     assert list(params) == [
         "self",
@@ -395,6 +401,7 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
         "max_iterations",
         "tier",
         "extra_context",
+        "compose_disposition",  # AD-1180
         "compactor",
         "compaction_threshold",
         "token_budget",

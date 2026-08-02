@@ -20,6 +20,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from probos.events import EventType, SensoriumBudgetExceededEvent
+from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
@@ -2391,33 +2392,19 @@ class CognitiveAgent(BaseAgent):
         is unchanged from HEAD on every single-pass turn. Gap-regex-safe (AD-957:
         no can't / cannot / unable / lack / no-capability phrasing) so the block
         never trips the AD-596 capability-gap detector. Overridable (Open/Closed).
+
+        AD-1180: the text itself now lives in
+        :mod:`probos.cognitive.agentic_disposition` so the four call sites that
+        pass a *static* ``instructions`` attribute (the AD-856 task path, crew
+        children, the AD-860 convergence re-run and AD-1072 delegation) can
+        compose the same disposition at their shared choke point,
+        ``WorkItemAgenticExecutor.run``. This hook is unchanged in behaviour --
+        it is a pure extraction, and the conversational call site therefore
+        passes ``compose_disposition=False`` so the block appears exactly once.
         """
         if not self._conversational_agentic_will_run(observation):
             return ""
-        return (
-            "\n\nActing directly this turn: you have a working loop that runs real "
-            "tools before you reply, so do the work and report the result rather "
-            "than only describing how it might be done. The tool schemas you were "
-            "handed this turn are the authoritative list of what you hold -- read "
-            "them and reach for whichever one fits the task, instead of assuming a "
-            "narrower set than you were given. When you are unsure what the ship "
-            "offers right now, search_capabilities is itself a move worth making: "
-            "discovering what is reachable grounds your reply in what is truly "
-            "there this turn. run_python is your general-purpose instrument -- when "
-            "a task fits none of the other tools, write and run Python to carry it: "
-            "compute, transform data, drive a library, or produce a real "
-            "downloadable file (a .docx, .xlsx, .pdf, chart, or archive) the "
-            "Captain can open, then hand back the result. Be resourceful: take the "
-            "direct route first, and when an attempt falls short, adjust it and go "
-            "again before settling for an explanation. If something you need is "
-            "missing -- a library, a file, a detail only the Captain holds -- say "
-            "plainly what is needed and why, then carry the task as far as the "
-            "tools at hand allow. All of this sits inside your orders and your "
-            "granted authority: act freely within them, and bring anything that "
-            "would exceed them to the Captain for approval rather than routing "
-            "around it. Prefer finishing the task within this turn; describe an "
-            "approach only when the Captain asks for the plan itself."
-        )
+        return AGENTIC_DISPOSITION
 
     def _conversational_task_protocol(self, observation: dict) -> str:
         """Overridable hook (AD-845): task-creation protocol appended to the
@@ -3792,6 +3779,15 @@ class CognitiveAgent(BaseAgent):
                     tier=tier,
                     compactor=_compactor,
                     compaction_threshold=_compaction_threshold,
+                    # AD-1180: this is the ONE call site that must opt OUT.
+                    # ``system_prompt`` is the COMPOSED conversational prompt,
+                    # which already carries the disposition through the AD-1177
+                    # hook (``_conversational_agentic_self_description``,
+                    # appended in ``_decide_via_llm``). Letting the executor
+                    # compose it again would put two copies in front of the
+                    # model. Every other caller passes a static ``instructions``
+                    # attribute and therefore wants the default, True.
+                    compose_disposition=False,
                 )
                 _last_stop["reason"] = str(
                     getattr(outcome, "stopped_reason", "") or ""

@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.integrations.mcp_bridge.risk import (
     McpToolRisk,
     resolve_tool_risk,
@@ -1507,6 +1508,19 @@ class WorkItemAgenticExecutor:
         max_iterations: int | None = None,
         tier: str | None = None,
         extra_context: dict | None = None,
+        # AD-1180: compose the shared agentic disposition into the system
+        # prompt. Defaults to TRUE so a FUTURE call site inherits it rather
+        # than having to remember -- which is the entire lesson of this AD.
+        # AD-1177 authored the disposition and reached exactly one of five
+        # paths, because each new caller passed a static ``instructions``
+        # attribute straight through and nothing here composed anything. A
+        # default of False would reproduce that failure the next time someone
+        # adds a caller. What keeps this inert for operators is the config
+        # gate (``agentic_tools.disposition_enabled``, default-OFF), NOT this
+        # kwarg. Only the conversational path passes False, because its
+        # ``instructions`` is the COMPOSED prompt that already carries the
+        # block via the AD-1177 hook.
+        compose_disposition: bool = True,
         # AD-1142: crew-child working-context compaction + spend ceiling.
         # PURE PASS-THROUGH — this method also serves the AD-839 conversational
         # path and the AD-1072 delegation path, so it deliberately reads NO
@@ -1994,8 +2008,29 @@ class WorkItemAgenticExecutor:
                 "if they are watching a session right now.",
                 agent_id,
             )
+        # AD-1180: compose the shared disposition at the ONE choke point every
+        # agentic path already flows through, instead of duplicating prose into
+        # five call sites. Composed AFTER ``instructions`` for three reasons:
+        # (1) the conversational path's AD-1177 hook appends it exactly this way
+        # (``composed += _agentic_self_desc`` in ``_decide_via_llm``), so all
+        # five paths now produce an identically shaped prompt; (2) the constant
+        # is authored as a SUFFIX -- it opens with its own blank-line separator
+        # and ends mid-thought with none, so a prefix placement would glue its
+        # last sentence onto the agent's first line; (3) identity and standing
+        # orders are the frame, and the operating disposition belongs closest to
+        # the task.
+        #
+        # Default-OFF: with ``disposition_enabled`` False this is exactly
+        # ``instructions or ""`` -- the pre-AD-1180 expression, unchanged, for
+        # BOTH values of ``compose_disposition``.
+        _system_prompt = instructions or ""
+        if compose_disposition and getattr(
+            agentic_tools_cfg, "disposition_enabled", False
+        ):
+            _system_prompt = f"{_system_prompt}{AGENTIC_DISPOSITION}"
+
         agentic_result = await loop.run(
-            system_prompt=instructions or "",
+            system_prompt=_system_prompt,
             user_message=task_text,
             tools=tools,
             context=_context,

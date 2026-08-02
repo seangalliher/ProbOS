@@ -6256,7 +6256,18 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
       guardrail — its only reader is the AD-745 DM dispatch stage, which this
       path does not use. An agentic-loop caller gets the domain allow/denylist,
       ``classify_action`` tiering, per-domain rate limiting and the session
-      duration cap."""
+      duration cap.
+
+    AD-1180 adds ``disposition_enabled``: compose the shared agentic
+    disposition into the system prompt inside ``WorkItemAgenticExecutor.run``.
+    It belongs here rather than on ``dm_agentic`` precisely because the paths it
+    fixes are the NON-conversational ones — crew children, the AD-860
+    convergence re-run and AD-1072 delegation all reach the same executor with
+    the same eleven-group tool array and, before this flag, no disposition about
+    using any of it. Default-OFF like every other flag on this model, so an
+    operator who does not opt in gets a byte-identical system prompt; unlike the
+    others, turning it ON changes what the model READS rather than what it
+    HOLDS."""
 
     tool_search_enabled: bool = False
     delegation_enabled: bool = False
@@ -6284,6 +6295,32 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
             "defaults to None, which permits every host absent from "
             "domain_denylist — set an allowlist to bound where an agent may "
             "navigate."
+        ),
+    )
+    # AD-1180: compose the shared agentic disposition on EVERY path that hands
+    # out tools, not just the Captain's 1:1 DM turn.
+    disposition_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1180: compose the shared agentic disposition "
+            "(probos.cognitive.agentic_disposition.AGENTIC_DISPOSITION) into "
+            "the system prompt inside WorkItemAgenticExecutor.run, so it "
+            "reaches every path that hands an agent a tool array. AD-1177 "
+            "authored that text and it reached exactly ONE of the five callers "
+            "-- the Captain's 1:1 DM turn -- because the other four (the "
+            "AD-856 task path, crew children, the AD-860 convergence re-run and "
+            "AD-1072 delegation) pass the agent's STATIC instructions attribute "
+            "straight through while receiving the same eleven-group tool array. "
+            "Default-OFF: with this False the system prompt reaching the loop "
+            "is byte-identical to AD-1177 on every path. Turning it ON is a "
+            "REAL behaviour change for crew children, verifier convergence and "
+            "delegated sub-agents by design -- it adds roughly 1,500 characters "
+            "of disposition to each of those runs and tells them to be "
+            "resourceful, to treat run_python as the general-purpose "
+            "instrument, and to act inside their orders. Interaction to know: "
+            "crew_token_budget (AD-1142) is a HARD STOP that fails a child and "
+            "blocks its dependents; it defaults to None, so on shipped defaults "
+            "there is no ceiling for these characters to push a child over."
         ),
     )
     # AD-1141: Σ into the crew loop. The bool is the ablation gate; the three
