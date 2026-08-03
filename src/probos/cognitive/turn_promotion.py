@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -487,7 +488,15 @@ async def run_with_promotion(
     hold.add(task)
     task.add_done_callback(hold.discard)
 
+    # BF-705: measured, not configured. The log line below used to print
+    # ``promote_after_seconds`` — so every promotion in the ship's log read back
+    # exactly whatever the config said, and none of them were evidence of
+    # anything. ``asyncio.wait`` cannot fire its timer while the loop is blocked,
+    # so the real wait overshoots the budget under the concurrent cognition this
+    # BF exists to survive, and that overshoot is the number worth having.
+    _wait_started = time.monotonic()
     done, _pending = await asyncio.wait({task}, timeout=promote_after_seconds)
+    waited_seconds = time.monotonic() - _wait_started
     if task in done:
         # Fast path: the turn was a reply after all. ``result()`` re-raises the
         # run's exception into the caller exactly as a direct await would.
@@ -529,8 +538,9 @@ async def run_with_promotion(
     reporter.add_done_callback(hold.discard)
 
     logger.info(
-        "AD-1165: promoted agent=%s turn to work item %s after %.1fs; the run "
-        "continues in the background and reports into thread %s",
-        agent_id, work_item.id, promote_after_seconds, thread_id,
+        "AD-1165: promoted agent=%s turn to work item %s after %.1fs measured "
+        "(budget %.1fs); the run continues in the background and reports into "
+        "thread %s",
+        agent_id, work_item.id, waited_seconds, promote_after_seconds, thread_id,
     )
     return _ACK_TEMPLATE.format(work_item_id=work_item.id)

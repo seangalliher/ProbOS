@@ -323,6 +323,108 @@ def _coerce_promotion_budget(raw: Any) -> float:
     return value
 
 
+# BF-705: headroom held back from whatever remains of the intent TTL. Promotion
+# is not instantaneous: once the timer fires the runtime still has to write the
+# work item, transition it to in_progress, spawn the reporter, and carry the
+# acknowledgement back up through the handler to the bus. On the reference
+# vessel that tail measures well under a second — but what it is racing is a
+# hard cancel, and overshooting it produces precisely the defect this fixes: an
+# acknowledgement that arrives AFTER the Captain has been told the agent did not
+# respond. The margin is therefore generous rather than tight. It is a module
+# constant and not a config field on purpose: a knob here would be a second
+# value to leave misconfigured, which is the bug.
+_PROMOTION_MARGIN_SECONDS: float = 5.0
+
+# BF-705: the positive floor the resolved budget is clamped to.
+# ``run_with_promotion`` reads ``promote_after_seconds <= 0.0`` as "do not
+# promote, await inline" — the exact opposite of what a blown deadline needs —
+# so a deadline that has already been spent must never be allowed to drive the
+# budget to zero. One second is long enough that a genuinely fast turn still
+# returns its own text on the fast path, and short enough that a turn arriving
+# with its deadline nearly gone is promoted almost immediately, which is the
+# only way it can answer at all.
+_MIN_PROMOTION_BUDGET_SECONDS: float = 1.0
+
+
+def _effective_promotion_budget(
+    configured: float,
+    observation: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> float:
+    """BF-705: shrink the promotion budget so it fits inside the intent's TTL.
+
+    The budget and the deadline it races were measured from different clocks.
+    ``IntentBus`` starts the TTL at dispatch (``wait_for(handler(intent),
+    timeout=intent.ttl_seconds)``); ``promote_to_task_after_seconds`` starts
+    when ``run_with_promotion`` is reached, roughly 1,600 lines into the
+    handler. Everything between — perceive, sensorium assembly, episodic recall,
+    browser session binding, contention with background cognition — is
+    unbudgeted. Measured on the reference vessel at ~29s beside a dream cycle,
+    which made a 35s budget acknowledge a turn 4s AFTER the chat TTL had already
+    reported that the agent did not respond.
+
+    So the budget is resolved against what is actually LEFT of the deadline::
+
+        min(configured, ttl_seconds - elapsed - _PROMOTION_MARGIN_SECONDS)
+
+    clamped to a positive floor and never raised above ``configured``.
+    Shrinking only: this can bring a promotion forward, never push one out.
+
+    The floor is ``min(_MIN_PROMOTION_BUDGET_SECONDS, configured)`` rather than
+    the constant itself, which keeps two invariants at once — the result is
+    never ``<= 0`` while promotion is enabled, and a ``configured`` of ``0.0``
+    (the shipped default, meaning OFF) still resolves to ``0.0`` rather than
+    being switched on by the clamp.
+
+    Every part of the deadline is optional and defensively typed. A missing,
+    ``None``, string or MagicMock ``ttl_seconds``/``created_at`` returns
+    ``configured`` unchanged — the byte-identical degrade path, which covers
+    every non-chat caller and every producer that predates this. The exact
+    ``type`` check on the numbers is the boundary ``_coerce_promotion_budget``
+    documents: a MagicMock attribute compares as another MagicMock rather than a
+    bool, so ``isinstance`` alone would let one through into the arithmetic. The
+    subtraction is guarded as well, because a naive ``created_at`` against an
+    aware ``now`` raises rather than returning a wrong number.
+
+    ``created_at`` and ``now`` are both wall-clock, so a clock adjustment
+    mid-turn skews this. It cannot skew the result above ``configured``, so the
+    only reachable error is a SHORTER budget: the turn is promoted earlier than
+    it strictly needed to be, costing a work item and delivering the answer
+    anyway. That is the safe direction, and it is why a monotonic alternative is
+    not worth the plumbing — ``IntentMessage`` carries wall-clock ``created_at``
+    and the bus enforcing the TTL may be in another process on the federated
+    path.
+    """
+    ttl_raw = observation.get("ttl_seconds") if type(observation) is dict else None
+    if type(ttl_raw) not in (int, float):
+        return configured
+    ttl = float(ttl_raw)
+    if not math.isfinite(ttl):
+        return configured
+    created_at = observation.get("created_at")
+    if not isinstance(created_at, datetime):
+        return configured
+    if now is None:
+        now = datetime.now(timezone.utc)
+    try:
+        elapsed = (now - created_at).total_seconds()
+    except Exception:
+        # A naive/aware mismatch, or something that satisfied the isinstance
+        # check without being a real datetime. Either way the deadline cannot be
+        # read, so the configured budget stands.
+        logger.debug(
+            "BF-705: could not read the intent deadline; keeping the configured "
+            "promotion budget of %ss",
+            configured, exc_info=True,
+        )
+        return configured
+    if type(elapsed) not in (int, float) or not math.isfinite(elapsed):
+        return configured
+    floor = min(_MIN_PROMOTION_BUDGET_SECONDS, configured)
+    return max(min(configured, ttl - elapsed - _PROMOTION_MARGIN_SECONDS), floor)
+
+
 def _promotion_request_text(observation: dict[str, Any], fallback: str) -> str:
     """AD-1165: the text a promoted turn's work item records as the request.
 
@@ -2169,6 +2271,13 @@ class CognitiveAgent(BaseAgent):
                 # built system prompt. AD-791a populates thread_id on
                 # every chat dispatch.
                 "thread_id": getattr(intent, "thread_id", None),
+                # BF-705: the intent's own deadline. The chat TTL is enforced
+                # by IntentBus from dispatch; the AD-1165 promotion budget is
+                # measured from ~1,600 lines further into the handler, so the
+                # two cannot be related unless the deadline travels with the
+                # observation. ``_effective_promotion_budget`` reads both.
+                "ttl_seconds": getattr(intent, "ttl_seconds", None),
+                "created_at": getattr(intent, "created_at", None),
             }
         else:
             # Dict fallback (for compatibility with BaseAgent contract).
@@ -2203,6 +2312,15 @@ class CognitiveAgent(BaseAgent):
                 observation["intent_id"] = _as_dict["id"]
             if "thread_id" in _as_dict:  # BF-698
                 observation["thread_id"] = _as_dict["thread_id"]
+            # BF-705: the deadline follows the same rule for the same reason.
+            # ``IntentMessage.__dict__`` carries both fields, so the fifteen
+            # callers above get them; a hand-built dict carries neither and
+            # stays untouched, which keeps the AD-432 contract that this branch
+            # invents nothing it was not given.
+            if "ttl_seconds" in _as_dict:  # BF-705
+                observation["ttl_seconds"] = _as_dict["ttl_seconds"]
+            if "created_at" in _as_dict:  # BF-705
+                observation["created_at"] = _as_dict["created_at"]
 
         # AD-492: Store correlation_id on working memory for cross-reference
         _wm = getattr(self, '_working_memory', None)
@@ -3825,6 +3943,16 @@ class CognitiveAgent(BaseAgent):
             if promote_after <= 0.0:
                 text = await _agentic_turn()
             else:
+                # BF-705: the budget above is measured from HERE, but the TTL
+                # that cancels this turn started at dispatch — everything since
+                # (perceive, sensorium, recall, browser binding) was unbudgeted,
+                # and was measured at ~29s under load. Resolve the budget
+                # against what is actually left of the deadline so the
+                # acknowledgement cannot land after the Captain has already been
+                # told the agent did not respond. Shrinking only, and never to
+                # zero — see ``_effective_promotion_budget``.
+                promote_after = _effective_promotion_budget(promote_after, observation)
+
                 from probos.cognitive.turn_promotion import (
                     _INCOMPLETE_STOP_REASONS,
                     run_with_promotion,
