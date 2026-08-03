@@ -85,6 +85,7 @@ function legacyItem(
     status: 'in_progress',
     priority: 1,
     parent_id: parentId,
+    project_id: null,
     depends_on: [],
     assigned_to: 'facilitator-1',
     created_by: 'captain',

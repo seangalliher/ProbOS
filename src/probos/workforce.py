@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import re
+import sqlite3
 import time
 import uuid
 from collections import defaultdict
@@ -629,6 +630,10 @@ class WorkItem:
     status: str = "open"                # WorkItemStatus value; string for extensibility
     priority: int = 3                   # 1 (critical) to 5 (low)
     parent_id: str | None = None        # Recursive containment / WBS
+    # AD-1176: soft reference to Project.id. No foreign key and no existence
+    # check at insert — matching ChatThread.project_id. A work item pointing at
+    # a deleted project still loads; it simply stops matching the filter.
+    project_id: str | None = None
     depends_on: list[str] = field(default_factory=list)
     assigned_to: str | None = None      # agent UUID or pool ID
     created_by: str = "captain"
@@ -661,6 +666,7 @@ class WorkItem:
             "status": self.status,
             "priority": self.priority,
             "parent_id": self.parent_id,
+            "project_id": self.project_id,
             "depends_on": self.depends_on,
             "assigned_to": self.assigned_to,
             "created_by": self.created_by,
@@ -1040,7 +1046,10 @@ CREATE TABLE IF NOT EXISTS work_items (
     verification TEXT NOT NULL DEFAULT '{}',
     schedule TEXT NOT NULL DEFAULT '{}',
     ttl_seconds INTEGER,
-    template_id TEXT
+    template_id TEXT,
+    -- AD-1176: appended last so a fresh CREATE TABLE and the ALTER TABLE
+    -- migration below produce an identical column order.
+    project_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS bookings (
@@ -1163,6 +1172,15 @@ _MAX_WORK_ITEM_CHILD_SNAPSHOT_NODES = 65_536
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_CONTAINER_ENTRIES = 16_384
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_STRING_BYTES = 1_048_576
 _MISSING_METADATA_VALUE = object()
+# The crew child barrier compares ``WorkItem.to_dict()`` minus ``updated_at``
+# (see ``crew_finalizer._publication_child_snapshot``), so this set MUST equal
+# ``set(WorkItem().to_dict()) - {"updated_at"}``. Every field added to the
+# dataclass has to be listed here and emitted by ``_work_item_child_snapshot``
+# below, or publication raises ``work_item_child_barrier_invalid``. Neither
+# barrier is persisted — both are recomputed from live rows inside the write
+# transaction — so growing them does not invalidate anything on disk.
+# AD-1176 added ``project_id``; ``test_ad1176_work_item_project.py`` guards the
+# agreement.
 _WORK_ITEM_CHILD_SNAPSHOT_KEYS = frozenset({
     "id",
     "title",
@@ -1171,6 +1189,7 @@ _WORK_ITEM_CHILD_SNAPSHOT_KEYS = frozenset({
     "status",
     "priority",
     "parent_id",
+    "project_id",
     "depends_on",
     "assigned_to",
     "created_by",
@@ -1188,6 +1207,8 @@ _WORK_ITEM_CHILD_SNAPSHOT_KEYS = frozenset({
     "ttl_seconds",
     "template_id",
 })
+# The plan-adoption barrier compares whole ``to_dict()`` payloads, so this set
+# must equal ``set(WorkItem().to_dict())``.
 _WORK_ITEM_PLAN_ADOPTION_SNAPSHOT_KEYS = (
     _WORK_ITEM_CHILD_SNAPSHOT_KEYS | {"updated_at"}
 )
@@ -1701,6 +1722,10 @@ def _detach_direct_child_snapshots(
                 raw["template_id"] is not None
                 and type(raw["template_id"]) is not str
             )
+            or (
+                raw["project_id"] is not None
+                and type(raw["project_id"]) is not str
+            )
         ):
             raise ValueError(error)
         for key in ("created_at", "trust_requirement"):
@@ -1734,6 +1759,7 @@ def _work_item_child_snapshot(item: WorkItem) -> dict[str, Any]:
         "status": item.status,
         "priority": item.priority,
         "parent_id": item.parent_id,
+        "project_id": item.project_id,
         "depends_on": item.depends_on,
         "assigned_to": item.assigned_to,
         "created_by": item.created_by,
@@ -2017,6 +2043,17 @@ class WorkItemStore(EventEmitterMixin):
             self._db.row_factory = aiosqlite.Row
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
+
+            # AD-1176: Migrate project_id column onto pre-AD-1176 databases.
+            # A fresh DB already has it from _SCHEMA; an existing one gets it
+            # here. Both end up with project_id as the trailing column.
+            try:
+                await self._db.execute(
+                    "ALTER TABLE work_items ADD COLUMN project_id TEXT",
+                )
+                await self._db.commit()
+            except sqlite3.OperationalError:
+                pass  # Column already exists — migration idempotency
         await self._refresh_snapshot_cache()
         self._running = True
         self._tick_task = asyncio.create_task(self._tick_loop())
@@ -2078,8 +2115,8 @@ class WorkItemStore(EventEmitterMixin):
                             created_at, updated_at, due_at, estimated_tokens,
                             actual_tokens, trust_requirement, required_capabilities,
                             tags, metadata, steps, verification, schedule,
-                            ttl_seconds, template_id
-                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            ttl_seconds, template_id, project_id
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             item.id, item.title, item.description, item.work_type,
                             item.status, item.priority, item.parent_id,
@@ -2091,7 +2128,7 @@ class WorkItemStore(EventEmitterMixin):
                             json.dumps(item.tags), json.dumps(item.metadata),
                             json.dumps(item.steps), json.dumps(item.verification),
                             json.dumps(item.schedule), item.ttl_seconds,
-                            item.template_id,
+                            item.template_id, item.project_id,
                         ),
                     )
                     req = ResourceRequirement(
@@ -2154,6 +2191,7 @@ class WorkItemStore(EventEmitterMixin):
         tags: list[str] | None = None,
         limit: int = 50,
         offset: int = 0,
+        project_id: str | None = None,
     ) -> list[WorkItem]:
         """List work items with optional filters. Ordered by priority ASC, created_at DESC."""
         if not self._db:
@@ -2172,6 +2210,11 @@ class WorkItemStore(EventEmitterMixin):
         if parent_id is not None:
             conditions.append("parent_id = ?")
             params.append(parent_id)
+        if project_id is not None:
+            # AD-1176: filtered in SQL alongside the other scalar columns, not
+            # in memory like ``tags`` — the LIMIT must apply after the filter.
+            conditions.append("project_id = ?")
+            params.append(project_id)
         if priority is not None:
             conditions.append("priority = ?")
             params.append(priority)
@@ -4899,6 +4942,7 @@ class WorkItemStore(EventEmitterMixin):
             status=row["status"],
             priority=row["priority"],
             parent_id=row["parent_id"],
+            project_id=row["project_id"],
             depends_on=json.loads(row["depends_on"]) if row["depends_on"] else [],
             assigned_to=row["assigned_to"],
             created_by=row["created_by"],

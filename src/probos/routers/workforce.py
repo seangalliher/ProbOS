@@ -152,6 +152,7 @@ async def list_work_items(
     work_type: str | None = None,
     parent_id: str | None = None,
     priority: int | None = None,
+    project_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
     runtime: Any = Depends(get_runtime),
@@ -161,7 +162,8 @@ async def list_work_items(
         raise HTTPException(503, "Workforce engine not enabled")
     items = await runtime.work_item_store.list_work_items(
         status=status, assigned_to=assigned_to, work_type=work_type,
-        parent_id=parent_id, priority=priority, limit=limit, offset=offset,
+        parent_id=parent_id, priority=priority, project_id=project_id,
+        limit=limit, offset=offset,
     )
     return {"work_items": [i.to_dict() for i in items], "count": len(items)}
 

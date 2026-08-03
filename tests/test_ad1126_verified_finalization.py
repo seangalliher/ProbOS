@@ -5708,6 +5708,9 @@ _WORK_ITEM_SEMANTIC_KEYS = (
     "status",
     "priority",
     "parent_id",
+    # AD-1176: the child barrier compares to_dict() minus updated_at, so this
+    # mirror must carry project_id too.
+    "project_id",
     "depends_on",
     "assigned_to",
     "created_by",

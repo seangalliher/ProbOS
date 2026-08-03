@@ -106,6 +106,9 @@ _WORK_ITEM_COLUMNS = [
     "schedule",
     "ttl_seconds",
     "template_id",
+    # AD-1176: appended last by both the CREATE TABLE and the ALTER TABLE
+    # migration, so fresh and upgraded databases share this exact order.
+    "project_id",
 ]
 _CREW_PARENT_IDS = itertools.count(1)
 

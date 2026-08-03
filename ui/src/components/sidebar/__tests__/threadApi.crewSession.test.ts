@@ -81,6 +81,7 @@ function legacyParent(): LegacyCrewWorkItemView {
     status: 'in_progress',
     priority: 3,
     parent_id: null,
+    project_id: null,
     depends_on: [],
     assigned_to: 'facilitator-1',
     created_by: 'captain',
@@ -185,6 +186,32 @@ describe('AD-1132 threadApi CrewSession contracts', () => {
     const legacy = legacyTree();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(legacy)));
     expect(await fetchCrewTaskDetail('p1')).toEqual({ kind: 'success', response: legacy });
+  });
+
+  it('AD-1176: accepts a project-scoped legacy tree and rejects a missing project_id', async () => {
+    // The legacy validator is exact-key, so WorkItem.project_id must be part
+    // of the accepted shape — and its absence must still be rejected rather
+    // than cast.
+    const exact = legacyTree();
+    const scoped: LegacyCrewTaskTree = {
+      ...exact,
+      parent: { ...exact.parent, project_id: 'proj-alpha' },
+      children: [{ ...exact.children[0], project_id: 'proj-alpha' }],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(scoped)));
+    expect(await fetchCrewTaskDetail('p1')).toEqual({ kind: 'success', response: scoped });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      ...exact,
+      parent: withoutKey(legacyParent(), 'project_id'),
+    })));
+    expect(await fetchCrewTaskDetail('p1')).toEqual({ kind: 'error', status: 200 });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      ...exact,
+      parent: { ...exact.parent, project_id: 7 },
+    })));
+    expect(await fetchCrewTaskDetail('p1')).toEqual({ kind: 'error', status: 200 });
   });
 
   it('rejects partial, additive, or wrongly typed nested AD-862 values', async () => {

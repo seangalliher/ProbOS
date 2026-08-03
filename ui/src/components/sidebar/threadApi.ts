@@ -223,9 +223,10 @@ export function isCrewSessionSummaryProjection(
 
 const LEGACY_WORK_ITEM_KEYS = [
   'id', 'title', 'description', 'work_type', 'status', 'priority', 'parent_id',
-  'depends_on', 'assigned_to', 'created_by', 'created_at', 'updated_at', 'due_at',
-  'estimated_tokens', 'actual_tokens', 'trust_requirement', 'required_capabilities',
-  'tags', 'metadata', 'steps', 'verification', 'schedule', 'ttl_seconds', 'template_id',
+  'project_id', 'depends_on', 'assigned_to', 'created_by', 'created_at',
+  'updated_at', 'due_at', 'estimated_tokens', 'actual_tokens',
+  'trust_requirement', 'required_capabilities', 'tags', 'metadata', 'steps',
+  'verification', 'schedule', 'ttl_seconds', 'template_id',
 ] as const;
 
 function hasLegacyWorkItemFields(value: Record<string, unknown>): boolean {
@@ -236,6 +237,7 @@ function hasLegacyWorkItemFields(value: Record<string, unknown>): boolean {
     && typeof value.status === 'string'
     && isFiniteNumber(value.priority)
     && isNullableString(value.parent_id)
+    && isNullableString(value.project_id)
     && isStringArray(value.depends_on)
     && isNullableString(value.assigned_to)
     && typeof value.created_by === 'string'

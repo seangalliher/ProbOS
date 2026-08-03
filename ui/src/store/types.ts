@@ -579,6 +579,7 @@ export interface WorkItemView {
   status: string;              // draft | open | scheduled | in_progress | review | done | failed | cancelled | blocked
   priority: number;            // 1 (critical) - 5 (low)
   parent_id: string | null;
+  project_id: string | null;   // AD-1176: soft reference to a Project
   depends_on: string[];
   assigned_to: string | null;  // resource_id (= agent UUID)
   created_by: string;
@@ -623,6 +624,7 @@ export interface LegacyCrewWorkItemView {
   readonly status: string;
   readonly priority: number;
   readonly parent_id: string | null;
+  readonly project_id: string | null;  // AD-1176
   readonly depends_on: readonly string[];
   readonly assigned_to: string | null;
   readonly created_by: string;

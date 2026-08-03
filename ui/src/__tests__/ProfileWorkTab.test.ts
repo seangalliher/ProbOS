@@ -4,7 +4,7 @@ import type { WorkItemView, BookableResourceView, BookingView, Agent } from '../
 
 const makeItem = (overrides: Partial<WorkItemView> = {}): WorkItemView => ({
   id: 'wi-1', title: 'Test task', description: '', work_type: 'task',
-  status: 'open', priority: 3, parent_id: null, depends_on: [],
+  status: 'open', priority: 3, parent_id: null, project_id: null, depends_on: [],
   assigned_to: 'res-1', created_by: 'captain', created_at: 1711612800,
   updated_at: 1711612800, due_at: null, estimated_tokens: 50000,
   actual_tokens: 0, trust_requirement: 0, required_capabilities: [],
