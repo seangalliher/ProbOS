@@ -16,7 +16,9 @@ can reason over.
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import importlib.util
 import logging
 import shutil
 import time
@@ -61,6 +63,92 @@ _MIME_BY_EXT: dict[str, str] = {
 
 def _mime_for(name: str) -> str:
     return _MIME_BY_EXT.get(Path(name).suffix.lower(), "application/octet-stream")
+
+
+# AD-1178: what the model is told when an import in its script cannot resolve.
+# Written as a REQUEST, never as a limitation: it names the module, states that
+# the Captain can approve installing it, and says what to do meanwhile. It is
+# authored to NOT match ``cognitive/decomposer._CAPABILITY_GAP_RE`` — a match
+# would misread a routine "this needs a library" report as a capability gap and
+# trip self-mod. ``tests/test_ad1178_missing_dependency.py`` asserts that through
+# the real ``is_capability_gap`` (the assertion lives in the test so the tools
+# layer keeps no import of the cognitive layer). Single ``{names}`` slot, phrased
+# so it reads correctly for one module or several.
+_DEPENDENCY_GUIDANCE = (
+    "This script imports {names} — absent from the runtime environment, so the "
+    "import failed. The Captain can approve installing {names} into the runtime "
+    "venv; say plainly which module is needed and why, and ask for that approval. "
+    "Meanwhile, retry using a module that is already present, or report the "
+    "request to the Captain and stop."
+)
+
+
+def detect_unimportable(source_code: str) -> list[str]:
+    """AD-1178: return the sorted, deduplicated root module names imported by
+    ``source_code`` that this interpreter is unable to resolve to a spec.
+
+    Deliberately NOT ``DependencyResolver.detect_missing``, and deliberately with
+    no dependency on the resolver existing:
+
+    * ``detect_missing`` answers *"which allowlisted packages are missing"*. Its
+      ``__init__`` defaults ``policy="whitelist"`` and ``startup/
+      cognitive_services.py`` constructs it WITHOUT a policy when dynamic install
+      is off, so it ``continue``s past every import that is not on
+      ``self_mod.allowed_imports`` **before** it checks availability. Verified on
+      the reference vessel: ``detect_missing("import reportlab\\nimport
+      matplotlib\\nimport json")`` returns ``[]``.
+    * ``runtime.dependency_resolver`` is only constructed when
+      ``self_mod.enabled or dependency.dynamic_install_enabled``, so an operator
+      with both off has ``None``.
+
+    This helper therefore has no allowlist, no policy and no runtime lookup. It
+    answers the different question: *"which imports in this script will fail"*.
+
+    The AD-993 sandbox runs the script under ``sys.executable`` in this same
+    venv, so this process is a sound proxy for what that subprocess can import.
+
+    No config flag gates this. It fires only when an import is genuinely
+    unresolvable — already a failure the model is being shown a traceback for —
+    so it adds information on an error path and removes none. A default-OFF flag
+    would leave it inert for every operator, which is the failure mode AD-1175 /
+    AD-1177 / AD-1180 were each correcting. The tool already returns ``stderr``
+    unconditionally; this is the same category.
+
+    Unparseable source returns ``[]`` — the run reports the ``SyntaxError``
+    itself. Relative imports are skipped: they resolve against the workdir, not
+    site-packages.
+    """
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return []
+
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                roots.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            # ``from . import x`` / ``from ..pkg import y`` — workdir-relative.
+            if getattr(node, "level", 0):
+                continue
+            if node.module:
+                roots.add(node.module.split(".")[0])
+
+    unimportable: list[str] = []
+    for name in sorted(roots):
+        if not name:
+            continue
+        try:
+            resolved = importlib.util.find_spec(name) is not None
+        except Exception:
+            # find_spec raises ModuleNotFoundError for a missing parent package
+            # and ValueError for some malformed names. Either way the import
+            # fails, which is exactly what is being reported.
+            resolved = False
+        if not resolved:
+            unimportable.append(name)
+    return unimportable
 
 
 class CodeExecutionTool:
@@ -188,6 +276,14 @@ class CodeExecutionTool:
             }
             if dep_summary is not None:
                 output["dependencies"] = dep_summary
+            else:
+                # AD-1178: the install path is off (or found nothing), so a
+                # genuinely unresolvable import would otherwise reach the model
+                # as a bare traceback. Only reached when dep_summary is None, so
+                # the AD-1073 enabled path above is untouched.
+                unimportable = self._unimportable_summary(code)
+                if unimportable is not None:
+                    output["dependencies"] = unimportable
             return ToolResult(
                 output=output,
                 error=(res.error or None),
@@ -201,6 +297,31 @@ class CodeExecutionTool:
             return ToolResult(error=f"execution failed: {exc}")
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
+
+    def _unimportable_summary(self, code: str) -> dict[str, Any] | None:
+        """AD-1178: turn an unresolvable import into a structured request the
+        model can act on, instead of a bare ``ModuleNotFoundError`` traceback.
+
+        Returns ``None`` when every import resolves, so a run with nothing
+        missing carries no ``dependencies`` key — byte-identical to AD-1066.
+        Never touches ``runtime.dependency_resolver``: it is ``None`` whenever
+        ``self_mod.enabled`` and ``dependency.dynamic_install_enabled`` are both
+        off. ``install_enabled`` is read from config rather than hardcoded, so
+        the one case where this branch runs with the flag ON (the flag is set but
+        ``detect_missing``'s whitelist filtered the import out) reports the
+        operator's real setting instead of a false ``False``.
+        """
+        missing = detect_unimportable(code)
+        if not missing:
+            return None
+        dep_cfg = getattr(getattr(self._runtime, "config", None), "dependency", None)
+        return {
+            "missing": missing,
+            "install_enabled": bool(
+                getattr(dep_cfg, "dynamic_install_enabled", False)
+            ),
+            "guidance": _DEPENDENCY_GUIDANCE.format(names=", ".join(missing)),
+        }
 
     async def _maybe_install_missing(self, code: str) -> dict | None:
         """AD-1073: detect missing third-party imports in ``code`` and, when the
