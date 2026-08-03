@@ -56,6 +56,11 @@ const ACTIVE_AMBER = '#f0b060';
 const DIM = '#666680';
 const DENY_RED = '#d05050';
 
+/* BF-710: the module docstring above always claimed this panel polls; it did
+ * not. 10s matches the established panel-list refresh cadence
+ * (CrewRosterPanel.tsx, bridge/FullSystem.tsx, bridge/BridgeSystem.tsx). */
+const POLL_INTERVAL_MS = 10000;
+
 function sourceColor(source: string): string {
   const key = (source || '').toLowerCase();
   return SOURCE_COLORS[key] || DEFAULT_SOURCE_COLOR;
@@ -208,7 +213,16 @@ function RequestCard({ req, onDecide }: {
 
 // ── Panel ──────────────────────────────────────────────────────────
 export default function SkillRequestPanel({ fetchImpl }: { fetchImpl?: FetchImpl } = {}) {
-  const doFetch: FetchImpl = fetchImpl ?? ((...args) => fetch(...args));
+  /* BF-710: this was a bare `fetchImpl ?? ((...args) => fetch(...args))`, so on
+   * the production path (no prop) it produced a new function every render,
+   * making `load` and the mount effect unstable. Every test injects fetchImpl
+   * and so only ever exercised the stable branch. Keyed on the prop, the
+   * default path is now as stable as the injected one and the interval below
+   * is armed once instead of being torn down and rebuilt on every render. */
+  const doFetch: FetchImpl = useCallback(
+    (...args: Parameters<FetchImpl>) => (fetchImpl ? fetchImpl(...args) : fetch(...args)),
+    [fetchImpl],
+  );
   const [requests, setRequests] = useState<SkillRequestView[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -227,6 +241,8 @@ export default function SkillRequestPanel({ fetchImpl }: { fetchImpl?: FetchImpl
 
   useEffect(() => {
     void load();
+    const timer = window.setInterval(() => { void load(); }, POLL_INTERVAL_MS);
+    return () => { window.clearInterval(timer); };
   }, [load]);
 
   const onDecide = useCallback(async (id: string, approve: boolean, reason: string) => {

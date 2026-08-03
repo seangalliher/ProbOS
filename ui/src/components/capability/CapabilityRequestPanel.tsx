@@ -41,6 +41,13 @@ const ACTIVE_AMBER = '#f0b060';
 const DIM = '#666680';
 const DENY_RED = '#d05050';
 
+/* BF-710: the module docstring above always claimed this panel polls; it did
+ * not. `load` is a stable useCallback, so the mount effect ran exactly once and
+ * a request filed afterwards never appeared. 10s matches the established
+ * panel-list refresh cadence (CrewRosterPanel.tsx, bridge/FullSystem.tsx,
+ * bridge/BridgeSystem.tsx all use 10000). */
+const POLL_INTERVAL_MS = 10000;
+
 function departmentColor(kind: string): string {
   // Map the request kind to a department context color. grant/install lean
   // engineering; build leans engineering too — all use the engineering hue
@@ -203,6 +210,8 @@ export default function CapabilityRequestPanel() {
 
   useEffect(() => {
     void load();
+    const timer = window.setInterval(() => { void load(); }, POLL_INTERVAL_MS);
+    return () => { window.clearInterval(timer); };
   }, [load]);
 
   const onDecide = useCallback(async (id: string, approve: boolean, reason: string) => {

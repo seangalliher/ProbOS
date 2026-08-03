@@ -7,6 +7,14 @@ the chat half of the dual-surface decision surface — the HXI card is the other
 
 Honest-degrade: if the ward room is unavailable, log and return without raising
 so a missing chat substrate never blocks request filing.
+
+BF-708: every real producer hands listeners a *dict* envelope
+(``ProbOSRuntime._emit_event`` and ``BaseEvent.to_dict`` both build
+``{"type", "data", "timestamp"}``), but this module read the envelope with
+``getattr``, which on a dict returns ``None``. Every notice was dropped with the
+AD-857 "missing agent_id" warning while the field sat one level down. The shape
+question is answered once, in :func:`event_payload`, because any other
+``add_event_listener`` consumer faces it too.
 """
 
 from __future__ import annotations
@@ -15,6 +23,40 @@ import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Envelope keys, in precedence order. ``data`` is what ProbOSRuntime._emit_event
+# and BaseEvent.to_dict emit; ``payload`` is the older alternate spelling.
+_ENVELOPE_KEYS: tuple[str, ...] = ("data", "payload")
+
+
+def event_payload(event: Any) -> dict[str, Any]:
+    """Return the domain-field mapping carried by a system event (BF-708).
+
+    Accepts every shape an ``add_event_listener`` consumer can be handed:
+
+    1. dict envelope with ``data``      -> the inner ``data`` mapping
+    2. dict envelope with ``payload``   -> the inner ``payload`` mapping
+    3. object with ``.data``            -> that mapping
+    4. object with ``.payload``         -> that mapping
+    5. bare dict of domain fields       -> the dict itself
+
+    A dict that carries an envelope key resolves to the *inner* mapping even
+    when that mapping is empty — an envelope with no domain fields genuinely has
+    none, and falling back to the envelope would surface ``type``/``timestamp``
+    as if they were domain fields. Anything unrecognised yields ``{}`` so the
+    caller's own missing-field diagnostic fires rather than an AttributeError.
+    """
+    if isinstance(event, dict):
+        for key in _ENVELOPE_KEYS:
+            inner = event.get(key)
+            if isinstance(inner, dict):
+                return inner
+        return event
+    for key in _ENVELOPE_KEYS:
+        inner = getattr(event, key, None)
+        if isinstance(inner, dict):
+            return inner
+    return {}
 
 
 async def notify_captain_of_capability_request(runtime: Any, event: Any) -> None:
@@ -33,7 +75,7 @@ async def notify_captain_of_capability_request(runtime: Any, event: Any) -> None
         )
         return
 
-    payload = getattr(event, "data", None) or getattr(event, "payload", None) or {}
+    payload = event_payload(event)
     agent_id = payload.get("agent_id") or ""
     if not agent_id:
         logger.warning(
