@@ -745,14 +745,27 @@ class TestAgentFacingText:
     def test_every_authored_string_is_clean_under_the_real_gap_regex(
         self, rendered
     ):
-        """The REAL imported regex — ``lack`` is a bare substring, so a word like
-        ``blacklist`` in a browser refusal would silently trip it."""
+        """The REAL imported regex, never a re-typed copy, which would drift.
+
+        BF-707 narrowed this from a substring match to whole words, so an
+        ordinary word like ``blacklist`` no longer trips it. The guard still
+        matters: a genuine refusal phrasing in authored text would.
+        """
         # Assert
         assert _CAPABILITY_GAP_RE.search(rendered) is None
 
     def test_the_gap_regex_would_catch_a_careless_reword(self):
-        """Proves the guard above has teeth rather than always passing."""
-        assert _CAPABILITY_GAP_RE.search("the browser blacklist refused it")
+        """Proves the guard above has teeth rather than always passing.
+
+        BF-707: this used to assert that ``the browser blacklist refused it``
+        matched -- true only because ``lack`` matched inside ``blacklist``. A
+        teeth test resting on that defect passes a broken regex and fails the
+        fix. A real reword is the honest proof, and ``blacklist`` now
+        demonstrates the opposite half of the property.
+        """
+        assert _CAPABILITY_GAP_RE.search("the browser cannot reach that page")
+        assert _CAPABILITY_GAP_RE.search("it lacks permission for that")
+        assert _CAPABILITY_GAP_RE.search("the browser blacklist refused it") is None
 
     @pytest.mark.asyncio
     async def test_a_parked_refusal_names_the_request_and_never_says_success(

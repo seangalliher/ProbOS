@@ -30,12 +30,29 @@ logger = logging.getLogger(__name__)
 # Patterns that indicate a capability gap (the LLM is saying "I can't do X")
 # rather than a genuine conversational reply ("Hello!").
 # Note: [''] matches both ASCII and Unicode curly apostrophes.
+#
+# BF-707: the whole alternation is wrapped in \b(?:...)\b because two branches
+# were matching INSIDE ordinary words, and a false positive here drives the
+# self-modification pipeline — the runtime concludes it is missing a capability
+# because an agent used a normal English word.
+#
+#   lack(?:s|ing)?     matched b|lack|, S|lack|, b|lack|board, p|lack|et
+#   can['\u2019]?t     matched signifi|cant|, va|cant|, s|cant|, appli|cant|
+#
+# The apostrophe is optional (so "cant" is a deliberate spelling tolerance), and
+# THAT is what made the second one reach into "significant" — by far the more
+# common word in agent prose, and the reason this is not a cosmetic fix.
+#
+# One wrapper rather than a \b on each branch: every alternative already begins
+# and ends with a word character, so the group boundaries apply to whichever
+# branch matches. Verify that property before adding a branch that starts or
+# ends with punctuation — \b would then silently never fire for it.
 _CAPABILITY_GAP_RE = re.compile(
-    r"don['\u2019]?t have|(?:can['\u2019]?t|cannot|unable to|no (?:built-in |native )?(?:"
+    r"\b(?:don['\u2019]?t have|(?:can['\u2019]?t|cannot|unable to|no (?:built-in |native )?(?:"
     r"capability|ability|support|way|mechanism|tool))|not (?:available|"
     r"supported|possible)|lack(?:s|ing)?|doesn['\u2019]?t (?:have|support)|"
     r"beyond (?:my|current) (?:capabilities|abilities)|outside (?:my|the) "
-    r"(?:scope|capabilities)",
+    r"(?:scope|capabilities))\b",
     re.IGNORECASE,
 )
 

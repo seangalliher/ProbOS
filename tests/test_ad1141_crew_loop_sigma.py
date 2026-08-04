@@ -1262,11 +1262,20 @@ async def test_every_module_level_authored_string_is_gap_regex_clean() -> None:
 
 
 async def test_the_gap_regex_under_test_is_the_real_one() -> None:
-    """A re-typed copy would not catch the substrings that actually bite —
-    ``lack`` is bare, so 'black hole' and 'slack' trip it."""
-    assert _CAPABILITY_GAP_RE.search("we found a black hole") is not None
-    assert _CAPABILITY_GAP_RE.search("cut some slack") is not None
+    """A re-typed copy would not catch what actually bites.
+
+    BF-707: these assertions used to be ``black hole`` and ``cut some slack``,
+    which matched only because ``lack`` had no word boundary. Proving the import
+    is real by leaning on a defect means the test PASSES a broken regex and
+    FAILS the fix -- precisely inverted. Real phrasings prove the same thing,
+    and the ordinary-word half is now pinned alongside it.
+    """
     assert _CAPABILITY_GAP_RE.search("cannot do this") is not None
+    assert _CAPABILITY_GAP_RE.search("no mechanism for that") is not None
+    assert _CAPABILITY_GAP_RE.search("it lacks a renderer") is not None
+    # The BF-707 half: ordinary prose must no longer register as a gap.
+    assert _CAPABILITY_GAP_RE.search("we found a black hole") is None
+    assert _CAPABILITY_GAP_RE.search("cut some slack") is None
 
 
 async def test_composed_task_text_is_clean_across_every_path(store) -> None:

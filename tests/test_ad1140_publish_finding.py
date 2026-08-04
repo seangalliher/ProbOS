@@ -229,12 +229,21 @@ def test_every_module_authored_string_is_clean_under_the_real_gap_regex() -> Non
 def test_the_gap_regex_really_would_catch_the_phrasings_this_module_avoids() -> None:
     """Guards the guard: prove the regex is live, not a no-op import.
 
-    ``lack`` is a bare substring, so ordinary prose about a missing transport
-    trips it — including inside ``black hole``, which is the phrase the DD-4
-    rationale uses in prose and which therefore must never reach an agent.
+    BF-707: this list used to include ``black hole``, because ``lack`` carried
+    no word boundary and matched inside it. That pinned the substring DEFECT as
+    though it were the contract -- and the DD-4 rationale genuinely does use the
+    phrase in prose, so the module was avoiding a phrase it never needed to
+    avoid. Worse, a teeth test built on the defect PASSES a broken regex and
+    FAILS the fix, which is exactly backwards.
+
+    Real capability-gap phrasings prove the import is live just as well, and the
+    ordinary-prose half of the property is now asserted explicitly.
     """
-    for phrase in ("cannot", "unable to", "no mechanism", "black hole", "lacks"):
+    for phrase in ("cannot", "unable to", "no mechanism", "lacks"):
         assert _CAPABILITY_GAP_RE.search(phrase) is not None
+    # The other half of the same property, and the reason BF-707 exists.
+    for phrase in ("black hole", "a significant finding"):
+        assert _CAPABILITY_GAP_RE.search(phrase) is None
 
 
 def test_tool_description_is_framed_and_names_the_durable_outcome() -> None:
