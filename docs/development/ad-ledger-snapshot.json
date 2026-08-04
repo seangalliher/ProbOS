@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-04T05:53:21+00:00",
-    "head": "f5649ef7",
-    "subject_count": 2216,
+    "captured_at": "2026-08-04T22:02:53+00:00",
+    "head": "28731dfb",
+    "subject_count": 2218,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2614,6 +2614,9 @@
       "BF-706": [
         "git BF-706"
       ],
+      "BF-707": [
+        "git BF-707"
+      ],
       "BF-708": [
         "git BF-708"
       ],
@@ -2653,8 +2656,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-04T05:53:21+00:00",
-    "issue_count": 1144,
+    "captured_at": "2026-08-04T22:02:53+00:00",
+    "issue_count": 1145,
     "issues": {
       "AD-1000": [
         {
@@ -14190,8 +14193,8 @@
             "BF-707"
           ],
           "number": 1113,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-707: _CAPABILITY_GAP_RE matches 'lack' inside words -- 'black' and 'Slack' register as capability gaps"
         }
       ],
@@ -14266,6 +14269,17 @@
           "reason": "",
           "state": "OPEN",
           "title": "BF-713: doctor UX test depends on a live LLM proxy and flakes when it returns an empty 200"
+        }
+      ],
+      "BF-714": [
+        {
+          "claims": [
+            "BF-714"
+          ],
+          "number": 1145,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-714: the DM degrade message discards the diagnosis the runtime already made"
         }
       ],
       "BF-80": [
