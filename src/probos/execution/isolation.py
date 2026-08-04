@@ -148,6 +148,23 @@ class SubprocessSandbox:
         workdir = Path(request.workdir) if request.workdir else (
             self._scratch_root / uuid.uuid4().hex
         )
+        # BF-715: absolutise BEFORE anything downstream uses it. The child runs
+        # with ``cwd=workdir``, so a RELATIVE workdir makes the script path in
+        # argv resolve a second time against the new cwd:
+        #
+        #   argv script : data/execution/scratch/exec-A/script.py
+        #   child cwd   : data/execution/scratch/exec-A
+        #   child opens : data/execution/scratch/exec-A/
+        #                 data/execution/scratch/exec-A/script.py   -> ENOENT
+        #
+        # ``execution.scratch_dir`` defaults to the relative
+        # ``data/execution/scratch``, so this fired on the default configuration
+        # for every code_execution_tool run: exit code 2, "can't open file", and
+        # an agent that correctly reported it could not produce its artifact.
+        # Resolving here fixes the script path, the cwd and the ``workdir``
+        # string returned to callers in one place, and makes the whole
+        # invocation independent of the parent's current directory.
+        workdir = workdir.resolve()
         try:
             workdir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
