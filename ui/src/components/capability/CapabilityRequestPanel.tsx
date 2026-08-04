@@ -191,7 +191,13 @@ function RequestCard({ req, onDecide }: {
 }
 
 // ── Panel ──────────────────────────────────────────────────────────
-export default function CapabilityRequestPanel() {
+/* AD-1201: `onDecided` lets the host (the approvals centre) re-read the shared
+ * pending-approvals slice the moment a decision lands, so the Bridge section and
+ * the BRIDGE badge do not show a stale count until the next poll. Optional —
+ * omitted, this panel behaves exactly as before. */
+export default function CapabilityRequestPanel(
+  { onDecided }: { onDecided?: () => void } = {},
+) {
   const [requests, setRequests] = useState<CapabilityRequestView[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -225,7 +231,8 @@ export default function CapabilityRequestPanel() {
     }
     // Remove the decided request from the pending list.
     setRequests(prev => prev.filter(r => r.id !== id));
-  }, []);
+    onDecided?.();
+  }, [onDecided]);
 
   if (loaded && requests.length === 0) {
     return null;

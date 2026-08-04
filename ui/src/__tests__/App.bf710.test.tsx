@@ -1,9 +1,25 @@
 /**
- * BF-710: pin that the approval panels are actually MOUNTED by production.
+ * Reachability guard for the approve/deny surface — BF-710, replaced by AD-1201.
  *
- * WHAT IS PINNED HERE: a property of `ui/src/App.tsx` — that it imports both
- * approval panels from their real module paths and renders both elements inside
- * the tree it returns.
+ * WHAT IS PINNED HERE: that some shipped code path renders the approval panels.
+ * The property is unchanged from BF-710; only the chain that satisfies it moved.
+ *
+ * BF-710 satisfied it by having `App.tsx` render `<CapabilityRequestPanel />`
+ * and `<SkillRequestPanel />` directly, inside a fixed top-right container. That
+ * container sat at the exact coordinates of the AD-325 BRIDGE toggle and covered
+ * it, so AD-1201 moved the surface into the Bridge. The chain is now three links
+ * instead of one:
+ *
+ *     App.tsx  --renders-->  ApprovalsCenterPanel  --renders-->  both panels
+ *     App.tsx  --renders-->  IntentSurface --renders--> BridgePanel
+ *                                            |- APPROVALS section, whose
+ *                                               onExpand opens the centre
+ *
+ * Every link is asserted below. Break any one of them — drop the centre from
+ * App, drop either panel from the centre, drop the APPROVALS section from the
+ * Bridge, or drop the `approvalsCenterOpen` wiring that opens the centre — and
+ * this file fails. Deleting it instead of replacing it would restore the exact
+ * condition BF-710 existed to fix.
  *
  * WHY A COMPONENT-LEVEL TEST CANNOT PIN IT: `render(<CapabilityRequestPanel />)`
  * mounts the component *by definition*. Both panels already had passing test
@@ -14,55 +30,109 @@
  * missing mount. The reachability question is a property of the caller, so the
  * assertion has to be made about the caller.
  *
- * App.tsx is asserted at the source level rather than by `render(<App />)`
- * because App mounts the full HXI (WebSocket hook, three.js canvas, ~20 sibling
- * panels), so a render-based check would pass or fail for reasons unrelated to
- * this mount. Source-level guards on a component that is expensive to mount are
- * an established idiom here — see `components/mesh/__tests__/MobileMesh.test.tsx`
- * and `components/workspace/__tests__/WorkspaceFilesRail.test.tsx`.
+ * App.tsx and BridgePanel are asserted at the source level rather than by
+ * `render(<App />)` because App mounts the full HXI (WebSocket hook, three.js
+ * canvas, ~20 sibling panels), so a render-based check would pass or fail for
+ * reasons unrelated to this mount. Source-level guards on a component that is
+ * expensive to mount are an established idiom here — see
+ * `components/mesh/__tests__/MobileMesh.test.tsx` and
+ * `components/workspace/__tests__/WorkspaceFilesRail.test.tsx`. The one link
+ * that is cheap to mount — the Bridge's expand affordance — is exercised for
+ * real in `components/approvals/__tests__/ApprovalsInBridge.test.tsx`.
  */
 import { describe, it, expect } from 'vitest';
 import appSource from '../App.tsx?raw';
+import bridgeSource from '../components/BridgePanel.tsx?raw';
+import centerSource from '../components/approvals/ApprovalsCenterPanel.tsx?raw';
+import { ApprovalsCenterPanel } from '../components/approvals/ApprovalsCenterPanel';
 import CapabilityRequestPanel from '../components/capability/CapabilityRequestPanel';
 import SkillRequestPanel from '../components/skill/SkillRequestPanel';
 
-/** The JSX App actually returns — imports alone are not a mount. */
+/** The JSX a component actually returns — imports alone are not a mount. */
 function returnedTree(source: string): string {
   const start = source.indexOf('return (');
   expect(start).toBeGreaterThan(-1);
   return source.slice(start);
 }
 
-describe('App approval-panel mount (BF-710)', () => {
-  it('imports both approval panels from their real module paths', () => {
+describe('approvals surface reachability (BF-710, re-homed by AD-1201)', () => {
+  it('App imports the approvals centre from its real module path', () => {
     expect(appSource).toContain(
-      "from './components/capability/CapabilityRequestPanel'",
+      "from './components/approvals/ApprovalsCenterPanel'",
     );
-    expect(appSource).toContain("from './components/skill/SkillRequestPanel'");
-    // The specifiers above resolve — these imports are the same modules.
+    // The specifier above resolves — this import is the same module.
+    expect(typeof ApprovalsCenterPanel).toBe('function');
+  });
+
+  it('App renders the approvals centre inside the tree it returns', () => {
+    expect(returnedTree(appSource)).toContain('<ApprovalsCenterPanel />');
+  });
+
+  it('App mounts the centre unconditionally — it gates itself on the store flag', () => {
+    /* The centre returns null while `approvalsCenterOpen` is false, so no
+     * conditional wrapper is needed and none should creep in: a gate in App
+     * would be a second place that can silently switch the surface off. */
+    const line = returnedTree(appSource)
+      .split('\n')
+      .find((l) => l.includes('<ApprovalsCenterPanel />')) as string;
+    expect(line).toBeTruthy();
+    expect(line.trim()).toBe('<ApprovalsCenterPanel />');
+  });
+
+  it('the centre imports both approval panels from their real module paths', () => {
+    expect(centerSource).toContain("from '../capability/CapabilityRequestPanel'");
+    expect(centerSource).toContain("from '../skill/SkillRequestPanel'");
     expect(typeof CapabilityRequestPanel).toBe('function');
     expect(typeof SkillRequestPanel).toBe('function');
   });
 
-  it('renders CapabilityRequestPanel inside the tree App returns', () => {
-    expect(returnedTree(appSource)).toContain('<CapabilityRequestPanel />');
+  it('the centre renders both approval panels inside the tree it returns', () => {
+    const tree = returnedTree(centerSource);
+    expect(tree).toContain('<CapabilityRequestPanel');
+    expect(tree).toContain('<SkillRequestPanel');
   });
 
-  it('renders SkillRequestPanel inside the tree App returns', () => {
-    expect(returnedTree(appSource)).toContain('<SkillRequestPanel />');
+  it('BridgePanel renders an APPROVALS section that opens the centre', () => {
+    /* The Bridge is now the only path a Captain has to the centre, so the
+     * section and its expand wiring are part of the reachability chain. */
+    const tree = returnedTree(bridgeSource);
+    expect(tree).toContain('title="Approvals"');
+    expect(tree).toContain('approvalsCenterOpen: true');
   });
 
-  it('mounts both unconditionally — the panels gate themselves', () => {
-    /* Each panel returns null once loaded with an empty pending list, so no
-     * conditional wrapper is needed and none should creep in: a gate in App
-     * would be a second place that can silently switch the surface off. */
+  it('BridgePanel gates the APPROVALS section on there being pending requests', () => {
+    /* HXI #9 — the section rises and recedes. An always-present empty section
+     * would be the same clutter the floating stack was. */
+    expect(returnedTree(bridgeSource)).toContain('pendingApprovals.length > 0 &&');
+  });
+
+  it('the APPROVALS section carries no stationId — it is feed, not a station', () => {
+    /* `BridgeSection` keys its accent edge off `stationId`; passing one here
+     * would give a feed item the command-station treatment (HXI #9). */
+    const tree = returnedTree(bridgeSource);
+    const titleAt = tree.indexOf('title="Approvals"');
+    expect(titleAt).toBeGreaterThan(-1);
+    const tagStart = tree.lastIndexOf('<BridgeSection', titleAt);
+    expect(tagStart).toBeGreaterThan(-1);
+    // Props run from the tag start to the line that closes the opening tag.
+    // `>` inside an `onExpand={() => ...}` arrow makes a bare indexOf('>')
+    // unreliable, so walk lines until one is exactly the closing angle.
+    const lines = tree.slice(tagStart).split('\n');
+    const closeAt = lines.findIndex((l, i) => i > 0 && l.trim() === '>');
+    expect(closeAt).toBeGreaterThan(0);
+    const props = lines.slice(0, closeAt).join('\n');
+    expect(props).toContain('title="Approvals"');
+    expect(props).not.toContain('stationId');
+  });
+
+  it('App no longer pins the approval panels over the BRIDGE toggle', () => {
+    /* BF-710's wrapper sat at `top: 12, right: 12, zIndex: 26`; the AD-325
+     * BRIDGE toggle is at `top: 12, right: 12, zIndex: 25`. Nothing in App may
+     * claim that band again — the commercial-overlay badge holds the mirrored
+     * top-LEFT slot and is unaffected. */
     const tree = returnedTree(appSource);
-    for (const marker of ['<CapabilityRequestPanel />', '<SkillRequestPanel />']) {
-      const line = tree
-        .split('\n')
-        .find((l) => l.includes(marker)) as string;
-      expect(line).toBeTruthy();
-      expect(line.trim()).toBe(marker);
-    }
+    expect(tree).not.toContain('zIndex: 26');
+    expect(tree).not.toContain('<CapabilityRequestPanel');
+    expect(tree).not.toContain('<SkillRequestPanel');
   });
 });

@@ -118,7 +118,13 @@ export function IntentSurface() {
   const notifications = useStore((s) => s.notifications);
   const needsAttentionCount = agentTasks?.filter(t => t.requires_action).length ?? 0;
   const unreadCount = notifications?.filter(n => !n.acknowledged).length ?? 0;
-  const badgeCount = needsAttentionCount + unreadCount;
+  /* AD-1201: a blocked agent waiting on the Captain is the most urgent thing the
+   * badge can carry. Reads the same store slice the Bridge APPROVALS section
+   * renders (one poller in BridgePanel), so the two never disagree. This is the
+   * persistent, non-occluding indicator BF-710's floating stack was trying to
+   * be — it lives IN the toggle instead of on top of it. */
+  const pendingApprovalCount = useStore((s) => s.pendingApprovals).length;
+  const badgeCount = needsAttentionCount + unreadCount + pendingApprovalCount;
 
   // AD-946: the command palette derives its launches from the SAME station
   // registry the Bridge renders (one source of truth, no hand-duplicated list).

@@ -33,8 +33,7 @@ import { McpAppsPanel } from './components/mcp/McpAppsPanel';
 import { WorkstationPanel } from './components/workstation/WorkstationPanel';
 import { BrowserWorkstationPanel } from './components/workstation/BrowserWorkstationPanel';
 import { WorkspacePanel } from './components/workspace/WorkspacePanel';
-import CapabilityRequestPanel from './components/capability/CapabilityRequestPanel';
-import SkillRequestPanel from './components/skill/SkillRequestPanel';
+import { ApprovalsCenterPanel } from './components/approvals/ApprovalsCenterPanel';
 import { useSettingsStore } from './store/useSettingsStore';
 import CameraLiveIndicator from './components/perception/CameraLiveIndicator';
 import CameraPreviewPanel from './components/perception/CameraPreviewPanel';
@@ -135,20 +134,15 @@ export default function App() {
       <BrowserWorkstationPanel />
       <CameraLiveIndicator />
       <CameraPreviewPanel />
-      {/* BF-710: the approve/deny surfaces. Filed since AD-857 / AD-908 but never
-          mounted, so an agent asking the Captain for permission had no path to
-          reach them. Both render null while their pending list is empty, so this
-          stack is invisible until something actually needs a decision. They carry
-          no positioning of their own — the fixed wrapper follows the
-          CommercialOverlayBadge idiom below. Poll-driven; a live-push consumer on
-          CAPABILITY_REQUEST_FILED is the follow-up. */}
-      <div style={{
-        position: 'fixed', top: 12, right: 12, zIndex: 26,
-        width: 320, maxHeight: '46vh', overflowY: 'auto',
-      }}>
-        <CapabilityRequestPanel />
-        <SkillRequestPanel />
-      </div>
+      {/* AD-1201: the approve/deny experience. BF-710 mounted the two panels in a
+          fixed top-right stack at `top: 12, right: 12` — the exact position of the
+          AD-325 BRIDGE toggle, which it covered completely. Pending approvals now
+          rise in the Bridge as an APPROVALS activity-feed section; its Expand
+          affordance opens this centre, which hosts the same two panels. Mounted
+          unconditionally and self-gated on `approvalsCenterOpen`, matching the
+          other overlay panels above. Still poll-driven; a live-push consumer on
+          CAPABILITY_REQUEST_FILED remains the follow-up. */}
+      <ApprovalsCenterPanel />
       {/* AD-944: the commercial-overlay status badge outlived the retired toolbar.
           It is invisible in the default OSS build (renders null when no overlay is
           loaded) but must stay mounted. Re-homed to the vacated top-left band. */}

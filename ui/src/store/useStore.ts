@@ -269,6 +269,29 @@ export interface ArtifactView {
   _pinned_from_project: boolean;
 }
 
+/**
+ * AD-1201: a normalized pending-approval summary spanning both approval queues
+ * (capability requests, AD-857; skill requests, AD-908).
+ *
+ * The Bridge APPROVALS section and the BRIDGE badge need only "who asked, what
+ * kind, how long ago" — this is that projection, not a mirror of either GET
+ * serializer. One store action fills it from both endpoints in a single `set`,
+ * so the two consumers can never disagree about the count mid-cycle. The full
+ * request detail (rationale, reason field, approve/deny) stays in
+ * CapabilityRequestPanel / SkillRequestPanel, which the approvals centre hosts.
+ */
+export interface PendingApproval {
+  id: string;
+  /** Which queue the request came from — selects the decide endpoint. */
+  queue: 'capability' | 'skill';
+  agent_id: string;
+  /** Capability `kind`, or the skill request's `source` (self/counselor/chief). */
+  kind: string;
+  /** Capability `target`, or the skill label. */
+  target: string;
+  created_at: number;
+}
+
 export interface HXIState {
   // Data
   agents: Map<string, Agent>;
@@ -386,6 +409,7 @@ export interface HXIState {
   wardRoomOpen: boolean;
   shipsLockerOpen: boolean;  // AD-1001b: global capabilities catalog overlay
   mcpServersOpen: boolean;  // AD-1018: MCP servers management overlay
+  approvalsCenterOpen: boolean;  // AD-1201: dedicated approvals centre overlay
   mcpAppsOpen: boolean;  // AD-1024: MCP-app gallery overlay
   workstationOpen: boolean;  // AD-1021: code/text workstation overlay
   browserWorkstationOpen: boolean;  // AD-1052: browser/web-app workstation overlay
@@ -629,6 +653,11 @@ export interface HXIState {
   setPersonnelWindowRect: (rect: WardRoomWindowRect) => void;
   selectDmChannel: (channelId: string) => void;
   refreshWardRoomDmChannels: () => void;
+  // AD-1201: pending approvals across both queues (capability + skill). Filled
+  // by the single poller in BridgePanel; read by the Bridge APPROVALS section
+  // and the BRIDGE badge in IntentSurface.
+  pendingApprovals: PendingApproval[];
+  refreshPendingApprovals: () => void;
   // Communications settings (AD-485)
   communicationsSettings: { dm_min_rank: string; recreation_min_rank: string };
   refreshCommunicationsSettings: () => void;
@@ -1284,6 +1313,7 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomOpen: false,
   shipsLockerOpen: false,  // AD-1001b
   mcpServersOpen: false,  // AD-1018
+  approvalsCenterOpen: false,  // AD-1201
   mcpAppsOpen: false,  // AD-1024
   workstationOpen: false,  // AD-1021
   browserWorkstationOpen: false,  // AD-1052
@@ -1298,6 +1328,7 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomView: 'channels' as const,
   wardRoomDmPending: null,
   wardRoomDmChannels: [],
+  pendingApprovals: [],  // AD-1201
   _wardRoomThreadCache: new Map(),
   // AD-837: seed display-mode + window rect from persisted layout.
   wardRoomDisplayMode: loadWardRoomLayout().mode,
@@ -2026,6 +2057,67 @@ export const useStore = create<HXIState>((set, get) => ({
         set({ wardRoomDmChannels: data || [] });
       }
     } catch { /* swallow */ }
+  },
+  /* AD-1201: the single fetch for pending approvals. Both queues are read
+   * together and committed in ONE `set`, so the Bridge section, the approvals
+   * centre and the BRIDGE badge always see the same count — three independent
+   * pollers could disagree mid-cycle. `Promise.allSettled` keeps one endpoint
+   * being down from blanking the other queue's requests. */
+  refreshPendingApprovals: async () => {
+    type Row = Record<string, unknown>;
+    const readQueue = async (
+      url: string,
+      queue: PendingApproval['queue'],
+      project: (r: Row) => PendingApproval,
+    ): Promise<PendingApproval[]> => {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error(`${queue} approvals unavailable (${resp.status})`);
+      }
+      const data = await resp.json();
+      const rows: Row[] = Array.isArray(data?.requests) ? data.requests : [];
+      return rows.map(project);
+    };
+
+    const [capability, skill] = await Promise.allSettled([
+      readQueue('/api/capability-requests?status=pending', 'capability', (r) => ({
+        id: String(r.id ?? ''),
+        queue: 'capability' as const,
+        agent_id: String(r.agent_id ?? ''),
+        kind: String(r.kind ?? ''),
+        target: String(r.target ?? ''),
+        created_at: Number(r.created_at ?? 0),
+      })),
+      readQueue('/api/skill-requests?status=pending', 'skill', (r) => ({
+        id: String(r.id ?? ''),
+        queue: 'skill' as const,
+        agent_id: String(r.agent_id ?? ''),
+        kind: String(r.source ?? ''),
+        target: String(r.skill_label || r.skill_id || ''),
+        created_at: Number(r.created_at ?? 0),
+      })),
+    ]);
+
+    if (capability.status === 'rejected' && skill.status === 'rejected') {
+      /* Tier-2 log-and-degrade: both queues unreachable, so we know nothing new.
+       * Keep the last known list rather than falsely clearing the badge. */
+      console.warn(
+        'AD-1201: both approval queues unreachable; keeping the last known pending list',
+        capability.reason,
+        skill.reason,
+      );
+      return;
+    }
+
+    const previous = get().pendingApprovals;
+    const keep = (queue: PendingApproval['queue']) =>
+      previous.filter((a) => a.queue === queue);
+    const next = [
+      ...(capability.status === 'fulfilled' ? capability.value : keep('capability')),
+      ...(skill.status === 'fulfilled' ? skill.value : keep('skill')),
+    ].sort((a, b) => b.created_at - a.created_at);
+
+    set({ pendingApprovals: next });
   },
   refreshCommunicationsSettings: async () => {
     try {

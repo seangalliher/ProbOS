@@ -1,12 +1,21 @@
 /* Bridge Panel — unified command console (AD-325) */
 
 import { useState, useEffect } from 'react';
-import { useStore } from '../store/useStore';
+import { useStore, type PendingApproval } from '../store/useStore';
 import { ChevronDown, ChevronRight, Expand, Close } from './icons/Glyphs';
 import { TaskCard } from './bridge/BridgeCards';
 import { NotificationCard } from './bridge/BridgeNotifications';
 import { BridgeShutdown } from './bridge/BridgeSystem';
 import { buildBridgeStations, isPopulated, type StationId, type StationAction } from './bridge/stations';
+import { timeAgo } from './wardroom/timeAgo';
+
+/* AD-1201: the ONE approvals poll. The Bridge APPROVALS section, the approvals
+ * centre and the BRIDGE badge all read the same store slice this fills, so they
+ * cannot disagree about the count. 10s matches the established panel-refresh
+ * cadence (CrewRosterPanel.tsx, bridge/FullSystem.tsx, bridge/BridgeSystem.tsx).
+ * BridgePanel owns it because it is mounted for the whole session (IntentSurface
+ * renders it unconditionally and slides it off-screen when closed). */
+const APPROVALS_POLL_INTERVAL_MS = 10000;
 
 /* ── Collapsible Section ── */
 function BridgeSection({
@@ -101,6 +110,47 @@ function StationActionRow({ action, accent }: { action: StationAction; accent: s
   );
 }
 
+/* ── AD-1201: compact pending-approval summary row. Who asked, what kind, how
+   long ago — the full request detail and the approve/deny controls live in the
+   approvals centre, not in the feed. BF-709 (#1115): `target` is currently the
+   whole assembled prompt for `continue` requests; that is its own issue and is
+   deliberately NOT truncated here, because a truncated assembled prompt is still
+   noise and hiding it would make #1115 harder to see. ── */
+function ApprovalRow({ approval, onOpen }: { approval: PendingApproval; onOpen: () => void }) {
+  return (
+    <div
+      data-testid="bridge-approval-row"
+      data-queue={approval.queue}
+      onClick={onOpen}
+      style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 6,
+        padding: '5px 6px',
+        cursor: 'pointer',
+        userSelect: 'none' as const,
+        borderRadius: 4,
+      }}
+    >
+      <span style={{
+        fontSize: 9, fontWeight: 700, letterSpacing: 0.5,
+        textTransform: 'uppercase' as const, color: '#f0b060',
+      }}>
+        {approval.kind || approval.queue}
+      </span>
+      <span style={{
+        fontSize: 10, color: '#9098b0',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
+      }}>
+        {approval.agent_id || 'unknown agent'}
+      </span>
+      <span style={{ marginLeft: 'auto', fontSize: 9, color: '#666680', flexShrink: 0 }}>
+        {timeAgo(approval.created_at)}
+      </span>
+    </div>
+  );
+}
+
 export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const agentTasks = useStore(s => s.agentTasks);
   const notifications = useStore(s => s.notifications);
@@ -108,9 +158,18 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
   const dmChannels = useStore(s => s.wardRoomDmChannels);
   const refreshDms = useStore(s => s.refreshWardRoomDmChannels);
   const wardRoomUnread = useStore(s => s.wardRoomUnread);
+  const pendingApprovals = useStore(s => s.pendingApprovals);
+  const refreshApprovals = useStore(s => s.refreshPendingApprovals);
   const totalUnread = Object.values(wardRoomUnread ?? {}).reduce((sum, n) => sum + n, 0);
 
   useEffect(() => { refreshDms(); }, [refreshDms]);
+
+  // AD-1201: the single approvals poll. Cleared on unmount — no leaked timer.
+  useEffect(() => {
+    refreshApprovals();
+    const timer = window.setInterval(() => { refreshApprovals(); }, APPROVALS_POLL_INTERVAL_MS);
+    return () => { window.clearInterval(timer); };
+  }, [refreshApprovals]);
 
   // ATTENTION: requires_action tasks + action_required notifications
   const attentionTasks = (agentTasks ?? []).filter(
@@ -242,6 +301,28 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
 
         {/* ── ACTIVITY FEED — alert-driven, NOT stations (HXI #9). These rise
             and recede with system state; they carry no stationId. ── */}
+        {/* APPROVALS (AD-1201) — an agent is blocked waiting on the Captain.
+            Deliberately no stationId: this is a feed item that rises and
+            recedes, not a command station. Expand opens the approvals centre,
+            where the approve/deny controls live. */}
+        {pendingApprovals.length > 0 && (
+          <BridgeSection
+            title="Approvals"
+            count={pendingApprovals.length}
+            defaultOpen={true}
+            accentColor="#f0b060"
+            onExpand={() => useStore.setState({ approvalsCenterOpen: true })}
+          >
+            {pendingApprovals.map(a => (
+              <ApprovalRow
+                key={`${a.queue}:${a.id}`}
+                approval={a}
+                onOpen={() => useStore.setState({ approvalsCenterOpen: true })}
+              />
+            ))}
+          </BridgeSection>
+        )}
+
         {/* ATTENTION */}
         {attentionCount > 0 && (
           <BridgeSection title="Attention" count={attentionCount} defaultOpen={true} accentColor="#f0b060">
@@ -277,8 +358,8 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
         )}
 
         {/* Empty state — the activity feed is empty (stations always render). */}
-        {attentionCount === 0 && activeTasks.length === 0 && infoNotifs.length === 0 &&
-         recentTasks.length === 0 && (
+        {pendingApprovals.length === 0 && attentionCount === 0 && activeTasks.length === 0 &&
+         infoNotifs.length === 0 && recentTasks.length === 0 && (
           <div style={{
             fontSize: 10, color: '#555', fontStyle: 'italic',
             textAlign: 'center', padding: '32px 0',

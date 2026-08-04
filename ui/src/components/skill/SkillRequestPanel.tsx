@@ -212,7 +212,13 @@ function RequestCard({ req, onDecide }: {
 }
 
 // ── Panel ──────────────────────────────────────────────────────────
-export default function SkillRequestPanel({ fetchImpl }: { fetchImpl?: FetchImpl } = {}) {
+/* AD-1201: `onDecided` lets the host (the approvals centre) re-read the shared
+ * pending-approvals slice the moment a decision lands, so the Bridge section and
+ * the BRIDGE badge do not show a stale count until the next poll. Optional —
+ * omitted, this panel behaves exactly as before. */
+export default function SkillRequestPanel(
+  { fetchImpl, onDecided }: { fetchImpl?: FetchImpl; onDecided?: () => void } = {},
+) {
   /* BF-710: this was a bare `fetchImpl ?? ((...args) => fetch(...args))`, so on
    * the production path (no prop) it produced a new function every render,
    * making `load` and the mount effect unstable. Every test injects fetchImpl
@@ -256,7 +262,8 @@ export default function SkillRequestPanel({ fetchImpl }: { fetchImpl?: FetchImpl
     }
     // Remove the decided request from the pending list.
     setRequests(prev => prev.filter(r => r.id !== id));
-  }, [doFetch]);
+    onDecided?.();
+  }, [doFetch, onDecided]);
 
   if (loaded && requests.length === 0) {
     return null;
