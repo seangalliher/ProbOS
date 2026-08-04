@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-04T22:02:53+00:00",
-    "head": "28731dfb",
-    "subject_count": 2218,
+    "captured_at": "2026-08-04T22:46:00+00:00",
+    "head": "5ede2bf8",
+    "subject_count": 2220,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2629,6 +2629,9 @@
       "BF-710": [
         "git BF-710"
       ],
+      "BF-715": [
+        "git BF-715"
+      ],
       "BF-76": [
         "git BF-076"
       ],
@@ -2656,8 +2659,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-04T22:02:53+00:00",
-    "issue_count": 1145,
+    "captured_at": "2026-08-04T22:46:00+00:00",
+    "issue_count": 1146,
     "issues": {
       "AD-1000": [
         {
@@ -14280,6 +14283,17 @@
           "reason": "",
           "state": "OPEN",
           "title": "BF-714: the DM degrade message discards the diagnosis the runtime already made"
+        }
+      ],
+      "BF-715": [
+        {
+          "claims": [
+            "BF-715"
+          ],
+          "number": 1146,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-715: a relative sandbox workdir made the script path resolve twice, breaking all code execution"
         }
       ],
       "BF-80": [
