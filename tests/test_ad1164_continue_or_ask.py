@@ -46,6 +46,8 @@ from probos.cognitive.continue_or_ask import (
     _CUT_OFF_TAIL,
     _CUT_OFF_TAIL_WITH_REQUEST,
     _MAX_CONTINUE_PASSES,
+    _display_task_text,
+    _task_excerpt,
     CONTINUE_ACTION,
     CONTINUE_REQUEST_KIND,
     CONTINUE_SCOPE_KEY,
@@ -55,6 +57,9 @@ from probos.cognitive.continue_or_ask import (
     resolve_continue_max_passes,
     resolve_exhausted_turn,
 )
+# BF-709: the ONE helper both Captain-facing paths now derive their text from.
+# Imported from its owner so this suite cannot pass against a second copy.
+from probos.cognitive.cognitive_agent import _promotion_request_text
 # The real membership set and the real continuation renderer, imported so this
 # suite cannot pass against a private copy (AD-1155 owns both).
 from probos.cognitive.crew_executor import (
@@ -68,7 +73,9 @@ from probos.cognitive.crew_executor import (
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.llm_client import OpenAICompatibleClient
 from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+from probos.cognitive.swe_harness.tool_call import ToolCallRequest, ToolCallResult
 from probos.config import DmAgenticConfig
+from probos.fault_report import FaultReportStore
 from probos.tools.action_approvals import ActionApprovalStore
 from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
@@ -1305,3 +1312,308 @@ class TestConversationalSeam:
             assert any("filed continue request" in m for m in messages)
         finally:
             await store.stop()
+
+
+# ── 10. BF-709: the card title is the ask, not the scaffolding ─────────────
+
+
+# The exact live shape, from the seven requests pending on the reference vessel:
+# the AD-1055 visual-context block and the BF-294 confabulation guard, prepended
+# by the runtime, ahead of the four words the Captain actually typed.
+_RAW_ASK = "Type Hello World into the document I have open"
+_SCAFFOLD = (
+    "--- Current Visual Context ---\n"
+    "Camera not active or no frames described yet. Do NOT describe what you "
+    "cannot see.\n"
+    "--- End Visual Context ---\n\n"
+)
+_ASSEMBLED = _SCAFFOLD + _RAW_ASK
+
+
+class _FaultRuntime(_Runtime):
+    """``_Runtime`` plus the AD-1169 store, which only the defect path reads."""
+
+    def __init__(self, *, request_store: Any = None, fault_store: Any = None) -> None:
+        super().__init__(request_store=request_store)
+        self.fault_report_store = fault_store
+
+
+def _defect_outcome() -> Any:
+    """The BF-701 shape, built from the REAL tool-call dataclasses.
+
+    Two calls to the same tool, both answered with the same error, which is what
+    ``detect_tool_defect`` needs to route the turn down the fault path instead of
+    filing a continue request.
+    """
+
+    class _Outcome:
+        final_text = "partial"
+        stopped_reason = "max_iterations"
+        tool_calls = [
+            ToolCallRequest(name="browser", arguments={}, id="c1"),
+            ToolCallRequest(name="browser", arguments={}, id="c2"),
+        ]
+        tool_results = [
+            ToolCallResult(id="c1", output="unknown browser action: 'key_type'", is_error=True),
+            ToolCallResult(id="c2", output="unknown browser action: 'key_type'", is_error=True),
+        ]
+
+    return _Outcome()
+
+
+async def _target_for(tmp_path: Path, name: str, **kwargs: Any) -> str:
+    """Drive the production entry point and hand back the filed card's title."""
+    store = await _request_store(tmp_path, name)
+    try:
+        await resolve_exhausted_turn(
+            WorkItemAgenticOutcome(
+                final_text="partial", stopped_reason="max_iterations"
+            ),
+            reinvoke=_never_reinvoked,
+            runtime=_Runtime(request_store=store),
+            agent_id="counselor_0",
+            base_task_text=_ASSEMBLED,
+            thread_id="thread-1",
+            config=_config(),
+            **kwargs,
+        )
+        return (await store.list_pending())[0].target
+    finally:
+        await store.stop()
+
+
+class TestDisplayTextIsTheAsk:
+    @pytest.mark.asyncio
+    async def test_a_supplied_display_text_titles_the_card_with_the_raw_ask(
+        self, tmp_path
+    ):
+        """The defect, inverted: the Captain reads what they asked for."""
+        # Act
+        target = await _target_for(
+            tmp_path, "supplied.db", display_task_text=_RAW_ASK
+        )
+        # Assert — the ask is there in full, and none of the scaffolding is.
+        assert target == f"continue: {_RAW_ASK}"
+        assert "Visual Context" not in target
+        assert "Do NOT describe" not in target
+
+    @pytest.mark.asyncio
+    async def test_omitting_the_display_text_is_byte_identical_to_today(
+        self, tmp_path
+    ):
+        """The default-preserving claim, proved by a caller that does not pass one."""
+        # Act — the pre-BF-709 call, argument for argument.
+        target = await _target_for(tmp_path, "omitted.db")
+        # Assert — exactly what the assembled prompt excerpted to before.
+        assert target == f"continue: {_task_excerpt(_ASSEMBLED)}"
+        assert "Visual Context" in target
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "blank", ["", "   ", "\n\t ", "\u00a0"], ids=["empty", "spaces", "mixed", "nbsp"]
+    )
+    async def test_a_blank_display_text_falls_back_rather_than_emptying_the_title(
+        self, tmp_path, blank
+    ):
+        """A whitespace-only message is not an ask, and must not become the title.
+
+        ``or`` would not do: every value here except ``""`` is truthy, so a
+        truthiness fallback would excerpt whitespace to ``""`` and degrade the
+        card to the bare ``"continue"`` with no context at all.
+        """
+        # Act
+        target = await _target_for(
+            tmp_path, "blank.db", display_task_text=blank
+        )
+        # Assert
+        assert target == f"continue: {_task_excerpt(_ASSEMBLED)}"
+        assert target != "continue"
+        assert target != "continue: "
+
+    @pytest.mark.asyncio
+    async def test_reinvocation_still_receives_the_full_assembled_prompt(
+        self, tmp_path
+    ):
+        """THE regression guard. Fixing the title by changing ``base_task_text``
+        would pass every assertion above and silently strip working memory,
+        episodic recall and session history off every continued pass.
+
+        A continued turn must be handed the SAME prompt the first pass got,
+        plus AD-1155's continuation block — never the four words on the card.
+        """
+        # Arrange — a live standing rule, so re-invocation actually happens.
+        approvals = await _approvals(tmp_path)
+        store = await _request_store(tmp_path)
+        try:
+            await approvals.issue_approval(
+                "counselor_0",
+                CONTINUE_TOOL_ID,
+                CONTINUE_ACTION,
+                scope_key=CONTINUE_SCOPE_KEY,
+                ttl_seconds=3600,
+            )
+            reinvoker = _RecordingReinvoker(
+                [WorkItemAgenticOutcome(final_text="done", stopped_reason="complete")]
+            )
+            # Act — with a display text supplied, which is the whole point.
+            await resolve_exhausted_turn(
+                WorkItemAgenticOutcome(
+                    final_text="pass one", stopped_reason="max_iterations"
+                ),
+                reinvoke=reinvoker,
+                runtime=_Runtime(request_store=store, approval_store=approvals),
+                agent_id="counselor_0",
+                base_task_text=_ASSEMBLED,
+                display_task_text=_RAW_ASK,
+                config=_config(max_passes=2),
+            )
+            # Assert — the exact prompt, composed from the ASSEMBLED base.
+            expected = _render_continuation(
+                previous_output="pass one",
+                todo_labels=None,
+                completion_marker=None,
+            )
+            assert reinvoker.prompts == [_ASSEMBLED + expected]
+            # Said the other way round, so a future refactor cannot pass by
+            # accident: the scaffolding survived and the raw ask alone did not
+            # become the prompt.
+            assert _SCAFFOLD in reinvoker.prompts[0]
+            assert reinvoker.prompts[0] != _RAW_ASK + expected
+        finally:
+            await store.stop()
+            await approvals.stop()
+
+    @pytest.mark.asyncio
+    async def test_the_fault_report_records_the_raw_ask_as_what_was_attempted(
+        self, tmp_path
+    ):
+        """AD-1170's ``attempted`` is Captain-facing too, so it gets the ask."""
+        # Arrange
+        faults = FaultReportStore()
+        store = await _request_store(tmp_path)
+        try:
+            # Act
+            text = await resolve_exhausted_turn(
+                _defect_outcome(),
+                reinvoke=_never_reinvoked,
+                runtime=_FaultRuntime(request_store=store, fault_store=faults),
+                agent_id="counselor_0",
+                base_task_text=_ASSEMBLED,
+                display_task_text=_RAW_ASK,
+                thread_id="thread-1",
+                config=_config(),
+            )
+            # Assert — the defect path really ran...
+            assert "fault report" in text
+            open_faults = faults.list_open()
+            assert len(open_faults) == 1
+            # ...and it recorded the ask, not the prompt.
+            assert open_faults[0].attempted == _RAW_ASK
+            assert "Visual Context" not in open_faults[0].attempted
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_the_fault_report_falls_back_when_no_display_text_is_given(
+        self, tmp_path
+    ):
+        """Same default-preserving guarantee on the second Captain-facing site."""
+        # Arrange
+        faults = FaultReportStore()
+        store = await _request_store(tmp_path)
+        try:
+            # Act
+            await resolve_exhausted_turn(
+                _defect_outcome(),
+                reinvoke=_never_reinvoked,
+                runtime=_FaultRuntime(request_store=store, fault_store=faults),
+                agent_id="counselor_0",
+                base_task_text=_ASSEMBLED,
+                thread_id="thread-1",
+                config=_config(),
+            )
+            # Assert
+            assert faults.list_open()[0].attempted == _ASSEMBLED
+        finally:
+            await store.stop()
+
+    @pytest.mark.parametrize(
+        "display",
+        [None, 123, b"bytes", "", "   ", object()],
+        ids=["none", "int", "bytes", "empty", "spaces", "object"],
+    )
+    def test_the_resolver_falls_back_for_anything_that_is_not_a_real_ask(
+        self, display
+    ):
+        """Boundary cases on the new helper. ``type(...) is str`` rather than
+        ``isinstance`` follows the module's existing idiom."""
+        # Act / Assert
+        assert _display_task_text(display, _ASSEMBLED) == _ASSEMBLED
+
+    def test_the_resolver_prefers_a_real_ask(self):
+        # Act / Assert
+        assert _display_task_text(_RAW_ASK, _ASSEMBLED) == _RAW_ASK
+
+
+class TestBothCaptainFacingPathsAgree:
+    """AD-1201 put continue requests in front of the Captain and AD-1165 puts
+    promoted turns on the board. Until BF-709 the two read differently from the
+    SAME turn; these assert they now derive from one helper on one observation.
+    """
+
+    @pytest.mark.asyncio
+    async def test_one_observation_yields_the_same_text_on_both_surfaces(
+        self, tmp_path
+    ):
+        # Arrange — the observation the DM router builds (``captain_message`` is
+        # set there precisely so downstream consumers can recover the raw ask).
+        observation = {"params": {"captain_message": _RAW_ASK, "text": _RAW_ASK}}
+        derived = _promotion_request_text(observation, _ASSEMBLED)
+        # Act
+        target = await _target_for(
+            tmp_path, "agree.db", display_task_text=derived
+        )
+        # Assert — the promotion path's string and the card title are one string.
+        assert derived == _RAW_ASK
+        assert target == f"continue: {derived}"
+
+    def test_the_helper_still_falls_back_to_the_assembled_prompt(self):
+        """No ``captain_message`` anywhere ⇒ today's behaviour on both paths."""
+        # Act / Assert
+        assert _promotion_request_text({}, _ASSEMBLED) == _ASSEMBLED
+
+    def test_the_arming_site_passes_the_shared_helper_as_the_display_text(self):
+        """The seam. Without this, every test above proves the module works and
+        none of them proves anything calls it that way — the exact failure this
+        suite's own preamble warns about."""
+        # Act
+        source = (
+            _REPO_ROOT / "src" / "probos" / "cognitive" / "cognitive_agent.py"
+        ).read_text(encoding="utf-8")
+        # Assert — the display text is the shared helper...
+        assert "display_task_text=_promotion_request_text(" in source
+        # ...and the base is STILL the assembled prompt. If this line ever
+        # changes, continuation silently loses its context.
+        assert "base_task_text=user_message," in source
+
+    def test_the_module_does_not_import_the_arming_sites_helper(self):
+        """``continue_or_ask`` is imported lazily BY ``cognitive_agent``;
+        reaching back for ``_promotion_request_text`` would invert that."""
+        # Act
+        source = (
+            _REPO_ROOT / "src" / "probos" / "cognitive" / "continue_or_ask.py"
+        ).read_text(encoding="utf-8")
+        # Assert
+        assert "import _promotion_request_text" not in source
+        assert "from probos.cognitive.cognitive_agent import" not in source
+
+    def test_reinvocation_is_never_handed_the_display_text(self):
+        """Asserted at the source as well as behaviourally, because this is the
+        one line whose regression no title assertion could catch."""
+        # Act
+        source = (
+            _REPO_ROOT / "src" / "probos" / "cognitive" / "continue_or_ask.py"
+        ).read_text(encoding="utf-8")
+        # Assert
+        assert "await reinvoke(base_task_text + block)" in source
+        assert "reinvoke(display_task_text" not in source

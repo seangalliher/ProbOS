@@ -348,6 +348,31 @@ def _task_excerpt(text: Any, limit: int = _MAX_EXCERPT_CHARS) -> str:
     return collapsed[: max(0, limit - 1)].rstrip() + "\u2026"
 
 
+def _display_task_text(display: Any, base: str) -> str:
+    """BF-709: the Captain-facing text for a turn — the raw ask when there is one.
+
+    ``base_task_text`` has two jobs that want opposite values. Re-invocation
+    needs the FULLY ASSEMBLED prompt (working memory, episodic recall, session
+    history, the AD-1055 visual-context block, the BF-294 confabulation guard),
+    or a continued pass loses everything the first pass knew. A card title needs
+    the RAW message, or the Captain reads scaffolding instead of the ask — which
+    is what the seven live pending requests show.
+
+    So the two are separated rather than reconciled: ``base`` keeps its job and
+    ``display`` carries the ask, resolved at the arming site by
+    ``cognitive_agent._promotion_request_text`` (imported nowhere here — that
+    would invert the lazy import that reaches this module).
+
+    Falls back to ``base`` for anything absent, non-``str`` or blank, so a
+    caller that passes no display text gets byte-identical behaviour to before
+    this parameter existed. ``strip()`` rather than truthiness because a
+    whitespace-only message is not an ask.
+    """
+    if type(display) is str and display.strip():
+        return display
+    return base
+
+
 def continue_payload(thread_id: Any) -> dict[str, Any]:
     """The AD-1154 six-key payload for a ``kind="continue"`` request.
 
@@ -428,6 +453,7 @@ async def file_continue_request(
     thread_id: str,
     base_task_text: str,
     passes: int,
+    display_task_text: str = "",
 ) -> str:
     """File the ``kind="continue"`` ask. Returns its id, or ``""`` on any failure.
 
@@ -435,6 +461,11 @@ async def file_continue_request(
     NOT render ``payload``, so the human-readable context lives in ``target``
     (what was being worked on) and ``rationale`` (why it stopped). The payload
     carries the machine shape a standing rule would be keyed on.
+
+    BF-709: ``target`` is excerpted from ``display_task_text`` when the caller
+    supplies one, because ``base_task_text`` is the assembled prompt and reads
+    as scaffolding on a card. Omitted or blank falls back to ``base_task_text``
+    — today's title exactly. See :func:`_display_task_text`.
 
     Never raises. A missing store or a failed write logs at WARNING and yields
     ``""``; the caller then reports the partial work with the no-id note. Losing
@@ -449,7 +480,7 @@ async def file_continue_request(
             agent_id[:12],
         )
         return ""
-    excerpt = _task_excerpt(base_task_text)
+    excerpt = _task_excerpt(_display_task_text(display_task_text, base_task_text))
     target = f"continue: {excerpt}" if excerpt else "continue"
     try:
         request = await store.file_request(
@@ -491,6 +522,7 @@ async def resolve_exhausted_turn(
     agent_id: str,
     base_task_text: str,
     thread_id: str = "",
+    display_task_text: str = "",
     config: Any,
 ) -> str:
     """Turn a step-limit stop into a continuation or an honest, durable ask.
@@ -501,6 +533,14 @@ async def resolve_exhausted_turn(
     constructs an executor and the five other callers of
     ``WorkItemAgenticExecutor.run`` are untouched by construction rather than by
     flag (the AD-1155 seam argument, applied one layer up).
+
+    BF-709: ``base_task_text`` is the ASSEMBLED prompt and stays that way —
+    every re-invocation below is built from it, and a pass that continued from
+    the raw message alone would lose working memory, episodic recall and session
+    history. ``display_task_text`` is the Captain's raw ask, used at the two
+    Captain-facing sites (the fault report's ``attempted``, the filed request's
+    ``target``) and nowhere else. Omitted or blank falls back to
+    ``base_task_text``, so an older caller's behaviour is unchanged.
 
     The order of the gates is load-bearing:
 
@@ -601,7 +641,7 @@ async def resolve_exhausted_turn(
             thread_id=thread_id,
             tool_id=tool_id,
             error_text=error_text,
-            attempted=base_task_text,
+            attempted=_display_task_text(display_task_text, base_task_text),
         )
         logger.info(
             "AD-1170: agent %s stopped against a repeated failure of tool %r "
@@ -627,6 +667,7 @@ async def resolve_exhausted_turn(
         thread_id=thread_id,
         base_task_text=base_task_text,
         passes=passes,
+        display_task_text=display_task_text,
     )
     lead = _CUT_OFF_LEAD_WITH_WORK if partial else _CUT_OFF_LEAD_NO_WORK
     tail = (

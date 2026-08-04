@@ -3929,6 +3929,15 @@ class CognitiveAgent(BaseAgent):
                         agent_id=self.id,
                         base_task_text=user_message,
                         thread_id=thread_id,
+                        # BF-709: ``base_task_text`` above stays the ASSEMBLED
+                        # prompt because every re-invoked pass is built from it.
+                        # The Captain's card title needs the opposite value, so
+                        # the raw ask is threaded alongside rather than swapped
+                        # in — the same helper the AD-1165 promotion path below
+                        # already uses, so both surfaces read as what was asked.
+                        display_task_text=_promotion_request_text(
+                            observation, user_message
+                        ),
                         config=cfg,
                     )
                 return turn_text
