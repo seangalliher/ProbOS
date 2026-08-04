@@ -29,16 +29,16 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
 | AD | **AD-1202** | **AD-1203** | AD-1201 | 1202 |
-| BF | **BF-712** | **BF-713** | BF-710 | 711-712 |
+| BF | **BF-713** | **BF-714** | BF-710 | 711-713 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-04T05:49:30+00:00 at `39bffe30` | 2215 subjects, 809 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-04T05:53:21+00:00 at `f5649ef7` | 2216 subjects, 810 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-04T05:30:14+00:00 | 1143 issues, 731 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-08-04T05:53:21+00:00 | 1144 issues, 732 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,11 +46,11 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 63 | 8 | assigned, issue open, no shipped code |
+| `allocated-open` | 62 | 9 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 6 | 0 | abandoned, number **not** reusable |
-| `shipped` | 872 | 373 | code in history |
+| `shipped` | 873 | 373 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
@@ -75,7 +75,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-1187` | [#1124](https://github.com/seangalliher/ProbOS/issues/1124), [#1139](https://github.com/seangalliher/ProbOS/issues/1139) | issue #1124, #1139 open, no code | AD-1187: a governed agent-facing claim and discovery surface over AD-496 |
 | `AD-1186` | [#1123](https://github.com/seangalliher/ProbOS/issues/1123), [#1138](https://github.com/seangalliher/ProbOS/issues/1138) | issue #1123, #1138 open, no code | AD-1186: Ship Trials -- a release catalog and policy over the existing evaluators |
 | `AD-1185` | [#1121](https://github.com/seangalliher/ProbOS/issues/1121), [#1138](https://github.com/seangalliher/ProbOS/issues/1138) | issue #1121, #1138 open, no code | AD-1185: a supported SystemConfig contract, parsed and booted in CI |
-| `AD-1184` | [#1120](https://github.com/seangalliher/ProbOS/issues/1120) | issue #1120 open, no code | AD-1184: generate a reconciled AD/BF lifecycle view from the live authorities |
 | `AD-1183` | [#1118](https://github.com/seangalliher/ProbOS/issues/1118) | issue #1118 open, no code | AD-1183: Replace time-sensitive competitive claims in OSS with dated evidence or neutral contracts |
 | `AD-1182` | [#1117](https://github.com/seangalliher/ProbOS/issues/1117) | issue #1117 open, no code | AD-1182: Make Captain Card configuration a real contract or remove it |
 | `AD-1181` | [#1116](https://github.com/seangalliher/ProbOS/issues/1116) | issue #1116 open, no code | AD-1181: Decide the boundary between agent-native coordination and CrewOrchestrator |
@@ -121,6 +120,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-277` | — | mentioned by an authority, no code and no closure |  |
 | `AD-276` | — | mentioned by an authority, no code and no closure |  |
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
+| `BF-713` | [#1144](https://github.com/seangalliher/ProbOS/issues/1144) | issue #1144 open, no code | BF-713: doctor UX test depends on a live LLM proxy and flakes when it returns an empty 200 |
 | `BF-712` | [#1143](https://github.com/seangalliher/ProbOS/issues/1143) | issue #1143 open, no code | BF-712: AD-580 resolve-refire test has a 10ms timing margin and flakes under the parallel gate |
 | `BF-711` | [#1122](https://github.com/seangalliher/ProbOS/issues/1122), [#1138](https://github.com/seangalliher/ProbOS/issues/1138) | issue #1122, #1138 open, no code | BF-711: judge and infrastructure failure score as competence failure |
 | `BF-707` | [#1113](https://github.com/seangalliher/ProbOS/issues/1113) | issue #1113 open, no code | BF-707: _CAPABILITY_GAP_RE matches 'lack' inside words -- 'black' and 'Slack' register as capability gaps |
@@ -153,7 +153,7 @@ _(none)_
 
 ## Shipped
 
-**AD** (872): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180, 1201
+**AD** (873): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180, 1184, 1201
 
 **BF** (373): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-686, 688, 690, 692-706, 708-710
 

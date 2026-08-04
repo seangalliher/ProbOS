@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-04T05:49:30+00:00",
-    "head": "39bffe30",
-    "subject_count": 2215,
+    "captured_at": "2026-08-04T05:53:21+00:00",
+    "head": "f5649ef7",
+    "subject_count": 2216,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -357,6 +357,9 @@
       ],
       "AD-1180": [
         "git AD-1180"
+      ],
+      "AD-1184": [
+        "git AD-1184"
       ],
       "AD-1201": [
         "git AD-1201"
@@ -2650,8 +2653,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-04T05:30:14+00:00",
-    "issue_count": 1143,
+    "captured_at": "2026-08-04T05:53:21+00:00",
+    "issue_count": 1144,
     "issues": {
       "AD-1000": [
         {
@@ -3916,8 +3919,8 @@
             "AD-1184"
           ],
           "number": 1120,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1184: generate a reconciled AD/BF lifecycle view from the live authorities"
         }
       ],
@@ -14252,6 +14255,17 @@
           "reason": "",
           "state": "OPEN",
           "title": "BF-712: AD-580 resolve-refire test has a 10ms timing margin and flakes under the parallel gate"
+        }
+      ],
+      "BF-713": [
+        {
+          "claims": [
+            "BF-713"
+          ],
+          "number": 1144,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-713: doctor UX test depends on a live LLM proxy and flakes when it returns an empty 200"
         }
       ],
       "BF-80": [
