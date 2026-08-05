@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-05T02:26:53+00:00",
-    "head": "4177a44d",
-    "subject_count": 2223,
+    "captured_at": "2026-08-05T02:45:43+00:00",
+    "head": "c4985118",
+    "subject_count": 2224,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2662,8 +2662,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-05T02:26:53+00:00",
-    "issue_count": 1149,
+    "captured_at": "2026-08-05T02:45:43+00:00",
+    "issue_count": 1153,
     "issues": {
       "AD-1000": [
         {
@@ -4189,6 +4189,13 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1203: per-turn tool-use provenance -- an agent's claims are not traceable to the calls behind them"
+        },
+        {
+          "claims": [],
+          "number": 1153,
+          "reason": "",
+          "state": "OPEN",
+          "title": "Epic: ProbOS observes, diagnoses and reports its own defects (AD-1203, AD-1205, AD-1206, AD-1207)"
         }
       ],
       "AD-1204": [
@@ -4200,6 +4207,60 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1204: an incomplete promoted turn reads as 'running', and the agent tells the Captain so"
+        }
+      ],
+      "AD-1205": [
+        {
+          "claims": [
+            "AD-1205"
+          ],
+          "number": 1150,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1205: fault detection is too narrow to see a defect that breaks everything"
+        },
+        {
+          "claims": [],
+          "number": 1153,
+          "reason": "",
+          "state": "OPEN",
+          "title": "Epic: ProbOS observes, diagnoses and reports its own defects (AD-1203, AD-1205, AD-1206, AD-1207)"
+        }
+      ],
+      "AD-1206": [
+        {
+          "claims": [
+            "AD-1206"
+          ],
+          "number": 1151,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1206: an approved repair brief becomes a GitHub issue (the missing consumer)"
+        },
+        {
+          "claims": [],
+          "number": 1153,
+          "reason": "",
+          "state": "OPEN",
+          "title": "Epic: ProbOS observes, diagnoses and reports its own defects (AD-1203, AD-1205, AD-1206, AD-1207)"
+        }
+      ],
+      "AD-1207": [
+        {
+          "claims": [
+            "AD-1207"
+          ],
+          "number": 1152,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1207: nothing surfaces a fault the ship has found to the Captain"
+        },
+        {
+          "claims": [],
+          "number": 1153,
+          "reason": "",
+          "state": "OPEN",
+          "title": "Epic: ProbOS observes, diagnoses and reports its own defects (AD-1203, AD-1205, AD-1206, AD-1207)"
         }
       ],
       "AD-423": [
