@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-04T22:46:00+00:00",
-    "head": "5ede2bf8",
-    "subject_count": 2220,
+    "captured_at": "2026-08-05T01:48:04+00:00",
+    "head": "8846d661",
+    "subject_count": 2221,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2659,8 +2659,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-04T22:46:00+00:00",
-    "issue_count": 1146,
+    "captured_at": "2026-08-05T01:48:04+00:00",
+    "issue_count": 1147,
     "issues": {
       "AD-1000": [
         {
@@ -4175,6 +4175,17 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1202: the HXI has no control primitives -- 478 controls styled inline, zero shared components"
+        }
+      ],
+      "AD-1203": [
+        {
+          "claims": [
+            "AD-1203"
+          ],
+          "number": 1147,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1203: per-turn tool-use provenance -- an agent's claims are not traceable to the calls behind them"
         }
       ],
       "AD-423": [
