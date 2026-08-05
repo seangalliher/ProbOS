@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-05T04:59:08+00:00",
-    "head": "7cf58c41",
-    "subject_count": 2228,
+    "captured_at": "2026-08-05T17:29:26+00:00",
+    "head": "6d143a71",
+    "subject_count": 2230,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2638,6 +2638,9 @@
       "BF-716": [
         "git BF-716"
       ],
+      "BF-717": [
+        "git BF-717"
+      ],
       "BF-76": [
         "git BF-076"
       ],
@@ -2665,7 +2668,7 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-05T04:59:08+00:00",
+    "captured_at": "2026-08-05T17:29:26+00:00",
     "issue_count": 1156,
     "issues": {
       "AD-1000": [
@@ -14422,8 +14425,8 @@
             "BF-717"
           ],
           "number": 1156,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-717: a promoted turn asks for approval and tells the Captain nothing in the chat"
         }
       ],
