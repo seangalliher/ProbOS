@@ -7,12 +7,18 @@ capability gap while working an item:
      triage fast-path (AD-854), transitions the work item to ``blocked``, and
      records ``blocked_reason`` + ``capability_request_id`` in item metadata
      (read-merge-write so pre-existing metadata survives).
+  1b. ``block_on_request`` is that second half on its own (AD-1204), for a
+     caller that already filed its own request. AD-1164's ``continue`` ask is
+     the one caller: a turn that ran out of steps is waiting on a decision
+     exactly like a capability gap is, so it parks the same way and resumes
+     through the same path below.
   2. ``on_capability_event`` subscribes to CAPABILITY_REQUEST_FULFILLED and
      CAPABILITY_REQUEST_DECIDED. When a blocked item's request is fulfilled it
      resumes the item (``blocked`` -> ``in_progress``) and re-dispatches it
      through the WorkItemRouter. When the request is denied it cancels the
      item, recording the denial reason. An ``approved`` decision is a no-op
-     (resume happens only on FULFILLED, which the grant fast-path also emits).
+     (resume happens only on FULFILLED, which the grant fast-path also emits,
+     and which AD-1204's approval handler emits for a ``continue``).
 
 Tier-2 log-and-degrade throughout: missing stores/router never raise.
 """
@@ -88,23 +94,13 @@ class CapabilityGapDriver:
                 config=self._triage_config(),
             )
             # Transition via the validated state machine.
-            transitioned = await store.transition_work_item(
-                work_item_id, "blocked", source="capability_gap_driver"
+            blocked = await self.block_on_request(
+                work_item_id=work_item_id,
+                request_id=req.id,
+                reason=gap_target,
             )
-            if transitioned is None:
-                logger.warning(
-                    "AD-855: could not transition work item %s to blocked "
-                    "(unknown id or illegal from current status); request %s "
-                    "filed but board not updated",
-                    work_item_id, req.id[:12],
-                )
+            if not blocked:
                 return req
-            # Read-merge-write so pre-existing metadata keys survive.
-            item = await store.get_work_item(work_item_id)
-            base = dict(item.metadata) if item and item.metadata else {}
-            base["blocked_reason"] = gap_target
-            base["capability_request_id"] = req.id
-            await store.update_work_item(work_item_id, metadata=base)
             logger.info(
                 "AD-855: work item %s BLOCKED on %r; capability request %s filed",
                 work_item_id, gap_target, req.id[:12],
@@ -117,6 +113,60 @@ class CapabilityGapDriver:
                 work_item_id, gap_target, exc_info=True,
             )
             return None
+
+    async def block_on_request(
+        self,
+        *,
+        work_item_id: str,
+        request_id: str,
+        reason: str,
+    ) -> bool:
+        """Park a work item on a capability request it is waiting for.
+
+        Transitions the item to ``blocked`` through the validated state machine
+        and records ``blocked_reason`` + ``capability_request_id`` in metadata,
+        read-merge-write so pre-existing keys survive. Those two keys are what
+        :meth:`on_capability_event` and the board read back, so they are written
+        in exactly one place.
+
+        Returns ``True`` when the board was updated, ``False`` when the
+        transition was illegal from the item's current status or the id is
+        unknown — in which case the caller still holds a filed request and
+        should say so rather than pretending the item is parked.
+
+        AD-1204: extracted from :meth:`on_capability_gap` so a ``continue`` ask
+        (whose request is filed by ``continue_or_ask``, not by triage) reaches
+        the same parking behaviour without duplicating the metadata contract.
+        Exceptions propagate: each caller already owns its own degrade
+        boundary, and swallowing here would change ``on_capability_gap``'s
+        established failure shape.
+        """
+        store = self._work_item_store
+        if store is None:
+            logger.warning(
+                "AD-855: no work-item store, so work item %s cannot be parked "
+                "on request %s; the request stands and the board is unchanged",
+                work_item_id, request_id[:12],
+            )
+            return False
+        transitioned = await store.transition_work_item(
+            work_item_id, "blocked", source="capability_gap_driver"
+        )
+        if transitioned is None:
+            logger.warning(
+                "AD-855: could not transition work item %s to blocked "
+                "(unknown id or illegal from current status); request %s "
+                "filed but board not updated",
+                work_item_id, request_id[:12],
+            )
+            return False
+        # Read-merge-write so pre-existing metadata keys survive.
+        item = await store.get_work_item(work_item_id)
+        base = dict(item.metadata) if item and item.metadata else {}
+        base["blocked_reason"] = reason
+        base["capability_request_id"] = request_id
+        await store.update_work_item(work_item_id, metadata=base)
+        return True
 
     async def on_capability_event(self, event: dict) -> None:
         """Resume or cancel a blocked work item when its request resolves.

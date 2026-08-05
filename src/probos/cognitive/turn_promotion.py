@@ -450,6 +450,7 @@ async def run_with_promotion(
     request_text: str,
     hold: set["asyncio.Task[Any]"],
     completed_probe: Callable[[], bool] | None = None,
+    on_promoted: Callable[[str], None] | None = None,
 ) -> str:
     """Run ``work``; promote it to a background task if it outlives the budget.
 
@@ -478,6 +479,20 @@ async def run_with_promotion(
     budget is otherwise indistinguishable from one that completed, and the work
     item closes ``done`` either way. Omitting it preserves that behaviour
     exactly, which is why it is optional.
+
+    ``on_promoted`` (AD-1204) is the reverse direction of ``completed_probe``:
+    it publishes the work item's id back to the still-running ``work`` the
+    moment the item exists. The item is created LAZILY — the run is already
+    in flight when the budget elapses — so the id cannot be a parameter of
+    ``work``; it does not exist when ``work`` is constructed. Everything the
+    run wants to link to that item (AD-1204's ``continue`` request) therefore
+    reads a cell this callback writes. Called exactly once, only on the
+    promoted path, before the reporter is spawned, and never on the inline
+    path (where there is no item and nothing to link).
+
+    A raising ``on_promoted`` is logged and swallowed: the promotion itself
+    has already succeeded, and failing it here would trade a working
+    background task for a missing link.
     """
     if promote_after_seconds <= 0.0:
         return await work()
@@ -521,6 +536,20 @@ async def run_with_promotion(
             agent_id, thread_id,
         )
         return await task
+
+    # AD-1204: the run is still executing and can now name the item it belongs
+    # to. Published before the reporter is spawned so the id is available for
+    # as much of the remaining run as possible.
+    if on_promoted is not None:
+        try:
+            on_promoted(work_item.id)
+        except Exception:
+            logger.warning(
+                "AD-1204: publishing work item %s back to the promoted run for "
+                "agent=%s raised; the task still runs and reports, but anything "
+                "it files this turn will not be linked to the item",
+                work_item.id, agent_id, exc_info=True,
+            )
 
     reporter = asyncio.create_task(
         _finish_promoted_turn(

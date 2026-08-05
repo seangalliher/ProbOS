@@ -95,7 +95,79 @@ async def decide_capability_request(
     if decided is None:  # pragma: no cover - guarded above, defensive only
         raise HTTPException(status_code=404, detail="capability request not found")
     standing = await _maybe_issue_standing_rule(runtime, decided, req)
+    # AD-1204: after the standing rule, so a resumed turn that immediately
+    # consults ``_standing_rule_permits`` sees the rule the same approval just
+    # granted rather than racing it.
+    await _maybe_fulfil_on_approval(store, decided, approve=req.approve)
     return {"request": _serialize(decided), "standing_rule": standing}
+
+# AD-1204: request kinds for which the Captain's approval IS the fulfilment.
+#
+# Every other kind names something a separate fulfiller then does — a grant is
+# applied, a package is installed, an agent is built — and ``mark_fulfilled``
+# is called by whoever did it. ``continue`` has no such actor. The thing being
+# asked for is permission to carry on, so the moment permission is given there
+# is nothing left to do and the request is complete.
+#
+# This matters because ``CapabilityGapDriver.on_capability_event`` resumes on
+# CAPABILITY_REQUEST_FULFILLED only; DECIDED+approved is deliberately a no-op
+# there. Without this, an approved ``continue`` emitted DECIDED, nothing ever
+# emitted FULFILLED, and the blocked work item waited forever.
+#
+# An explicit allowlist rather than "any kind nobody else fulfils", for the
+# same Minimal Authority reason ``_STANDING_RULE_KINDS`` is one: a future kind
+# becomes self-fulfilling when someone decides it should.
+#
+# Kept as a literal rather than importing ``continue_or_ask.CONTINUE_REQUEST_KIND``
+# so this router does not pull the cognitive agentic stack into its import
+# chain; a drift guard in tests/test_ad1204_approval_resumes_the_turn.py
+# asserts the two agree.
+_FULFIL_ON_APPROVAL_KINDS: frozenset[str] = frozenset({"continue"})
+
+
+async def _maybe_fulfil_on_approval(
+    store: Any,
+    decided: CapabilityRequest,
+    *,
+    approve: bool,
+) -> bool:
+    """AD-1204: mark a self-fulfilling request fulfilled once it is approved.
+
+    Returns whether FULFILLED was emitted. Honest-degrade: a denial, another
+    kind, or a failed write all yield ``False`` with HTTP 200. The decision is
+    already durably recorded by ``decide()``; failing the whole request because
+    the follow-on emit did not land would discard it.
+
+    A DENIAL deliberately does nothing here. The blocked work item is cancelled
+    by ``CapabilityGapDriver._cancel`` off the DECIDED event that ``decide()``
+    already emitted, so a denied continue leaves nothing stranded.
+    """
+    if not approve or decided.kind not in _FULFIL_ON_APPROVAL_KINDS:
+        return False
+    try:
+        updated = await store.mark_fulfilled(decided.id)
+    except Exception:
+        logger.warning(
+            "AD-1204: could not mark approved %s request %s fulfilled; the "
+            "approval itself is recorded, but any work item blocked on it "
+            "stays blocked until it is decided again",
+            decided.kind, decided.id[:12], exc_info=True,
+        )
+        return False
+    if updated is None:
+        logger.warning(
+            "AD-1204: marking approved %s request %s fulfilled returned "
+            "nothing; the approval stands and any blocked work item is not "
+            "resumed",
+            decided.kind, decided.id[:12],
+        )
+        return False
+    logger.info(
+        "AD-1204: approved %s request %s is fulfilled by the approval itself; "
+        "any work item blocked on it now resumes",
+        decided.kind, decided.id[:12],
+    )
+    return True
 
 # AD-1175: request kinds a standing rule can be scoped to.
 #

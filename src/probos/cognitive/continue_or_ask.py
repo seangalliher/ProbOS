@@ -135,6 +135,17 @@ _CONTINUE_RATIONALE: str = (
     "with the task still open. Approving records that this turn should carry on."
 )
 
+# AD-1204: the ``blocked_reason`` recorded on a work item parked on a continue
+# ask. Written into item metadata by ``CapabilityGapDriver.block_on_request``
+# beside ``capability_request_id``, and read back by the board and by anyone
+# asking why a row stopped moving.
+#
+# Asserted clean against the REAL ``decomposer._CAPABILITY_GAP_RE`` by the test
+# suite, for the same reason every other string in this module is: this text
+# describes a turn that stopped, and the natural phrasing for that is exactly
+# what the gap regex reads as "I need a capability I do not have".
+_BLOCKED_REASON: str = "continue: the turn reached its step limit"
+
 # AD-1170: a stalled turn has more than one possible cause, and until now the
 # system only modelled one of them.
 #
@@ -454,6 +465,7 @@ async def file_continue_request(
     base_task_text: str,
     passes: int,
     display_task_text: str = "",
+    work_item_id: str | None = None,
 ) -> str:
     """File the ``kind="continue"`` ask. Returns its id, or ``""`` on any failure.
 
@@ -466,6 +478,18 @@ async def file_continue_request(
     supplies one, because ``base_task_text`` is the assembled prompt and reads
     as scaffolding on a card. Omitted or blank falls back to ``base_task_text``
     — today's title exactly. See :func:`_display_task_text`.
+
+    AD-1204: ``work_item_id`` is the AD-1165 item this turn was promoted to,
+    and it is what makes an approval able to DO something. Without it
+    ``CapabilityGapDriver.on_capability_event`` recovers ``req.work_item_id``,
+    finds ``None``, and logs "nothing to resume" — which is what four live
+    approvals bought on 2026-08-04. With it, the ask is linked AND the item is
+    parked ``blocked``, so the same driver that has always handled
+    BLOCKED -> approve -> resume handles this too.
+
+    ``None`` (a turn that finished under the promotion budget, so there is no
+    item) files exactly the request this function filed before this AD, and
+    parks nothing.
 
     Never raises. A missing store or a failed write logs at WARNING and yields
     ``""``; the caller then reports the partial work with the no-id note. Losing
@@ -488,7 +512,7 @@ async def file_continue_request(
             kind=CONTINUE_REQUEST_KIND,
             target=target,
             rationale=_CONTINUE_RATIONALE.format(passes=passes),
-            work_item_id=None,
+            work_item_id=work_item_id,
             payload=continue_payload(thread_id),
         )
     except Exception:
@@ -503,6 +527,10 @@ async def file_continue_request(
     request_id = getattr(request, "id", "") if request is not None else ""
     if type(request_id) is not str or not request_id:
         return ""
+    if work_item_id:
+        await _park_work_item(
+            runtime, work_item_id=work_item_id, request_id=request_id
+        )
     logger.info(
         "AD-1164: conversational turn for agent %s stopped at its step limit "
         "after %d pass(es); filed continue request %s and returned the partial "
@@ -514,6 +542,57 @@ async def file_continue_request(
     return request_id
 
 
+async def _park_work_item(
+    runtime: Any, *, work_item_id: str, request_id: str
+) -> bool:
+    """AD-1204: mark the promoted item ``blocked`` on the ask that stopped it.
+
+    Delegates to ``CapabilityGapDriver.block_on_request`` rather than touching
+    the work-item store here, so ``blocked_reason`` / ``capability_request_id``
+    keep exactly one writer — the driver that reads them back when the request
+    resolves. Without the transition the item stays ``in_progress`` and the
+    driver's idempotency guard (``if item.status != "blocked": return``) makes
+    even a correctly linked approval a no-op.
+
+    Returns whether the board was updated. Never raises: an absent driver, an
+    illegal transition or a store failure all leave the ask filed and the
+    partial work returned, which is this module's one permitted direction of
+    failure.
+    """
+    driver = getattr(runtime, "capability_gap_driver", None)
+    if driver is None:
+        logger.warning(
+            "AD-1204: no capability-gap driver is wired, so work item %s stays "
+            "in_progress while continue request %s waits; approving it will "
+            "record the decision but will not resume the turn",
+            work_item_id, request_id[:12],
+        )
+        return False
+    try:
+        parked = bool(
+            await driver.block_on_request(
+                work_item_id=work_item_id,
+                request_id=request_id,
+                reason=_BLOCKED_REASON,
+            )
+        )
+    except Exception:
+        logger.warning(
+            "AD-1204: parking work item %s on continue request %s raised; the "
+            "ask stands and the partial work is still returned, but approving "
+            "it will not resume the turn",
+            work_item_id, request_id[:12], exc_info=True,
+        )
+        return False
+    if parked:
+        logger.info(
+            "AD-1204: work item %s parked blocked on continue request %s; an "
+            "approval now resumes and re-dispatches it",
+            work_item_id, request_id[:12],
+        )
+    return parked
+
+
 async def resolve_exhausted_turn(
     outcome: Any,
     *,
@@ -523,6 +602,7 @@ async def resolve_exhausted_turn(
     base_task_text: str,
     thread_id: str = "",
     display_task_text: str = "",
+    work_item_id: str | None = None,
     config: Any,
 ) -> str:
     """Turn a step-limit stop into a continuation or an honest, durable ask.
@@ -541,7 +621,12 @@ async def resolve_exhausted_turn(
     Captain-facing sites (the fault report's ``attempted``, the filed request's
     ``target``) and nowhere else. Omitted or blank falls back to
     ``base_task_text``, so an older caller's behaviour is unchanged.
-
+    AD-1204: ``work_item_id`` is the AD-1165 work item this turn was promoted
+    to, if it was. Supplied, the filed ask is LINKED to it and the item is
+    parked ``blocked``, so approving the ask resumes and re-dispatches the item
+    through the driver that has always done that. Omitted or ``None`` — a turn
+    that finished inside the promotion budget, so there is no item — the ask is
+    filed exactly as before and nothing is parked.
     The order of the gates is load-bearing:
 
     1. Gate off  ⇒ return the outcome's text unchanged.
@@ -668,6 +753,7 @@ async def resolve_exhausted_turn(
         base_task_text=base_task_text,
         passes=passes,
         display_task_text=display_task_text,
+        work_item_id=work_item_id,
     )
     lead = _CUT_OFF_LEAD_WITH_WORK if partial else _CUT_OFF_LEAD_NO_WORK
     tail = (

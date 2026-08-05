@@ -3861,6 +3861,21 @@ class CognitiveAgent(BaseAgent):
             # as complete.
             _last_stop: dict[str, str] = {"reason": ""}
 
+            # AD-1204: the promoted work item's id, published back here by
+            # ``run_with_promotion`` the moment the item is created. It cannot
+            # be a parameter: the item is created LAZILY, part-way through the
+            # run below, so at the time ``_agentic_turn`` is constructed it does
+            # not exist yet. A closure-captured cell is the same shape
+            # ``_last_stop`` already uses at this site, pointed the other way.
+            #
+            # Empty means "this turn was never promoted" — no item, so the
+            # continue request is filed unlinked and behaves exactly as it did
+            # before this AD.
+            _promoted: dict[str, str] = {"work_item_id": ""}
+
+            def _record_promotion(work_item_id: str) -> None:
+                _promoted["work_item_id"] = work_item_id
+
             # AD-1167: compaction for this path. ``AgenticLoop`` re-flattens the
             # entire message history into one prompt every iteration, and no
             # compactor was ever wired here -- so each added step re-paid for
@@ -3938,6 +3953,10 @@ class CognitiveAgent(BaseAgent):
                         display_task_text=_promotion_request_text(
                             observation, user_message
                         ),
+                        # AD-1204: link the ask to the promoted item so an
+                        # approval can resume it. Empty (not promoted) becomes
+                        # None, which is byte-identical to before this AD.
+                        work_item_id=_promoted["work_item_id"] or None,
                         config=cfg,
                     )
                 return turn_text
@@ -3978,6 +3997,7 @@ class CognitiveAgent(BaseAgent):
                     completed_probe=(
                         lambda: _last_stop["reason"] not in _INCOMPLETE_STOP_REASONS
                     ),
+                    on_promoted=_record_promotion,
                 )
             return text.strip() or None
         except Exception:
