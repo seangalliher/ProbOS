@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-05T03:13:41+00:00",
-    "head": "aabccb2b",
-    "subject_count": 2225,
+    "captured_at": "2026-08-05T04:19:20+00:00",
+    "head": "aeaa8048",
+    "subject_count": 2226,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2662,8 +2662,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-05T03:13:41+00:00",
-    "issue_count": 1155,
+    "captured_at": "2026-08-05T04:19:20+00:00",
+    "issue_count": 1156,
     "issues": {
       "AD-1000": [
         {
@@ -14411,6 +14411,17 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-716: the Bridge showed a blocked agent, but nothing about it read as urgent"
+        }
+      ],
+      "BF-717": [
+        {
+          "claims": [
+            "BF-717"
+          ],
+          "number": 1156,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-717: a promoted turn asks for approval and tells the Captain nothing in the chat"
         }
       ],
       "BF-80": [
