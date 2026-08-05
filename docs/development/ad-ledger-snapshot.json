@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-05T01:48:04+00:00",
-    "head": "8846d661",
-    "subject_count": 2221,
+    "captured_at": "2026-08-05T02:26:53+00:00",
+    "head": "4177a44d",
+    "subject_count": 2223,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2632,6 +2632,9 @@
       "BF-715": [
         "git BF-715"
       ],
+      "BF-716": [
+        "git BF-716"
+      ],
       "BF-76": [
         "git BF-076"
       ],
@@ -2659,8 +2662,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-05T01:48:04+00:00",
-    "issue_count": 1147,
+    "captured_at": "2026-08-05T02:26:53+00:00",
+    "issue_count": 1149,
     "issues": {
       "AD-1000": [
         {
@@ -4186,6 +4189,17 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1203: per-turn tool-use provenance -- an agent's claims are not traceable to the calls behind them"
+        }
+      ],
+      "AD-1204": [
+        {
+          "claims": [
+            "AD-1204"
+          ],
+          "number": 1149,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1204: an incomplete promoted turn reads as 'running', and the agent tells the Captain so"
         }
       ],
       "AD-423": [
@@ -14305,6 +14319,17 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-715: a relative sandbox workdir made the script path resolve twice, breaking all code execution"
+        }
+      ],
+      "BF-716": [
+        {
+          "claims": [
+            "BF-716"
+          ],
+          "number": 1148,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-716: the Bridge showed a blocked agent, but nothing about it read as urgent"
         }
       ],
       "BF-80": [
