@@ -153,13 +153,20 @@ describe('AD-1201 Bridge APPROVALS section', () => {
     expect(header).toBeNull();
   });
 
-  it('shows a compact summary per row — who asked, what kind, how long ago', async () => {
+  it('shows a compact summary per row — the ask, what kind, how long ago', async () => {
     await mountBridge([CAPABILITY_ROW], []);
     await screen.findByText(/Approvals \(1\)/i);
 
     const row = screen.getByTestId('bridge-approval-row');
-    expect(row.textContent).toContain('continue');
-    expect(row.textContent).toContain('engineering-3');
+    // BF-716: the ASK leads. This assertion used to require the agent id
+    // ('engineering-3') in the row, which is what shipped — and the Captain
+    // reported the result as unreadable: "CONTINUE counselor_counselor_0_67c601cb".
+    // The identifier is not what makes a card actionable, so it is no longer
+    // the headline; `target` (BF-709's readable request) is.
+    expect(screen.getByTestId('bridge-approval-ask').textContent).toContain(
+      'summarise the incident log',
+    );
+    expect(screen.getByTestId('bridge-approval-kind').textContent).toBe('continue');
     expect(row.textContent).toMatch(/just now|m ago|h ago|d ago/);
     // The approve/deny controls belong in the centre, not the feed.
     expect(row.querySelector('button')).toBeNull();

@@ -19,11 +19,15 @@ const APPROVALS_POLL_INTERVAL_MS = 10000;
 
 /* ── Collapsible Section ── */
 function BridgeSection({
-  title, count, defaultOpen, accentColor, onExpand, stationId, children,
+  title, count, defaultOpen, accentColor, onExpand, stationId, alerting, children,
 }: {
   title: string; count: number; defaultOpen: boolean;
   accentColor?: string; onExpand?: () => void;
   stationId?: StationId;
+  /** BF-716: this section is waiting on the Captain. Pulses its edge (HXI #4:
+   *  motion encodes state, never decoration). Only the approvals feed sets it —
+   *  if everything pulses, nothing does. */
+  alerting?: boolean;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -31,8 +35,12 @@ function BridgeSection({
 
   return (
     <div>
+      {alerting && (
+        <style>{`@keyframes bridgeApprovalAttention{0%,100%{border-left-color:rgba(240,176,96,0.35)}50%{border-left-color:rgba(240,176,96,1)}}`}</style>
+      )}
       <div
         data-station={stationId}
+        data-alerting={alerting ? 'true' : undefined}
         onClick={() => setOpen(o => !o)}
         style={{
           padding: '8px 12px',
@@ -45,7 +53,14 @@ function BridgeSection({
           // AD-943: the command-station layer carries its accent edge; the
           // activity-feed sections (no stationId) do not — a glanceable
           // distinction (HXI #6), reusing the accent token (no new color).
-          borderLeft: stationId ? `2px solid ${color}` : undefined,
+          // BF-716: an alerting feed section is the one exception — a blocked
+          // agent earns an edge, and that edge pulses.
+          borderLeft: stationId
+            ? `2px solid ${color}`
+            : alerting ? `2px solid ${color}` : undefined,
+          animation: alerting
+            ? 'bridgeApprovalAttention 2s ease-in-out infinite'
+            : undefined,
         }}
       >
         <span style={{ color: '#666' }}>{open ? <ChevronDown size={8} /> : <ChevronRight size={8} />}</span>
@@ -117,6 +132,15 @@ function StationActionRow({ action, accent }: { action: StationAction; accent: s
    deliberately NOT truncated here, because a truncated assembled prompt is still
    noise and hiding it would make #1115 harder to see. ── */
 function ApprovalRow({ approval, onOpen }: { approval: PendingApproval; onOpen: () => void }) {
+  /* BF-716: the ASK is the headline, not the agent id.
+   *
+   * AD-1201 shipped this row rendering `kind` + `agent_id`, so the Captain saw
+   * "CONTINUE counselor_counselor_0_67c601cb" — an opaque identifier — while
+   * `target` sat unused one property away. BF-709 had just done the work to
+   * make `target` the Captain's raw request instead of the assembled prompt;
+   * this row discarded that entirely. The human-readable text is the reason a
+   * card is glanceable, so it leads. */
+  const ask = (approval.target || '').trim();
   return (
     <div
       data-testid="bridge-approval-row"
@@ -124,28 +148,37 @@ function ApprovalRow({ approval, onOpen }: { approval: PendingApproval; onOpen: 
       onClick={onOpen}
       style={{
         display: 'flex',
-        alignItems: 'baseline',
-        gap: 6,
+        flexDirection: 'column' as const,
+        gap: 2,
         padding: '5px 6px',
         cursor: 'pointer',
         userSelect: 'none' as const,
         borderRadius: 4,
       }}
     >
-      <span style={{
-        fontSize: 9, fontWeight: 700, letterSpacing: 0.5,
-        textTransform: 'uppercase' as const, color: '#f0b060',
-      }}>
-        {approval.kind || approval.queue}
-      </span>
-      <span style={{
-        fontSize: 10, color: '#9098b0',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
-      }}>
-        {approval.agent_id || 'unknown agent'}
-      </span>
-      <span style={{ marginLeft: 'auto', fontSize: 9, color: '#666680', flexShrink: 0 }}>
-        {timeAgo(approval.created_at)}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span
+          data-testid="bridge-approval-kind"
+          style={{
+            fontSize: 9, fontWeight: 700, letterSpacing: 0.5,
+            textTransform: 'uppercase' as const, color: '#f0b060', flexShrink: 0,
+          }}
+        >
+          {approval.kind || approval.queue}
+        </span>
+        <span style={{ marginLeft: 'auto', fontSize: 9, color: '#666680', flexShrink: 0 }}>
+          {timeAgo(approval.created_at)}
+        </span>
+      </div>
+      <span
+        data-testid="bridge-approval-ask"
+        style={{
+          fontSize: 11, color: '#c8cee0', lineHeight: 1.35,
+          display: '-webkit-box', WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical' as const, overflow: 'hidden',
+        }}
+      >
+        {ask || approval.agent_id || 'unknown request'}
       </span>
     </div>
   );
@@ -269,6 +302,37 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
 
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+        {/* ── APPROVALS — ABOVE the stations, deliberately (BF-716, HXI #9).
+            AD-1201 put this at the top of the activity feed, which renders
+            AFTER every command station. Measured on the reference vessel: a
+            blocked agent sat below PERSONNEL (0), SCIENCE (0), OPERATIONS (0),
+            ENGINEERING (0) and COMMAND (0) — outranked by five sections
+            containing nothing. HXI #9 is explicit that pending decisions rise
+            to the top and the layout reshapes around what matters right now,
+            so an agent waiting on the Captain outranks a station at rest.
+
+            It still carries no stationId: it is a feed item that rises and
+            recedes, not a command station. `alerting` gives it the one pulsing
+            edge in the panel — the exception that makes the rule readable. ── */}
+        {pendingApprovals.length > 0 && (
+          <BridgeSection
+            title="Approvals"
+            count={pendingApprovals.length}
+            defaultOpen={true}
+            accentColor="#f0b060"
+            alerting={true}
+            onExpand={() => useStore.setState({ approvalsCenterOpen: true })}
+          >
+            {pendingApprovals.map(a => (
+              <ApprovalRow
+                key={`${a.queue}:${a.id}`}
+                approval={a}
+                onOpen={() => useStore.setState({ approvalsCenterOpen: true })}
+              />
+            ))}
+          </BridgeSection>
+        )}
+
         {/* ── COMMAND STATIONS — the Ship's-Computer command layer (AD-943).
             Driven by the typed registry; the 3 existing sections migrate here.
             personnel/science/command are modelled placeholders (no body yet),
@@ -300,29 +364,9 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
           ))}
 
         {/* ── ACTIVITY FEED — alert-driven, NOT stations (HXI #9). These rise
-            and recede with system state; they carry no stationId. ── */}
-        {/* APPROVALS (AD-1201) — an agent is blocked waiting on the Captain.
-            Deliberately no stationId: this is a feed item that rises and
-            recedes, not a command station. Expand opens the approvals centre,
-            where the approve/deny controls live. */}
-        {pendingApprovals.length > 0 && (
-          <BridgeSection
-            title="Approvals"
-            count={pendingApprovals.length}
-            defaultOpen={true}
-            accentColor="#f0b060"
-            onExpand={() => useStore.setState({ approvalsCenterOpen: true })}
-          >
-            {pendingApprovals.map(a => (
-              <ApprovalRow
-                key={`${a.queue}:${a.id}`}
-                approval={a}
-                onOpen={() => useStore.setState({ approvalsCenterOpen: true })}
-              />
-            ))}
-          </BridgeSection>
-        )}
-
+            and recede with system state; they carry no stationId. Approvals
+            render ABOVE the stations (BF-716); everything below is ordinary
+            feed. ── */}
         {/* ATTENTION */}
         {attentionCount > 0 && (
           <BridgeSection title="Attention" count={attentionCount} defaultOpen={true} accentColor="#f0b060">
