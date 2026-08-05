@@ -28,17 +28,17 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
-| AD | **AD-1207** | **AD-1208** | AD-1201 | 1202-1207 |
+| AD | **AD-1208** | **AD-1209** | AD-1201 | 1202-1208 |
 | BF | **BF-716** | **BF-717** | BF-716 | _(none)_ |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-05T02:45:43+00:00 at `c4985118` | 2224 subjects, 813 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-05T03:13:41+00:00 at `aabccb2b` | 2225 subjects, 813 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-05T02:45:43+00:00 | 1153 issues, 740 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-08-05T03:13:41+00:00 | 1155 issues, 741 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,7 +46,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 67 | 9 | assigned, issue open, no shipped code |
+| `allocated-open` | 68 | 9 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 6 | 0 | abandoned, number **not** reusable |
@@ -54,10 +54,11 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 ## Allocated and open — **do not reuse these numbers**
 
-76 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+77 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
+| `AD-1208` | [#1154](https://github.com/seangalliher/ProbOS/issues/1154) | issue #1154 open, no code | AD-1208: bound agentic turns by risk and cost, not by a flat iteration cap |
 | `AD-1207` | [#1152](https://github.com/seangalliher/ProbOS/issues/1152), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1152, #1153 open, no code | AD-1207: nothing surfaces a fault the ship has found to the Captain |
 | `AD-1206` | [#1151](https://github.com/seangalliher/ProbOS/issues/1151), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1151, #1153 open, no code | AD-1206: an approved repair brief becomes a GitHub issue (the missing consumer) |
 | `AD-1205` | [#1150](https://github.com/seangalliher/ProbOS/issues/1150), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1150, #1153 open, no code | AD-1205: fault detection is too narrow to see a defect that breaks everything |

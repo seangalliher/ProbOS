@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-05T02:45:43+00:00",
-    "head": "c4985118",
-    "subject_count": 2224,
+    "captured_at": "2026-08-05T03:13:41+00:00",
+    "head": "aabccb2b",
+    "subject_count": 2225,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2662,8 +2662,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-05T02:45:43+00:00",
-    "issue_count": 1153,
+    "captured_at": "2026-08-05T03:13:41+00:00",
+    "issue_count": 1155,
     "issues": {
       "AD-1000": [
         {
@@ -4261,6 +4261,17 @@
           "reason": "",
           "state": "OPEN",
           "title": "Epic: ProbOS observes, diagnoses and reports its own defects (AD-1203, AD-1205, AD-1206, AD-1207)"
+        }
+      ],
+      "AD-1208": [
+        {
+          "claims": [
+            "AD-1208"
+          ],
+          "number": 1154,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1208: bound agentic turns by risk and cost, not by a flat iteration cap"
         }
       ],
       "AD-423": [
@@ -14274,6 +14285,15 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1179: derive tool schemas from the tool (kill the BF-701/BF-706 drift class)"
+        },
+        {
+          "claims": [
+            "BF-706"
+          ],
+          "number": 1155,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-706: the in-page input verbs the agent was never offered"
         }
       ],
       "BF-707": [
