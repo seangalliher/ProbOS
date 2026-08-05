@@ -28,17 +28,17 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
-| AD | **AD-1208** | **AD-1209** | AD-1201 | 1202-1208 |
+| AD | **AD-1208** | **AD-1209** | AD-1204 | 1205-1208 |
 | BF | **BF-717** | **BF-718** | BF-716 | 717 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-05T04:19:20+00:00 at `aeaa8048` | 2226 subjects, 813 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-05T04:59:08+00:00 at `7cf58c41` | 2228 subjects, 814 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-05T04:19:20+00:00 | 1156 issues, 742 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-08-05T04:59:08+00:00 | 1156 issues, 742 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,15 +46,15 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 68 | 10 | assigned, issue open, no shipped code |
+| `allocated-open` | 67 | 10 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 6 | 0 | abandoned, number **not** reusable |
-| `shipped` | 873 | 376 | code in history |
+| `shipped` | 874 | 376 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-78 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+77 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -62,7 +62,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-1207` | [#1152](https://github.com/seangalliher/ProbOS/issues/1152), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1152, #1153 open, no code | AD-1207: nothing surfaces a fault the ship has found to the Captain |
 | `AD-1206` | [#1151](https://github.com/seangalliher/ProbOS/issues/1151), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1151, #1153 open, no code | AD-1206: an approved repair brief becomes a GitHub issue (the missing consumer) |
 | `AD-1205` | [#1150](https://github.com/seangalliher/ProbOS/issues/1150), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1150, #1153 open, no code | AD-1205: fault detection is too narrow to see a defect that breaks everything |
-| `AD-1204` | [#1149](https://github.com/seangalliher/ProbOS/issues/1149) | issue #1149 open, no code | AD-1204: an incomplete promoted turn reads as 'running', and the agent tells the Captain so |
 | `AD-1203` | [#1147](https://github.com/seangalliher/ProbOS/issues/1147), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1147, #1153 open, no code | AD-1203: per-turn tool-use provenance -- an agent's claims are not traceable to the calls behind them |
 | `AD-1202` | [#1142](https://github.com/seangalliher/ProbOS/issues/1142) | issue #1142 open, no code | AD-1202: the HXI has no control primitives -- 478 controls styled inline, zero shared components |
 | `AD-1200` | [#1137](https://github.com/seangalliher/ProbOS/issues/1137) | issue #1137 open, no code | AD-1200: hierarchical AGENTS.md discovery for external repositories |
@@ -160,7 +159,7 @@ _(none)_
 
 ## Shipped
 
-**AD** (873): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180, 1184, 1201
+**AD** (874): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180, 1184, 1201, 1204
 
 **BF** (376): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-686, 688, 690, 692-710, 715-716
 

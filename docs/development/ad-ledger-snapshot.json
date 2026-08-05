@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-05T04:19:20+00:00",
-    "head": "aeaa8048",
-    "subject_count": 2226,
+    "captured_at": "2026-08-05T04:59:08+00:00",
+    "head": "7cf58c41",
+    "subject_count": 2228,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -363,6 +363,9 @@
       ],
       "AD-1201": [
         "git AD-1201"
+      ],
+      "AD-1204": [
+        "git AD-1204"
       ],
       "AD-142": [
         "git AD-142"
@@ -2662,7 +2665,7 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-05T04:19:20+00:00",
+    "captured_at": "2026-08-05T04:59:08+00:00",
     "issue_count": 1156,
     "issues": {
       "AD-1000": [
@@ -4204,8 +4207,8 @@
             "AD-1204"
           ],
           "number": 1149,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1204: an incomplete promoted turn reads as 'running', and the agent tells the Captain so"
         }
       ],
