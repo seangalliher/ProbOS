@@ -313,8 +313,9 @@ class TestRealProduceConsumePath:
                 thread_id="thread-1",
                 config=_config(),
             )
-            # Assert — the partial work survives, verbatim and first.
-            assert text.startswith(outcome.final_text)
+            # Assert — the partial work survives verbatim; BF-717 moved it BELOW
+            # the stop notice, so it now trails rather than leads.
+            assert text.endswith(outcome.final_text)
             assert "step limit" in text
             assert "still open" in text
             # ...and exactly one durable ask reached the queue.
@@ -322,7 +323,11 @@ class TestRealProduceConsumePath:
             assert len(pending) == 1
             assert pending[0].kind == CONTINUE_REQUEST_KIND
             assert pending[0].agent_id == "counselor_0"
-            assert f"request {pending[0].id}" in text
+            # BF-717: the id is still discoverable, but it is now parenthetical
+            # rather than the sentence's subject — the Captain needs the ACTION
+            # ("approve it in the Bridge"), not a UUID to copy.
+            assert pending[0].id in text
+            assert "Bridge" in text
         finally:
             await store.stop()
 
@@ -585,7 +590,7 @@ class TestPassCap:
                 config=_config(max_passes=1),
             )
             # Assert
-            assert text.startswith("partial")
+            assert text.endswith("partial")  # BF-717: work trails the notice
             assert len(await store.list_pending()) == 1
         finally:
             await store.stop()
@@ -718,7 +723,7 @@ class TestFailSafe:
                 config=_config(),
             )
             # Assert
-            assert text.startswith("partial")
+            assert text.endswith("partial")  # BF-717: work trails the notice
             assert "step limit" in text
             assert len(await store.list_pending()) == 1
         finally:
@@ -739,8 +744,8 @@ class TestFailSafe:
             config=_config(),
         )
         # Assert
-        assert text.startswith("partial")
-        assert text.endswith(_CUT_OFF_TAIL)
+        assert text.endswith("partial")  # BF-717: work trails the notice
+        assert _CUT_OFF_TAIL in text
         assert "request " not in text
 
     @pytest.mark.asyncio
@@ -758,7 +763,7 @@ class TestFailSafe:
         )
         # Assert
         assert text == (
-            "partial" + _CUT_OFF_SEPARATOR + _CUT_OFF_LEAD_WITH_WORK + _CUT_OFF_TAIL
+            _CUT_OFF_LEAD_WITH_WORK + _CUT_OFF_TAIL + _CUT_OFF_SEPARATOR + "partial"
         )
 
     @pytest.mark.asyncio
@@ -790,7 +795,7 @@ class TestFailSafe:
                 config=_config(max_passes=3),
             )
             # Assert
-            assert text.startswith("pass one")
+            assert text.endswith("pass one")  # BF-717: work trails the notice
             assert len(await store.list_pending()) == 1
         finally:
             await store.stop()
@@ -825,7 +830,7 @@ class TestFailSafe:
                 config=_config(max_passes=3),
             )
             # Assert
-            assert text.startswith("pass one")
+            assert text.endswith("pass one")  # BF-717: work trails the notice
             assert len(await store.list_pending()) == 1
         finally:
             await store.stop()
@@ -1103,10 +1108,18 @@ class TestHonestStatement:
         assert "still open" in lowered
 
     def test_the_no_work_lead_does_not_claim_there_is_work_above_it(self):
-        """A text-less run must not say "the work above is partial" above nothing."""
+        """Each lead must describe the work that is actually there.
+
+        BF-717 inverted the order: the stop notice now LEADS and the partial work
+        follows it, because a Captain scanning a thread reads the first line and
+        the first line has to be the one that needs them. So the with-work lead
+        points BELOW, not above. The property is unchanged — a run that produced
+        no text must not claim there is work anywhere — only the direction moved.
+        """
         # Act / Assert
         assert "above" not in _CUT_OFF_LEAD_NO_WORK
-        assert "above" in _CUT_OFF_LEAD_WITH_WORK
+        assert "below" not in _CUT_OFF_LEAD_NO_WORK
+        assert "below" in _CUT_OFF_LEAD_WITH_WORK
 
     @pytest.mark.asyncio
     async def test_the_partial_work_is_preserved_verbatim_and_first(self, tmp_path):
@@ -1126,8 +1139,14 @@ class TestHonestStatement:
                 config=_config(),
             )
             # Assert
-            assert text.startswith(partial)
-            assert text[len(partial):].startswith(_CUT_OFF_SEPARATOR)
+            assert text.endswith(partial)
+            assert _CUT_OFF_SEPARATOR + partial in text
+            # BF-717: the STOP leads now. Measured on the reference vessel, the
+            # old order opened with mid-thought technical detail and the Captain,
+            # reading the top, saw an agent still working and waited 22 minutes.
+            assert text.startswith("I have stopped")
+            # The AD-1164 guarantee is untouched: partial work preserved verbatim.
+            assert partial in text
         finally:
             await store.stop()
 
@@ -1252,7 +1271,7 @@ class TestReuse:
                 config=_config(max_passes=3),
             )
             # Assert
-            assert text.startswith("partial")
+            assert text.endswith("partial")  # BF-717: work trails the notice
             assert len(await store.list_pending()) == 1
         finally:
             await store.stop()

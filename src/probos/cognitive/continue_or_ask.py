@@ -115,19 +115,33 @@ _MAX_EXCERPT_CHARS = 120
 # approximately right about that.
 _CUT_OFF_SEPARATOR: str = "\n\n---\n"
 _CUT_OFF_LEAD_WITH_WORK: str = (
-    "I stopped here because this turn reached its step limit. The work above is "
-    "partial and the task is still open."
+    "I have stopped and need your approval to keep going — this turn reached "
+    "its step limit with the task still open. Partial work is below."
 )
 _CUT_OFF_LEAD_NO_WORK: str = (
-    "I stopped because this turn reached its step limit before I had anything "
-    "to report back. The task is still open."
+    "I have stopped and need your approval to keep going — this turn reached "
+    "its step limit before I had anything to report back. The task is still "
+    "open."
 )
+# BF-717: the tail names the action that actually resumes the work.
+#
+# This previously read "say the word and I will pick up from exactly where this
+# stopped", which directs the Captain to the one surface that cannot help them.
+# A chat reply does not resume a stopped turn. Approving the request does — and
+# only since AD-1204, which made approval fulfil the request and re-dispatch the
+# parked work item. Before that the sentence was false in every case; after it,
+# it is false only in the way that matters most, by sending the human somewhere
+# that looks responsive and changes nothing.
+#
+# Observed on the reference vessel 2026-08-04: the Captain read this line, replied
+# in the thread, and waited. The request sat pending in the Bridge the whole time.
 _CUT_OFF_TAIL: str = (
-    " Say the word and I will pick up from exactly where this stopped."
+    " Filing an approval ask for it failed, so ask me again and I will restart "
+    "from here."
 )
 _CUT_OFF_TAIL_WITH_REQUEST: str = (
-    " I filed request {request_id} asking the Captain whether to keep going; "
-    "say the word and I will pick up from exactly where this stopped."
+    " Approve the pending request in the Bridge and I will pick up from exactly "
+    "where this stopped. (Request {request_id}.)"
 )
 
 _CONTINUE_RATIONALE: str = (
@@ -762,4 +776,18 @@ async def resolve_exhausted_turn(
         else _CUT_OFF_TAIL
     )
     note = lead + tail
-    return partial + _CUT_OFF_SEPARATOR + note if partial else note
+    # BF-717: the STOP leads; the partial work follows it.
+    #
+    # This previously returned ``partial + separator + note``, which put ~200
+    # characters of mid-thought technical detail above the fact that everything
+    # had halted. Measured on the reference vessel 2026-08-04: the message opened
+    # "Let me fetch via the simpler /pypi/{package}/{latest} approach to get clean
+    # version info" and the Captain, reading the top of it, saw an agent still
+    # working. They waited 22 minutes. The stop notice was present the whole time,
+    # below a horizontal rule, at the bottom.
+    #
+    # Partial work is context FOR the decision, not the headline. A human scanning
+    # a thread reads the first line, so the first line has to be the one that
+    # needs them. The AD-1164 guarantee is unchanged -- the partial work is still
+    # returned in full, and a turn with no work still yields the bare note.
+    return note + _CUT_OFF_SEPARATOR + partial if partial else note

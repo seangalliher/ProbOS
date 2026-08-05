@@ -325,7 +325,8 @@ class TestTheItemIsParked:
         )
 
         # Assert — partial work returned, ask filed, item simply not parked.
-        assert text.startswith("I have the page open")
+        # BF-717: the stop notice leads, the partial work follows it.
+        assert text.index("I have the page open") > text.index("I have stopped")
         pending = await request_store.list_pending()
         assert len(pending) == 1
         refreshed = await work_item_store.get_work_item(item.id)
@@ -543,7 +544,8 @@ class TestUnpromotedTurnIsUnchanged:
         pending = await wired.request_store.list_pending()
         assert len(pending) == 1
         assert pending[0].work_item_id is None
-        assert text.startswith("I have the page open")
+        # BF-717: the stop notice leads, the partial work follows it.
+        assert text.index("I have the page open") > text.index("I have stopped")
         assert "step limit" in text
         assert wired.router.dispatched == []
 
