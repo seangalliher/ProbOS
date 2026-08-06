@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-05T17:29:26+00:00",
-    "head": "6d143a71",
-    "subject_count": 2230,
+    "captured_at": "2026-08-06T03:28:52+00:00",
+    "head": "ce54f62d",
+    "subject_count": 2231,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2668,8 +2668,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-05T17:29:26+00:00",
-    "issue_count": 1156,
+    "captured_at": "2026-08-06T03:28:52+00:00",
+    "issue_count": 1157,
     "issues": {
       "AD-1000": [
         {
@@ -14428,6 +14428,17 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-717: a promoted turn asks for approval and tells the Captain nothing in the chat"
+        }
+      ],
+      "BF-718": [
+        {
+          "claims": [
+            "BF-718"
+          ],
+          "number": 1157,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-718: agent messages that arrive asynchronously are never spoken"
         }
       ],
       "BF-80": [

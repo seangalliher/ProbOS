@@ -29,16 +29,16 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
 | AD | **AD-1208** | **AD-1209** | AD-1204 | 1205-1208 |
-| BF | **BF-717** | **BF-718** | BF-717 | _(none)_ |
+| BF | **BF-718** | **BF-719** | BF-717 | 718 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-05T17:29:26+00:00 at `6d143a71` | 2230 subjects, 815 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-06T03:28:52+00:00 at `ce54f62d` | 2231 subjects, 815 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-05T17:29:26+00:00 | 1156 issues, 742 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-08-06T03:28:52+00:00 | 1157 issues, 743 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,7 +46,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 67 | 9 | assigned, issue open, no shipped code |
+| `allocated-open` | 67 | 10 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 6 | 0 | abandoned, number **not** reusable |
@@ -54,7 +54,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 ## Allocated and open — **do not reuse these numbers**
 
-76 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+77 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -125,6 +125,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-277` | — | mentioned by an authority, no code and no closure |  |
 | `AD-276` | — | mentioned by an authority, no code and no closure |  |
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
+| `BF-718` | [#1157](https://github.com/seangalliher/ProbOS/issues/1157) | issue #1157 open, no code | BF-718: agent messages that arrive asynchronously are never spoken |
 | `BF-714` | [#1145](https://github.com/seangalliher/ProbOS/issues/1145) | issue #1145 open, no code | BF-714: the DM degrade message discards the diagnosis the runtime already made |
 | `BF-713` | [#1144](https://github.com/seangalliher/ProbOS/issues/1144) | issue #1144 open, no code | BF-713: doctor UX test depends on a live LLM proxy and flakes when it returns an empty 200 |
 | `BF-712` | [#1143](https://github.com/seangalliher/ProbOS/issues/1143) | issue #1143 open, no code | BF-712: AD-580 resolve-refire test has a 10ms timing margin and flakes under the parallel gate |
