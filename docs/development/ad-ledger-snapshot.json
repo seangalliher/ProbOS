@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-06T03:28:52+00:00",
-    "head": "ce54f62d",
-    "subject_count": 2231,
+    "captured_at": "2026-08-06T03:51:43+00:00",
+    "head": "81eb675f",
+    "subject_count": 2233,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2641,6 +2641,9 @@
       "BF-717": [
         "git BF-717"
       ],
+      "BF-719": [
+        "git BF-719"
+      ],
       "BF-76": [
         "git BF-076"
       ],
@@ -2668,8 +2671,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-06T03:28:52+00:00",
-    "issue_count": 1157,
+    "captured_at": "2026-08-06T03:51:43+00:00",
+    "issue_count": 1158,
     "issues": {
       "AD-1000": [
         {
@@ -14439,6 +14442,17 @@
           "reason": "",
           "state": "OPEN",
           "title": "BF-718: agent messages that arrive asynchronously are never spoken"
+        }
+      ],
+      "BF-719": [
+        {
+          "claims": [
+            "BF-719"
+          ],
+          "number": 1158,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-719: the sandbox says network is off but not what to use instead, so agents fetch with Python"
         }
       ],
       "BF-80": [
