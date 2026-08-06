@@ -790,6 +790,42 @@ export interface LiveRailOwner {
   readonly parentId: string;
 }
 
+/**
+ * BF-720: the places a live frame can stop travelling.
+ *
+ * A frame that reaches the websocket but never reaches a transcript used to
+ * vanish at one of six `return`s with no log, no counter and no dev warning.
+ * BF-703 and BF-720 were both diagnosed by a human noticing an absence,
+ * because there was nothing else to notice.
+ *
+ * - `frame_shape`      the envelope or payload failed validation.
+ * - `generation`       no authority, or a different stream generation.
+ * - `sequence`         replay or out-of-order.
+ * - `thread_not_open`  neither chat shell claims the thread.
+ * - `thread_mismatch`  a mounted chat surface is not the addressed thread.
+ *                      Expected when several surfaces are mounted: only one
+ *                      of them owns the thread. Only interesting when NO
+ *                      surface accepted a refresh command.
+ * - `stale_transcript` a fetched transcript was discarded after it arrived.
+ */
+export type LiveDropGate =
+  | 'frame_shape'
+  | 'generation'
+  | 'sequence'
+  | 'thread_not_open'
+  | 'thread_mismatch'
+  | 'stale_transcript';
+
+export interface LiveDropRecord {
+  readonly gate: LiveDropGate;
+  /** Frame `type`, or `'<unparsed>'` when the shape gate rejected it. */
+  readonly eventType: string;
+  /** Thread the frame addressed, when one could be recovered. */
+  readonly threadId: string | null;
+  /** Free-form discriminator, e.g. the reason a transcript was discarded. */
+  readonly detail: string | null;
+}
+
 export type CrewTaskDetailResponse =
   | LegacyCrewTaskTree
   | { readonly session: CrewSessionDetailProjection };

@@ -30,6 +30,7 @@ import type {
   ArtifactVersionAddedData, ChatThreadMessageAppendedData,
   CrewSessionDetailProjection, CrewSessionProjectionEventData,
   CrewSessionSummaryProjection, LiveArtifactRefreshCommand,
+  LiveDropGate, LiveDropRecord,
   LiveRailOwner, LiveThreadRefreshCommand, LiveTodoRefreshCommand,
   RoomSummary,
 } from './types';
@@ -385,6 +386,12 @@ export interface HXIState {
   liveTodoRefresh: LiveTodoRefreshCommand | null;
   liveCrewOwnerParentId: string | null;
   liveRailOwner: LiveRailOwner | null;
+  // BF-720: every place a live frame stops travelling. ``liveDropCount`` is a
+  // monotonic total; ``liveDrops`` keeps the most recent ``LIVE_DROP_LOG_LIMIT``
+  // records so a test -- or a human staring at a transcript that will not
+  // update -- can name the gate instead of inferring it from an absence.
+  liveDropCount: number;
+  liveDrops: readonly LiveDropRecord[];
   // AD-938: thread-keyed display transcript. When a thread is active the
   // profile chat tab renders these (the thread's real messages) instead of the
   // per-agent ``agentConversations`` buffer; loaded on open + reconciled on
@@ -532,6 +539,14 @@ export interface HXIState {
 
   // Actions
   handleEvent: (event: WSEvent) => void;
+  // BF-720: record a live frame that stopped travelling. Called from the store's
+  // own gates and from the chat surfaces downstream of them.
+  recordLiveDrop: (
+    gate: LiveDropGate,
+    eventType: string,
+    threadId?: string | null,
+    detail?: string | null,
+  ) => void;
   addChatMessage: (role: 'user' | 'agent' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; buildFailureReport?: BuildFailureReport; architectProposal?: ArchitectProposalView; agent_id?: string; callsign?: string }) => void;
   clearAnimationEvent: (key: 'pendingConsensusFlash' | 'pendingSelfModBloom' | 'pendingRoutingPulse' | 'pendingFeedbackPulse') => void;
   setConnected: (v: boolean) => void;
@@ -1208,6 +1223,25 @@ function parseLiveFrame(event: WSEvent): ParsedLiveFrame | null {
   };
 }
 
+/**
+ * BF-720: how many drop records to retain. Bounded so a drop storm (a client
+ * awaiting a snapshot while the server keeps emitting) cannot grow the store.
+ */
+const LIVE_DROP_LOG_LIMIT = 32;
+
+/**
+ * BF-720: best-effort thread identity for a frame that may not have parsed.
+ * A drop record is only useful if it names the transcript that went quiet, and
+ * the shape gate rejects frames before any typed accessor is available.
+ */
+function liveFrameThreadId(event: unknown): string | null {
+  if (!isLiveRecord(event) || !isLiveRecord(event.data)) return null;
+  const threadId = event.data.thread_id;
+  return typeof threadId === 'string' && threadId.length > 0 && threadId.length <= 128
+    ? threadId
+    : null;
+}
+
 function boundedMapSet<K, V>(
   source: ReadonlyMap<K, V>,
   key: K,
@@ -1293,6 +1327,9 @@ export const useStore = create<HXIState>((set, get) => ({
   liveTodoRefresh: null,
   liveCrewOwnerParentId: null,
   liveRailOwner: null,
+  // BF-720: no frame has been dropped yet.
+  liveDropCount: 0,
+  liveDrops: [],
   // AD-938: empty at boot; ProfileChatTab populates per active thread.
   threadMessages: new Map(),
   activeThreadId: null,
@@ -2467,9 +2504,31 @@ export const useStore = create<HXIState>((set, get) => ({
 
   clearAnimationEvent: (key) => set({ [key]: null }),
 
+  // BF-720: the only way a dropped frame leaves a trace.
+  recordLiveDrop: (gate, eventType, threadId = null, detail = null) => {
+    const record: LiveDropRecord = { gate, eventType, threadId, detail };
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.debug(
+        '[live-drop] %s dropped %s (thread=%s, detail=%s)',
+        gate, eventType, threadId ?? '-', detail ?? '-',
+      );
+    }
+    set((s) => ({
+      liveDropCount: s.liveDropCount + 1,
+      liveDrops: [...s.liveDrops.slice(-(LIVE_DROP_LOG_LIMIT - 1)), record],
+    }));
+  },
+
   handleEvent: (event: WSEvent) => {
     const frame = parseLiveFrame(event);
-    if (frame === null) return;
+    if (frame === null) {
+      const unparsedType = isLiveRecord(event) && typeof event.type === 'string'
+        ? event.type.slice(0, 128)
+        : '<unparsed>';
+      get().recordLiveDrop('frame_shape', unparsedType, liveFrameThreadId(event));
+      return;
+    }
     const { type, data, generation, sequence } = frame;
     const authority = get();
     if (type === 'state_snapshot') {
@@ -2483,6 +2542,10 @@ export const useStore = create<HXIState>((set, get) => ({
       });
     } else {
       if (authority.liveGeneration === null || authority.liveGeneration !== generation) {
+        get().recordLiveDrop(
+          'generation', type, liveFrameThreadId(event),
+          authority.liveGeneration === null ? 'no_authority' : 'generation_changed',
+        );
         return;
       }
       if (type === 'resync_required') {
@@ -2492,7 +2555,10 @@ export const useStore = create<HXIState>((set, get) => ({
         });
         return;
       }
-      if (sequence <= authority.liveSequence) return;
+      if (sequence <= authority.liveSequence) {
+        get().recordLiveDrop('sequence', type, liveFrameThreadId(event), 'replay_or_stale');
+        return;
+      }
       set({
         liveSequence: sequence,
         ...(sequence > authority.liveSequence + 1
@@ -2727,6 +2793,13 @@ export const useStore = create<HXIState>((set, get) => ({
         const shellThread = current.activeThreadId ?? null;
         const isOpen = message.thread_id === profileThread
           || message.thread_id === shellThread;
+        if (!isOpen) {
+          // BF-720: expected for a background thread, but this is also gate 4 --
+          // the one BF-703 had to widen -- so it must say so out loud.
+          get().recordLiveDrop(
+            'thread_not_open', type, message.thread_id, 'no_shell_owns_thread',
+          );
+        }
         set({
           chatThreads,
           ...(isOpen

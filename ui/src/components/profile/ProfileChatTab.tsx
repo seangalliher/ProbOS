@@ -639,24 +639,57 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     transcriptInFlightRef.current.add(targetThreadId);
     const requestId = ++transcriptRequestRef.current;
     const authority = useStore.getState();
+    // BF-720: capture the AUTHORITY this transcript is fetched under, and only
+    // that. ``liveGeneration`` identifies the stream whose state the server is
+    // serving; if it changes mid-fetch the result describes a world this client
+    // no longer trusts, and a snapshot will re-establish authority and bump
+    // ``liveRepairEpoch`` to refetch.
+    //
+    // ``liveSequence`` used to be captured here too and compared after the
+    // fetch. That was a liveness bug, not a safety property: a sequence advance
+    // within the same generation means only "another frame arrived", and one
+    // always does at the moment a work item finishes and its report is promoted.
+    // On the reference vessel it discarded a fetched-and-correct transcript and
+    // left a promoted report invisible for 17.5 minutes. Ordering between two
+    // refreshes of the same thread is already enforced by ``requestId`` and
+    // ``transcriptInFlightRef``, which coalesce rather than race.
     const generation = authority.liveGeneration;
-    const sequence = authority.liveSequence;
     try {
       const outcome = await repairThreadMessages(targetThreadId);
       const current = useStore.getState();
       const currentOwner = transcriptOwnerRef.current;
-      if (
-        requestId !== transcriptRequestRef.current
-        || currentOwner.agentId !== agentId
-        || currentOwner.threadId !== targetThreadId
-        || current.liveGeneration !== generation
-        || current.liveSequence !== sequence
-        || outcome.kind !== 'success'
-      ) return;
+      // BF-720: a transcript that arrived and was then thrown away is the sixth
+      // drop point, and the only one downstream of a successful fetch. Name the
+      // discriminator so the log distinguishes "never fetched" from "fetched
+      // and discarded". Checked first so ``outcome`` narrows for the rest.
+      if (outcome.kind !== 'success') {
+        current.recordLiveDrop(
+          'stale_transcript', 'transcript_repair', targetThreadId, 'fetch_failed',
+        );
+        return;
+      }
+      const staleReason = requestId !== transcriptRequestRef.current
+        ? 'superseded_request'
+        : currentOwner.agentId !== agentId
+          ? 'owner_agent_changed'
+          : currentOwner.threadId !== targetThreadId
+            ? 'owner_thread_changed'
+            : current.liveGeneration !== generation
+              ? 'generation_changed'
+              : null;
+      if (staleReason !== null) {
+        current.recordLiveDrop('stale_transcript', 'transcript_repair', targetThreadId, staleReason);
+        return;
+      }
       if (
         triggerMessageId !== null
         && !outcome.messages.some(message => message.id === triggerMessageId)
-      ) return;
+      ) {
+        current.recordLiveDrop(
+          'stale_transcript', 'transcript_repair', targetThreadId, 'trigger_message_absent',
+        );
+        return;
+      }
       current.setThreadMessages(
         targetThreadId,
         outcome.messages.map(message => threadDtoToMessage(message, current.agents)),
@@ -1088,6 +1121,15 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     const command = liveThreadRefresh;
     if (command !== null && command.threadId === activeThreadId) {
       void refreshThreadTranscript(command.requestId);
+    } else if (command !== null) {
+      // BF-720 gate 5. Routine when several chat surfaces are mounted -- only
+      // one of them owns the thread. It matters only when NO surface accepted
+      // the command, which the drop log makes visible by omission of a
+      // corresponding refresh.
+      useStore.getState().recordLiveDrop(
+        'thread_mismatch', 'chat_thread_message_appended', command.threadId,
+        `surface_thread=${activeThreadId ?? 'none'}`,
+      );
     }
   }, [activeThreadId, liveThreadRefresh, refreshThreadTranscript]);
 

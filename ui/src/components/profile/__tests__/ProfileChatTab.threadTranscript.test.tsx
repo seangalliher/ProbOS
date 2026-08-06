@@ -324,7 +324,15 @@ describe('AD-1133 live transcript repair wiring', () => {
   it('drops stale room and stream results before replacing messages', () => {
     expect(profileChatSource).toContain('currentOwner.threadId !== targetThreadId');
     expect(profileChatSource).toContain('current.liveGeneration !== generation');
-    expect(profileChatSource).toContain('current.liveSequence !== sequence');
+    // BF-720: the room and the stream AUTHORITY are what make a result stale.
+    // This assertion also used to pin ``current.liveSequence !== sequence``,
+    // and that pin held the defect in place: a sequence advance within the same
+    // generation means only that another frame arrived, which one always does
+    // at the moment a work item finishes and its report is promoted. It
+    // discarded a fetched-and-correct transcript and left a promoted report
+    // invisible for 17.5 minutes (#1159). Ordering between two refreshes of one
+    // thread is enforced by ``requestId`` + ``transcriptInFlightRef`` instead.
+    expect(profileChatSource).not.toContain('current.liveSequence !== sequence');
   });
 });
 
