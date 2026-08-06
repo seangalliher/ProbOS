@@ -20,6 +20,18 @@ This file contains **durable architectural knowledge** that changes rarely. For 
 
 ---
 
+## Evidence Standard (Standing Order, both modes)
+
+**Claims that something does NOT exist require an enumeration you actually ran.** Asserting a thing exists is self-verifying — you had to find it to cite it. Asserting "nothing consumes this", "there is no such status", "no resume path exists", "that is never called" is not: a failed recall and a completed search are indistinguishable from the inside, and the output is a confident assertion rather than a hedge. Run the search, and show it.
+
+These errors cluster in the subsystems you know best, because familiarity is what licenses skipping the lookup. High confidence about code you recently wrote is the trigger to enumerate, not a reason to skip it. Measured: four wrong premises in one week (2026-08-04/06), two of which reached filed GitHub issues, one of which was written into a shipped code comment.
+
+**Live-system claims must come from the live system.** The running vessel's data directory is `%LOCALAPPDATA%\ProbOS\data`, NOT `d:\ProbOS\data` (a stale decoy). Resolve the path from the process, never infer it from the repo layout. Four wrong file-based claims came from this one mistake.
+
+**Prefer empirical evidence to reading.** Comparing producer-marker and consumer-marker counts in the live log, or querying the live database, has surfaced more real defects here than source reading — which is what produces the confident wrong answers. A producer firing proves the producer, not the chain.
+
+---
+
 ## Building: Engineering Principles (Standing Order)
 
 All code MUST maintain the **ProbOS Principles Stack**. These are enforced during architect review and apply to all contributors.
@@ -163,6 +175,9 @@ When reviewing PROGRESS.md or evaluating changes, check for:
 - **Missing boundary test**: "This public method has a happy-path test but no error/edge case test."
 - **Circular import risk**: "This import creates a cycle between [X] and [Y]. Use `TYPE_CHECKING` guard for type-only imports."
 - **Raw config access**: "This reads configuration from a raw dict/env var instead of using the Pydantic models in config.py."
+- **Half-chain evidence**: "A test proves the producer fires and another proves the consumer works, but nothing crosses the seam. That is the signature of this repo's most common defect — every link correct, the chain dead. Require one test spanning file → approve → fulfil → resume."
+- **Test pinning the defect as contract**: "This assertion encodes the buggy behaviour as a requirement — highest risk in `?raw` source scans, which cannot tell 'required' from 'what shipped'. Update the assertion and record why inline; never delete it."
+- **Unverified absence**: "This asserts something does not exist / is not wired without showing the enumeration that proves it. Run the search and paste it."
 
 ## Architect: Claude Code Prompt Drafting
 
