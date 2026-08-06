@@ -35,7 +35,7 @@ import logging
 import re
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from probos.events import EventType
@@ -462,6 +462,17 @@ class CapabilityRequestStore(EventEmitterMixin):
         """Approve or deny a request. Updates DB + cache, records trust, emits DECIDED.
 
         Returns the updated request, or None if the id is unknown.
+
+        BF-722: the decision is built as a NEW object, committed, and only then
+        published into the cache. :meth:`get` hands out the cached instance
+        itself, so mutating it before the write made the in-memory queue report
+        a decision the durable row had not taken; a failed lock or commit left
+        the card gone from ``list_pending()`` and the row still ``pending``,
+        resurrected on the next restart. The exception propagates untouched —
+        the caller decides how to degrade — and the cache still holds the
+        pending original. Trust and DECIDED follow the commit for the same
+        reason: a decision that did not persist must not move trust or wake a
+        blocked work item.
         """
         req = await self.get(request_id)
         if req is None:
@@ -470,23 +481,26 @@ class CapabilityRequestStore(EventEmitterMixin):
                 request_id[:12],
             )
             return None
-        req.status = "approved" if approve else "denied"
-        req.decided_at = time.time()
-        req.decided_by = decided_by
-        req.decision_reason = reason
+        updated = replace(
+            req,
+            status="approved" if approve else "denied",
+            decided_at=time.time(),
+            decided_by=decided_by,
+            decision_reason=reason,
+        )
         if self._db:
             await self._db.execute(
                 "UPDATE capability_requests SET status = ?, decided_at = ?, "
                 "decided_by = ?, decision_reason = ? WHERE id = ?",
-                (req.status, req.decided_at, req.decided_by,
-                 req.decision_reason, req.id),
+                (updated.status, updated.decided_at, updated.decided_by,
+                 updated.decision_reason, updated.id),
             )
             await self._db.commit()
-        self._cache[req.id] = req
+        self._cache[updated.id] = updated
         if self._trust_network is not None:
             try:
                 self._trust_network.record_outcome(
-                    req.agent_id,
+                    updated.agent_id,
                     approve,
                     weight=1.0,
                     intent_type="capability_request",
@@ -496,27 +510,32 @@ class CapabilityRequestStore(EventEmitterMixin):
                 logger.warning(
                     "AD-853: trust outcome failed for %s on request %s: %s; "
                     "decision still recorded",
-                    req.agent_id[:12], req.id[:12], e,
+                    updated.agent_id[:12], updated.id[:12], e,
                 )
         self._emit(EventType.CAPABILITY_REQUEST_DECIDED, {
-            "id": req.id,
-            "agent_id": req.agent_id,
-            "kind": req.kind,
-            "status": req.status,
-            "decided_by": req.decided_by,
-            "decision_reason": req.decision_reason,
+            "id": updated.id,
+            "agent_id": updated.agent_id,
+            "kind": updated.kind,
+            "status": updated.status,
+            "decided_by": updated.decided_by,
+            "decision_reason": updated.decision_reason,
         })
         logger.info(
             "AD-853: Capability request %s — %s (by=%s)",
-            req.id[:12], req.status, decided_by,
+            updated.id[:12], updated.status, decided_by,
         )
-        return req
+        return updated
 
     async def mark_fulfilled(self, request_id: str) -> CapabilityRequest | None:
         """Mark a request fulfilled once its rung's fulfiller has completed.
 
         Updates DB + cache and emits FULFILLED. Returns the updated request, or
         None if the id is unknown.
+
+        BF-722: same commit-then-publish ordering as :meth:`decide`, and for the
+        same reason — FULFILLED is what resumes a blocked work item, so emitting
+        it for a write that did not land would resume an item whose durable row
+        still says the capability is outstanding.
         """
         req = await self.get(request_id)
         if req is None:
@@ -525,25 +544,25 @@ class CapabilityRequestStore(EventEmitterMixin):
                 request_id[:12],
             )
             return None
-        req.status = "fulfilled"
+        updated = replace(req, status="fulfilled")
         if self._db:
             await self._db.execute(
                 "UPDATE capability_requests SET status = ? WHERE id = ?",
-                (req.status, req.id),
+                (updated.status, updated.id),
             )
             await self._db.commit()
-        self._cache[req.id] = req
+        self._cache[updated.id] = updated
         self._emit(EventType.CAPABILITY_REQUEST_FULFILLED, {
-            "id": req.id,
-            "agent_id": req.agent_id,
-            "kind": req.kind,
-            "status": req.status,
+            "id": updated.id,
+            "agent_id": updated.agent_id,
+            "kind": updated.kind,
+            "status": updated.status,
         })
         logger.info(
             "AD-854: Capability request %s — fulfilled",
-            req.id[:12],
+            updated.id[:12],
         )
-        return req
+        return updated
 
     async def list_pending(self) -> list[CapabilityRequest]:
         """Return all requests still awaiting a decision."""

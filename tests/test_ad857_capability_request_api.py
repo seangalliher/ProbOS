@@ -127,6 +127,30 @@ async def test_decide_unknown_id_is_404(store: CapabilityRequestStore) -> None:
 
 
 async def test_decide_already_decided_is_400(store: CapabilityRequestStore) -> None:
+    # BF-722 UPDATED THIS TEST. It used to approve the request and then assert
+    # that re-approving it was a 400 — which pinned the defect as the contract.
+    # Fulfilment can fail while the approval is durably recorded, and the
+    # blanket guard then refused the only retry. Re-approving an ``approved``
+    # request is now a retry of the fulfilment (see the test below).
+    #
+    # The guard still has teeth for every other decided status, so this case
+    # moved to ``denied``: re-approving a denial is a reversal, not a retry.
+    req = await store.file_request(agent_id="agent-1", kind="install", target="pandas")
+    await store.decide(req.id, False, reason="not now")
+    client = _client_for(_FakeRuntime(store))
+
+    resp = client.post(
+        f"/api/capability-requests/{req.id}/decide",
+        json={"approve": True},
+    )
+
+    assert resp.status_code == 400
+
+
+async def test_decide_already_approved_retries_fulfilment_with_200(
+    store: CapabilityRequestStore,
+) -> None:
+    """BF-722: an approved request re-approved retries fulfilment, not the decision."""
     req = await store.file_request(agent_id="agent-1", kind="install", target="pandas")
     await store.decide(req.id, True)
     client = _client_for(_FakeRuntime(store))
@@ -134,6 +158,26 @@ async def test_decide_already_decided_is_400(store: CapabilityRequestStore) -> N
     resp = client.post(
         f"/api/capability-requests/{req.id}/decide",
         json={"approve": True},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # ``install`` has no fulfiller, so the honest answer is "not fulfilled".
+    assert body["fulfilled"] is False
+    assert body["request"]["status"] == "approved"
+
+
+async def test_decide_already_approved_then_denied_is_400(
+    store: CapabilityRequestStore,
+) -> None:
+    """BF-722: re-DENYING an approved request is a revocation — out of scope."""
+    req = await store.file_request(agent_id="agent-1", kind="install", target="pandas")
+    await store.decide(req.id, True)
+    client = _client_for(_FakeRuntime(store))
+
+    resp = client.post(
+        f"/api/capability-requests/{req.id}/decide",
+        json={"approve": False, "reason": "changed my mind"},
     )
 
     assert resp.status_code == 400

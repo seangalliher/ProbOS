@@ -1110,13 +1110,24 @@ class TestResolution:
     async def test_deciding_an_already_decided_request_still_returns_400(
         self, tmp_path
     ):
+        # BF-722 UPDATED THIS TEST. It used to approve the request and then
+        # assert that re-approving it raised 400 — which pinned the defect as
+        # the contract. ``_maybe_fulfil_on_approval`` honest-degrades to False
+        # when fulfilment fails, so a blanket already-decided guard consumed
+        # the only retry the Captain had for an approval that never took
+        # effect. Re-approving an ``approved`` request is now a retry of the
+        # FULFILMENT (200), not a re-decision.
+        #
+        # The guard itself still has teeth, so the case moved to ``denied``:
+        # a denial is not re-decidable here, and re-approving one would be a
+        # reversal rather than a retry.
         from fastapi import HTTPException
 
         # Arrange
         store = await _store(tmp_path)
         runtime = _FakeRuntime(store=store, config=SystemConfig())
         request = await store.file_action_request("agent-a", _payload())
-        await store.decide(request.id, approve=True, reason="ok")
+        await store.decide(request.id, approve=False, reason="no")
         try:
             # Act / Assert
             with pytest.raises(HTTPException) as excinfo:
@@ -1126,6 +1137,35 @@ class TestResolution:
                     runtime=runtime,
                 )
             assert excinfo.value.status_code == 400
+        finally:
+            await store.stop()
+
+    @pytest.mark.asyncio
+    async def test_re_approving_an_approved_request_retries_the_fulfilment(
+        self, tmp_path
+    ):
+        """BF-722: the case the blanket guard used to refuse.
+
+        An ``action`` request has no fulfiller, so the retry reports
+        ``fulfilled=False`` — 'approved, fulfilment pending' — rather than 400.
+        """
+        # Arrange
+        store = await _store(tmp_path)
+        runtime = _FakeRuntime(store=store, config=SystemConfig())
+        request = await store.file_action_request("agent-a", _payload())
+        await store.decide(request.id, approve=True, reason="ok")
+        try:
+            # Act
+            response = await decide_capability_request(
+                request.id,
+                CapabilityRequestDecideRequest(approve=True, reason="again"),
+                runtime=runtime,
+            )
+            # Assert
+            assert response["request"]["status"] == "approved"
+            assert response["fulfilled"] is False
+            # The retry must not re-decide: the original decision stands.
+            assert response["request"]["decision_reason"] == "ok"
         finally:
             await store.stop()
 

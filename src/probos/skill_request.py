@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from probos.events import EventType
@@ -200,6 +200,16 @@ class SkillRequestStore(EventEmitterMixin):
         """Approve or deny a request. Updates DB + cache, records trust, emits DECIDED.
 
         Returns the updated request, or None if the id is unknown.
+
+        BF-722: the decision is built as a NEW object, committed, and only then
+        published into the cache. :meth:`get` hands out the cached instance
+        itself, so mutating it before the write made the in-memory queue report
+        a decision the durable row had not taken; a failed lock or commit left
+        the request out of ``list_pending()`` while the row stayed ``requested``,
+        resurrected on the next restart. The exception propagates untouched —
+        the caller decides how to degrade — and the cache still holds the
+        undecided original. Trust and DECIDED follow the commit for the same
+        reason: a decision that did not persist must not move trust.
         """
         req = await self.get(request_id)
         if req is None:
@@ -208,23 +218,26 @@ class SkillRequestStore(EventEmitterMixin):
                 request_id[:12],
             )
             return None
-        req.status = "approved" if approve else "denied"
-        req.decided_at = time.time()
-        req.decided_by = decided_by
-        req.decision_reason = reason
+        updated = replace(
+            req,
+            status="approved" if approve else "denied",
+            decided_at=time.time(),
+            decided_by=decided_by,
+            decision_reason=reason,
+        )
         if self._db:
             await self._db.execute(
                 "UPDATE skill_requests SET status = ?, decided_at = ?, "
                 "decided_by = ?, decision_reason = ? WHERE id = ?",
-                (req.status, req.decided_at, req.decided_by,
-                 req.decision_reason, req.id),
+                (updated.status, updated.decided_at, updated.decided_by,
+                 updated.decision_reason, updated.id),
             )
             await self._db.commit()
-        self._cache[req.id] = req
+        self._cache[updated.id] = updated
         if self._trust_network is not None:
             try:
                 self._trust_network.record_outcome(
-                    req.agent_id,
+                    updated.agent_id,
                     approve,
                     weight=1.0,
                     intent_type="skill_request",
@@ -234,21 +247,21 @@ class SkillRequestStore(EventEmitterMixin):
                 logger.warning(
                     "AD-906: trust outcome failed for %s on skill request %s: %s; "
                     "decision still recorded",
-                    req.agent_id[:12], req.id[:12], e,
+                    updated.agent_id[:12], updated.id[:12], e,
                 )
         self._emit(EventType.SKILL_REQUEST_DECIDED, {
-            "id": req.id,
-            "agent_id": req.agent_id,
-            "skill_id": req.skill_id,
-            "status": req.status,
-            "decided_by": req.decided_by,
-            "decision_reason": req.decision_reason,
+            "id": updated.id,
+            "agent_id": updated.agent_id,
+            "skill_id": updated.skill_id,
+            "status": updated.status,
+            "decided_by": updated.decided_by,
+            "decision_reason": updated.decision_reason,
         })
         logger.info(
             "AD-906: Skill request %s — %s (by=%s)",
-            req.id[:12], req.status, decided_by,
+            updated.id[:12], updated.status, decided_by,
         )
-        return req
+        return updated
 
     async def begin_training(
         self,

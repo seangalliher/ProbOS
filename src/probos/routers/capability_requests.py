@@ -77,6 +77,19 @@ async def decide_capability_request(
     Unknown id -> 404. Already-decided (non-pending) -> 400. The store's
     ``decide()`` has no already-decided guard, so the pending check is owned
     here (AD-857 correction #2).
+
+    BF-722: one exception to that guard — an ``approved`` request re-approved is
+    a retry of the FULFILMENT, not a re-decision. Fulfilment can fail while the
+    approval is durably recorded (``_maybe_fulfil_on_approval`` honest-degrades
+    to ``False``), and a blanket guard then refused the only retry the Captain
+    had. The retry deliberately does NOT call ``decide()`` again: ``decide()``
+    records a trust outcome, so re-deciding would inflate the requesting agent's
+    trust once per click. Deciding once and retrying fulfilment separately is
+    what keeps trust honest.
+
+    Every other non-pending status still returns 400. A ``denied`` request is
+    not re-decidable here, and re-denying an approved one is a revocation — a
+    different operation, out of scope.
     """
     if not runtime.capability_request_store:
         raise HTTPException(status_code=503, detail="capability request store not available")
@@ -84,22 +97,48 @@ async def decide_capability_request(
     existing = await store.get(request_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="capability request not found")
-    if existing.status != "pending":
+
+    standing: dict[str, Any] | None = None
+    if existing.status == "pending":
+        decided = await store.decide(
+            request_id, req.approve, reason=req.reason, decided_by="captain"
+        )
+        if decided is None:  # pragma: no cover - guarded above, defensive only
+            raise HTTPException(status_code=404, detail="capability request not found")
+        standing = await _maybe_issue_standing_rule(runtime, decided, req)
+    elif existing.status == "approved" and req.approve:
+        # BF-722: retry the fulfilment of an approval already on record. No
+        # decide(), so no second trust outcome; no standing rule either, since
+        # the one decision that could issue it has already been made.
+        decided = existing
+        logger.info(
+            "BF-722: capability request %s is already approved; retrying "
+            "fulfilment without re-deciding it",
+            request_id[:12],
+        )
+    else:
         raise HTTPException(
             status_code=400,
             detail=f"capability request already decided (status={existing.status})",
         )
-    decided = await store.decide(
-        request_id, req.approve, reason=req.reason, decided_by="captain"
-    )
-    if decided is None:  # pragma: no cover - guarded above, defensive only
-        raise HTTPException(status_code=404, detail="capability request not found")
-    standing = await _maybe_issue_standing_rule(runtime, decided, req)
+
     # AD-1204: after the standing rule, so a resumed turn that immediately
     # consults ``_standing_rule_permits`` sees the rule the same approval just
     # granted rather than racing it.
-    await _maybe_fulfil_on_approval(store, decided, approve=req.approve)
-    return {"request": _serialize(decided), "standing_rule": standing}
+    fulfilled = await _maybe_fulfil_on_approval(store, decided, approve=req.approve)
+    # BF-722: re-read so the body reports the state the store actually holds.
+    # ``decide()`` now returns a distinct object rather than the cached
+    # instance, so a successful ``mark_fulfilled`` no longer shows through it.
+    current = await store.get(request_id) or decided
+    return {
+        "request": _serialize(current),
+        "standing_rule": standing,
+        # BF-722: lets a caller tell "approved and fulfilled" from "approved,
+        # fulfilment pending". The route still returns 200 when this is False:
+        # the approval IS durably recorded, and failing the request would
+        # discard it.
+        "fulfilled": fulfilled,
+    }
 
 # AD-1204: request kinds for which the Captain's approval IS the fulfilment.
 #

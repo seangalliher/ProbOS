@@ -610,7 +610,17 @@ class TestIdempotency:
 
     @pytest.mark.asyncio
     async def test_a_second_approval_is_refused_by_the_pending_guard(self, wired):
-        """AD-857 owns the already-decided guard; a re-approve cannot re-resume."""
+        """AD-857 owns the already-decided guard; a re-approve cannot re-resume.
+
+        BF-722 NARROWED what this proves, without changing the assertion. The
+        guard is no longer blanket: an ``approved`` request re-approved is now a
+        retry of the FULFILMENT (HTTP 200), because fulfilment can fail while
+        the approval is durably recorded. This test still holds because the
+        first approval SUCCEEDS here — a ``continue`` is self-fulfilling, so the
+        request reaches ``fulfilled``, and a fulfilled request has nothing left
+        to retry. That is the load-bearing part now: the retry window closes the
+        moment fulfilment lands, so it can never re-dispatch a resumed item.
+        """
         from fastapi import HTTPException
 
         # Arrange
@@ -622,6 +632,8 @@ class TestIdempotency:
         )
         await wired.bus.drain()
         wired.router.dispatched.clear()
+        # The precondition BF-722 made load-bearing, asserted rather than assumed.
+        assert (await wired.request_store.get(req.id)).status == "fulfilled"
 
         # Act / Assert
         with pytest.raises(HTTPException) as excinfo:
