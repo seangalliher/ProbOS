@@ -181,15 +181,26 @@ class CodeExecutionTool:
     @property
     def description(self) -> str:
         return (
-            "Run a Python script in an isolated sandbox to perform a task or "
-            "produce a file — e.g. a Word document (python-docx), a spreadsheet "
-            "(openpyxl), a PDF (reportlab), or a chart (matplotlib). Any file the "
+            "Run a Python script in an isolated sandbox to produce a file — "
+            "e.g. a Word document (python-docx), a spreadsheet (openpyxl), a "
+            "PDF (reportlab), or a chart (matplotlib). Any file the "
             "script writes into the current working directory is saved and shown "
             "to the Captain as a downloadable artifact. Write files to the "
             "current directory by plain filename, e.g. "
             "doc.save('report.docx'). Returns stdout, stderr, the exit code, and "
-            "the names of the files produced. Network is off; required libraries "
-            "must already be installed."
+            "the names of the files produced. "
+            # BF-719: the constraint has to name the alternative, or it does not
+            # change the choice. This previously read "Network is off; required
+            # libraries must already be installed" as a trailing clause after an
+            # opening that invited general use ("to perform a task or produce a
+            # file"). Measured on the reference vessel 2026-08-05: an agent asked
+            # to fetch fifteen web pages wrote a Python script to do it, every
+            # request died against the blackhole proxy, and the turn produced
+            # nothing. The agent HAD this description and still chose wrong.
+            "THIS SANDBOX HAS NO NETWORK ACCESS — outbound requests fail. To "
+            "fetch a URL use the http_fetch tool instead, then pass the result "
+            "into this tool if you need to process it. Required libraries must "
+            "already be installed."
         )
 
     @property
