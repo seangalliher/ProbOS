@@ -28,17 +28,17 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
-| AD | **AD-1208** | **AD-1209** | AD-1204 | 1205-1208 |
-| BF | **BF-719** | **BF-720** | BF-719 | _(none)_ |
+| AD | **AD-1209** | **AD-1210** | AD-1204 | 1205-1209 |
+| BF | **BF-720** | **BF-721** | BF-719 | 720 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-06T03:51:43+00:00 at `81eb675f` | 2233 subjects, 816 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-06T04:21:29+00:00 at `8349a758` | 2234 subjects, 816 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-06T03:51:43+00:00 | 1158 issues, 744 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-08-06T04:21:29+00:00 | 1160 issues, 746 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,7 +46,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 67 | 10 | assigned, issue open, no shipped code |
+| `allocated-open` | 68 | 11 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 6 | 0 | abandoned, number **not** reusable |
@@ -54,10 +54,11 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 ## Allocated and open — **do not reuse these numbers**
 
-77 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+79 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
+| `AD-1209` | [#1160](https://github.com/seangalliher/ProbOS/issues/1160) | issue #1160 open, no code | AD-1209: an agent cannot read task state, so asking 'is it done?' re-runs the task |
 | `AD-1208` | [#1154](https://github.com/seangalliher/ProbOS/issues/1154) | issue #1154 open, no code | AD-1208: bound agentic turns by risk and cost, not by a flat iteration cap |
 | `AD-1207` | [#1152](https://github.com/seangalliher/ProbOS/issues/1152), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1152, #1153 open, no code | AD-1207: nothing surfaces a fault the ship has found to the Captain |
 | `AD-1206` | [#1151](https://github.com/seangalliher/ProbOS/issues/1151), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1151, #1153 open, no code | AD-1206: an approved repair brief becomes a GitHub issue (the missing consumer) |
@@ -125,6 +126,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-277` | — | mentioned by an authority, no code and no closure |  |
 | `AD-276` | — | mentioned by an authority, no code and no closure |  |
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
+| `BF-720` | [#1159](https://github.com/seangalliher/ProbOS/issues/1159) | issue #1159 open, no code | BF-720: a promoted turn's report is persisted but not delivered live -- 17 minutes invisible |
 | `BF-718` | [#1157](https://github.com/seangalliher/ProbOS/issues/1157) | issue #1157 open, no code | BF-718: agent messages that arrive asynchronously are never spoken |
 | `BF-714` | [#1145](https://github.com/seangalliher/ProbOS/issues/1145) | issue #1145 open, no code | BF-714: the DM degrade message discards the diagnosis the runtime already made |
 | `BF-713` | [#1144](https://github.com/seangalliher/ProbOS/issues/1144) | issue #1144 open, no code | BF-713: doctor UX test depends on a live LLM proxy and flakes when it returns an empty 200 |

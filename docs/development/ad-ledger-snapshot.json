@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-06T03:51:43+00:00",
-    "head": "81eb675f",
-    "subject_count": 2233,
+    "captured_at": "2026-08-06T04:21:29+00:00",
+    "head": "8349a758",
+    "subject_count": 2234,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2671,8 +2671,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-06T03:51:43+00:00",
-    "issue_count": 1158,
+    "captured_at": "2026-08-06T04:21:29+00:00",
+    "issue_count": 1160,
     "issues": {
       "AD-1000": [
         {
@@ -4281,6 +4281,17 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1208: bound agentic turns by risk and cost, not by a flat iteration cap"
+        }
+      ],
+      "AD-1209": [
+        {
+          "claims": [
+            "AD-1209"
+          ],
+          "number": 1160,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1209: an agent cannot read task state, so asking 'is it done?' re-runs the task"
         }
       ],
       "AD-423": [
@@ -14453,6 +14464,17 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-719: the sandbox says network is off but not what to use instead, so agents fetch with Python"
+        }
+      ],
+      "BF-720": [
+        {
+          "claims": [
+            "BF-720"
+          ],
+          "number": 1159,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-720: a promoted turn's report is persisted but not delivered live -- 17 minutes invisible"
         }
       ],
       "BF-80": [
