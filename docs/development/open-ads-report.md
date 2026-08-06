@@ -28,17 +28,17 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
-| AD | **AD-1212** | **AD-1213** | AD-1204 | 1205-1212 |
+| AD | **AD-1213** | **AD-1214** | AD-1204 | 1205-1213 |
 | BF | **BF-724** | **BF-725** | BF-720 | 721-724 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-06T21:36:32+00:00 at `8d85f6ea` | 2238 subjects, 817 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-06T22:16:12+00:00 at `b7466d32` | 2239 subjects, 817 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-06T21:36:32+00:00 | 1169 issues, 753 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-08-06T22:16:12+00:00 | 1170 issues, 754 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,7 +46,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 71 | 14 | assigned, issue open, no shipped code |
+| `allocated-open` | 72 | 14 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 6 | 0 | abandoned, number **not** reusable |
@@ -54,10 +54,11 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 ## Allocated and open — **do not reuse these numbers**
 
-85 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+86 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
+| `AD-1213` | [#1170](https://github.com/seangalliher/ProbOS/issues/1170) | issue #1170 open, no code | AD-1213: the chain of command does not reach the approval path |
 | `AD-1212` | [#1166](https://github.com/seangalliher/ProbOS/issues/1166) | issue #1166 open, no code | AD-1212: action requests cannot be meaningfully approved in the HXI |
 | `AD-1211` | [#1164](https://github.com/seangalliher/ProbOS/issues/1164) | issue #1164 open, no code | AD-1211: approving a grant, install, or build never fulfils it |
 | `AD-1210` | [#1161](https://github.com/seangalliher/ProbOS/issues/1161) | issue #1161 open, no code | AD-1210: four more surfaces discard a correct fetch when any live frame arrives |

@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-06T21:36:32+00:00",
-    "head": "8d85f6ea",
-    "subject_count": 2238,
+    "captured_at": "2026-08-06T22:16:12+00:00",
+    "head": "b7466d32",
+    "subject_count": 2239,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2674,8 +2674,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-06T21:36:32+00:00",
-    "issue_count": 1169,
+    "captured_at": "2026-08-06T22:16:12+00:00",
+    "issue_count": 1170,
     "issues": {
       "AD-1000": [
         {
@@ -4335,6 +4335,17 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1212: action requests cannot be meaningfully approved in the HXI"
+        }
+      ],
+      "AD-1213": [
+        {
+          "claims": [
+            "AD-1213"
+          ],
+          "number": 1170,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1213: the chain of command does not reach the approval path"
         }
       ],
       "AD-423": [
