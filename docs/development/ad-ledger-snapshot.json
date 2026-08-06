@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-06T04:49:31+00:00",
-    "head": "15c70718",
-    "subject_count": 2236,
+    "captured_at": "2026-08-06T21:36:32+00:00",
+    "head": "8d85f6ea",
+    "subject_count": 2238,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2674,8 +2674,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-06T04:49:31+00:00",
-    "issue_count": 1160,
+    "captured_at": "2026-08-06T21:36:32+00:00",
+    "issue_count": 1169,
     "issues": {
       "AD-1000": [
         {
@@ -4219,6 +4219,13 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "AD-1204: an incomplete promoted turn reads as 'running', and the agent tells the Captain so"
+        },
+        {
+          "claims": [],
+          "number": 1163,
+          "reason": "",
+          "state": "OPEN",
+          "title": "Verify the AD-1204 continue-resume live \u2014 it has never executed"
         }
       ],
       "AD-1205": [
@@ -4295,6 +4302,39 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1209: an agent cannot read task state, so asking 'is it done?' re-runs the task"
+        }
+      ],
+      "AD-1210": [
+        {
+          "claims": [
+            "AD-1210"
+          ],
+          "number": 1161,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1210: four more surfaces discard a correct fetch when any live frame arrives"
+        }
+      ],
+      "AD-1211": [
+        {
+          "claims": [
+            "AD-1211"
+          ],
+          "number": 1164,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1211: approving a grant, install, or build never fulfils it"
+        }
+      ],
+      "AD-1212": [
+        {
+          "claims": [
+            "AD-1212"
+          ],
+          "number": 1166,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1212: action requests cannot be meaningfully approved in the HXI"
         }
       ],
       "AD-423": [
@@ -14478,6 +14518,50 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-720: a promoted turn's report is persisted but not delivered live -- 17 minutes invisible"
+        }
+      ],
+      "BF-721": [
+        {
+          "claims": [
+            "BF-721"
+          ],
+          "number": 1165,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-721: capability DM replies can reach the wrong agent instance"
+        }
+      ],
+      "BF-722": [
+        {
+          "claims": [
+            "BF-722"
+          ],
+          "number": 1167,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-722: approval transaction integrity \u2014 failed fulfilment and cache-before-commit"
+        }
+      ],
+      "BF-723": [
+        {
+          "claims": [
+            "BF-723"
+          ],
+          "number": 1168,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-723: decisions are not reconciled monotonically across polling views"
+        }
+      ],
+      "BF-724": [
+        {
+          "claims": [
+            "BF-724"
+          ],
+          "number": 1169,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-724: the approvals entry path is not keyboard operable"
         }
       ],
       "BF-80": [

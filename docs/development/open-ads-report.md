@@ -28,17 +28,17 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
-| AD | **AD-1209** | **AD-1210** | AD-1204 | 1205-1209 |
-| BF | **BF-720** | **BF-721** | BF-720 | _(none)_ |
+| AD | **AD-1212** | **AD-1213** | AD-1204 | 1205-1212 |
+| BF | **BF-724** | **BF-725** | BF-720 | 721-724 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-06T04:49:31+00:00 at `15c70718` | 2236 subjects, 817 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-06T21:36:32+00:00 at `8d85f6ea` | 2238 subjects, 817 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-06T04:49:31+00:00 | 1160 issues, 746 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-08-06T21:36:32+00:00 | 1169 issues, 753 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,7 +46,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 68 | 10 | assigned, issue open, no shipped code |
+| `allocated-open` | 71 | 14 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 6 | 0 | abandoned, number **not** reusable |
@@ -54,10 +54,13 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 ## Allocated and open — **do not reuse these numbers**
 
-78 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+85 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
+| `AD-1212` | [#1166](https://github.com/seangalliher/ProbOS/issues/1166) | issue #1166 open, no code | AD-1212: action requests cannot be meaningfully approved in the HXI |
+| `AD-1211` | [#1164](https://github.com/seangalliher/ProbOS/issues/1164) | issue #1164 open, no code | AD-1211: approving a grant, install, or build never fulfils it |
+| `AD-1210` | [#1161](https://github.com/seangalliher/ProbOS/issues/1161) | issue #1161 open, no code | AD-1210: four more surfaces discard a correct fetch when any live frame arrives |
 | `AD-1209` | [#1160](https://github.com/seangalliher/ProbOS/issues/1160) | issue #1160 open, no code | AD-1209: an agent cannot read task state, so asking 'is it done?' re-runs the task |
 | `AD-1208` | [#1154](https://github.com/seangalliher/ProbOS/issues/1154) | issue #1154 open, no code | AD-1208: bound agentic turns by risk and cost, not by a flat iteration cap |
 | `AD-1207` | [#1152](https://github.com/seangalliher/ProbOS/issues/1152), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1152, #1153 open, no code | AD-1207: nothing surfaces a fault the ship has found to the Captain |
@@ -126,6 +129,10 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-277` | — | mentioned by an authority, no code and no closure |  |
 | `AD-276` | — | mentioned by an authority, no code and no closure |  |
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
+| `BF-724` | [#1169](https://github.com/seangalliher/ProbOS/issues/1169) | issue #1169 open, no code | BF-724: the approvals entry path is not keyboard operable |
+| `BF-723` | [#1168](https://github.com/seangalliher/ProbOS/issues/1168) | issue #1168 open, no code | BF-723: decisions are not reconciled monotonically across polling views |
+| `BF-722` | [#1167](https://github.com/seangalliher/ProbOS/issues/1167) | issue #1167 open, no code | BF-722: approval transaction integrity — failed fulfilment and cache-before-commit |
+| `BF-721` | [#1165](https://github.com/seangalliher/ProbOS/issues/1165) | issue #1165 open, no code | BF-721: capability DM replies can reach the wrong agent instance |
 | `BF-718` | [#1157](https://github.com/seangalliher/ProbOS/issues/1157) | issue #1157 open, no code | BF-718: agent messages that arrive asynchronously are never spoken |
 | `BF-714` | [#1145](https://github.com/seangalliher/ProbOS/issues/1145) | issue #1145 open, no code | BF-714: the DM degrade message discards the diagnosis the runtime already made |
 | `BF-713` | [#1144](https://github.com/seangalliher/ProbOS/issues/1144) | issue #1144 open, no code | BF-713: doctor UX test depends on a live LLM proxy and flakes when it returns an empty 200 |
@@ -279,6 +286,7 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `AD-1166` — code is in history but [#1095](https://github.com/seangalliher/ProbOS/issues/1095) is still open.
 - `AD-1173` — code is in history but [#1095](https://github.com/seangalliher/ProbOS/issues/1095) is still open.
 - `AD-1176` — code is in history but [#1107](https://github.com/seangalliher/ProbOS/issues/1107) is still open.
+- `AD-1204` — code is in history but [#1163](https://github.com/seangalliher/ProbOS/issues/1163) is still open.
 - `BF-063` — collision: 2 issues each lead with this number: [#3](https://github.com/seangalliher/ProbOS/issues/3), [#135](https://github.com/seangalliher/ProbOS/issues/135).
 - `BF-125` — collision: 2 issues each lead with this number: [#28](https://github.com/seangalliher/ProbOS/issues/28), [#29](https://github.com/seangalliher/ProbOS/issues/29).
 - `BF-126` — collision: 2 issues each lead with this number: [#33](https://github.com/seangalliher/ProbOS/issues/33), [#133](https://github.com/seangalliher/ProbOS/issues/133).
