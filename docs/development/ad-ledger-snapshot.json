@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-06T04:21:29+00:00",
-    "head": "8349a758",
-    "subject_count": 2234,
+    "captured_at": "2026-08-06T04:49:31+00:00",
+    "head": "15c70718",
+    "subject_count": 2236,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2644,6 +2644,9 @@
       "BF-719": [
         "git BF-719"
       ],
+      "BF-720": [
+        "git BF-720"
+      ],
       "BF-76": [
         "git BF-076"
       ],
@@ -2671,7 +2674,7 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-06T04:21:29+00:00",
+    "captured_at": "2026-08-06T04:49:31+00:00",
     "issue_count": 1160,
     "issues": {
       "AD-1000": [
@@ -14472,8 +14475,8 @@
             "BF-720"
           ],
           "number": 1159,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-720: a promoted turn's report is persisted but not delivered live -- 17 minutes invisible"
         }
       ],

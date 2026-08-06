@@ -29,16 +29,16 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
 | AD | **AD-1209** | **AD-1210** | AD-1204 | 1205-1209 |
-| BF | **BF-720** | **BF-721** | BF-719 | 720 |
+| BF | **BF-720** | **BF-721** | BF-720 | _(none)_ |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-06T04:21:29+00:00 at `8349a758` | 2234 subjects, 816 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-06T04:49:31+00:00 at `15c70718` | 2236 subjects, 817 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-06T04:21:29+00:00 | 1160 issues, 746 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-08-06T04:49:31+00:00 | 1160 issues, 746 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,15 +46,15 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 68 | 11 | assigned, issue open, no shipped code |
+| `allocated-open` | 68 | 10 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 6 | 0 | abandoned, number **not** reusable |
-| `shipped` | 874 | 378 | code in history |
+| `shipped` | 874 | 379 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-79 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+78 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -126,7 +126,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-277` | — | mentioned by an authority, no code and no closure |  |
 | `AD-276` | — | mentioned by an authority, no code and no closure |  |
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
-| `BF-720` | [#1159](https://github.com/seangalliher/ProbOS/issues/1159) | issue #1159 open, no code | BF-720: a promoted turn's report is persisted but not delivered live -- 17 minutes invisible |
 | `BF-718` | [#1157](https://github.com/seangalliher/ProbOS/issues/1157) | issue #1157 open, no code | BF-718: agent messages that arrive asynchronously are never spoken |
 | `BF-714` | [#1145](https://github.com/seangalliher/ProbOS/issues/1145) | issue #1145 open, no code | BF-714: the DM degrade message discards the diagnosis the runtime already made |
 | `BF-713` | [#1144](https://github.com/seangalliher/ProbOS/issues/1144) | issue #1144 open, no code | BF-713: doctor UX test depends on a live LLM proxy and flakes when it returns an empty 200 |
@@ -163,7 +162,7 @@ _(none)_
 
 **AD** (874): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180, 1184, 1201, 1204
 
-**BF** (378): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-686, 688, 690, 692-710, 715-717, 719
+**BF** (379): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-686, 688, 690, 692-710, 715-717, 719-720
 
 ## Unaccounted — silent, **not** free
 
