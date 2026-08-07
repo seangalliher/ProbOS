@@ -220,8 +220,16 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     const token = roomTokenRef.current;
     const requestId = ++artifactRefreshRequestRef.current;
     const authority = useStore.getState();
+    /* BF-723 (absorbing #1161): ``liveGeneration`` is the authority check — a
+     * stream identity change voids the result. ``liveSequence`` used to be
+     * captured and compared here too, which discarded exactly the refresh the
+     * Captain was waiting for: this path is triggered by a live artifact
+     * command, and the frames that follow a promotion arrive while the GET is
+     * still in flight. Same defect BF-720 removed from ProfileChatTab.
+     * Ordering is already held by ``artifactRefreshRequestRef`` and
+     * ``artifactRefreshInFlightRef``, which coalesce rather than race, and
+     * ``triggerArtifactId`` still gates on the promoted row being present. */
     const generation = authority.liveGeneration;
-    const sequence = authority.liveSequence;
     try {
       const list = await fetchThreadArtifacts(threadId);
       const current = useStore.getState();
@@ -229,7 +237,6 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
         requestId !== artifactRefreshRequestRef.current
         || !ownsRoom(token)
         || current.liveGeneration !== generation
-        || current.liveSequence !== sequence
         || (triggerArtifactId !== null && !list.some(row => row.id === triggerArtifactId))
       ) return;
       setArtifacts(list);
@@ -265,8 +272,12 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     const targetTaskId = effectiveTaskId;
     const requestId = ++stepsRefreshRequestRef.current;
     const authority = useStore.getState();
+    /* BF-723 (absorbing #1161): as above — ``liveGeneration`` only. A Todo list
+     * fetched in response to a live Todo command is not stale because the next
+     * frame arrived; that is the normal shape of a work item completing.
+     * ``stepsRefreshRequestRef``, ``stepsRefreshInFlightRef`` and
+     * ``effectiveTaskIdRef`` already cover ordering and ownership. */
     const generation = authority.liveGeneration;
-    const sequence = authority.liveSequence;
     try {
       const nextSteps = await fetchTaskSteps(targetTaskId);
       const current = useStore.getState();
@@ -275,7 +286,6 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
         || !ownsRoom(token)
         || effectiveTaskIdRef.current !== targetTaskId
         || current.liveGeneration !== generation
-        || current.liveSequence !== sequence
       ) return;
       setSteps(nextSteps);
     } catch {

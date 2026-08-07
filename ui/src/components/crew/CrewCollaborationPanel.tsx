@@ -565,8 +565,17 @@ export default function CrewCollaborationPanel({
     const requestId = ++requestIdRef.current;
     const inFlight = { ownerKey: targetOwnerKey, generation: targetGeneration, requestId };
     const authority = useStore.getState();
+    /* BF-723 (absorbing #1161): ``liveGeneration`` is the authority this load
+     * runs under; a stream identity change genuinely voids the response.
+     *
+     * ``liveSequence`` used to be captured here too and compared afterwards,
+     * and this was the worst surface for it: the panel refreshes BECAUSE a
+     * child finished, and a child finishing is itself a frame — so the
+     * condition it tested for was the condition that made the fetch worth
+     * doing. BF-720 removed the identical comparison from ProfileChatTab.
+     * Ordering is already enforced by ``requestIdRef`` + ``inFlightRef``
+     * (which coalesce) and by ``owns(...)``. */
     const requestedLiveGeneration = authority.liveGeneration;
-    const requestedLiveSequence = authority.liveSequence;
     inFlightRef.current = inFlight;
     const finish = () => {
       if (inFlightRef.current === inFlight) inFlightRef.current = null;
@@ -589,7 +598,6 @@ export default function CrewCollaborationPanel({
       requestId !== requestIdRef.current
       || !owns(targetThreadId, targetParentId, targetOwnerKey, targetGeneration)
       || currentAuthority.liveGeneration !== requestedLiveGeneration
-      || currentAuthority.liveSequence !== requestedLiveSequence
     ) {
       finish();
       return;

@@ -293,6 +293,24 @@ export interface PendingApproval {
   created_at: number;
 }
 
+/** What a decided approval reports back to its host (BF-723). */
+export interface DecidedApproval {
+  queue: PendingApproval['queue'];
+  id: string;
+}
+
+/* BF-723: the two queues mint ids independently, so a bare id is not a safe
+ * key — a capability request and a skill request can legitimately share one.
+ * NUL cannot appear in either queue literal and neither literal is a prefix of
+ * the other, so the queue segment is unambiguous both for lookup and for the
+ * prefix scan that releases spent tombstones. */
+const APPROVAL_KEY_SEP = '\u0000';
+
+/** Composite tombstone/lookup key for one approval request (BF-723). */
+export function approvalKey(queue: PendingApproval['queue'], id: string): string {
+  return `${queue}${APPROVAL_KEY_SEP}${id}`;
+}
+
 export interface HXIState {
   // Data
   agents: Map<string, Agent>;
@@ -673,6 +691,18 @@ export interface HXIState {
   // and the BRIDGE badge in IntentSurface.
   pendingApprovals: PendingApproval[];
   refreshPendingApprovals: () => void;
+  /* BF-723: requests the Captain has decided, keyed by `approvalKey`. A refresh
+   * result is reconciled against this set, so a server that has not yet caught
+   * up cannot resurrect a decided row — nor can an in-flight GET issued before
+   * the decision. Entries are released as soon as the server stops reporting
+   * the id, so the set tracks outstanding disagreements, not session history. */
+  decidedApprovals: Set<string>;
+  /** BF-723: ordinal issued to the most recent approvals refresh. */
+  approvalRequestSeq: number;
+  /** BF-723: ordinal of the newest response applied, per queue. */
+  approvalAppliedSeq: Record<PendingApproval['queue'], number>;
+  /** BF-723: record a decision so every later refresh reconciles against it. */
+  recordApprovalDecision: (queue: PendingApproval['queue'], id: string) => void;
   // Communications settings (AD-485)
   communicationsSettings: { dm_min_rank: string; recreation_min_rank: string };
   refreshCommunicationsSettings: () => void;
@@ -1366,6 +1396,9 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomDmPending: null,
   wardRoomDmChannels: [],
   pendingApprovals: [],  // AD-1201
+  decidedApprovals: new Set<string>(),  // BF-723
+  approvalRequestSeq: 0,  // BF-723
+  approvalAppliedSeq: { capability: 0, skill: 0 },  // BF-723
   _wardRoomThreadCache: new Map(),
   // AD-837: seed display-mode + window rect from persisted layout.
   wardRoomDisplayMode: loadWardRoomLayout().mode,
@@ -2099,7 +2132,36 @@ export const useStore = create<HXIState>((set, get) => ({
    * together and committed in ONE `set`, so the Bridge section, the approvals
    * centre and the BRIDGE badge always see the same count — three independent
    * pollers could disagree mid-cycle. `Promise.allSettled` keeps one endpoint
-   * being down from blanking the other queue's requests. */
+   * being down from blanking the other queue's requests.
+   *
+   * BF-723: a result is now applied only if it is still current in two senses.
+   * It must be newer than the last response applied for its queue (an older
+   * in-flight GET landing late describes a superseded state), and every row it
+   * carries must survive the tombstone set (a request the Captain has already
+   * decided is gone whatever the server still says).
+   *
+   * The degraded `keep(...)` branch is filtered too, so `reconcile`'s
+   * postcondition — "returns no decided row" — holds by reading this function
+   * alone. It is belt to the fulfilled branch's braces rather than an
+   * independently reachable fault: `recordApprovalDecision` already drops the
+   * row from the shared slice, and `previous` is read after the await, so a
+   * decided row cannot reach `previous` while the fulfilled branch filters. A
+   * mutation removing only this filter leaves every BF-723 test green; a
+   * mutation removing the fulfilled one fails three. Do not read the two as
+   * equally load-bearing. */
+  recordApprovalDecision: (queue, id) => {
+    const key = approvalKey(queue, id);
+    const decided = new Set(get().decidedApprovals);
+    decided.add(key);
+    set({
+      decidedApprovals: decided,
+      /* Drop it here rather than waiting for the refresh, so the badge falls
+       * the moment the Captain decides even if the next GET never lands. */
+      pendingApprovals: get().pendingApprovals.filter(
+        (a) => approvalKey(a.queue, a.id) !== key,
+      ),
+    });
+  },
   refreshPendingApprovals: async () => {
     type Row = Record<string, unknown>;
     const readQueue = async (
@@ -2115,6 +2177,11 @@ export const useStore = create<HXIState>((set, get) => ({
       const rows: Row[] = Array.isArray(data?.requests) ? data.requests : [];
       return rows.map(project);
     };
+
+    // BF-723: claim an ordinal before issuing, so a response can be compared
+    // against whatever has been applied for its queue by the time it lands.
+    const ticket = get().approvalRequestSeq + 1;
+    set({ approvalRequestSeq: ticket });
 
     const [capability, skill] = await Promise.allSettled([
       readQueue('/api/capability-requests?status=pending', 'capability', (r) => ({
@@ -2146,15 +2213,52 @@ export const useStore = create<HXIState>((set, get) => ({
       return;
     }
 
+    /* Read the reconciliation inputs AFTER the await — a decision taken while
+     * these GETs were in flight is exactly the case this has to catch. */
     const previous = get().pendingApprovals;
-    const keep = (queue: PendingApproval['queue']) =>
-      previous.filter((a) => a.queue === queue);
+    const decided = get().decidedApprovals;
+    const appliedSeq = get().approvalAppliedSeq;
+    const nextAppliedSeq = { ...appliedSeq };
+    const spentTombstones = new Set<string>();
+
+    const reconcile = (
+      queue: PendingApproval['queue'],
+      outcome: PromiseSettledResult<PendingApproval[]>,
+    ): PendingApproval[] => {
+      const survive = (rows: PendingApproval[]) =>
+        rows.filter((r) => !decided.has(approvalKey(queue, r.id)));
+      // Degraded or superseded: hold what we already showed, minus anything
+      // decided since. Never re-admit a decided row on the fallback path.
+      if (outcome.status !== 'fulfilled' || ticket <= appliedSeq[queue]) {
+        return survive(previous.filter((a) => a.queue === queue));
+      }
+      nextAppliedSeq[queue] = ticket;
+      // This response is authoritative for the queue, so any tombstone it does
+      // not mention has served its purpose and is released below.
+      const reported = new Set(outcome.value.map((r) => approvalKey(queue, r.id)));
+      const prefix = `${queue}${APPROVAL_KEY_SEP}`;
+      for (const key of decided) {
+        if (key.startsWith(prefix) && !reported.has(key)) spentTombstones.add(key);
+      }
+      return survive(outcome.value);
+    };
+
     const next = [
-      ...(capability.status === 'fulfilled' ? capability.value : keep('capability')),
-      ...(skill.status === 'fulfilled' ? skill.value : keep('skill')),
+      ...reconcile('capability', capability),
+      ...reconcile('skill', skill),
     ].sort((a, b) => b.created_at - a.created_at);
 
-    set({ pendingApprovals: next });
+    set({
+      pendingApprovals: next,
+      approvalAppliedSeq: nextAppliedSeq,
+      ...(spentTombstones.size > 0
+        ? {
+          decidedApprovals: new Set(
+            [...decided].filter((key) => !spentTombstones.has(key)),
+          ),
+        }
+        : {}),
+    });
   },
   refreshCommunicationsSettings: async () => {
     try {

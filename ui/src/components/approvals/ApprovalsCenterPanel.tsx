@@ -20,7 +20,7 @@
  */
 
 import { useCallback } from 'react';
-import { useStore } from '../../store/useStore';
+import { useStore, type DecidedApproval } from '../../store/useStore';
 import { Close } from '../icons/Glyphs';
 import CapabilityRequestPanel from '../capability/CapabilityRequestPanel';
 import SkillRequestPanel from '../skill/SkillRequestPanel';
@@ -32,13 +32,22 @@ export function ApprovalsCenterPanel() {
   const open = useStore(s => s.approvalsCenterOpen);
   const pendingApprovals = useStore(s => s.pendingApprovals);
   const refreshApprovals = useStore(s => s.refreshPendingApprovals);
+  const recordDecision = useStore(s => s.recordApprovalDecision);
 
   const close = useCallback(() => useStore.setState({ approvalsCenterOpen: false }), []);
 
   /* The hosted panels drop a decided request from their own list immediately.
    * Re-reading the shared slice keeps the Bridge section and the BRIDGE badge
-   * in step instead of showing a stale count until the next 10s poll. */
-  const onDecided = useCallback(() => { refreshApprovals(); }, [refreshApprovals]);
+   * in step instead of showing a stale count until the next 10s poll.
+   *
+   * BF-723: record the decision centrally BEFORE re-reading. The refresh alone
+   * was not enough — a failed or late GET could hand back the row that was just
+   * decided, and the shared slice had no way to know it should not believe it.
+   * The tombstone is what makes the refresh result reconcilable. */
+  const onDecided = useCallback((decided: DecidedApproval) => {
+    recordDecision(decided.queue, decided.id);
+    refreshApprovals();
+  }, [recordDecision, refreshApprovals]);
 
   if (!open) return null;
 

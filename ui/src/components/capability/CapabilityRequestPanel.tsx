@@ -11,6 +11,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
+/* BF-723: type-only — the panel stays store-free at runtime (it is fetch-driven
+ * and mountable standalone). Importing the shape keeps the callback contract
+ * and the store's reconciliation key from drifting apart. */
+import type { DecidedApproval } from '../../store/useStore';
+
 // ── Capability request shape (mirrors the GET serializer) ──────────
 export interface CapabilityRequestView {
   id: string;
@@ -194,9 +199,16 @@ function RequestCard({ req, onDecide }: {
 /* AD-1201: `onDecided` lets the host (the approvals centre) re-read the shared
  * pending-approvals slice the moment a decision lands, so the Bridge section and
  * the BRIDGE badge do not show a stale count until the next poll. Optional —
- * omitted, this panel behaves exactly as before. */
+ * omitted, this panel behaves exactly as before.
+ *
+ * BF-723: it now says WHAT was decided. It used to take no arguments, so the
+ * decision existed only in this component's `requests` state and the shared
+ * slice could only be told "refresh" — leaving a failing or late GET free to
+ * put the decided row straight back while the card stayed gone from here. The
+ * queue is this panel's own identity: it is the panel that talks to
+ * /api/capability-requests, so it is the one that knows. */
 export default function CapabilityRequestPanel(
-  { onDecided }: { onDecided?: () => void } = {},
+  { onDecided }: { onDecided?: (decided: DecidedApproval) => void } = {},
 ) {
   const [requests, setRequests] = useState<CapabilityRequestView[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -231,7 +243,7 @@ export default function CapabilityRequestPanel(
     }
     // Remove the decided request from the pending list.
     setRequests(prev => prev.filter(r => r.id !== id));
-    onDecided?.();
+    onDecided?.({ queue: 'capability', id });
   }, [onDecided]);
 
   if (loaded && requests.length === 0) {

@@ -152,8 +152,21 @@ export default function ChatsPanel() {
     summaryInFlightRef.current = true;
     const requestId = ++summaryRequestRef.current;
     const authority = useStore.getState();
+    /* BF-723 (absorbing #1161): capture the AUTHORITY this refresh runs under,
+     * and only that. ``liveGeneration`` identifies the stream whose state the
+     * server is serving; if it changes mid-fetch the result describes a world
+     * this client no longer trusts, and a snapshot will bump
+     * ``liveRepairEpoch`` to refetch.
+     *
+     * ``liveSequence`` used to be captured here too and compared afterwards.
+     * That was a liveness bug, not a safety property — the same one BF-720
+     * removed from ProfileChatTab. Within one generation a sequence advance
+     * means only that another frame arrived, and one always does at the moment
+     * a work item finishes, which is exactly when a room's outputs/steps
+     * counters change and this refresh is worth doing. Ordering between two
+     * refreshes is already enforced by ``summaryRequestRef`` and
+     * ``summaryInFlightRef``, which coalesce rather than race. */
     const generation = authority.liveGeneration;
-    const sequence = authority.liveSequence;
     try {
       const outcome = await repairRoomSummaries();
       const current = useStore.getState();
@@ -161,7 +174,6 @@ export default function ChatsPanel() {
         requestId !== summaryRequestRef.current
         || !current.chatsOpen
         || current.liveGeneration !== generation
-        || current.liveSequence !== sequence
       ) return;
       if (outcome.kind === 'success') {
         hydrateRoomSummaries(outcome.summaries);

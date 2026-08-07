@@ -14,6 +14,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
+/* BF-723: type-only — the panel stays store-free at runtime. */
+import type { DecidedApproval } from '../../store/useStore';
+
 // ── Skill request shape (mirrors the GET serializer) ───────────────
 export interface SkillRequestView {
   id: string;
@@ -215,9 +218,15 @@ function RequestCard({ req, onDecide }: {
 /* AD-1201: `onDecided` lets the host (the approvals centre) re-read the shared
  * pending-approvals slice the moment a decision lands, so the Bridge section and
  * the BRIDGE badge do not show a stale count until the next poll. Optional —
- * omitted, this panel behaves exactly as before. */
+ * omitted, this panel behaves exactly as before.
+ *
+ * BF-723: it now says WHAT was decided, for the reason set out in
+ * CapabilityRequestPanel. The queue is this panel's own identity. */
 export default function SkillRequestPanel(
-  { fetchImpl, onDecided }: { fetchImpl?: FetchImpl; onDecided?: () => void } = {},
+  {
+    fetchImpl,
+    onDecided,
+  }: { fetchImpl?: FetchImpl; onDecided?: (decided: DecidedApproval) => void } = {},
 ) {
   /* BF-710: this was a bare `fetchImpl ?? ((...args) => fetch(...args))`, so on
    * the production path (no prop) it produced a new function every render,
@@ -262,7 +271,7 @@ export default function SkillRequestPanel(
     }
     // Remove the decided request from the pending list.
     setRequests(prev => prev.filter(r => r.id !== id));
-    onDecided?.();
+    onDecided?.({ queue: 'skill', id });
   }, [doFetch, onDecided]);
 
   if (loaded && requests.length === 0) {
