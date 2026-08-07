@@ -280,14 +280,16 @@ async def _route_grant(
         reason="grant fast-path: non-destructive + in-dept peer precedent + trust>=floor",
         decided_by="capability_triage",
     )
-    await permission_store.issue_grant(
-        agent_id,
-        tool_id,
-        permission,
+    return await fulfil_grant(
+        req.id,
+        store=store,
+        agent_id=agent_id,
+        tool_id=tool_id,
+        tool_registration=tool_registration,
+        permission_store=permission_store,
         reason="AD-854 grant fast-path auto-approval",
         issued_by="capability_triage",
-    )
-    return await store.mark_fulfilled(req.id) or req
+    ) or req
 
 
 async def _route_build(
@@ -299,18 +301,147 @@ async def _route_build(
     self_mod_pipeline: Any,
 ) -> CapabilityRequest:
     """Route a build rung to the self-modification pipeline (own approval gate)."""
+    return await fulfil_build(
+        req.id,
+        store=store,
+        gap_target=gap_target,
+        rationale=rationale,
+        self_mod_pipeline=self_mod_pipeline,
+    ) or req
+
+
+# ── The fulfillers: what an approved rung actually DOES ────────────────────
+#
+# AD-1211. These are the *performing* half, split out from the *evaluating*
+# half above so the two callers share one description of each rung:
+#
+#   * the file-time fast path in this module, when triage auto-approves; and
+#   * ``routers/capability_requests._maybe_fulfil_on_approval``, when the
+#     Captain approves a request that was left pending.
+#
+# Only the first caller existed before AD-1211, so approving a pending grant,
+# install or build recorded the decision and did nothing else — no grant
+# issued, no FULFILLED event, and ``CapabilityGapDriver`` (which resumes on
+# FULFILLED only) left the linked work item blocked forever.
+#
+# Each returns the fulfilled request, or ``None`` when it could not fulfil.
+# A ``None`` return must mean ``mark_fulfilled`` was NOT called, so the caller
+# reports the failure honestly and the Captain can retry it (BF-722).
+
+
+async def fulfil_grant(
+    request_id: str,
+    *,
+    store: CapabilityRequestStore,
+    agent_id: str,
+    tool_id: str,
+    tool_registration: Any,
+    permission_store: ToolPermissionStore | None,
+    reason: str,
+    issued_by: str,
+) -> CapabilityRequest | None:
+    """Issue the tool grant an approved ``grant`` request asked for, then fulfil it.
+
+    The permission is derived from the tool's own default matrix rather than
+    supplied by the caller, so neither path can grant wider access than the
+    tool declares it needs (Minimal Authority). Returns ``None`` without
+    marking fulfilled when there is no permission store to issue into.
+    """
+    if permission_store is None:
+        logger.warning(
+            "AD-1211: cannot fulfil grant request %s for %s on %s — no tool "
+            "permission store is wired; the approval is recorded but no grant "
+            "was issued and any work item blocked on it stays blocked",
+            request_id[:12], agent_id, tool_id,
+        )
+        return None
+    permission = _derive_tool_permission(tool_registration)
+    await permission_store.issue_grant(
+        agent_id,
+        tool_id,
+        permission,
+        reason=reason,
+        issued_by=issued_by,
+    )
+    return await store.mark_fulfilled(request_id)
+
+
+async def fulfil_build(
+    request_id: str,
+    *,
+    store: CapabilityRequestStore,
+    gap_target: str,
+    rationale: str,
+    self_mod_pipeline: Any,
+) -> CapabilityRequest | None:
+    """Run the self-mod pipeline for an approved ``build`` request, then fulfil it.
+
+    Only an ``active`` record counts as built. The pipeline owns its own
+    approval gate and its own failure modes, so anything else — ``None``, or a
+    record that was rejected or never activated — leaves the request
+    approved-and-unfulfilled and therefore retriable, rather than announcing an
+    agent that does not exist.
+    """
     if self_mod_pipeline is None:
         logger.warning(
-            "AD-854: build triaged for %r but no self-mod pipeline; "
-            "leaving request %s pending",
-            gap_target, req.id[:12],
+            "AD-1211: cannot fulfil build request %s for %r — no self-mod "
+            "pipeline is wired; the approval is recorded but nothing was built "
+            "and any work item blocked on it stays blocked",
+            request_id[:12], gap_target,
         )
-        return req
+        return None
     record = await self_mod_pipeline.handle_unhandled_intent(
         gap_target,
         rationale or f"Capability gap: {gap_target}",
         {},
     )
-    if record is not None and getattr(record, "status", None) == "active":
-        return await store.mark_fulfilled(req.id) or req
-    return req
+    status = getattr(record, "status", None) if record is not None else None
+    if status != "active":
+        logger.warning(
+            "AD-1211: build for %r (request %s) produced no active agent "
+            "(status=%r); the approval stands, the request is not fulfilled "
+            "and can be retried",
+            gap_target, request_id[:12], status,
+        )
+        return None
+    return await store.mark_fulfilled(request_id)
+
+
+async def fulfil_install(
+    request_id: str,
+    *,
+    store: CapabilityRequestStore,
+    target: str,
+    runtime: Any,
+) -> CapabilityRequest | None:
+    """Install what an approved ``install`` request asked for, then fulfil it.
+
+    Delegates to ``runtime.ensure_dependency`` (AD-838c) — the ship's one
+    install actor — with ``pre_approved=True``, because the Captain has just
+    approved this exact request and must not be asked for it a second time.
+    Returns ``None`` without marking fulfilled when the dependency subsystem is
+    absent or the install did not succeed.
+
+    There is no file-time caller: triage leaves every ``install`` rung pending
+    for the Captain, so unlike ``fulfil_grant`` / ``fulfil_build`` this one is
+    reached from the approval path alone.
+    """
+    ensure = getattr(runtime, "ensure_dependency", None)
+    if not callable(ensure):
+        logger.warning(
+            "AD-1211: cannot fulfil install request %s for %r — the runtime "
+            "exposes no ensure_dependency; the approval is recorded but "
+            "nothing was installed and any blocked work item stays blocked",
+            request_id[:12], target,
+        )
+        return None
+    result = await ensure(target, pre_approved=True)
+    if not getattr(result, "success", False):
+        logger.warning(
+            "AD-1211: installing %r for request %s did not succeed (%s); the "
+            "approval stands, the request is not fulfilled and can be retried",
+            target, request_id[:12],
+            getattr(result, "error", None) or "no error reported",
+        )
+        return None
+    return await store.mark_fulfilled(request_id)

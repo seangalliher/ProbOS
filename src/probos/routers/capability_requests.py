@@ -9,12 +9,23 @@ persistence; this router owns the pending-state guard and serialization.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from probos.api_models import CapabilityRequestDecideRequest
 from probos.capability_request import CapabilityRequest
+
+# AD-1211: the rung fulfillers, shared with the file-time fast path so there is
+# one description of how each kind is fulfilled. ``capability_triage`` imports
+# only ``probos.tools.protocol`` (stdlib-only in turn), so this does not pull
+# the cognitive stack into the API import chain.
+from probos.cognitive.capability_triage import (
+    fulfil_build,
+    fulfil_grant,
+    fulfil_install,
+)
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -125,7 +136,9 @@ async def decide_capability_request(
     # AD-1204: after the standing rule, so a resumed turn that immediately
     # consults ``_standing_rule_permits`` sees the rule the same approval just
     # granted rather than racing it.
-    fulfilled = await _maybe_fulfil_on_approval(store, decided, approve=req.approve)
+    fulfilled = await _maybe_fulfil_on_approval(
+        runtime, store, decided, approve=req.approve
+    )
     # BF-722: re-read so the body reports the state the store actually holds.
     # ``decide()`` now returns a distinct object rather than the cached
     # instance, so a successful ``mark_fulfilled`` no longer shows through it.
@@ -140,70 +153,168 @@ async def decide_capability_request(
         "fulfilled": fulfilled,
     }
 
-# AD-1204: request kinds for which the Captain's approval IS the fulfilment.
+# ── Fulfilment: what approving a request of each kind actually DOES ────────
 #
-# Every other kind names something a separate fulfiller then does — a grant is
-# applied, a package is installed, an agent is built — and ``mark_fulfilled``
-# is called by whoever did it. ``continue`` has no such actor. The thing being
-# asked for is permission to carry on, so the moment permission is given there
-# is nothing left to do and the request is complete.
+# AD-1211. Until this AD, approving a pending ``grant``, ``install`` or
+# ``build`` recorded the decision and stopped. The card vanished, no grant was
+# issued, no package installed, no agent built, no FULFILLED event fired — and
+# ``CapabilityGapDriver.on_capability_event`` resumes a blocked work item on
+# FULFILLED **only** (DECIDED+approved is deliberately a no-op there), so the
+# linked work item stayed blocked permanently.
 #
-# This matters because ``CapabilityGapDriver.on_capability_event`` resumes on
-# CAPABILITY_REQUEST_FULFILLED only; DECIDED+approved is deliberately a no-op
-# there. Without this, an approved ``continue`` emitted DECIDED, nothing ever
-# emitted FULFILLED, and the blocked work item waited forever.
+# The comment that stood here through AD-1204 said every other kind "names
+# something a separate fulfiller then does... and ``mark_fulfilled`` is called
+# by whoever did it". That was true of the file-time fast path in
+# ``capability_triage`` and false of this path, where no such actor existed. A
+# wrong premise in a comment is worse than the bug: it tells the next reader
+# the chain is there.
 #
-# An explicit allowlist rather than "any kind nobody else fulfils", for the
-# same Minimal Authority reason ``_STANDING_RULE_KINDS`` is one: a future kind
-# becomes self-fulfilling when someone decides it should.
+# So: an explicit kind -> fulfiller map. Explicit rather than "any kind nobody
+# else fulfils", for the same Minimal Authority reason ``_STANDING_RULE_KINDS``
+# is one — a future kind becomes fulfillable when someone decides it should,
+# not by inheriting it.
 #
-# Kept as a literal rather than importing ``continue_or_ask.CONTINUE_REQUEST_KIND``
-# so this router does not pull the cognitive agentic stack into its import
-# chain; a drift guard in tests/test_ad1204_approval_resumes_the_turn.py
-# asserts the two agree.
-_FULFIL_ON_APPROVAL_KINDS: frozenset[str] = frozenset({"continue"})
+#   continue -> the approval IS the fulfilment (AD-1204). The thing asked for
+#               is permission to carry on, so once permission is given there is
+#               nothing left to do.
+#   grant    -> issue the tool grant, then mark fulfilled.
+#   install  -> install the dependency, then mark fulfilled.
+#   build    -> run the self-mod pipeline, then mark fulfilled if it produced
+#               an active agent.
+#   action   -> DELIBERATELY ABSENT. An approved action is authorised by a
+#               standing grant for NEXT time; the parked action is not replayed
+#               from here. The recorded browser session is almost certainly
+#               reaped by the time a human answers, and re-running an agentic
+#               loop from a REST handler would put an unbudgeted LLM run behind
+#               a button. The standing rule ``decide_capability_request``
+#               issues just before it gets here is the whole of what an
+#               approved action does.
+#
+# ``continue`` is kept as a literal rather than importing
+# ``continue_or_ask.CONTINUE_REQUEST_KIND`` so this router does not pull the
+# cognitive agentic stack into its import chain; a drift guard in
+# tests/test_ad1204_approval_resumes_the_turn.py asserts the two agree.
+_CONTINUE_KIND: str = "continue"
+
+#: What a fulfiller looks like: ``(runtime, store, decided)`` in, the fulfilled
+#: request out — or ``None`` when it could not fulfil, which MUST mean
+#: ``mark_fulfilled`` was not called (BF-722: the failure is reported and the
+#: Captain can retry).
+ApprovalFulfiller = Callable[
+    [Any, Any, CapabilityRequest], Awaitable[CapabilityRequest | None]
+]
+
+
+async def _fulfil_by_approval_itself(
+    _runtime: Any, store: Any, decided: CapabilityRequest
+) -> CapabilityRequest | None:
+    """AD-1204: ``continue`` — approval is the whole of the fulfilment."""
+    return await store.mark_fulfilled(decided.id)
+
+
+async def _fulfil_grant_request(
+    runtime: Any, store: Any, decided: CapabilityRequest
+) -> CapabilityRequest | None:
+    """AD-1211: issue the tool grant this request asked for, then fulfil it.
+
+    Same function the file-time fast path calls, so there is one description of
+    how a grant is issued rather than two that drift.
+    """
+    tool_registry = getattr(runtime, "tool_registry", None)
+    return await fulfil_grant(
+        decided.id,
+        store=store,
+        agent_id=decided.agent_id,
+        tool_id=decided.target,
+        tool_registration=(
+            tool_registry.get(decided.target) if tool_registry is not None else None
+        ),
+        permission_store=getattr(runtime, "tool_permission_store", None),
+        reason=decided.decision_reason or "AD-1211: Captain approved this grant",
+        issued_by=decided.decided_by or "captain",
+    )
+
+
+async def _fulfil_install_request(
+    runtime: Any, store: Any, decided: CapabilityRequest
+) -> CapabilityRequest | None:
+    """AD-1211: install what this request asked for, then fulfil it."""
+    return await fulfil_install(
+        decided.id, store=store, target=decided.target, runtime=runtime
+    )
+
+
+async def _fulfil_build_request(
+    runtime: Any, store: Any, decided: CapabilityRequest
+) -> CapabilityRequest | None:
+    """AD-1211: build the agent this request asked for, then fulfil it."""
+    return await fulfil_build(
+        decided.id,
+        store=store,
+        gap_target=decided.target,
+        rationale=decided.rationale,
+        self_mod_pipeline=getattr(runtime, "self_mod_pipeline", None),
+    )
+
+
+_APPROVAL_FULFILLERS: dict[str, ApprovalFulfiller] = {
+    _CONTINUE_KIND: _fulfil_by_approval_itself,
+    "grant": _fulfil_grant_request,
+    "install": _fulfil_install_request,
+    "build": _fulfil_build_request,
+}
 
 
 async def _maybe_fulfil_on_approval(
+    runtime: Any,
     store: Any,
     decided: CapabilityRequest,
     *,
     approve: bool,
 ) -> bool:
-    """AD-1204: mark a self-fulfilling request fulfilled once it is approved.
+    """AD-1211: run the fulfiller for an approved request's kind.
 
-    Returns whether FULFILLED was emitted. Honest-degrade: a denial, another
-    kind, or a failed write all yield ``False`` with HTTP 200. The decision is
-    already durably recorded by ``decide()``; failing the whole request because
-    the follow-on emit did not land would discard it.
+    Returns whether FULFILLED was emitted. Honest-degrade throughout: a denial,
+    a kind with no fulfiller, a fulfiller that declines, and a fulfiller that
+    raises all yield ``False`` with HTTP 200. The decision is already durably
+    recorded by ``decide()``; failing the whole request because the follow-on
+    work did not land would discard it, and BF-722 made that ``False`` the
+    signal the Captain can retry on.
 
     A DENIAL deliberately does nothing here. The blocked work item is cancelled
     by ``CapabilityGapDriver._cancel`` off the DECIDED event that ``decide()``
-    already emitted, so a denied continue leaves nothing stranded.
+    already emitted, so a denied request leaves nothing stranded.
     """
-    if not approve or decided.kind not in _FULFIL_ON_APPROVAL_KINDS:
+    if not approve:
+        return False
+    fulfiller = _APPROVAL_FULFILLERS.get(decided.kind)
+    if fulfiller is None:
+        logger.info(
+            "AD-1211: approved %s request %s has no fulfiller — the approval "
+            "itself is the whole effect for this kind",
+            decided.kind, decided.id[:12],
+        )
         return False
     try:
-        updated = await store.mark_fulfilled(decided.id)
+        updated = await fulfiller(runtime, store, decided)
     except Exception:
         logger.warning(
-            "AD-1204: could not mark approved %s request %s fulfilled; the "
-            "approval itself is recorded, but any work item blocked on it "
-            "stays blocked until it is decided again",
+            "AD-1211: fulfilling approved %s request %s failed; the approval "
+            "itself is recorded, but any work item blocked on it stays blocked "
+            "until the Captain approves it again",
             decided.kind, decided.id[:12], exc_info=True,
         )
         return False
     if updated is None:
         logger.warning(
-            "AD-1204: marking approved %s request %s fulfilled returned "
-            "nothing; the approval stands and any blocked work item is not "
-            "resumed",
+            "AD-1211: approved %s request %s could not be fulfilled; the "
+            "approval stands and any blocked work item is not resumed",
             decided.kind, decided.id[:12],
         )
         return False
     logger.info(
-        "AD-1204: approved %s request %s is fulfilled by the approval itself; "
-        "any work item blocked on it now resumes",
+        "AD-1211: approved %s request %s is fulfilled; any work item blocked "
+        "on it now resumes",
         decided.kind, decided.id[:12],
     )
     return True

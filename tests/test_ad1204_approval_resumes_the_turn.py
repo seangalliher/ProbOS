@@ -49,7 +49,9 @@ from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.turn_promotion import run_with_promotion
 from probos.config import DmAgenticConfig
 from probos.routers.capability_requests import (
-    _FULFIL_ON_APPROVAL_KINDS,
+    _APPROVAL_FULFILLERS,
+    _CONTINUE_KIND,
+    _fulfil_by_approval_itself,
     _maybe_fulfil_on_approval,
     decide_capability_request,
 )
@@ -773,9 +775,19 @@ class TestPromotionPublishesTheWorkItemId:
 
 class TestFulfilOnApproval:
     def test_the_router_allowlist_agrees_with_the_module_that_files_the_kind(self):
-        """Drift guard: the literal here and the constant there are one kind."""
+        """Drift guard: the literal here and the constant there are one kind.
+
+        AD-1211 replaced the ``_FULFIL_ON_APPROVAL_KINDS`` frozenset this used
+        to compare against with a kind -> fulfiller map, because grant, install
+        and build gained real fulfillers on this path. The guard's job is
+        unchanged and still load-bearing: the literal the router keeps (so it
+        does not import the cognitive agentic stack) must be the same string
+        ``continue_or_ask`` files, and it must still be the kind that fulfils
+        by approval alone rather than by doing something.
+        """
         # Assert
-        assert _FULFIL_ON_APPROVAL_KINDS == frozenset({CONTINUE_REQUEST_KIND})
+        assert _CONTINUE_KIND == CONTINUE_REQUEST_KIND
+        assert _APPROVAL_FULFILLERS[CONTINUE_REQUEST_KIND] is _fulfil_by_approval_itself
 
     @pytest.mark.asyncio
     async def test_a_denial_never_fulfils(self):
@@ -784,21 +796,42 @@ class TestFulfilOnApproval:
         decided = SimpleNamespace(id="req-1", kind=CONTINUE_REQUEST_KIND)
 
         # Act / Assert
-        assert await _maybe_fulfil_on_approval(store, decided, approve=False) is False
+        assert (
+            await _maybe_fulfil_on_approval(
+                SimpleNamespace(), store, decided, approve=False
+            )
+            is False
+        )
         assert store.calls == []
 
     @pytest.mark.asyncio
-    async def test_another_kind_is_never_self_fulfilling(self):
-        """A grant/install/build has a real fulfiller; approval is not it."""
+    async def test_a_kind_with_no_fulfiller_is_never_self_fulfilling(self):
+        """Approval alone completes ``continue`` and nothing else.
+
+        This used to assert grant/install/build alongside ``action``, which
+        described the defect AD-1211 fixed rather than the contract: those
+        three had no fulfiller on the approval path at all, so approving one
+        recorded a decision and stranded the work item. They now dispatch to
+        real fulfillers and are covered end-to-end in
+        tests/test_ad1211_approval_fulfils_every_kind.py.
+
+        ``action`` stays here, and stays deliberately absent: an approved
+        action authorises the NEXT one through a standing rule and never
+        replays the parked one.
+        """
         # Arrange
         store = _NullFulfilStore()
 
         # Act / Assert
-        for kind in ("grant", "install", "build", "action"):
+        for kind in ("action", "no_such_kind"):
             decided = SimpleNamespace(id="req-1", kind=kind)
             assert (
-                await _maybe_fulfil_on_approval(store, decided, approve=True) is False
+                await _maybe_fulfil_on_approval(
+                    SimpleNamespace(), store, decided, approve=True
+                )
+                is False
             )
+        assert "action" not in _APPROVAL_FULFILLERS
         assert store.calls == []
 
     @pytest.mark.asyncio
@@ -809,7 +842,7 @@ class TestFulfilOnApproval:
         # Act / Assert
         assert (
             await _maybe_fulfil_on_approval(
-                _RaisingFulfilStore(), decided, approve=True
+                SimpleNamespace(), _RaisingFulfilStore(), decided, approve=True
             )
             is False
         )
@@ -821,7 +854,12 @@ class TestFulfilOnApproval:
         decided = SimpleNamespace(id="req-1", kind=CONTINUE_REQUEST_KIND)
 
         # Act / Assert
-        assert await _maybe_fulfil_on_approval(store, decided, approve=True) is False
+        assert (
+            await _maybe_fulfil_on_approval(
+                SimpleNamespace(), store, decided, approve=True
+            )
+            is False
+        )
         assert store.calls == ["req-1"]
 
 

@@ -123,10 +123,22 @@ class DependencyResolver:
 
         return missing
 
-    async def resolve(self, source_code: str) -> DependencyResult:
+    async def resolve(
+        self, source_code: str, *, pre_approved: bool = False
+    ) -> DependencyResult:
         """Orchestrate detection, approval, and installation.
 
         Returns DependencyResult indicating what happened.
+
+        AD-1211: ``pre_approved`` states that a human has ALREADY approved this
+        install on the record — the Captain approving an ``install`` capability
+        request is the only caller today. It skips the approval callback so the
+        same human is not asked a second time for the same package, and nothing
+        else: detection, the policy, the deny-list, installation and
+        verification all run exactly as they do for any other caller. It is
+        deliberately NOT a way to install something the policy excludes — a
+        denied or unlisted-under-``whitelist`` import is still never offered,
+        because ``detect_missing`` decides that before approval is reached.
         """
         missing = self.detect_missing(source_code)
         if not missing:
@@ -136,7 +148,13 @@ class DependencyResolver:
         packages = [IMPORT_TO_PACKAGE.get(m, m) for m in missing]
 
         # User approval
-        if self._approval_fn:
+        if pre_approved:
+            logger.info(
+                "AD-1211: installing %s without a fresh approval prompt — "
+                "approval is already on record for this request",
+                ", ".join(packages),
+            )
+        elif self._approval_fn:
             try:
                 approved = await self._approval_fn(
                     [

@@ -3656,7 +3656,7 @@ class ProbOSRuntime:
         return results
 
     async def ensure_dependency(
-        self, import_name: str | list[str]
+        self, import_name: str | list[str], *, pre_approved: bool = False
     ) -> "DependencyResult":
         """AD-838c: Ensure one or more third-party packages are importable.
 
@@ -3665,6 +3665,15 @@ class ProbOSRuntime:
         imports already in ``config.self_mod.allowed_imports`` (the whitelist tier);
         unlisted imports require an approval callback (wired by the shell) under the
         ``prompt_unlisted`` policy. All install activity is logged to the event log.
+
+        AD-1211: ``pre_approved`` says a human has already approved this exact
+        install — the Captain approving an ``install`` capability request. It
+        suppresses BOTH approval gates on this path (the no-callback refusal
+        below, and the resolver's approval callback) so the Captain is not
+        asked a second time for something they just approved. Every other
+        caller defaults to ``False`` and is byte-identical to before. It does
+        NOT bypass the resolver, the deny-list or the policy, and the install
+        is event-logged exactly as any other.
         """
         from probos.cognitive.dependency_resolver import DependencyResult
 
@@ -3695,7 +3704,11 @@ class ProbOSRuntime:
         # cannot be approved interactively. Hard-decline unlisted packages rather
         # than installing silently. Use the PUBLIC allowed_imports as the
         # auto-approve set (do not reach into resolver privates).
-        if resolver._approval_fn is None:
+        #
+        # AD-1211: skipped only when approval is already on record. The refusal
+        # exists because nobody could be asked; when the answer is already
+        # "yes", refusing discards it and strands whatever was approved.
+        if resolver._approval_fn is None and not pre_approved:
             auto = set(self.config.self_mod.allowed_imports)
             prompt_tier = [
                 m
@@ -3718,7 +3731,7 @@ class ProbOSRuntime:
                     error="approval callback unavailable",
                 )
 
-        result = await resolver.resolve(source)
+        result = await resolver.resolve(source, pre_approved=pre_approved)
 
         if (result.installed or result.failed) and self.event_log:
             await self.event_log.log(

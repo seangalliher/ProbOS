@@ -39,16 +39,18 @@ from probos.api_models import CapabilityRequestDecideRequest
 from probos.capability_request import CapabilityRequestStore
 from probos.cognitive.capability_gap_driver import CapabilityGapDriver
 from probos.events import EventType
+# ``_CONTINUE_KIND`` is the kind the route fulfils by approval alone, imported
+# from production rather than re-typed so a change to it reaches this suite
+# instead of silently bypassing it. It was ``next(iter(_FULFIL_ON_APPROVAL_KINDS))``
+# until AD-1211 replaced that frozenset with a kind -> fulfiller map; the intent
+# is unchanged, but the map now holds four kinds, so the self-fulfilling one has
+# to be named rather than picked out of a one-element set.
 from probos.routers.capability_requests import (
-    _FULFIL_ON_APPROVAL_KINDS,
+    _CONTINUE_KIND,
     decide_capability_request,
 )
 from probos.skill_request import SkillRequestStore
 from probos.workforce import WorkItemStore
-
-# The kind the route self-fulfils. Read from production rather than re-typed so
-# a change to the allowlist reaches this suite instead of silently bypassing it.
-_CONTINUE_KIND = next(iter(_FULFIL_ON_APPROVAL_KINDS))
 
 
 # ── Test doubles ───────────────────────────────────────────────────────────
