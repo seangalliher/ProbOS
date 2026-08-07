@@ -35,10 +35,10 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-07T19:07:56+00:00 at `73739eba` | 2251 subjects, 824 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-07T20:06:19+00:00 at `aff79cae` | 2252 subjects, 824 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-07T19:07:56+00:00 | 1178 issues, 761 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-08-07T20:06:19+00:00 | 1178 issues, 761 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 

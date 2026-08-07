@@ -70,6 +70,24 @@ _ARTIFACT_LIBRARIES: tuple[tuple[str, str, str], ...] = (
     ("PIL", "Pillow", "an image"),
 )
 
+# AD-1219 (#1180): libraries that do not AUTHOR a downloadable artifact but that
+# an agent reaches for constantly while producing one. Kept separate from
+# `_ARTIFACT_LIBRARIES` because the two answer different questions -- "what can
+# I hand the Captain" versus "what can I work with on the way there" -- and the
+# description states them as separate clauses for that reason.
+#
+# These are advertised on the same terms as the artifact set: derived from real
+# importability, and required to be declared core dependencies. Installing a
+# library the agent is never told about is only half the Captain's request; an
+# unnamed capability is one the agent will not reach for, which BF-726 already
+# established is the same drift pointed the other way.
+_ANALYSIS_LIBRARIES: tuple[tuple[str, str, str], ...] = (
+    ("pandas", "pandas", "tabular data"),
+    ("numpy", "numpy", "numerics"),
+    ("bs4", "beautifulsoup4", "HTML parsing"),
+    ("tabulate", "tabulate", "text tables"),
+)
+
 
 def _importable(module: str) -> bool:
     """Whether ``module`` can be imported in the interpreter the sandbox uses.
@@ -95,6 +113,19 @@ def _available_artifact_libraries() -> list[tuple[str, str]]:
     return [
         (pip_name, purpose)
         for module, pip_name, purpose in _ARTIFACT_LIBRARIES
+        if _importable(module)
+    ]
+
+
+def _available_analysis_libraries() -> list[tuple[str, str]]:
+    """AD-1219: the (pip name, purpose) processing libraries actually present.
+
+    Same derivation and same rationale as :func:`_available_artifact_libraries`;
+    separate list because the description states the two as separate clauses.
+    """
+    return [
+        (pip_name, purpose)
+        for module, pip_name, purpose in _ANALYSIS_LIBRARIES
         if _importable(module)
     ]
 
@@ -256,6 +287,17 @@ class CodeExecutionTool:
                 "Run a Python script in an isolated sandbox to produce a file. "
                 "Only the standard library is available, so write formats it "
                 "supports directly — CSV, JSON or plain text. "
+            )
+        # AD-1219: the processing libraries, derived on the same terms. Stated
+        # as its own clause so it reads as "what you can work with" rather than
+        # "what you can hand over", and omitted entirely when none are present
+        # so the honest-degrade path stays clean.
+        analysis = _available_analysis_libraries()
+        if analysis:
+            opening += (
+                "Also available for working with data on the way there: "
+                + ", ".join(f"{pip} ({purpose})" for pip, purpose in analysis)
+                + ". "
             )
         return (
             opening

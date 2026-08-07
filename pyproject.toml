@@ -55,6 +55,33 @@ dependencies = [
     "keyring>=25.0",  # AD-749: M365 token storage (MIT)
     "msal>=1.0",  # AD-749: Microsoft OAuth device-code flow (MIT)
     "tzdata>=2024.1",  # AD-984d: IANA tz database for zoneinfo on Windows (public-domain data, Apache-2.0 wrapper)
+    # AD-1219 (#1180): the sandbox's ADVERTISED library surface must be
+    # installed by default. `_ARTIFACT_LIBRARIES` in tools/code_execution_tool.py
+    # names what run_python offers to build; before AD-1219 two of those six
+    # (reportlab, matplotlib) were declared ONLY in the uninstalled
+    # `crew-tools` extra and Pillow was present merely by transitive accident
+    # via torch. The tool advertised all six regardless, so the agent told the
+    # Captain it could produce PDFs and charts that nothing in the venv could
+    # author (BF-726 / BF-727). A tool may not advertise a library that is not a
+    # declared dependency of the package shipping the tool -- asserted by
+    # tests/test_ad1219_advertised_libraries_are_installed.py.
+    "reportlab>=4.0",       # authors PDFs (pypdf, already core, only READS them)
+    "matplotlib>=3.9",      # authors charts
+    "pillow>=10.0",         # authors/edits images; was transitive-only
+    # Companions an agent reaches for constantly. Kept to pure-Python or
+    # universally-wheeled packages: a default install must never require the
+    # operator to install a native toolchain first, which is why cairosvg,
+    # pytesseract and pdf2image stay in `crew-tools` (Cairo / Tesseract /
+    # Poppler respectively). numpy and requests were already present via
+    # torch/facenet's transitive closure; declared explicitly here because
+    # depending on another package's dependency graph is the same fragility
+    # that left Pillow advertised-but-undeclared.
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "requests>=2.32",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "tabulate>=0.9",
 ]
 
 [project.urls]
@@ -88,41 +115,37 @@ discovery = [
     "zeroconf>=0.130",   # AD-708e: LAN mDNS advertisement (LGPL-2.1; optional, never vendored)
 ]
 
-# AD-1066: default libraries available to crew agents' sandboxed code execution
+# AD-1066: further libraries available to crew agents' sandboxed code execution
 # (config.execution.enabled). Mirrors the Claude Cowork / Codex document-and-data
-# toolbelt so crew agents can build .docx / .xlsx / .pdf / charts and parse
-# documents via run_python. Install with: pip install -e .[crew-tools]. A few
-# libs need a system binary too — pytesseract→Tesseract, pdf2image→Poppler,
-# cairosvg→Cairo. All public + permissively licensed (MIT/BSD/Apache).
+# toolbelt. Install with: pip install -e .[crew-tools]. A few libs need a system
+# binary too — pytesseract→Tesseract, pdf2image→Poppler, cairosvg→Cairo, which is
+# why they are here rather than in the default set. All public + permissively
+# licensed (MIT/BSD/Apache).
+#
+# AD-1219 (#1180) moved numpy, pandas, matplotlib, pillow, reportlab,
+# beautifulsoup4, lxml and requests OUT of this extra and into the core
+# dependencies. They are deliberately NOT repeated here: two declarations of one
+# dependency set is the same drift class this AD exists to close.
 crew-tools = [
-    # Data & analysis (openpyxl is already a core dep)
-    "numpy>=2.0",
-    "pandas>=2.2",
+    # Data & analysis (openpyxl, pandas, numpy are core deps)
     "xlsxwriter>=3.2",
-    # Visualization & graphics
-    "matplotlib>=3.9",
+    # Visualization & graphics (matplotlib, pillow are core deps)
     "seaborn>=0.13",
-    "pillow>=10.0",
-    "cairosvg>=2.7",
-    # Document creation & processing (python-docx / python-pptx already core)
-    "reportlab>=4.0",
+    "cairosvg>=2.7",          # needs Cairo
+    # Document creation & processing (python-docx / python-pptx / reportlab core)
     "mammoth>=1.8",
     # PDF processing (pypdf already core)
     "pypdfium2>=4.30",
     "pdfplumber>=0.11",
     "pdfminer.six>=20240706",
-    "pdf2image>=1.17",
-    "pytesseract>=0.3.13",
-    # Markup, parsing & templating
-    "beautifulsoup4>=4.12",
-    "lxml>=5.0",
+    "pdf2image>=1.17",        # needs Poppler
+    "pytesseract>=0.3.13",    # needs Tesseract
+    # Markup, parsing & templating (beautifulsoup4, lxml are core deps)
     "markdownify>=0.13",
     "markitdown>=0.1",
     "jinja2>=3.1",
     # File-type detection (used by Claude/Cowork document skills)
     "magika>=0.6",
-    # HTTP (httpx already core; requests is the common agent default)
-    "requests>=2.32",
 ]
 
 [dependency-groups]
