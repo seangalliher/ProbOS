@@ -28,17 +28,17 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
-| AD | **AD-1213** | **AD-1214** | AD-1204 | 1205-1213 |
-| BF | **BF-724** | **BF-725** | BF-720 | 721-724 |
+| AD | **AD-1215** | **AD-1216** | AD-1211 | 1212-1215 |
+| BF | **BF-724** | **BF-725** | BF-722 | 723-724 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-06T22:16:12+00:00 at `b7466d32` | 2239 subjects, 817 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-07T02:10:57+00:00 at `468ef406` | 2242 subjects, 819 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-06T22:16:12+00:00 | 1170 issues, 754 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-08-07T02:10:57+00:00 | 1172 issues, 756 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,11 +46,11 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 72 | 14 | assigned, issue open, no shipped code |
+| `allocated-open` | 73 | 13 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 6 | 0 | abandoned, number **not** reusable |
-| `shipped` | 874 | 379 | code in history |
+| `shipped` | 875 | 380 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
@@ -58,9 +58,10 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
+| `AD-1215` | [#1172](https://github.com/seangalliher/ProbOS/issues/1172) | issue #1172 open, no code | AD-1215: extension_registry is never assigned, so the install rung has never fired |
+| `AD-1214` | [#1171](https://github.com/seangalliher/ProbOS/issues/1171) | issue #1171 open, no code | AD-1214: pre-clear a class so routine decisions stop notifying |
 | `AD-1213` | [#1170](https://github.com/seangalliher/ProbOS/issues/1170) | issue #1170 open, no code | AD-1213: the chain of command does not reach the approval path |
 | `AD-1212` | [#1166](https://github.com/seangalliher/ProbOS/issues/1166) | issue #1166 open, no code | AD-1212: action requests cannot be meaningfully approved in the HXI |
-| `AD-1211` | [#1164](https://github.com/seangalliher/ProbOS/issues/1164) | issue #1164 open, no code | AD-1211: approving a grant, install, or build never fulfils it |
 | `AD-1210` | [#1161](https://github.com/seangalliher/ProbOS/issues/1161) | issue #1161 open, no code | AD-1210: four more surfaces discard a correct fetch when any live frame arrives |
 | `AD-1209` | [#1160](https://github.com/seangalliher/ProbOS/issues/1160) | issue #1160 open, no code | AD-1209: an agent cannot read task state, so asking 'is it done?' re-runs the task |
 | `AD-1208` | [#1154](https://github.com/seangalliher/ProbOS/issues/1154) | issue #1154 open, no code | AD-1208: bound agentic turns by risk and cost, not by a flat iteration cap |
@@ -132,7 +133,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
 | `BF-724` | [#1169](https://github.com/seangalliher/ProbOS/issues/1169) | issue #1169 open, no code | BF-724: the approvals entry path is not keyboard operable |
 | `BF-723` | [#1168](https://github.com/seangalliher/ProbOS/issues/1168) | issue #1168 open, no code | BF-723: decisions are not reconciled monotonically across polling views |
-| `BF-722` | [#1167](https://github.com/seangalliher/ProbOS/issues/1167) | issue #1167 open, no code | BF-722: approval transaction integrity — failed fulfilment and cache-before-commit |
 | `BF-721` | [#1165](https://github.com/seangalliher/ProbOS/issues/1165) | issue #1165 open, no code | BF-721: capability DM replies can reach the wrong agent instance |
 | `BF-718` | [#1157](https://github.com/seangalliher/ProbOS/issues/1157) | issue #1157 open, no code | BF-718: agent messages that arrive asynchronously are never spoken |
 | `BF-714` | [#1145](https://github.com/seangalliher/ProbOS/issues/1145) | issue #1145 open, no code | BF-714: the DM degrade message discards the diagnosis the runtime already made |
@@ -168,9 +168,9 @@ _(none)_
 
 ## Shipped
 
-**AD** (874): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180, 1184, 1201, 1204
+**AD** (875): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180, 1184, 1201, 1204, 1211
 
-**BF** (379): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-686, 688, 690, 692-710, 715-717, 719-720
+**BF** (380): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-686, 688, 690, 692-710, 715-717, 719-720, 722
 
 ## Unaccounted — silent, **not** free
 

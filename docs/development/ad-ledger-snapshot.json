@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-06T22:16:12+00:00",
-    "head": "b7466d32",
-    "subject_count": 2239,
+    "captured_at": "2026-08-07T02:10:57+00:00",
+    "head": "468ef406",
+    "subject_count": 2242,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -366,6 +366,9 @@
       ],
       "AD-1204": [
         "git AD-1204"
+      ],
+      "AD-1211": [
+        "git AD-1211"
       ],
       "AD-142": [
         "git AD-142"
@@ -2647,6 +2650,9 @@
       "BF-720": [
         "git BF-720"
       ],
+      "BF-722": [
+        "git BF-722"
+      ],
       "BF-76": [
         "git BF-076"
       ],
@@ -2674,8 +2680,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-06T22:16:12+00:00",
-    "issue_count": 1170,
+    "captured_at": "2026-08-07T02:10:57+00:00",
+    "issue_count": 1172,
     "issues": {
       "AD-1000": [
         {
@@ -4321,8 +4327,8 @@
             "AD-1211"
           ],
           "number": 1164,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1211: approving a grant, install, or build never fulfils it"
         }
       ],
@@ -4346,6 +4352,28 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1213: the chain of command does not reach the approval path"
+        }
+      ],
+      "AD-1214": [
+        {
+          "claims": [
+            "AD-1214"
+          ],
+          "number": 1171,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1214: pre-clear a class so routine decisions stop notifying"
+        }
+      ],
+      "AD-1215": [
+        {
+          "claims": [
+            "AD-1215"
+          ],
+          "number": 1172,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1215: extension_registry is never assigned, so the install rung has never fired"
         }
       ],
       "AD-423": [
@@ -14548,8 +14576,8 @@
             "BF-722"
           ],
           "number": 1167,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-722: approval transaction integrity \u2014 failed fulfilment and cache-before-commit"
         }
       ],
