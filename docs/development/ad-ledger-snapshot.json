@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-07T02:10:57+00:00",
-    "head": "468ef406",
-    "subject_count": 2242,
+    "captured_at": "2026-08-07T06:23:09+00:00",
+    "head": "b699247d",
+    "subject_count": 2247,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2650,8 +2650,17 @@
       "BF-720": [
         "git BF-720"
       ],
+      "BF-721": [
+        "git BF-721"
+      ],
       "BF-722": [
         "git BF-722"
+      ],
+      "BF-723": [
+        "git BF-723"
+      ],
+      "BF-724": [
+        "git BF-724"
       ],
       "BF-76": [
         "git BF-076"
@@ -2680,8 +2689,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-07T02:10:57+00:00",
-    "issue_count": 1172,
+    "captured_at": "2026-08-07T06:23:09+00:00",
+    "issue_count": 1173,
     "issues": {
       "AD-1000": [
         {
@@ -4316,8 +4325,8 @@
             "AD-1210"
           ],
           "number": 1161,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1210: four more surfaces discard a correct fetch when any live frame arrives"
         }
       ],
@@ -14565,8 +14574,8 @@
             "BF-721"
           ],
           "number": 1165,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-721: capability DM replies can reach the wrong agent instance"
         }
       ],
@@ -14587,8 +14596,8 @@
             "BF-723"
           ],
           "number": 1168,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-723: decisions are not reconciled monotonically across polling views"
         }
       ],
@@ -14598,9 +14607,20 @@
             "BF-724"
           ],
           "number": 1169,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-724: the approvals entry path is not keyboard operable"
+        }
+      ],
+      "BF-725": [
+        {
+          "claims": [
+            "BF-725"
+          ],
+          "number": 1173,
           "reason": "",
           "state": "OPEN",
-          "title": "BF-724: the approvals entry path is not keyboard operable"
+          "title": "BF-725: the Bridge station rows are not keyboard operable either"
         }
       ],
       "BF-80": [
