@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-07T06:23:09+00:00",
-    "head": "b699247d",
-    "subject_count": 2247,
+    "captured_at": "2026-08-07T19:07:56+00:00",
+    "head": "73739eba",
+    "subject_count": 2251,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -2662,6 +2662,12 @@
       "BF-724": [
         "git BF-724"
       ],
+      "BF-725": [
+        "git BF-725"
+      ],
+      "BF-726": [
+        "git BF-726"
+      ],
       "BF-76": [
         "git BF-076"
       ],
@@ -2689,8 +2695,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-07T06:23:09+00:00",
-    "issue_count": 1173,
+    "captured_at": "2026-08-07T19:07:56+00:00",
+    "issue_count": 1178,
     "issues": {
       "AD-1000": [
         {
@@ -4383,6 +4389,39 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1215: extension_registry is never assigned, so the install rung has never fired"
+        }
+      ],
+      "AD-1216": [
+        {
+          "claims": [
+            "AD-1216"
+          ],
+          "number": 1175,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1216: approve from the chat, not only from the Bridge"
+        }
+      ],
+      "AD-1217": [
+        {
+          "claims": [
+            "AD-1217"
+          ],
+          "number": 1177,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1217: \"NO NETWORK ACCESS\" is a proxy hint described as a guarantee"
+        }
+      ],
+      "AD-1218": [
+        {
+          "claims": [
+            "AD-1218"
+          ],
+          "number": 1178,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1218: surface the remaining sandbox limits instead of letting agents find them by failing"
         }
       ],
       "AD-423": [
@@ -14618,9 +14657,20 @@
             "BF-725"
           ],
           "number": 1173,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-725: the Bridge station rows are not keyboard operable either"
+        }
+      ],
+      "BF-726": [
+        {
+          "claims": [
+            "BF-726"
+          ],
+          "number": 1176,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-726: the sandbox advertised two libraries it cannot import"
         }
       ],
       "BF-80": [
