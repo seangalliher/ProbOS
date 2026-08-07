@@ -17,6 +17,52 @@ import { timeAgo } from './wardroom/timeAgo';
  * renders it unconditionally and slides it off-screen when closed). */
 const APPROVALS_POLL_INTERVAL_MS = 10000;
 
+/* ── BF-724: UA-chrome neutraliser for the semantic controls ──
+ *
+ * The collapsible header, its expand affordance and the approval row were
+ * clickable `div`/`span`s: no tab stop, no key handler, no role. The only route
+ * to a pending approval could not be operated from a keyboard. They are now
+ * real `<button>`s — but a `<button>` arrives with UA chrome a `<div>` never
+ * had: a `buttonface` background, an outset border, `1px 6px` padding, centred
+ * text, and its OWN font (buttons do not inherit `font-family`, so the panel's
+ * JetBrains Mono would silently become Arial inside every converted control).
+ *
+ * Resetting it here keeps the rendered output identical to the divs these
+ * replaced. This change is semantics and focus, never appearance — the amber /
+ * blue / violet trust spectrum and the stroke-SVG glyphs are untouched (HXI #3).
+ *
+ * `outline` is deliberately NOT set inline: an inline declaration outranks the
+ * stylesheet, which would make the amber focus ring below unreachable. */
+const BARE_BUTTON: React.CSSProperties = {
+  appearance: 'none',
+  WebkitAppearance: 'none',
+  background: 'none',
+  border: 'none',
+  borderRadius: 0,
+  margin: 0,
+  padding: 0,
+  fontFamily: 'inherit',
+  fontSize: 'inherit',
+  fontWeight: 'inherit',
+  fontStyle: 'inherit',
+  lineHeight: 'inherit',
+  color: 'inherit',
+  textAlign: 'left',
+  // A `display:flex` button must not inherit the UA's centring behaviour; the
+  // divs these replaced laid their children out from the start edge.
+  alignItems: 'stretch',
+  justifyContent: 'flex-start',
+};
+
+/* HXI #3: the default UA focus ring breaks the visual language. Focus is drawn
+ * with the same amber the panel already uses for an active/alerting state.
+ * `:focus-visible` only, so a pointer click does not paint a ring. Both rules
+ * carry equal specificity, so the ring rule must come second. */
+const FOCUS_RING_CSS = `
+[data-hxi-focus]:focus{outline:none}
+[data-hxi-focus]:focus-visible{outline:1px solid #f0b060;outline-offset:-1px}
+`;
+
 /* ── Collapsible Section ── */
 function BridgeSection({
   title, count, defaultOpen, accentColor, onExpand, stationId, alerting, children,
@@ -41,9 +87,11 @@ function BridgeSection({
       <div
         data-station={stationId}
         data-alerting={alerting ? 'true' : undefined}
-        onClick={() => setOpen(o => !o)}
         style={{
-          padding: '8px 12px',
+          // BF-724: the vertical padding moved onto the two buttons so the full
+          // row height stays clickable now that the row itself is inert. The
+          // rendered box is unchanged: 8px + content + 8px, inset 12px.
+          padding: '0 12px',
           cursor: 'pointer',
           userSelect: 'none',
           display: 'flex',
@@ -63,24 +111,55 @@ function BridgeSection({
             : undefined,
         }}
       >
-        <span style={{ color: '#666' }}>{open ? <ChevronDown size={8} /> : <ChevronRight size={8} />}</span>
-        <span style={{
-          fontSize: 10, fontWeight: 700, letterSpacing: 1.5,
-          textTransform: 'uppercase' as const, color,
-        }}>
-          {title} ({count})
-        </span>
+        {/* BF-724: the disclosure control. Two SIBLING buttons, not a nested
+            pair — a button inside a button is invalid interactive content and
+            would reintroduce the very unreachability this fixes. `flex: 1`
+            keeps the whole row up to the expand affordance clickable, exactly
+            as the div it replaced. Its accessible name is the visible label
+            (WCAG 2.5.3), so no aria-label competes with it. */}
+        <button
+          type="button"
+          data-hxi-focus=""
+          aria-expanded={open}
+          onClick={() => setOpen(o => !o)}
+          style={{
+            ...BARE_BUTTON,
+            flex: 1,
+            minWidth: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '8px 0',
+            cursor: 'pointer',
+          }}
+        >
+          <span style={{ color: '#666' }}>{open ? <ChevronDown size={8} /> : <ChevronRight size={8} />}</span>
+          <span style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: 1.5,
+            textTransform: 'uppercase' as const, color,
+          }}>
+            {title} ({count})
+          </span>
+        </button>
         {onExpand && (
-          <span
-            onClick={(e) => { e.stopPropagation(); onExpand(); }}
+          <button
+            type="button"
+            data-hxi-focus=""
+            onClick={onExpand}
+            /* Glyph-only, so content gives it no accessible name. `title` alone
+               would leave it to the UA's last-resort fallback; the label is
+               explicit and section-scoped, and the title stays as the tooltip. */
+            aria-label={`Expand ${title} to full view`}
             style={{
+              ...BARE_BUTTON,
               marginLeft: 'auto', fontSize: 10, color: '#666',
-              cursor: 'pointer', padding: '0 4px',
+              cursor: 'pointer', padding: '8px 4px',
+              display: 'flex', alignItems: 'center',
             }}
             title="Expand to full view"
           >
             <Expand size={10} />
-          </span>
+          </button>
         )}
       </div>
       {open && <div style={{ padding: '4px 8px 8px' }}>{children}</div>}
@@ -141,15 +220,31 @@ function ApprovalRow({ approval, onOpen }: { approval: PendingApproval; onOpen: 
    * this row discarded that entirely. The human-readable text is the reason a
    * card is glanceable, so it leads. */
   const ask = (approval.target || '').trim();
+  const label = ask || approval.agent_id || 'unknown request';
   return (
-    <div
+    <button
+      type="button"
+      data-hxi-focus=""
       data-testid="bridge-approval-row"
       data-queue={approval.queue}
       onClick={onOpen}
+      /* BF-724: the row's own content reads as "continue · 7m ago · <the ask>",
+         which is a serviceable name but buries the action. This says what
+         activating it does, and still carries the ask so two pending rows are
+         distinguishable by name alone. */
+      aria-label={`Open approval request: ${label}`}
       style={{
+        ...BARE_BUTTON,
         display: 'flex',
         flexDirection: 'column' as const,
         gap: 2,
+        // A block-level `div` filled its parent; `width: 100%` restates that
+        // for the button. There is no global `box-sizing: border-box` in this
+        // app, so without the override the 6px side padding would be ADDED to
+        // the 100% and the row would render 12px wider than the div it
+        // replaced — the markup change dragging the layout with it.
+        width: '100%',
+        boxSizing: 'border-box' as const,
         padding: '5px 6px',
         cursor: 'pointer',
         userSelect: 'none' as const,
@@ -180,7 +275,7 @@ function ApprovalRow({ approval, onOpen }: { approval: PendingApproval; onOpen: 
       >
         {ask || approval.agent_id || 'unknown request'}
       </span>
-    </div>
+    </button>
   );
 }
 
@@ -260,6 +355,10 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
       fontFamily: "'JetBrains Mono', monospace",
       pointerEvents: open ? 'auto' : 'none',
     }}>
+      {/* BF-724: one focus-ring rule for every control this panel made
+          keyboard-reachable. Mounted here rather than per-section so it is
+          declared once for the whole panel. */}
+      <style>{FOCUS_RING_CSS}</style>
       {/* Header */}
       <div style={{
         display: 'flex',

@@ -187,7 +187,17 @@ describe('AD-1201 expand opens the approvals centre', () => {
     await mountBridge([CAPABILITY_ROW], []);
     const header = await screen.findByText(/Approvals \(1\)/i);
 
-    const expand = header.parentElement?.querySelector('[title="Expand to full view"]');
+    /* BF-724: the header row is now a flex container holding two SIBLING
+     * buttons — the disclosure (chevron + title, carrying `aria-expanded`) and
+     * the expand affordance. Nesting the expand control inside the disclosure
+     * would be interactive content inside a button, which is the same class of
+     * defect BF-724 exists to remove. The title's parent is therefore the
+     * disclosure button rather than the row, so this walks one level further
+     * out. The property asserted below is unchanged, and the mouse path it
+     * covers is deliberately kept: `ApprovalsKeyboard.bf724.test.tsx` proves
+     * the keyboard path, this one proves the pointer path still works. */
+    const expand = header.parentElement?.parentElement
+      ?.querySelector('[title="Expand to full view"]');
     expect(expand).toBeTruthy();
     expect(useStore.getState().approvalsCenterOpen).toBe(false);
 

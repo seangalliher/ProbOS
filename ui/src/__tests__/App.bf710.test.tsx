@@ -50,12 +50,36 @@ import SkillRequestPanel from '../components/skill/SkillRequestPanel';
 
 /** The JSX a component actually returns — imports alone are not a mount. */
 function returnedTree(source: string): string {
-  const start = source.indexOf('return (');
+  /* BF-724: this was `indexOf('return (')`, which ALSO matches the
+   * `return () => { … }` cleanup of a `useEffect`. App.tsx has carried three
+   * such cleanups since before this file existed, so "the tree it returns" has
+   * quietly meant "everything after the first effect cleanup" — the assertions
+   * below happened to hold on the wider slice, so nothing ever failed. Adding a
+   * focus-transfer effect to ApprovalsCenterPanel would have done the same to
+   * the centre. Anchoring on the newline that follows a JSX `return (` tells the
+   * statement apart from the arrow. Every assertion below is unchanged; this
+   * only makes them mean what they already claimed. */
+  const start = source.search(/return \(\r?\n/);
   expect(start).toBeGreaterThan(-1);
   return source.slice(start);
 }
 
 describe('approvals surface reachability (BF-710, re-homed by AD-1201)', () => {
+  it('the tree helper anchors on a JSX return, not on an effect cleanup', () => {
+    /* BF-724: a guard on the guard. Every assertion in this file is evaluated
+     * against `returnedTree(...)`, and until BF-724 that helper matched
+     * `return (` anywhere — including the `return () => { … }` cleanup of a
+     * `useEffect`. App.tsx has carried three such cleanups since before this
+     * file existed, so "the tree it returns" has silently meant "everything
+     * after the first effect cleanup" and nothing ever failed. Adding a
+     * focus-transfer effect to the centre would have done the same to
+     * `centerSource`. Anchoring is invisible when it is wrong, so it gets its
+     * own assertion rather than relying on the others to notice. */
+    for (const source of [appSource, bridgeSource, centerSource]) {
+      expect(returnedTree(source)).toMatch(/^return \(\r?\n/);
+    }
+  });
+
   it('App imports the approvals centre from its real module path', () => {
     expect(appSource).toContain(
       "from './components/approvals/ApprovalsCenterPanel'",
