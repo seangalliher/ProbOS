@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/wardroom", tags=["wardroom"])
 
+# BF-721: the Captain is not a registered agent, so a Captain-authored thread has
+# no agent to reply to — the target is the *other* party and must come from the
+# channel-level fallback.
+_CAPTAIN_AUTHOR_ID = "captain"
+
+_DM_CHANNEL_PREFIX = "dm-"
+
 
 def _resolve_dm_target_agent_id(channel_name: str, runtime: Any) -> str | None:
     """AD-574b: Resolve the non-Captain participant agent_id from a DM channel name.
@@ -29,13 +36,27 @@ def _resolve_dm_target_agent_id(channel_name: str, runtime: Any) -> str | None:
 
     The UI's DM panel needs the FULL agent_id (not the 8-char prefix) to call
     ``POST /api/agent/{id}/chat``. Resolve by scanning ``runtime.registry.all()``
-    for an alive crew agent whose id starts with the non-Captain prefix.
+    for a registered crew agent whose id starts with the non-Captain prefix.
 
-    Returns ``None`` when no live agent matches (deleted/renamed/lookup failure).
-    Tier-2 log-and-degrade: any unexpected error is caught, logged at warning,
-    and returns ``None`` so the UI falls back to the async post-only path.
+    This is the **channel-level default**. It is inherently lossy: the 8-char
+    prefix truncates inside the agent type (every Counselor instance keys to
+    ``counselo``) and an agent-to-agent channel has two participants but only
+    one answer. Prefer :func:`_resolve_thread_target_agent_id`, which uses the
+    thread's own ``author_id``; this remains the fallback when no thread context
+    is available or the author is not a registered agent.
+
+    BF-721: registration, not liveness, is the test. The previous
+    ``getattr(agent, "is_alive", False)`` gate meant a resting crew member — the
+    normal state for a proactive agent between think ticks — resolved to
+    ``None`` and the Captain's reply silently degraded to the async post-only
+    path. AD-1076 established the same rule for group-chat membership: a
+    *persistent* relationship must not depend on momentary liveness.
+
+    Returns ``None`` when no registered agent matches (deleted/renamed/lookup
+    failure). Tier-2 log-and-degrade: any unexpected error is caught, logged at
+    warning, and returns ``None`` so the UI falls back to the async post-only path.
     """
-    if not channel_name.startswith("dm-"):
+    if not channel_name.startswith(_DM_CHANNEL_PREFIX):
         return None
     try:
         registry = getattr(runtime, "registry", None)
@@ -45,13 +66,11 @@ def _resolve_dm_target_agent_id(channel_name: str, runtime: Any) -> str | None:
         if len(parts) != 3:
             return None
         # The non-Captain prefix is the part that is not literally "captain".
-        candidates = [p for p in parts[1:] if p != "captain"]
+        candidates = [p for p in parts[1:] if p != _CAPTAIN_AUTHOR_ID]
         if not candidates:
             return None
         prefix = candidates[0]
         for agent in registry.all():
-            if not getattr(agent, "is_alive", False):
-                continue
             agent_id = getattr(agent, "id", "")
             if agent_id and agent_id.startswith(prefix):
                 return agent_id
@@ -62,6 +81,61 @@ def _resolve_dm_target_agent_id(channel_name: str, runtime: Any) -> str | None:
             channel_name, exc,
         )
         return None
+
+
+def _resolve_thread_target_agent_id(
+    channel_name: str, author_id: str, runtime: Any,
+) -> str | None:
+    """BF-721: Resolve the reply target for ONE thread rather than a whole channel.
+
+    One DM channel holds many threads and may have several authors — the live
+    vessel has 20+ agent-to-agent channels with two distinct thread authors, and
+    the ``dm-captain-{agent_id[:8]}`` scheme collapses every same-type instance
+    onto one channel. A single channel-level answer therefore routes some
+    replies to the wrong agent.
+
+    ``threads.author_id`` already holds the exact, full agent id of the filer, so
+    the authoritative target is per thread. Rules:
+
+    1. Non-DM channel ⇒ ``None``. Only DM threads carry a synchronous reply target.
+    2. Author is a registered agent ⇒ that agent. Registration is checked via
+       ``registry.get(author_id)``, **not** liveness (see AD-1076 / BF-721).
+    3. Otherwise — the Captain authored it, or the author has since been
+       unregistered — fall back to the channel-level default, which answers
+       "who is the other party in this channel".
+
+    A failed fallback still yields ``None``, so the UI degrades to the async
+    post-only path exactly as before.
+    """
+    if not channel_name.startswith(_DM_CHANNEL_PREFIX):
+        return None
+    if author_id and author_id != _CAPTAIN_AUTHOR_ID:
+        try:
+            registry = getattr(runtime, "registry", None)
+            if registry is not None and registry.get(author_id) is not None:
+                return author_id
+        except Exception as exc:  # noqa: BLE001 — Tier-2 log-and-degrade
+            logger.warning(
+                "BF-721: registry lookup failed for thread author %r in channel %r "
+                "(%s); falling back to channel-level DM target",
+                author_id, channel_name, exc,
+            )
+    return _resolve_dm_target_agent_id(channel_name, runtime)
+
+
+def _thread_with_target(thread: Any, channel_name: str, runtime: Any) -> dict[str, Any]:
+    """BF-721: project a thread into a dict carrying its own ``target_agent_id``.
+
+    Accepts a ``WardRoomThread`` dataclass or an already-dict thread row and
+    always returns a fresh dict, so the source object is never mutated. Every
+    pre-existing key is preserved verbatim — the payload gains one key and
+    changes nothing else.
+    """
+    data: dict[str, Any] = dict(thread) if isinstance(thread, dict) else dict(vars(thread))
+    data["target_agent_id"] = _resolve_thread_target_agent_id(
+        channel_name, str(data.get("author_id") or ""), runtime,
+    )
+    return data
 
 
 # ── DMs (AD-453/AD-485) ──────────────────────────────────────────
@@ -85,8 +159,13 @@ async def list_dm_channels(runtime: Any = Depends(get_runtime)):
                 "description": ch.description,
                 "created_at": ch.created_at,
             },
-            "latest_thread": threads[0] if threads else None,
+            # BF-721: each thread carries its own target, derived from its author.
+            "latest_thread": (
+                _thread_with_target(threads[0], ch.name, runtime) if threads else None
+            ),
             "thread_count": thread_count,
+            # BF-721: channel-level default retained for consumers with no thread
+            # context, and as the fallback for Captain-authored threads.
             "target_agent_id": _resolve_dm_target_agent_id(ch.name, runtime),
         })
     return result
@@ -102,7 +181,11 @@ async def list_dm_threads(channel_id: str, runtime: Any = Depends(get_runtime)):
     if not dm_ch:
         raise HTTPException(status_code=404, detail="DM channel not found")
     threads = await runtime.ward_room.list_threads(channel_id, limit=100)
-    return {"channel": dm_ch, "threads": threads}
+    # BF-721: per-thread reply target, derived from each thread's own author.
+    return {
+        "channel": dm_ch,
+        "threads": [_thread_with_target(t, dm_ch.name, runtime) for t in threads],
+    }
 
 
 @router.get("/captain-dms")
@@ -121,8 +204,11 @@ async def list_captain_dms(runtime: Any = Depends(get_runtime)):
         result.append({
             "channel": {"id": ch.id, "name": ch.name, "description": ch.description,
                         "created_at": ch.created_at},
-            "threads": threads,
+            # BF-721: each thread carries its own target, derived from its author.
+            "threads": [_thread_with_target(t, ch.name, runtime) for t in threads],
             "thread_count": thread_count,
+            # BF-721: channel-level default retained for consumers with no thread
+            # context, and as the fallback for Captain-authored threads.
             "target_agent_id": _resolve_dm_target_agent_id(ch.name, runtime),
         })
     return result
@@ -211,6 +297,17 @@ async def wardroom_thread_detail(thread_id: str, runtime: Any = Depends(get_runt
     result = await runtime.ward_room.get_thread(thread_id)
     if not result:
         raise HTTPException(404, "Thread not found")
+    # BF-721: this is the payload the HXI reads for the OPEN thread, so it is the
+    # one that must carry the per-thread reply target. Non-DM threads resolve to
+    # ``None`` — only DM threads have a synchronous reply target.
+    thread = result.get("thread")
+    if thread is not None:
+        result["thread"] = _thread_with_target(
+            thread,
+            str((thread.get("channel_name") if isinstance(thread, dict)
+                 else getattr(thread, "channel_name", "")) or ""),
+            runtime,
+        )
     return result
 
 

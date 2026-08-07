@@ -131,3 +131,104 @@ describe('AD-574b WardRoomThreadDetail sync DM', () => {
     expect(send.disabled).toBe(true);
   });
 });
+
+/**
+ * BF-721: one DM channel holds many threads and may have several authors, so the
+ * channel-level target_agent_id routes some replies to the wrong agent. The
+ * backend now derives a per-thread target from that thread's own author_id; the
+ * UI must prefer it and keep the channel-level value as the fallback.
+ */
+describe('BF-721 WardRoomThreadDetail per-thread DM target', () => {
+  const CHANNEL_TARGET = 'counselor_counselor_0_67c601cb';
+  const THREAD_TARGET = 'counselor_counselor_1_aa11bb22';
+
+  function setThreadTarget(target: string | null | undefined) {
+    useStore.setState({
+      wardRoomThreadDetail: {
+        thread: { ...FAKE_THREAD, target_agent_id: target } as any,
+        posts: [],
+      },
+      wardRoomDmChannels: [
+        { channel: { id: 'ch-1', name: 'dm-captain-counselo', description: '', created_at: 0 },
+          latest_thread: null, thread_count: 2, target_agent_id: CHANNEL_TARGET },
+      ],
+    });
+  }
+
+  async function sendAndCollectUrls() {
+    const fetchMock = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+      if (String(url).includes('/api/agent/')) {
+        return new Response(JSON.stringify({ response: 'ack' }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    }) as any;
+
+    render(<WardRoomThreadDetail />);
+    fireEvent.change(screen.getByPlaceholderText('Reply...'), { target: { value: 'ping' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(calls.some((u: string) => u.includes('/api/agent/'))).toBe(true);
+    });
+    return fetchMock.mock.calls.map((c: unknown[]) => String(c[0]));
+  }
+
+  it('replies to the thread target, not the channel target', async () => {
+    setThreadTarget(THREAD_TARGET);
+    const calls = await sendAndCollectUrls();
+    expect(calls).toContain(`/api/agent/${THREAD_TARGET}/chat`);
+    expect(calls).not.toContain(`/api/agent/${CHANNEL_TARGET}/chat`);
+  });
+
+  it('posts the agent response under the thread target author_id', async () => {
+    setThreadTarget(THREAD_TARGET);
+    const fetchMock = vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+      if (String(url).includes('/api/agent/')) {
+        return new Response(JSON.stringify({ response: 'ack' }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    }) as any;
+
+    render(<WardRoomThreadDetail />);
+    fireEvent.change(screen.getByPlaceholderText('Reply...'), { target: { value: 'ping' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    await waitFor(() => {
+      const bodies = fetchMock.mock.calls
+        .filter((c: any[]) => String(c[0]).includes('/posts'))
+        .map((c: any[]) => JSON.parse(String(c[1]?.body ?? '{}')));
+      expect(bodies.some((b: any) => b.author_id === THREAD_TARGET)).toBe(true);
+      expect(bodies.some((b: any) => b.author_id === CHANNEL_TARGET)).toBe(false);
+    });
+  });
+
+  it('falls back to the channel target when the thread has none', async () => {
+    setThreadTarget(null);
+    const calls = await sendAndCollectUrls();
+    expect(calls).toContain(`/api/agent/${CHANNEL_TARGET}/chat`);
+  });
+
+  it('falls back to the channel target when the field is absent entirely', async () => {
+    setThreadTarget(undefined);
+    const calls = await sendAndCollectUrls();
+    expect(calls).toContain(`/api/agent/${CHANNEL_TARGET}/chat`);
+  });
+
+  it('stays on the async post-only path outside a DM view', async () => {
+    setThreadTarget(THREAD_TARGET);
+    useStore.setState({ wardRoomView: 'channels' });
+    const fetchMock = vi.spyOn(global, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 })) as any;
+
+    render(<WardRoomThreadDetail />);
+    fireEvent.change(screen.getByPlaceholderText('Reply...'), { target: { value: 'ping' } });
+    fireEvent.click(screen.getByText('Send'));
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(calls.some((u: string) => u.includes('/api/wardroom/threads/t1/posts'))).toBe(true);
+      expect(calls.some((u: string) => u.includes('/api/agent/'))).toBe(false);
+    });
+  });
+});

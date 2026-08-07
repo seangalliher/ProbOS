@@ -16,16 +16,24 @@ const ALLOWED_ATTACHMENT_MIMES = [
 ] as const;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
-// AD-574b: Resolve the target agent_id for the active DM thread by scanning
-// the wardRoomDmChannels listing for the channel that owns this thread.
+// AD-574b: Resolve the target agent_id for the active DM thread.
+// BF-721: the thread's OWN target wins. One DM channel holds many threads and
+// may have several authors — the channel-level value is a single answer for the
+// whole channel and routes some replies to the wrong agent. The backend derives
+// the thread-level value from that thread's author_id, so prefer it and keep the
+// channel-level value as the fallback (Captain-authored threads, and any thread
+// whose author is no longer a registered agent).
 // Returns null when not in a DM view, when the thread has no resolvable
 // channel, or when the backend could not resolve the participant.
 function resolveDmTargetAgentId(
   view: 'channels' | 'dms' | 'dm-detail',
   activeChannel: string | null,
-  dmChannels: { channel: { id: string }; target_agent_id: string | null }[]
+  dmChannels: { channel: { id: string }; target_agent_id: string | null }[],
+  threadTargetAgentId?: string | null
 ): string | null {
-  if (view !== 'dm-detail' || !activeChannel) return null;
+  if (view !== 'dm-detail') return null;
+  if (threadTargetAgentId) return threadTargetAgentId;
+  if (!activeChannel) return null;
   const entry = dmChannels.find(c => c.channel.id === activeChannel);
   return entry?.target_agent_id ?? null;
 }
@@ -68,7 +76,10 @@ export function WardRoomThreadDetail() {
   if (!thread) return null;
   const isDm = view === 'dm-detail';
   const flatPosts = isDm ? flattenPosts(posts) : null;
-  const targetAgentId = resolveDmTargetAgentId(view, activeChannel, dmChannels);
+  // BF-721: thread-level target first, channel-level default as fallback.
+  const targetAgentId = resolveDmTargetAgentId(
+    view, activeChannel, dmChannels, thread.target_agent_id,
+  );
   const isThinking = dmPending?.threadId === activeThread;
 
   // AD-574b: Synchronous DM reply via /api/agent/{id}/chat with dual-write to

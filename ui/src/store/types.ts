@@ -505,6 +505,10 @@ export interface WardRoomThread {
   net_score: number;
   author_callsign: string;
   channel_name: string;
+  // BF-721: reply target for THIS thread, resolved from its own author_id.
+  // Present on DM payloads; null on non-DM threads and when the author is not a
+  // registered agent (the channel-level default is then used instead).
+  target_agent_id?: string | null;
 }
 
 export interface WardRoomPost {

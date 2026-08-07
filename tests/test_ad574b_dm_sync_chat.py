@@ -50,13 +50,26 @@ class TestResolveDmTargetAgentId:
         # dm-{a8}-{b8} — non-captain prefix is parts[1] (or [2] if [1]=="captain").
         result = _resolve_dm_target_agent_id("dm-agentA001-agentB002", runtime_with_agents)
         # Helper takes first non-captain candidate → "agentA001" → resolves.
+        # BF-721: this first-candidate rule is why the channel-level answer is only
+        # a DEFAULT. An agent-to-agent channel has two participants but one answer,
+        # so threads authored by the second participant would be misrouted. The
+        # per-thread resolver (_resolve_thread_target_agent_id) is the correct
+        # answer when thread context exists; this remains the no-context fallback.
         assert result == "agentA001full"
 
-    def test_dead_agent_not_returned(self):
+    def test_resting_agent_is_returned(self):
+        # BF-721: this test was named ``test_dead_agent_not_returned`` and asserted
+        # ``result is None`` for an agent with ``is_alive=False``. That pinned the
+        # ``getattr(agent, "is_alive", False)`` gate as the contract — but a
+        # proactive crew member is idle most of the time, so the gate made the
+        # Captain's reply silently degrade to the async post-only path for a
+        # perfectly healthy, registered agent. AD-1076 established the same rule
+        # for group-chat membership: a *persistent* relationship must not depend on
+        # momentary liveness. Registration, not wakefulness, is the test.
         agents = [_FakeAgent("ghostx", alive=False)]
         rt = SimpleNamespace(registry=_FakeRegistry(agents))
         result = _resolve_dm_target_agent_id("dm-captain-ghostx", rt)
-        assert result is None
+        assert result == "ghostx"
 
     def test_unresolvable_prefix_returns_none(self, runtime_with_agents):
         result = _resolve_dm_target_agent_id("dm-captain-unknown", runtime_with_agents)
