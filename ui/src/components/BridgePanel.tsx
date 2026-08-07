@@ -172,11 +172,28 @@ function BridgeSection({
    unread pill; NO emoji (HXI #3). data-testid mirrors the old toolbar testIds so
    existing specs keep resolving. ── */
 function StationActionRow({ action, accent }: { action: StationAction; accent: string }) {
+  /* BF-725: a semantic button, for the same reason as the three controls above.
+   * This renders EVERY station launch row -- Ward Room, Chats, Crew, Notebooks,
+   * Settings -- so as a `div` with an onClick the whole command surface below
+   * the approvals section was unreachable without a mouse. BF-724 made the
+   * approvals route operable and left this; it is the same defect, wider.
+   *
+   * `BARE_BUTTON` strips what the UA adds and a div never had. `boxSizing` is
+   * explicit because this app has no global border-box: `width:100%` plus the
+   * 6px side padding would otherwise render 12px wider than the div it
+   * replaces. The accessible name is built from the label rather than left to
+   * content, so the count badge is not read as part of the destination. */
+  const countLabel =
+    typeof action.count === 'number' && action.count > 0 ? ` (${action.count})` : '';
   return (
-    <div
+    <button
+      type="button"
       data-testid={action.id}
+      data-hxi-focus=""
+      aria-label={`Open ${action.label}${countLabel}`}
       onClick={action.onInvoke}
       style={{
+        ...BARE_BUTTON,
         display: 'flex',
         alignItems: 'center',
         gap: 6,
@@ -184,6 +201,8 @@ function StationActionRow({ action, accent }: { action: StationAction; accent: s
         cursor: 'pointer',
         userSelect: 'none' as const,
         borderRadius: 4,
+        width: '100%',
+        boxSizing: 'border-box',
       }}
     >
       <span style={{ color: '#666' }}><ChevronRight size={8} /></span>
@@ -200,7 +219,7 @@ function StationActionRow({ action, accent }: { action: StationAction; accent: s
           borderRadius: 8, padding: '1px 6px', fontSize: 9, fontWeight: 700,
         }}>{action.count}</span>
       )}
-    </div>
+    </button>
   );
 }
 
