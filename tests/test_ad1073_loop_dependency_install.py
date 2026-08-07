@@ -50,7 +50,11 @@ def _runtime(
     )
     rt.ensure_calls = []
 
-    async def _ensure(names):
+    async def _ensure(names, **_kwargs):
+        # AD-1220 added `requested_by`. Absorbed with **kwargs rather than
+        # pinned: this stub asserts on the NAMES passed through, so the
+        # keyword set is incidental and pinning it would only make the stub
+        # break again on the next additive option (the BF-678 class).
         rt.ensure_calls.append(list(names))
         if raises:
             raise RuntimeError("boom")

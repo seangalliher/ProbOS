@@ -362,6 +362,11 @@ class CodeExecutionTool:
         ctx = context or {}
         thread_id = str(ctx.get("thread_id") or "")
         created_by = str(ctx.get("agent_id") or "agent")
+        # AD-1220: attribution for an install ask needs the REAL agent, not the
+        # "agent" placeholder `created_by` falls back to for artifact authorship.
+        # A request the Captain cannot trace to a requester cannot answer the
+        # only question that matters when approving one.
+        requesting_agent = str(ctx.get("agent_id") or "")
 
         scratch_root = Path(getattr(cfg, "scratch_dir", "data/execution/scratch"))
         workdir = scratch_root / f"exec-{uuid.uuid4().hex}"
@@ -376,7 +381,9 @@ class CodeExecutionTool:
             # BEFORE the run, reusing runtime.ensure_dependency. Default-OFF and
             # byte-identical to AD-1066 when dependency.dynamic_install_enabled is
             # False (returns None => no behavior change, no extra output key).
-            dep_summary = await self._maybe_install_missing(code)
+            dep_summary = await self._maybe_install_missing(
+                code, requested_by=requesting_agent
+            )
             sandbox = SubprocessSandbox(scratch_root=str(scratch_root))
             timeout = self._resolve_timeout(
                 (params or {}).get("timeout"), getattr(cfg, "timeout_seconds", 30),
@@ -452,7 +459,9 @@ class CodeExecutionTool:
             "guidance": _DEPENDENCY_GUIDANCE.format(names=", ".join(missing)),
         }
 
-    async def _maybe_install_missing(self, code: str) -> dict | None:
+    async def _maybe_install_missing(
+        self, code: str, *, requested_by: str = ""
+    ) -> dict | None:
         """AD-1073: detect missing third-party imports in ``code`` and, when the
         operator has opted in (``dependency.dynamic_install_enabled``), route them
         through ``runtime.ensure_dependency`` - the existing approval-gated
@@ -462,9 +471,15 @@ class CodeExecutionTool:
 
         Returns a summary dict (``missing`` / ``installed`` / ``declined`` /
         ``error``) for the tool output, or ``None`` when the feature is OFF or
-        nothing is missing - keeping the default-OFF path byte-identical. Honest-
-        degrade (AD-592): when no approval surface is wired, ``ensure_dependency``
-        hard-declines and the script simply runs and reports the import error."""
+        nothing is missing - keeping the default-OFF path byte-identical.
+
+        AD-1220: ``requested_by`` carries the calling agent through to
+        ``ensure_dependency`` so a no-approver decline files an ``install``
+        capability request the Captain can approve in the HXI, attributed to
+        whoever needs the library. Before this, the honest-degrade below was
+        the whole story on an API vessel: the only approval callback is a Rich
+        console prompt wired in the interactive shell, so the request was
+        declined and nobody was ever asked."""
         dep_cfg = getattr(getattr(self._runtime, "config", None), "dependency", None)
         if dep_cfg is None or not getattr(dep_cfg, "dynamic_install_enabled", False):
             return None
@@ -480,7 +495,7 @@ class CodeExecutionTool:
         if not missing:
             return None
         try:
-            res = await ensure(missing)
+            res = await ensure(missing, requested_by=requested_by)
         except Exception:
             logger.warning(
                 "AD-1073: ensure_dependency raised for %s", missing, exc_info=True,

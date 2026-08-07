@@ -279,6 +279,86 @@ class LiveEventListenerHandle:
             raise
 
 
+async def file_dependency_install_requests(
+    store: Any, packages: list[str], requested_by: str
+) -> list[str]:
+    """AD-1220: file one ``install`` capability request per package.
+
+    Module-level and store-first rather than a method on the runtime, for two
+    reasons. It depends on the one collaborator it actually uses (Dependency
+    Inversion) instead of reaching through ``self``; and ``ensure_dependency``
+    is conventionally exercised in this repo by calling it UNBOUND against a
+    lightweight stand-in (``ProbOSRuntime.ensure_dependency(rt, ...)`` in
+    ``test_ad838c`` and ``test_ad1211``). A sibling method call would have made
+    that established seam raise ``AttributeError`` — which it did, on the first
+    run, in two pre-existing suites.
+
+    Returns the package names actually filed; never raises. Filing is
+    best-effort on a decline path: losing the ask is bad, losing the agent's
+    partial work because the ask failed to write would be worse.
+
+    Deduplicates against the pending queue by ``(agent_id, target)``. A script
+    that fails the same import on every run must not bury the Captain under
+    identical cards — the one pending request already IS the ask. Keyed by
+    agent as well as target so two agents blocked on the same library remain
+    two visible facts.
+
+    ``requested_by`` is required rather than defaulted to a system identity:
+    approving an install should answer *who* wants the library and why, and an
+    unattributed request cannot. With no requester the ask is skipped and the
+    previous decline-only behaviour stands exactly.
+    """
+    if not requested_by or not packages:
+        return []
+    if store is None:
+        logger.warning(
+            "AD-1220: %d package(s) need Captain approval for agent %s but no "
+            "capability-request store is wired, so the ask cannot be filed; "
+            "the script still runs and reports the import error",
+            len(packages), requested_by[:12],
+        )
+        return []
+    try:
+        pending = await store.list_pending()
+    except Exception:
+        logger.warning(
+            "AD-1220: could not read the pending queue to deduplicate install "
+            "requests for agent %s; filing none rather than risking duplicate "
+            "cards on the Captain's approval queue",
+            requested_by[:12], exc_info=True,
+        )
+        return []
+    already = {
+        (getattr(r, "agent_id", ""), getattr(r, "target", ""))
+        for r in pending
+        if getattr(r, "kind", "") == "install"
+    }
+    filed: list[str] = []
+    for package in packages:
+        if (requested_by, package) in already:
+            continue
+        try:
+            await store.file_request(
+                agent_id=requested_by,
+                kind="install",
+                target=package,
+                rationale=(
+                    f"A script needs the {package} library, which is not "
+                    "installed. Approving installs it into the environment the "
+                    "sandbox shares, so the next run can import it."
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "AD-1220: filing the install request for %r on behalf of agent "
+                "%s failed; the script still runs and reports the import error",
+                package, requested_by[:12], exc_info=True,
+            )
+            continue
+        filed.append(package)
+    return filed
+
+
 class ProbOSRuntime:
     """Top-level orchestrator. Wires substrate + mesh + consensus components, manages lifecycle."""
 
@@ -3656,7 +3736,11 @@ class ProbOSRuntime:
         return results
 
     async def ensure_dependency(
-        self, import_name: str | list[str], *, pre_approved: bool = False
+        self,
+        import_name: str | list[str],
+        *,
+        pre_approved: bool = False,
+        requested_by: str = "",
     ) -> "DependencyResult":
         """AD-838c: Ensure one or more third-party packages are importable.
 
@@ -3674,6 +3758,16 @@ class ProbOSRuntime:
         caller defaults to ``False`` and is byte-identical to before. It does
         NOT bypass the resolver, the deny-list or the policy, and the install
         is event-logged exactly as any other.
+
+        AD-1220: ``requested_by`` names the agent that needs the package, so a
+        no-approver decline can file an ``install`` capability request the
+        Captain can actually see and approve in the HXI, instead of dead-ending.
+        The approval half of that loop already worked — ``fulfil_install``
+        (AD-1211) calls straight back into this method with
+        ``pre_approved=True`` — but nothing ever filed the request, so the
+        producer and the consumer were both correct and nothing crossed the
+        seam between them. Empty (the default) preserves the previous
+        decline-only behaviour exactly.
         """
         from probos.cognitive.dependency_resolver import DependencyResult
 
@@ -3717,18 +3811,37 @@ class ProbOSRuntime:
                 and not any(a.split(".")[0] == m for a in auto)
             ]
             if prompt_tier:
+                # AD-1220: file the ask before declining, so the Captain can
+                # approve it in the HXI. The only approval callback anywhere is
+                # wired in experience/shell.py:163 and prompts on a Rich
+                # console, so on an API/HXI vessel this branch WAS the end of
+                # the road — the package was never installed and the Captain
+                # was never told it had been wanted.
+                filed = await file_dependency_install_requests(
+                    getattr(self, "capability_request_store", None),
+                    prompt_tier,
+                    requested_by,
+                )
                 if self.event_log:
                     await self.event_log.log(
                         category="dependency",
                         event="dependency_install_declined",
                         detail=json.dumps(
-                            {"packages": prompt_tier, "reason": "approval_callback_unavailable"}
+                            {
+                                "packages": prompt_tier,
+                                "reason": "approval_callback_unavailable",
+                                "requests_filed": filed,
+                            }
                         ),
                     )
                 return DependencyResult(
                     success=False,
                     declined=prompt_tier,
-                    error="approval callback unavailable",
+                    error=(
+                        "approval requested"
+                        if filed
+                        else "approval callback unavailable"
+                    ),
                 )
 
         result = await resolver.resolve(source, pre_approved=pre_approved)

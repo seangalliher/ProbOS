@@ -74,7 +74,8 @@ def _runtime(
     )
     rt.ensure_calls = []
 
-    async def _ensure(names):
+    async def _ensure(names, **_kwargs):
+        # AD-1220 added `requested_by`; absorbed rather than pinned (BF-678).
         rt.ensure_calls.append(list(names))
         return ensure_result
 
