@@ -39,6 +39,65 @@ _SKIP_DIR_PARTS = {".venv", "venv", "__pycache__", ".git", "node_modules", ".pyt
 # Per-file cap so a runaway script can't push a huge blob into the store.
 _MAX_ARTIFACT_BYTES = 25 * 1024 * 1024  # 25 MiB
 
+# BF-726: what the tool may ADVERTISE, checked against what the sandbox can
+# actually import rather than hand-listed in the description.
+#
+# The description used to name reportlab and matplotlib as examples. Neither is
+# installed by default — they live in the ``crew-tools`` extra — so an agent
+# asked for a PDF or a chart wrote exactly the script it had been told to write,
+# died on the import, and spent its remaining iterations recovering. That is the
+# same defect BF-719 fixed for the network, one layer down: a stated capability
+# the sandbox does not have costs more than an unstated one, because the agent
+# does not merely lack the option, it is actively misled into it.
+#
+# Deriving it also retires the enumeration. A hand-written list beside the thing
+# it describes is the shape behind BF-701 (a tool advertising twelve actions
+# while its gate held eleven) and AD-1177 — authored correct, then frozen while
+# the thing it describes moved.
+#
+# Checking here is valid because the sandbox runs the submitted script under
+# ``sys.executable`` (``isolation.py`` — ``python_executable or sys.executable``,
+# and this tool never sets it), so this process's import table IS the sandbox's.
+# If that ever stops being true, this derivation becomes a new false premise and
+# must move into the sandbox.
+_ARTIFACT_LIBRARIES: tuple[tuple[str, str, str], ...] = (
+    # (import name, pip name, what an agent would use it for)
+    ("docx", "python-docx", "a Word document"),
+    ("openpyxl", "openpyxl", "a spreadsheet"),
+    ("pptx", "python-pptx", "a slide deck"),
+    ("reportlab", "reportlab", "a PDF"),
+    ("matplotlib", "matplotlib", "a chart"),
+    ("PIL", "Pillow", "an image"),
+)
+
+
+def _importable(module: str) -> bool:
+    """Whether ``module`` can be imported in the interpreter the sandbox uses.
+
+    ``find_spec`` raises rather than returning None for a missing PARENT package
+    and for a malformed name, so the call is contained: an unimportable library
+    must read as absent, never as an exception out of a description property.
+    """
+    try:
+        return importlib.util.find_spec(module) is not None
+    except Exception:  # noqa: BLE001 — absent is the only meaningful answer here
+        return False
+
+
+def _available_artifact_libraries() -> list[tuple[str, str]]:
+    """The (pip name, purpose) pairs the sandbox can actually satisfy.
+
+    Recomputed per call rather than cached: AD-1073 can install a package
+    mid-session, and a description that keeps denying a library the agent just
+    had installed would be the same lie in the opposite direction. Six
+    ``find_spec`` calls is not a cost worth caching against that.
+    """
+    return [
+        (pip_name, purpose)
+        for module, pip_name, purpose in _ARTIFACT_LIBRARIES
+        if _importable(module)
+    ]
+
 # Extension → mime for the produced-file cards. Unknown → octet-stream (still
 # downloadable). Covers the document/data formats crew skills generate.
 _MIME_BY_EXT: dict[str, str] = {
@@ -180,10 +239,27 @@ class CodeExecutionTool:
 
     @property
     def description(self) -> str:
+        # BF-726: the examples are DERIVED from what the sandbox can import, so
+        # this cannot advertise a library the script would then fail to import.
+        available = _available_artifact_libraries()
+        if available:
+            examples = ", ".join(f"{purpose} ({pip})" for pip, purpose in available)
+            opening = (
+                "Run a Python script in an isolated sandbox to produce a file — "
+                f"e.g. {examples}. "
+            )
+        else:
+            # Honest-degrade: no document library present. Still useful for
+            # stdlib output (csv, json, text), and saying so beats naming
+            # libraries that are not there.
+            opening = (
+                "Run a Python script in an isolated sandbox to produce a file. "
+                "Only the standard library is available, so write formats it "
+                "supports directly — CSV, JSON or plain text. "
+            )
         return (
-            "Run a Python script in an isolated sandbox to produce a file — "
-            "e.g. a Word document (python-docx), a spreadsheet (openpyxl), a "
-            "PDF (reportlab), or a chart (matplotlib). Any file the "
+            opening
+            + "Any file the "
             "script writes into the current working directory is saved and shown "
             "to the Captain as a downloadable artifact. Write files to the "
             "current directory by plain filename, e.g. "
