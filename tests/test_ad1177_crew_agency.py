@@ -151,8 +151,17 @@ def test_block_does_not_hardcode_a_partial_tool_enumeration() -> None:
 def test_block_defers_to_the_tool_array_as_authoritative() -> None:
     block = _block()
     assert _defers_to_tool_array(block)
-    # ... and tells the agent not to assume a smaller set than it was handed.
-    assert "narrower set than you were given" in block
+    # ... and tells the agent not to assume a DIFFERENT set than it was handed.
+    #
+    # BF-727 (#1179) widened this from one direction to two. AD-1177 wrote only
+    # "narrower set than you were given", guarding under-reach. The failure that
+    # actually reached the Captain was over-reach: asked what the sandbox could
+    # produce, the agent claimed PDFs and matplotlib plots, neither of which is
+    # importable. Guarding one direction of a symmetric drift leaves the other
+    # open, and BF-726's description test already asserts this same symmetry
+    # ("a present library left unnamed is the same drift pointed the other
+    # way") — the disposition needed it too.
+    assert "narrower or a wider set than you were given" in block
 
 
 # ── (5) run_python framed as the general-purpose fallback ─────────────────
@@ -160,8 +169,33 @@ def test_run_python_framed_as_general_fallback_not_only_file_producer() -> None:
     block = _block()
     assert "run_python is your general-purpose instrument" in block
     assert "fits none of the other tools" in block
-    # The concrete file-production example is kept -- it works and it is real.
-    assert ".docx" in block
+    # BF-727 (#1179): this line used to read
+    #
+    #     # The concrete file-production example is kept -- it works and it is real.
+    #     assert ".docx" in block
+    #
+    # It is UPDATED rather than deleted, because the reason it was wrong is the
+    # finding. `.docx` was indeed real — but it was one item in a parenthetical
+    # that also promised `.pdf` and `chart`, and neither reportlab nor
+    # matplotlib was installed. Pinning the true member of the list made the
+    # whole list a contract, so the false members rode along under the
+    # protection of a passing test.
+    #
+    # The irony is local: check (c) thirty lines above forbids a PARTIAL TOOL
+    # enumeration in this same prose — "either name every offerable tool or
+    # defer to the tool array" — and this assertion then required a partial
+    # FORMAT enumeration. Same defect class, same file, opposite verdicts.
+    #
+    # So the assertion now pins the BEHAVIOUR (run_python produces real,
+    # downloadable files) and leaves the format vocabulary to the one surface
+    # that derives it from real importability: the BF-726 tool description.
+    assert "downloadable file" in block
+    for literal in (".docx", ".xlsx", ".pdf", ".pptx", "chart"):
+        assert literal not in block.lower(), (
+            f"the disposition names {literal!r} again — prose cannot know what "
+            "is installed, and this is exactly how the Captain came to be told "
+            "the sandbox could author PDFs (BF-727)"
+        )
 
 
 # ── (6) search_capabilities still named as a distinct act ─────────────────

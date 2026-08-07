@@ -44,25 +44,48 @@ from probos.config import AgenticToolsConfig, DmAgenticConfig, SystemConfig
 from tests.test_ad1070_capability_suppression import _obs, _self, _self_desc
 
 
-# ── the golden copy: the AD-1177 text exactly as it shipped at 2d04770b ─────
+# ── the golden copy: the AD-1177 text as amended by BF-727 ─────────────────
 #
 # Held here rather than derived from the source, because the source is what this
 # AD moved. A derived copy would agree with any edit; this one only agrees with
-# AD-1177.
-_AD1177_TEXT = (
+# the text we deliberately settled on.
+#
+# AMENDED by BF-727 (#1179) — recorded, not silently rewritten, because this
+# test's original claim ("the extraction moved prose, it did not edit it") was
+# true of AD-1180 and is no longer the whole story. Two clauses changed:
+#
+#   1. "...produce a real downloadable file (a .docx, .xlsx, .pdf, chart, or
+#      archive) the Captain can open..."
+#      → the parenthetical is GONE. It was a second, hand-maintained declaration
+#        of the sandbox's artifact surface, and it went stale exactly as AD-1177
+#        predicted for the tool list it retired three lines above. BF-726 had
+#        already made the tool description derive from real importability; this
+#        prose still promised .pdf and charts, and the vessel (restarted WITH
+#        BF-726 in place) told the Captain it could produce PDFs and matplotlib
+#        plots. Neither library is importable. The prose now points at the
+#        schema instead of racing it.
+#
+#   2. "...instead of assuming a narrower set than you were given..."
+#      → "...instead of assuming either a narrower or a wider set...". AD-1177
+#        guarded one direction; the observed failure was the other one.
+#
+# The remaining ~85% is AD-1177 verbatim and must stay that way.
+_GOLDEN_TEXT = (
     "\n\nActing directly this turn: you have a working loop that runs real "
     "tools before you reply, so do the work and report the result rather "
     "than only describing how it might be done. The tool schemas you were "
     "handed this turn are the authoritative list of what you hold -- read "
-    "them and reach for whichever one fits the task, instead of assuming a "
-    "narrower set than you were given. When you are unsure what the ship "
-    "offers right now, search_capabilities is itself a move worth making: "
-    "discovering what is reachable grounds your reply in what is truly "
-    "there this turn. run_python is your general-purpose instrument -- when "
-    "a task fits none of the other tools, write and run Python to carry it: "
-    "compute, transform data, drive a library, or produce a real "
-    "downloadable file (a .docx, .xlsx, .pdf, chart, or archive) the "
-    "Captain can open, then hand back the result. Be resourceful: take the "
+    "them and reach for whichever one fits the task, instead of assuming "
+    "either a narrower or a wider set than you were given. When you are "
+    "unsure what the ship offers right now, search_capabilities is itself a "
+    "move worth making: discovering what is reachable grounds your reply in "
+    "what is truly there this turn. run_python is your general-purpose "
+    "instrument -- when a task fits none of the other tools, write and run "
+    "Python to carry it: compute, transform data, drive a library, or "
+    "produce a real downloadable file the Captain can open. Its schema "
+    "names the libraries actually present this turn, so let that decide what "
+    "you offer to build rather than what you would expect to be installed, "
+    "then hand back the result. Be resourceful: take the "
     "direct route first, and when an attempt falls short, adjust it and go "
     "again before settling for an explanation. If something you need is "
     "missing -- a library, a file, a detail only the Captain holds -- say "
@@ -145,16 +168,18 @@ def _base_kwargs(**overrides: Any) -> dict[str, Any]:
     return kwargs
 
 
-# ── (1) the extraction moved prose, it did not edit it ─────────────────────
-def test_the_constant_is_byte_identical_to_the_ad1177_text() -> None:
+# ── (1) the extraction moved prose; later edits are deliberate ─────────────
+def test_the_constant_is_byte_identical_to_the_golden_text() -> None:
     """Full-string equality, not a substring match.
 
     A substring assertion passes on a reworded block that merely retains a
     phrase. AD-1177 settled this wording and verified it against the real gap
-    regex; AD-1180 widens its reach and must not touch it.
+    regex; AD-1180 widened its reach without touching it; BF-727 made the two
+    corrections recorded above the golden copy. Anything further has to update
+    this constant on purpose.
     """
-    assert AGENTIC_DISPOSITION == _AD1177_TEXT
-    assert len(AGENTIC_DISPOSITION) == 1477
+    assert AGENTIC_DISPOSITION == _GOLDEN_TEXT
+    assert len(AGENTIC_DISPOSITION) == 1606
 
 
 def test_the_conversational_hook_returns_the_shared_constant() -> None:

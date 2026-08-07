@@ -16,10 +16,30 @@ module-level import in the other and reintroduce that cycle. This module imports
 nothing, so both sides can depend on it freely and it can never become the
 reason an import graph breaks.
 
-The text is byte-identical to what AD-1177 shipped and is deliberately NOT
-reworded here -- AD-1180 widens its reach, it does not relitigate its wording.
-``tests/test_ad1180_agentic_disposition.py`` holds a golden copy and asserts full
-string equality, so a future edit here has to be a deliberate one.
+The text is the AD-1177 prose with one BF-727 correction, and is otherwise
+deliberately NOT reworded -- AD-1180 widened its reach, it did not relitigate
+the wording. ``tests/test_ad1180_agentic_disposition.py`` holds a golden copy and
+asserts full string equality, so a future edit here has to be a deliberate one.
+
+BF-727 (#1179): the prose used to enumerate the artifact formats --
+``(a .docx, .xlsx, .pdf, chart, or archive)`` -- which made this the SECOND
+declaration of the sandbox's capability surface. BF-726 had just derived the
+first one (the ``run_python`` tool description) from real importability, and the
+vessel restarted with that fix in place; the Captain then asked what the sandbox
+could produce and was told "PDFs" and "matplotlib/seaborn plots", neither of
+which is importable. The agent was not confabulating -- it was reading this
+line. So the enumeration is gone and the prose now points at the schema, which
+is the same move AD-1177 made for the tool list three lines above, applied to
+the format list it left behind.
+
+Deliberately NOT a second derived list: two derived lists can still disagree,
+and the failure being repaired is precisely two declarations disagreeing. One
+authority (the BF-726 description), one consumer (this prose).
+
+The AD-1177 sentence also guarded only ONE direction of the drift -- "instead of
+assuming a narrower set than you were given". The observed failure was the
+opposite direction, so it now guards both. BF-726's own test asserts that same
+symmetry for the description; the disposition needed it too.
 
 Wording constraint (AD-957 / AD-596): the text must never match
 ``probos.cognitive.decomposer._CAPABILITY_GAP_RE``, or the AD-596 capability-gap
@@ -35,15 +55,17 @@ AGENTIC_DISPOSITION = (
     "tools before you reply, so do the work and report the result rather "
     "than only describing how it might be done. The tool schemas you were "
     "handed this turn are the authoritative list of what you hold -- read "
-    "them and reach for whichever one fits the task, instead of assuming a "
-    "narrower set than you were given. When you are unsure what the ship "
-    "offers right now, search_capabilities is itself a move worth making: "
-    "discovering what is reachable grounds your reply in what is truly "
-    "there this turn. run_python is your general-purpose instrument -- when "
-    "a task fits none of the other tools, write and run Python to carry it: "
-    "compute, transform data, drive a library, or produce a real "
-    "downloadable file (a .docx, .xlsx, .pdf, chart, or archive) the "
-    "Captain can open, then hand back the result. Be resourceful: take the "
+    "them and reach for whichever one fits the task, instead of assuming "
+    "either a narrower or a wider set than you were given. When you are "
+    "unsure what the ship offers right now, search_capabilities is itself a "
+    "move worth making: discovering what is reachable grounds your reply in "
+    "what is truly there this turn. run_python is your general-purpose "
+    "instrument -- when a task fits none of the other tools, write and run "
+    "Python to carry it: compute, transform data, drive a library, or "
+    "produce a real downloadable file the Captain can open. Its schema "
+    "names the libraries actually present this turn, so let that decide what "
+    "you offer to build rather than what you would expect to be installed, "
+    "then hand back the result. Be resourceful: take the "
     "direct route first, and when an attempt falls short, adjust it and go "
     "again before settling for an explanation. If something you need is "
     "missing -- a library, a file, a detail only the Captain holds -- say "
