@@ -7,6 +7,7 @@ provider-specific translation.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -14,6 +15,194 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from probos.tools.protocol import ToolRegistration, ToolResult
+
+
+# ── BF-728: structure-aware rendering of a structured tool output ───────────
+#
+# A tool that returns a dict was flattened with a bare ``str()`` and only then
+# bounded, by character position, in ``truncate_tool_output``. For a small
+# result that is fine. For a large one it is not, and the failure is silent.
+#
+# Measured on the live vessel: the Captain asked for the current version of the
+# top 15 PyPI packages. The agent fetched all 15 successfully (16 http_fetch
+# calls, every one is_error=False, every one HTTP 200). PyPI's JSON is 1-3 MB
+# and is dominated by two members - ``info.description`` (the whole README) and
+# ``releases`` (every file of every historical release). ``info.version``, the
+# one field wanted, sits between them. Head/tail truncation kept the start of
+# the README and the end of the release history and discarded the middle, so
+# the key ``"version"`` reached the model for only 8 of 15 packages. The agent
+# then answered from training data - boto3 1.34.131, nine minor versions stale
+# against the 1.43.67 it had just successfully fetched - and explained itself
+# with "this sandbox has no network access", which is true of the run_python
+# sandbox and irrelevant to the mesh http_fetch it had just used.
+#
+# So the fix belongs HERE, at the last point where the value is still a
+# structure, not in the character-slicer downstream. Keys and short scalars are
+# almost always the answer; the bulk almost never is.
+#
+# A long string is NOT elided blindly: for http_fetch the ``body`` member IS
+# the payload, so a string that parses as JSON is recursed into instead. That
+# is what lets ``info.version`` survive inside a 1 MB body string.
+
+_ELIDED_TEXT = "<elided {n} chars>"
+_ELIDED_ITEMS = "<elided {n} more items>"
+_ELIDED_KEYS = "<elided {n} more keys>"
+_MAX_DEPTH = 12
+_LIST_KEEP = 8
+_DICT_KEEP = 40
+_MIN_VALUE_CHARS = 120
+# A long string is only worth parsing if it plausibly opens a JSON container.
+_JSON_OPENERS = ("{", "[")
+
+
+def _shrink(
+    value: Any,
+    *,
+    value_max: int,
+    list_keep: int,
+    dict_keep: int,
+    depth: int,
+) -> Any:
+    """Return ``value`` with oversized leaves replaced by elision markers.
+
+    One pass, no re-serialisation: sizes are read off the leaves as they are
+    visited and the decision is made in place. AD-1151 R3 measured a
+    serialise-per-elision shrink loop at 33 s for 2000 entries, synchronously
+    inside an async method; this must never become that shape.
+
+    Dict BREADTH is bounded as well as list length. PyPI keys ``releases`` by
+    version string, so that one member is a dict of ~1,500 entries - bounding
+    lists alone left the rendered result larger than the input it was meant to
+    shrink. Insertion order is kept, which is what makes this safe in practice:
+    producers put identity and metadata first and bulk last.
+    """
+    if depth >= _MAX_DEPTH:
+        return "<elided: nesting too deep>"
+
+    if isinstance(value, str):
+        if len(value) <= value_max:
+            return value
+        stripped = value.lstrip()
+        if stripped[:1] in _JSON_OPENERS:
+            # An embedded JSON document (http_fetch's ``body``). Recurse rather
+            # than elide - the payload is the point of the call.
+            try:
+                return _shrink(
+                    json.loads(stripped),
+                    value_max=value_max,
+                    list_keep=list_keep,
+                    dict_keep=dict_keep,
+                    depth=depth + 1,
+                )
+            except Exception:  # noqa: BLE001 — not JSON after all; elide it
+                pass
+        return _ELIDED_TEXT.format(n=len(value))
+
+    if isinstance(value, dict):
+        # Keep EVERY scalar-valued entry. Scalars are cheap and are almost
+        # always the answer; the cost is in nested containers, so only those
+        # are rationed. Bounding a dict by POSITION instead was wrong and
+        # measurably so: PyPI serves ``info`` with alphabetically ordered keys,
+        # so a first-N rule cut ``version`` off the end - the exact field this
+        # whole fix exists to preserve.
+        #
+        # The container ration decays with depth, so deep bulk (PyPI's
+        # ``releases`` is a dict of ~1,500 version keys) collapses while the
+        # shallow, identifying layer survives intact.
+        out: dict[Any, Any] = {}
+        ration = max(1, dict_keep >> depth)
+        kept_containers = 0
+        dropped = 0
+        for k, v in value.items():
+            if isinstance(v, (dict, list, tuple)):
+                if kept_containers >= ration:
+                    dropped += 1
+                    continue
+                kept_containers += 1
+            out[k] = _shrink(
+                v,
+                value_max=value_max,
+                list_keep=list_keep,
+                dict_keep=dict_keep,
+                depth=depth + 1,
+            )
+        if dropped:
+            out[_ELIDED_KEYS.format(n=dropped)] = "..."
+        return out
+
+    if isinstance(value, (list, tuple)):
+        kept = [
+            _shrink(
+                v,
+                value_max=value_max,
+                list_keep=list_keep,
+                dict_keep=dict_keep,
+                depth=depth + 1,
+            )
+            for v in value[:list_keep]
+        ]
+        if len(value) > list_keep:
+            kept.append(_ELIDED_ITEMS.format(n=len(value) - list_keep))
+        return kept
+
+    # int / float / bool / None and anything else: left exactly as-is. These
+    # are the short scalars the answer usually lives in.
+    return value
+
+
+def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
+    """BF-728: flatten a tool's return value, preserving shape when it is big.
+
+    Byte-identical to the previous bare ``str()`` coercion whenever bounding is
+    off (``max_chars <= 0``), the value is not a container, or its plain
+    rendering already fits. Only an oversized structure takes the new path, so
+    every tool whose results are small is unaffected.
+
+    At most TWO renders, never a shrink loop: if the first pass is still far
+    over budget the second uses hard caps. Anything still oversized after that
+    falls through to the existing character-level bound, which is strictly no
+    worse than the pre-BF-728 behaviour and now operates on a shape-preserved
+    string instead of raw bulk.
+
+    Never raises: a value that cannot be walked or re-rendered falls back to
+    ``str(value)``, exactly today's behaviour.
+    """
+    if not isinstance(value, (dict, list, tuple)):
+        return str(value)
+
+    try:
+        plain = str(value)
+    except Exception:  # noqa: BLE001 — a hostile __repr__ is not our problem
+        return ""
+    if max_chars <= 0 or len(plain) <= max_chars:
+        return plain
+
+    # Scale the per-leaf allowance to the budget rather than fixing it, so a
+    # generous cap keeps more of each value instead of eliding just as hard.
+    # At most three renders, never a shrink loop (AD-1151 R3): each pass
+    # tightens, and the first one that fits wins.
+    try:
+        passes = (
+            (max(_MIN_VALUE_CHARS, max_chars // 20), _LIST_KEEP, _DICT_KEEP),
+            (_MIN_VALUE_CHARS, 4, 8),
+            (48, 2, 3),
+        )
+        rendered = plain
+        for value_max, list_keep, dict_keep in passes:
+            rendered = str(
+                _shrink(
+                    value,
+                    value_max=value_max,
+                    list_keep=list_keep,
+                    dict_keep=dict_keep,
+                    depth=0,
+                )
+            )
+            if len(rendered) <= max_chars:
+                break
+        return rendered
+    except Exception:  # noqa: BLE001 — degrade to the pre-BF-728 rendering
+        return plain
 
 
 @dataclass(frozen=True)
@@ -41,12 +230,19 @@ class ToolCallResult:
         request_id: str,
         tool_result: "ToolResult",
         duration_ms: float,
+        *,
+        max_chars: int = 0,
     ) -> "ToolCallResult":
         """Adapt an AD-423a ``ToolResult`` to a ``ToolCallResult``.
 
         ``output`` is preserved via ``str()`` coercion when non-string.
         ``error is not None`` maps to ``is_error=True`` with the error
         text serialised into ``output`` so the LLM sees the failure cause.
+
+        BF-728: ``max_chars`` lets an oversized STRUCTURED output be flattened
+        shape-first rather than blindly, because this is the last point where
+        the value is still a structure. Defaults to 0 (off), which keeps the
+        bare ``str()`` coercion and every existing caller byte-identical.
         """
         if tool_result.error is not None:
             return cls(
@@ -56,7 +252,12 @@ class ToolCallResult:
                 duration_ms=duration_ms,
             )
         raw = tool_result.output
-        out = raw if isinstance(raw, str) else str(raw) if raw is not None else ""
+        if isinstance(raw, str):
+            out = raw
+        elif raw is None:
+            out = ""
+        else:
+            out = render_tool_output(raw, max_chars=max_chars)
         return cls(
             id=request_id,
             output=out,

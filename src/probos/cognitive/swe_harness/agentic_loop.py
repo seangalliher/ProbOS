@@ -1232,8 +1232,14 @@ class AgenticLoop:
                 context=context,
             )
             duration_ms = (time.perf_counter() - start) * 1000.0
+            # BF-728: hand the bound down so a big structured result is
+            # flattened shape-first. This is the last point where the value is
+            # still a structure; `truncate_tool_output` below only sees text.
             tcr = ToolCallResult.from_tool_result(
-                use.tool_call.id, raw_result, duration_ms
+                use.tool_call.id,
+                raw_result,
+                duration_ms,
+                max_chars=self._tool_result_max_chars,
             )
         except Exception as exc:
             duration_ms = (time.perf_counter() - start) * 1000.0
