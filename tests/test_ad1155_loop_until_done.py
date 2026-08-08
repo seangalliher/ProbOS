@@ -387,6 +387,13 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
     repointed rather than removed so this stays a drift guard. It does not
     weaken what AD-1155 pinned: the assertion below is the load-bearing half,
     and no outer-loop / continuation parameter has appeared.
+
+    BF-731 added ``priority`` on the same terms. It defaults to ``None``, which
+    means the kwarg is never forwarded to ``AgenticLoop`` at all, so every one
+    of those five callers still constructs the loop exactly as it did. The
+    parameter exists so the conversational DM path can hand over the priority
+    AD-637f already classifies, putting a Captain turn back in the reserved
+    interactive LLM lane instead of the shared background one.
     """
     params = inspect.signature(WorkItemAgenticExecutor.run).parameters
     assert list(params) == [
@@ -401,6 +408,7 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
         "max_iterations",
         "tier",
         "extra_context",
+        "priority",  # BF-731
         "compose_disposition",  # AD-1180
         "compactor",
         "compaction_threshold",

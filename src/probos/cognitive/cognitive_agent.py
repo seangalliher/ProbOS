@@ -3850,6 +3850,29 @@ class CognitiveAgent(BaseAgent):
             )
             max_iterations = getattr(cfg, "max_iterations", 5)
             tier = getattr(cfg, "tier", "standard")
+            # BF-731: the same AD-637f classification the single-pass path
+            # applies at ``_decide_via_llm``. Without it every call this loop
+            # makes defaulted to NORMAL, so enabling dm_agentic silently moved
+            # the Captain's conversation out of the reserved interactive slots
+            # and into the background lane shared with all proactive cognition.
+            # Measured 2026-08-08: 11s to acquire the first slot against ~1s on
+            # a direct probe of the same proxy, leaving too little of the
+            # promotion budget for a second iteration -- so a three-word
+            # presence check became a background task.
+            #
+            # Call the classifier rather than hardcoding CRITICAL: it is the
+            # single source of truth (it also feeds NATS header emission), and
+            # this path should follow it if the rules change.
+            _agentic_priority = Priority.classify(
+                intent=observation.get("intent", ""),
+                is_captain=(
+                    (observation.get("params") or {}).get("author_id", "")
+                    == "captain"
+                ),
+                was_mentioned=(
+                    (observation.get("params") or {}).get("was_mentioned", False)
+                ),
+            )
 
             # BF-704: the awaited turn returns a plain string, so a run that
             # exhausted its step budget is indistinguishable downstream from
@@ -3910,6 +3933,7 @@ class CognitiveAgent(BaseAgent):
                     thread_id=thread_id,
                     max_iterations=max_iterations,
                     tier=tier,
+                    priority=_agentic_priority,
                     compactor=_compactor,
                     compaction_threshold=_compaction_threshold,
                     # AD-1180: this is the ONE call site that must opt OUT.

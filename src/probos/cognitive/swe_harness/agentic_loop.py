@@ -733,6 +733,7 @@ class AgenticLoop:
         tool_result_tail_chars: int = TOOL_RESULT_TAIL_CHARS,
         parallel_tool_calls_enabled: bool = False,
         max_parallel_tool_calls: int = PARALLEL_TOOL_CALLS_DEFAULT,
+        priority: Any | None = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -742,6 +743,20 @@ class AgenticLoop:
         self._tier = tier
         self._compactor = compactor
         self._compaction_threshold = compaction_threshold
+        # BF-731: the LLM lane this loop's calls belong in. AD-637f classifies a
+        # Captain message as Priority.CRITICAL so it gets the reserved
+        # interactive slots, but that classification was only applied on the
+        # non-agentic path (cognitive_agent.py). Every call from here defaulted
+        # to NORMAL, so turning on dm_agentic silently moved the Captain into
+        # the shared background lane behind all proactive cognition. Measured
+        # 2026-08-08: an 11s wait for the first slot against ~1s on a direct
+        # probe of the same proxy, which left too little of the promotion
+        # budget for a second iteration.
+        #
+        # None means "say nothing", NOT "say NORMAL": the kwarg is then never
+        # passed, so every existing caller and every test double whose
+        # ``complete`` does not accept ``priority`` is byte-identical.
+        self._priority = priority
         # AD-1146: when True, emit the provider's real multi-turn message array
         # (assistant.tool_calls + role:"tool" results) instead of flattening the
         # transcript into one prompt string. Default-OFF — the flattened path is
@@ -872,7 +887,10 @@ class AgenticLoop:
                     max_tokens=4096,
                 )
             try:
-                response = await self._llm.complete(req)
+                if self._priority is None:
+                    response = await self._llm.complete(req)
+                else:
+                    response = await self._llm.complete(req, priority=self._priority)
             except Exception as exc:
                 logger.warning(
                     "AD-545: LLM complete() failed at iteration=%d agent=%s; "

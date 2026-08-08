@@ -1508,6 +1508,12 @@ class WorkItemAgenticExecutor:
         max_iterations: int | None = None,
         tier: str | None = None,
         extra_context: dict | None = None,
+        # BF-731: the LLM lane this run's calls belong in. None (every task
+        # caller) leaves the loop's behaviour byte-identical; the conversational
+        # DM path supplies the priority AD-637f already classified so a Captain
+        # turn reaches the reserved interactive slots instead of queueing in the
+        # shared background lane behind proactive cognition.
+        priority: Any | None = None,
         # AD-1180: compose the shared agentic disposition into the system
         # prompt. Defaults to TRUE so a FUTURE call site inherits it rather
         # than having to remember -- which is the entire lesson of this AD.
@@ -1947,6 +1953,11 @@ class WorkItemAgenticExecutor:
             _loop_kwargs["compaction_threshold"] = compaction_threshold
         if token_budget is not None:
             _loop_kwargs["token_budget"] = token_budget
+        # BF-731: same additive shape. Absent => the kwarg is never passed to
+        # AgenticLoop, which in turn never passes it to complete(), so the task
+        # path and every test double keep the exact call they had before.
+        if priority is not None:
+            _loop_kwargs["priority"] = priority
         # AD-1146: opt into the provider's real multi-turn message array
         # (assistant.tool_calls + role:"tool" results). Default-OFF — with the
         # flag off the loop builds the AD-545 flattened prompt verbatim. Read
