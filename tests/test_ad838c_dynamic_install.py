@@ -43,7 +43,15 @@ def _fake_runtime(
         dependency_resolver=resolver,
         event_log=event_log,
         config=SimpleNamespace(
-            self_mod=SimpleNamespace(allowed_imports=allowed_imports or [])
+            self_mod=SimpleNamespace(allowed_imports=allowed_imports or []),
+            # AD-1222: the auto-approve tier moved off self_mod.allowed_imports
+            # onto its own field, because "may appear in generated code" and
+            # "installs without asking the Captain" are different questions.
+            # These tests pass their tier via `allowed_imports`, so it is
+            # mirrored here to keep each case testing what it always tested.
+            dependency=SimpleNamespace(
+                auto_approve_imports=allowed_imports or []
+            ),
         ),
     )
 

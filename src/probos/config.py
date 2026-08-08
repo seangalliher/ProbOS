@@ -6685,13 +6685,44 @@ class DependencyConfig(BaseModel):
 
     Distinct from SelfModConfig — this governs whether runtime task execution
     may install missing third-party packages (Copilot-style ask-before-install),
-    independent of the self-modification pipeline. ``config.self_mod.allowed_imports``
-    is reused as the auto-approve tier.
+    independent of the self-modification pipeline.
+
+    AD-1222: the auto-approve tier is declared HERE rather than borrowed from
+    ``self_mod.allowed_imports``. Those lists answer different questions —
+    *which imports may appear in generated code* is a code-safety allowlist,
+    *which packages install without asking the Captain* is an authority grant —
+    and reusing one for the other meant nobody ever chose the second. Measured
+    2026-08-07: the borrowed list carried 16 third-party entries, 5 of them not
+    installed, so enabling dynamic install silently granted no-prompt
+    installation of feedparser, chardet, toml, markdown and psutil. Benign
+    packages, unchosen authority. Design Principle 13(a): a capability ceiling
+    must be a decision, never an inheritance.
     """
 
     dynamic_install_enabled: bool = False
     dynamic_install_policy: Literal["whitelist", "prompt_unlisted"] = "prompt_unlisted"
     dynamic_install_deny: list[str] = Field(default_factory=list)
+    auto_approve_imports: list[str] = Field(
+        default_factory=lambda: [
+            # Standard library only. Anything else asks the Captain, which is
+            # what ``prompt_unlisted`` already promises. Kept explicit rather
+            # than derived from ``sys.stdlib_module_names`` so that widening
+            # the tier is a visible edit in a diff, not a Python version bump.
+            "asyncio", "base64", "calendar", "collections", "contextlib",
+            "copy", "csv", "dataclasses", "datetime", "decimal", "difflib",
+            "enum", "fnmatch", "fractions", "functools", "glob", "hashlib",
+            "html", "io", "itertools", "json", "logging", "math", "os",
+            "pathlib", "pprint", "random", "re", "secrets", "shutil",
+            "statistics", "string", "struct", "sys", "tempfile", "textwrap",
+            "time", "typing", "urllib", "uuid", "xml",
+        ],
+        description=(
+            "AD-1222: packages that install with no Captain prompt. Everything "
+            "else files an install request (AD-1220). Stdlib-only by default: "
+            "installing a third-party package is an authority grant and should "
+            "be asked for, not inherited from the self-mod import allowlist."
+        ),
+    )
 
 
 class CapabilityTriageConfig(BaseModel):

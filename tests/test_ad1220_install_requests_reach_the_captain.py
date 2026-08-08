@@ -63,7 +63,12 @@ def _runtime(store: CapabilityRequestStore | None, resolver: Any) -> Any:
     """Minimal stand-in carrying only what ensure_dependency reads."""
     return SimpleNamespace(
         config=SimpleNamespace(
-            dependency=SimpleNamespace(dynamic_install_enabled=True),
+            dependency=SimpleNamespace(
+                dynamic_install_enabled=True,
+                # AD-1222: the auto-approve tier is declared here now, not
+                # borrowed from self_mod.allowed_imports.
+                auto_approve_imports=["json", "os"],
+            ),
             self_mod=SimpleNamespace(allowed_imports=["json", "os"]),
         ),
         dependency_resolver=resolver,

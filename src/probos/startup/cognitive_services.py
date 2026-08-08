@@ -188,8 +188,11 @@ async def init_cognitive_services(
         from probos.cognitive.dependency_resolver import DependencyResolver
 
         if dep_cfg.dynamic_install_enabled:
+            # AD-1222: the task-path resolver gates INSTALL authority, so it
+            # takes the dependency tier. The self-mod branch below keeps the
+            # self-mod allowlist, which gates what generated code may import.
             dependency_resolver = DependencyResolver(
-                allowed_imports=config.self_mod.allowed_imports,
+                allowed_imports=dep_cfg.auto_approve_imports,
                 policy=dep_cfg.dynamic_install_policy,
                 deny_imports=dep_cfg.dynamic_install_deny,
             )

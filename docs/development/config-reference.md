@@ -479,6 +479,7 @@ AD-838c: Dynamic dependency installation for the task path.
 | `dynamic_install_enabled` | `bool` | `False` | — |  |
 | `dynamic_install_policy` | `Literal['whitelist', 'prompt_unlisted']` | `'prompt_unlisted'` | — |  |
 | `dynamic_install_deny` | `list[str]` | `[]` | — |  |
+| `auto_approve_imports` | `list[str]` | `['asyncio', 'base64', 'calendar', 'collections', 'contextlib', 'copy', 'csv', 'dataclasses', 'datetime', 'decimal', 'difflib', 'enum', 'fnmatch', 'fractions', 'functools', 'glob', 'hashlib', 'html', 'io', 'itertools', 'json', 'logging', 'math', 'os', 'pathlib', 'pprint', 'random', 're', 'secrets', 'shutil', 'statistics', 'string', 'struct', 'sys', 'tempfile', 'textwrap', 'time', 'typing', 'urllib', 'uuid', 'xml']` | — | AD-1222: packages that install with no Captain prompt. Everything else files an install request (AD-1220). Stdlib-only by default: installing a third-party package is an authority grant and should be asked for, not inherited from the self-mod import allowlist. |
 
 ## `execution`
 

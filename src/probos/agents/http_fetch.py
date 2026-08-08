@@ -67,7 +67,25 @@ class HttpFetchAgent(BaseAgent):
     # either completes or raises TimeoutException before asyncio.wait()
     # cancels the task.
     DEFAULT_TIMEOUT: float = 8.0
-    MAX_BODY_BYTES: int = 1024 * 1024  # 1MB cap
+    # BF-729: what this defends and what it costs, per Design Principle 13(a)
+    # (a capability ceiling must be a decision, never an inheritance).
+    #
+    # DEFENDS: the fetched body is returned INLINE in this agent's result dict
+    # and therefore crosses the intent bus as an ``IntentResult``. That is the
+    # shape AD-731 exists to prevent -- the bus carries refs, the store carries
+    # bytes -- after the 2026-05-11 OOM crash (#636). This cap is what keeps an
+    # arbitrary remote response from becoming an arbitrary bus payload.
+    #
+    # COSTS: a JSON document larger than this arrives cut mid-structure, so it
+    # no longer parses. Measured 2026-08-07: boto3's PyPI JSON is 3,233,027
+    # bytes, and the agent could not read a version it had successfully
+    # fetched (#1182).
+    #
+    # So do NOT raise this to widen capability -- that reintroduces #636. The
+    # path for large bodies is AD-1221 (#1183), where the body never enters the
+    # bus at all. Truncation is reported explicitly below so an agent can tell
+    # a whole document from a prefix instead of inferring it from the size.
+    MAX_BODY_BYTES: int = 1024 * 1024
     USER_AGENT: str = "ProbOS/0.1.0 (https://github.com/seangalliher/ProbOS)"
 
     # Only expose safe response headers
@@ -263,7 +281,9 @@ class HttpFetchAgent(BaseAgent):
                     self._record_to_profile(domain, latency_ms2, response.status_code)
                     delay += retry_delay
 
-                body = response.content[:self.MAX_BODY_BYTES].decode(
+                raw = response.content
+                truncated = len(raw) > self.MAX_BODY_BYTES
+                body = raw[:self.MAX_BODY_BYTES].decode(
                     "utf-8", errors="replace"
                 )
 
@@ -281,6 +301,14 @@ class HttpFetchAgent(BaseAgent):
                         "headers": safe_headers,
                         "body": body,
                         "body_length": len(body),
+                        # BF-729: state the truncation instead of leaving it to
+                        # be inferred. Without these two an agent holding a
+                        # 1,048,576-char prefix cannot tell it apart from a
+                        # complete document, and on 2026-08-07 that produced a
+                        # confident wrong explanation ("this sandbox has no
+                        # network access") for data that had in fact arrived.
+                        "truncated": truncated,
+                        "total_bytes": len(raw),
                         "rate_limit_delay": round(delay, 2),
                     },
                 }

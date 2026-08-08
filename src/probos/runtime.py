@@ -3803,7 +3803,11 @@ class ProbOSRuntime:
         # exists because nobody could be asked; when the answer is already
         # "yes", refusing discards it and strands whatever was approved.
         if resolver._approval_fn is None and not pre_approved:
-            auto = set(self.config.self_mod.allowed_imports)
+            # AD-1222: the auto-approve set is the DEPENDENCY tier, not the
+            # self-mod import allowlist. Those answer different questions, and
+            # borrowing one for the other meant nobody chose which packages may
+            # install without asking the Captain.
+            auto = set(self.config.dependency.auto_approve_imports)
             prompt_tier = [
                 m
                 for m in missing

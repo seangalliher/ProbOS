@@ -188,7 +188,14 @@ async def wired(tmp_path):
         self_mod_pipeline=None,
         dependency_resolver=None,
         event_log=_EventLog(),
-        config=SimpleNamespace(self_mod=SimpleNamespace(allowed_imports=[])),
+        config=SimpleNamespace(
+            self_mod=SimpleNamespace(allowed_imports=[]),
+            # AD-1222: ensure_dependency now reads its auto-approve tier from
+            # config.dependency, not from the self-mod import allowlist. Empty
+            # here preserves what this fixture always meant: nothing is
+            # auto-approved, so the no-callback refusal is what gets tested.
+            dependency=SimpleNamespace(auto_approve_imports=[]),
+        ),
     )
     runtime.ensure_dependency = functools.partial(
         ProbOSRuntime.ensure_dependency, runtime
@@ -587,7 +594,12 @@ class TestInstallDoesNotAskTwice:
                 allowed_imports=[], install_fn=install, policy="prompt_unlisted"
             ),
             event_log=_EventLog(),
-            config=SimpleNamespace(self_mod=SimpleNamespace(allowed_imports=[])),
+            config=SimpleNamespace(
+                self_mod=SimpleNamespace(allowed_imports=[]),
+                # AD-1222: empty tier == nothing auto-approves, which is what
+                # this case has always meant.
+                dependency=SimpleNamespace(auto_approve_imports=[]),
+            ),
         )
 
         # Act
@@ -617,7 +629,12 @@ class TestInstallDoesNotAskTwice:
                 policy="prompt_unlisted",
             ),
             event_log=_EventLog(),
-            config=SimpleNamespace(self_mod=SimpleNamespace(allowed_imports=[_PKG])),
+            config=SimpleNamespace(
+                self_mod=SimpleNamespace(allowed_imports=[_PKG]),
+                # AD-1222: mirrors the resolver's own allowlist, so this case
+                # still exercises "the callback still runs" and nothing else.
+                dependency=SimpleNamespace(auto_approve_imports=[_PKG]),
+            ),
         )
 
         # Act
