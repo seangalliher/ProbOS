@@ -26,6 +26,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from probos.execution.fetch_broker import (
+    SANDBOX_HELPER_FILENAME,
+    SANDBOX_HELPER_SOURCE,
+    SandboxFetchBroker,
+)
 from probos.execution.isolation import ExecutionRequest, SubprocessSandbox
 from probos.tools.protocol import ToolResult, ToolType
 
@@ -34,6 +39,10 @@ logger = logging.getLogger(__name__)
 # The sandbox writes the submitted source to ``script.py`` (see
 # execution/isolation.py ExecutionRequest docstring) — never surface it.
 _SCRIPT_NAME = "script.py"
+# AD-1221: the ship also generates the fetch helper and, when the workdir must
+# be importable, a launcher. Both are machinery, not work products — without
+# this the Captain would be handed `ship.py` as a "file the agent produced".
+_GENERATED_NAMES = {_SCRIPT_NAME, SANDBOX_HELPER_FILENAME, "_probos_launch.py"}
 # Directories that are machinery, not deliverables.
 _SKIP_DIR_PARTS = {".venv", "venv", "__pycache__", ".git", "node_modules", ".pytest_cache"}
 # Per-file cap so a runaway script can't push a huge blob into the store.
@@ -326,6 +335,7 @@ class CodeExecutionTool:
                     "inside those should be split into steps rather than run "
                     "until it is cut off. "
                 )
+        network = self._network_clause()
         return (
             opening
             + "Any file the "
@@ -359,7 +369,35 @@ class CodeExecutionTool:
             # security-posture decision that belongs with the Captain (#1177),
             # and is deliberately NOT settled here.
             + limits
-            + "OUTBOUND NETWORK IS BLOCKED HERE — requests fail. To "
+            + network
+        )
+
+    def _network_clause(self) -> str:
+        """AD-1221: describe the network posture this run ACTUALLY has.
+
+        The clause is derived from config at call time rather than written as a
+        constant, because a constant is how AD-1217 went wrong: the description
+        asserted a boundary that had stopped matching the code. When the relay
+        is on, "OUTBOUND NETWORK IS BLOCKED" is simply false, and an agent that
+        believes it will not use the capability the operator turned on — the
+        BF-728 failure mode, where the work succeeded and the agent disbelieved
+        its own result.
+        """
+        if getattr(self._cfg(), "fetch_broker_enabled", False):
+            return (
+                "Direct network access is blocked here, but you can fetch "
+                "through the ship: `import ship; r = ship.fetch(url)` "
+                "returns a dict with `body`, `status_code`, `truncated` and "
+                "`total_bytes`. The ship performs the request under its normal "
+                "SSRF checks and rate limits. PREFER THIS over http_fetch when "
+                "you need to extract a small answer from a large document — "
+                "fetch it and parse it here, and only print what you need, "
+                "instead of carrying the whole document through the "
+                "conversation. It raises ship.FetchError if the ship "
+                "declines. Required libraries must already be installed."
+            )
+        return (
+            "OUTBOUND NETWORK IS BLOCKED HERE — requests fail. To "
             "fetch a URL use the http_fetch tool instead, then pass the result "
             "into this tool if you need to process it. Required libraries must "
             "already be installed."
@@ -390,6 +428,79 @@ class CodeExecutionTool:
     def _cfg(self) -> Any:
         return getattr(getattr(self._runtime, "config", None), "execution", None)
 
+    def _governed_fetcher(self) -> Any:
+        """The registered agent that can perform a governed HTTP fetch, if any.
+
+        Resolved by capability (does it expose ``fetch_governed``?) rather than
+        by pool name or class, so the broker keeps working if the HTTP agent is
+        renamed, re-pooled, or replaced by a differently-implemented one.
+        """
+        registry = getattr(self._runtime, "registry", None)
+        if registry is None:
+            return None
+        try:
+            agents = registry.all()
+        except Exception:  # noqa: BLE001 — registry unavailable
+            return None
+        for agent in agents:
+            if callable(getattr(agent, "fetch_governed", None)):
+                return agent
+        return None
+
+    async def _start_fetch_broker(
+        self, cfg: Any, workdir: Path,
+    ) -> tuple[dict[str, str], SandboxFetchBroker | None]:
+        """AD-1221: mint a per-run loopback fetch relay and the helper the
+        script imports to use it.
+
+        Returns ``({}, None)`` — the byte-identical pre-AD-1221 path — whenever
+        the capability is off or unavailable. Every failure here degrades to
+        "no relay this run" rather than failing the execution: the script can
+        still do everything it could yesterday.
+        """
+        if not getattr(cfg, "fetch_broker_enabled", False):
+            return {}, None
+
+        fetcher = self._governed_fetcher()
+        if fetcher is None:
+            logger.warning(
+                "AD-1221: execution.fetch_broker_enabled is on but no registered "
+                "agent exposes fetch_governed; this run gets no fetch relay and "
+                "probos.fetch() will report it is unavailable"
+            )
+            return {}, None
+
+        cap = int(getattr(cfg, "fetch_broker_max_body_bytes", 8 * 1024 * 1024))
+
+        async def _fetch(url: str, method: str) -> dict[str, Any]:
+            return await fetcher.fetch_governed(url, method, max_body_bytes=cap)
+
+        broker = SandboxFetchBroker(fetch=_fetch)
+        try:
+            host, port, token = await broker.start()
+            (workdir / SANDBOX_HELPER_FILENAME).write_text(
+                SANDBOX_HELPER_SOURCE, encoding="utf-8"
+            )
+        except Exception:  # noqa: BLE001 — degrade, do not fail the run
+            logger.warning(
+                "AD-1221: could not start the sandbox fetch relay; this run "
+                "proceeds without it", exc_info=True,
+            )
+            try:
+                await broker.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            return {}, None
+
+        return (
+            {
+                "PROBOS_FETCH_HOST": host,
+                "PROBOS_FETCH_PORT": str(port),
+                "PROBOS_FETCH_TOKEN": token,
+            },
+            broker,
+        )
+
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None,
     ) -> ToolResult:
@@ -414,6 +525,7 @@ class CodeExecutionTool:
 
         scratch_root = Path(getattr(cfg, "scratch_dir", "data/execution/scratch"))
         workdir = scratch_root / f"exec-{uuid.uuid4().hex}"
+        broker: SandboxFetchBroker | None = None
         try:
             workdir.mkdir(parents=True, exist_ok=True)
             # AD-1074d: stage the thread's current documents into the workdir so
@@ -432,6 +544,10 @@ class CodeExecutionTool:
             timeout = self._resolve_timeout(
                 (params or {}).get("timeout"), getattr(cfg, "timeout_seconds", 30),
             )
+            # AD-1221: stand up a loopback fetch relay for THIS run only, so the
+            # script can fetch and extract in one process. Returns ({}, None)
+            # when the capability is off, which is the byte-identical old path.
+            broker_env, broker = await self._start_fetch_broker(cfg, workdir)
             res = await sandbox.run(
                 ExecutionRequest(
                     code=code,
@@ -440,6 +556,8 @@ class CodeExecutionTool:
                     max_output_bytes=getattr(cfg, "max_output_bytes", 65536),
                     max_memory_mb=getattr(cfg, "max_memory_mb", 512),
                     allow_network=False,
+                    env=(broker_env or None),
+                    import_workdir=bool(broker_env),
                 )
             )
             produced = await self._capture_artifacts(
@@ -476,6 +594,18 @@ class CodeExecutionTool:
             )
             return ToolResult(error=f"execution failed: {exc}")
         finally:
+            # AD-1221: the relay must not outlive the script it was minted for.
+            # Closed here rather than after `sandbox.run` so a timeout, an
+            # exception, or a cancelled turn all still take the socket down.
+            if broker is not None:
+                try:
+                    await broker.stop()
+                except Exception:  # noqa: BLE001 — teardown, run already over
+                    logger.warning(
+                        "AD-1221: sandbox fetch broker failed to close cleanly; "
+                        "the listener may linger until process exit",
+                        exc_info=True,
+                    )
             shutil.rmtree(workdir, ignore_errors=True)
 
     def _unimportable_summary(self, code: str) -> dict[str, Any] | None:
@@ -584,7 +714,7 @@ class CodeExecutionTool:
             name = getattr(art, "name", "")
             # Never stage the sandbox's own script, or a name that would escape
             # the workdir (path traversal / nested paths).
-            if not name or name == _SCRIPT_NAME or "/" in name or "\\" in name:
+            if not name or name in _GENERATED_NAMES or "/" in name or "\\" in name:
                 continue
             if getattr(art, "size_bytes", 0) > _MAX_ARTIFACT_BYTES:
                 continue
@@ -626,7 +756,7 @@ class CodeExecutionTool:
             rel_parts = p.relative_to(workdir).parts
             if any(part in _SKIP_DIR_PARTS for part in rel_parts):
                 continue
-            if len(rel_parts) == 1 and p.name == _SCRIPT_NAME:
+            if len(rel_parts) == 1 and p.name in _GENERATED_NAMES:
                 continue  # the sandbox's own script, not a deliverable
             try:
                 blob = p.read_bytes()

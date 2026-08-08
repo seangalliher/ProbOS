@@ -80,6 +80,10 @@ class ExecutionRequest:
     allow_network: bool = False              # soft at Tier 1 (proxy hint); hard at Tier 2
     env: dict[str, str] | None = None        # extra env on top of a scrubbed base
     python_executable: str | None = None     # default: sys.executable
+    # AD-1221: make the working directory importable, so a helper module the
+    # ship generated there (e.g. `ship.py`) can be imported by the script.
+    # Default False keeps every existing caller byte-identical.
+    import_workdir: bool = False
 
 
 @dataclass
@@ -237,7 +241,30 @@ class SubprocessSandbox:
             script = workdir / "script.py"
             script.write_text(request.code, encoding="utf-8")
             # -I = isolated mode (ignore env vars + user site); -B = no .pyc.
-            return [py, "-I", "-B", str(script)]
+            if not request.import_workdir:
+                return [py, "-I", "-B", str(script)]
+            # AD-1221: `-I` implies `-P`, which deliberately does NOT prepend
+            # the script's directory to sys.path — that is what stops a file in
+            # the working directory from shadowing a stdlib module, and it is
+            # not something to give up in exchange for a feature (Design
+            # Principle 13b). So keep `-I` and add the one directory we chose,
+            # via a launcher. `runpy` compiles script.py as its own file, so
+            # the agent's tracebacks still report the agent's real line numbers
+            # — which a prepended prelude inside script.py would have silently
+            # shifted, turning every sandbox error message into a small lie.
+            launcher = workdir / "_probos_launch.py"
+            launcher.write_text(
+                "import runpy, sys, os\n"
+                "sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))\n"
+                "sys.argv = ['script.py']\n"
+                "runpy.run_path(\n"
+                "    os.path.join(os.path.dirname(os.path.abspath(__file__)),\n"
+                "                 'script.py'),\n"
+                "    run_name='__main__',\n"
+                ")\n",
+                encoding="utf-8",
+            )
+            return [py, "-I", "-B", str(launcher)]
         return None
 
     @staticmethod

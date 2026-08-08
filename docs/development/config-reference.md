@@ -492,6 +492,8 @@ AD-993/994: governed ephemeral code execution (tiered isolation).
 | `scratch_dir` | `str` | `'data/execution'` | — |  |
 | `persistent_workspaces` | `bool` | `True` | — |  |
 | `workspace_root` | `str` | `'data/execution/workspaces'` | — |  |
+| `fetch_broker_enabled` | `bool` | `False` | — |  |
+| `fetch_broker_max_body_bytes` | `int` | `8388608` | — |  |
 | `workspace_write_enabled` | `bool` | `False` | — |  |
 | `timeout_seconds` | `float` | `30.0` | — |  |
 | `max_output_bytes` | `int` | `65536` | — |  |

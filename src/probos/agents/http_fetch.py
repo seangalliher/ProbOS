@@ -248,11 +248,35 @@ class HttpFetchAgent(BaseAgent):
 
         return None
 
-    async def _fetch_url(self, url: str, method: str) -> dict[str, Any]:
+    async def fetch_governed(
+        self,
+        url: str,
+        method: str = "GET",
+        *,
+        max_body_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Public governed fetch: SSRF validation, per-domain rate limiting,
+        429 retry and profile recording, exactly as the ``http_fetch`` intent
+        gets them.
+
+        Exists so an in-process consumer (AD-1221's sandbox fetch broker) can
+        reach the governed path without reaching into a private method, and
+        without the body transiting the intent bus. ``max_body_bytes`` lets
+        such a consumer choose its own cap: :attr:`MAX_BODY_BYTES` is sized to
+        protect the bus (see its comment and the #636 OOM), and a caller that
+        does not put the body on the bus is not the thing that cap defends.
+        """
+        return await self._fetch_url(url, method, max_body_bytes=max_body_bytes)
+
+    async def _fetch_url(
+        self, url: str, method: str, *, max_body_bytes: int | None = None
+    ) -> dict[str, Any]:
         """Fetch a URL with timeout, body capping, and per-domain rate limiting."""
         error = self._validate_url(url)
         if error:
             return {"success": False, "error": f"SSRF protection: {error}"}
+
+        cap = self.MAX_BODY_BYTES if max_body_bytes is None else max_body_bytes
 
         domain, state = self._get_domain_state(url)
         delay = await self._wait_for_rate_limit(domain, state)
@@ -282,10 +306,8 @@ class HttpFetchAgent(BaseAgent):
                     delay += retry_delay
 
                 raw = response.content
-                truncated = len(raw) > self.MAX_BODY_BYTES
-                body = raw[:self.MAX_BODY_BYTES].decode(
-                    "utf-8", errors="replace"
-                )
+                truncated = len(raw) > cap
+                body = raw[:cap].decode("utf-8", errors="replace")
 
                 safe_headers = {
                     k: v

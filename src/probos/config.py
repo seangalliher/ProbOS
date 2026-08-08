@@ -3214,6 +3214,22 @@ class ExecutionConfig(BaseModel):
     # (the original AD-993/994 behavior).
     persistent_workspaces: bool = True
     workspace_root: str = "data/execution/workspaces"
+    # AD-1221: let sandboxed code fetch a URL through the ship's governed HTTP
+    # path (`import probos; probos.fetch(url)`), so an agent can fetch and
+    # extract in ONE process instead of carrying every byte through its context
+    # window. This does NOT open general network access: the sandbox gets a
+    # loopback socket to a relay that exists only for that run, and every
+    # request still passes SSRF validation, per-domain rate limiting and audit.
+    # Default OFF because it is a capability increase and the operator should
+    # choose it; see Design Principle 13 for why the choice is stated rather
+    # than inherited.
+    fetch_broker_enabled: bool = False
+    # A body returned through the broker goes to the sandbox's own memory, NOT
+    # onto the intent bus, so HttpFetchAgent.MAX_BODY_BYTES (1 MB, sized to
+    # protect the bus after the #636 OOM) is not the constraint that applies
+    # here. 8 MB is chosen to cover the documents this is for — package
+    # indexes, API listings, large HTML pages — while still bounding one fetch.
+    fetch_broker_max_body_bytes: int = 8 * 1024 * 1024
     # AD-1021b: governed write-through to the per-agent workspace folder (the
     # Monaco workstation Save path). Default OFF — a separate master switch from
     # ``enabled`` so editing a workspace text file (consensus-gated) does not
