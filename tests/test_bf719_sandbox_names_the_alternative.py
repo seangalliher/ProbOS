@@ -36,14 +36,34 @@ class TestTheConstraintNamesTheAlternative:
 
     def test_it_still_states_the_sandbox_has_no_network(self):
         # Assert
+        #
+        # AD-1217 (#1177) reworded this from "THIS SANDBOX HAS NO NETWORK
+        # ACCESS" to "OUTBOUND NETWORK IS BLOCKED HERE". UPDATED, not deleted:
+        # BF-719's property is that the blocking fact is stated plainly enough
+        # to change the agent's routing, and that survives. What did not
+        # survive is the phrasing as an ENFORCEMENT GUARANTEE - isolation.py
+        # sets blackhole proxy variables and its own comment calls that a
+        # "soft deterrent only". requests/httpx honour them, so the practical
+        # claim holds; a raw socket would not.
         lowered = _description().lower()
-        assert "no network access" in lowered
+        assert "outbound network is blocked" in lowered
+        assert "requests fail" in lowered
 
     def test_the_no_network_statement_precedes_the_library_note(self):
         """Order matters: the blocking fact should not trail the housekeeping."""
-        # Assert
+        # Assert — same property, AD-1217's wording.
         d = _description()
-        assert d.index("NO NETWORK ACCESS") < d.index("libraries")
+        assert d.index("OUTBOUND NETWORK IS BLOCKED HERE") < d.index("libraries")
+
+    def test_it_does_not_claim_an_enforcement_level_the_code_lacks(self):
+        """AD-1217. The risk was never an agent breaking out — it was a
+        reviewer or a later AD treating the sentence as an enforced boundary
+        and building on it, the same class as the false comment corrected in
+        AD-1211. The sandbox docstring already admits a determined script can
+        read host files by absolute path; the network limit now matches that
+        honesty."""
+        d = _description()
+        assert "HAS NO NETWORK ACCESS" not in d
 
     def test_it_no_longer_invites_general_task_use(self):
         """"to perform a task" is what made a fetch look in-scope."""

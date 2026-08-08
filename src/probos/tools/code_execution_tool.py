@@ -299,6 +299,33 @@ class CodeExecutionTool:
                 + ", ".join(f"{pip} ({purpose})" for pip, purpose in analysis)
                 + ". "
             )
+        # AD-1218: state the limits the agent can actually hit, derived from
+        # config rather than written down, so a re-tuned sandbox cannot start
+        # lying about itself the way BF-726's library list did. A limit an
+        # agent can hit should be a limit it is told about, in the tool that
+        # imposes it. The wall clock is the sharpest of these: a script looping
+        # over fifteen URLs has no way to know it has 30 seconds, so it writes
+        # something reasonable, gets killed mid-run, and has to diagnose a
+        # truncation it was never warned about.
+        cfg = self._cfg()
+        limits = ""
+        if cfg is not None:
+            timeout = getattr(cfg, "timeout_seconds", None)
+            out_bytes = getattr(cfg, "max_output_bytes", None)
+            memory_mb = getattr(cfg, "max_memory_mb", None)
+            parts: list[str] = []
+            if timeout:
+                parts.append(f"{float(timeout):.0f}s wall clock")
+            if out_bytes:
+                parts.append(f"{int(out_bytes) // 1024} KB of captured output")
+            if memory_mb:
+                parts.append(f"{int(memory_mb)} MB memory")
+            if parts:
+                limits = (
+                    "Limits: " + ", ".join(parts) + ". Work that will not fit "
+                    "inside those should be split into steps rather than run "
+                    "until it is cut off. "
+                )
         return (
             opening
             + "Any file the "
@@ -315,7 +342,24 @@ class CodeExecutionTool:
             # to fetch fifteen web pages wrote a Python script to do it, every
             # request died against the blackhole proxy, and the turn produced
             # nothing. The agent HAD this description and still chose wrong.
-            "THIS SANDBOX HAS NO NETWORK ACCESS — outbound requests fail. To "
+            #
+            # AD-1217: the routing guidance is kept verbatim in force — BF-719's
+            # effect was re-observed live on 2026-08-07 — but the claim is no
+            # longer phrased as an enforcement guarantee. `isolation.py`
+            # `_build_env` sets blackhole PROXY variables and says so in its own
+            # comment: "Soft deterrent only ... Hard network isolation is Tier
+            # 2." requests/httpx honour them, which is why it holds in practice;
+            # a raw socket would not. The risk was never an agent breaking out,
+            # it was a reviewer or a later AD treating "HAS NO NETWORK ACCESS"
+            # as an enforced boundary and building on it — the same class as the
+            # false comment corrected in AD-1211. The sandbox docstring already
+            # admits "a determined script can still read host files by absolute
+            # path"; the filesystem limit was described honestly and the network
+            # limit was not. Whether Tier 1 should actually enforce this is a
+            # security-posture decision that belongs with the Captain (#1177),
+            # and is deliberately NOT settled here.
+            + limits
+            + "OUTBOUND NETWORK IS BLOCKED HERE — requests fail. To "
             "fetch a URL use the http_fetch tool instead, then pass the result "
             "into this tool if you need to process it. Required libraries must "
             "already be installed."

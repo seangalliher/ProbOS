@@ -21,10 +21,12 @@ admitted) and AD-1177.
 from __future__ import annotations
 
 import importlib.util
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from probos.config import ExecutionConfig
 from probos.tools import code_execution_tool as mod
 from probos.tools.code_execution_tool import CodeExecutionTool
 
@@ -135,7 +137,7 @@ class TestBf719IsNotRegressed:
 
     def test_still_states_the_constraint_and_names_the_alternative(self) -> None:
         desc = _description()
-        assert "NO NETWORK ACCESS" in desc
+        assert "OUTBOUND NETWORK IS BLOCKED HERE" in desc
         assert "http_fetch" in desc
 
     def test_still_explains_where_produced_files_go(self) -> None:
@@ -148,13 +150,44 @@ class TestTheDescriptionIsCheapAndPure:
     def test_reads_no_runtime_state(self) -> None:
         """Guards against someone later reaching into the runtime here: the
         description is built during tool-offer assembly, before any request
-        context exists."""
+        context exists.
 
-        class _Exploding:
+        AD-1218 narrowed this from "touches nothing" to "touches nothing but
+        static config", and the docstring above is why: the property being
+        defended is *no request context*, and ``config`` is neither request
+        context nor state — it is a Pydantic model fixed at boot and already
+        read by ``invoke`` through the same ``_cfg()`` accessor. AD-1218 states
+        the sandbox's wall clock, output and memory caps, and those are only
+        knowable from config; hardcoding them instead would reintroduce exactly
+        the drift BF-726 exists to end.
+
+        The teeth are unchanged for the real risk — the stores and per-request
+        objects — and that is asserted below rather than assumed.
+        """
+
+        class _ConfigOnly:
+            """Explodes on anything except the static config."""
+
+            config = SimpleNamespace(execution=ExecutionConfig())
+
             def __getattr__(self, name: str) -> Any:
                 raise AssertionError(f"description touched runtime.{name}")
 
-        assert CodeExecutionTool(runtime=_Exploding()).description
+        assert CodeExecutionTool(runtime=_ConfigOnly()).description
+
+    def test_the_guard_still_bites_on_request_scoped_state(self) -> None:
+        """Proves the narrowing above did not defang the guard. Reaching for a
+        store from the description must still fail loudly."""
+
+        class _ConfigOnly:
+            config = SimpleNamespace(execution=ExecutionConfig())
+
+            def __getattr__(self, name: str) -> Any:
+                raise AssertionError(f"description touched runtime.{name}")
+
+        runtime = _ConfigOnly()
+        with pytest.raises(AssertionError, match="artifact_store"):
+            _ = runtime.artifact_store
 
     def test_is_stable_across_calls(self) -> None:
         assert _description() == _description()
