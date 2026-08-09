@@ -1729,6 +1729,43 @@ class WorkItemAgenticExecutor:
                 )
                 status_ids = []
 
+        # AD-1226 (#1197): let the agent READ BACK something it produced. The
+        # episode carries a content-addressable ref, not a copy, so "what was in
+        # that list you sent me?" is answerable without the text ever having
+        # been carried in context -- and without producing it a second time.
+        # Measured 2026-08-08: a correctly delivered fifteen-row table, and four
+        # minutes later the agent reporting that it could not see what it had
+        # sent. Read-only and ownership-scoped. Flag-gated AND store-gated:
+        # without the attachment store there is nothing to read back, and an
+        # offer pointing at nothing is worse than no offer. Registered
+        # idempotently, mirroring the AD-1209 block above.
+        recall_ids: list[str] = []
+        _memory_cfg = getattr(getattr(runtime, "config", None), "memory", None)
+        if (
+            getattr(_memory_cfg, "recall_outcome_refs_enabled", False)
+            and getattr(runtime, "attachment_store", None) is not None
+            and registry is not None
+        ):
+            try:
+                from probos.tools.recall_artifact_tool import RecallArtifactTool
+
+                if registry.get("recall_artifact") is None:
+                    registry.register(
+                        RecallArtifactTool(runtime=runtime),
+                        provider="AD-1226",
+                        tags=["recall_artifact", "artifacts"],
+                    )
+                recall_ids = ["recall_artifact"]
+            except Exception:
+                logger.warning(
+                    "AD-1226: failed to register/offer the recall_artifact tool "
+                    "for agent %s; continuing without it — a question about the "
+                    "agent's own earlier output may be answered from "
+                    "recollection or by redoing the work",
+                    agent_id, exc_info=True,
+                )
+                recall_ids = []
+
         # AD-1072: the conversational-loop discovery + delegation tools, both
         # default-OFF (config.agentic_tools). With both flags off this whole
         # section is inert and ``tool_ids`` is byte-identical to the AD-1068 set.
@@ -1927,7 +1964,7 @@ class WorkItemAgenticExecutor:
         tool_ids = list(
             dict.fromkeys([
                 *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
-                *status_ids,
+                *status_ids, *recall_ids,
                 *search_ids, *delegate_ids, *event_log_ids, *oracle_ids,
                 *publish_ids, *browser_ids,
             ])

@@ -206,6 +206,7 @@ Episodic memory configuration.
 | `group_episode_enrichment_enabled` | `bool` | `False` | — |  |
 | `group_reflection_max_chars` | `int` | `600` | — |  |
 | `episode_visual_binding_enabled` | `bool` | `False` | — |  |
+| `recall_outcome_refs_enabled` | `bool` | `False` | — |  |
 | `tcm_enabled` | `bool` | `True` | — |  |
 | `tcm_dimension` | `int` | `16` | — |  |
 | `tcm_drift_rate` | `float` | `0.95` | — |  |

@@ -1214,6 +1214,12 @@ class MemoryConfig(BaseModel):
     # the frame survives ring reaping) and index the description for integrated recall.
     # Default OFF -> AnchorFrame.visual_* stay "", episodes byte-identical.
     episode_visual_binding_enabled: bool = False
+    # AD-1226: carry a content-addressable ref to a produced artifact in the
+    # episode's outcome, render a one-line "what I produced" cue at recall, and
+    # offer the read-only ``recall_artifact`` tool so the full text can be
+    # re-read on demand instead of being carried in memory. Default-OFF: when
+    # False every prompt this touches is byte-identical to today.
+    recall_outcome_refs_enabled: bool = False
     # AD-601: TCM Temporal Context Model
     tcm_enabled: bool = True
     tcm_dimension: int = 16

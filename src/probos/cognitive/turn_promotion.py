@@ -55,6 +55,7 @@ flight, not a request for someone to start it.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from typing import Any, Awaitable, Callable
@@ -66,6 +67,26 @@ logger = logging.getLogger(__name__)
 # the title is a one-line handle for a card.
 _TITLE_MAX_CHARS = 120
 _DESCRIPTION_MAX_CHARS = 4000
+
+# AD-1226: how much of a promoted run's report is copied into the episode's
+# ``outcome["response"]``.
+#
+# This number is a decision, not an inheritance (Design Principle 13a). It used
+# to be 500 and it was a *partial copy of the payload* — measured on the
+# reference vessel, a 1362-char fifteen-row table was stored as 500 chars and
+# seven rows, cut mid-word at "| charset-normalizer | 3.4.9 | The Real Fi". A
+# truncated copy is the worst of both worlds: too big to be a summary and too
+# small to be the answer.
+#
+# With the ref in place the stored text no longer has to *be* the payload. It
+# has two jobs and both are small: it feeds the semantic embedding that makes
+# the episode findable, and it renders as one line of the memory section. The
+# full text is retrievable on demand through ``recall_artifact``, so 240 chars
+# buys a findable, readable cue without spending prompt budget on a copy.
+#
+# Only applied when ``memory.recall_outcome_refs_enabled`` is on — shrinking
+# the stored text is only defensible *because* the ref exists.
+_OUTCOME_DIGEST_CHARS = 240
 
 # ``metadata["source"]`` on the promoted item. Distinguishes an item this module
 # created from one the Captain or the crew orchestrator raised, so a later
@@ -131,6 +152,99 @@ def _shorten(text: str, limit: int) -> str:
     if len(flat) <= limit:
         return flat
     return flat[: max(0, limit - 1)].rstrip() + "\u2026"
+
+
+def _outcome_digest(body: str, limit: int = _OUTCOME_DIGEST_CHARS) -> str:
+    """AD-1226: a short, whole cue for ``outcome["response"]``.
+
+    Cuts on the last line boundary inside ``limit`` when there is one, so a
+    markdown table never ends mid-cell and the rendered memory line never shows
+    the Captain half a row. Falls back to a hard cut only when the first line
+    is itself longer than the cap.
+    """
+    text = str(body or "")
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    cut = window.rfind("\n")
+    if cut > 0:
+        return window[:cut].rstrip()
+    return window
+
+
+async def _store_outcome_artifact(
+    *,
+    runtime: Any,
+    agent_id: str,
+    thread_id: str,
+    work_item_id: str,
+    body: str,
+) -> dict[str, Any] | None:
+    """AD-1226: persist a promoted run's full report and describe where it went.
+
+    Returns the ``artifact_ref`` to embed in the episode's outcome, or ``None``
+    when nothing durable could be written — in which case the episode is stored
+    exactly as it would have been, carrying its digest and no ref, and recall
+    renders no "you produced" cue rather than one pointing at nothing.
+
+    Log-and-degrade throughout. An artifact that fails to store must never turn
+    a delivered report into a failed one; by the time this runs the Captain
+    already has the text in the thread.
+    """
+    attachment_store = getattr(runtime, "attachment_store", None)
+    if attachment_store is None or not body:
+        return None
+
+    blob = str(body).encode("utf-8")
+    content_hash = hashlib.sha256(blob).hexdigest()
+    try:
+        await attachment_store.write(
+            content_hash, blob, "text/markdown", origin="agent_artifact",
+        )
+    except Exception:
+        logger.warning(
+            "AD-1226: could not store the artifact for work item %s; the report "
+            "was delivered and the episode still carries its digest, but the "
+            "full text will not be re-readable through recall_artifact",
+            work_item_id, exc_info=True,
+        )
+        return None
+
+    # The name is the handle a human (or the agent) recognises on the board.
+    name = f"task-{work_item_id}"
+    artifact_id = ""
+    artifact_store = getattr(runtime, "artifact_store", None)
+    if artifact_store is not None and thread_id:
+        try:
+            artifact = artifact_store.add_version(
+                thread_id=thread_id,
+                name=name,
+                content_hash=content_hash,
+                mime="text/markdown",
+                size_bytes=len(blob),
+                created_by=agent_id,
+            )
+            artifact_id = str(getattr(artifact, "id", "") or "")
+        except Exception:
+            # Non-fatal by design: the attachment ref alone is enough to fetch
+            # by, so the agent can still read its own work back. Only the
+            # artifact drawer's version chain is missing an entry.
+            logger.warning(
+                "AD-1226: stored the artifact bytes for work item %s but could "
+                "not register a version on thread %s; the text is still "
+                "readable by content hash and only the version chain is short "
+                "one entry",
+                work_item_id, thread_id, exc_info=True,
+            )
+
+    return {
+        "content_hash": content_hash,
+        "mime": "text/markdown",
+        "size_bytes": len(blob),
+        "chars": len(body),
+        "artifact_id": artifact_id,
+        "name": name,
+    }
 
 
 async def _create_promoted_work_item(
@@ -257,10 +371,45 @@ async def _store_promoted_episode(
 
     Log-and-degrade throughout: an episode that fails to store must never turn
     a delivered report into a failed one.
+
+    AD-1226: when ``memory.recall_outcome_refs_enabled`` is on, the full report
+    is also written to the content-addressable stores and the outcome carries a
+    ref to it, so the agent can read its own work back later instead of having
+    to carry it. OFF ⇒ this function is byte-identical to AD-1166.
     """
     memory = getattr(runtime, "episodic_memory", None)
     if memory is None:
         return
+
+    # AD-1226: one flag, read once. OFF ⇒ no artifact write, no ref key, and
+    # the AD-1166 ``body[:500]`` response verbatim.
+    refs_enabled = bool(getattr(
+        getattr(getattr(runtime, "config", None), "memory", None),
+        "recall_outcome_refs_enabled",
+        False,
+    ))
+    artifact_ref: dict[str, Any] | None = None
+    if refs_enabled:
+        try:
+            artifact_ref = await _store_outcome_artifact(
+                runtime=runtime,
+                agent_id=agent_id,
+                thread_id=thread_id,
+                work_item_id=work_item_id,
+                body=body,
+            )
+        except Exception:
+            # Defence in depth: the helper already degrades internally, so
+            # reaching here means something unforeseen. The report is already
+            # delivered and must stay delivered.
+            logger.warning(
+                "AD-1226: artifact capture for work item %s failed outright; "
+                "the report was delivered and the episode is stored without a "
+                "re-readable ref",
+                work_item_id, exc_info=True,
+            )
+            artifact_ref = None
+
     try:
         import time as _time
 
@@ -284,23 +433,31 @@ async def _store_promoted_episode(
                 agent_id, exc_info=True,
             )
 
+        outcome: dict[str, Any] = {
+            "intent": "direct_message",
+            # A run that stopped at its step limit did partial work. It is
+            # neither a success nor a failure, and recording it as either
+            # would teach the wrong lesson.
+            "success": bool(complete and not failed),
+            "complete": bool(complete),
+            # AD-1226: a short whole cue once the full text is retrievable;
+            # the AD-1166 partial copy verbatim while it is not.
+            "response": (
+                _outcome_digest(body) if refs_enabled else body[:500]
+            ),
+            "session_type": "1:1",
+            "source": PROMOTION_SOURCE,
+            "work_item_id": work_item_id,
+        }
+        if artifact_ref is not None:
+            outcome["artifact_ref"] = artifact_ref
+
         await memory.store(Episode(
             user_input=f"[1:1 background task] Captain: {request_text}",
             timestamp=_time.time(),
             agent_ids=[sovereign_id],
             correlation_id=work_item_id,
-            outcomes=[{
-                "intent": "direct_message",
-                # A run that stopped at its step limit did partial work. It is
-                # neither a success nor a failure, and recording it as either
-                # would teach the wrong lesson.
-                "success": bool(complete and not failed),
-                "complete": bool(complete),
-                "response": body[:500],
-                "session_type": "1:1",
-                "source": PROMOTION_SOURCE,
-                "work_item_id": work_item_id,
-            }],
+            outcomes=[outcome],
             reflection=(
                 f"Captain asked for work that outgrew a reply; it ran as "
                 f"background task {work_item_id} and "

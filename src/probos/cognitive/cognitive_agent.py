@@ -96,6 +96,78 @@ _CAMERA_PROMINENT_SALIENCE: float = 1_000_000.0
 _CAMERA_RECESSIVE_ZONE_FLOOR: int = 1_000_000
 _CAMERA_RECESSIVE_SALIENCE: float = -1.0
 
+# AD-1226: shape of the one-line "you produced this" cue appended to a recalled
+# memory. Both numbers are decisions, not inheritances (Design Principle 13a).
+#
+# The hash prefix is what the agent copies into ``recall_artifact``, so it has
+# to be long enough to be unambiguous and short enough to read: 12 hex chars is
+# 48 bits, far past collision range for one agent's own artifacts, and fits the
+# line without wrapping. The tool accepts any prefix of 8 or more, so a longer
+# quote from the agent also resolves.
+#
+# The digest fallback renders only when a ref stored nothing readable. It is
+# capped so a pre-AD-1226 500-char outcome cannot turn one cue into a paragraph
+# — the cue exists to say WHAT was produced, not to reproduce it.
+_PRODUCED_HASH_CHARS: int = 12
+_PRODUCED_DIGEST_CHARS: int = 160
+
+
+def _recall_outcome_refs_on(runtime: Any) -> bool:
+    """AD-1226: True only when outcome refs are configured ON.
+
+    Default-OFF: a missing runtime/config or an unset flag returns False, so no
+    ``outcome_ref`` key is ever set on a recalled memory and no cue is ever
+    rendered. This is the single gate both halves of the recall side sit behind.
+    """
+    _mem_cfg = getattr(getattr(runtime, "config", None), "memory", None)
+    return bool(getattr(_mem_cfg, "recall_outcome_refs_enabled", False))
+
+
+def _format_produced_line(runtime: Any, mem: dict) -> str:
+    """AD-1226: tell the agent it produced something, and how to read it back.
+
+    The Captain's requirement is two capabilities, and this line is the first:
+    *know* that a thing was produced, and enough about it to answer "did you do
+    it?" without a fetch. The second — *refer back* — is the ``recall_artifact``
+    tool, which this line names so the action is obvious at the moment the agent
+    is reading its own memory.
+
+    Deliberately a module-level function taking ``runtime``, NOT a method. The
+    AD-979d ``_Holder`` stub documents the contract that ``_format_memory_section``
+    renders using only ``.id``/``._runtime`` plus ``_confabulation_guard``; making
+    the renderer reach for a second instance method broke every duck-typed caller
+    of it. Passing the dependency in keeps the renderer callable by anything that
+    holds a runtime.
+
+    Returns "" whenever the flag is off or the memory carries no ref, so every
+    caller appends nothing rather than branching.
+    """
+    if not _recall_outcome_refs_on(runtime):
+        return ""
+    ref = mem.get("outcome_ref")
+    ref = ref if isinstance(ref, dict) else {}
+    content_hash = str(ref.get("content_hash") or "").strip()
+    name = str(ref.get("name") or "").strip()
+    try:
+        chars = int(ref.get("chars") or 0)
+    except (TypeError, ValueError):
+        chars = 0
+
+    if not content_hash:
+        # A ref that stored nothing readable. Say what was produced from the
+        # digest rather than pointing at an artifact that is not there.
+        digest = " ".join(str(mem.get("outcome_digest") or "").split())
+        if not digest:
+            return ""
+        return f"    -> you produced this: {digest[:_PRODUCED_DIGEST_CHARS]}"
+
+    what = f'"{name}"' if name else "a document"
+    size = f" ({chars:,} chars)" if chars > 0 else ""
+    return (
+        f"    -> you produced {what}{size}. Re-read it with "
+        f'recall_artifact("{content_hash[:_PRODUCED_HASH_CHARS]}").'
+    )
+
 
 class SensoriumLayer(StrEnum):
     """AD-666: Three-layer classification for agent context injections."""
@@ -8402,9 +8474,44 @@ class CognitiveAgent(BaseAgent):
 
             lines.append(header)
             lines.append(f"    {mem.get('input', '') or mem.get('reflection', '')}")
+            # AD-1226: one extra line, only when this episode carries a ref to
+            # something the agent produced. Default-OFF ⇒ "" ⇒ nothing appended
+            # ⇒ this section is byte-identical to AD-568c. Called as a module
+            # function so this renderer still needs nothing from ``self`` beyond
+            # ``_runtime`` (AD-979d ``_Holder`` contract).
+            produced = _format_produced_line(getattr(self, "_runtime", None), mem)
+            if produced:
+                lines.append(produced)
         lines.append("")
         lines.append("=== END SHIP MEMORY ===")
         return lines
+
+    # ---- AD-1226: recall a produced artifact without carrying it -----------
+
+    @staticmethod
+    def _episode_outcome_cue(ep: Any) -> dict[str, Any]:
+        """AD-1226: the first outcome on ``ep`` that carries an artifact ref.
+
+        Returns ``{"outcome_ref": ..., "outcome_digest": ...}`` for that one
+        outcome, or ``{}`` when the episode produced nothing durable. Defensive
+        by necessity: ``outcomes`` round-trips through ``outcomes_json`` and may
+        be absent, empty, or hold non-dicts written by an older build.
+        """
+        outcomes = getattr(ep, "outcomes", None)
+        if not isinstance(outcomes, list):
+            return {}
+        for outcome in outcomes:
+            if not isinstance(outcome, dict):
+                continue
+            ref = outcome.get("artifact_ref")
+            if not isinstance(ref, dict):
+                continue
+            cue: dict[str, Any] = {"outcome_ref": ref}
+            digest = outcome.get("response")
+            if isinstance(digest, str) and digest.strip():
+                cue["outcome_digest"] = digest
+            return cue
+        return {}
 
     def _resolve_attention_budget(self) -> int:
         """AD-1028: resolve the ContextAssembler global token budget.
@@ -9925,12 +10032,18 @@ class CognitiveAgent(BaseAgent):
                 # ``_format_memory_section`` — they feed ``_salience_rank_memories``
                 # at the DM/WR bid-build. OFF ⇒ no keys added ⇒ byte-identical.
                 _salience_on = self._salience_scoring_enabled()
+                # AD-1226: OFF ⇒ no outcome keys are added to any memory dict ⇒
+                # ``_format_produced_line`` has nothing to render ⇒ the memory
+                # section is byte-identical.
+                _outcome_refs_on = _recall_outcome_refs_on(self._runtime)
                 for ep in episodes:
                     mem = {
                         "input": ep.user_input[:200] if ep.user_input else "",
                         "reflection": ep.reflection[:200] if ep.reflection else "",
                         "source": getattr(ep, 'source', 'direct'),
                     }
+                    if _outcome_refs_on:
+                        mem.update(self._episode_outcome_cue(ep))
                     if _salience_on:
                         mem["_embedding"] = list(ep.embedding) if ep.embedding else []
                         mem["_timestamp"] = float(ep.timestamp or 0.0)
