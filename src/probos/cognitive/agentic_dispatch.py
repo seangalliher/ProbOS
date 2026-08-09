@@ -1700,6 +1700,35 @@ class WorkItemAgenticExecutor:
                 )
                 skill_ids = []
 
+        # AD-1209 (#1160): let the agent READ a task's state. Without it the
+        # only route toward answering "is it done?" is to do the work and see,
+        # so a status question becomes a second execution of the job -- measured
+        # at 106s and fifteen repeat HTTP fetches on 2026-07-31, and four work
+        # items from one request on 2026-08-08. Read-only and ownership-scoped;
+        # it cannot cancel, resume or mutate anything (AD-1204 owns resumption).
+        # Offered whenever a work-item store exists, registered idempotently,
+        # mirroring the AD-1068 block above.
+        status_ids: list[str] = []
+        if getattr(runtime, "work_item_store", None) is not None and registry is not None:
+            try:
+                from probos.tools.work_item_status_tool import WorkItemStatusTool
+
+                if registry.get("work_item_status") is None:
+                    registry.register(
+                        WorkItemStatusTool(runtime=runtime),
+                        provider="AD-1209",
+                        tags=["work_item_status", "tasks"],
+                    )
+                status_ids = ["work_item_status"]
+            except Exception:
+                logger.warning(
+                    "AD-1209: failed to register/offer the work_item_status tool "
+                    "for agent %s; continuing without it — a status question may "
+                    "restart the work it is asking about",
+                    agent_id, exc_info=True,
+                )
+                status_ids = []
+
         # AD-1072: the conversational-loop discovery + delegation tools, both
         # default-OFF (config.agentic_tools). With both flags off this whole
         # section is inert and ``tool_ids`` is byte-identical to the AD-1068 set.
@@ -1898,6 +1927,7 @@ class WorkItemAgenticExecutor:
         tool_ids = list(
             dict.fromkeys([
                 *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
+                *status_ids,
                 *search_ids, *delegate_ids, *event_log_ids, *oracle_ids,
                 *publish_ids, *browser_ids,
             ])
