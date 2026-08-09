@@ -43,6 +43,22 @@ _SCRIPT_NAME = "script.py"
 # be importable, a launcher. Both are machinery, not work products — without
 # this the Captain would be handed `ship.py` as a "file the agent produced".
 _GENERATED_NAMES = {_SCRIPT_NAME, SANDBOX_HELPER_FILENAME, "_probos_launch.py"}
+# BF-734: modules the ship GENERATES into the working directory at execution
+# time. `find_spec` cannot resolve them from this process -- they do not exist
+# until `_start_fetch_broker` writes them, moments later -- but they ARE
+# importable inside the sandbox, because the AD-1221 launcher puts the workdir
+# on `sys.path`.
+#
+# Reporting them as missing packages is wrong twice over. It is false, and it
+# routes the run into the dependency-install path for something pip could never
+# supply: measured on the reference vessel 2026-08-08, an agent that wrote
+# `import ship` produced "This agent requires packages that are not installed:
+# ship" and the run then blocked on an approval prompt that could not sensibly
+# be answered. Every promoted run that followed the AD-1221 description's
+# advice stalled this way.
+_WORKDIR_PROVIDED_MODULES = frozenset(
+    {SANDBOX_HELPER_FILENAME.removesuffix(".py")}
+)
 # Directories that are machinery, not deliverables.
 _SKIP_DIR_PARTS = {".venv", "venv", "__pycache__", ".git", "node_modules", ".pytest_cache"}
 # Per-file cap so a runaway script can't push a huge blob into the store.
@@ -237,6 +253,9 @@ def detect_unimportable(source_code: str) -> list[str]:
     unimportable: list[str] = []
     for name in sorted(roots):
         if not name:
+            continue
+        # BF-734: the ship writes these into the workdir before the run.
+        if name in _WORKDIR_PROVIDED_MODULES:
             continue
         try:
             resolved = importlib.util.find_spec(name) is not None
@@ -666,6 +685,17 @@ class CodeExecutionTool:
         except Exception:
             logger.warning("AD-1073: detect_missing failed", exc_info=True)
             return None
+        # BF-734: never ask the Captain to pip-install a module the ship itself
+        # generates into the workdir. The resolver cannot know about `ship`;
+        # this tool is the only thing that does, so the filter belongs here.
+        if missing:
+            filtered = [m for m in missing if m not in _WORKDIR_PROVIDED_MODULES]
+            if len(filtered) != len(missing):
+                logger.debug(
+                    "BF-734: dropped ship-provided module(s) from the install "
+                    "set: %s", sorted(set(missing) - set(filtered)),
+                )
+            missing = filtered
         if not missing:
             return None
         try:
