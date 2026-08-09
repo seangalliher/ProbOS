@@ -387,6 +387,14 @@ class RecallArtifactTool:
         finder = getattr(store, "find_first_by_hash", None)
         if callable(finder) and _is_full_hash(lowered):
             art = finder(lowered)
+        if art is None and not _is_full_hash(lowered):
+            # AD-1227: the prompt prints a 12-char prefix, so the store must be
+            # able to resolve one. Without this the only prefix route was the
+            # 50-episode recall window, and an artifact whose episode had aged
+            # out was named in the prompt and then unreadable.
+            by_prefix = getattr(store, "find_by_hash_prefix", None)
+            if callable(by_prefix):
+                art = by_prefix(lowered, created_by=agent_id)
         if art is None and thread_id:
             latest = getattr(store, "latest", None)
             if callable(latest):

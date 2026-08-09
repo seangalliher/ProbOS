@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_thread ON artifacts (thread_id, name, version);
 CREATE INDEX IF NOT EXISTS idx_artifacts_hash ON artifacts (content_hash);
+CREATE INDEX IF NOT EXISTS idx_artifacts_creator ON artifacts (created_by, created_at);
 """
 
 
@@ -328,6 +329,82 @@ class ArtifactStore:
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [_row(r) for r in rows]
+
+    def list_recent_by_creator(
+        self,
+        created_by: str,
+        *,
+        limit: int | None = None,
+    ) -> list[Artifact]:
+        """AD-1227: the latest version of everything ``created_by`` has made,
+        newest first, across every thread.
+
+        Mirrors ``list_thread_latest`` but pivots on the creator rather than the
+        thread, so an agent can be told what it has produced without asking
+        semantic recall (BF-739: "what have I produced?" is not a similarity
+        question and loses to an unbounded population of competing episodes).
+
+        Grouping is by ``(thread_id, name)``, not ``name``: artifact names are
+        only unique within a thread, so grouping by name alone would collapse
+        two different threads' artifacts that happen to share one.
+
+        A blank ``created_by`` returns ``[]`` and is NOT a wildcard — the same
+        ownership rule ``recall_artifact_tool`` enforces; an anonymous caller
+        must not enumerate the ship's output.
+        """
+        if not str(created_by or "").strip():
+            return []
+        query = """
+                SELECT a.* FROM artifacts a
+                INNER JOIN (
+                    SELECT thread_id, name, MAX(version) AS max_version
+                    FROM artifacts WHERE created_by = ?
+                    GROUP BY thread_id, name
+                ) m ON a.thread_id = m.thread_id AND a.name = m.name
+                       AND a.version = m.max_version
+                WHERE a.created_by = ?
+                ORDER BY a.created_at DESC
+                """
+        params: tuple[object, ...] = (created_by, created_by)
+        if limit is not None:
+            if type(limit) is not int or limit < 1:
+                raise ValueError("artifact_list_limit_invalid")
+            query += " LIMIT ?"
+            params = (*params, limit)
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [_row(r) for r in rows]
+
+    def find_by_hash_prefix(
+        self, prefix: str, *, created_by: str,
+    ) -> Artifact | None:
+        """AD-1227: resolve a content-hash PREFIX to one of ``created_by``'s
+        artifacts, newest first.
+
+        The AD-1226 memory cue and the AD-1227 register both print a 12-char
+        prefix, because a 64-char hash does not belong in a prompt line. Without
+        this, ``recall_artifact`` could only turn a prefix back into bytes via
+        the 50-episode ``recent_for_agent`` window, so an artifact whose episode
+        had aged out was named in the prompt and then unreadable.
+
+        Scoped to the creator in SQL: a prefix is short enough that an unscoped
+        lookup could collide across agents, and the register is the agent's own.
+        Requires 8 characters, matching the tool's own floor.
+        """
+        prefix = str(prefix or "").strip().lower()
+        if len(prefix) < 8 or not str(created_by or "").strip():
+            return None
+        # Hex-only, so the LIKE pattern below cannot carry a wildcard. Rejecting
+        # is correct where stripping would silently search for a different hash.
+        if any(ch not in "0123456789abcdef" for ch in prefix):
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifacts WHERE created_by = ? AND content_hash LIKE ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (created_by, prefix + "%"),
+            ).fetchone()
+        return _row(row) if row else None
 
     def count_thread_latest(self, thread_id: str) -> int:
         with self._connect() as conn:

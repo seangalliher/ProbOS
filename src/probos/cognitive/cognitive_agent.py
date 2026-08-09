@@ -169,6 +169,75 @@ def _format_produced_line(runtime: Any, mem: dict) -> str:
     )
 
 
+# AD-1227: how many of the agent's own outputs the register names. This is an
+# always-present section charged to every turn's budget, so the number is a
+# decision (Design Principle 13a): three covers "the thing I just made" plus
+# recent context without turning the prompt into a catalogue.
+_RECENT_OUTPUTS_LIMIT: int = 3
+
+
+def _format_recent_outputs(runtime: Any, agent_id: str) -> list[str]:
+    """AD-1227: a deterministic register of what this agent has produced.
+
+    BF-739: AD-1226 wrote a correct ref into the episode and the agent still
+    reported it could not see its own output, because the only route to that
+    ref was semantic recall — where the ref-bearing episode loses to its own
+    conversational twin, to dream-consolidated narrations of the failure, and
+    to the agent's own earlier denial. "What have I produced?" is not a
+    similarity question, so this answers it from ``ArtifactStore`` by owner:
+    no embeddings, no ranking, nothing to outrank it.
+
+    Deliberately a module-level function taking ``runtime``, NOT a method, for
+    the same reason as ``_format_produced_line``: the AD-979d ``_Holder`` stub
+    pins the contract that prompt renderers need only ``.id``/``._runtime``.
+
+    Returns ``[]`` — no emit at all, byte-identical prompt — whenever the flag
+    is off, there is no store, the caller is anonymous, nothing was produced,
+    or the store raises.
+    """
+    if not _recall_outcome_refs_on(runtime):
+        return []
+    store = getattr(runtime, "artifact_store", None)
+    if store is None:
+        return []
+    agent_id = str(agent_id or "").strip()
+    if not agent_id:
+        return []
+
+    try:
+        artifacts = store.list_recent_by_creator(agent_id, limit=_RECENT_OUTPUTS_LIMIT)
+    except Exception:
+        logger.warning(
+            "AD-1227: could not read the artifact register for %s; the agent's "
+            "own-output section is omitted from this turn's prompt",
+            agent_id,
+            exc_info=True,
+        )
+        return []
+    if not artifacts:
+        return []
+
+    now = time.time()
+    lines = [
+        "=== WHAT YOU HAVE PRODUCED ===",
+        "Things you made. You do not carry their text — read one back with "
+        "recall_artifact.",
+    ]
+    for art in artifacts:
+        version = int(getattr(art, "version", 1) or 1)
+        marker = f" v{version}" if version > 1 else ""
+        age = format_duration(now - float(getattr(art, "created_at", now) or now))
+        ref = str(getattr(art, "content_hash", "") or "")[:_PRODUCED_HASH_CHARS]
+        lines.append(
+            f'  "{art.name}"{marker} ({int(art.size_bytes):,} bytes, {age} ago)'
+            f' -> recall_artifact("{ref}")'
+        )
+    lines.append("=== END ===")
+    # Trailing separator, matching every other block emitted on the DM path.
+    lines.append("")
+    return lines
+
+
 class SensoriumLayer(StrEnum):
     """AD-666: Three-layer classification for agent context injections."""
 
@@ -8829,6 +8898,18 @@ class CognitiveAgent(BaseAgent):
                     *self._format_memory_section(memories, source_framing=_framing),
                     "",
                 ], salience=_epi_salience)
+
+            # AD-1227: the agent's own output register — read straight from
+            # ArtifactStore by owner, so "what have I produced?" never competes
+            # in the recall ranking it loses (BF-739). Flag-OFF / no store /
+            # nothing produced ⇒ [] ⇒ no emit ⇒ byte-identical prompt.
+            # Both attributes are read defensively: this builder is exercised by
+            # minimal test doubles, and an agent with no id has no register.
+            _recent_outputs = _format_recent_outputs(
+                getattr(self, "_runtime", None), getattr(self, "id", ""),
+            )
+            if _recent_outputs:
+                _emit("recent_outputs", _recent_outputs)
 
             # AD-981b: own recall-confidence cue — rendered only when the gating
             # flag set a weak/none band on this observation; OFF => segment None
