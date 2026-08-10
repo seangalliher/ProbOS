@@ -238,6 +238,7 @@ def create_app(runtime: Any) -> FastAPI:
         federation_attachments as federation_attachments_router,  # AD-731a-1: cross-host attachment serving (#638)
         marketplace as marketplace_router,  # AD-813: read-only skill/pack marketplace BROWSE
         desktop as desktop_router,  # AD-841: read-only desktop integration status console
+        traces as traces_router,  # AD-1203: read the persisted tool traces (#1147)
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -279,6 +280,7 @@ def create_app(runtime: Any) -> FastAPI:
         federation_attachments_router,  # AD-731a-1: cross-host attachment serving (#638)
         marketplace_router,  # AD-813: read-only skill/pack marketplace BROWSE
         desktop_router,  # AD-841: read-only desktop integration status console
+        traces_router,  # AD-1203: read the persisted tool traces (#1147)
     ):
         app.include_router(r.router)
 
