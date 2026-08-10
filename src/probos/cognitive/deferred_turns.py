@@ -26,13 +26,19 @@ would reproduce that defect with more traffic. Turns are replayed oldest-first,
 one await at a time, and health is re-read between each — so a re-degrading
 endpoint stops the drain rather than being hammered by the rest of the backlog.
 
-**3. One turn per thread, latest wins.** This is a product decision, not a
-storage limit. Replaying an entire backlog would deliver several answers at once,
-out of order relative to everything the Captain said after them, each written
-without sight of the others. A colleague coming back from an interruption
-answers where the conversation got to; so does this. The superseded message is
-still in the transcript, and the agent reads the thread, so the context is not
-lost — only the duplicate answers are.
+**3. A thread holding a turn accepts no further turns.** The Captain's
+correction to the first build, and it removes a defect rather than adding a
+feature. "Latest wins" meant a follow-up silently destroyed the question it
+followed up on — the only abandonment path here that posted no note, in a design
+whose whole point is that abandonment is never silent. Blocking admission
+deletes the path instead of papering it.
+
+The block is close to free, which is what makes it the right answer rather than
+merely the safe one: it only binds while the model is down, and a new turn sent
+then would have failed anyway. Once health returns, the drain runs within one
+poll plus the settle delay, so the thread reopens in seconds. If the model stays
+down, the TTL frees the thread with a note. The declined message is answered by
+nothing and says so — it is not secretly queued behind the first.
 
 **The promise this makes must survive the ship.** The queue is in memory,
 because the failure it addresses is measured in seconds (BF-674 clocked a 48.8s
@@ -85,7 +91,7 @@ _EXHAUSTED_NOTE = (
 _MAX_ATTEMPTS = 2
 
 
-def _format_ago(seconds: float) -> str:
+def format_ago(seconds: float) -> str:
     """Render an elapsed span the way a person would say it."""
     if seconds < 90.0:
         return "a moment ago"
@@ -151,18 +157,21 @@ class DeferredTurnQueue:
         The return value decides the Captain's wording at the degrade seam, so a
         refusal here must never be silent-dropped into a promise. Refuses after
         ``stop()`` so a turn cannot be admitted into a queue that will never
-        drain.
+        drain, and refuses a second turn for a thread already holding one.
         """
         if self._closed or not thread_id or not agent_id:
             return False
-        if thread_id not in self._held and len(self._held) >= self._max_threads:
+        if thread_id in self._held:
+            # One at a time. The router declines before dispatching, so reaching
+            # this is defence in depth rather than the primary guard.
+            return False
+        if len(self._held) >= self._max_threads:
             logger.warning(
                 "AD-1230: holding %d degraded turns already (max_threads=%d); "
                 "thread %s is told to resend instead of being promised an answer",
                 len(self._held), self._max_threads, thread_id,
             )
             return False
-        # Latest wins: a newer message supersedes the one held for this thread.
         self._held[thread_id] = DeferredTurn(
             thread_id=thread_id,
             agent_id=agent_id,
@@ -170,6 +179,13 @@ class DeferredTurnQueue:
             queued_at=self._now(),
         )
         return True
+
+    def held_for(self, thread_id: str) -> float | None:
+        """Seconds this thread's turn has been held, or None if none is held."""
+        entry = self._held.get(thread_id)
+        if entry is None:
+            return None
+        return max(0.0, self._now() - entry.queued_at)
 
     def held_count(self) -> int:
         return len(self._held)
@@ -240,7 +256,7 @@ class DeferredTurnQueue:
             if not self._healthy():
                 break
             if self._held.get(entry.thread_id) is not entry:
-                continue  # superseded by a newer message while we awaited
+                continue  # expired or flushed while we awaited an earlier turn
             entry.attempts += 1
             try:
                 reply = await self._dispatch(
@@ -256,9 +272,9 @@ class DeferredTurnQueue:
                 )
                 reply = ""
             if self._held.get(entry.thread_id) is not entry:
-                continue  # superseded while dispatching; its answer is stale
+                continue  # expired or flushed mid-dispatch; its answer is stale
             if reply:
-                ago = _format_ago(max(0.0, self._now() - entry.queued_at))
+                ago = format_ago(max(0.0, self._now() - entry.queued_at))
                 self._deliver(entry, _ANSWER_PREFIX.format(ago=ago) + reply)
                 self._held.pop(entry.thread_id, None)
                 answered += 1
@@ -288,7 +304,7 @@ class DeferredTurnQueue:
             return False
 
     def _notify(self, entry: DeferredTurn, template: str) -> None:
-        ago = _format_ago(max(0.0, self._now() - entry.queued_at))
+        ago = format_ago(max(0.0, self._now() - entry.queued_at))
         self._deliver(entry, template.format(ago=ago))
 
     def _deliver(self, entry: DeferredTurn, body: str) -> None:

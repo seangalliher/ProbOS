@@ -25,10 +25,11 @@ from probos.cognitive.deferred_turns import (
     _EXPIRED_NOTE,
     _SHUTDOWN_NOTE,
     DeferredTurnQueue,
-    _format_ago,
+    format_ago,
 )
 from probos.routers.agents import (
     _LLM_DEGRADE_FALLBACK,
+    _decline_while_holding,
     _hold_degraded_turn,
     _llm_degrade_message,
 )
@@ -90,18 +91,33 @@ def test_a_turn_is_held() -> None:
     assert h.queue.held_count() == 1
 
 
-def test_a_newer_message_supersedes_the_one_held_for_that_thread() -> None:
-    """One answer per thread, not a backlog replayed at the Captain. The
-    superseded message is still in the transcript and the agent reads the
-    thread, so the context survives -- only the duplicate answers do not.
+def test_a_thread_already_holding_a_turn_refuses_another() -> None:
+    """The Captain's correction to the first build, and it deletes a defect.
+
+    "Latest wins" meant a follow-up silently destroyed the question it followed
+    up on -- the only abandonment path here that posted no note, in a design
+    whose whole point is that abandonment is never silent.
     """
     h = _Harness()
-    h.offer("t1")
-    h.queue.offer(thread_id="t1", agent_id="ezri", params={"text": "newer"})
+    assert h.offer("t1") is True
+    assert h.queue.offer(
+        thread_id="t1", agent_id="ezri", params={"text": "newer"}
+    ) is False
 
     assert h.queue.held_count() == 1
     asyncio.run(h.queue.drain_once())
+    # The ORIGINAL question is the one answered.
     assert h.dispatched == ["t1"]
+    assert h.posted[0][2].endswith("answer for t1")
+
+
+def test_held_for_reports_the_wait_and_none_when_free() -> None:
+    h = _Harness()
+    assert h.queue.held_for("t1") is None
+    h.offer("t1")
+    h.clock.t += 45.0
+    assert h.queue.held_for("t1") == pytest.approx(45.0)
+    assert h.queue.held_for("other") is None
 
 
 def test_at_the_thread_ceiling_a_further_thread_is_refused_not_promised() -> None:
@@ -116,10 +132,12 @@ def test_at_the_thread_ceiling_a_further_thread_is_refused_not_promised() -> Non
     assert h.queue.held_count() == 2
 
 
-def test_the_ceiling_does_not_block_replacing_a_thread_already_held() -> None:
+def test_the_ceiling_counts_threads_not_messages() -> None:
     h = _Harness(max_threads=1)
     assert h.offer("t1") is True
-    assert h.offer("t1") is True
+    assert h.offer("t1") is False  # already held, not a second slot
+    assert h.offer("t2") is False  # ceiling reached
+    assert h.queue.held_count() == 1
 
 
 def test_a_turn_without_a_thread_is_refused() -> None:
@@ -222,15 +240,15 @@ def test_a_raising_dispatch_is_treated_as_a_failed_attempt_not_a_crash() -> None
     assert h.queue.held_count() == 1
 
 
-def test_a_turn_superseded_mid_dispatch_does_not_deliver_a_stale_answer() -> None:
-    """The Captain sent a newer message while the old one was in flight. The
-    old answer is about a superseded question.
+def test_a_turn_removed_mid_dispatch_does_not_deliver_a_stale_answer() -> None:
+    """Its TTL ran out while it was in flight, so the thread has already been
+    told the turn was abandoned. Posting the answer too would contradict that.
     """
     h = _Harness()
 
     async def _dispatch(thread_id: str, agent_id: str, params: dict) -> str:
         h.dispatched.append(thread_id)
-        h.queue.offer(thread_id="t1", agent_id="ezri", params={"text": "newer"})
+        h.queue._held.pop(thread_id, None)
         return "stale answer"
 
     h.queue._dispatch = _dispatch  # type: ignore[method-assign]
@@ -238,7 +256,6 @@ def test_a_turn_superseded_mid_dispatch_does_not_deliver_a_stale_answer() -> Non
 
     assert asyncio.run(h.queue.drain_once()) == 0
     assert h.posted == []
-    assert h.queue.held_count() == 1
 
 
 def test_a_failing_post_does_not_break_the_drain() -> None:
@@ -347,7 +364,7 @@ def test_no_posted_string_reads_as_a_capability_gap(template: str) -> None:
 def test_elapsed_renders_the_way_a_person_would_say_it(
     seconds: float, expected: str
 ) -> None:
-    assert _format_ago(seconds) == expected
+    assert format_ago(seconds) == expected
 
 
 # ── the router seam ───────────────────────────────────────────────
@@ -449,6 +466,108 @@ def test_the_held_wording_promises_an_answer_and_the_resend_wording_does_not() -
     assert "I'll answer" not in resend
 
 
+# ── a held thread takes no new work ───────────────────────────────
+
+
+def test_a_free_thread_dispatches_normally() -> None:
+    h = _Harness()
+    assert _decline_while_holding(
+        _runtime(_COOLING, h.queue), thread=SimpleNamespace(id="t1")
+    ) == ""
+
+
+def test_no_queue_means_no_decline() -> None:
+    assert _decline_while_holding(
+        _runtime(_COOLING), thread=SimpleNamespace(id="t1")
+    ) == ""
+    assert _decline_while_holding(_runtime(_COOLING), thread=None) == ""
+
+
+def test_a_held_thread_is_declined_and_told_the_new_message_is_not_queued() -> None:
+    """A Captain who thought both were waiting would sit through the outage
+    expecting two answers.
+    """
+    h = _Harness()
+    h.offer("t1")
+    h.clock.t += 180.0
+
+    notice = _decline_while_holding(
+        _runtime(_COOLING, h.queue), thread=SimpleNamespace(id="t1")
+    )
+    assert "still holding your message from 3 minutes ago" in notice
+    assert "not queued" in notice
+    assert "standard recovering in 5s" in notice
+
+
+def test_the_decline_still_reads_as_a_decline_without_a_diagnosis() -> None:
+    h = _Harness()
+    h.offer("t1")
+    notice = _decline_while_holding(
+        _runtime({"overall": "degraded", "tiers": {}}, h.queue),
+        thread=SimpleNamespace(id="t1"),
+    )
+    assert "still holding your message" in notice
+    assert "the model is still down" in notice
+
+
+def test_a_raising_hold_read_dispatches_rather_than_refusing() -> None:
+    """Failing closed here would block a thread on a broken read. The turn is
+    dispatched instead, which is the pre-AD-1230 behaviour.
+    """
+
+    class _Boom:
+        def held_for(self, thread_id: str) -> float | None:
+            raise RuntimeError("queue exploded")
+
+    assert _decline_while_holding(
+        _runtime(_COOLING, _Boom()), thread=SimpleNamespace(id="t1")
+    ) == ""
+
+
+def test_no_decline_string_reads_as_a_capability_gap() -> None:
+    from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
+
+    h = _Harness()
+    h.offer("t1")
+    for health in (_COOLING, {"overall": "degraded", "tiers": {}}):
+        notice = _decline_while_holding(
+            _runtime(health, h.queue), thread=SimpleNamespace(id="t1")
+        )
+        assert _CAPABILITY_GAP_RE.search(notice) is None, notice
+
+
+def test_a_hold_read_that_is_not_a_number_dispatches_rather_than_gagging() -> None:
+    """Found by 22 real failures: treating "not None" as "a hold exists" means
+    ANY object blocks the thread -- and a MagicMock runtime returns one from
+    every attribute. Blocking an agent on an unreadable value is worse than
+    dispatching, so an unexpected type degrades to pre-AD-1230 behaviour.
+    """
+    from unittest.mock import MagicMock
+
+    for value in (MagicMock(), "600", object(), True, float("nan")):
+        class _Q:
+            def held_for(self, thread_id: str, _v: Any = value) -> Any:
+                return _v
+
+        assert _decline_while_holding(
+            _runtime(_COOLING, _Q()), thread=SimpleNamespace(id="t1")
+        ) == "", value
+
+
+def test_the_router_declines_before_it_dispatches() -> None:
+    """The whole point of the placement: a blocked thread must not spend an LLM
+    call on an endpoint already in cooldown. Pins the order in the handler.
+    """
+    import inspect
+
+    from probos.routers import agents as agents_router
+
+    src = inspect.getsource(agents_router)
+    decline = src.index("_held_notice = _decline_while_holding(")
+    send = src.index("if _held_notice else await runtime.intent_bus.send(intent)")
+    assert decline < send
+
+
 # ── the crossing test ─────────────────────────────────────────────
 
 
@@ -477,12 +596,23 @@ def test_a_degraded_turn_is_held_and_answered_after_recovery() -> None:
     assert asyncio.run(h.queue.drain_once()) == 0
     assert h.dispatched == []
 
+    # 2b. A follow-up on the same thread is refused BEFORE any dispatch, and is
+    #     told plainly that it is not also queued. The first question survives.
+    h.clock.t += 180.0
+    follow_up = _decline_while_holding(runtime, thread=SimpleNamespace(id="t1"))
+    assert "still holding your message from 3 minutes ago" in follow_up
+    assert "not queued" in follow_up
+    assert h.queue.held_count() == 1
+
     # 3. It recovers. The turn is replayed and the answer lands in the thread.
     h.healthy = True
-    h.clock.t += 300.0
+    h.clock.t += 120.0
     assert asyncio.run(h.queue.drain_once()) == 1
 
     thread_id, author, body = h.posted[0]
     assert (thread_id, author) == ("t1", "ezri")
     assert body == _ANSWER_PREFIX.format(ago="5 minutes ago") + "answer for t1"
     assert h.queue.held_count() == 0
+
+    # 4. The thread is free again.
+    assert _decline_while_holding(runtime, thread=SimpleNamespace(id="t1")) == ""

@@ -6125,14 +6125,15 @@ class DmAgenticConfig(BaseModel):  # AD-1065
             "reproduces BF-714 exactly \u2014 the Captain is told the tier is "
             "cooling, how long it has left, and to send the message again. ON, "
             "the turn is held and the Captain is told an answer is coming, "
-            "which is a promise the runtime then has to keep: held turns are "
-            "replayed oldest-first one at a time, and every abandonment path "
-            "(TTL, retries exhausted, shutdown) posts into the thread rather "
-            "than dropping silently. Only turns whose degrade the runtime could "
-            "actually diagnose are held \u2014 an unreadable health status is not "
-            "evidence a retry would help. The queue is in memory by design: the "
-            "outage it covers is measured in seconds (BF-674 clocked 48.8s), "
-            "so a durable store would outlive its own TTL."
+            "which is a promise the runtime then has to keep: a thread holding "
+            "a turn accepts no further turns until that one is answered, held "
+            "turns are replayed oldest-first one at a time, and every "
+            "abandonment path (TTL, retries exhausted, shutdown) posts into the "
+            "thread rather than dropping silently. Only turns whose degrade the "
+            "runtime could actually diagnose are held \u2014 an unreadable health "
+            "status is not evidence a retry would help. The queue is in memory "
+            "by design: the outage it covers is measured in seconds (BF-674 "
+            "clocked 48.8s), so a durable store would outlive its own TTL."
         ),
     )
     hold_degraded_turn_ttl_seconds: float = Field(
@@ -6153,10 +6154,11 @@ class DmAgenticConfig(BaseModel):  # AD-1065
         le=256,
         description=(
             "AD-1230: how many distinct threads may hold a turn at once. One "
-            "turn is held per thread (a newer message supersedes the one held "
-            "for that thread), so this bounds the ship, not the conversation. "
-            "At the ceiling a further thread is told to resend rather than "
-            "being promised an answer that would queue behind fifteen others."
+            "turn is held per thread and that thread accepts no further turns "
+            "until it is answered, so this bounds the ship, not the "
+            "conversation. At the ceiling a further thread is told to resend "
+            "rather than being promised an answer that would queue behind "
+            "fifteen others."
         ),
     )
     compaction_enabled: bool = Field(

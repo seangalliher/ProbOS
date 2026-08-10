@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from typing import Any
@@ -2521,6 +2522,59 @@ def _llm_degrade_message(runtime: Any) -> str:
     )
 
 
+def _decline_while_holding(runtime: Any, *, thread: Any) -> str:
+    """AD-1230: refuse a new turn while this thread's earlier one is still held.
+
+    Returns "" when the thread is free, so the handler dispatches normally.
+
+    Checked BEFORE dispatch, which is the point: a thread whose turn is waiting
+    on the model is waiting because the model is down, so the new turn would
+    spend a call on an endpoint already in cooldown and come back empty. This
+    costs nothing while it binds — once health returns the drain reopens the
+    thread within a poll plus the settle delay — and it removes the one
+    abandonment path that used to be silent, where a follow-up destroyed the
+    question it followed up on.
+    """
+    queue = getattr(runtime, "deferred_turn_queue", None)
+    if queue is None or thread is None:
+        return ""
+    try:
+        waited = queue.held_for(thread.id)
+    except Exception:
+        logger.warning(
+            "AD-1230: could not read the hold state for thread %s; the turn is "
+            "dispatched normally rather than being refused on a failed read",
+            getattr(thread, "id", "?"), exc_info=True,
+        )
+        return ""
+    if waited is None:
+        return ""
+    # Only a real finite number is evidence of a hold. Anything else means the
+    # read did not answer the question, and blocking a thread on that is worse
+    # than dispatching -- so an unexpected value degrades to pre-AD-1230
+    # behaviour rather than silently gagging the agent.
+    if isinstance(waited, bool) or not isinstance(waited, (int, float)):
+        logger.warning(
+            "AD-1230: hold state for thread %s came back as %s, not a wait in "
+            "seconds; dispatching the turn normally",
+            getattr(thread, "id", "?"), type(waited).__name__,
+        )
+        return ""
+    if not math.isfinite(waited):
+        return ""
+    from probos.cognitive.deferred_turns import format_ago
+
+    detail = _llm_degrade_detail(runtime)
+    state = f"my language model is {detail}" if detail else "the model is still down"
+    # Says plainly that THIS message is not also queued. A Captain who thought
+    # both were waiting would sit through the outage expecting two answers.
+    return (
+        f"(I'm still holding your message from {format_ago(waited)} and I answer "
+        f"that one first — {state}. This message is not queued; send it again "
+        "after I reply.)"
+    )
+
+
 def _hold_degraded_turn(
     runtime: Any,
     *,
@@ -3249,14 +3303,20 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                 exc_info=True,
             )
 
-    result = await runtime.intent_bus.send(intent)
+    # AD-1230: a thread whose earlier turn is still held takes no new work. The
+    # check is here rather than after the send so a blocked thread does not
+    # spend an LLM call on an endpoint that is already in cooldown.
+    _held_notice = _decline_while_holding(runtime, thread=thread)
+    result = None if _held_notice else await runtime.intent_bus.send(intent)
 
     callsign = ""
     if hasattr(runtime, 'callsign_registry'):
         callsign = runtime.callsign_registry.get_callsign(agent.agent_type)
 
     response_text = ""
-    if result and result.result:
+    if _held_notice:
+        response_text = _held_notice
+    elif result and result.result:
         response_text = str(result.result)
     elif result and result.error:
         response_text = f"(error: {result.error})"
