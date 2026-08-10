@@ -6117,6 +6117,48 @@ class DmAgenticConfig(BaseModel):  # AD-1065
             "a report nothing would deliver."
         ),
     )
+    hold_degraded_turns: bool = Field(
+        default=False,
+        description=(
+            "AD-1230: hold a Captain DM that the LLM was too degraded to "
+            "answer, and reply in the same thread once the model recovers. OFF "
+            "reproduces BF-714 exactly \u2014 the Captain is told the tier is "
+            "cooling, how long it has left, and to send the message again. ON, "
+            "the turn is held and the Captain is told an answer is coming, "
+            "which is a promise the runtime then has to keep: held turns are "
+            "replayed oldest-first one at a time, and every abandonment path "
+            "(TTL, retries exhausted, shutdown) posts into the thread rather "
+            "than dropping silently. Only turns whose degrade the runtime could "
+            "actually diagnose are held \u2014 an unreadable health status is not "
+            "evidence a retry would help. The queue is in memory by design: the "
+            "outage it covers is measured in seconds (BF-674 clocked 48.8s), "
+            "so a durable store would outlive its own TTL."
+        ),
+    )
+    hold_degraded_turn_ttl_seconds: float = Field(
+        default=900.0,
+        ge=30.0,
+        le=7200.0,
+        description=(
+            "AD-1230: how long a held turn waits for the model before it is "
+            "abandoned with a note in the thread. Past this the answer is stale "
+            "enough that resending is better than delivering it \u2014 an answer to "
+            "a question the Captain asked an hour ago, arriving under "
+            "everything said since, costs more attention than it returns."
+        ),
+    )
+    hold_degraded_turn_max_threads: int = Field(
+        default=16,
+        ge=1,
+        le=256,
+        description=(
+            "AD-1230: how many distinct threads may hold a turn at once. One "
+            "turn is held per thread (a newer message supersedes the one held "
+            "for that thread), so this bounds the ship, not the conversation. "
+            "At the ceiling a further thread is told to resend rather than "
+            "being promised an answer that would queue behind fifteen others."
+        ),
+    )
     compaction_enabled: bool = Field(
         default=False,
         description=(

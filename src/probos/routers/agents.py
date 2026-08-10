@@ -2442,14 +2442,12 @@ _LLM_DEGRADE_FALLBACK = (
 )
 
 
-def _llm_degrade_message(runtime: Any) -> str:
-    """BF-714: tell the Captain what the runtime already diagnosed.
+def _llm_degrade_detail(runtime: Any) -> str:
+    """Return "``overall``: ``per-tier detail``", or "" when undiagnosable.
 
-    When a tier degrades, BF-612 recycles the pool, BF-674 opens a cooldown with
-    a countdown, and BF-680 records the exhaustion — all correctly, all to a
-    console the Captain cannot see from the HXI. The reply said "check upstream
-    proxy/endpoint", which is an instruction to go and rediscover what the ship
-    already knew.
+    Empty is meaningful: it means the runtime has no evidence about *why* the
+    reply was empty, which is exactly the case in which AD-1230 must not hold
+    the turn. A retry is only worth promising against a diagnosis.
 
     ``get_health_status`` is on the client protocol, so this reads a supported
     surface rather than private state. Never raises: this runs on a path that
@@ -2459,12 +2457,12 @@ def _llm_degrade_message(runtime: Any) -> str:
     client = getattr(runtime, "llm_client", None)
     getter = getattr(client, "get_health_status", None)
     if not callable(getter):
-        return _LLM_DEGRADE_FALLBACK
+        return ""
     try:
         health = getter() or {}
         tiers = health.get("tiers") or {}
         if not isinstance(tiers, dict) or not tiers:
-            return _LLM_DEGRADE_FALLBACK
+            return ""
 
         cooling: list[str] = []
         failing: list[str] = []
@@ -2483,29 +2481,81 @@ def _llm_degrade_message(runtime: Any) -> str:
 
         detail = "; ".join(cooling + failing)
         if not detail:
-            return _LLM_DEGRADE_FALLBACK
+            return ""
         overall = str(health.get("overall", "") or "degraded")
-        # Leads with the recovery countdown when there is one, because that is
-        # the only part the Captain can act on: wait, or don't.
-        #
-        # It then says to send the message again, because nothing will retry it.
-        # The turn completed -- the router received a result and appended it --
-        # so this message is spent. The first wording said "I'll answer normally
-        # once it recovers", which reads as a promise to answer THIS message and
-        # is false; the Captain reasonably asked whether a reply would arrive on
-        # its own. An agent must not describe a recovery the system does not
-        # perform.
-        return (
-            f"(no reply — my language model is {overall}: {detail}. "
-            "Send that again once it recovers; this turn will not retry itself.)"
-        )
+        return f"{overall}: {detail}"
     except Exception:
         logger.warning(
             "BF-714: could not render the LLM health diagnosis for the degrade "
             "reply; falling back to the generic message",
             exc_info=True,
         )
+        return ""
+
+
+def _llm_degrade_message(runtime: Any) -> str:
+    """BF-714: tell the Captain what the runtime already diagnosed.
+
+    When a tier degrades, BF-612 recycles the pool, BF-674 opens a cooldown with
+    a countdown, and BF-680 records the exhaustion — all correctly, all to a
+    console the Captain cannot see from the HXI. The reply said "check upstream
+    proxy/endpoint", which is an instruction to go and rediscover what the ship
+    already knew.
+    """
+    detail = _llm_degrade_detail(runtime)
+    if not detail:
         return _LLM_DEGRADE_FALLBACK
+    # Leads with the recovery countdown when there is one, because that is
+    # the only part the Captain can act on: wait, or don't.
+    #
+    # It then says to send the message again, because nothing will retry it.
+    # The turn completed -- the router received a result and appended it --
+    # so this message is spent. The first wording said "I'll answer normally
+    # once it recovers", which reads as a promise to answer THIS message and
+    # is false; the Captain reasonably asked whether a reply would arrive on
+    # its own. An agent must not describe a recovery the system does not
+    # perform. AD-1230 makes the promise available by making it true.
+    return (
+        f"(no reply — my language model is {detail}. "
+        "Send that again once it recovers; this turn will not retry itself.)"
+    )
+
+
+def _hold_degraded_turn(
+    runtime: Any,
+    *,
+    agent_id: str,
+    thread: Any,
+    params: dict[str, Any],
+) -> str:
+    """AD-1230: hold this turn for the model, returning the reply to send now.
+
+    Returns "" when the turn was NOT held, so the caller falls through to the
+    BF-714 resend wording. The two messages differ by exactly one promise and
+    the queue's admission decision is what picks between them — a refusal must
+    never be able to surface as "I'll answer this later".
+    """
+    queue = getattr(runtime, "deferred_turn_queue", None)
+    if queue is None or thread is None:
+        return ""
+    detail = _llm_degrade_detail(runtime)
+    if not detail:
+        # No diagnosis means no evidence a retry would land differently.
+        return ""
+    try:
+        if not queue.offer(thread_id=thread.id, agent_id=agent_id, params=params):
+            return ""
+    except Exception:
+        logger.warning(
+            "AD-1230: offering the degraded turn to the hold queue failed; "
+            "the Captain is told to resend instead",
+            exc_info=True,
+        )
+        return ""
+    return (
+        f"(holding that — my language model is {detail}. "
+        "I'll answer it here once the model recovers.)"
+    )
 
 
 @router.post("/{agent_id}/thread")
@@ -3227,7 +3277,12 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
         # endpoint (Copilot proxy, local Ollama, etc.) returned an empty
         # completion. Surface that explicitly so the Captain knows to check
         # upstream rather than chasing an in-runtime bug.
-        response_text = _llm_degrade_message(runtime)
+        #
+        # AD-1230: when the runtime can diagnose the degrade, hold the turn and
+        # answer it once the model recovers instead of spending it.
+        response_text = _hold_degraded_turn(
+            runtime, agent_id=agent_id, thread=thread, params=_params
+        ) or _llm_degrade_message(runtime)
 
     # BF-622: strip any echoed visual-context scaffolding from the 1:1 reply
     # (same risk as the group path — a degraded LLM proxy can echo its input,

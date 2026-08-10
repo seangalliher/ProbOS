@@ -2506,6 +2506,96 @@ def _wire_board_reconciler(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_deferred_turns(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-1230: hold a Captain turn the model was too degraded to answer.
+
+    Wired only when ``dm_agentic.hold_degraded_turns`` is on, because the flag
+    is what converts the BF-714 "send that again" wording into a promise — and
+    the promise is only keepable if this queue exists to keep it. The router
+    reads ``runtime.deferred_turn_queue`` and falls back to the resend wording
+    whenever it is absent, so a skipped wire degrades to today's behaviour.
+    """
+    cfg = getattr(config, "dm_agentic", None)
+    if cfg is None or not getattr(cfg, "hold_degraded_turns", False):
+        return False
+    if getattr(runtime, "chat_thread_store", None) is None:
+        logger.info(
+            "AD-1230: no chat_thread_store — a held turn would have nowhere to "
+            "report; degraded turns keep the BF-714 resend wording"
+        )
+        return False
+    if getattr(runtime, "intent_bus", None) is None:
+        logger.info(
+            "AD-1230: no intent_bus — a held turn could never be replayed; "
+            "degraded turns keep the BF-714 resend wording"
+        )
+        return False
+
+    from probos.cognitive.deferred_turns import DeferredTurnQueue
+    from probos.types import IntentMessage
+
+    async def _dispatch(thread_id: str, agent_id: str, params: dict[str, Any]) -> str:
+        # A FRESH IntentMessage, never the original object: re-sending one
+        # reuses its ``message_id``, and correlation maps keyed on that id treat
+        # a duplicate live key as the same in-flight request.
+        result = await runtime.intent_bus.send(IntentMessage(
+            intent="direct_message",
+            params=dict(params),
+            target_agent_id=agent_id,
+            ttl_seconds=60.0,
+            thread_id=thread_id,
+        ))
+        if result is not None and result.result:
+            return str(result.result)
+        return ""
+
+    def _post(thread_id: str, agent_id: str, body: str) -> None:
+        # Synchronous on purpose — ``ChatThreadStore``'s commit callback emits
+        # CHAT_THREAD_MESSAGE_APPENDED, which the HXI already consumes to
+        # live-refresh an open transcript (AD-1133). No new UI wiring.
+        runtime.chat_thread_store.append_message(
+            thread_id,
+            author_id=agent_id,
+            role="agent",
+            body=body,
+            metadata={"source": "deferred_turn"},
+        )
+
+    def _is_healthy() -> bool:
+        getter = getattr(getattr(runtime, "llm_client", None), "get_health_status", None)
+        if not callable(getter):
+            return False
+        tiers = (getter() or {}).get("tiers") or {}
+        if not isinstance(tiers, dict):
+            return False
+        # One operational tier with no cooldown left is enough to be worth a
+        # retry; requiring ALL of them would strand text turns behind an
+        # unrelated image tier that happens to be down.
+        return any(
+            isinstance(info, dict)
+            and str(info.get("status", "")) == "operational"
+            and float(info.get("endpoint_cooldown_remaining_seconds", 0.0) or 0.0) <= 0.0
+            for info in tiers.values()
+        )
+
+    ttl = float(getattr(cfg, "hold_degraded_turn_ttl_seconds", 900.0))
+    max_threads = int(getattr(cfg, "hold_degraded_turn_max_threads", 16))
+    queue = DeferredTurnQueue(
+        dispatch=_dispatch,
+        post=_post,
+        is_healthy=_is_healthy,
+        ttl_seconds=ttl,
+        max_threads=max_threads,
+    )
+    queue.start()
+    runtime.deferred_turn_queue = queue  # public attr; the router reads it
+    logger.info(
+        "AD-1230: holding degraded Captain turns (ttl=%.0fs, max_threads=%d)",
+        ttl, max_threads,
+    )
+    return True
+
+
 def _wire_capability_gap_driver(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-855: Wire the CapabilityGapDriver.
 
@@ -4496,6 +4586,12 @@ async def finalize_startup(
             # Tier-2 log-and-degrade.
             if _wire_board_reconciler(runtime=runtime, config=config):
                 logger.info("AD-876: BoardReconciler wired during finalization")
+
+            # AD-1230: hold a Captain turn the LLM was too degraded to answer
+            # and reply once the model recovers. Needs only the chat thread
+            # store and the intent bus. Tier-2 log-and-degrade.
+            if _wire_deferred_turns(runtime=runtime, config=config):
+                logger.info("AD-1230: deferred-turn queue wired during finalization")
 
             # AD-855: CapabilityGapDriver -- BLOCKED -> request -> approve ->
             # resume loop. Independent of hybrid dispatch; only needs the

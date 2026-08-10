@@ -820,6 +820,19 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             )
         runtime.board_reconciler_ticker = None
 
+    # AD-1230: stop holding degraded turns. ``stop()`` posts into every thread
+    # that is still waiting — the Captain was promised an answer, so a restart
+    # must say so rather than drop the promise silently.
+    if getattr(runtime, "deferred_turn_queue", None) is not None:
+        try:
+            await runtime.deferred_turn_queue.stop()
+        except Exception:
+            logger.warning(
+                "AD-1230: deferred_turn_queue.stop() failed; held turns may not "
+                "have been reported into their threads", exc_info=True
+            )
+        runtime.deferred_turn_queue = None
+
     # AD-818 (#751): Stop schema-version sidecar (R2). Unlike ParticipantIndex
     # (owned by EpisodicMemory.stop()), this store has no owner — left unstopped
     # its aiosqlite WAL connection holds schema_versions.db-wal/-shm locks, a

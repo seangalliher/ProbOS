@@ -201,6 +201,11 @@ def test_a_client_without_the_health_method_degrades() -> None:
 def test_the_router_has_no_hardcoded_degrade_string_left() -> None:
     """The message existed twice in the handler. Both sites must route through
     the helper, or one of them keeps telling the Captain to go look for himself.
+
+    AD-1230 added a third outcome at the empty-completion site -- hold the turn
+    and promise an answer -- so that site now reads ``_hold_degraded_turn(...)
+    or _llm_degrade_message(runtime)``. The resend wording remains the fallback
+    for both sites, which is what this pins.
     """
     import inspect
 
@@ -210,3 +215,5 @@ def test_the_router_has_no_hardcoded_degrade_string_left() -> None:
     # The literal survives exactly once: inside the fallback constant.
     assert src.count("check upstream proxy/endpoint at the configured tier") == 1
     assert src.count("_llm_degrade_message(runtime)") == 2
+    # AD-1230: and the hold is offered before the fallback, never instead of it.
+    assert src.count("_hold_degraded_turn(") == 2  # definition + call site
