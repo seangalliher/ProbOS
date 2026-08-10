@@ -700,15 +700,29 @@ def _conversational_thread_id(
     _from = ""
     if type(_params) is dict:
         _from = str(_params.get("from", "") or "")
+    # BF-737 round 2: the discriminators named the producer as
+    # routers/agents.py agent_chat -- the only producer of "captain_message" --
+    # which sets thread_id=thread.id, with thread demonstrably non-None because
+    # the same handler appended the Captain's message to that thread seconds
+    # earlier. perceive copies the field and _recall_relevant_memories returns
+    # the same dict object, so five separately-verified statements cannot all
+    # hold. Printing the raw value, its type, and whether the key exists at all
+    # distinguishes "never set" from "set to None" from "overwritten later",
+    # which is the only question left.
+    _raw = observation.get("thread_id", "<absent>")
     logger.warning(
         "BF-698/BF-737: neither observation nor params carried a thread_id for "
         "agent=%s; resolved the canonical thread %s from the store. Producer "
-        "discriminators: intent=%r from=%r params_keys=%s",
+        "discriminators: intent=%r from=%r params_keys=%s | observed "
+        "thread_id=%r type=%s present=%s",
         agent_id,
         resolved,
         str(observation.get("intent", "") or ""),
         _from,
         sorted(_params)[:12] if type(_params) is dict else None,
+        _raw,
+        type(_raw).__name__,
+        "thread_id" in observation,
     )
     return resolved
 
