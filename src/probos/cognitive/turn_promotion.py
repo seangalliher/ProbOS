@@ -597,6 +597,80 @@ async def _finish_promoted_turn(
         )
 
 
+async def _report_holding_slot(
+    task: "asyncio.Task[str]",
+    *,
+    runtime: Any,
+    agent_id: str,
+    thread_id: str,
+    work_item_id: str,
+    request_text: str = "",
+    completed_probe: Callable[[], bool] | None = None,
+    background_slot: Callable[[], Any] | None = None,
+) -> None:
+    """BF-732: hold a concurrency slot for as long as the promoted run lives.
+
+    The slot wraps the whole reporter, so it is released on every terminal path
+    ``_finish_promoted_turn`` distinguishes -- completed, failed, and cancelled
+    (which re-raises through the ``async with``). That is the property worth
+    testing: a run that dies must not leak the capacity it was holding.
+
+    Without a slot factory this is exactly ``_finish_promoted_turn``, so the
+    default path is unchanged.
+
+    A slot that cannot be acquired must not cost the Captain the report. If the
+    manager raises, the report still runs -- unaccounted, which is today's
+    behaviour and strictly better than a silent loss.
+    """
+    if background_slot is None:
+        await _finish_promoted_turn(
+            task,
+            runtime=runtime,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            work_item_id=work_item_id,
+            request_text=request_text,
+            completed_probe=completed_probe,
+        )
+        return
+
+    try:
+        slot = background_slot()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning(
+            "BF-732: could not open a concurrency slot for promoted work item "
+            "%s; the run reports as before but is not counted against agent=%s "
+            "capacity",
+            work_item_id, agent_id, exc_info=True,
+        )
+        slot = None
+
+    if slot is None:
+        await _finish_promoted_turn(
+            task,
+            runtime=runtime,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            work_item_id=work_item_id,
+            request_text=request_text,
+            completed_probe=completed_probe,
+        )
+        return
+
+    async with slot:
+        await _finish_promoted_turn(
+            task,
+            runtime=runtime,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            work_item_id=work_item_id,
+            request_text=request_text,
+            completed_probe=completed_probe,
+        )
+
+
 async def run_with_promotion(
     work: Callable[[], Awaitable[str]],
     *,
@@ -608,6 +682,7 @@ async def run_with_promotion(
     hold: set["asyncio.Task[Any]"],
     completed_probe: Callable[[], bool] | None = None,
     on_promoted: Callable[[str], None] | None = None,
+    background_slot: Callable[[], Any] | None = None,
 ) -> str:
     """Run ``work``; promote it to a background task if it outlives the budget.
 
@@ -650,6 +725,22 @@ async def run_with_promotion(
     A raising ``on_promoted`` is logged and swallowed: the promotion itself
     has already succeeded, and failing it here would trade a working
     background task for a missing link.
+
+    ``background_slot`` (BF-732) returns an async context manager -- normally
+    ``ConcurrencyManager.slot`` -- held by the reporter for as long as the
+    promoted run lives. Without it a promoted run escaped the per-agent
+    accounting entirely: the foreground slot releases when the acknowledgement
+    returns, which is correct because the *turn* is over, but the *run* is not,
+    and nothing bounded how many accumulated. Measured 2026-08-08: four live
+    promoted runs from one conversation, each competing for LLM capacity with
+    the Captain's next turn, with a ceiling of "intent dispatch rate".
+
+    Held by the reporter rather than acquired here on purpose. Acquiring before
+    returning would block the acknowledgement behind a slot this turn's own
+    foreground slot is still holding -- a deadlock at ``max_concurrent=1``. The
+    reporter is a separate task, so its acquire waits harmlessly while the
+    acknowledgement returns and the foreground slot releases. The run is
+    unaccounted for that window, which is small, bounded, and honest.
     """
     if promote_after_seconds <= 0.0:
         return await work()
@@ -709,7 +800,7 @@ async def run_with_promotion(
             )
 
     reporter = asyncio.create_task(
-        _finish_promoted_turn(
+        _report_holding_slot(
             task,
             runtime=runtime,
             agent_id=agent_id,
@@ -717,6 +808,7 @@ async def run_with_promotion(
             work_item_id=work_item.id,
             request_text=request_text,
             completed_probe=completed_probe,
+            background_slot=background_slot,
         ),
         name=f"ad1165-report-{work_item.id[:8]}",
     )

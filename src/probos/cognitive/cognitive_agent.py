@@ -427,6 +427,14 @@ def _enrich_vision_messages_with_context(
     return [{"role": "user", "content": enriched_content}]
 
 
+# BF-732: a promoted run competes with the agent's ordinary background work,
+# not with the Captain's foreground turn -- that one is already over by the time
+# this slot is taken. Below `direct_message` (8) so a new DM is never queued
+# behind a background run, above `proactive_think` (2) because the Captain asked
+# for this one.
+_PROMOTED_RUN_PRIORITY: int = 5
+
+
 def _classify_concurrency_priority(intent: IntentMessage) -> int:
     """AD-672: Map intent to concurrency priority on a 0-10 scale."""
     is_captain = intent.params.get("is_captain", False)
@@ -4182,6 +4190,17 @@ class CognitiveAgent(BaseAgent):
                     run_with_promotion,
                 )
 
+                # BF-732: the promoted run keeps a slot of its own. The
+                # foreground slot releases when the acknowledgement returns --
+                # correct, the turn is over -- but the run is not, and nothing
+                # bounded how many accumulated.
+                _cm = getattr(self, "_concurrency_manager", None)
+                _bg_slot = None
+                if _cm is not None:
+                    _bg_slot = lambda: _cm.slot(  # noqa: E731
+                        "direct_message_promoted", _PROMOTED_RUN_PRIORITY,
+                    )
+
                 text = await run_with_promotion(
                     _agentic_turn,
                     promote_after_seconds=promote_after,
@@ -4194,6 +4213,7 @@ class CognitiveAgent(BaseAgent):
                         lambda: _last_stop["reason"] not in _INCOMPLETE_STOP_REASONS
                     ),
                     on_promoted=_record_promotion,
+                    background_slot=_bg_slot,
                 )
             return text.strip() or None
         except Exception:
