@@ -2436,6 +2436,70 @@ async def agent_avatar_divergence_history(
     }
 
 
+_LLM_DEGRADE_FALLBACK = (
+    "(no reply — agent's LLM endpoint returned empty content; "
+    "check upstream proxy/endpoint at the configured tier)"
+)
+
+
+def _llm_degrade_message(runtime: Any) -> str:
+    """BF-714: tell the Captain what the runtime already diagnosed.
+
+    When a tier degrades, BF-612 recycles the pool, BF-674 opens a cooldown with
+    a countdown, and BF-680 records the exhaustion — all correctly, all to a
+    console the Captain cannot see from the HXI. The reply said "check upstream
+    proxy/endpoint", which is an instruction to go and rediscover what the ship
+    already knew.
+
+    ``get_health_status`` is on the client protocol, so this reads a supported
+    surface rather than private state. Never raises: this runs on a path that
+    has already failed, and a formatting error must not replace a diagnosis with
+    a traceback.
+    """
+    client = getattr(runtime, "llm_client", None)
+    getter = getattr(client, "get_health_status", None)
+    if not callable(getter):
+        return _LLM_DEGRADE_FALLBACK
+    try:
+        health = getter() or {}
+        tiers = health.get("tiers") or {}
+        if not isinstance(tiers, dict) or not tiers:
+            return _LLM_DEGRADE_FALLBACK
+
+        cooling: list[str] = []
+        failing: list[str] = []
+        for name, info in tiers.items():
+            if not isinstance(info, dict):
+                continue
+            remaining = float(info.get("endpoint_cooldown_remaining_seconds", 0.0) or 0.0)
+            if remaining > 0.0:
+                cooling.append(f"{name} recovering in {remaining:.0f}s")
+            elif str(info.get("status", "")) not in ("operational", ""):
+                fails = int(info.get("consecutive_failures", 0) or 0)
+                failing.append(
+                    f"{name} {info.get('status')}"
+                    + (f" after {fails} failures" if fails else "")
+                )
+
+        detail = "; ".join(cooling + failing)
+        if not detail:
+            return _LLM_DEGRADE_FALLBACK
+        overall = str(health.get("overall", "") or "degraded")
+        # Leads with the recovery countdown when there is one, because that is
+        # the only part the Captain can act on: wait, or don't.
+        return (
+            f"(no reply — my language model is {overall}: {detail}. "
+            "I'll answer normally once it recovers.)"
+        )
+    except Exception:
+        logger.warning(
+            "BF-714: could not render the LLM health diagnosis for the degrade "
+            "reply; falling back to the generic message",
+            exc_info=True,
+        )
+        return _LLM_DEGRADE_FALLBACK
+
+
 @router.post("/{agent_id}/thread")
 async def get_or_create_agent_thread(
     agent_id: str, runtime: Any = Depends(get_runtime),
@@ -3155,10 +3219,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
         # endpoint (Copilot proxy, local Ollama, etc.) returned an empty
         # completion. Surface that explicitly so the Captain knows to check
         # upstream rather than chasing an in-runtime bug.
-        response_text = (
-            "(no reply — agent's LLM endpoint returned empty content; "
-            "check upstream proxy/endpoint at the configured tier)"
-        )
+        response_text = _llm_degrade_message(runtime)
 
     # BF-622: strip any echoed visual-context scaffolding from the 1:1 reply
     # (same risk as the group path — a degraded LLM proxy can echo its input,
@@ -3167,8 +3228,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     if "Current Visual Context" in response_text:
         from probos.perception.working_memory import strip_visual_context_block
         response_text = strip_visual_context_block(response_text) or (
-            "(no reply — agent's LLM endpoint returned empty content; "
-            "check upstream proxy/endpoint at the configured tier)"
+            _llm_degrade_message(runtime)
         )
         logger.warning(
             "BF-289: agent=%s direct_message returned empty content "
