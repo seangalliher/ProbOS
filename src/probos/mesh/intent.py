@@ -1281,6 +1281,13 @@ class IntentBus:
         the local AttachmentStore inside the LLM client. The bus carries
         only refs; payload size is bounded; the uniform-NATS-transport
         invariant is restored. AD-637z2 closes as part of this AD.
+
+        BF-742: every field of ``IntentMessage`` must appear here. A field the
+        wire omits is not defaulted at the receiver in any visible way -- it
+        arrives as the dataclass default, so a producer that set it and a
+        consumer that reads it can both be correct while the value never
+        survives the trip. A drift guard in the tests pins this set against
+        ``dataclasses.fields``.
         """
         return {
             "intent": intent.intent,
@@ -1291,6 +1298,7 @@ class IntentBus:
             "id": intent.id,
             "created_at": intent.created_at.isoformat(),
             "target_agent_id": intent.target_agent_id,
+            "thread_id": intent.thread_id,
         }
 
     @staticmethod
@@ -1310,6 +1318,9 @@ class IntentBus:
             id=data.get("id", ""),
             created_at=created_at,
             target_agent_id=data.get("target_agent_id"),
+            # Tolerant of a peer that predates BF-742: absent means None, which
+            # is the pre-fix behaviour rather than a hard failure.
+            thread_id=data.get("thread_id"),
         )
 
     @staticmethod
@@ -1319,6 +1330,9 @@ class IntentBus:
         result.result must be JSON-serializable. Non-serializable values
         will raise TypeError — this is intentional (fail fast). Handlers
         using the NATS path must return serializable results.
+
+        BF-742: ``metadata`` is carried. AD-1203 put the per-turn tool-trace
+        ref there and this omission dropped it on every NATS reply.
         """
         return {
             "intent_id": result.intent_id,
@@ -1328,6 +1342,7 @@ class IntentBus:
             "error": result.error,
             "confidence": result.confidence,
             "timestamp": result.timestamp.isoformat(),
+            "metadata": result.metadata,
         }
 
     @staticmethod
@@ -1338,6 +1353,7 @@ class IntentBus:
             ts = datetime.fromisoformat(ts)
         else:
             ts = datetime.now(timezone.utc)
+        metadata = data.get("metadata")
         return IntentResult(
             intent_id=data.get("intent_id", ""),
             agent_id=data.get("agent_id", ""),
@@ -1346,4 +1362,5 @@ class IntentBus:
             error=data.get("error"),
             confidence=data.get("confidence", 0.0),
             timestamp=ts,
+            metadata=metadata if isinstance(metadata, dict) else {},
         )
