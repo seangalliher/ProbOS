@@ -3439,6 +3439,12 @@ class EpisodicMemory:
             "anchors_json": json.dumps(dataclasses.asdict(ep.anchors)) if ep.anchors else "",
             "content_hash": compute_episode_hash(normalized),
             "user_input": ep.user_input or "",  # AD-605: preserve original for recall
+            # BF-740: producers set this (turn_promotion pairs an outcome episode
+            # to its acknowledgement by work item) and it was dropped here, so the
+            # link AD-1166 documented never existed. Deliberately NOT in
+            # compute_episode_hash: adding a field there would invalidate every
+            # stored episode's hash and trigger a mass auto-heal for a pairing key.
+            "correlation_id": ep.correlation_id or "",
             "_hash_v": 2,  # Hash normalization version (round(ts,6) + float coercion)
             "importance": int(ep.importance),  # AD-598: importance score (1-10)
             "valid_from": float(ep.valid_from),
@@ -3606,6 +3612,7 @@ class EpisodicMemory:
             trust_deltas=json.loads(metadata.get("trust_deltas_json", "[]")),
             source=metadata.get("source", "direct"),
             anchors=anchors,
+            correlation_id=metadata.get("correlation_id", "") or "",  # BF-740
             importance=int(metadata.get("importance", 5)),
             valid_from=float(metadata.get("valid_from", 0.0)),
             valid_until=float(metadata.get("valid_until", 0.0)),
