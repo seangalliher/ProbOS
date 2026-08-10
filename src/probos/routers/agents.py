@@ -3210,12 +3210,28 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # successful DM round-trip.
     if thread is not None:
         try:
+            # AD-1203: bind the claim to the calls behind it. The agentic run
+            # already persists a crew_trace blob; without the ref here there was
+            # no way, from outside the process, to resolve what the agent said
+            # to what it did. Absent on a non-agentic turn, so the metadata is
+            # byte-identical for those.
+            _reply_meta: dict[str, Any] = {"intent_id": intent.id}
+            _trace_ref = ""
+            try:
+                _trace_ref = str(
+                    (getattr(result, "metadata", None) or {}).get("tool_trace_ref", "")
+                    or ""
+                )
+            except Exception:
+                _trace_ref = ""
+            if _trace_ref:
+                _reply_meta["tool_trace_ref"] = _trace_ref
             _thread_store.append_message(
                 thread.id,
                 author_id=agent_id,
                 role="agent",
                 body=response.get("response", "") or "",
-                metadata={"intent_id": intent.id},
+                metadata=_reply_meta,
             )
         except Exception:
             logger.warning(

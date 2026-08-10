@@ -85,6 +85,13 @@ class IntentResult:
     error: str | None = None
     confidence: float = 0.0
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # AD-1203: out-of-band provenance about how the result was produced, for
+    # callers that record the turn. Additive with an empty default, so every
+    # existing producer and consumer is unchanged. Currently carries
+    # ``tool_trace_ref`` -- the content hash of the crew_trace blob for the
+    # agentic run behind this result -- so a claim can be resolved to the calls
+    # that produced it. Not for payload: results belong in ``result``.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class Priority(StrEnum):

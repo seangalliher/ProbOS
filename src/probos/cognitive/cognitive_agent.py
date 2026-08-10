@@ -3804,6 +3804,10 @@ class CognitiveAgent(BaseAgent):
                 "llm_output": _agentic_output,
                 "tier_used": "agentic",
             }
+            # AD-1203: provenance for the turn, set by the run above.
+            _trace_ref = str(observation.get("_tool_trace_ref", "") or "")
+            if _trace_ref:
+                decision["_tool_trace_ref"] = _trace_ref
             if applied_strategy_ids:
                 decision["_applied_strategy_ids"] = applied_strategy_ids
             return decision
@@ -4108,6 +4112,15 @@ class CognitiveAgent(BaseAgent):
                 _last_stop["reason"] = str(
                     getattr(outcome, "stopped_reason", "") or ""
                 )
+                # AD-1203: carry the run's trace ref out on the observation, the
+                # one mutable object already threaded through decide -> act.
+                # The crew path records this ref; the 1:1 DM path computed it and
+                # dropped it, so a Captain-visible claim could not be resolved to
+                # the calls behind it. Last pass wins: a re-invoked pass (AD-1164)
+                # is the run that produced the text the Captain sees.
+                _ref = str(getattr(outcome, "tool_trace_ref", "") or "")
+                if _ref:
+                    observation["_tool_trace_ref"] = _ref
                 return outcome
 
             async def _agentic_turn() -> str:
@@ -5027,13 +5040,13 @@ class CognitiveAgent(BaseAgent):
         """Execute based on LLM decision.  Override for structured output."""
         if decision.get("action") == "error":
             return {"success": False, "error": decision.get("reason")}
-        # AD-407b: pass through conversational responses for ward room
-        if decision.get("intent") in ("direct_message", "ward_room_notification"):
-            return {"success": True, "result": decision.get("llm_output", "")}
-        return {
-            "success": True,
-            "result": decision.get("llm_output", ""),
-        }
+        # AD-1203: forward the agentic run's trace ref so ``handle_intent`` can
+        # put it on the IntentResult. Absent on every non-agentic path.
+        _out: dict[str, Any] = {"success": True, "result": decision.get("llm_output", "")}
+        _ref = str(decision.get("_tool_trace_ref", "") or "")
+        if _ref:
+            _out["_tool_trace_ref"] = _ref
+        return _out
 
     async def report(self, result: dict) -> dict:
         """Package result as a dict (compatible with BaseAgent contract)."""
@@ -6310,6 +6323,12 @@ class CognitiveAgent(BaseAgent):
             result=report.get("result"),
             error=report.get("error"),
             confidence=self.confidence,
+            # AD-1203: so the caller recording this turn can bind the claim to
+            # the calls behind it. Empty on every non-agentic path.
+            metadata=(
+                {"tool_trace_ref": report["_tool_trace_ref"]}
+                if report.get("_tool_trace_ref") else {}
+            ),
         )
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:

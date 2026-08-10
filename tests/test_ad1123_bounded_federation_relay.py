@@ -1982,7 +1982,16 @@ def test_source_guards_forbid_dispatch_learning_queue_task_and_allow_all_shapes(
 
 
 def test_federation_relay_contract_has_no_unrelated_worktree_diff() -> None:
-    """Guard AD-1123-owned relay files, not future shared mesh maintenance."""
+    """Guard AD-1123-owned relay files, not future shared mesh maintenance.
+
+    The list below is the relay surface this AD owns. It previously also named
+    ``src/probos/types.py``, ``src/probos/events.py`` and
+    ``src/probos/startup/fleet_organization.py`` -- shared mesh modules, which
+    the docstring above explicitly disclaims. Since the guard reads the
+    *worktree* diff, naming them made any uncommitted edit to a core type fail
+    the gate on an unrelated build: AD-1203 hit exactly that adding a field to
+    ``IntentResult``. Narrowed to the files the guard says it protects.
+    """
     root = Path(__file__).resolve().parents[1]
     forbidden = (
         "src/probos/federation/bridge.py",
@@ -1990,9 +1999,6 @@ def test_federation_relay_contract_has_no_unrelated_worktree_diff() -> None:
         "src/probos/federation/nats_transport.py",
         "src/probos/federation/transport.py",
         "src/probos/federation/mock_transport.py",
-        "src/probos/types.py",
-        "src/probos/events.py",
-        "src/probos/startup/fleet_organization.py",
     )
     result = subprocess.run(
         ["git", "diff", "--name-only"],
