@@ -2487,9 +2487,17 @@ def _llm_degrade_message(runtime: Any) -> str:
         overall = str(health.get("overall", "") or "degraded")
         # Leads with the recovery countdown when there is one, because that is
         # the only part the Captain can act on: wait, or don't.
+        #
+        # It then says to send the message again, because nothing will retry it.
+        # The turn completed -- the router received a result and appended it --
+        # so this message is spent. The first wording said "I'll answer normally
+        # once it recovers", which reads as a promise to answer THIS message and
+        # is false; the Captain reasonably asked whether a reply would arrive on
+        # its own. An agent must not describe a recovery the system does not
+        # perform.
         return (
             f"(no reply — my language model is {overall}: {detail}. "
-            "I'll answer normally once it recovers.)"
+            "Send that again once it recovers; this turn will not retry itself.)"
         )
     except Exception:
         logger.warning(

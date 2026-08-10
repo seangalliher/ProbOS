@@ -106,6 +106,44 @@ def test_an_operational_tier_is_not_reported_as_a_problem() -> None:
     assert "fast" not in msg
 
 
+def test_the_message_does_not_promise_a_reply_that_will_never_come() -> None:
+    """The first BF-714 wording said "I'll answer normally once it recovers",
+    which reads as a promise to answer THIS message. Nothing retries it: the
+    router received a result and appended it, so the turn is spent. The Captain
+    reasonably asked whether a reply would arrive on its own -- it will not.
+
+    An agent must not describe a recovery the system does not perform. This is
+    the same class as BF-728 and BF-739: a plausible sentence that is false.
+    """
+    msg = _llm_degrade_message(_runtime({
+        "overall": "degraded",
+        "tiers": {
+            "standard": {"status": "unreachable", "consecutive_failures": 3,
+                         "endpoint_cooldown_remaining_seconds": 5.0},
+        },
+    }))
+
+    assert "I'll answer" not in msg
+    assert "will not retry" in msg
+    # And it says what to actually do about it.
+    assert "again" in msg
+
+
+def test_the_message_still_leads_with_the_countdown() -> None:
+    """The retry instruction must not displace the diagnosis -- the countdown
+    is what makes "send it again" actionable rather than a guess.
+    """
+    msg = _llm_degrade_message(_runtime({
+        "overall": "degraded",
+        "tiers": {
+            "standard": {"status": "unreachable", "consecutive_failures": 3,
+                         "endpoint_cooldown_remaining_seconds": 5.0},
+        },
+    }))
+
+    assert msg.index("recovering in 5s") < msg.index("again")
+
+
 # ── it never replaces a diagnosis with a traceback ────────────────
 
 
