@@ -1,6 +1,5 @@
 """Tests for Bridge Alert Service (AD-410)."""
 
-import time
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
@@ -82,10 +81,12 @@ class TestDeduplication:
         assert len(alerts1) == 1
         assert len(alerts2) == 1
 
-    def test_expired_key_re_emits(self, monkeypatch):
-        svc = BridgeAlertService(cooldown_seconds=10)
+    def test_expired_key_re_emits(self):
+        # BF-691/BF-712: drive the service's own injected clock rather than
+        # monkeypatching ``time.monotonic`` globally. The service now captures
+        # its clock at construction, so a later global patch would not reach it.
         t = [100.0]
-        monkeypatch.setattr(time, "monotonic", lambda: t[0])
+        svc = BridgeAlertService(cooldown_seconds=10, clock=lambda: t[0])
         alerts1 = svc.check_vitals({"pool_health": {"http": 0.2}})
         assert len(alerts1) == 1
         # Advance past cooldown

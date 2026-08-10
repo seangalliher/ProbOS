@@ -17,6 +17,30 @@ from probos.substrate.registry import AgentRegistry
 # Helpers
 # ---------------------------------------------------------------------------
 
+class _Clock:
+    """BF-691/BF-712: a clock the test advances, instead of one it waits for.
+
+    Every suppression rule in ``BridgeAlertService`` is a comparison against
+    elapsed time. Driving it with ``time.sleep`` meant a 20ms clean period
+    checked after a 30ms sleep -- a 10ms margin that a scheduling delay under
+    ``-n 16`` routinely exceeds. The test then passed alone and failed in the
+    gate, which is the harder failure to notice and the one that trains a
+    reader to discount real failures.
+
+    ``advance`` moves time exactly, so these tests assert the rule rather than
+    the scheduler.
+    """
+
+    def __init__(self, start: float = 1_000.0) -> None:
+        self._now = float(start)
+
+    def __call__(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += float(seconds)
+
+
 def _make_service(**kwargs) -> BridgeAlertService:
     """Create a BridgeAlertService with short defaults for testing."""
     defaults = {
@@ -26,6 +50,11 @@ def _make_service(**kwargs) -> BridgeAlertService:
     }
     defaults.update(kwargs)
     return BridgeAlertService(**defaults)
+
+
+def _timed_service(clock: _Clock, **kwargs) -> BridgeAlertService:
+    """A service whose notion of time is the supplied clock."""
+    return _make_service(clock=clock, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -43,17 +72,21 @@ class TestAlertDismiss:
 
     def test_dismiss_expires(self):
         """After duration passes, alert fires again."""
-        bas = _make_service()
-        bas.dismiss_alert("test:key", 0.01)  # 10ms
-        time.sleep(0.02)
-        # After expiry, should_emit should return True
+        clock = _Clock()
+        bas = _timed_service(clock)
+        bas.dismiss_alert("test:key", 60.0)
+        clock.advance(60.1)
         assert bas._should_emit("test:key") is True
 
     def test_dismiss_custom_duration(self):
         """Custom duration_seconds honored over default."""
-        bas = _make_service(default_dismiss_duration=9999.0)
-        bas.dismiss_alert("test:key", 0.01)
-        time.sleep(0.02)
+        clock = _Clock()
+        bas = _timed_service(clock, default_dismiss_duration=9999.0)
+        bas.dismiss_alert("test:key", 60.0)
+        # Still inside the custom duration, and nowhere near the default.
+        clock.advance(59.0)
+        assert bas._should_emit("test:key") is False
+        clock.advance(2.0)
         assert bas._should_emit("test:key") is True
 
     def test_dismiss_unknown_key_noop(self):
@@ -86,13 +119,15 @@ class TestAlertResolve:
         via _is_suppressed that the clean gap elapses when there are no
         detections.
         """
-        bas = _make_service(resolve_clean_period=0.02)
+        bas = _timed_service(clock := _Clock(), resolve_clean_period=30.0)
         bas.resolve_alert("test:key")
         # Immediately after resolve, suppressed
         assert bas._is_suppressed("test:key") is True
-        # Wait for clean period with NO detection
-        time.sleep(0.03)
-        # Clean period elapsed → no longer suppressed
+        # Still suppressed one tick short of the clean period.
+        clock.advance(29.0)
+        assert bas._is_suppressed("test:key") is True
+        # Clean period elapsed with NO detection -> no longer suppressed
+        clock.advance(2.0)
         assert bas._is_suppressed("test:key") is False
 
     def test_resolve_no_refire_during_clean_period(self):
@@ -106,10 +141,11 @@ class TestAlertResolve:
 
     def test_resolve_tracks_last_detected(self):
         """Each detection updates _last_detected even when suppressed."""
-        bas = _make_service(resolve_clean_period=5.0)
+        clock = _Clock()
+        bas = _timed_service(clock, resolve_clean_period=5.0)
         bas.resolve_alert("test:key")
         t1 = bas._last_detected.get("test:key")
-        time.sleep(0.01)
+        clock.advance(1.0)
         bas._should_emit("test:key")
         t2 = bas._last_detected.get("test:key")
         assert t2 is not None
@@ -119,12 +155,14 @@ class TestAlertResolve:
 
     def test_resolve_continuous_detection_stays_suppressed(self):
         """Pattern detected continuously without clean gap → stays suppressed indefinitely."""
-        bas = _make_service(resolve_clean_period=0.05)
+        clock = _Clock()
+        bas = _timed_service(clock, resolve_clean_period=5.0)
         bas.resolve_alert("test:key")
-        # Keep detecting — clean period never elapses
+        # Keep detecting, each step well inside the clean period, for far longer
+        # than the clean period in total: the gap resets on every detection.
         for _ in range(20):
             assert bas._should_emit("test:key") is False
-            time.sleep(0.005)
+            clock.advance(1.0)
         # Still suppressed because continuous detection resets the gap
         assert bas._should_emit("test:key") is False
 
@@ -193,9 +231,10 @@ class TestAlertListSuppressed:
 
     def test_list_excludes_expired(self):
         """Expired dismissals not shown."""
-        bas = _make_service()
-        bas.dismiss_alert("expired:key", 0.01)
-        time.sleep(0.02)
+        clock = _Clock()
+        bas = _timed_service(clock)
+        bas.dismiss_alert("expired:key", 60.0)
+        clock.advance(60.1)
         # Trigger _is_suppressed to clean up expired entry
         bas._should_emit("expired:key")
 

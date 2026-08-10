@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -152,47 +149,81 @@ def test_doctor_returns_nonzero_on_missing_config(monkeypatch, tmp_path):
     assert code >= 1
 
 
-@pytest.mark.skipif(
-    os.environ.get("CI", "").lower() == "true",
-    reason="doctor asserts a fully-provisioned host (sandbox binary, NATS, optional "
-    "channel deps); CI's minimal runner legitimately reports optional-environment "
-    "issues, making the strict clean-setup count unstable",
-)
-def test_doctor_returns_zero_on_clean_setup(monkeypatch, tmp_path):
-    """All checks passing -> _cmd_doctor returns 0."""
+def test_doctor_returns_the_failed_check_count(monkeypatch, tmp_path):
+    """BF-713: ``_cmd_doctor`` returns the number of FAILed checks.
+
+    This used to assert ``code <= 1`` against the **real** registry, which runs
+    eighteen live checks -- LLM proxy, NATS socket, Docker, disk, channel
+    adapters -- against whatever host happens to be running the suite. It was a
+    statement about the machine, not the code, and it flaked under ``-n 16``
+    while passing alone.
+
+    Its ``OpenAICompatibleClient`` stub was also dead. AD-801 moved doctor to a
+    check registry and ``llm_check`` builds its own client, so patching the
+    symbol in ``__main__`` stopped affecting the probe. The test believed it had
+    isolated the LLM and had not -- which is why the documented cause (an empty
+    HTTP 200 from the proxy) could still reach it.
+
+    So this drives a registry the test controls and asserts the contract the
+    exit code actually carries: FAIL counts, WARN does not.
+    """
     from probos import __main__ as probos_main
+    from probos.doctor import registry as doctor_registry
+    from probos.doctor.protocol import CheckOutcome, CheckResult
     import argparse
 
     home = tmp_path / "probos_home"
     data = tmp_path / "data"
     home.mkdir()
     data.mkdir()
-
-    # Write a minimal valid config
-    config_path = home / "config.yaml"
-    config_path.write_text(
+    (home / "config.yaml").write_text(
         "system:\n  name: probos\n  version: 0.1.0\n  log_level: WARNING\n"
         "cognitive:\n  default_llm_tier: fast\n",
         encoding="utf-8",
     )
-
     monkeypatch.setattr(probos_main, "_probos_home", lambda: home)
     monkeypatch.setattr(probos_main, "_default_data_dir", lambda: data)
 
-    # Mock LLM client to claim all connectivity
-    class _FakeClient:
-        def __init__(self, *a, **kw):
-            pass
-        async def check_connectivity(self):
-            return {"fast": True, "standard": True, "deep": True, "vision": True}
-        async def close(self):
-            return None
+    class _Check:
+        def __init__(self, name: str, outcome: CheckOutcome) -> None:
+            self._name = name
+            self._outcome = outcome
 
-    monkeypatch.setattr(probos_main, "OpenAICompatibleClient", _FakeClient)
+        @property
+        def name(self) -> str:
+            return self._name
 
-    args = argparse.Namespace(command="doctor")
-    code = probos_main._cmd_doctor(args)
-    # cfg.nats may not exist on minimal config; no check fires; only LLM + chromadb runs.
-    # Allow any small failure count from chromadb env, but config + data_dir + LLM should pass.
-    # Strictest path: all 5 checks pass -> 0. If chromadb is missing in test env, code may be 1.
-    assert code <= 1
+        async def run(self, ctx) -> CheckResult:
+            return CheckResult(outcome=self._outcome, message=self._name)
+
+    def _drive(*checks):
+        monkeypatch.setattr(doctor_registry, "_CHECKS", list(checks))
+        monkeypatch.setattr(doctor_registry, "_NAMES", {c.name for c in checks})
+        return probos_main._cmd_doctor(argparse.Namespace(command="doctor"))
+
+    ok = _Check("ok", CheckOutcome.OK)
+    warn = _Check("warn", CheckOutcome.WARN)
+    bad = _Check("bad", CheckOutcome.FAIL)
+    worse = _Check("worse", CheckOutcome.FAIL)
+
+    assert _drive(ok) == 0
+    # WARN is explicitly not a failure -- the AD-484 contract the gate relies on.
+    assert _drive(ok, warn) == 0
+    assert _drive(ok, bad) == 1
+    assert _drive(bad, worse, warn, ok) == 2
+
+
+def test_the_doctor_registry_is_not_empty():
+    """The companion to the test above: driving a fake registry proves the exit
+    contract, and would still pass if every real check vanished. This proves
+    checks are actually registered on import.
+    """
+    from probos.doctor import registry as doctor_registry
+    import probos.doctor.checks  # noqa: F401 -- registration happens on import
+
+    names = {c.name for c in doctor_registry.iter_checks()}
+
+    assert len(names) >= 5, f"doctor has almost no checks registered: {names}"
+    assert "llm" in {n.lower() for n in names} or any(
+        "llm" in n.lower() for n in names
+    ), f"the LLM check is not registered: {names}"

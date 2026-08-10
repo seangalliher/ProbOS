@@ -16,7 +16,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,13 @@ class BridgeAlertService:
     objects that the runtime delivers via _deliver_bridge_alert().
     """
 
+    # BF-691/BF-712: class-level default so an instance built with
+    # ``__new__`` -- which several test doubles do, hand-mirroring the
+    # constructor's attributes -- still has a working clock. ``__init__``
+    # overrides it per instance. ``staticmethod`` so a plain function set here
+    # later is not bound as a method.
+    _clock: Callable[[], float] = staticmethod(time.monotonic)
+
     def __init__(
         self,
         cooldown_seconds: float = 300,
@@ -58,7 +65,15 @@ class BridgeAlertService:
         trust_drop_alert_threshold: float = 0.25,
         resolve_clean_period: float = 3600.0,
         default_dismiss_duration: float = 14400.0,
+        *,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        # BF-691/BF-712: every suppression decision here is a comparison against
+        # elapsed time. Tests previously drove it by sleeping past a 20ms clean
+        # period with a 10ms margin, which a scheduling delay under `-n 16`
+        # routinely exceeded. Injecting the clock follows the CrewSessionService
+        # and WorkPermitStore precedent and lets time be advanced exactly.
+        self._clock = clock
         self._cooldown = cooldown_seconds
         self._trust_drop_threshold = trust_drop_threshold
         self._trust_drop_alert = trust_drop_alert_threshold
@@ -76,7 +91,7 @@ class BridgeAlertService:
 
     def _should_emit(self, dedup_key: str) -> bool:
         """Check dedup cache. Returns True if alert should fire."""
-        now = time.monotonic()
+        now = self._clock()
         # AD-580: Always track detection timestamp (independent of emission)
         self._last_detected[dedup_key] = now
         # AD-580: Check suppression before time-based dedup
@@ -101,7 +116,7 @@ class BridgeAlertService:
 
     def _is_suppressed(self, dedup_key: str) -> bool:
         """Check if a dedup_key is currently suppressed."""
-        now = time.monotonic()
+        now = self._clock()
 
         # Muted — indefinite suppression
         if dedup_key in self._muted:
@@ -133,12 +148,12 @@ class BridgeAlertService:
     def dismiss_alert(self, dedup_key: str, duration_seconds: float | None = None) -> None:
         """Suppress an alert type for a specified duration (default 4 hours)."""
         duration = duration_seconds if duration_seconds is not None else self._default_dismiss_duration
-        self._dismissed[dedup_key] = time.monotonic() + duration
+        self._dismissed[dedup_key] = self._clock() + duration
         logger.info("Alert dismissed: %s for %.0fs", dedup_key, duration)
 
     def resolve_alert(self, dedup_key: str) -> None:
         """Mark an alert as resolved. Re-fires only after a clean detection period."""
-        self._resolved[dedup_key] = time.monotonic()
+        self._resolved[dedup_key] = self._clock()
         logger.info("Alert resolved: %s", dedup_key)
 
     def mute_alert(self, dedup_key: str) -> None:
@@ -153,7 +168,7 @@ class BridgeAlertService:
 
     def list_suppressed(self) -> list[dict]:
         """Return all currently suppressed alert keys with mode and expiry."""
-        now = time.monotonic()
+        now = self._clock()
         result: list[dict] = []
 
         for key, expiry in self._dismissed.items():
