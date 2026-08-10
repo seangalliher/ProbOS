@@ -77,7 +77,7 @@ class ExecutionRequest:
     timeout_seconds: float = 30.0
     max_output_bytes: int = 64 * 1024
     max_memory_mb: int = 512
-    allow_network: bool = False              # soft at Tier 1 (proxy hint); hard at Tier 2
+    allow_network: bool = False              # AD-1233: deterrent at Tier 1 by decision, not oversight; see _build_env
     env: dict[str, str] | None = None        # extra env on top of a scrubbed base
     python_executable: str | None = None     # default: sys.executable
     # AD-1221: make the working directory importable, so a helper module the
@@ -273,8 +273,26 @@ class SubprocessSandbox:
             k: os.environ[k] for k in _ENV_PASSTHROUGH if k in os.environ
         }
         if not request.allow_network:
-            # Soft deterrent only (well-behaved libs honor proxy env). Hard
-            # network isolation is Tier 2.
+            # AD-1233 (#1186): a DECIDED posture, not an inherited default.
+            #
+            # These four variables are a deterrent, not a boundary. requests and
+            # httpx honour them -- which covers every library an agent actually
+            # reaches for -- and a raw socket ignores them entirely. The Captain
+            # chose to keep it soft rather than add OS-level egress blocking,
+            # because the governed way out already exists: AD-1221's fetch
+            # broker performs the ordinary mesh fetch, with SSRF validation,
+            # per-domain rate limiting and audit. Hardening this would push
+            # agents toward smuggling bytes through their own context window
+            # (the exact cost AD-1221 was built to remove) and would buy little,
+            # since the threat model here is a confused agent rather than a
+            # hostile one -- code reaching the sandbox has already passed
+            # approval-gated install and the tier-3 gate.
+            #
+            # What it defends: an agent that casually calls requests.get()
+            # inside run_python fails fast and is pushed to the broker.
+            # What it costs: a raw socket is unimpeded, so this must never be
+            # cited as an enforced boundary by a later AD. Design Principle 13
+            # -- a capability ceiling must be a decision, and this one is.
             env["http_proxy"] = _BLACKHOLE_PROXY
             env["https_proxy"] = _BLACKHOLE_PROXY
             env["HTTP_PROXY"] = _BLACKHOLE_PROXY
