@@ -678,11 +678,29 @@ def _conversational_thread_id(
     # WARNING, not INFO: the system compensated, but something upstream dropped
     # provenance it was handed, and that is the signal that finds the root
     # cause. If this fires on every turn, that is information.
+    #
+    # BF-737: the original text said the producer "is still unidentified" and
+    # then gave a reader nothing to identify it with, so 56 occurrences in one
+    # log answered no question. These three fields are the discriminators.
+    # Eliminated by direct execution 2026-08-09, so a reader can skip them:
+    # ``perceive`` carries ``thread_id`` on BOTH the IntentMessage and the
+    # ``intent.__dict__`` branch, and ``routers/agents.py`` sets it on every DM
+    # (its resolve-failure warning has zero occurrences live). So the producer
+    # dispatches an intent whose ``thread_id`` was never populated -- and the
+    # intent name plus the ``from`` marker distinguish which entry point that is.
+    _params = observation.get("params")
+    _from = ""
+    if type(_params) is dict:
+        _from = str(_params.get("from", "") or "")
     logger.warning(
-        "BF-698: neither observation nor params carried a thread_id for "
-        "agent=%s; resolved the canonical thread %s from the store. The "
-        "producer that should have supplied it is still unidentified",
-        agent_id, resolved,
+        "BF-698/BF-737: neither observation nor params carried a thread_id for "
+        "agent=%s; resolved the canonical thread %s from the store. Producer "
+        "discriminators: intent=%r from=%r params_keys=%s",
+        agent_id,
+        resolved,
+        str(observation.get("intent", "") or ""),
+        _from,
+        sorted(_params)[:12] if type(_params) is dict else None,
     )
     return resolved
 
