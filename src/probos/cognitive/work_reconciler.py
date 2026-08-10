@@ -21,7 +21,7 @@ class ReconcileDecision:
     """A pure classification of what should happen to one board item."""
 
     work_item_id: str
-    action: str  # "live_redispatch" | "clear_and_reroute" | "skip"
+    action: str  # "live_redispatch" | "clear_and_reroute" | "strand_terminal" | "skip"
     assignee: str | None
     resolved_agent_id: str | None
     reason: str
@@ -92,6 +92,11 @@ class WorkItemReconciler:
         and the configured stall threshold. When True, a live-owned
         ``in_progress`` item is rerouted (``reason="stalled"``) instead of
         skipped — liveness alone no longer implies progress.
+
+        BF-730: a stalled ``in_progress`` item that is NOT dispatchable returns
+        ``strand_terminal`` instead. It cannot be rerouted without replaying an
+        AD-1165 promoted turn, and it cannot be left ``in_progress`` without
+        showing the Captain a board of work that is not running.
         """
         wid = wi.get("id", "")
         status = wi.get("status", "")
@@ -100,6 +105,25 @@ class WorkItemReconciler:
         if status in _TERMINAL:
             return ReconcileDecision(wid, "skip", assignee, None, "terminal")
         if not is_dispatchable:
+            # BF-730: dispatchability and reconcilability are different
+            # questions, and conflating them made the sweep structurally unable
+            # to touch the only items that strand. An AD-1165 promoted turn is
+            # deliberately NOT dispatchable -- rerouting one would replay side
+            # effects the turn already performed -- so every stalled promoted
+            # turn returned "skip" here and sat on the board forever. Measured
+            # 2026-08-08: 42 non-terminal items, all classified skip, six of
+            # them in_progress and idle between 23.5h and 182h.
+            #
+            # A stalled one still needs an ending. It cannot resume (the turn
+            # that owned it is gone) and it must never be dispatched, so it
+            # gets a terminal action and no reroute. Owner liveness is
+            # deliberately NOT part of this condition: neither a live nor a
+            # dead owner permits dispatch here, so both strand identically and
+            # excluding one would leave the same defect for a subset.
+            if is_stalled and status == "in_progress":
+                return ReconcileDecision(
+                    wid, "strand_terminal", assignee, None, "stalled_not_dispatchable"
+                )
             return ReconcileDecision(wid, "skip", assignee, None, "not_dispatchable")
         if assignee is None and status == "open":
             return ReconcileDecision(

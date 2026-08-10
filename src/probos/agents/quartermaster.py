@@ -236,6 +236,10 @@ class QuartermasterAgent(BaseAgent):
             "quarantined": 0,
             "quarantined_skipped": 0,
             "backoff_skipped": 0,
+            # BF-730: stalled items the router may never dispatch, ended rather
+            # than rerouted. Counted separately from "cleared" because nothing
+            # was rerouted.
+            "stranded": 0,
             # AD-879: starvation visibility
             "truncated": False,
             # AD-878: boot-race grace period skips
@@ -293,6 +297,49 @@ class QuartermasterAgent(BaseAgent):
             if decision.action == "live_redispatch":
                 await self._router.dispatch_work_item(wi)
                 counts["redispatched"] += 1
+            elif decision.action == "strand_terminal":
+                # BF-730: a stalled item the router may never dispatch. Ends it
+                # rather than rerouting it -- rerouting would replay an AD-1165
+                # promoted turn's side effects, which is a worse defect than the
+                # stranding it would fix.
+                #
+                # ``failed``, not ``cancelled``: the issue flagged the auto-close
+                # policy as Captain-facing, and cancelled reads as a decision
+                # someone made. This stopped without finishing and nothing
+                # chose that, which is what failed means. The reason is recorded
+                # on the item so the board says why.
+                owner_node = md_current.get("owner_node")
+                if (
+                    self._federation_enabled
+                    and owner_node
+                    and owner_node != self._local_node_id
+                ):
+                    counts["remote_owner_skipped"] += 1
+                    return
+                fresh = await self._store.get_work_item(item.id)
+                md = dict(fresh.metadata) if fresh else dict(md_current)
+                md["stranded_reason"] = "stalled_not_dispatchable"
+                md["stranded_at"] = time.time()
+                md["last_reconcile_at"] = time.time()
+                await self._store.update_work_item(
+                    item.id, status="failed", metadata=md,
+                )
+                if self._emit is not None:
+                    try:
+                        self._emit(
+                            EventType.WORK_ITEM_RECONCILED,
+                            {
+                                "work_item_id": item.id,
+                                "action": "strand_terminal",
+                                "reason": decision.reason,
+                            },
+                        )
+                    except Exception:
+                        logger.warning(
+                            "BF-730: strand_terminal emit failed for %s",
+                            item.id, exc_info=True,
+                        )
+                counts["stranded"] += 1
             elif decision.action == "clear_and_reroute":
                 # AD-882: federation node-scope guard — an item owned by a remote
                 # node only looks "not live" locally; never reclaim it (and never

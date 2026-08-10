@@ -199,6 +199,10 @@ async def test_reconcile_empty_board_all_zero(store: WorkItemStore) -> None:
         "stalled": 0,
         # AD-882: remote-owner skip counter always present
         "remote_owner_skipped": 0,
+        # BF-730: stalled items the router may never dispatch, ended rather
+        # than rerouted. Counted apart from "cleared" because nothing was
+        # rerouted -- conflating them would hide a replay if one ever occurred.
+        "stranded": 0,
     }
 
 
