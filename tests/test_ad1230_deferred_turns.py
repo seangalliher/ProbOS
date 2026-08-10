@@ -568,6 +568,115 @@ def test_the_router_declines_before_it_dispatches() -> None:
     assert decline < send
 
 
+# ── AD-1232: a message sent during the outage is not inert ────────
+
+
+def test_what_the_captain_said_during_the_outage_reaches_the_replay() -> None:
+    """The block's real cost, paid down. The thread refuses new turns AND the
+    replay used to carry the conversation as it stood when the model died -- so
+    a message sent during the outage was declined at the door and invisible to
+    the answer. Both, which is a worse deal than "one at a time".
+    """
+    h = _Harness()
+    h.queue._read_history = lambda tid, since: [  # type: ignore[method-assign]
+        {"role": "user", "text": "also check the changelog"},
+        {"role": "agent", "text": "(I'm still holding your message...)"},
+    ]
+    h.queue.offer(
+        thread_id="t1", agent_id="ezri",
+        params={"text": "which versions?", "session_history": [
+            {"role": "user", "text": "morning"},
+        ]},
+    )
+
+    seen: list[dict] = []
+
+    async def _capture(thread_id: str, agent_id: str, params: dict) -> str:
+        seen.append(params)
+        return "answer"
+
+    h.queue._dispatch = _capture  # type: ignore[method-assign]
+    asyncio.run(h.queue.drain_once())
+
+    assert seen[0]["session_history"] == [
+        {"role": "user", "text": "morning"},
+        {"role": "user", "text": "also check the changelog"},
+        {"role": "agent", "text": "(I'm still holding your message...)"},
+    ]
+    # The held question itself is unchanged -- it is still what gets answered.
+    assert seen[0]["text"] == "which versions?"
+
+
+def test_the_stored_turn_is_not_mutated_by_a_replay() -> None:
+    """A failed attempt keeps its place and is retried. Splicing into the stored
+    params would compound the interim history on every attempt.
+    """
+    h = _Harness(replies=["", "ok"])
+    h.queue._read_history = lambda tid, since: [  # type: ignore[method-assign]
+        {"role": "user", "text": "and the changelog"},
+    ]
+    h.queue.offer(thread_id="t1", agent_id="ezri", params={"text": "q"})
+
+    asyncio.run(h.queue.drain_once())
+    held = h.queue._held["t1"]
+    assert "session_history" not in held.params
+
+
+def test_a_raising_history_read_costs_context_not_the_answer() -> None:
+    h = _Harness()
+
+    def _boom(thread_id: str, since: float) -> list[dict[str, str]]:
+        raise RuntimeError("store is gone")
+
+    h.queue._read_history = _boom  # type: ignore[method-assign]
+    h.offer("t1")
+
+    assert asyncio.run(h.queue.drain_once()) == 1
+
+
+@pytest.mark.parametrize("bad", [None, "nope", 42, [], [{"role": "user"}], [None]])
+def test_a_malformed_history_read_is_ignored(bad: Any) -> None:
+    h = _Harness()
+    h.queue._read_history = lambda tid, since: bad  # type: ignore[method-assign]
+    h.queue.offer(thread_id="t1", agent_id="ezri", params={"text": "q"})
+
+    seen: list[dict] = []
+
+    async def _capture(thread_id: str, agent_id: str, params: dict) -> str:
+        seen.append(params)
+        return "answer"
+
+    h.queue._dispatch = _capture  # type: ignore[method-assign]
+    asyncio.run(h.queue.drain_once())
+    assert seen[0].get("session_history") in (None, [])
+
+
+def test_the_interim_splice_is_bounded() -> None:
+    """The block is per-thread but the Captain can still type. An unbounded
+    splice would grow the prompt by however long the outage lasted.
+    """
+    from probos.cognitive.deferred_turns import _INTERIM_HISTORY_LIMIT
+
+    h = _Harness()
+    h.queue._read_history = lambda tid, since: [  # type: ignore[method-assign]
+        {"role": "user", "text": f"msg {i}"} for i in range(100)
+    ]
+    h.queue.offer(thread_id="t1", agent_id="ezri", params={"text": "q"})
+
+    seen: list[dict] = []
+
+    async def _capture(thread_id: str, agent_id: str, params: dict) -> str:
+        seen.append(params)
+        return "answer"
+
+    h.queue._dispatch = _capture  # type: ignore[method-assign]
+    asyncio.run(h.queue.drain_once())
+
+    history = seen[0]["session_history"]
+    assert len(history) == _INTERIM_HISTORY_LIMIT
+    assert history[-1] == {"role": "user", "text": "msg 99"}  # the newest kept
+
+
 # ── the crossing test ─────────────────────────────────────────────
 
 

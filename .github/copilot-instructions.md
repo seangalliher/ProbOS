@@ -246,7 +246,17 @@ Cross-cutting: `federation/` (bridge, router, transport), `knowledge/` (Git-back
 
 ### Design Principles
 
-1. **Agent-native OS**: Every component is an autonomous agent. No central scheduler. Agents self-organize via capability matching and Hebbian-learned routing.
+1. **Agent-native OS, hybrid coordination (AD-1231)**: Every component is an autonomous agent, and coordination is **hybrid by design** — not because a central scheduler crept in, but because neither pure model is right for every kind of work.
+
+    **Agents choose what to work on** wherever the work is cognitive, discretionary, or discoverable: intent routing, capability matching, Hebbian-learned pairings, proactive attention, self-claiming from the work board. There is **no central dispatcher deciding which agent thinks about what**, and adding one would be a regression. This is the half the Nooplex thesis rests on, and the half that must never quietly erode.
+
+    **A deterministic service owns durable workflow time** where the requirement is a guarantee rather than a judgement: admission and concurrency bounds, compare-and-set state transitions, crash recovery, exactly-once delivery, cancellation and drain. `CrewOrchestrator` is the reference case. These are properties an emergent negotiation cannot promise, and pretending otherwise costs correctness for no gain in autonomy.
+
+    **The boundary test — who is deciding *what*, not who is deciding.** A service may decide *when a durable step runs, in what order, and whether it may run twice*. An agent decides *what the work is, whether to take it, and how to do it*. A service that starts choosing which agent is best suited, or ranking work by relevance, has crossed the line and belongs back in the mesh. An agent that starts owning CAS or exactly-once delivery has crossed it in the other direction and belongs behind a service.
+
+    **The bottleneck is the thing being avoided, not the scheduler.** The objection to conventional multi-agent orchestrators is that one planner becomes the single point of thought — every decision queues behind it, and the system's ceiling is that planner's context window. A service that sequences durable state while N agents reason concurrently is not that. Review the *scope* of what a central component decides, not merely its existence.
+
+    Review flag: *"this service decides which agent, or how good the work is"* (pull it back to the mesh) and *"this agent owns a durable transition"* (push it behind a service).
 2. **Probabilistic consensus**: Destructive ops require multi-agent quorum voting with confidence weighting and Shapley attribution.
 3. **Bayesian trust**: Beta(alpha, beta) reputation per agent. Built-in: Beta(2,2)=0.50. Self-designed: Beta(1,3)=0.25 (probationary). Always store raw (alpha, beta), never derived means.
 4. **Hebbian routing**: "Neurons that fire together wire together." Successful intent-agent pairings strengthen, failures weaken.

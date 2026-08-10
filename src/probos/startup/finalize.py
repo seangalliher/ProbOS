@@ -2578,12 +2578,31 @@ def _wire_deferred_turns(*, runtime: Any, config: "SystemConfig") -> bool:
             for info in tiers.values()
         )
 
+    def _read_history(thread_id: str, since_wall: float) -> list[dict[str, str]]:
+        # AD-1232: what the Captain said after the turn was held. Shaped like
+        # the HXI's own ``history`` payload ({role, text}) because the agent
+        # renders both through the same block.
+        rows = runtime.chat_thread_store.list_messages(
+            thread_id, limit=40, newest=True
+        )
+        out: list[dict[str, str]] = []
+        for row in rows:
+            if float(getattr(row, "created_at", 0.0) or 0.0) <= since_wall:
+                continue
+            body = str(getattr(row, "body", "") or "")
+            if not body:
+                continue
+            role = str(getattr(row, "role", "") or "")
+            out.append({"role": "user" if role == "captain" else role, "text": body})
+        return out
+
     ttl = float(getattr(cfg, "hold_degraded_turn_ttl_seconds", 900.0))
     max_threads = int(getattr(cfg, "hold_degraded_turn_max_threads", 16))
     queue = DeferredTurnQueue(
         dispatch=_dispatch,
         post=_post,
         is_healthy=_is_healthy,
+        read_history=_read_history,
         ttl_seconds=ttl,
         max_threads=max_threads,
     )

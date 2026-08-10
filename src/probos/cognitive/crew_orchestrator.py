@@ -1,6 +1,21 @@
 """AD-867: :class:`CrewOrchestrator` — wire the full crew pipeline behind one
 runtime entry point.
 
+**AD-1231 — why a service owns this, and where its authority stops.** Design
+Principle 1 is hybrid: agents choose *what to work on*; a deterministic service
+owns *durable workflow time*. This module is that service's reference case. It
+decides when a durable step runs, in what order, and whether it may run twice —
+admission bounds, CAS transitions, crash recovery, exactly-once delivery,
+cancellation and drain. Those are guarantees an emergent negotiation cannot
+make.
+
+What it must never decide is *which agent is best suited* or *how good the work
+is*. Agent selection stays with capability matching and Hebbian routing; quality
+stays with the verifier. The bottleneck the no-central-scheduler principle
+exists to prevent is one planner becoming the single point of thought — N agents
+reasoning concurrently behind a sequencer is not that. A change here that starts
+ranking agents or work belongs back in the mesh.
+
 The dormant crew classes (AD-859 executor, AD-860 verifier, AD-861 synthesizer,
 AD-864 assignment resolver, AD-865 delegator) each do one stage of a multi-agent
 collaboration. This module threads them into a single end-to-end flow:

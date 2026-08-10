@@ -43,7 +43,7 @@ Consequences (see the research doc for the full map):
 
 ### 3.1 Options considered
 
-- **A — Mesh-level attention service.** *Rejected.* It is a **central scheduler** — the exact anti-pattern ProbOS's Design Principle #1 forbids ("no central scheduler"). It would need every agent's private working set to decide their focus, breaching **sovereignty/shard isolation (AD-397)**, and would be a throughput bottleneck and single point of failure.
+- **A — Mesh-level attention service.** *Rejected.* It would decide **which agent thinks about what**, which is the half of Design Principle #1 (AD-1231) that no service may take. The principle is hybrid — a deterministic service may own *durable workflow time* (admission, CAS, recovery, exactly-once) — but attention is not workflow time, it is the cognitive decision itself, and a service that ranks an agent's focus for it has crossed the boundary. It would also need every agent's private working set to decide their focus, breaching **sovereignty/shard isolation (AD-397)**, and would be a throughput bottleneck and single point of failure.
 - **B — In-process helper class.** Workable and fast, but it's "just a class": no identity, no audit trail, doesn't honor the agent-native principle, and tends to accrete hidden state.
 - **C — A deterministic Attention Faculty as a *Cognitive Organ* (a child component of the agent).** *Chosen.* In-process and synchronous (fast, intimate access), **no LLM**, with a parent-derived **identity** and an **audit trail**; **subscribes to the mesh** for exogenous salience between turns. Honors the agent-native principle *fractally* (a faculty composing a mind) without misclassifying a component as a mesh peer.
 

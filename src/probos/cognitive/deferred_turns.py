@@ -90,6 +90,11 @@ _EXHAUSTED_NOTE = (
 # load generator against an endpoint that is already struggling.
 _MAX_ATTEMPTS = 2
 
+# AD-1232: how many messages sent DURING the outage are carried into the replay.
+# Bounded because the block is per-thread but the Captain can still type: an
+# unbounded splice would grow the prompt by however long the outage lasted.
+_INTERIM_HISTORY_LIMIT = 10
+
 
 def format_ago(seconds: float) -> str:
     """Render an elapsed span the way a person would say it."""
@@ -110,6 +115,10 @@ class DeferredTurn:
     agent_id: str
     params: dict[str, Any]
     queued_at: float
+    # Wall clock, unlike ``queued_at`` (monotonic): AD-1232 uses it as the
+    # cutoff for "what did the Captain say after this was held", and thread
+    # rows are timestamped in wall clock.
+    queued_wall: float = 0.0
     attempts: int = 0
 
 
@@ -123,6 +132,8 @@ class DeferredTurnQueue:
     turn and returns the reply text (empty string means it failed again).
     ``post`` -- ``(thread_id, agent_id, body) -> None``; appends into the thread.
     ``is_healthy`` -- ``() -> bool``; True when the model is worth trying.
+    ``read_history`` -- ``(thread_id, since_wall) -> list[{role, text}]``;
+    AD-1232, optional. What the Captain said AFTER the turn was held.
     """
 
     def __init__(
@@ -131,20 +142,24 @@ class DeferredTurnQueue:
         dispatch: Callable[[str, str, dict[str, Any]], Awaitable[str]],
         post: Callable[[str, str, str], None],
         is_healthy: Callable[[], bool],
+        read_history: Callable[[str, float], list[dict[str, str]]] | None = None,
         ttl_seconds: float = 900.0,
         max_threads: int = 16,
         settle_seconds: float = 2.0,
         poll_seconds: float = 5.0,
         now: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
         self._dispatch = dispatch
         self._post = post
         self._is_healthy = is_healthy
+        self._read_history = read_history
         self._ttl_seconds = ttl_seconds
         self._max_threads = max_threads
         self._settle_seconds = settle_seconds
         self._poll_seconds = poll_seconds
         self._now = now
+        self._wall = wall_clock
         self._held: dict[str, DeferredTurn] = {}
         self._task: asyncio.Task[None] | None = None
         self._closed = False
@@ -177,6 +192,7 @@ class DeferredTurnQueue:
             agent_id=agent_id,
             params=dict(params),
             queued_at=self._now(),
+            queued_wall=self._wall(),
         )
         return True
 
@@ -260,7 +276,7 @@ class DeferredTurnQueue:
             entry.attempts += 1
             try:
                 reply = await self._dispatch(
-                    entry.thread_id, entry.agent_id, entry.params
+                    entry.thread_id, entry.agent_id, self._replay_params(entry)
                 )
             except asyncio.CancelledError:
                 raise
@@ -282,6 +298,46 @@ class DeferredTurnQueue:
                 self._notify(entry, _EXHAUSTED_NOTE)
                 self._held.pop(entry.thread_id, None)
         return answered
+
+    def _replay_params(self, entry: DeferredTurn) -> dict[str, Any]:
+        """AD-1232: the held params, with anything said since appended.
+
+        Without this the block has a real cost: the thread refuses new turns,
+        and the turn it eventually runs carries the conversation as it stood
+        when the model went down -- so a message the Captain sent during the
+        outage reaches nothing at all. It is declined at the door AND invisible
+        to the answer, which is a worse deal than he agreed to.
+
+        Fails open to the stored params. A history read that raises or returns
+        the wrong shape costs context, not the answer.
+        """
+        if self._read_history is None:
+            return entry.params
+        try:
+            since = self._read_history(entry.thread_id, entry.queued_wall)
+        except Exception:
+            logger.warning(
+                "AD-1232: could not read what was said after thread %s was held; "
+                "replaying with the history captured at hold time",
+                entry.thread_id, exc_info=True,
+            )
+            return entry.params
+        if not isinstance(since, list) or not since:
+            return entry.params
+
+        clean = [
+            e for e in since[-_INTERIM_HISTORY_LIMIT:]
+            if isinstance(e, dict) and e.get("text")
+        ]
+        if not clean:
+            return entry.params
+
+        prior = entry.params.get("session_history")
+        params = dict(entry.params)
+        params["session_history"] = (
+            list(prior) if isinstance(prior, list) else []
+        ) + clean
+        return params
 
     def _expire(self) -> None:
         cutoff = self._now() - self._ttl_seconds
