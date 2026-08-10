@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
-import socket
 import time
 import urllib.parse
 from dataclasses import dataclass, field
@@ -13,6 +11,7 @@ from typing import Any, ClassVar
 
 import httpx
 
+from probos.security.url_guard import validate_public_url
 from probos.substrate.agent import BaseAgent
 from probos.types import (
     CapabilityDescriptor,
@@ -198,36 +197,20 @@ class HttpFetchAgent(BaseAgent):
         """Package the result for the mesh."""
         return result
 
-    # Blocked metadata hostnames
-    _BLOCKED_HOSTS = frozenset({"metadata.google.internal"})
+    # BF-743: the metadata-host list lives in security.url_guard now, so the
+    # browser tool enforces the same one.
 
     def _validate_url(self, url: str) -> str | None:
-        """Validate URL is safe to fetch. Returns error message or None if safe."""
-        parsed = urllib.parse.urlparse(url)
+        """Validate URL is safe to fetch. Returns error message or None if safe.
 
-        # Scheme check
-        if parsed.scheme not in ("http", "https"):
-            return f"Blocked scheme: {parsed.scheme}"
-
-        # Extract hostname
-        hostname = parsed.hostname
-        if not hostname:
-            return "No hostname in URL"
-
-        # Cloud metadata hostnames
-        if hostname.lower() in self._BLOCKED_HOSTS:
-            return f"Blocked metadata endpoint: {hostname}"
-
-        # Resolve DNS to catch rebinding attacks
-        try:
-            addrinfo = socket.getaddrinfo(hostname, None)
-        except socket.gaierror:
-            return f"Cannot resolve hostname: {hostname}"
-
-        for family, _, _, _, sockaddr in addrinfo:
-            ip = ipaddress.ip_address(sockaddr[0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return f"Blocked private/reserved IP: {ip}"
+        BF-743: the scheme / metadata-host / DNS / private-address checks moved
+        to ``security.url_guard`` so the browser tool enforces the identical
+        floor. They were here and nowhere else, which made ``browser.goto`` a
+        route around them. Refusal strings are unchanged.
+        """
+        error = validate_public_url(url)
+        if error is not None:
+            return error
 
         # AD-456b: Egress policy consultation (active enforcement). Defense in
         # depth — runs AFTER scheme/host/private-IP guards. EgressPolicy emits

@@ -151,7 +151,16 @@ async def test_open_captain_session_allowlisted_domain_opens() -> None:
 
 @pytest.mark.asyncio
 async def test_open_captain_session_malformed_url_honest_degrade() -> None:
-    """A URL the page refuses to load degrades honestly, never raises."""
+    """A URL that cannot be loaded degrades honestly, never raises.
+
+    BF-743 changed WHERE this is caught, not whether. The URL used to reach
+    Playwright, which rejected it with ``ERR_INVALID_URL``; the domain check now
+    refuses a malformed URL before the page ever sees it. The contract under
+    test -- ``opened`` is False, a reason is given, nothing raises -- is
+    unchanged, so the assertion is updated rather than removed. The refusing
+    page stays as the belt-and-braces arm: if the guard ever stops catching
+    this, the page still must not raise through.
+    """
 
     class _RefusingPage(_FakePage):
         async def goto(self, url: str) -> None:  # type: ignore[override]
@@ -162,7 +171,27 @@ async def test_open_captain_session_malformed_url_honest_degrade() -> None:
     res = await tool.open_captain_session("http://[not-a-url")
 
     assert res["opened"] is False
-    assert "ERR_INVALID_URL" in res["reason"]
+    assert res["reason"]
+    assert "Malformed URL" in res["reason"] or "ERR_INVALID_URL" in res["reason"]
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_url_never_reaches_the_page() -> None:
+    """BF-743: the guard is what refuses it, so Playwright is never handed a
+    URL the runtime already knows is unusable.
+    """
+    reached: list[str] = []
+
+    class _RecordingPage(_FakePage):
+        async def goto(self, url: str) -> None:  # type: ignore[override]
+            reached.append(url)
+
+    tool, _, _, _ = _make_tool(page=_RecordingPage())
+
+    res = await tool.open_captain_session("http://[not-a-url")
+
+    assert res["opened"] is False
+    assert reached == []
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from probos.events import EventType
+from probos.security.url_guard import check_url_shape
 from probos.tools.browser.actions import action_verify, classify_action, dispatch_action
 from probos.tools.browser.loop_host import shutdown_playwright_host
 from probos.tools.browser.session import BrowserSession
@@ -890,8 +891,19 @@ class BrowserTool:
 
     def _check_domain(self, url: str) -> str:
         """Return a deny reason, or empty string if allowed."""
+        # Actions that carry no URL (state, extract_text, back) are not
+        # navigations and have nothing to check.
         if not url:
             return ""
+
+        # BF-743, part 1: structural refusals the config lists structurally
+        # cannot express. ``file:///etc/passwd`` has no hostname, so it matched
+        # nothing and fell out of the old early-return as *allowed* -- a local
+        # file read through ``browser.goto``.
+        shape = check_url_shape(url)
+        if shape is not None:
+            return shape
+
         try:
             host = (urlparse(url).hostname or "").lower()
         except Exception:
@@ -913,6 +925,19 @@ class BrowserTool:
                     break
             if not allowed:
                 return "not in allowlist"
+
+        # BF-743, part 2: NOT the DNS-resolution half of the floor, and that is
+        # a decision rather than an oversight. ``check_resolved_address`` would
+        # additionally catch a hostname that RESOLVES to a private address
+        # (``localtest.me`` -> 127.0.0.1), but it is a blocking ``getaddrinfo``
+        # on an async path, it makes every navigation depend on DNS succeeding,
+        # and it reports a transient resolution failure as a policy denial --
+        # which is a wrong diagnosis handed to an agent. ``http_fetch`` pays
+        # that cost because it is the one making the request; here Playwright
+        # resolves independently a moment later, so the check is advisory
+        # anyway. Residual, stated rather than implied: a NAME pointing at a
+        # private address is still reachable through the browser. Literals,
+        # schemes and metadata hosts are not.
         return ""
 
     @staticmethod
