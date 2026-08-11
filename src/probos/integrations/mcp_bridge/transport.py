@@ -59,6 +59,52 @@ class Transport(Protocol):
         ...
 
 
+# BF-746: an SSE answer to a single JSON-RPC request is short by construction --
+# the server sends the response and closes. The cap exists so a server that
+# streams indefinitely cannot make this loop the thing that hangs.
+_SSE_MAX_EVENTS = 64
+
+
+def _json_rpc_from_sse(body: str, *, url: str, expect_id: Any = None) -> dict:
+    """Pull the JSON-RPC envelope out of an SSE stream.
+
+    Streamable HTTP permits either framing for the same request, so this is a
+    decoding difference rather than a different protocol -- the payload inside
+    ``data:`` is the identical envelope a JSON response would have carried.
+
+    Matches ``expect_id`` when the stream carries more than one envelope, and
+    otherwise takes the first parseable one, because a server that sends a
+    single unmatched response is likelier to be right than this matcher.
+    """
+    first: dict | None = None
+    for index, block in enumerate(body.replace("\r\n", "\n").split("\n\n")):
+        if index >= _SSE_MAX_EVENTS:
+            break
+        data_lines = [
+            line[5:].lstrip() if line.startswith("data:") else ""
+            for line in block.split("\n")
+            if line.startswith("data:")
+        ]
+        if not data_lines:
+            continue
+        try:
+            envelope = json.loads("\n".join(data_lines))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(envelope, dict):
+            continue
+        if expect_id is not None and envelope.get("id") == expect_id:
+            return envelope
+        if first is None:
+            first = envelope
+
+    if first is not None:
+        return first
+    raise MCPProtocolError(
+        f"no JSON-RPC envelope in the SSE stream from {url}", reason="bad_sse",
+    )
+
+
 class HttpTransport:
     """JSON-RPC-over-Streamable-HTTP wire body (lifted from ``MCPClient._call``).
 
@@ -131,6 +177,19 @@ class HttpTransport:
         if response.status_code >= 400:
             raise MCPProtocolError(
                 f"HTTP {response.status_code} from {url}", reason="http_error",
+            )
+
+        # BF-746: Streamable HTTP lets the server answer with EITHER a JSON body
+        # or an SSE stream, and this transport has always advertised both in its
+        # Accept header while only parsing the first. Microsoft Learn answers
+        # with text/event-stream, so it -- and every server that makes the same
+        # legal choice -- failed here with "bad JSON" before the handshake
+        # finished. Verified live 2026-08-11: 200, content-type
+        # text/event-stream, body framed `event: message\ndata: {...}`.
+        ctype = (self.last_metadata.get("content-type") or "").split(";")[0].strip()
+        if ctype.lower() == "text/event-stream":
+            return _json_rpc_from_sse(
+                response.text, url=url, expect_id=payload.get("id")
             )
 
         try:
