@@ -126,6 +126,9 @@ class BrowserTool:
         self._emit_event = emit_event
         self._runtime = runtime  # AD-706c-1: for vision-LLM verify action
         self._sessions: dict[str, BrowserSession] = {}
+        # BF-749: agent_id -> its current session id. Lets an omitted session_id
+        # continue the agent's own browser instead of launching another.
+        self._agent_sessions: dict[str, str] = {}
         # Token -> {token, session_id, action, params, created_at}
         self._pending_confirmations: dict[str, dict[str, Any]] = {}
         # Lazily-started reaper task; reference held per Async Discipline.
@@ -182,7 +185,7 @@ class BrowserTool:
                     "type": "string",
                     "enum": list(_AGENT_ACTIONS),
                 },
-                "session_id": {"type": "string", "description": "Reuse an existing session, or omit to create a fresh one."},
+                "session_id": {"type": "string", "description": "Omit to continue in the browser you are already using. Pass an id only to target a specific session."},
                 "url": {"type": "string"},
                 "index": {"type": "integer"},
                 "selector": {"type": "string"},
@@ -254,6 +257,8 @@ class BrowserTool:
                     await session.stop()
                 except Exception:
                     logger.debug("AD-706: session %s stop failed", sid, exc_info=True)
+        # BF-749: no session survives shutdown, so no claim may either.
+        self._agent_sessions.clear()
         # BF-695: every session is closed, so the Playwright host thread (if one
         # was ever needed) has no owner left. Closing it here pairs the lazy
         # start in ``BrowserSession.start``. The host is process-wide and
@@ -275,6 +280,7 @@ class BrowserTool:
                 except Exception:
                     logger.debug("AD-706: session %s stop failed", sid, exc_info=True)
                 self._sessions.pop(sid, None)
+                self._release_claim(sid)
                 self._safe_emit(
                     EventType.BROWSER_SESSION_CLOSED,
                     {"session_id": sid, "reason": "expired"},
@@ -323,6 +329,19 @@ class BrowserTool:
                     "AD-1158: binding browser call to workstation session %s "
                     "for agent %s", bound[:12], agent_id or "<unknown>",
                 )
+
+        # BF-749: still nothing, so fall back to this agent's own live session
+        # before minting another. Omitting session_id is the path of least
+        # resistance when a model fills in a tool call, and it used to mean
+        # "launch a fresh Chromium" -- one live question produced four, all on
+        # the same host. It also broke continuity: goto then extract_text
+        # against two different browsers cannot read the page the first one
+        # loaded. The Captain binding above still outranks this, because a
+        # workstation the Captain is watching is a deliberate target.
+        if not session_id_param:
+            mine = self._agent_sessions.get(agent_id or "")
+            if mine and mine in self._sessions:
+                session_id_param = mine
 
         if action not in _AGENT_ACTION_SET:
             elapsed_ms = (time.monotonic() - t0) * 1000.0
@@ -550,6 +569,9 @@ class BrowserTool:
             except Exception:
                 logger.debug("AD-706: stop expired session failed", exc_info=True)
             self._sessions.pop(session_id, None)
+            # BF-749: an expired session must not stay claimable, or the next
+            # omitted-session_id call resolves to a dead id and lands here again.
+            self._release_claim(session_id)
             self._safe_emit(
                 EventType.BROWSER_SESSION_CLOSED,
                 {"session_id": session_id, "reason": "expired"},
@@ -564,6 +586,10 @@ class BrowserTool:
         )
         await session.start()
         self._sessions[new_id] = session
+        # BF-749: claim it for this agent so its next omitted-session_id call
+        # continues here. Keyed per agent -- two agents never share a browser.
+        if agent_id:
+            self._agent_sessions[agent_id] = new_id
         self._safe_emit(
             EventType.BROWSER_SESSION_OPENED,
             {"session_id": new_id, "agent_id": agent_id},
@@ -632,6 +658,10 @@ class BrowserTool:
             return {"connected": False, "reason": f"Could not connect to {endpoint}"}
 
         self._sessions[new_id] = session
+        # BF-749: deliberately NOT claimed. A bridged session is the Captain's
+        # own browser attached over CDP with explicit consent; the id is
+        # returned so the caller can name it. Claiming it would make every
+        # later omitted-session_id call drive the Captain's real browser.
         self._safe_emit(
             EventType.BROWSER_BRIDGE_CONNECTED,
             {"session_id": new_id, "agent_id": agent_id, "host": host},
@@ -662,6 +692,9 @@ class BrowserTool:
                 exc_info=True,
             )
         self._sessions.pop(session_id, None)
+        # BF-749: release any agent's claim, or its next omitted-session_id call
+        # resolves to a session that no longer exists.
+        self._release_claim(session_id)
         self._safe_emit(
             EventType.BROWSER_SESSION_CLOSED,
             {"session_id": session_id, "reason": reason},
@@ -757,8 +790,15 @@ class BrowserTool:
         # it. Contain it here: this method's whole contract is that the Captain
         # gets a reason back, never an exception through the router.
         try:
+            # BF-749: name the session explicitly. ``invoke`` now continues an
+            # agent's existing browser when no id is given, which is right for
+            # crew work and wrong here: this method's contract is to open a
+            # FRESH session, and the Captain may hold several at once. Without
+            # the explicit id a refused navigation would discard the session
+            # this call reused -- closing a page the Captain was already on.
             result = await self.invoke(
-                {"action": "goto", "url": target}, {"agent_id": agent_id},
+                {"action": "goto", "url": target, "session_id": uuid.uuid4().hex},
+                {"agent_id": agent_id},
             )
         except Exception as exc:  # noqa: BLE001 - Tier-2 log-and-degrade
             logger.warning(
@@ -1073,6 +1113,18 @@ class BrowserTool:
             return parsed._replace(query="", fragment="").geturl()
         except Exception:
             return ""
+
+    def _release_claim(self, session_id: str) -> None:
+        """BF-749: drop any agent's claim on a session that no longer exists.
+
+        Called from every path that removes a session, because a stale claim is
+        worse than no claim: the next omitted-``session_id`` call would resolve
+        to a dead id, miss the live-session guard, and mint a fresh Chromium
+        anyway — the exact behaviour the claim exists to prevent.
+        """
+        for agent_id, claimed in list(self._agent_sessions.items()):
+            if claimed == session_id:
+                self._agent_sessions.pop(agent_id, None)
 
     def _safe_emit(self, event_type: EventType, data: dict[str, Any]) -> None:
         if self._emit_event is None:
