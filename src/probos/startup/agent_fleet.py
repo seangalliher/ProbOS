@@ -217,7 +217,15 @@ async def create_agent_fleet(
             yeoman = yeo_agents[0]
             try:
                 await yeoman.initialize(
-                    captain_card=getattr(runtime, "captain_card", None),
+                    # AD-1234: the second injection site. Yeoman adopted the
+                    # persona whenever the card was not None, so disabling the
+                    # Card left it in place here even once runtime honoured the
+                    # flag. One flag, both sites, or it is not a contract.
+                    captain_card=(
+                        getattr(runtime, "captain_card", None)
+                        if getattr(config.cognitive, "captain_card_enabled", True)
+                        else None
+                    ),
                     duty_schedule=getattr(runtime, "duty_schedule", None),
                     digest_window_seconds=getattr(
                         config.proactive_cognitive,

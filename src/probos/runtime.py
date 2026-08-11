@@ -2412,8 +2412,12 @@ class ProbOSRuntime:
         from probos.cognitive.session_manager import SessionManager
         from probos.cognitive.task_recovery import TaskRecoveryManager
         import hashlib
-        # Captain Card path
-        captain_card_path = self._data_dir / "captain_card.json"
+        # AD-1234: honour the configured path. It was hardcoded here while
+        # ``captain_card_path`` sat in CognitiveConfig unread, so an operator
+        # who pointed it elsewhere silently got the default.
+        _cc_cfg = getattr(self.config, "cognitive", None)
+        _cc_rel = str(getattr(_cc_cfg, "captain_card_path", "") or "captain_card.json")
+        captain_card_path = self._data_dir / _cc_rel
         # Load or create Captain Card
         if captain_card_path.exists():
             self.captain_card = load_card(captain_card_path)
@@ -2439,8 +2443,19 @@ class ProbOSRuntime:
             pending = await self.task_recovery.list_pending_delegations(self.active_session.id)
             logger.info(f"Pending delegations: {len(pending)}")
 
-        # Bootstrap LLM context with Captain Card
-        self._system_context = self.captain_card.to_system_context()
+        # AD-1234: the Card is always LOADED (SessionManager keys on its id),
+        # but injection is what ``captain_card_enabled`` governs, and it was
+        # never read -- setting it false did nothing at all. Bounded by
+        # ``captain_card_max_tokens``, also previously unread; the budget is
+        # approximated as chars/4, exactly as its description says.
+        if getattr(_cc_cfg, "captain_card_enabled", True):
+            _ctx = self.captain_card.to_system_context()
+            _cap = int(getattr(_cc_cfg, "captain_card_max_tokens", 500) or 500) * 4
+            self._system_context = (
+                _ctx if len(_ctx) <= _cap else _ctx[:_cap].rstrip() + "\n"
+            )
+        else:
+            self._system_context = ""
 
         # Phase 1: Infrastructure (AD-517)
         from probos.startup.infrastructure import boot_infrastructure

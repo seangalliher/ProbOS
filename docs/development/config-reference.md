@@ -153,8 +153,7 @@ Cognitive layer configuration.
 | `background_demotion_factor` | `float` | `0.25` | — |  |
 | `captain_card_enabled` | `bool` | `True` | — | AD-739: inject the Captain Card into CognitiveAgent system prompts. Default ON — the Card is a benign context anchor. |
 | `captain_card_path` | `str` | `'captain_card.json'` | — | AD-739: relative path under runtime.data_dir for the Captain Card JSON sidecar. |
-| `captain_card_max_tokens` | `int` | `500` | ≥ 100, ≤ 1500 | AD-739: token budget for the rendered Card text injected into system prompts. Approximated as max chars / 4. |
-| `captain_card_refresh_min_interval_seconds` | `int` | `3600` | ≥ 60 | AD-739: minimum interval between Dreaming-driven Card refreshes. |
+| `captain_card_max_tokens` | `int` | `500` | ≥ 100, ≤ 1500 | AD-739: token budget for the rendered Card text injected into system prompts. Approximated as max chars / 4. AD-1234: actually enforced now -- it was unread until then. |
 | `artifact_fenced_threshold_lines` | `int` | `40` | ≥ 10 | AD-797: fenced code block line-count threshold for artifact extraction. Blocks shorter than this stay inline. |
 
 ## `memory`

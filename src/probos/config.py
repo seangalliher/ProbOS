@@ -572,14 +572,8 @@ class CognitiveConfig(BaseModel):
         le=1500,
         description=(
             "AD-739: token budget for the rendered Card text injected "
-            "into system prompts. Approximated as max chars / 4."
-        ),
-    )
-    captain_card_refresh_min_interval_seconds: int = Field(
-        default=3600,
-        ge=60,
-        description=(
-            "AD-739: minimum interval between Dreaming-driven Card refreshes."
+            "into system prompts. Approximated as max chars / 4. "
+            "AD-1234: actually enforced now -- it was unread until then."
         ),
     )
 

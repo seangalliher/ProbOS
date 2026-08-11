@@ -130,7 +130,12 @@ def test_cognitive_config_defaults() -> None:
     assert cfg.cognitive.captain_card_enabled is True
     assert cfg.cognitive.captain_card_path == "captain_card.json"
     assert cfg.cognitive.captain_card_max_tokens == 500
-    assert cfg.cognitive.captain_card_refresh_min_interval_seconds == 3600
+    # AD-1234 (#1117): ``captain_card_refresh_min_interval_seconds`` was
+    # DELETED, not renamed. It described "Dreaming-driven Card refreshes" and
+    # nothing in src/ ever refreshed the Card, so it rate-limited a mechanism
+    # that does not exist. This assertion is kept and inverted rather than
+    # dropped: if the field returns, it must arrive with the refresh it bounds.
+    assert not hasattr(cfg.cognitive, "captain_card_refresh_min_interval_seconds")
 
 
 # 10. Public surface — package exposes the canonical names.
