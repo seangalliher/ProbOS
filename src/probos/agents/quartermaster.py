@@ -64,6 +64,7 @@ class QuartermasterAgent(BaseAgent):
         reconcile_backoff_seconds: int = 600,
         min_item_age_seconds: int = 30,
         stall_timeout_seconds: int = 0,
+        strand_timeout_seconds: int = 0,
         local_node_id: str = "node-1",
         federation_enabled: bool = False,
         **kwargs: Any,
@@ -82,6 +83,10 @@ class QuartermasterAgent(BaseAgent):
         self._min_item_age_seconds = min_item_age_seconds
         # AD-881: live-but-stalled reroute threshold (0 = disabled, default off)
         self._stall_timeout_seconds = stall_timeout_seconds
+        # BF-752: the strand threshold for an in_progress item the router may
+        # never dispatch. Separate because that path can only END an item, never
+        # replay one, so it is safe to run by default where reroute is not.
+        self._strand_timeout_seconds = strand_timeout_seconds
         # AD-882: federation node-scope guard (no-op on a single node).
         self._local_node_id = local_node_id
         self._federation_enabled = federation_enabled
@@ -285,10 +290,22 @@ class QuartermasterAgent(BaseAgent):
             # AD-881: the sweep owns the clock + threshold; the reconciler stays
             # pure and receives the precomputed staleness signal. updated_at is
             # last board-mutation (not a heartbeat) — a coarse stall signal.
+            #
+            # BF-752: which threshold applies depends on dispatchability,
+            # because the consequences differ. A dispatchable item gets
+            # rerouted, so a wrong call replays live work -- hence AD-881's
+            # default-off. A non-dispatchable one can only be stranded terminal,
+            # so a wrong call ends an item that was already unrunnable. One
+            # threshold for both meant the safe path inherited the risky path's
+            # default and nothing could ever end a stalled promoted turn.
             is_stalled = False
-            if self._stall_timeout_seconds > 0 and wi.get("status") == "in_progress":
+            if wi.get("status") == "in_progress":
+                threshold = (
+                    self._stall_timeout_seconds if is_disp
+                    else self._strand_timeout_seconds
+                )
                 updated_at = wi.get("updated_at") or 0
-                if float(updated_at) < time.time() - self._stall_timeout_seconds:
+                if threshold > 0 and float(updated_at) < time.time() - threshold:
                     is_stalled = True
             decision = self._reconciler.classify(
                 wi, is_dispatchable=is_disp, is_stalled=is_stalled

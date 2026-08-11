@@ -2587,6 +2587,9 @@ def _wire_board_reconciler(*, runtime: Any, config: "SystemConfig") -> bool:
     agent._min_item_age_seconds = cfg.min_item_age_seconds
     # AD-881: live-but-stalled reroute threshold (0 = disabled, default off).
     agent._stall_timeout_seconds = cfg.stall_timeout_seconds
+    # BF-752: strand threshold for in_progress items the router may never
+    # dispatch — the only path that can end a stalled promoted turn.
+    agent._strand_timeout_seconds = cfg.strand_timeout_seconds
     # AD-882: federation node-scope guard — local node id + federation-enabled flag.
     agent._local_node_id = config.federation.node_id
     agent._federation_enabled = config.federation.enabled

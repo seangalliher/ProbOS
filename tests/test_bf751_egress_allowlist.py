@@ -279,3 +279,105 @@ async def test_candidates_that_cannot_be_pulled_are_reported(caplog) -> None:
 
     assert pulled == []
     assert "none could be pulled" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# BF-751a: the silent outcomes were logged at DEBUG, so at the vessel's INFO
+# level "no third silent outcome" was never actually met. A run that offered
+# nothing still gave no reason why, and diagnosing it cost a restart and a
+# guess.
+# ---------------------------------------------------------------------------
+
+def _wb(records: list[Any], *, store: Any | None = None) -> Any:
+    from probos.cognitive.mcp_workbench import MCPWorkbench
+
+    return MCPWorkbench(
+        tool_registry=None,
+        bridge=SimpleNamespace(get_client=lambda key: None),
+        consensus_invoke=None,
+        episode_writer=None,
+        server_store=_Store(records) if store is None else store,
+        perm_store=None,
+        dept_grant_store=None,
+        risk_store=None,
+        ontology=None,
+        agent_registry=None,
+    )
+
+
+def _record() -> Any:
+    return SimpleNamespace(
+        name="microsoft-learn", type="http", url=LEARN,
+        enabled=True, default_risk="open", id="s1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_zero_limit_says_so_at_info(caplog) -> None:
+    with caplog.at_level(logging.INFO):
+        assert await _wb([_record()]).preload_open_tools("a1", limit=0) == []
+
+    assert "limit=0" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_an_unwired_store_says_so_at_info(caplog) -> None:
+    from probos.cognitive.mcp_workbench import MCPWorkbench
+
+    wb = MCPWorkbench(
+        tool_registry=None, bridge=None, consensus_invoke=None,
+        episode_writer=None, server_store=None, perm_store=None,
+        dept_grant_store=None, risk_store=None, ontology=None,
+        agent_registry=None,
+    )
+
+    with caplog.at_level(logging.INFO):
+        assert await wb.preload_open_tools("a1", limit=24) == []
+
+    assert "server_store_wired=False" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_server_that_enumerates_nothing_names_that_cause(caplog) -> None:
+    """The live shape: a server is enabled, egress or transport eats the tool
+    list, and the agent is offered nothing. This is the message that would have
+    saved a restart and two rounds of inference."""
+    wb = _wb([_record()])
+
+    async def _none(_rec: Any) -> list[dict[str, str]]:
+        return []
+
+    wb._enumerate_tools = _none  # type: ignore[assignment]
+
+    with caplog.at_level(logging.INFO):
+        assert await wb.preload_open_tools("a1", limit=24) == []
+
+    assert "1 enabled server(s), 0 tool(s) enumerated" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_tools_are_counted_separately(caplog) -> None:
+    """'Enumerated but unauthorized' and 'never enumerated' are different
+    failures with different fixes; the message has to tell them apart."""
+    wb = _wb([_record()])
+
+    async def _two(_rec: Any) -> list[dict[str, str]]:
+        return [{"name": "a", "description": ""}, {"name": "b", "description": ""}]
+
+    wb._enumerate_tools = _two  # type: ignore[assignment]
+    wb._grants = lambda aid: ([], [])  # type: ignore[assignment]
+
+    with caplog.at_level(logging.INFO):
+        assert await wb.preload_open_tools("a1", limit=24) == []
+
+    assert "2 tool(s) enumerated, 2 unauthorized" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_ship_with_no_mcp_servers_stays_quiet(caplog) -> None:
+    """Most vessels run none. Reporting 'offered nothing' every turn would be
+    noise, and noise is how the real signal got missed in the first place."""
+    with caplog.at_level(logging.INFO):
+        assert await _wb([]).preload_open_tools("a1", limit=24) == []
+
+    assert "AD-1239" not in caplog.text

@@ -2701,6 +2701,7 @@ AD-876: periodic + warm-boot work-board reconciliation (Quartermaster).
 | `min_item_age_seconds` | `int` | `30` | ≥ 0, ≤ 600 |  |
 | `reactive_reclaim` | `bool` | `False` | — |  |
 | `stall_timeout_seconds` | `int` | `0` | ≥ 0, ≤ 86400 |  |
+| `strand_timeout_seconds` | `int` | `14400` | ≥ 0, ≤ 604800 |  |
 
 ## `process_chain_registry`
 

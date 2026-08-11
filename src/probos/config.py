@@ -5674,6 +5674,23 @@ class WorkBoardReconcilerConfig(BaseModel):
     # made no board progress within this window is rerouted. updated_at is
     # last-mutation (not a heartbeat), so this is a coarse signal — default off.
     stall_timeout_seconds: int = Field(default=0, ge=0, le=86400)  # 0 = disabled
+    # BF-752: the same staleness question for an in_progress item the router may
+    # never dispatch — an AD-1165 promoted turn. Separate from the field above
+    # because the risk is not symmetric. Rerouting a live-but-quiet DISPATCHABLE
+    # item can replay work that was actually still running, which is why that one
+    # is off by default. A non-dispatchable one is different: BF-730 already
+    # established it can never be dispatched at all, so the only outcome is
+    # ``strand_terminal`` — status ``failed`` with a recorded reason. That turns
+    # an eternal ``in_progress`` into an honest ending and can replay nothing.
+    #
+    # Left at 0 the strand path is unreachable, which is how a work item that
+    # died in a 2.5-minute LLM outage sat in_progress with nothing able to end
+    # it. BF-730 measured stranded items idle between 23.5h and 182h.
+    #
+    # 4h, not minutes: updated_at is last board-mutation, so a promoted turn
+    # doing long quiet work must not be declared dead. Well inside BF-730's
+    # measured range, far outside any plausible live turn.
+    strand_timeout_seconds: int = Field(default=14_400, ge=0, le=604_800)
 
 
 class CommunicationsConfig(BaseModel):

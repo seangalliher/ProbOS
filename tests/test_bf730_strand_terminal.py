@@ -229,7 +229,14 @@ async def test_the_crossing_a_promoted_turn_ends_and_is_never_dispatched() -> No
         work_item_store=store,
         work_item_router=router,
         reconciler=_reconciler(),
+        # BF-752: stranding is now governed by ``strand_timeout_seconds``, not
+        # ``stall_timeout_seconds``. The contract this test pins is unchanged --
+        # a stalled promoted turn ends and is never dispatched -- only the knob
+        # that arms it moved, because reroute and strand carry different risk
+        # and so cannot share a default. Both are set here so the split itself
+        # is visible: reroute armed, and stranding still the outcome.
         stall_timeout_seconds=int(STALL),
+        strand_timeout_seconds=int(STALL),
         reconcile_backoff_seconds=0,
         min_item_age_seconds=0,
     )
@@ -264,6 +271,7 @@ async def test_the_crossing_an_in_flight_promoted_turn_is_left_alone() -> None:
         work_item_router=router,
         reconciler=_reconciler(),
         stall_timeout_seconds=int(STALL),
+        strand_timeout_seconds=int(STALL),  # BF-752: see the crossing test above
         reconcile_backoff_seconds=0,
         min_item_age_seconds=0,
     )

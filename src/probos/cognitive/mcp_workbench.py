@@ -360,28 +360,41 @@ class MCPWorkbench:
         to end. Revisit if a vessel runs enough servers for the sum to matter.
         """
         if limit <= 0 or self._server_store is None:
-            logger.debug(
-                "AD-1239: not offering MCP tools by name to %s (limit=%d, "
-                "server_store=%s)",
+            # BF-751a: INFO, not debug. This shipped as debug and the live vessel
+            # runs at INFO, so "no third silent outcome" was not actually met --
+            # a run that offered nothing still gave no reason why.
+            logger.info(
+                "AD-1239: offering no MCP tools by name to %s (limit=%d, "
+                "server_store_wired=%s)",
                 agent_id[:12] or "?", limit, self._server_store is not None,
             )
             return []
 
         grants, dept_grants = self._grants(agent_id)
         candidates: list[tuple[str, str]] = []
+        # BF-751a: counted so a zero-candidate result can name its own cause
+        # instead of being indistinguishable from "no servers configured".
+        servers_enabled = 0
+        tools_seen = 0
+        unauthorized = 0
+        not_open = 0
         for record in self._server_store.list_sync():
             if not record.enabled:
                 continue
+            servers_enabled += 1
             for tool in await self._enumerate_tools(record):
                 tool_name = tool.get("name", "")
                 if not tool_name:
                     continue
+                tools_seen += 1
                 enabled, _source = resolve_mcp_access(
                     grants, record.name, tool_name, department_grants=dept_grants
                 )
                 if not enabled:
+                    unauthorized += 1
                     continue
                 if self._effective_risk(record, tool_name) is not McpToolRisk.OPEN:
+                    not_open += 1
                     continue
                 candidates.append((record.name, tool_name))
 
@@ -406,9 +419,18 @@ class MCPWorkbench:
                 len(candidates), agent_id[:12] or "?",
             )
         else:
-            logger.debug(
-                "AD-1239: no authorized OPEN-risk MCP tools to offer agent %s",
-                agent_id[:12] or "?",
+            # BF-751a: name the cause. A ship with no MCP servers stays quiet;
+            # one WITH servers that offered nothing has to say which filter ate
+            # them, or diagnosing it costs a restart and a guess.
+            log = logger.info if servers_enabled else logger.debug
+            log(
+                "AD-1239: offered agent %s no MCP tools by name — %d enabled "
+                "server(s), %d tool(s) enumerated, %d unauthorized, %d not "
+                "OPEN-risk. Zero tools enumerated from a live server usually "
+                "means egress or transport; unauthorized means no grant "
+                "reaches this agent.",
+                agent_id[:12] or "?", servers_enabled, tools_seen,
+                unauthorized, not_open,
             )
         return pulled
 
