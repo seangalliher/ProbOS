@@ -4082,6 +4082,12 @@ class MCPServerConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     cwd: str = ""
     timeout_seconds: float | None = None
+    # BF-750: the name this server is seeded into McpServerStore under, and so
+    # the name its grants are keyed by (mcp:{name}, mcp:{name}:{tool}). Optional
+    # -- derived from the transport identity when empty -- but an operator who
+    # sets it gets a readable grant id instead of learn-microsoft-com-api-mcp.
+    # Changing it after grants exist orphans them, so it is stable by contract.
+    name: str = ""
 
     @model_validator(mode="after")
     def _validate_transport(self) -> "MCPServerConfig":

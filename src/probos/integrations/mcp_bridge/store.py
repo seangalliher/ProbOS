@@ -27,7 +27,9 @@ import sqlite3
 import time
 import uuid
 from dataclasses import dataclass, field, replace
+from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import urlparse
 
 from probos.integrations.mcp_bridge.risk import McpToolRisk
 from probos.protocols import ConnectionFactory
@@ -119,6 +121,43 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # path stays tolerant (a bad legacy value is not rejected on load); this is the
 # create/update *boundary* guard only (Defense in Depth).
 _VALID_RISK_TIERS: frozenset[str] = frozenset(r.value for r in McpToolRisk)
+
+
+def derive_server_name(
+    *, server_type: str, url: str = "", command: str = ""
+) -> str:
+    """BF-750: a stable store name for a server declared in ``system.yaml``.
+
+    Config entries carry no ``name`` (``MCPServerConfig`` never had one), but
+    the store requires a unique one matching ``^[a-z0-9][a-z0-9-]*$`` — and that
+    name is load-bearing far beyond the row: MCP grants are keyed
+    ``mcp:{server}`` and ``mcp:{server}:{tool}``. A name that changed between
+    boots would silently revoke every grant issued against it. So this is a pure
+    function of the transport identity and nothing else: same config entry, same
+    name, forever.
+
+    HTTP derives from host + path (``https://learn.microsoft.com/api/mcp`` ->
+    ``learn-microsoft-com-api-mcp``) rather than host alone, so two servers on
+    one host do not collide. stdio derives from the command's basename.
+
+    Returns ``""`` when no legal name can be formed; the caller skips seeding
+    rather than inventing one. An operator who wants a readable name sets
+    ``name:`` on the config entry, which always wins over this.
+    """
+    if server_type == "http":
+        parsed = urlparse(url)
+        # A hostname is required, not merely a non-empty url. ``urlparse("not a
+        # url")`` yields no hostname and a path of the whole string, which would
+        # slug cleanly to ``not-a-url`` and seed a junk row that no bridge call
+        # can ever reach. No host, no name.
+        if not parsed.hostname:
+            return ""
+        raw = f"{parsed.hostname}{parsed.path or ''}"
+    else:
+        raw = PurePosixPath((command or "").replace("\\", "/")).name
+
+    slug = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
+    return slug if _NAME_RE.match(slug) else ""
 
 
 class McpServerValidationError(ValueError):

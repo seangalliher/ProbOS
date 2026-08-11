@@ -416,6 +416,87 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+async def _seed_config_mcp_servers(config: Any, store: Any) -> int:
+    """BF-750: persist ``config.mcp.servers`` into the store. Returns rows added.
+
+    Seed-if-absent, never overwrite. The store is the runtime-mutable surface: a
+    Captain may have disabled a server, re-tiered its risk, or edited it through
+    the CRUD API, and a boot-time overwrite would silently undo that. An
+    operator who changes a URL in ``system.yaml`` after first boot changes it in
+    the store too — stated here rather than discovered later.
+
+    Existence is keyed on the derived (or configured) NAME, not the URL, because
+    the name is what grants are issued against. Matching on URL would let a
+    config edit orphan every ``mcp:{server}`` grant.
+
+    Log-and-degrade throughout. A server carrying an Authorization header is
+    refused by the store's secret-guard by design (the secret must go through
+    the credential vault, not a config file); that must not stop the boot, and
+    the bridge still holds the registration either way.
+    """
+    from probos.integrations.mcp_bridge.store import (
+        McpServerRecord,
+        derive_server_name,
+        validate_record,
+    )
+
+    existing = {rec.name for rec in store.list_sync()}
+    added = 0
+    for srv in config.mcp.servers:
+        name = srv.name or derive_server_name(
+            server_type=srv.type, url=srv.url, command=srv.command
+        )
+        if not name:
+            logger.warning(
+                "BF-750: could not derive a store name for the configured %s MCP "
+                "server (url=%r command=%r); it stays bridge-only and no agent "
+                "can discover it. Set 'name:' on the entry to fix this.",
+                srv.type, srv.url, srv.command,
+            )
+            continue
+        if name in existing:
+            continue
+        try:
+            record = McpServerRecord(
+                name=name,
+                type=srv.type,
+                url=srv.url,
+                headers=dict(srv.headers),
+                command=srv.command,
+                args=list(srv.args),
+                env=dict(srv.env),
+                cwd=srv.cwd,
+                timeout_seconds=srv.timeout_seconds,
+            )
+            # Defense in depth: ``McpServerStore.create`` checks only name
+            # uniqueness -- the secret-guard and the stdio command allowlist
+            # live in ``validate_record``, which until now only the CRUD router
+            # called. Without this, a config entry carrying
+            # ``Authorization: Bearer ...`` would be written to mcp_servers.db
+            # in plaintext, and a stdio entry could name a command the
+            # allowlist forbids. The config path must clear the same gate the
+            # API path clears.
+            validate_record(record, command_allowlist=list(config.mcp.command_allowlist))
+            await store.create(record)
+        except Exception:
+            logger.warning(
+                "BF-750: could not seed configured MCP server %r into the store; "
+                "it stays bridge-only and no agent can discover it. A server "
+                "carrying credentials in config is refused by design — declare "
+                "it through the credential vault instead.",
+                name, exc_info=True,
+            )
+            continue
+        existing.add(name)
+        added += 1
+        logger.info(
+            "BF-750: seeded configured MCP server %r into the store; agents can "
+            "now discover it once they are granted mcp:%s",
+            name, name,
+        )
+    return added
+
+
 def _wire_mesh_intent_tools(*, runtime: Any) -> list[str]:
     """AD-909: Seed the universal mesh read-intents into the PERSISTENT catalog.
 
@@ -3961,6 +4042,17 @@ async def finalize_startup(
             )
             await mcp_server_store.start()
             runtime.mcp_server_store = mcp_server_store
+            # BF-750: seed config-declared servers INTO the store before reading
+            # it back. Until this existed both arrows pointed at the bridge
+            # (config -> bridge above, store -> bridge below) and nothing ever
+            # wrote config -> store. But the bridge is not what agents read:
+            # MCPWorkbench.find_mcp_tool / preload_open_tools /
+            # enabled_server_names all iterate the STORE. So a server an
+            # operator declared in system.yaml was registered, reachable by
+            # direct bridge call, and invisible to every agent on the ship --
+            # which is why a counselor asked a documentation question drove four
+            # Chromium instances past a connected learn.microsoft.com server.
+            await _seed_config_mcp_servers(config, mcp_server_store)
             for rec in mcp_server_store.list_sync():
                 if not rec.enabled:
                     continue
