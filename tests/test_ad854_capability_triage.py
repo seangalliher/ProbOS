@@ -58,7 +58,7 @@ class _FakeSelfMod:
         self._record = record
         self.calls: list[tuple] = []
 
-    async def handle_unhandled_intent(self, intent_name, description, params):
+    async def handle_unhandled_intent(self, intent_name, description, params, **_kw):
         self.calls.append((intent_name, description, params))
         return self._record
 

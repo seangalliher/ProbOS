@@ -129,7 +129,15 @@ class _SelfMod:
         self.calls: list[tuple[str, str]] = []
 
     async def handle_unhandled_intent(
-        self, intent_name: str, description: str, _params: dict[str, str]
+        self,
+        intent_name: str,
+        description: str,
+        _params: dict[str, str],
+        # BF-744: the real signature also takes requires_consensus and
+        # execution_context. A double narrower than the thing it stands in for
+        # fails the moment production starts passing them -- which is what
+        # happened here, and is why it is widened rather than pinned.
+        **_kw: Any,
     ) -> Any:
         self.calls.append((intent_name, description))
         return self._record

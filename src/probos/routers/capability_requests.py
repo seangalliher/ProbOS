@@ -254,6 +254,10 @@ async def _fulfil_build_request(
         gap_target=decided.target,
         rationale=decided.rationale,
         self_mod_pipeline=getattr(runtime, "self_mod_pipeline", None),
+        # BF-744: what the gap actually asked for, carried on the request since
+        # file time. Without it an approved build designed an agent with
+        # requires_consensus=False no matter how destructive the gap was.
+        design_context=decided.payload,
     )
 
 

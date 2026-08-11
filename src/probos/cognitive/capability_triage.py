@@ -135,6 +135,26 @@ def _peer_precedent(
     return False
 
 
+_DESIGN_CONTEXT_KEYS = (
+    "intent_description",
+    "parameters",
+    "requires_consensus",
+    "execution_context",
+)
+
+
+def _build_payload(design_context: dict[str, Any] | None) -> dict[str, Any] | None:
+    """BF-744: the design context a later approval needs, and nothing else.
+
+    Bounded to four known keys so a caller cannot use the request payload as an
+    open side-channel, and so what a Captain approves is what gets designed.
+    """
+    if not isinstance(design_context, dict):
+        return None
+    out = {k: design_context[k] for k in _DESIGN_CONTEXT_KEYS if k in design_context}
+    return out or None
+
+
 async def triage_and_file(
     *,
     gap_target: str,
@@ -148,6 +168,7 @@ async def triage_and_file(
     ontology: Any = None,
     trust_network: Any = None,
     self_mod_pipeline: Any = None,
+    design_context: dict[str, Any] | None = None,
     config: CapabilityTriageConfig | None = None,
 ) -> CapabilityRequest:
     """Resolve a capability gap to a rung, file the request, and route fulfilment.
@@ -193,6 +214,12 @@ async def triage_and_file(
         target=gap_target,
         rationale=rationale,
         work_item_id=work_item_id,
+        # BF-744: the design context rides on the request so a build reached
+        # LATER, through Captain approval, is designed with the same governance
+        # properties as one built at file time. Without it, approving a pending
+        # build produced an agent with requires_consensus=False regardless of
+        # what the gap actually asked for.
+        payload=_build_payload(design_context) if kind == "build" else None,
     )
     logger.info(
         "AD-854: triaged %r for %s -> %s (request %s)",
@@ -218,6 +245,7 @@ async def triage_and_file(
             gap_target=gap_target,
             rationale=rationale,
             self_mod_pipeline=self_mod_pipeline,
+            design_context=design_context,
         )
     # install: always Captain-gated — leave pending.
     return req
@@ -299,6 +327,7 @@ async def _route_build(
     gap_target: str,
     rationale: str,
     self_mod_pipeline: Any,
+    design_context: dict[str, Any] | None = None,
 ) -> CapabilityRequest:
     """Route a build rung to the self-modification pipeline (own approval gate)."""
     return await fulfil_build(
@@ -307,6 +336,7 @@ async def _route_build(
         gap_target=gap_target,
         rationale=rationale,
         self_mod_pipeline=self_mod_pipeline,
+        design_context=design_context,
     ) or req
 
 
@@ -373,6 +403,7 @@ async def fulfil_build(
     gap_target: str,
     rationale: str,
     self_mod_pipeline: Any,
+    design_context: dict[str, Any] | None = None,
 ) -> CapabilityRequest | None:
     """Run the self-mod pipeline for an approved ``build`` request, then fulfil it.
 
@@ -381,6 +412,14 @@ async def fulfil_build(
     record that was rejected or never activated — leaves the request
     approved-and-unfulfilled and therefore retriable, rather than announcing an
     agent that does not exist.
+
+    BF-744: ``design_context`` carries the four things this call used to drop.
+    It passed three positionals — name, rationale, ``{}`` — so
+    ``requires_consensus`` took its ``False`` default and every agent designed
+    through the capability ladder shipped WITHOUT a consensus gate, however
+    destructive the gap was. That contradicts the standing rule that destructive
+    intents must set ``requires_consensus=True``. Absent context reproduces the
+    old call exactly, so a caller that has none is unchanged.
     """
     if self_mod_pipeline is None:
         logger.warning(
@@ -390,10 +429,15 @@ async def fulfil_build(
             request_id[:12], gap_target,
         )
         return None
+    ctx = design_context if isinstance(design_context, dict) else {}
+    params = ctx.get("parameters")
     record = await self_mod_pipeline.handle_unhandled_intent(
         gap_target,
-        rationale or f"Capability gap: {gap_target}",
-        {},
+        str(ctx.get("intent_description") or rationale
+            or f"Capability gap: {gap_target}"),
+        params if isinstance(params, dict) else {},
+        requires_consensus=bool(ctx.get("requires_consensus", False)),
+        execution_context=str(ctx.get("execution_context") or ""),
     )
     status = getattr(record, "status", None) if record is not None else None
     if status != "active":
