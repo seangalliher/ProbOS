@@ -292,6 +292,11 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     Synchronous portion of the wiring; the async portion (RecordingReaper
     start, AD-706b) is invoked separately via ``_start_recording_reaper``
     from the async ``finalize_startup`` caller.
+
+    BF-753: this function declares reaper attributes it owns and nothing else.
+    It used to also null ``mcp_workbench`` / ``mcp_workbench_reaper`` as a
+    pre-declaration, but it runs 715 lines AFTER the MCP block that wires them,
+    so every boot built the workbench and then discarded the handle.
     """
     cfg = getattr(config, "browser_tool", None)
     if not cfg or not cfg.enabled:
@@ -407,12 +412,8 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     runtime.recording_reaper = None
     # AD-733-1: AttachmentReaper attribute -- async-started below.
     runtime.attachment_reaper = None
-    # AD-986d: TranscriptReaper attribute -- async-started below (default-off).
+    # AD-986d: TranscriptReaper attribute -- default-off; async-started below.
     runtime.transcript_reaper = None
-    # AD-1019c: MCP workbench + idle-TTL reaper attributes (default-OFF gate
-    # config.mcp.agent_tools_enabled; wired in the async MCP block below).
-    runtime.mcp_workbench = None
-    runtime.mcp_workbench_reaper = None
     return True
 
 
