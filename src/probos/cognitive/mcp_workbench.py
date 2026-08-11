@@ -320,6 +320,71 @@ class MCPWorkbench:
         logger.info("AD-1019c: pulled MCP tool %s onto the workbench", tool_id)
         return True
 
+    async def preload_open_tools(
+        self, agent_id: str, *, limit: int
+    ) -> list[str]:
+        """AD-1239: pull the agent's OPEN-risk authorized tools so they are
+        offered BY NAME, not only behind the ``find_mcp_tool`` search hop.
+
+        A search tool is not a capability an agent can see. Offered only
+        ``find_mcp_tool`` — "search for an MCP tool by what you want to do" — a
+        counselor asked a documentation question reached for the browser
+        instead, which advertises a concrete action vocabulary and reads like a
+        thing that does something. The docs server was connected and authorized
+        the whole time. Naming its tools is what makes MCP the obvious path.
+
+        Only ``OPEN``-risk tools are preloaded. Making a CONFIRM/CONSENSUS tool
+        invocable stays a deliberate act, and the search hop is what makes it
+        deliberate — so this widens *discoverability*, never authorization.
+
+        Deterministically ordered (server name, then tool name) and truncated to
+        ``limit`` so the offered set is stable turn to turn; an agent that saw a
+        tool last turn does not lose it to dict ordering this turn. ``limit <=
+        0`` preloads nothing. Never raises — a server that cannot be enumerated
+        contributes no tools.
+
+        Cost, stated rather than inherited: this runs once per agentic turn and
+        makes one live ``tools/list`` round-trip per enabled server. That is the
+        same per-call cost ``find_mcp_tool`` has always paid, now on a warmer
+        path — tens to a few hundred milliseconds against a turn already
+        dominated by an LLM call. Deliberately NOT cached: a cache would mean a
+        newly-added tool stays invisible for its TTL, and an agent being unable
+        to see a tool the operator just connected is the failure this AD exists
+        to end. Revisit if a vessel runs enough servers for the sum to matter.
+        """
+        if limit <= 0 or self._server_store is None:
+            return []
+
+        grants, dept_grants = self._grants(agent_id)
+        candidates: list[tuple[str, str]] = []
+        for record in self._server_store.list_sync():
+            if not record.enabled:
+                continue
+            for tool in await self._enumerate_tools(record):
+                tool_name = tool.get("name", "")
+                if not tool_name:
+                    continue
+                enabled, _source = resolve_mcp_access(
+                    grants, record.name, tool_name, department_grants=dept_grants
+                )
+                if not enabled:
+                    continue
+                if self._effective_risk(record, tool_name) is not McpToolRisk.OPEN:
+                    continue
+                candidates.append((record.name, tool_name))
+
+        pulled: list[str] = []
+        for server_name, tool_name in sorted(candidates)[:limit]:
+            if await self.pull_tool(agent_id, server_name, tool_name):
+                pulled.append(f"mcp:{server_name}:{tool_name}")
+        if pulled:
+            logger.info(
+                "AD-1239: offered agent %s %d MCP tool(s) by name (%d OPEN-risk "
+                "authorized candidate(s), limit %d)",
+                agent_id[:12] or "?", len(pulled), len(candidates), limit,
+            )
+        return pulled
+
     def _touch(self, tool_id: str) -> None:
         entry = self._pulled.get(tool_id)
         if entry is not None:
@@ -374,6 +439,27 @@ class MCPWorkbench:
         """Number of adapters currently warm on the workbench."""
         return len(self._pulled)
 
+    @property
+    def enabled_server_names(self) -> list[str]:
+        """AD-1239: names of the currently connected, enabled MCP servers.
+
+        Public so ``find_mcp_tool`` can NAME them in its description instead of
+        describing an abstract search. "Search for an MCP tool" told an agent
+        nothing about whether anything was there to find; "servers connected:
+        microsoft-learn" tells it what it can reach.
+        """
+        if self._server_store is None:
+            return []
+        try:
+            return sorted(r.name for r in self._server_store.list_sync() if r.enabled)
+        except Exception:
+            logger.warning(
+                "AD-1239: could not list MCP servers for the find_mcp_tool "
+                "description; describing it without server names",
+                exc_info=True,
+            )
+            return []
+
 
 class _FindMcpToolTool:
     """The ``find_mcp_tool`` active-search Tool (AD-1019c DD-2).
@@ -400,10 +486,23 @@ class _FindMcpToolTool:
 
     @property
     def description(self) -> str:
+        # AD-1239: name the connected servers and lead with retrieval. The
+        # previous text -- "search for an MCP tool by what you want to do (e.g.
+        # 'create a github issue')" -- described an abstract search whose only
+        # example was an ACTION, so an agent with a QUESTION did not recognise
+        # itself in it and reached for the browser instead.
+        servers = self._workbench.enabled_server_names
+        connected = (
+            f" Servers connected: {', '.join(servers)}." if servers else ""
+        )
         return (
-            "Search for an MCP tool by what you want to do (e.g. 'create a "
-            "github issue'); returns ranked authorized matches and makes them "
-            "callable."
+            "Find a tool from a connected MCP server -- these are the preferred "
+            "way to look things up, because they return structured data from an "
+            "authoritative source instead of a page you have to read. Search by "
+            "what you need, whether that is a lookup ('search the Microsoft "
+            "documentation', 'read a docs page') or an action ('create a github "
+            "issue')." + connected + " Returns ranked authorized matches and "
+            "makes them callable."
         )
 
     @property

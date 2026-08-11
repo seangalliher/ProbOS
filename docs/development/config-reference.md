@@ -1480,6 +1480,7 @@ MCP Bridge configuration (AD-449; AD-1014 stdio).
 | `agent_tools_enabled` | `bool` | `False` | — |  |
 | `agent_tool_idle_ttl_seconds` | `float` | `86400.0` | ≥ 1.0 |  |
 | `agent_tool_reaper_interval_seconds` | `float` | `3600.0` | ≥ 1.0 |  |
+| `max_directly_offered_tools` | `int` | `24` | ≥ 0 |  |
 
 ## `mcp_app_host`
 

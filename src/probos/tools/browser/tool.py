@@ -164,8 +164,20 @@ class BrowserTool:
 
     @property
     def description(self) -> str:
+        # AD-1239: state the posture first. Asked a documentation question, an
+        # agent offered this tool drove Chromium to a search engine while a
+        # connected docs MCP server sat one call away -- not perversely, but
+        # because this description named a concrete 20-action vocabulary and
+        # the alternatives named none. A tool that reads like the capable one
+        # gets chosen. Driving a browser is the slowest, most brittle way to
+        # read anything: it renders a page, then guesses at its structure.
         return (
-            f"Drive a Chromium browser. {len(_AGENT_ACTIONS)}-action vocabulary: "
+            "Drive a Chromium browser. LAST RESORT for reading information: "
+            "prefer an MCP tool (structured data from an authoritative source), "
+            "then http_fetch (raw content, no rendering). Use this only when a "
+            "page must actually be rendered or interacted with -- a login, a "
+            "form, a click-driven app, a site with no API. "
+            f"{len(_AGENT_ACTIONS)}-action vocabulary: "
             + ", ".join(_AGENT_ACTIONS)
             + ". Use state() to get an indexed list of clickable elements, then "
             "click by index. To enter text into an editing surface that is not a "

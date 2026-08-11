@@ -453,10 +453,12 @@ def _browser_read_only_description(actions: list[str]) -> str:
     the two actions the guard refuses.
     """
     return (
-        "Read a Chromium browser session. This session is offered in read-only "
-        f"mode, with these actions: {', '.join(actions)}. Use state() for an "
-        "indexed view of the page. To act on the page itself, hand that step to "
-        "the Captain."
+        "Read a Chromium browser session. LAST RESORT for reading information: "
+        "prefer an MCP tool (structured data from an authoritative source), "
+        "then http_fetch (raw content, no rendering). This session is offered "
+        f"in read-only mode, with these actions: {', '.join(actions)}. Use "
+        "state() for an indexed view of the page. To act on the page itself, "
+        "hand that step to the Captain."
     )
 
 
@@ -1633,6 +1635,17 @@ class WorkItemAgenticExecutor:
         mcp_cfg = getattr(getattr(runtime, "config", None), "mcp", None)
         if workbench is not None and getattr(mcp_cfg, "agent_tools_enabled", False):
             try:
+                # AD-1239: pull the agent's OPEN-risk authorized tools first, so
+                # they are offered BY NAME rather than only behind the
+                # find_mcp_tool search hop. A search tool is not a capability an
+                # agent can see: offered only find_mcp_tool, a counselor asked a
+                # documentation question reached for the browser -- which
+                # advertises a concrete action vocabulary -- while the docs
+                # server sat connected and authorized one call away.
+                await workbench.preload_open_tools(
+                    agent_id,
+                    limit=int(getattr(mcp_cfg, "max_directly_offered_tools", 0) or 0),
+                )
                 mcp_ids = workbench.dispatch_tool_ids(agent_id)
             except Exception:
                 logger.warning(

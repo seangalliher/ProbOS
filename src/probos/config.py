@@ -4124,6 +4124,26 @@ class MCPConfig(BaseModel):
     # AD-1019c: how often the workbench reaper sweeps for idle adapters. Default
     # 1h.
     agent_tool_reaper_interval_seconds: float = Field(default=3_600.0, ge=1.0)
+    # AD-1239: how many OPEN-risk authorized MCP tools to offer an agent BY NAME
+    # each turn, instead of only behind the find_mcp_tool search hop.
+    #
+    # A search tool is not a capability an agent can see. Offered only
+    # find_mcp_tool, a counselor asked a documentation question reached for the
+    # browser -- which advertises a concrete 20-action vocabulary -- and never
+    # searched for the docs server sitting one call away. Naming the tools is
+    # what makes MCP the obvious path.
+    #
+    # The bound is a real decision, not a default that calcified: every offered
+    # tool costs prompt tokens on every turn, so this trades context budget for
+    # discoverability. 24 fits the handful of servers a vessel typically runs
+    # while leaving room for the mesh, skill and browser offers. Raise it if
+    # your servers expose more and the tool list still fits; set 0 to restore
+    # search-only behaviour.
+    #
+    # CONFIRM- and CONSENSUS-risk tools are deliberately excluded regardless of
+    # this value. Making a destructive tool invocable is a deliberate act, and
+    # the search hop is what makes it deliberate.
+    max_directly_offered_tools: int = Field(default=24, ge=0)
 
 
 class ObservabilityBridgeConfig(BaseModel):
