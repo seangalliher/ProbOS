@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import math
 import time
@@ -28,6 +29,33 @@ _NETWORK_HANDLER_LATENCY_MS = 10_000.0
 _COGNITIVE_HANDLER_LATENCY_MS = 30_000.0
 _MAX_HANDLER_LATENCY_SAMPLES = 200
 _MAX_HANDLER_METRIC_KEYS = 1_000
+
+# BF-747: characters NATS forbids in a durable consumer name. A dot is the
+# subject separator, so `agent-dispatch-perception.vision_aggregator` is not a
+# name the server can hold -- and it does not say so. It TIMES OUT, which is why
+# the boot log reported `nats: timeout` and named nothing useful. Verified live
+# 2026-08-11 against the running server: the same call with an underscore
+# succeeds and with a dot times out.
+_DURABLE_UNSAFE = str.maketrans({c: "_" for c in ". *>\t\n/\\"})
+
+
+def _durable_consumer_name(agent_id: str) -> str:
+    """Return a NATS-safe durable name for this agent's dispatch consumer.
+
+    Both the create and the delete path call this, or teardown would target a
+    consumer that setup never made.
+
+    A sanitised name carries a short hash of the original so two agents that
+    differ only in an unsafe character (``a.b`` and ``a_b``) cannot collide onto
+    one consumer. An id that needs no sanitising is returned unchanged, which
+    matters: every durable that works today keeps the exact name it already has
+    on the live server, so this fix cannot orphan a working consumer.
+    """
+    safe = agent_id.translate(_DURABLE_UNSAFE)
+    if safe == agent_id:
+        return f"agent-dispatch-{agent_id}"
+    digest = hashlib.sha256(agent_id.encode("utf-8")).hexdigest()[:8]
+    return f"agent-dispatch-{safe}-{digest}"
 
 
 @dataclass
@@ -619,8 +647,10 @@ class IntentBus:
                 )
                 await msg.term()
 
-        # Durable name must be NATS-safe (alphanumeric + dash).
-        durable_name = f"agent-dispatch-{agent_id}"
+        # BF-747: sanitised, because the comment that used to sit here said the
+        # name "must be NATS-safe (alphanumeric + dash)" and then interpolated
+        # the agent id raw.
+        durable_name = _durable_consumer_name(agent_id)
 
         # AD-654b: max_deliver=10 bounds nak() redelivery loops.
         # With circuit breaker nak(delay=60) + max_deliver=10, a stuck breaker
@@ -683,7 +713,7 @@ class IntentBus:
         try:
             await self._nats_bus.delete_consumer(
                 "INTENT_DISPATCH",
-                f"agent-dispatch-{agent_id}",
+                _durable_consumer_name(agent_id),
             )
         except BaseException:
             if removal_error is None:
