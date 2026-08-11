@@ -141,6 +141,14 @@ class DriftDetector:
             agent_id, test_name, limit=window
         )
 
+        # BF-711: a run that measured nothing is not a data point about the
+        # agent. Left in, an LLM outage lands a run of 0.0 scores in the window
+        # and drift reports "declined" for a crew that never changed -- the
+        # Captain then distrusts a system that is working, at the moment it is
+        # hardest to check. Filtered here rather than at the store so the rows
+        # stay available for forensics.
+        history = [r for r in history if not getattr(r, "inconclusive", False)]
+
         # Get baseline
         baseline = await self._store.get_baseline(agent_id, test_name)
         baseline_score = baseline.score if baseline else 0.0

@@ -55,6 +55,11 @@ class CommunicationScore:
     action_appropriateness: float = 0.0
     voice_consistency: float = 0.0
     justifications: dict[str, str] = field(default_factory=dict)
+    # BF-711: why this could not be measured. Empty means it WAS measured, and
+    # the zeros are a real verdict about the response. Non-empty means the judge
+    # or its transport failed, and the zeros mean nothing at all -- which is the
+    # distinction the five float fields cannot carry on their own.
+    inconclusive: str = ""
 
     @property
     def composite(self) -> float:
@@ -76,6 +81,7 @@ class CommunicationScore:
             "voice_consistency": self.voice_consistency,
             "composite": self.composite,
             "justifications": dict(self.justifications),
+            "inconclusive": self.inconclusive,
         }
 
 
@@ -110,9 +116,16 @@ async def _score_response(
     response: str,
     rubric: str,
 ) -> CommunicationScore:
-    """Score a response using LLM-as-judge. Returns 0-scores on failure."""
+    """Score a response using LLM-as-judge.
+
+    BF-711: the three failure paths below return an INCONCLUSIVE score, not a
+    zero one. Each is a statement about the judge, never about the agent: no
+    judge configured, the judge's transport failed, the judge returned something
+    unparseable. Returning bare zeros made an LLM outage read as an agent that
+    communicates terribly -- and drift detection then reported a decline.
+    """
     if llm_client is None:
-        return CommunicationScore()
+        return CommunicationScore(inconclusive="no judge configured")
 
     prompt = _SCORING_PROMPT.format(
         scenario=scenario,
@@ -129,7 +142,9 @@ async def _score_response(
         ))
     except Exception as exc:
         logger.warning("AD-642: Scoring LLM call failed: %s", exc)
-        return CommunicationScore()
+        return CommunicationScore(
+            inconclusive=f"judge call failed: {type(exc).__name__}"
+        )
 
     content = getattr(llm_response, "content", "") or ""
     try:
@@ -139,7 +154,7 @@ async def _score_response(
 
     if parsed is None:
         logger.warning("AD-642: Scoring JSON parse failed: %s", content[:200])
-        return CommunicationScore()
+        return CommunicationScore(inconclusive="judge returned unparseable output")
 
     def _clamp(v: Any) -> float:
         try:
@@ -288,7 +303,10 @@ class CommunicationQualityProbe:
         )
 
         composite = score.composite
-        passed = composite >= self.threshold
+        # BF-711: an unmeasured run does not pass and does not fail -- it is
+        # excluded. ``passed`` stays False so nothing reads it as a pass, and
+        # ``inconclusive`` is what keeps it out of drift statistics.
+        passed = (not score.inconclusive) and composite >= self.threshold
 
         return TestResult(
             agent_id=agent_id,
@@ -298,6 +316,8 @@ class CommunicationQualityProbe:
             passed=passed,
             timestamp=time.time(),
             duration_ms=(time.time() - t0) * 1000,
+            inconclusive=bool(score.inconclusive),
+            error=score.inconclusive or None,
             details={
                 "dimensions": score.to_dict(),
                 "response_preview": response[:500],

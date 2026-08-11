@@ -81,6 +81,15 @@ class TestResult:
     is_baseline: bool = False
     details: dict = field(default_factory=dict)
     error: str | None = None
+    # BF-711: this run measured nothing, so ``score`` is not a verdict about the
+    # agent. Set when the judge or the harness failed -- an LLM outage, an
+    # unparseable judge reply, an exception inside the test. Drift statistics
+    # exclude these; without the flag an outage reads as competence decline and
+    # the Captain distrusts a system that is working.
+    #
+    # Deliberately NOT set on timeout: a test that times out may be a hung
+    # agent, and calling that inconclusive would hide a real fault.
+    inconclusive: bool = False
 
 
 @dataclass(frozen=True)
@@ -122,7 +131,8 @@ CREATE TABLE IF NOT EXISTS qualification_results (
     duration_ms REAL NOT NULL,
     is_baseline INTEGER NOT NULL DEFAULT 0,
     details_json TEXT NOT NULL DEFAULT '{}',
-    error TEXT
+    error TEXT,
+    inconclusive INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_qual_agent_test
@@ -159,6 +169,17 @@ class QualificationStore:
         db_path = str(self._data_dir / "qualification_results.db")
         self._db = await self._connection_factory.connect(db_path)
         await self._db.executescript(_SCHEMA)
+        # BF-711: CREATE TABLE IF NOT EXISTS does not add a column to a table
+        # that already exists, and the reference vessel's DB is 5.7 MB of rows.
+        # Existing results default to 0 -- they were measured under the old
+        # code, which had no way to record that they were not.
+        try:
+            await self._db.execute(
+                "ALTER TABLE qualification_results "
+                "ADD COLUMN inconclusive INTEGER NOT NULL DEFAULT 0"
+            )
+        except Exception:
+            pass  # already present
         await self._db.commit()
 
     async def stop(self) -> None:
@@ -178,8 +199,8 @@ class QualificationStore:
         await self._db.execute(
             "INSERT INTO qualification_results "
             "(id, agent_id, test_name, tier, score, passed, timestamp, "
-            "duration_ms, is_baseline, details_json, error) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "duration_ms, is_baseline, details_json, error, inconclusive) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             row,
         )
         await self._db.commit()
@@ -324,6 +345,7 @@ def _result_to_row(result: TestResult) -> tuple:
         1 if result.is_baseline else 0,
         json.dumps(result.details),
         result.error,
+        1 if result.inconclusive else 0,
     )
 
 
@@ -340,6 +362,8 @@ def _row_to_result(row: Any) -> TestResult:
         is_baseline=bool(row[8]),
         details=json.loads(row[9]) if row[9] else {},
         error=row[10],
+        # Tolerant of a row written before the column existed.
+        inconclusive=bool(row[11]) if len(row) > 11 else False,
     )
 
 
@@ -412,6 +436,8 @@ class QualificationHarness:
                 timestamp=time.time(),
                 duration_ms=(time.time() - t0) * 1000,
                 error=str(exc),
+                # BF-711: the harness raised, so nothing was measured.
+                inconclusive=True,
             )
 
         # Auto-baseline on first run
@@ -515,6 +541,7 @@ class QualificationHarness:
                     timestamp=time.time(),
                     duration_ms=(time.time() - t0) * 1000,
                     error=str(exc),
+                    inconclusive=True,  # BF-711: the harness raised
                 )
 
             # Force baseline regardless of error
