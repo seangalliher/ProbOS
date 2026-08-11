@@ -120,10 +120,15 @@ def _setup_logging(log_level: str, verbose: bool = False) -> None:
     process unkillable from the launching terminal.
     """
     from logging.handlers import RotatingFileHandler
-    formatter = logging.Formatter(
-        "%(asctime)s  %(levelname)-8s  %(name)-30s  %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    _FMT = "%(asctime)s  %(levelname)-8s  %(name)-30s  %(message)s"
+    # BF-748: the console keeps the compact clock -- the operator is watching it
+    # live and knows what day it is. The FILE gets the date, because it is an
+    # archive that spans days and five rotations, and a bare HH:MM:SS makes every
+    # forensic query ambiguous the moment it crosses midnight. Measured
+    # 2026-08-11: a query anchored on "10:16" matched two different boots on two
+    # different days and reported a working fix as still broken.
+    formatter = logging.Formatter(_FMT, datefmt="%H:%M:%S")
+    file_formatter = logging.Formatter(_FMT, datefmt="%Y-%m-%d %H:%M:%S")
     root = logging.getLogger()
     root.setLevel(getattr(logging, log_level.upper(), logging.WARNING))
     # AD-1026 (DD-4): reset + attach the WARNING+ counter so the end-of-boot
@@ -149,7 +154,7 @@ def _setup_logging(log_level: str, verbose: bool = False) -> None:
             backupCount=5,               # keep 5 rotations
             encoding="utf-8",
         )
-        _file_h.setFormatter(formatter)
+        _file_h.setFormatter(file_formatter)
         # File log captures INFO+ regardless of console level so diagnostics
         # are always available without restarting with --log-level=INFO.
         _file_h.setLevel(logging.INFO)
