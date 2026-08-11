@@ -160,6 +160,13 @@ class MCPWorkbench:
         """Live ``{name, description}`` for a server's tools. Never raises → []."""
         client = self._bridge.get_client(self._bridge_key(record))
         if client is None:
+            # BF-751: this used to return silently, which made a server that was
+            # registered-but-unreachable indistinguishable from one with no tools.
+            logger.warning(
+                "AD-1019c: MCP server %s has no bridge client, so it contributes "
+                "no tools; it is registered but was never wired to the bridge",
+                record.name,
+            )
             return []
         try:
             raw = await client.list_tools()
@@ -353,6 +360,11 @@ class MCPWorkbench:
         to end. Revisit if a vessel runs enough servers for the sum to matter.
         """
         if limit <= 0 or self._server_store is None:
+            logger.debug(
+                "AD-1239: not offering MCP tools by name to %s (limit=%d, "
+                "server_store=%s)",
+                agent_id[:12] or "?", limit, self._server_store is not None,
+            )
             return []
 
         grants, dept_grants = self._grants(agent_id)
@@ -382,6 +394,21 @@ class MCPWorkbench:
                 "AD-1239: offered agent %s %d MCP tool(s) by name (%d OPEN-risk "
                 "authorized candidate(s), limit %d)",
                 agent_id[:12] or "?", len(pulled), len(candidates), limit,
+            )
+        elif candidates:
+            # BF-751: candidates that all failed to pull is an anomaly worth
+            # hearing about — silence here is what made the live failure look
+            # like "the agent ignored MCP" rather than "MCP was unreachable".
+            logger.warning(
+                "AD-1239: %d authorized OPEN-risk MCP tool(s) matched for agent "
+                "%s but none could be pulled onto the workbench; the agent will "
+                "not be offered them",
+                len(candidates), agent_id[:12] or "?",
+            )
+        else:
+            logger.debug(
+                "AD-1239: no authorized OPEN-risk MCP tools to offer agent %s",
+                agent_id[:12] or "?",
             )
         return pulled
 

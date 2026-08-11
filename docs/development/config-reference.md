@@ -1389,6 +1389,7 @@ Security infrastructure configuration (AD-456 + AD-456b).
 | `secrets_store_filename` | `str` | `'secrets.json'` | — |  |
 | `egress_enabled` | `bool` | `True` | — |  |
 | `egress_deny_by_default` | `bool` | `True` | — |  |
+| `egress_allowlist` | `list[str]` | `['127.0.0.1', 'localhost', '::1']` | — |  |
 | `audit_enabled` | `bool` | `True` | — |  |
 | `sandbox_enabled` | `bool` | `True` | — |  |
 | `sandbox_default_wall_timeout_seconds` | `float` | `30.0` | — |  |

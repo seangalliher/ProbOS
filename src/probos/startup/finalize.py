@@ -416,6 +416,60 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _wire_egress_policy(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-456 + BF-751: build the outbound egress policy from config.
+
+    Extracted from ``finalize_startup`` so the allowlist wiring is reachable by a
+    test. It had none, and the omission was invisible: the policy kept the
+    hardcoded loopback-only default, and the MCP bridge — which consults it
+    unconditionally — could never reach any external server.
+    """
+    from probos.security.egress import EgressPolicy
+
+    runtime.egress_policy = EgressPolicy(
+        emit_event=getattr(runtime, "emit_event", None),
+        deny_by_default=config.security_infra.egress_deny_by_default,
+        allowlist=list(config.security_infra.egress_allowlist),
+    )
+    logger.info(
+        "AD-456: EgressPolicy wired (deny_by_default=%s, %d allowlisted host(s))",
+        config.security_infra.egress_deny_by_default,
+        len(config.security_infra.egress_allowlist),
+    )
+    return True
+
+
+def _warn_on_mcp_egress_mismatch(config: Any, store: Any, policy: Any) -> int:
+    """BF-751: report every registered MCP host the egress policy will refuse.
+
+    Registering a server is a statement of operator intent. When the allowlist
+    disagrees, the failure was previously invisible: the transport raises
+    ``egress_blocked`` deep inside ``list_tools``, the workbench honest-degrades
+    to an empty tool list, and the agent is simply never offered the tool. The
+    Captain sees a connected server and a crew that ignores it.
+
+    Say it once at boot, where the operator can act on it, and name the setting
+    that fixes it. Returns the number of refused hosts (0 when all agree).
+    """
+    if policy is None:
+        return 0
+    urls = {s.url for s in config.mcp.servers if s.type == "http" and s.url}
+    try:
+        urls |= {r.url for r in store.list_sync() if r.type == "http" and r.url}
+    except Exception:
+        logger.debug("BF-751: could not list stored MCP servers", exc_info=True)
+
+    refused = sorted(u for u in urls if not policy.is_allowed(u))
+    for url in refused:
+        logger.warning(
+            "BF-751: MCP server %s is registered but egress-denied, so no agent "
+            "can discover or call its tools. Add its host to "
+            "security_infra.egress_allowlist to permit it.",
+            url,
+        )
+    return len(refused)
+
+
 async def _seed_config_mcp_servers(config: Any, store: Any) -> int:
     """BF-750: persist ``config.mcp.servers`` into the store. Returns rows added.
 
@@ -3691,15 +3745,7 @@ async def finalize_startup(
         logger.info("AD-456c: CredentialStore per-tier gate enabled")
 
     if config.security_infra.egress_enabled:
-        from probos.security.egress import EgressPolicy
-        runtime.egress_policy = EgressPolicy(
-            emit_event=runtime.emit_event,
-            deny_by_default=config.security_infra.egress_deny_by_default,
-        )
-        logger.info(
-            "AD-456: EgressPolicy wired (deny_by_default=%s)",
-            config.security_infra.egress_deny_by_default,
-        )
+        _wire_egress_policy(runtime=runtime, config=config)
     else:
         runtime.egress_policy = None
 
@@ -4069,6 +4115,9 @@ async def finalize_startup(
                         cwd=rec.cwd,
                         timeout=rec.timeout_seconds,
                     )
+            _warn_on_mcp_egress_mismatch(
+                config, mcp_server_store, getattr(runtime, "egress_policy", None)
+            )
             # AD-1019b: department-tier grant store (the "department locker" of
             # the three-tier authorization model) + per-tool risk override store.
             from probos.integrations.mcp_bridge.department_grants import (

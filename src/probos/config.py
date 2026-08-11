@@ -4228,6 +4228,22 @@ class SecurityInfraConfig(BaseModel):
     secrets_store_filename: str = "secrets.json"
     egress_enabled: bool = True
     egress_deny_by_default: bool = True  # v1: real-signal default per no-theater
+    # BF-751: hosts the ship may reach. Until this existed the allowlist was the
+    # hardcoded loopback triple in security/egress.py with no operator surface,
+    # so with egress_enabled + deny_by_default the MCP bridge -- which consults
+    # the policy unconditionally -- could never reach ANY external server, and
+    # there was no supported way to permit one. Registration, the server store,
+    # risk tiers and the grant model all sat above a gate nothing could open.
+    #
+    # Default is exactly the old hardcoded triple, so an unset value is
+    # byte-identical to prior behaviour.
+    #
+    # Patterns match a host or a dot-suffixed parent (``example.com`` matches
+    # ``api.example.com``). Add the host of every MCP server you register --
+    # registering one is a statement of intent that this list has to agree with.
+    egress_allowlist: list[str] = Field(
+        default_factory=lambda: ["127.0.0.1", "localhost", "::1"]
+    )
     audit_enabled: bool = True
 
     # AD-456b: Runtime Sandboxing
@@ -4238,6 +4254,17 @@ class SecurityInfraConfig(BaseModel):
     # consultation-only behavior on existing deployments; flip to True at upgrade
     # time after reviewing allowlist coverage. AD-456b-7 will flip default to True
     # once fleet-wide allowlist coverage is verified.).
+    #
+    # BF-751: note the asymmetry this creates, because it is not obvious and it
+    # bit us. HttpFetchAgent consults the policy ONLY when this is True, but
+    # mcp_bridge/transport.py consults it unconditionally whenever a policy
+    # exists. So with the shipped defaults the ship ENFORCES egress on its most
+    # governed path (MCP: audited, consent-gated, risk-tiered) while leaving
+    # http_fetch unenforced. An agent asked for documentation was therefore
+    # denied the structured source and fell back to raw fetching of the same
+    # domain. Kept as-is rather than flipped, because flipping it silently
+    # firewalls every existing http_fetch caller against a loopback-only
+    # allowlist -- but it is a stated asymmetry now, not an accidental one.
     egress_active_enforcement: bool = False
 
     # AD-456c: Per-tier credential lookup gate (v1 default False — preserves
