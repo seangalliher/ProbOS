@@ -67,7 +67,22 @@ def main() -> None:
                     "id": req_id,
                     "result": {
                         "tools": [
-                            {"name": "echo", "description": "echo back arguments"},
+                            {
+                                "name": "echo",
+                                "description": "echo back arguments",
+                                # BF-754: a real contract, so a test can prove
+                                # the schema survives into the LLM definition.
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "q": {
+                                            "type": "string",
+                                            "description": "text to echo",
+                                        }
+                                    },
+                                    "required": ["q"],
+                                },
+                            },
                             {"name": "slow", "description": "never responds"},
                             {"name": "badjson", "description": "emits malformed json"},
                         ]

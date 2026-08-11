@@ -7,14 +7,64 @@ provider-specific translation.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import time
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from probos.tools.protocol import ToolRegistration, ToolResult
+
+
+# ── BF-754: a tool id is not automatically a legal LLM function name ────────
+#
+# OpenAI-compatible providers accept ``^[A-Za-z0-9_-]{1,64}$`` for a function
+# name. Every built-in tool id happens to satisfy that, so the definition
+# builder passed ``tool.tool_id`` through verbatim for its whole life and
+# nothing noticed.
+#
+# AD-1019c then introduced ids shaped ``mcp:{server}:{tool}``. Against the live
+# Copilot proxy that returns HTTP 500 -- "only alphanumeric characters,
+# hyphens, and underscores are allowed" -- and it fails the WHOLE request, not
+# just the offending tool. So the first turn that offered an MCP adapter would
+# have broken the agent's entire turn, not merely made one tool uncallable.
+#
+# The alias is deterministic (same id, same name, every boot -- the model may
+# see it across turns) and carries an 8-hex digest of the canonical id, because
+# sanitising alone collides: ``a:b`` and ``a_b`` both become ``a_b``.
+_LLM_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_LLM_NAME_MAX = 64
+_LLM_DIGEST_LEN = 8
+
+
+def llm_function_name(tool_id: str) -> str:
+    """BF-754: ``tool_id`` if a provider accepts it, else a stable safe alias."""
+    if _LLM_NAME_RE.match(tool_id):
+        return tool_id
+    digest = hashlib.sha256(tool_id.encode("utf-8")).hexdigest()[:_LLM_DIGEST_LEN]
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", tool_id).strip("_")
+    stem = stem[: _LLM_NAME_MAX - _LLM_DIGEST_LEN - 1]
+    return f"{stem}_{digest}" if stem else digest
+
+
+def resolve_llm_function_name(name: str, tool_ids: Iterable[str]) -> str | None:
+    """BF-754: map a name the model returned back to its canonical tool id.
+
+    ``None`` when nothing matches, so the caller keeps its own not-found path
+    rather than inventing a tool. Exact ids win over aliases: a real tool named
+    like another's alias must still resolve to itself.
+    """
+    candidates = list(tool_ids)
+    if name in candidates:
+        return name
+    for tool_id in candidates:
+        if llm_function_name(tool_id) == name:
+            return tool_id
+    return None
 
 
 # ── BF-728: structure-aware rendering of a structured tool output ───────────
@@ -312,7 +362,9 @@ def tool_registration_to_llm_definition(reg: "ToolRegistration") -> dict[str, An
     return {
         "type": "function",
         "function": {
-            "name": reg.tool.tool_id,
+            # BF-754: not tool_id verbatim -- an id the provider rejects fails
+            # the entire request, not just this tool.
+            "name": llm_function_name(reg.tool.tool_id),
             "description": reg.tool.description,
             "parameters": schema,
         },

@@ -269,7 +269,9 @@ async def test_candidates_that_cannot_be_pulled_are_reported(caplog) -> None:
     grant = SimpleNamespace(tool_id="mcp:microsoft-learn", is_restriction=False)
     wb._grants = lambda aid: ([grant], [])  # type: ignore[assignment]
 
-    async def _cannot_pull(aid: str, server: str, tool: str) -> bool:
+    async def _cannot_pull(
+        aid: str, server: str, tool: str, *, descriptor: Any = None
+    ) -> bool:
         return False
 
     wb.pull_tool = _cannot_pull  # type: ignore[assignment]

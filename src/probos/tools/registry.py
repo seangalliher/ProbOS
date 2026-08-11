@@ -163,6 +163,15 @@ class ToolRegistry:
         reg = self._tools.get(tool_id)
         return reg.tool if reg else None
 
+    def list_ids(self) -> list[str]:
+        """BF-754: every registered tool_id, including disabled ones.
+
+        Used to map a provider-safe function name back to its canonical id.
+        Disabled tools are included so the alias still resolves and the
+        registry's own enabled check remains the authority on refusal.
+        """
+        return list(self._tools.keys())
+
     def list_tools(
         self,
         *,

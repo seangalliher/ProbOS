@@ -66,6 +66,34 @@ class ToolExecutor:
         """Register a post-invocation hook."""
         self._post_hooks.append(hook)
 
+    def _resolve_tool_id(self, tool_id: str) -> str:
+        """BF-754: accept the provider-safe alias the model was actually shown.
+
+        A tool id the provider rejects (``mcp:{server}:{tool}``) is offered
+        under a sanitised alias, so the name that comes back is not the
+        registry key. Resolved here rather than in the loop because this is the
+        one point every call path shares, and an unresolvable name falls
+        through unchanged so the registry's own not-found error still speaks.
+        """
+        registry = self._registry
+        if registry is None or tool_id is None:
+            return tool_id
+        try:
+            if registry.get(tool_id) is not None:
+                return tool_id
+            from probos.cognitive.swe_harness.tool_call import (
+                resolve_llm_function_name,
+            )
+
+            resolved = resolve_llm_function_name(tool_id, registry.list_ids())
+        except Exception:
+            logger.debug(
+                "BF-754: alias resolution failed for %s; using it verbatim",
+                tool_id, exc_info=True,
+            )
+            return tool_id
+        return resolved or tool_id
+
     async def invoke(
         self,
         agent_id: str,
@@ -89,6 +117,7 @@ class ToolExecutor:
         """
         from probos.tools.protocol import ToolResult
 
+        tool_id = self._resolve_tool_id(tool_id)
         ctx = InvocationContext(
             agent_id=agent_id,
             tool_id=tool_id,

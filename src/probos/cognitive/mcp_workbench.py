@@ -19,6 +19,7 @@ lens. Default-OFF: the workbench is only constructed when
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -36,6 +37,52 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _FIND_MCP_TOOL_ID = "find_mcp_tool"
+
+# BF-754: bounds on an MCP server's advertised inputSchema. The schema is
+# remote input that goes straight into an LLM request, so it is validated and
+# bounded here rather than trusted: a hostile or broken server must not be able
+# to blow up the prompt or hand the provider something it will reject.
+_SCHEMA_MAX_PROPERTIES = 64
+_SCHEMA_MAX_BYTES = 16_384
+
+
+def _safe_input_schema(
+    raw: Any, server_name: str, tool_name: str
+) -> dict[str, Any]:
+    """BF-754: the tool's advertised JSON Schema, or a permissive fallback.
+
+    Falling back to ``{"type": "object"}`` keeps the tool callable when a server
+    advertises something unusable -- the model just has to infer the arguments,
+    which is exactly the situation before this existed.
+    """
+    if not isinstance(raw, dict) or raw.get("type") != "object":
+        return {"type": "object"}
+    props = raw.get("properties")
+    if props is not None and not isinstance(props, dict):
+        return {"type": "object"}
+    if isinstance(props, dict) and len(props) > _SCHEMA_MAX_PROPERTIES:
+        logger.warning(
+            "BF-754: %s/%s advertises %d properties (max %d); offering it "
+            "without a parameter schema",
+            server_name, tool_name, len(props), _SCHEMA_MAX_PROPERTIES,
+        )
+        return {"type": "object"}
+    try:
+        encoded = json.dumps(raw)
+    except Exception:
+        logger.warning(
+            "BF-754: %s/%s advertises a non-serialisable inputSchema; offering "
+            "it without a parameter schema", server_name, tool_name,
+        )
+        return {"type": "object"}
+    if len(encoded) > _SCHEMA_MAX_BYTES:
+        logger.warning(
+            "BF-754: %s/%s inputSchema is %d bytes (max %d); offering it "
+            "without a parameter schema",
+            server_name, tool_name, len(encoded), _SCHEMA_MAX_BYTES,
+        )
+        return {"type": "object"}
+    return raw
 
 
 def _tokenize(text: str) -> set[str]:
@@ -156,8 +203,15 @@ class MCPWorkbench:
 
     async def _enumerate_tools(
         self, record: "McpServerRecord"
-    ) -> list[dict[str, str]]:
-        """Live ``{name, description}`` for a server's tools. Never raises → []."""
+    ) -> list[dict[str, Any]]:
+        """Live ``{name, description, input_schema}`` for a server's tools.
+
+        BF-754: ``input_schema`` used to be dropped here and hardcoded to a bare
+        ``{"type": "object"}`` at registration, so the model was told a tool
+        existed but never told what to pass it. The live Microsoft Learn server
+        advertises required parameters (``query``, ``url``) that never reached
+        the offer. Never raises → [].
+        """
         client = self._bridge.get_client(self._bridge_key(record))
         if client is None:
             # BF-751: this used to return silently, which made a server that was
@@ -179,7 +233,13 @@ class MCPWorkbench:
             )
             return []
         return [
-            {"name": t.get("name", ""), "description": t.get("description", "")}
+            {
+                "name": t.get("name", ""),
+                "description": t.get("description", ""),
+                "input_schema": _safe_input_schema(
+                    t.get("inputSchema"), record.name, t.get("name", "")
+                ),
+            }
             for t in raw
             if isinstance(t, dict)
         ]
@@ -262,7 +322,12 @@ class MCPWorkbench:
         return [candidates[cid] for cid, _score in fused[:k]]
 
     async def pull_tool(
-        self, agent_id: str, server_name: str, tool_name: str
+        self,
+        agent_id: str,
+        server_name: str,
+        tool_name: str,
+        *,
+        descriptor: dict[str, Any] | None = None,
     ) -> bool:
         """Pull one authorized tool onto the workbench — register it warm (DD-3).
 
@@ -271,6 +336,12 @@ class MCPWorkbench:
         the ``ToolRegistry`` keyed ``mcp:{server}:{tool}`` and tracks it for the
         idle reaper. Idempotent: a re-pull refreshes ``last_used``. Returns
         ``True`` when the tool is warm and invocable.
+
+        BF-754: ``descriptor`` lets a caller that has ALREADY enumerated the
+        server hand the entry straight in. Without it this re-enumerated per
+        pull, so a preload of N tools from S servers cost S+N ``tools/list``
+        round trips every agentic turn -- 25 for one server at the default
+        limit. The descriptor is still authorization-checked above.
         """
         record = self._record_by_name(server_name)
         if record is None or not record.enabled:
@@ -284,8 +355,10 @@ class MCPWorkbench:
             )
             return False
 
-        tools = await self._enumerate_tools(record)
-        match = next((t for t in tools if t.get("name") == tool_name), None)
+        match = descriptor
+        if match is None:
+            tools = await self._enumerate_tools(record)
+            match = next((t for t in tools if t.get("name") == tool_name), None)
         if match is None:
             logger.info(
                 "AD-1019c: pull_tool — server %s does not expose tool %s",
@@ -307,7 +380,10 @@ class MCPWorkbench:
             tool_name=tool_name,
             name=match.get("name", tool_name),
             description=match.get("description", ""),
-            input_schema={"type": "object"},
+            # BF-754: the tool's real contract, not a bare object. Bounded and
+            # validated at enumeration; a server that advertises nothing usable
+            # still yields {"type": "object"} so the tool stays callable.
+            input_schema=match.get("input_schema") or {"type": "object"},
             server_default_risk=record.default_risk,
             risk_store=self._risk_store,
             consensus_invoke=self._consensus_invoke,
@@ -371,7 +447,7 @@ class MCPWorkbench:
             return []
 
         grants, dept_grants = self._grants(agent_id)
-        candidates: list[tuple[str, str]] = []
+        candidates: list[tuple[str, str, dict[str, Any]]] = []
         # BF-751a: counted so a zero-candidate result can name its own cause
         # instead of being indistinguishable from "no servers configured".
         servers_enabled = 0
@@ -396,11 +472,16 @@ class MCPWorkbench:
                 if self._effective_risk(record, tool_name) is not McpToolRisk.OPEN:
                     not_open += 1
                     continue
-                candidates.append((record.name, tool_name))
+                # BF-754: carry the descriptor so pull_tool need not re-enumerate.
+                candidates.append((record.name, tool_name, tool))
 
         pulled: list[str] = []
-        for server_name, tool_name in sorted(candidates)[:limit]:
-            if await self.pull_tool(agent_id, server_name, tool_name):
+        for server_name, tool_name, descriptor in sorted(
+            candidates, key=lambda c: (c[0], c[1])
+        )[:limit]:
+            if await self.pull_tool(
+                agent_id, server_name, tool_name, descriptor=descriptor
+            ):
                 pulled.append(f"mcp:{server_name}:{tool_name}")
         if pulled:
             logger.info(
