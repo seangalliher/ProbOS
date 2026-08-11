@@ -1572,6 +1572,76 @@ class BrowserToolConfig(BaseModel):
     domain_allowlist: list[str] | None = None  # None = all allowed (subject to denylist)
     domain_denylist: list[str] = Field(default_factory=list)
 
+    @staticmethod
+    def trusted_agentic_domains() -> list[str]:
+        """AD-1235: a starting allowlist for agentic coding and reference work.
+
+        Not the shipped default -- ``domain_allowlist`` stays ``None`` so an
+        existing deployment is not silently narrowed. This is the curated list
+        an operator can adopt, and the reference vessel does.
+
+        Chosen on one rule: a site an agent needs in order to do the work the
+        Captain asks for, weighted toward sources whose content is authored
+        rather than user-submitted. Prompt injection travels through page text,
+        so a page an agent reads is a page that can address it. That argues for
+        vendor documentation over forums, and it is why this list is short.
+
+        BF-743's address floor applies underneath regardless: no entry here can
+        reach loopback, a private range, or a non-HTTP scheme.
+        """
+        return [
+            # Source hosting and package registries -- an agent that cannot
+            # read a library's source or its published version is guessing.
+            "github.com",
+            "githubusercontent.com",     # raw.* and gist content
+            "gitlab.com",
+            "pypi.org",
+            "pythonhosted.org",          # sdist/wheel downloads
+            "npmjs.com",
+            "crates.io",
+            "nuget.org",
+            "rubygems.org",
+            "packagist.org",
+
+            # First-party language and platform documentation.
+            "python.org",
+            "docs.rs",
+            "readthedocs.io",
+            "readthedocs.org",
+            "developer.mozilla.org",
+            # learn.microsoft.com, not microsoft.com: the rule above says
+            # authored documentation, and the parent domain is mostly marketing
+            # and sign-in pages.
+            "learn.microsoft.com",
+            "go.dev",  # already covers pkg.go.dev by suffix
+            "rust-lang.org",
+            "nodejs.org",
+            "typescriptlang.org",
+            "kubernetes.io",
+            "docker.com",
+            "postgresql.org",
+            "sqlite.org",
+            "nginx.org",
+            "w3.org",
+            "json-schema.org",
+            "iana.org",
+
+            # Agent and model ecosystem -- the protocols this ship speaks.
+            "modelcontextprotocol.io",
+            "docs.anthropic.com",
+            "platform.openai.com",
+            "huggingface.co",
+
+            # Reference. Wikipedia and arXiv are user/author-submitted, so they
+            # carry more injection surface than the rest; kept because refusing
+            # them costs the Captain real answers, and the agent's own
+            # confabulation guards apply to what it reads.
+            "wikipedia.org",
+            "arxiv.org",
+            "stackoverflow.com",
+            "stackexchange.com",
+        ]
+
     # XGA screenshot scaling (Anthropic computer-use-demo discipline, MIT)
     screenshot_max_width: int = 1024
     screenshot_max_height: int = 768
