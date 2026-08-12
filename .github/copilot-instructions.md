@@ -32,6 +32,20 @@ These errors cluster in the subsystems you know best, because familiarity is wha
 
 ---
 
+## Adversarial Review Before Every Commit (Standing Order, both modes)
+
+**Before any commit that changes source, run the `Diff Reviewer` subagent on the staged diff and address what it finds.** Not optional, not "when the change feels risky" — the changes that felt safe are the ones this catches.
+
+Invoke it with a different model than the one that wrote the code (`.github/agents/diff-reviewer.agent.md` pins `GPT-5.6 Sol`; the author is usually Claude). A second read by the same model shares the same blind spots. Tell it what the change claims to do, name the consumer that has to accept it, and point at anything live it can probe.
+
+**Act on the findings before committing.** A finding that would break the next run is a blocker; file the rest with a number and say so in the commit. Do not commit and "address it after" — that is how a known defect ships.
+
+Why this is a standing order rather than advice: on 2026-08-11 an external review of BF-753/AD-1239 found five defects in one wave, and the immediate re-review of the fix (BF-754) found four more — including a docstring claiming a validation property the code did not provide, in a commit written minutes after recording that exact lesson. The author had verified every change against the thing they had just changed, which is the one check that cannot see a seam. Every finding sat between the changed component and its consumer.
+
+The reviewer's advantage is stance, not intelligence: it asks *does the next component accept this*, having no memory of already believing the answer. That stance is not reachable by trying harder on your own diff.
+
+---
+
 ## Building: Engineering Principles (Standing Order)
 
 All code MUST maintain the **ProbOS Principles Stack**. These are enforced during architect review and apply to all contributors.

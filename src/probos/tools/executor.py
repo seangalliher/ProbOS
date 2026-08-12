@@ -66,33 +66,59 @@ class ToolExecutor:
         """Register a post-invocation hook."""
         self._post_hooks.append(hook)
 
-    def _resolve_tool_id(self, tool_id: str) -> str:
+    def _resolve_tool_id(self, tool_id: str) -> str | None:
         """BF-754: accept the provider-safe alias the model was actually shown.
 
         A tool id the provider rejects (``mcp:{server}:{tool}``) is offered
         under a sanitised alias, so the name that comes back is not the
         registry key. Resolved here rather than in the loop because this is the
-        one point every call path shares, and an unresolvable name falls
-        through unchanged so the registry's own not-found error still speaks.
+        one point every call path shares.
+
+        Returns the canonical id, the name unchanged when nothing claims it, or
+        ``None`` when the name is AMBIGUOUS and the caller must refuse.
+
+        BF-757 corrected two things here. This began with an
+        ``if registry.get(tool_id) is not None: return tool_id`` fast path, so
+        an exact id short-circuited before any ambiguity check ever ran -- and
+        then ``resolved or tool_id`` turned a refusal back into the colliding
+        id. Both meant the refusal existed in the helper and never reached the
+        consumer: measured, the model was shown the aliased tool's definition
+        and the executor invoked the other one. A helper that is correct while
+        its caller bypasses it is the defect shape this repo produces most.
+
+        An unresolvable name still falls through UNCHANGED, and this used to
+        claim "the registry's own not-found error still speaks". It does not.
+        ``ToolRegistry.check_and_invoke`` resolves permission before it looks
+        for the tool, so an unknown name holds NONE and raises
+        ``ToolPermissionDenied`` -- the agent is told it lacks access to a tool
+        that does not exist. That predates this method and is not widened by
+        alias resolution, which can only turn names that would have missed into
+        hits. Filed as #1214.
         """
         registry = self._registry
         if registry is None or tool_id is None:
             return tool_id
         try:
-            if registry.get(tool_id) is not None:
-                return tool_id
             from probos.cognitive.swe_harness.tool_call import (
-                resolve_llm_function_name,
+                llm_function_name_claimants,
             )
 
-            resolved = resolve_llm_function_name(tool_id, registry.list_ids())
+            claimants = llm_function_name_claimants(tool_id, registry.list_ids())
         except Exception:
             logger.debug(
                 "BF-754: alias resolution failed for %s; using it verbatim",
                 tool_id, exc_info=True,
             )
             return tool_id
-        return resolved or tool_id
+        if len(claimants) > 1:
+            logger.error(
+                "BF-757: refusing to invoke %r -- %d tools would be offered "
+                "under that name (%s) and which one the model saw depends on "
+                "offer order, so invoking either could run a tool it never "
+                "chose", tool_id, len(claimants), claimants,
+            )
+            return None
+        return claimants[0] if claimants else tool_id
 
     async def invoke(
         self,
@@ -117,7 +143,19 @@ class ToolExecutor:
         """
         from probos.tools.protocol import ToolResult
 
-        tool_id = self._resolve_tool_id(tool_id)
+        resolved = self._resolve_tool_id(tool_id)
+        if resolved is None:
+            # BF-757: ambiguous. Refusing is the only safe answer -- invoking
+            # either claimant could run a tool the model never chose. An error
+            # ToolResult (not a raise) keeps this in the agent's own retry path
+            # rather than aborting the turn.
+            return ToolResult(
+                error=(
+                    f"Tool name {tool_id!r} is ambiguous and was not invoked. "
+                    "Two registered tools would be offered under that name."
+                ),
+            )
+        tool_id = resolved
         ctx = InvocationContext(
             agent_id=agent_id,
             tool_id=tool_id,

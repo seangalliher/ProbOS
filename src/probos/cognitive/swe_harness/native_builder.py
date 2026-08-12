@@ -13,6 +13,7 @@ from probos.cognitive.swe_harness.agentic_loop import (
     AgenticResult,
 )
 from probos.cognitive.swe_harness.tool_call import (
+    dedupe_llm_definitions,
     tool_registration_to_llm_definition,
 )
 
@@ -158,7 +159,10 @@ class NativeBuilderHarness:
                 )
                 continue
             defs.append(tool_registration_to_llm_definition(reg))
-        return defs
+        # BF-757: these ids are a fixed in-repo constant so they cannot collide
+        # today. The guard is here so that stays true if the list ever becomes
+        # dynamic -- a duplicate name fails the provider request entirely.
+        return dedupe_llm_definitions(defs, agent_id="builder")
 
     def _compose_system_prompt(self, spec: "BuildSpec") -> str:
         """Compose Standing Orders + BuildSpec constraints + tool-usage instructions."""

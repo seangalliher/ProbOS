@@ -1552,6 +1552,7 @@ class WorkItemAgenticExecutor:
             resolve_tool_result_bounds,
         )
         from probos.cognitive.swe_harness.tool_call import (
+            dedupe_llm_definitions,
             tool_registration_to_llm_definition,
         )
 
@@ -2014,6 +2015,11 @@ class WorkItemAgenticExecutor:
                         (definition.get("function") or {}).get("description", ""),
                     )
                 tools.append(definition)
+
+        # BF-757: last gate before the provider. A duplicate function name makes
+        # it reject the WHOLE request, so one collision would cost the agent
+        # every tool rather than the one.
+        tools = dedupe_llm_definitions(tools, agent_id=agent_id)
 
         # AD-1065: the conversational chat path passes a lower iteration cap +
         # a faster tier than the task-path defaults (25 / deep). When both are

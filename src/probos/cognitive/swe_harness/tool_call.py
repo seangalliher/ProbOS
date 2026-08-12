@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import time
 import uuid
@@ -18,6 +19,8 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from probos.tools.protocol import ToolRegistration, ToolResult
+
+logger = logging.getLogger(__name__)
 
 
 # ── BF-754: a tool id is not automatically a legal LLM function name ────────
@@ -34,16 +37,26 @@ if TYPE_CHECKING:
 # have broken the agent's entire turn, not merely made one tool uncallable.
 #
 # The alias is deterministic (same id, same name, every boot -- the model may
-# see it across turns) and carries an 8-hex digest of the canonical id, because
+# see it across turns) and carries a digest of the canonical id, because
 # sanitising alone collides: ``a:b`` and ``a_b`` both become ``a_b``.
-_LLM_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+#
+# BF-757: two corrections, both measured against the live proxy.
+#   * ``fullmatch``, not ``match``. ``$`` also matches before a trailing
+#     newline, so ``"valid\n"`` was passed through verbatim -- and the proxy
+#     returns HTTP 500 for it, failing the whole request.
+#   * 16 hex, not 8. 8 hex is 32 bits: a collision was found in 117,239
+#     candidate ids, and two tools offered under one name makes the proxy
+#     answer HTTP 500 "Tool names must be unique" -- again for the whole
+#     request. 64 bits puts the birthday bound around 2**32 ids, which no
+#     vessel will reach.
+_LLM_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _LLM_NAME_MAX = 64
-_LLM_DIGEST_LEN = 8
+_LLM_DIGEST_LEN = 16
 
 
 def llm_function_name(tool_id: str) -> str:
     """BF-754: ``tool_id`` if a provider accepts it, else a stable safe alias."""
-    if _LLM_NAME_RE.match(tool_id):
+    if _LLM_NAME_RE.fullmatch(tool_id):
         return tool_id
     digest = hashlib.sha256(tool_id.encode("utf-8")).hexdigest()[:_LLM_DIGEST_LEN]
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", tool_id).strip("_")
@@ -51,20 +64,70 @@ def llm_function_name(tool_id: str) -> str:
     return f"{stem}_{digest}" if stem else digest
 
 
+def llm_function_name_claimants(name: str, tool_ids: Iterable[str]) -> list[str]:
+    """BF-757: every tool id that would be offered to the provider as *name*.
+
+    Zero means the model named something nobody owns. One is the ordinary case.
+    Two or more means the name is AMBIGUOUS -- and which of them the model was
+    actually shown depends on the ORDER they were offered in, because
+    :func:`dedupe_llm_definitions` keeps the first and drops the rest. That
+    order is not recoverable from a list of ids, so the caller must refuse
+    rather than pick.
+    """
+    return [t for t in tool_ids if t == name or llm_function_name(t) == name]
+
+
 def resolve_llm_function_name(name: str, tool_ids: Iterable[str]) -> str | None:
     """BF-754: map a name the model returned back to its canonical tool id.
 
-    ``None`` when nothing matches, so the caller keeps its own not-found path
-    rather than inventing a tool. Exact ids win over aliases: a real tool named
-    like another's alias must still resolve to itself.
+    ``None`` when nothing matches OR when the name is ambiguous, so the caller
+    keeps its own not-found path rather than inventing a tool. Callers that must
+    distinguish the two use :func:`llm_function_name_claimants` directly.
+
+    BF-757: this used to prefer an exact id over an alias, documented as "a real
+    tool named like another's alias must still resolve to itself" -- which reads
+    as obviously correct and is not decidable here. Resolving either way
+    silently invokes a tool the model may never have been shown.
     """
-    candidates = list(tool_ids)
-    if name in candidates:
-        return name
-    for tool_id in candidates:
-        if llm_function_name(tool_id) == name:
-            return tool_id
-    return None
+    claimants = llm_function_name_claimants(name, tool_ids)
+    if len(claimants) != 1:
+        if claimants:
+            logger.warning(
+                "BF-757: tool name %r is ambiguous between %s; refusing to "
+                "guess which one the model was offered",
+                name, claimants,
+            )
+        return None
+    return claimants[0]
+
+
+def dedupe_llm_definitions(
+    definitions: Iterable[dict[str, Any]],
+    *,
+    agent_id: str = "",
+) -> list[dict[str, Any]]:
+    """BF-757: drop definitions whose function name repeats an earlier one.
+
+    The provider rejects a duplicated function name by failing the ENTIRE
+    request, so N tools with one collision offers zero. Dropping the later
+    duplicate offers N-1. The first occurrence wins, which keeps the result
+    stable across boots for a stable tool order.
+    """
+    seen: set[str] = set()
+    kept: list[dict[str, Any]] = []
+    for definition in definitions:
+        name = ((definition.get("function") or {}).get("name")) or ""
+        if name in seen:
+            logger.warning(
+                "BF-757: two tools offered to %s under the name %r; dropping "
+                "the later one (the provider rejects the whole request for a "
+                "duplicate name)",
+                agent_id or "<agent>", name,
+            )
+            continue
+        seen.add(name)
+        kept.append(definition)
+    return kept
 
 
 # ── BF-728: structure-aware rendering of a structured tool output ───────────

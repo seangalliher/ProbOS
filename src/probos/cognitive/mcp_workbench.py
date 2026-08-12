@@ -25,6 +25,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from jsonschema import Draft202012Validator
+
 from probos.cognitive.agentic_dispatch import _coerce_risk, _McpTool
 from probos.cognitive.episodic import fts_or_query, reciprocal_rank_fusion
 from probos.integrations.mcp_bridge.access import resolve_mcp_access
@@ -42,8 +44,43 @@ _FIND_MCP_TOOL_ID = "find_mcp_tool"
 # remote input that goes straight into an LLM request, so it is validated and
 # bounded here rather than trusted: a hostile or broken server must not be able
 # to blow up the prompt or hand the provider something it will reject.
+#
+# BF-757: the original pass checked SIZE and called that validation. It was not.
+# Measured against the live Copilot proxy, a malformed schema is accepted here
+# and then returns HTTP 500 -- which fails the agent's WHOLE turn, not just the
+# one tool.
+#
+# The first BF-757 attempt hand-rolled a structural walk. Re-review measured it
+# against the proxy and it was wrong in BOTH directions: it REJECTED `$defs` +
+# local `$ref`, boolean `items`, and nine-deep nesting (all HTTP 200), and it
+# ACCEPTED `type: "bogus"`, `oneOf: []`, `additionalProperties: "nope"`,
+# `minimum: "zero"` and a non-string `format` (all HTTP 500). A false rejection
+# silently strips a good server's parameters, which is the exact failure BF-754
+# existed to fix.
+#
+# The proxy's own error names the authority -- "It must match JSON Schema draft
+# 2020-12" -- so ask that authority instead of approximating it. Every verdict
+# above then matches.
 _SCHEMA_MAX_PROPERTIES = 64
 _SCHEMA_MAX_BYTES = 16_384
+
+# BF-757: a tool's advertised description is remote input on the same path. 24
+# tools advertising 100 KB descriptions rendered a 2,788,502-byte tool block
+# (~697k tokens) -- over the context window, so the turn dies before it starts.
+_DESCRIPTION_MAX_CHARS = 4_096
+
+
+def _safe_description(raw: Any) -> str:
+    """BF-757: a tool description the provider will accept, always a ``str``.
+
+    A non-string is dropped rather than coerced: ``str(some_dict)`` would put
+    remote-controlled punctuation into the prompt claiming to be prose.
+    """
+    if not isinstance(raw, str):
+        return ""
+    if len(raw) <= _DESCRIPTION_MAX_CHARS:
+        return raw
+    return raw[:_DESCRIPTION_MAX_CHARS] + " [...truncated]"
 
 
 def _safe_input_schema(
@@ -54,21 +91,20 @@ def _safe_input_schema(
     Falling back to ``{"type": "object"}`` keeps the tool callable when a server
     advertises something unusable -- the model just has to infer the arguments,
     which is exactly the situation before this existed.
+
+    BF-757: the returned schema is always PLAIN json data, never the object the
+    caller passed. ``isinstance(x, dict)`` admits subclasses, and a subclass
+    that serialises as ``{}`` while its ``get`` synthesises 250,000 nodes made
+    the previous hand-rolled walk visit all of them. Round-tripping through
+    json is what actually bounds the inspection, and it is also what lets the
+    2020-12 check below see exactly the data the provider will see.
     """
-    if not isinstance(raw, dict) or raw.get("type") != "object":
-        return {"type": "object"}
-    props = raw.get("properties")
-    if props is not None and not isinstance(props, dict):
-        return {"type": "object"}
-    if isinstance(props, dict) and len(props) > _SCHEMA_MAX_PROPERTIES:
-        logger.warning(
-            "BF-754: %s/%s advertises %d properties (max %d); offering it "
-            "without a parameter schema",
-            server_name, tool_name, len(props), _SCHEMA_MAX_PROPERTIES,
-        )
+    if not isinstance(raw, dict):
         return {"type": "object"}
     try:
-        encoded = json.dumps(raw)
+        # allow_nan=False: the default emits bare ``NaN``/``Infinity``, which is
+        # not JSON -- it serialises here and then dies at the provider.
+        encoded = json.dumps(raw, allow_nan=False)
     except Exception:
         logger.warning(
             "BF-754: %s/%s advertises a non-serialisable inputSchema; offering "
@@ -82,7 +118,33 @@ def _safe_input_schema(
             server_name, tool_name, len(encoded), _SCHEMA_MAX_BYTES,
         )
         return {"type": "object"}
-    return raw
+    try:
+        schema = json.loads(encoded)
+    except Exception:
+        return {"type": "object"}
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return {"type": "object"}
+    props = schema.get("properties")
+    if props is not None and not isinstance(props, dict):
+        return {"type": "object"}
+    if isinstance(props, dict) and len(props) > _SCHEMA_MAX_PROPERTIES:
+        logger.warning(
+            "BF-754: %s/%s advertises %d properties (max %d); offering it "
+            "without a parameter schema",
+            server_name, tool_name, len(props), _SCHEMA_MAX_PROPERTIES,
+        )
+        return {"type": "object"}
+    try:
+        Draft202012Validator.check_schema(schema)
+    except Exception as exc:
+        logger.warning(
+            "BF-757: %s/%s advertises an inputSchema that is not valid JSON "
+            "Schema 2020-12 (%s); the provider rejects the whole request for "
+            "these, so offering it without a parameter schema",
+            server_name, tool_name, exc.__class__.__name__,
+        )
+        return {"type": "object"}
+    return schema
 
 
 def _tokenize(text: str) -> set[str]:
@@ -232,17 +294,29 @@ class MCPWorkbench:
                 exc_info=True,
             )
             return []
-        return [
-            {
-                "name": t.get("name", ""),
-                "description": t.get("description", ""),
+        # BF-757: ``name`` and ``description`` are remote input too. A tool with
+        # a non-string/empty name is dropped -- its id would be ``mcp:srv:{}``,
+        # which nothing can invoke -- rather than offered and left to fail.
+        out: list[dict[str, Any]] = []
+        for t in raw:
+            if not isinstance(t, dict):
+                continue
+            name = t.get("name")
+            if not isinstance(name, str) or not name:
+                logger.warning(
+                    "BF-757: MCP server %s advertises a tool with a %s name; "
+                    "skipping it (nothing could invoke it)",
+                    record.name, type(t.get("name")).__name__,
+                )
+                continue
+            out.append({
+                "name": name,
+                "description": _safe_description(t.get("description")),
                 "input_schema": _safe_input_schema(
-                    t.get("inputSchema"), record.name, t.get("name", "")
+                    t.get("inputSchema"), record.name, name
                 ),
-            }
-            for t in raw
-            if isinstance(t, dict)
-        ]
+            })
+        return out
 
     def _effective_risk(
         self, record: "McpServerRecord", tool_name: str

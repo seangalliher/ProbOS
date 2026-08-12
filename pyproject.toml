@@ -28,6 +28,13 @@ dependencies = [
     "rich>=13.0",
     "httpx>=0.27",
     "pyzmq>=27.1.0",
+    # BF-757: an MCP server's advertised inputSchema is remote input that goes
+    # straight into an LLM request, and the provider rejects the WHOLE request
+    # for a schema that is not valid Draft 2020-12. mcp_workbench validates it
+    # with Draft202012Validator.check_schema before offering the tool. It was
+    # already present transitively (via chromadb); declared here because the
+    # import is now direct and load-bearing.
+    "jsonschema>=4.0",
     "chromadb>=1.0",
     "sentence-transformers>=3.0",
     # BF-313: torch >=2.4 required by transformers >=4.46 (the version

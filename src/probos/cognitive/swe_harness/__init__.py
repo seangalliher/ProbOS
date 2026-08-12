@@ -13,6 +13,7 @@ from probos.cognitive.swe_harness.tool_call import (
     ToolCallResult,
     ToolResultBlock,
     ToolUseBlock,
+    dedupe_llm_definitions,
     tool_registration_to_llm_definition,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "ToolCallResult",
     "ToolResultBlock",
     "ToolUseBlock",
+    "dedupe_llm_definitions",
     "tool_registration_to_llm_definition",
 ]
