@@ -328,6 +328,18 @@ class ToolRegistry:
         Raises ToolPermissionDenied if permission insufficient.
         Returns ToolResult with error if tool is locked by another agent.
         """
+        # #1214: existence BEFORE permission. This ran the other way round, so
+        # an unregistered id resolved to NONE, failed the permission check, and
+        # raised ToolPermissionDenied -- the agent was told it lacked access to
+        # a tool that does not exist, and the not-found branch further down was
+        # unreachable for the one case it was written for. Downstream that
+        # landed a typo in ``denied_tools``, which is the signal that motivates
+        # designing a new agent, so a misspelling could present as a missing
+        # capability. It also filed a TOOL_PERMISSION_DENIED audit record for a
+        # call that was never a permission question.
+        if self._tools.get(tool_id) is None:
+            return ToolResult(error=f"Tool '{tool_id}' not found")
+
         # Permission check
         held = self.resolve_permission(
             agent_id, tool_id,

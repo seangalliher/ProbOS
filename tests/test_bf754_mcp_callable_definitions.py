@@ -589,24 +589,26 @@ class _NamedTool:
 
 
 def test_the_dispatch_module_applies_dedupe_to_the_offered_tools() -> None:
-    """CROSSING: pins that the assembled ``tools`` list is passed THROUGH
-    dedupe before it reaches AgenticLoop. A source assertion is used because
-    the surrounding assembly needs a full runtime; the mutation check is that
-    removing the call makes this fail."""
+    """CROSSING: pins that the assembled offer is passed THROUGH dedupe before
+    it reaches AgenticLoop. BF-755 moved the assembly into a ``_build_tools``
+    closure so the same code can run again mid-turn; this repointed with it,
+    and now also pins that dedupe is INSIDE that one builder -- so the refresh
+    path cannot bypass it."""
     import inspect
 
     from probos.cognitive import agentic_dispatch as ad
 
     source = inspect.getsource(ad)
-    assert "tools = dedupe_llm_definitions(tools, agent_id=agent_id)" in source, (
-        "the offer path must dedupe; a duplicate name makes the provider "
-        "reject the whole request"
+    start = source.index("def _build_tools(")
+    builder = source[start:source.index("tools = _build_tools(")]
+
+    assert "return dedupe_llm_definitions(built, agent_id=agent_id)" in builder, (
+        "the offer must dedupe; a duplicate name makes the provider reject the "
+        "whole request"
     )
-    # ...and that it happens AFTER the list is built and BEFORE it is used.
-    build_at = source.index("tools.append(definition)")
-    dedupe_at = source.index("tools = dedupe_llm_definitions(")
-    use_at = source.index("tools=tools,")
-    assert build_at < dedupe_at < use_at
+    assert builder.index("built.append(definition)") < builder.index(
+        "return dedupe_llm_definitions("
+    )
 
 
 def test_the_build_harness_applies_dedupe_to_its_tools() -> None:

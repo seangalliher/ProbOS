@@ -1634,7 +1634,14 @@ class WorkItemAgenticExecutor:
         mcp_ids: list[str] = []
         workbench = getattr(runtime, "mcp_workbench", None)
         mcp_cfg = getattr(getattr(runtime, "config", None), "mcp", None)
-        if workbench is not None and getattr(mcp_cfg, "agent_tools_enabled", False):
+        # BF-755: the refresher below must be armed by the SAME gate that built
+        # the initial offer. Arming on the workbench alone would let a mid-turn
+        # refresh introduce MCP tools on a vessel where the operator turned
+        # agent_tools_enabled off.
+        mcp_offer_armed = workbench is not None and bool(
+            getattr(mcp_cfg, "agent_tools_enabled", False)
+        )
+        if mcp_offer_armed:
             try:
                 # AD-1239: pull the agent's OPEN-risk authorized tools first, so
                 # they are offered BY NAME rather than only behind the
@@ -1983,14 +1990,28 @@ class WorkItemAgenticExecutor:
                 *publish_ids, *browser_ids,
             ])
         )
+        # BF-755: the non-MCP half, so a mid-turn refresh can REBUILD the MCP
+        # half from the current authorized view rather than unioning onto the
+        # old one. An append-only merge could never drop a tool whose server was
+        # disabled or whose grant was revoked mid-turn.
+        _mcp_id_set = set(mcp_ids)
+        non_mcp_ids = [t for t in tool_ids if t not in _mcp_id_set]
 
         tools: list[dict] = []
         # AD-1163: resolved once, before the loop, so the browser offer can name
         # the Captain's open page. AD-1158/1162 made the binding WORK; this is
         # what makes the agent aware it exists.
         _captain_row = _captain_browser_session(runtime)
-        if registry is not None:
-            for tid in tool_ids:
+
+        def _build_tools(ids: list[str]) -> list[dict]:
+            """BF-755: assemble the offer for *ids*. Extracted so the same
+            assembly can run again mid-turn when discovery changes the set --
+            two assemblies that could drift is the shape this repo keeps
+            producing, so there is exactly one."""
+            built: list[dict] = []
+            if registry is None:
+                return built
+            for tid in ids:
                 reg = registry.get(tid)
                 if reg is None:
                     continue
@@ -2014,12 +2035,43 @@ class WorkItemAgenticExecutor:
                         agent_id,
                         (definition.get("function") or {}).get("description", ""),
                     )
-                tools.append(definition)
+                built.append(definition)
+            # BF-757: last gate before the provider. A duplicate function name
+            # makes it reject the WHOLE request, so one collision would cost the
+            # agent every tool rather than the one.
+            return dedupe_llm_definitions(built, agent_id=agent_id)
 
-        # BF-757: last gate before the provider. A duplicate function name makes
-        # it reject the WHOLE request, so one collision would cost the agent
-        # every tool rather than the one.
-        tools = dedupe_llm_definitions(tools, agent_id=agent_id)
+        tools = _build_tools(tool_ids)
+
+        def _refresh_tools() -> list[dict] | None:
+            """BF-755: re-offer after discovery pulled a tool onto the workbench.
+
+            ``dispatch_tool_ids`` is the SAME authorized view used to build the
+            initial offer, so a tool can only appear here if the agent was
+            already allowed to have it -- discovery widens what is *visible*,
+            never what is *permitted*.
+            """
+            if workbench is None or not mcp_offer_armed:
+                return None
+            try:
+                current = workbench.dispatch_tool_ids(agent_id)
+            except Exception:
+                # WARNING, not DEBUG: the tool the agent just found becomes
+                # uncallable for the rest of the turn. That is a visible
+                # degradation, and at DEBUG it is invisible at the default
+                # console level.
+                logger.warning(
+                    "BF-755: could not re-read the workbench for %s; keeping "
+                    "the offer as assembled, so a tool discovered this turn "
+                    "stays uncallable until the next one",
+                    agent_id[:12], exc_info=True,
+                )
+                return None
+            merged = list(dict.fromkeys([*non_mcp_ids, *current]))
+            if merged == tool_ids:
+                return None
+            tool_ids[:] = merged
+            return _build_tools(merged)
 
         # AD-1065: the conversational chat path passes a lower iteration cap +
         # a faster tier than the task-path defaults (25 / deep). When both are
@@ -2044,6 +2096,13 @@ class WorkItemAgenticExecutor:
         # path and every test double keep the exact call they had before.
         if priority is not None:
             _loop_kwargs["priority"] = priority
+        # BF-755: a tool the agent finds mid-turn becomes callable in that turn.
+        # Only passed when the MCP offer itself was armed -- an unarmed vessel
+        # never receives the kwarg, so its construction is byte-identical and
+        # every test double pinning the old signature keeps working (the BF-678
+        # class).
+        if mcp_offer_armed:
+            _loop_kwargs["refresh_tools"] = _refresh_tools
         # AD-1146: opt into the provider's real multi-turn message array
         # (assistant.tool_calls + role:"tool" results). Default-OFF — with the
         # flag off the loop builds the AD-545 flattened prompt verbatim. Read

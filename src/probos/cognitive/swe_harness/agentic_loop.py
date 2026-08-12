@@ -734,6 +734,7 @@ class AgenticLoop:
         parallel_tool_calls_enabled: bool = False,
         max_parallel_tool_calls: int = PARALLEL_TOOL_CALLS_DEFAULT,
         priority: Any | None = None,
+        refresh_tools: Callable[[], list[dict] | None] | None = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -775,6 +776,11 @@ class AgenticLoop:
         # A non-positive ceiling would make ``asyncio.Semaphore`` block forever,
         # so it is clamped once here rather than at the await.
         self._max_parallel_tool_calls = max(1, max_parallel_tool_calls)
+        # BF-755: rebuilds the tool offer after an iteration that ran tools, so
+        # a tool discovered mid-turn becomes callable in that turn. None (every
+        # existing caller) means the offer is assembled once and never touched,
+        # which is the AD-545 behaviour verbatim.
+        self._refresh_tools = refresh_tools
         self._tasks: set[asyncio.Task] = set()
 
     async def run(
@@ -1020,6 +1026,39 @@ class AgenticLoop:
                     for trb in tool_result_blocks
                 )
                 messages.append({"role": "user", "content": tool_result_text})
+
+            # BF-755: a tool discovered THIS iteration is registered, warm and
+            # authorized -- and absent from the definitions the model can call,
+            # because the list was assembled once before the loop. Search was
+            # designed as the route to CONFIRM/CONSENSUS-risk tools and to
+            # anything past ``max_directly_offered_tools``; without this, search
+            # could find them and nothing could call them until a later turn.
+            # Default-inert: no refresher supplied => the list is never rebuilt
+            # and the run is byte-identical.
+            if self._refresh_tools is not None:
+                # ``run`` promises it never raises -- every failure becomes
+                # AgenticResult.error. An unguarded callback here broke that,
+                # and would discard a COMPLETED tool iteration before its trace
+                # was persisted. A refresh failure costs the newly found tool,
+                # never the work already done.
+                try:
+                    refreshed = self._refresh_tools()
+                except Exception:
+                    logger.warning(
+                        "BF-755: refreshing the tool offer for %s failed at "
+                        "iteration=%d; keeping the offer as assembled, so a "
+                        "tool discovered this turn stays uncallable until the "
+                        "next one", agent_id[:12], iteration, exc_info=True,
+                    )
+                    refreshed = None
+                if refreshed is not None and refreshed != tools:
+                    logger.info(
+                        "BF-755: tool offer for %s changed mid-turn at "
+                        "iteration=%d (%d -> %d definitions); the model can now "
+                        "call what it just found",
+                        agent_id[:12], iteration, len(tools), len(refreshed),
+                    )
+                    tools = refreshed
 
         # BF-697: report the work. This exit is reached ONLY after the loop has
         # executed tool calls (a turn without them exits ``complete`` above), so

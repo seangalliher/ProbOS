@@ -617,6 +617,13 @@ class MCPWorkbench:
         """
         ids = [self.register_search_tool()]
         for tid, entry in self._pulled.items():
+            # BF-755 review: an adapter stays warm after an operator disables
+            # its server, and authorization alone did not notice. Offering it
+            # spends an LLM call on a tool that fails at the bridge. Invocation
+            # was always deny-safe; this stops the wasted turn.
+            record = self._record_by_name(entry.server_name)
+            if record is not None and not getattr(record, "enabled", True):
+                continue
             if self._is_authorized(agent_id, entry.server_name, entry.tool_name):
                 ids.append(tid)
         return ids

@@ -86,14 +86,13 @@ class ToolExecutor:
         and the executor invoked the other one. A helper that is correct while
         its caller bypasses it is the defect shape this repo produces most.
 
-        An unresolvable name still falls through UNCHANGED, and this used to
-        claim "the registry's own not-found error still speaks". It does not.
-        ``ToolRegistry.check_and_invoke`` resolves permission before it looks
-        for the tool, so an unknown name holds NONE and raises
-        ``ToolPermissionDenied`` -- the agent is told it lacks access to a tool
-        that does not exist. That predates this method and is not widened by
-        alias resolution, which can only turn names that would have missed into
-        hits. Filed as #1214.
+        An unresolvable name still falls through UNCHANGED. BF-757 recorded
+        here that ``ToolRegistry.check_and_invoke`` then raised
+        ``ToolPermissionDenied`` for a name that simply did not exist -- the
+        agent was told it lacked access to a tool nobody has. #1214 fixed that
+        at the registry: existence is now checked before permission, so an
+        unknown name returns a not-found ``ToolResult`` and a typo no longer
+        reaches ``denied_tools`` or the denial audit trail.
         """
         registry = self._registry
         if registry is None or tool_id is None:

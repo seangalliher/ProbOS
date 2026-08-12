@@ -183,11 +183,45 @@ class TestToolContextInvocation:
 
     @pytest.mark.asyncio
     async def test_invoke_not_found(self):
-        """Nonexistent tool resolves to NONE permission → ToolPermissionDenied."""
+        """#1214 INVERTED this. It read "Nonexistent tool resolves to NONE
+        permission -> ToolPermissionDenied" and asserted the raise -- pinning
+        as the contract the fact that permission was resolved before the tool
+        was looked up. The agent was told it lacked access to a tool that does
+        not exist, and a typo reached ``denied_tools``, which is the signal
+        that motivates designing a new agent. A missing tool is a not-found
+        error; only a real tool can be denied.
+        """
         registry = _make_registry_with_tools("echo")
         ctx = _make_context(registry)
+
+        result = await ctx.invoke("nonexistent", {})
+
+        assert not result.success
+        assert "not found" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_tool_files_no_permission_denial(self):
+        """#1214: the denial audit trail is for real denials. A typo filing a
+        TOOL_PERMISSION_DENIED record makes the governance log unreadable."""
+        events: list[tuple[str, dict]] = []
+        registry = _make_registry_with_tools("echo")
+        registry._emit_event = lambda name, payload: events.append((name, payload))
+        ctx = _make_context(registry)
+
+        await ctx.invoke("nonexistent", {})
+
+        assert not [e for e in events if e[0] == "TOOL_PERMISSION_DENIED"]
+
+    @pytest.mark.asyncio
+    async def test_a_real_tool_is_still_denied_and_still_audited(self):
+        """#1214 must not soften the real denial path -- an existing tool the
+        agent may not use still raises, and still audits."""
+        registry = ToolRegistry()
+        registry.register(_StubTool("restricted"), department="security")
+        ctx = _make_context(registry, department="medical")
+
         with pytest.raises(ToolPermissionDenied):
-            await ctx.invoke("nonexistent", {})
+            await ctx.invoke("restricted", {})
 
     @pytest.mark.asyncio
     async def test_invoke_permission_denied(self):

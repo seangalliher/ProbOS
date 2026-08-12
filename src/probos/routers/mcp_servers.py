@@ -38,6 +38,11 @@ from probos.integrations.mcp_bridge.access import (
 )
 from probos.integrations.mcp_bridge.client import MCPClient
 from probos.integrations.mcp_bridge.mcp_oauth import McpOAuthError, McpOAuthProvider
+from probos.integrations.mcp_bridge.registration import (
+    register_record,
+    resolve_auth_env as _shared_resolve_auth_env,
+    resolve_auth_headers as _shared_resolve_auth_headers,
+)
 from probos.integrations.mcp_bridge.risk import McpToolRisk, resolve_tool_risk
 from probos.integrations.mcp_bridge.session import MCPSession
 from probos.integrations.mcp_bridge.store import (
@@ -291,95 +296,26 @@ def _request_timeout(runtime: Any, record: McpServerRecord) -> float:
     return float(getattr(cfg, "request_timeout_seconds", 30.0) or 30.0)
 
 
-async def _resolve_secret_value(record: McpServerRecord, runtime: Any) -> str | None:
-    """Resolve the raw secret value for a record from the credential vault.
-
-    ``static`` → the stored token; ``oauth`` → the bundle's ``access_token``.
-    Returns ``None`` (honest-degrade, warning, **no secret logged**) when there
-    is no vault, no ``credential_ref``, a vault miss, or a corrupt bundle — the
-    server then registers unauthenticated.
-    """
-    vault = getattr(runtime, "credential_vault", None)
-    if vault is None or not record.credential_ref:
-        return None
-    raw = await vault.read(
-        ref=record.credential_ref, requesting_agent_id=_CAPTAIN_ID
-    )
-    if raw is None:
-        logger.warning(
-            "AD-1017: credential vault miss for MCP server %s (auth_kind=%s, ref "
-            "present, value absent); registering unauthenticated (no secret logged)",
-            record.name,
-            record.auth_kind,
-        )
-        return None
-    if record.auth_kind == "oauth":
-        bundle = _bundle_or_none(raw)
-        if bundle is None:
-            return None
-        return bundle.access_token
-    return raw
-
-
 async def _resolve_auth_headers(
     record: McpServerRecord, runtime: Any
 ) -> dict[str, str]:
-    """Build the http auth header(s) for a record. ``{}`` for none/miss.
-
-    ``auth_kind=="none"`` → ``{}`` (register byte-identical to AD-1015).
-    ``static`` → ``{header_name: f"{scheme} {value}".strip()}`` (bare ``value``
-    when ``scheme`` is empty). ``oauth`` → ``{"Authorization": "Bearer <access>"}``.
-    """
-    if record.auth_kind == "none":
-        return {}
-    value = await _resolve_secret_value(record, runtime)
-    if value is None:
-        return {}
-    if record.auth_kind == "oauth":
-        return {"Authorization": f"Bearer {value}"}
-    name = record.auth_header_name or "Authorization"
-    scheme = record.auth_scheme
-    return {name: f"{scheme} {value}".strip() if scheme else value}
+    """BF-745: delegates to the shared helper the boot path also uses."""
+    return await _shared_resolve_auth_headers(record, runtime)
 
 
 async def _resolve_auth_env(record: McpServerRecord, runtime: Any) -> dict[str, str]:
-    """Build the stdio auth env var for a record. ``{}`` unless ``auth_env_var`` set.
-
-    The operator names the env var their server expects (e.g. ``API_KEY``); when
-    unset, stdio registers unauthenticated (http is the primary auth path).
-    """
-    if record.auth_kind == "none" or not record.auth_env_var:
-        return {}
-    value = await _resolve_secret_value(record, runtime)
-    if value is None:
-        return {}
-    return {record.auth_env_var: value}
+    """BF-745: delegates to the shared helper the boot path also uses."""
+    return await _shared_resolve_auth_env(record, runtime)
 
 
 async def _register(runtime: Any, record: McpServerRecord) -> None:
-    """Live-register via the §4 key rule, merging resolved auth — http sync, stdio await.
+    """Live-register via the shared BF-745 path (http sync, stdio await).
 
-    ``auth_kind=="none"`` resolves to ``{}`` so the merged ``headers``/``env``
-    are byte-identical to the AD-1015 ``dict(record.headers)`` / ``dict(record.env)``.
+    This used to be the ONLY place that resolved credentials before registering.
+    The boot seed loop had its own copy that did not, so an authenticated server
+    silently lost its credentials on restart.
     """
-    bridge = getattr(runtime, "mcp_bridge", None)
-    if bridge is None:
-        return
-    if record.type == "http":
-        auth_headers = await _resolve_auth_headers(record, runtime)
-        bridge.register_server(
-            record.url, headers={**record.headers, **auth_headers}
-        )
-    else:
-        auth_env = await _resolve_auth_env(record, runtime)
-        await bridge.register_stdio_server(
-            name=record.name,
-            command=record.command,
-            args=list(record.args),
-            env={**record.env, **auth_env},
-            cwd=record.cwd,
-            timeout=record.timeout_seconds,
-        )
+    await register_record(runtime, record)
 
 
 async def _unregister(bridge: Any, key: str) -> None:

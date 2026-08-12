@@ -7311,15 +7311,21 @@ async def test_session_correction_projection_rereads_live_permissions_at_invocat
         ToolPermission.READ,
     )
     assert projected.get("late_static") is None
-    with pytest.raises(ToolPermissionDenied) as late_denial:
-        await projected.check_and_invoke(
-            "producer-1",
-            "late_static",
-            {},
-            agent_department="engineering",
-            agent_rank="ensign",
-        )
-    assert late_denial.value.held is ToolPermission.NONE
+    # #1214 REPOINTED the mechanism, not the guarantee. This asserted
+    # ToolPermissionDenied because permission used to resolve BEFORE the tool
+    # was looked up, so an absent tool read as an access failure. A tool that
+    # is not in the frozen projection is not present, and now says so. The
+    # load-bearing property is unchanged and still asserted below: a tool
+    # registered after the projection was taken MUST NOT run through it.
+    late_result = await projected.check_and_invoke(
+        "producer-1",
+        "late_static",
+        {},
+        agent_department="engineering",
+        agent_rank="ensign",
+    )
+    assert not late_result.success
+    assert "not found" in (late_result.error or "")
     assert late_tool.calls == []
 
 

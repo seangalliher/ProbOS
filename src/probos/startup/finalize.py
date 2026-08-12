@@ -4085,6 +4085,7 @@ async def finalize_startup(
         # a duplicate key, so the seed loop never double-registers. A fresh DB has
         # an empty cache -> the seed loop is a no-op -> byte-identical boot.
         if config.mcp.management_enabled:
+            from probos.integrations.mcp_bridge.registration import register_record
             from probos.integrations.mcp_bridge.store import McpServerStore
 
             mcp_server_store = McpServerStore(
@@ -4103,22 +4104,15 @@ async def finalize_startup(
             # which is why a counselor asked a documentation question drove four
             # Chromium instances past a connected learn.microsoft.com server.
             await _seed_config_mcp_servers(config, mcp_server_store)
+            # BF-745: through the shared registrar, which resolves the record's
+            # credentials out of the vault. This loop used to pass
+            # ``dict(rec.headers)`` verbatim while the HXI enable path resolved
+            # auth -- so an authenticated server worked when you enabled it and
+            # was silently unauthenticated after every restart.
             for rec in mcp_server_store.list_sync():
                 if not rec.enabled:
                     continue
-                if rec.type == "http":
-                    runtime.mcp_bridge.register_server(
-                        rec.url, headers=dict(rec.headers)
-                    )
-                else:
-                    await runtime.mcp_bridge.register_stdio_server(
-                        name=rec.name,
-                        command=rec.command,
-                        args=rec.args,
-                        env=rec.env,
-                        cwd=rec.cwd,
-                        timeout=rec.timeout_seconds,
-                    )
+                await register_record(runtime, rec)
             _warn_on_mcp_egress_mismatch(
                 config, mcp_server_store, getattr(runtime, "egress_policy", None)
             )
