@@ -1391,6 +1391,7 @@ Security infrastructure configuration (AD-456 + AD-456b).
 | `egress_deny_by_default` | `bool` | `True` | — |  |
 | `egress_allowlist` | `list[str]` | `['127.0.0.1', 'localhost', '::1']` | — |  |
 | `audit_enabled` | `bool` | `True` | — |  |
+| `read_roots` | `list[str]` | `[]` | — |  |
 | `sandbox_enabled` | `bool` | `True` | — |  |
 | `sandbox_default_wall_timeout_seconds` | `float` | `30.0` | — |  |
 | `sandbox_default_memory_peak_mb` | `float` | `256.0` | — |  |

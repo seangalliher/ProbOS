@@ -133,7 +133,15 @@ class CodeSearchAgent(BaseAgent):
         if plan.get("action") != "search":
             return {"success": False, "error": f"Unknown action: {plan.get('action')}"}
 
-        root = Path(plan["path"])
+        # BF-758: same allowlist, same seam. This one matters most of the three
+        # siblings -- ripgrep returns matching LINES, so an unbounded root turns
+        # a content search into a way to grep the credential store.
+        from probos.security.file_access import resolve_for_runtime
+
+        try:
+            root = resolve_for_runtime(str(plan["path"]), getattr(self, "_runtime", None))
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
         if not root.exists():
             return {"success": False, "error": f"Path not found: {plan['path']}"}
 

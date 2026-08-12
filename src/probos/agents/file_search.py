@@ -119,9 +119,19 @@ class FileSearchAgent(BaseAgent):
         …) + hidden + binary files — ripgrep's automatic-filtering behavior, so
         results are signal not noise. ``include_ignored=True`` restores the legacy
         raw recursive glob over everything (the escape hatch).
+
+        BF-758: confined to the readable roots. ``search_files`` is in the same
+        ``_MESH_READ_INTENT_POOLS`` allowlist as ``read_file`` and reached by
+        the same seam, so leaving it open would have moved the leak rather than
+        closed it.
         """
+        from probos.security.file_access import resolve_for_runtime
+
         try:
-            p = Path(path)
+            p = resolve_for_runtime(path, getattr(self, "_runtime", None))
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+        try:
             if not p.exists():
                 return {"success": False, "error": f"Directory not found: {path}"}
             if not p.is_dir():

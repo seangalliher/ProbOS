@@ -43,7 +43,17 @@ class ReadFileTool:
     tool_id: str = "read_file"
     name: str = "Read File"
     tool_type: ToolType = ToolType.UTILITY_AGENT
-    description: str = "Read a file's contents from the project tree."
+    # BF-758: the boundary is the runtime data directory -- the credential
+    # vault and the governance databases -- which is refused unconditionally.
+    # This previously claimed "from the project tree" while passing absolute
+    # paths through; a first BF-758 draft replaced that with a claim about
+    # workspace confinement that is only true when an operator sets
+    # ``security_infra.read_roots``. Both were false by default. This says what
+    # is actually enforced with no configuration.
+    description: str = (
+        "Read a file's contents. Relative paths resolve against the project "
+        "tree. The runtime's own data directory is not readable."
+    )
     input_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -68,7 +78,14 @@ class ReadFileTool:
         if not path:
             return ToolResult(error="path is required")
         try:
-            target = _resolve_path(str(path))
+            from probos.security.file_access import resolve_for_runtime
+
+            target = resolve_for_runtime(
+                str(path), self._runtime, relative_base=_PROJECT_ROOT
+            )
+        except Exception as exc:
+            return ToolResult(error=f"read_file refused: {exc}")
+        try:
             text = target.read_text(encoding="utf-8")
             offset = params.get("offset")
             limit = params.get("limit")

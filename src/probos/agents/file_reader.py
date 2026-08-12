@@ -99,8 +99,15 @@ class FileReaderAgent(BaseAgent):
 
         return None
 
+    def _confine(self, path: str) -> Path:
+        """BF-758: the readable path, or raise. Confinement is not optional --
+        this agent is reachable from agent-authored text via the AD-869
+        ``[MESH read_file path=...]`` seam, which runs on every DM turn."""
+        from probos.security.file_access import resolve_for_runtime
+
+        return resolve_for_runtime(path, getattr(self, "_runtime", None))
+
     async def act(self, plan: Any) -> Any:
-        """Execute the planned filesystem operation."""
         action = plan.get("action")
 
         if action == "error":
@@ -119,9 +126,12 @@ class FileReaderAgent(BaseAgent):
         return result
 
     async def _read_file(self, path: str) -> dict[str, Any]:
-        """Read file contents."""
+        """Read file contents, confined to the readable roots (BF-758)."""
         try:
-            p = Path(path)
+            p = self._confine(path)
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+        try:
             if not p.exists():
                 return {"success": False, "error": f"File not found: {path}"}
             if not p.is_file():
@@ -138,9 +148,16 @@ class FileReaderAgent(BaseAgent):
             return {"success": False, "error": str(e)}
 
     async def _stat_file(self, path: str) -> dict[str, Any]:
-        """Get file metadata."""
+        """Get file metadata, confined to the readable roots (BF-758).
+
+        Confined for the same reason as ``_read_file``: existence and size are
+        themselves information, and an unbounded stat enumerates the host.
+        """
         try:
-            p = Path(path)
+            p = self._confine(path)
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+        try:
             if not p.exists():
                 return {"success": False, "error": f"File not found: {path}"}
 

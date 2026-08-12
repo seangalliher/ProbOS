@@ -97,9 +97,20 @@ class DirectoryListAgent(BaseAgent):
         return result
 
     async def _list_directory(self, path: str) -> dict[str, Any]:
-        """List directory contents."""
+        """List directory contents, confined to the readable roots (BF-758).
+
+        ``list_directory`` sits in the same ``_MESH_READ_INTENT_POOLS``
+        allowlist as ``read_file`` and is reached by the same seam. Confining
+        only the content read would have closed one door and left this one
+        enumerating the data directory.
+        """
+        from probos.security.file_access import resolve_for_runtime
+
         try:
-            p = Path(path)
+            p = resolve_for_runtime(path, getattr(self, "_runtime", None))
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+        try:
             if not p.exists():
                 return {"success": False, "error": f"Directory not found: {path}"}
             if not p.is_dir():

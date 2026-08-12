@@ -4246,6 +4246,15 @@ class SecurityInfraConfig(BaseModel):
     )
     audit_enabled: bool = True
 
+    # BF-758: optional confinement for the filesystem intents reachable from
+    # agent-authored text (`read_file`, `stat_file`, `list_directory`,
+    # `search_files`, `search_content`). EMPTY = no confinement, which is the
+    # shipped default because reading a path the Captain names is ordinary work.
+    # Setting it restricts those intents to these roots plus the agent
+    # workspace. Independent of the floor: the runtime data directory is refused
+    # whatever this says, so widening it cannot hand out the credential vault.
+    read_roots: list[str] = Field(default_factory=list)
+
     # AD-456b: Runtime Sandboxing
     sandbox_enabled: bool = True
     sandbox_default_wall_timeout_seconds: float = 30.0
