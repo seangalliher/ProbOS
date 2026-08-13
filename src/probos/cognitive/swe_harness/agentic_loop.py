@@ -301,10 +301,13 @@ def build_tool_trace_payload(
     outcome is byte-identical to eliding one at a time, and earlier calls keep
     their outputs so a reader can see exactly where the budget ran out.
 
-    ``output_chars`` is always the ORIGINAL length and ``output_truncated`` is a
-    bool, so all three cases are machine-distinguishable: a tool that returned
-    nothing (``""`` / ``0`` / ``False``), a truncated output (marker / ``N`` /
-    ``True``) and an elided output (``""`` / ``N`` / ``True``).
+    ``output_chars`` is the length of the output AS RECEIVED and
+    ``output_truncated`` is a bool, so all three cases are machine-
+    distinguishable: a tool that returned nothing (``""`` / ``0`` / ``False``),
+    a truncated output (marker / ``N`` / ``True``) and an elided output (``""``
+    / ``N`` / ``True``). BF-760 (#1218): for a STRUCTURED tool result "as
+    received" is already the BF-728 rendering, not what the tool returned, so
+    this cannot be read as the original length for those.
 
     **Requests are never dropped.** If a fully-elided blob still exceeds
     ``blob_max_bytes`` it is returned anyway; losing call records to save bytes
@@ -1000,9 +1003,13 @@ class AgenticLoop:
             for use in tool_uses:
                 result.tool_calls.append(use.tool_call)
                 tool_id_history.append(use.tool_call.name)
-            # AD-1151 / DD-1: capture the FULL outputs alongside the requests,
-            # before AD-1148 bounding is applied to message content below, so
-            # the durable trace can record what the tool actually returned.
+            # AD-1151 / DD-1: capture the outputs alongside the requests,
+            # before AD-1148 bounding is applied to message content below.
+            # BF-760 (#1218): these are NOT the tool's full outputs for a STRUCTURED
+            # result. BF-728 renders at ``from_tool_result``, upstream of here,
+            # so the trace records the rendered value and its ``output_chars``
+            # measures that rather than what the tool returned. A string output
+            # is untouched by that path and does arrive whole.
             result.tool_results.extend(tool_results)
 
             # AD-1146: structured results are individually correlated by

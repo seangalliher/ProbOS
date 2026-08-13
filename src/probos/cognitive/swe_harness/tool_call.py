@@ -156,8 +156,52 @@ def dedupe_llm_definitions(
 # A long string is NOT elided blindly: for http_fetch the ``body`` member IS
 # the payload, so a string that parses as JSON is recursed into instead. That
 # is what lets ``info.version`` survive inside a 1 MB body string.
+#
+# ── BF-759: a document envelope is one leaf, and BF-728 threw it away ───────
+#
+# BF-728 reasoned about a dict of records, where the bulk is noise and the keys
+# are the answer. An MCP tool result is the opposite shape: the MCP standard
+# content envelope is ``{content: [{type: "text", text: <whole document>}]}`` -
+# ONE string leaf holding the entire payload. A leaf over its allowance was
+# replaced wholesale by a marker, so the shape survived and the document did
+# not.
+#
+# Measured on the live vessel: ``microsoft_docs_fetch`` on a 13,027-char page
+# returned 81 characters to the model - ``{'content': [{'type': 'text',
+# 'text': '<elided 13027 chars>'}], 'isError': False}``. Zero percent of the
+# document, and 1.4% of a 6,000-character budget spent. Nothing errored; the
+# agent fell back to ``run_python`` on the same URLs, which is the symptom.
+# This is not a Microsoft Learn quirk - that envelope is the MCP standard, so
+# every MCP text-returning tool was affected.
+#
+# Two changes, both about spending the budget rather than protecting it:
+#
+#   * An oversized string is TRUNCATED to its allowance and what went between
+#     is counted in the marker, never discarded outright. Returning none of a
+#     payload when there is room for some of it is always the wrong trade.
+#   * After the tightening passes settle on a render that fits, one further
+#     render raises the per-leaf allowance by whatever budget is left over.
+#     That converges exactly for the single-leaf document shape and is declined
+#     for a structure with several oversized leaves, where each would grow by
+#     the same headroom.
+#
+# Two carve-outs, both found by review rather than by reasoning:
+#
+#   * An OPAQUE leaf keeps BF-728's counted elision. MCP also defines ``image``
+#     and ``audio`` content blocks whose ``data`` member is base64; half a
+#     base64 blob is not half an answer, and truncating it would spend the
+#     whole budget on noise. ``_looks_like_text`` is the test.
+#   * The truncation keeps a TAIL as well as a head, for AD-1148 DD-1's reason.
+#     AD-1153 closes a bounded ``extract_text`` with "re-run with a narrower
+#     selector to retrieve the elided region" - a head-only cut removes the one
+#     sentence telling the agent how to get the rest.
+#
+# The same page now renders 5,999 characters - 100% of the budget and 46% of
+# the document. The rest is AD-1240's job, which could not begin while this
+# function destroyed the value before anything downstream could offload it.
 
 _ELIDED_TEXT = "<elided {n} chars>"
+_ELIDED_SPAN = "... <elided {n} more chars> ..."
 _ELIDED_ITEMS = "<elided {n} more items>"
 _ELIDED_KEYS = "<elided {n} more keys>"
 _MAX_DEPTH = 12
@@ -166,6 +210,41 @@ _DICT_KEEP = 40
 _MIN_VALUE_CHARS = 120
 # A long string is only worth parsing if it plausibly opens a JSON container.
 _JSON_OPENERS = ("{", "[")
+# How far to look for evidence that a leaf is readable rather than opaque.
+_OPAQUE_PROBE_CHARS = 4096
+
+
+def _looks_like_text(value: str) -> bool:
+    """BF-759: whether a slice of ``value`` would be worth anything to a reader.
+
+    Prose, markup, CSV and logs all break somewhere within their first few
+    kilobytes; base64 (an MCP ``image``/``audio`` block's ``data`` member), a
+    hex digest and a data URI do not. The probe is bounded, so a pathological
+    leaf costs a fixed amount rather than its own length.
+
+    Stated limitation rather than an implicit one: an unbroken run of CJK text
+    longer than the probe reads as opaque and keeps the counted elision. Real
+    documents carry newlines well inside 4 KB, so this has not been observed.
+    """
+    return any(char.isspace() for char in value[:_OPAQUE_PROBE_CHARS])
+
+
+def _truncate_leaf(value: str, value_max: int) -> str:
+    """BF-759: keep the head and the tail of ``value``, counting what went.
+
+    Returns ``value`` untouched when the marker would cost more than the
+    overshoot it reports, so a leaf can never render longer than it arrived.
+    """
+    if value_max + len(_ELIDED_SPAN.format(n=len(value))) >= len(value):
+        return value
+    head = value_max * 2 // 3
+    tail = value_max - head
+    omitted = len(value) - head - tail
+    return (
+        value[:head]
+        + _ELIDED_SPAN.format(n=omitted)
+        + value[len(value) - tail :]
+    )
 
 
 def _shrink(
@@ -188,6 +267,15 @@ def _shrink(
     lists alone left the rendered result larger than the input it was meant to
     shrink. Insertion order is kept, which is what makes this safe in practice:
     producers put identity and metadata first and bulk last.
+
+    BF-759: an oversized string keeps its head and its tail unless it is
+    opaque. It is ALMOST monotone in ``value_max`` — a larger allowance returns
+    more of every leaf — but not quite, and the exception is reachable: a string
+    that parses as JSON is recursed into only while it EXCEEDS the allowance, so
+    raising ``value_max`` past its length flips it from a walked container back
+    to a verbatim string. :func:`render_tool_output` therefore requires a grown
+    render to be no shorter than the one it replaces, rather than trusting
+    monotonicity.
     """
     if depth >= _MAX_DEPTH:
         return "<elided: nesting too deep>"
@@ -207,9 +295,11 @@ def _shrink(
                     dict_keep=dict_keep,
                     depth=depth + 1,
                 )
-            except Exception:  # noqa: BLE001 — not JSON after all; elide it
+            except Exception:  # noqa: BLE001 — not JSON after all; cut it
                 pass
-        return _ELIDED_TEXT.format(n=len(value))
+        if not _looks_like_text(value):
+            return _ELIDED_TEXT.format(n=len(value))
+        return _truncate_leaf(value, value_max)
 
     if isinstance(value, dict):
         # Keep EVERY scalar-valued entry. Scalars are cheap and are almost
@@ -271,8 +361,9 @@ def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
     rendering already fits. Only an oversized structure takes the new path, so
     every tool whose results are small is unaffected.
 
-    At most TWO renders, never a shrink loop: if the first pass is still far
-    over budget the second uses hard caps. Anything still oversized after that
+    A bounded number of renders, never a shrink loop: at most three tightening
+    renders after the initial plain one, each tighter than the last, then BF-759
+    spends any leftover budget in one further render. Anything still oversized
     falls through to the existing character-level bound, which is strictly no
     worse than the pre-BF-728 behaviour and now operates on a shape-preserved
     string instead of raw bulk.
@@ -292,7 +383,7 @@ def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
 
     # Scale the per-leaf allowance to the budget rather than fixing it, so a
     # generous cap keeps more of each value instead of eliding just as hard.
-    # At most three renders, never a shrink loop (AD-1151 R3): each pass
+    # At most four renders, never a shrink loop (AD-1151 R3): each pass
     # tightens, and the first one that fits wins.
     try:
         passes = (
@@ -301,6 +392,7 @@ def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
             (48, 2, 3),
         )
         rendered = plain
+        fitted: tuple[int, int, int] | None = None
         for value_max, list_keep, dict_keep in passes:
             rendered = str(
                 _shrink(
@@ -312,8 +404,33 @@ def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
                 )
             )
             if len(rendered) <= max_chars:
+                fitted = (value_max, list_keep, dict_keep)
                 break
-        return rendered
+        if fitted is None or len(rendered) >= max_chars:
+            return rendered
+
+        # BF-759: the passes only ever tighten, so a structure whose payload is
+        # a single leaf settles far under budget with that leaf gone. Raise the
+        # allowance by the unspent remainder and keep the result if it still
+        # fits. It must also be no SHORTER than what it replaces. ``_shrink`` is
+        # monotone in ``value_max`` everywhere except at the JSON-recursion
+        # boundary: a JSON-looking string is walked only while it EXCEEDS the
+        # allowance, so raising ``value_max`` past its length returns it
+        # verbatim instead - a different shape, not a longer one. Measured live
+        # at cap 300 on a JSON body carrying a 125-character JSON string: the
+        # fitted render is 210 characters and the grown one 181, and without
+        # this comparison the shorter render would be returned.
+        value_max, list_keep, dict_keep = fitted
+        grown = str(
+            _shrink(
+                value,
+                value_max=value_max + (max_chars - len(rendered)),
+                list_keep=list_keep,
+                dict_keep=dict_keep,
+                depth=0,
+            )
+        )
+        return grown if len(rendered) <= len(grown) <= max_chars else rendered
     except Exception:  # noqa: BLE001 — degrade to the pre-BF-728 rendering
         return plain
 

@@ -31,6 +31,7 @@ Two design points are load-bearing and each was arrived at by being wrong first:
 from __future__ import annotations
 
 import json
+import re
 import time
 
 import pytest
@@ -128,11 +129,30 @@ class TestEmbeddedJson:
         assert "FOUND" in rendered
 
     def test_a_long_non_json_string_is_elided_with_its_size(self) -> None:
+        """Unchanged by BF-759, and it took a detour to establish that.
+
+        BF-759 truncates an oversized leaf instead of discarding it, which
+        would have made this marker report the REMAINDER rather than the total.
+        But a 500,000-character run of ``L`` carries no whitespace, so BF-759's
+        opaque carve-out classifies it as bytes rather than prose and keeps the
+        counted elision this test was written for. The assertion is original;
+        the note records that the behaviour is now conditional.
+        """
         out = {"log": "L" * 500_000, "status": 200}
         rendered = render_tool_output(out, max_chars=2000)
         assert "elided" in rendered
         assert "500000" in rendered, "the marker must say how much went"
         assert "'status': 200" in rendered, "a short scalar must survive"
+
+    def test_a_long_readable_string_is_cut_and_the_marker_reconciles(self) -> None:
+        """BF-759's other half of the same branch: a leaf that reads as prose is
+        truncated rather than discarded, and what went is counted."""
+        prose = "the quick brown fox jumps over the lazy dog " * 12_000
+        rendered = render_tool_output({"log": prose, "status": 200}, max_chars=6000)
+        reported = int(re.search(r"<elided (\d+) more chars>", rendered).group(1))
+        assert 0 < reported < len(prose)
+        assert "the quick brown fox" in rendered, "the payload must reach the model"
+        assert "'status': 200" in rendered
 
     def test_a_string_that_only_looks_like_json_is_elided_not_raised(self) -> None:
         out = {"body": "{not really json at all" + "x" * 500_000}
