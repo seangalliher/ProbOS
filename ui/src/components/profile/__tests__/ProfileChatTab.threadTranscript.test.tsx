@@ -18,6 +18,8 @@ import { listMessages } from '../../sidebar/threadApi';
 import {
   threadDtoToMessage, selectTranscriptMessages, loadThreadMessages,
   buildTranscriptItems, transcriptDayLabel, TRANSCRIPT_RENDER_CAP, type TranscriptItem,
+  createSpeechLedger, admitMessages, isSpeakableAgentMessage, speechKeyFor,
+  SPEECH_SCOPE_CAP,
 } from '../profileTranscript';
 import { ChatMessageRow } from '../ChatMessageRow';
 
@@ -124,6 +126,87 @@ describe('AD-938 selectTranscriptMessages', () => {
 
   it('returns [] when no thread and no buffer', () => {
     expect(selectTranscriptMessages(null, undefined, undefined)).toEqual([]);
+  });
+});
+
+describe('BF-718 speech ledger', () => {
+  const agentMsg = (text: string, authorId = 'a1'): AgentProfileMessage => (
+    { id: `${text}-${Math.random()}`, role: 'agent', text, timestamp: 0, authorId }
+  );
+
+  it('admits a message once and never again, whatever id it carries', () => {
+    const ledger = createSpeechLedger();
+    const first = admitMessages(ledger, 's', [agentMsg('hello')], { seed: false });
+    const second = admitMessages(ledger, 's', [agentMsg('hello')], { seed: false });
+    expect(first.map((m) => m.text)).toEqual(['hello']);
+    expect(second).toEqual([]);
+  });
+
+  it('records without admitting when seeding', () => {
+    const ledger = createSpeechLedger();
+    expect(admitMessages(ledger, 's', [agentMsg('history')], { seed: true })).toEqual([]);
+    // Seeded content stays silent when it reappears in a later live pass.
+    expect(admitMessages(ledger, 's', [agentMsg('history')], { seed: false })).toEqual([]);
+  });
+
+  it('keeps scopes independent, so one thread cannot silence another', () => {
+    const ledger = createSpeechLedger();
+    admitMessages(ledger, 'thread-a', [agentMsg('same words')], { seed: false });
+    const other = admitMessages(ledger, 'thread-b', [agentMsg('same words')], { seed: false });
+    expect(other.map((m) => m.text)).toEqual(['same words']);
+  });
+
+  it('distinguishes identical text from different authors', () => {
+    const ledger = createSpeechLedger();
+    admitMessages(ledger, 's', [agentMsg('acknowledged', 'a1')], { seed: false });
+    const peer = admitMessages(ledger, 's', [agentMsg('acknowledged', 'a2')], { seed: false });
+    expect(peer.map((m) => m.authorId)).toEqual(['a2']);
+  });
+
+  it('evicts oldest first past the cap, and bounds the scope', () => {
+    const ledger = createSpeechLedger();
+    const filler = Array.from({ length: SPEECH_SCOPE_CAP }, (_, i) => agentMsg(`m${i}`));
+    admitMessages(ledger, 's', filler, { seed: true });
+    expect(ledger.scopes.get('s')?.size).toBe(SPEECH_SCOPE_CAP);
+
+    admitMessages(ledger, 's', [agentMsg('newest')], { seed: true });
+    expect(ledger.scopes.get('s')?.size).toBe(SPEECH_SCOPE_CAP);
+    // m0 was evicted, so it is speakable again; the newest entry is not.
+    expect(admitMessages(ledger, 's', [agentMsg('m0')], { seed: false }).length).toBe(1);
+    expect(admitMessages(ledger, 's', [agentMsg('newest')], { seed: false })).toEqual([]);
+  });
+
+  it('never admits a non-agent message', () => {
+    const ledger = createSpeechLedger();
+    const captain: AgentProfileMessage = { id: 'c', role: 'user', text: 'hi', timestamp: 0 };
+    expect(admitMessages(ledger, 's', [captain], { seed: false })).toEqual([]);
+    expect(isSpeakableAgentMessage(captain)).toBe(false);
+  });
+
+  it('rejects placeholders and blank text, and accepts ordinary prose', () => {
+    expect(isSpeakableAgentMessage(agentMsg('(no response)'))).toBe(false);
+    expect(isSpeakableAgentMessage(agentMsg('  (error: timeout)  '))).toBe(false);
+    expect(isSpeakableAgentMessage(agentMsg('   '))).toBe(false);
+    expect(isSpeakableAgentMessage(agentMsg('A perfectly ordinary reply.'))).toBe(true);
+  });
+
+  it('keys on trimmed text, so whitespace drift is not a second utterance', () => {
+    expect(speechKeyFor({ role: 'agent', authorId: 'a1', text: ' hello ' }))
+      .toBe(speechKeyFor({ role: 'agent', authorId: 'a1', text: 'hello' }));
+  });
+
+  it('does not let the Captain\u2019s own words claim the agent\u2019s identical reply', () => {
+    // The default author is applied to EVERY row, so without role in the key a
+    // Captain message "Echo me" claims the agent's reply of the same text and
+    // the reply goes silent.
+    const ledger = createSpeechLedger();
+    const captain: AgentProfileMessage = { id: 'c', role: 'user', text: 'Echo me', timestamp: 0 };
+    const reply: AgentProfileMessage = { id: 'a', role: 'agent', text: 'Echo me', timestamp: 0 };
+
+    admitMessages(ledger, 's', [captain], { seed: false, defaultAuthorId: 'ezri' });
+    const spoken = admitMessages(ledger, 's', [reply], { seed: false, defaultAuthorId: 'ezri' });
+
+    expect(spoken.map((m) => m.text)).toEqual(['Echo me']);
   });
 });
 

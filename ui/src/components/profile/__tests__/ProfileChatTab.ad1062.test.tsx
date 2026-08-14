@@ -197,7 +197,19 @@ describe('AD-1062 production wiring (source-level)', () => {
 
   it('uses the component live output-policy reader at the post-await greeting boundary', () => {
     expect(profileChatSource).toMatch(/isOutputAudioEnabledNow/);
-    expect(profileChatSource).toMatch(/if \(isOutputAudioEnabledNow\(requestAgentId, tid\)\)/);
+    // BF-718 wrapped this call in the shared speech claim, so it is no longer
+    // the head of its own `if (`. The property being guarded is unchanged: the
+    // LIVE reader is consulted with the request's own agent and thread AFTER
+    // the await, and its RESULT still gates the utterance — hence requiring a
+    // `speakResponse` inside the block it opens, which keeps this from passing
+    // if the call is moved or its result ignored. The bounded `[\s\S]` span
+    // tolerates bookkeeping statements before the utterance without pinning
+    // their exact formatting, which an exact match would turn into a false
+    // regression on every unrelated edit. The behavioural proof is the mounted
+    // BF-671 greeting tests in ProfileChatTab.audioControl.test.tsx.
+    expect(profileChatSource).toMatch(
+      /&& isOutputAudioEnabledNow\(requestAgentId, tid\)\s*\)\s*\{[\s\S]{0,400}?speakResponse\(/,
+    );
   });
 
   it('the call-open trigger has no capability-gap phrasing', () => {

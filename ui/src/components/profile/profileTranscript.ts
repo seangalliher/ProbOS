@@ -114,3 +114,169 @@ export async function loadThreadMessages(
   const dtos = await listMessages(threadId);
   setThreadMessages(threadId, dtos.map((m) => threadDtoToMessage(m, agents)));
 }
+
+// ── BF-718: every speaker claims before it speaks ──────────────────────────
+//
+// Speech used to be bound to the request/response path, so a reply the UI asked
+// for was spoken and a message the server pushed was not. A promoted turn's
+// report (AD-1165) is appended server-side and arrives as
+// CHAT_THREAD_MESSAGE_APPENDED — it reached the transcript and never reached
+// the speaker.
+//
+// The first attempt at this added a transcript watcher ALONGSIDE the existing
+// speakers and was reverted: ProfileChatTab already had three (the send round
+// trip, the AD-1062 call greeting, and the BF-290 conversation-mode callback),
+// so a fourth produced duplicates, and no id-based marking wins the race
+// between an HTTP response and the WebSocket event the server emits before
+// returning it.
+//
+// So the four speakers share a CLAIM instead. Each asks the ledger for the
+// right to speak a given piece of content before speaking it, and exactly one
+// gets it. Keying on content rather than on message id is what makes that work
+// in both directions: the send path's optimistic row and the server's canonical
+// row carry different ids but identical text, so whichever lands first claims
+// it and the other falls silent. Neither has to know it raced.
+//
+// The transcript effect is the speaker that closes BF-718 — it is the only one
+// that sees messages nobody requested. The other three are kept because each
+// sees something it cannot: a reply landing in a thread the Captain has already
+// navigated away from (BF-671), and the conversation-mode turn-taking signal
+// that has to fire from whoever actually spoke (BF-290).
+
+/** Per-scope memory of what has already been decided about. A scope is one
+ *  thread, or the per-agent buffer for a 1:1 that has no thread yet. Keeping
+ *  them separate matters: a late response from one thread must not wipe the
+ *  state of the thread the Captain is now looking at. */
+export interface SpeechLedger {
+  scopes: Map<string, Set<string>>;
+}
+
+/** Bound per scope. Insertion-ordered, oldest evicted first. */
+export const SPEECH_SCOPE_CAP = 500;
+
+export function createSpeechLedger(): SpeechLedger {
+  return { scopes: new Map<string, Set<string>>() };
+}
+
+/** Identity for speech: role + author + trimmed text, NOT the message id.
+ *
+ *  ``sendText`` appends its reply locally with a generated id and the server's
+ *  own append then replaces it with the canonical row under a different id.
+ *  Sharing one claim across both, a content key collapses them; an id key would
+ *  speak every ordinary reply twice. Two identical messages from one author
+ *  also collapse, so the second is silent — the safe direction, since the
+ *  alternative is talking over the Captain.
+ *
+ *  ``defaultAuthorId`` matters more than it looks: ``addAgentMessage`` omits
+ *  ``authorId`` entirely on the 1:1 buffer (AD-936 only sets it for group
+ *  replies), so a claim made with an explicit agent id would not match the row
+ *  it was made for, and both speakers would fire. In a 1:1 an agent message
+ *  with no author IS from the mounted agent — the same assumption the speaking
+ *  effect already makes when it picks a voice.
+ *
+ *  ``role`` leads the key because that default is applied to EVERY row,
+ *  including the Captain's. Without it, the Captain typing "Echo me" claims the
+ *  agent's identical reply and the reply is silent. Role alone is enough — the
+ *  author default may be applied to a non-agent row without harm once the roles
+ *  cannot collide, so there is deliberately no second guard here to drift out
+ *  of step with this one. */
+export function speechKeyFor(
+  msg: Pick<AgentProfileMessage, 'authorId' | 'text' | 'role'>,
+  defaultAuthorId = '',
+): string {
+  return `${msg.role ?? ''}\u0000${msg.authorId || defaultAuthorId}\u0000${(msg.text ?? '').trim()}`;
+}
+
+/** Whether a message is the kind of thing that gets spoken at all.
+ *
+ *  The parenthetical rule is inherited, not invented: the send path has always
+ *  skipped ``(no response)`` / ``(communication error)`` / ``(error: …)``, and
+ *  moving the decision here has to bring that with it or the Captain starts
+ *  hearing placeholders read aloud. */
+export function isSpeakableAgentMessage(msg: AgentProfileMessage): boolean {
+  if (msg.role !== 'agent') return false;
+  const text = (msg.text ?? '').trim();
+  return text.length > 0 && !text.startsWith('(');
+}
+
+function scopeSet(ledger: SpeechLedger, scopeKey: string): Set<string> {
+  let set = ledger.scopes.get(scopeKey);
+  if (!set) {
+    set = new Set<string>();
+    ledger.scopes.set(scopeKey, set);
+  }
+  return set;
+}
+
+function remember(set: Set<string>, key: string): void {
+  set.add(key);
+  while (set.size > SPEECH_SCOPE_CAP) {
+    const oldest = set.values().next();
+    if (oldest.done) break;
+    set.delete(oldest.value);
+  }
+}
+
+/** Take the right to speak ``msg`` in ``scopeKey``, once.
+ *
+ *  Returns true only for the caller that got there first AND only when the
+ *  content is the kind of thing that gets spoken at all. Every later caller
+ *  gets false, so the losers of the HTTP-versus-WebSocket race stay silent
+ *  without needing to know they lost. Recording happens either way — an
+ *  unspeakable message still consumes its key, so a placeholder cannot be
+ *  "claimed" a second time by a different speaker.
+ *
+ *  This is synchronous and same-tick: both speakers run on one event loop in
+ *  one component, so there is no window between the check and the claim. */
+export function claimSpeech(
+  ledger: SpeechLedger,
+  scopeKey: string,
+  msg: AgentProfileMessage,
+  defaultAuthorId = '',
+): boolean {
+  const set = scopeSet(ledger, scopeKey);
+  const key = speechKeyFor(msg, defaultAuthorId);
+  if (set.has(key)) return false;
+  remember(set, key);
+  return isSpeakableAgentMessage(msg);
+}
+
+/** The scope a claim belongs to. A thread when there is one, otherwise the
+ *  per-agent buffer — the two speakers must agree on this or they would claim
+ *  in different scopes and both speak. */
+export function speechScopeKey(threadId: string | null | undefined, agentId: string): string {
+  return threadId ? threadId : `agent:${agentId}`;
+}
+
+/** Record every message in ``messages`` against ``scopeKey`` and return the
+ *  ones that are newly arrived AND speakable.
+ *
+ *  ``seed: true`` records without returning anything. The caller passes it
+ *  until the scope's transcript has actually loaded, and again after a
+ *  reconnect repair — both are moments when the whole history shows up at once
+ *  and none of it is a live arrival. Inferring that from how MANY messages
+ *  appeared does not work: the first render of a thread has an empty list
+ *  because the transcript hydrates asynchronously, so the real history arrives
+ *  afterwards and looks exactly like new traffic.
+ *
+ *  ``liveIds`` is the exception that keeps seeding from swallowing a real
+ *  arrival. A push can land WHILE a seeding load is in flight, and that load's
+ *  response can already contain the pushed row — blanket-seeding the array then
+ *  claims it silently and the follow-up refresh finds nothing left to say,
+ *  which is BF-718 all over again. Messages whose id is listed here are known
+ *  to be live and are admitted even while seeding. */
+export function admitMessages(
+  ledger: SpeechLedger,
+  scopeKey: string,
+  messages: readonly AgentProfileMessage[],
+  opts: { seed: boolean; defaultAuthorId?: string; liveIds?: ReadonlySet<string> },
+): AgentProfileMessage[] {
+  const admitted: AgentProfileMessage[] = [];
+  for (const msg of messages) {
+    const isLive = !opts.seed || !!opts.liveIds?.has(msg.id);
+    if (claimSpeech(ledger, scopeKey, msg, opts.defaultAuthorId) && isLive) {
+      admitted.push(msg);
+    }
+  }
+  return admitted;
+}

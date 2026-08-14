@@ -36,6 +36,7 @@ import {
 import { MicIndicator } from './MicIndicator';
 import { subscribePcm } from '../../audio/voiceActivity';
 import type {
+  AgentProfileMessage,
   ChatAttachment,
   CrewSessionArtifactCommand,
   CrewSessionDetailProjection,
@@ -44,7 +45,10 @@ import type {
 } from '../../store/types';
 // AD-938: thread-keyed transcript helpers (extracted for testability — the
 // AD-936 ChatMessageRow precedent; keeps the heavy audio deps out of the test).
-import { selectTranscriptMessages, threadDtoToMessage, buildTranscriptItems } from './profileTranscript';
+import {
+  selectTranscriptMessages, threadDtoToMessage, buildTranscriptItems,
+  createSpeechLedger, admitMessages, claimSpeech, speechScopeKey, speechKeyFor,
+} from './profileTranscript';
 import { ModulationIndicator } from './ModulationIndicator';
 import { GroupChatHeader } from './GroupChatHeader';
 // AD-932: discoverable "+ Add people" on a fresh/empty 1:1 (no thread yet).
@@ -613,6 +617,24 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const outputPolicyThreadIdRef = useRef(threadId);
   outputPolicyAgentIdRef.current = agentId;
   outputPolicyThreadIdRef.current = threadId;
+  // BF-718: four things can speak a 1:1 reply — this effect, the send round
+  // trip, the AD-1062 call greeting, and the BF-290 conversation-mode callback
+  // — and each sees a different subset, so they share one claim rather than one
+  // of them owning the path. A scope is seeded — recorded without speaking —
+  // the first time it is seen and after any reload that was not triggered by a
+  // specific message, which is exactly the set of moments when a whole
+  // transcript appears at once.
+  const speechLedgerRef = useRef(createSpeechLedger());
+  const speechSeenScopesRef = useRef(new Set<string>());
+  const speechSeedScopesRef = useRef(new Set<string>());
+  // Message ids the server told us about explicitly. A push can land WHILE a
+  // seeding load is in flight and be inside that load's response, so seeding
+  // per-array would claim it silently — BF-718 again. Seeding skips these.
+  const speechLiveIdsRef = useRef(new Set<string>());
+  // Speech keys currently being uttered. Losing a claim does NOT prove someone
+  // is speaking: the claim may have lost to identical text said earlier, in
+  // which case no 'end' will ever fire and anything waiting on one strands.
+  const speechInFlightRef = useRef(new Set<string>());
 
   // AD-938: the displayed transcript. In a thread context (group or warm 1:1)
   // render the thread's real messages (loaded on open below); with no thread (a
@@ -694,6 +716,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         targetThreadId,
         outcome.messages.map(message => threadDtoToMessage(message, current.agents)),
       );
+      // BF-718: a load with no trigger message is a whole transcript arriving
+      // at once — opening the thread, or the reconnect repair replaying what
+      // was missed while the socket was down. Seed it. A load driven by a
+      // specific appended message is the live arrival this AD exists to speak,
+      // so it is deliberately not seeded.
+      if (triggerMessageId === null) speechSeedScopesRef.current.add(targetThreadId);
     } finally {
       transcriptInFlightRef.current.delete(targetThreadId);
       const requested = transcriptPendingRef.current.has(targetThreadId);
@@ -927,13 +955,22 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         timestamp: Date.now() / 1000,
         authorId: requestAgentId,
       });
-      if (isOutputAudioEnabledNow(requestAgentId, tid)) {
+      const greetingMsg: AgentProfileMessage = {
+        id: '', role: 'agent', text: reply, timestamp: 0, authorId: requestAgentId,
+      };
+      // BF-718: claim before speaking. The transcript effect may already have
+      // spoken this greeting if the server's append beat this response back.
+      if (
+        claimSpeech(speechLedgerRef.current, speechScopeKey(tid, requestAgentId), greetingMsg)
+        && isOutputAudioEnabledNow(requestAgentId, tid)
+      ) {
+        speechInFlightRef.current.add(speechKeyFor(greetingMsg, requestAgentId));
         speakResponse(stripMarkdownForSpeech(reply), voiceProfile ?? undefined, requestAgentId);
       }
     } catch {
       // Honest-degrade: a failed greeting just means the call opens quietly.
     }
-  }, [agentId, isOutputAudioEnabledNow, voiceProfile]);
+  }, [agentId, voiceProfile]);
   const handleStartCall = useCallback(async (video: boolean) => {
     if (callBusy) return;
     setCallBusy(true);
@@ -1120,6 +1157,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   useEffect(() => {
     const command = liveThreadRefresh;
     if (command !== null && command.threadId === activeThreadId) {
+      // BF-718: remember this id BEFORE the fetch. The reload it triggers may
+      // be coalesced into an in-flight seeding load whose response already
+      // contains the row, and seeding must not swallow it.
+      speechLiveIdsRef.current.add(command.requestId);
       void refreshThreadTranscript(command.requestId);
     } else if (command !== null) {
       // BF-720 gate 5. Routine when several chat surfaces are mounted -- only
@@ -1138,6 +1179,62 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       void refreshThreadTranscript();
     }
   }, [activeThreadId, liveRepairEpoch, refreshThreadTranscript]);
+
+  // BF-718: an utterance has ended, so nothing is waiting on it any more.
+  // Cleared per agent rather than per utterance because the speech events carry
+  // only an agent id — erring toward "not speaking" keeps a missed correlation
+  // from stranding the conversation controller.
+  useEffect(() => onSpeechEvent((event) => {
+    if (event.type !== 'end') return;
+    const ended = event.agent_id;
+    for (const key of [...speechInFlightRef.current]) {
+      if (!ended || key.startsWith(`agent\u0000${ended}\u0000`)) {
+        speechInFlightRef.current.delete(key);
+      }
+    }
+  }), []);
+
+  // BF-718: speak a message because of what it IS, not because of how it got
+  // here. A promoted turn's report (AD-1165) is appended server-side and
+  // arrives over the WebSocket, so it never passed through the send round trip
+  // that used to do the speaking — the Captain heard every ordinary reply and
+  // silence for the background report saying the work had landed.
+  //
+  // This speaker and the other three share the ledger's claim, so an ordinary
+  // reply is spoken exactly once whichever of them sees it first.
+  //
+  // The ONE deferral is a room the AD-921 sequencer actually serves. That
+  // predicate has to match `sendText`'s group routing EXACTLY (>= 2 crew
+  // participants) rather than the UI's broader `isGroupChat`, which also counts
+  // an agent-created single-crew room: classifying a room as group here while
+  // the send path treats it as a 1:1 hands WS-first messages to nobody and
+  // makes audibility depend on network ordering. A live 1:1 CALL is likewise
+  // NOT deferred — `speakMeetingReplies` is only ever handed group fan-out
+  // replies, so deferring a call would silence it entirely.
+  // `isOutputAudioEnabledNow` already resolves call audio for that case.
+  // The group bail-out still CLAIMS first, so a room's backlog is not read
+  // aloud the moment it stops being a group.
+  const defersToMeetingSequencer = meetingParticipantIds.length >= 2;
+  useEffect(() => {
+    const scopeKey = speechScopeKey(activeThreadId, agentId);
+    const firstSight = !speechSeenScopesRef.current.has(scopeKey);
+    speechSeenScopesRef.current.add(scopeKey);
+    const seed = firstSight || speechSeedScopesRef.current.delete(scopeKey);
+    const arrivals = admitMessages(speechLedgerRef.current, scopeKey, messages, {
+      seed, defaultAuthorId: agentId, liveIds: speechLiveIdsRef.current,
+    });
+    for (const msg of arrivals) speechLiveIdsRef.current.delete(msg.id);
+    if (defersToMeetingSequencer) return;
+    for (const msg of arrivals) {
+      const author = msg.authorId || agentId;
+      if (!isOutputAudioEnabledNow(author, activeThreadId ?? undefined)) continue;
+      speechInFlightRef.current.add(speechKeyFor(msg, agentId));
+      speakResponse(stripMarkdownForSpeech(msg.text), voiceProfile ?? undefined, author);
+    }
+  }, [
+    messages, activeThreadId, agentId, defersToMeetingSequencer,
+    isOutputAudioEnabledNow, voiceProfile,
+  ]);
 
   // AD-795: Hydrate the input from a pending chat draft (set by the
   // Compact-mode starter chips). Subscribes via a selector so the effect
@@ -1469,11 +1566,25 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           authorId: requestAgentId,
         });
       }
-      // AD-718: TTS playback for agent reply only (skip system error placeholders).
+      // AD-718: TTS playback for agent reply only (skip system error
+      // placeholders — the claim below enforces that centrally).
+      //
+      // BF-718: claim first. The server appends this same reply over the
+      // WebSocket BEFORE returning this response, so the transcript effect may
+      // already have spoken it; the claim makes whichever arrived first the
+      // only speaker. This path is kept because it is the only one that sees a
+      // reply landing in a thread the Captain has navigated away from (BF-671),
+      // which the mounted transcript cannot.
+      const replyRow: AgentProfileMessage = {
+        id: '', role: 'agent', text: reply, timestamp: 0, authorId: requestAgentId,
+      };
       if (
-        isOutputAudioEnabledNow(requestAgentId, responseThreadId)
-        && reply
-        && !reply.startsWith('(')
+        claimSpeech(
+          speechLedgerRef.current,
+          speechScopeKey(responseThreadId, requestAgentId),
+          replyRow,
+        )
+        && isOutputAudioEnabledNow(requestAgentId, responseThreadId)
       ) {
         // AD-738e-1: forward parsed emotion (v1 name) so the TTS endpoint
         // applies per-emotion prosody. ``data.emotion`` may be null on
@@ -1482,6 +1593,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         const _emotion = typeof data?.emotion === 'string' && data.emotion.length > 0
           ? data.emotion
           : undefined;
+        speechInFlightRef.current.add(speechKeyFor(replyRow, requestAgentId));
         speakResponse(
           stripMarkdownForSpeech(reply),
           voiceProfile ?? undefined,
@@ -1589,18 +1701,58 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         // controller completion when the TTS 'end' event fires. When TTS
         // is disabled, signal completion immediately so the controller
         // advances to silence_pending and the silence timer can run.
+        //
+        // BF-718: claim first, so the transcript effect does not also speak the
+        // message this just appended. This runs synchronously during the
+        // controller callback, before React re-renders, so it wins the claim
+        // and keeps ownership of the turn-taking signal below.
+        const replyMsg: AgentProfileMessage = {
+          id: '', role: 'agent', text: replyText, timestamp: 0, authorId: armAgentId,
+        };
+        const claimed = claimSpeech(
+          speechLedgerRef.current,
+          speechScopeKey(
+            resolveProfileThreadId(
+              threadId,
+              useStore.getState().activeProfileThreadId,
+              useStore.getState().threadIdByAgent,
+              armAgentId,
+            ),
+            armAgentId,
+          ),
+          replyMsg,
+        );
+        // Audio off: nothing will ever emit an 'end', so signal immediately or
+        // the controller waits forever in agent_speaking and the next mic press
+        // is refused (BF-290).
         if (!isOutputAudioEnabledNow(armAgentId)) {
+          markAgentReplyComplete();
+          return;
+        }
+        // BF-718: losing the claim does NOT prove someone is speaking. It also
+        // happens when identical text was said earlier in this scope, in which
+        // case no utterance exists and no 'end' will ever arrive — waiting on
+        // one would strand the controller worse than the bug being fixed.
+        // Only wait when this exact content is genuinely in flight.
+        const speechKey = speechKeyFor(replyMsg, armAgentId);
+        if (!claimed && !speechInFlightRef.current.has(speechKey)) {
           markAgentReplyComplete();
           return;
         }
         // Subscribe BEFORE speakResponse so we don't race the 'start' event.
         // We listen for the matching 'end' for this agent_id, then unsubscribe.
+        // Set up whether or not this callback won: losing to an utterance that
+        // IS in flight means completion has to track that utterance's end, or
+        // the barge-in guard detaches and the silence timer starts while the
+        // agent is still audibly talking.
         const unsub = onSpeechEvent((event) => {
           if (event.type !== 'end') return;
           if (event.agent_id && event.agent_id !== armAgentId) return;
           try { unsub(); } catch { /* Tier-2 */ }
           markAgentReplyComplete();
         });
+        if (!claimed) return;
+        speechInFlightRef.current.add(speechKey);
         speakResponse(stripMarkdownForSpeech(replyText), voiceProfile ?? undefined, armAgentId);
       },
       onStateChange: (state) => {
@@ -1610,7 +1762,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     console.info(`AD-760: mic mode ${mode} armed for agent ${armAgentId}`);
     const disposeConversation = armConversationMode(armOpts);
     return disposeConversation;
-  }, [agentId, micMode, meetingActive, callAudioEnabled, voiceProfile, ttsKey]);
+  }, [agentId, micMode, meetingActive, callAudioEnabled, voiceProfile, ttsKey, threadId]);
 
   // AD-973: the single mic is the composer mic next to Send (the MicIndicator
   // button below). It already captures one VAD-bounded utterance via the

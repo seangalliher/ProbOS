@@ -64,8 +64,13 @@ describe('AD-985 group-meeting open-mic wiring', () => {
   it('re-runs arming when agent / mode / meeting / call-audio state changes', () => {
     // The relocated effect depends on the meeting + call-audio flags so entering
     // or leaving a call re-arms the controller for the right surface.
+    //
+    // The trailing `[^\]]*` is deliberate: this guards that those deps are
+    // PRESENT, not that the array is closed to additions. BF-718 appended
+    // `threadId` because onAgentReply now resolves the claim scope, and an
+    // exact-array match would have read that correct addition as a regression.
     expect(profileChatSource).toMatch(
-      /\[agentId, micMode, meetingActive, callAudioEnabled, voiceProfile, ttsKey\]/,
+      /\[agentId, micMode, meetingActive, callAudioEnabled, voiceProfile, ttsKey[^\]]*\]/,
     );
   });
 });
