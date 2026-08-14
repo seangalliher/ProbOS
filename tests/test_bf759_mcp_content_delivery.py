@@ -27,10 +27,11 @@ Two properties are asserted here and each was arrived at by being wrong first:
   13 KB document under a 6 KB cap whole, so the only way to deliver any of it
   is to cut it. Returning none of a payload while the budget goes unspent is
   never the right trade.
-* **Leftover budget is spent.** The passes only ever tighten, so a single-leaf
-  payload settles far under budget with that leaf gone. One further render
-  raises the allowance by the remainder; ``_shrink`` is monotone in
-  ``value_max`` so the result is a superset, and it is kept only if it fits.
+* **Leftover budget is spent.** A single-leaf payload settles far under budget
+  with that leaf gone, so the allowance has to grow. BF-761 (#1219) replaced
+  this AD's one optimistic growth render with a bounded search, after measuring
+  the single guess delivering 3% of the budget on real CRLF markdown; the
+  property asserted here is unchanged, the mechanism below it is not.
 
 The diagnosis was wrong the first time and that is worth recording: this was
 first attributed to ``truncate_tool_output`` losing "53% from the middle". That
@@ -73,7 +74,15 @@ def _mcp_envelope(text: str) -> dict:
 
 
 def _a_page(chars: int) -> str:
-    """Prose, not filler — a repeated marker would let a broken slice look fine."""
+    """Prose, not filler — a repeated marker would let a broken slice look fine.
+
+    BF-761: this is prose joined by SPACES, so its repr expansion is 1.00x. That
+    is the one payload class where BF-759's single-attempt growth landed, and it
+    is why this suite reported the budget as spent while the live vessel was
+    delivering 3% of it on CRLF markdown. Newline-dense payloads are covered by
+    tests/test_bf761_budget_is_spent_on_real_content.py; keep this one at 1.00x
+    so the two files test different things.
+    """
     unit = "Section {}: transports, lifecycle and capabilities. "
     body = "".join(unit.format(i) for i in range(chars))
     assert len(body) >= chars, "fixture must produce the length it is asked for"
@@ -280,7 +289,8 @@ class TestGrowthIsSafe:
 
     def test_cost_stays_bounded_with_the_extra_render(self) -> None:
         """AD-1151 R3 measured a serialise-per-elision shrink loop at 33 s. The
-        growth render adds one pass, not a search."""
+        allowance search adds a FIXED number of renders, not a search that grows
+        with the input."""
         big = {f"k{i}": {"vals": list(range(50)), "note": "N" * 5_000} for i in range(2_000)}
         start = time.perf_counter()
         rendered = render_tool_output(big, max_chars=LIVE_CAP)

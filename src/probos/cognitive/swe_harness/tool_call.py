@@ -179,11 +179,10 @@ def dedupe_llm_definitions(
 #   * An oversized string is TRUNCATED to its allowance and what went between
 #     is counted in the marker, never discarded outright. Returning none of a
 #     payload when there is room for some of it is always the wrong trade.
-#   * After the tightening passes settle on a render that fits, one further
-#     render raises the per-leaf allowance by whatever budget is left over.
-#     That converges exactly for the single-leaf document shape and is declined
-#     for a structure with several oversized leaves, where each would grow by
-#     the same headroom.
+#   * The allowance is SEARCHED for rather than guessed. BF-761 measured the
+#     original single optimistic guess delivering 3% of the budget on every
+#     real page, because the guess is made in raw characters and the budget is
+#     checked against the repr.
 #
 # Two carve-outs, both found by review rather than by reasoning:
 #
@@ -212,6 +211,11 @@ _MIN_VALUE_CHARS = 120
 _JSON_OPENERS = ("{", "[")
 # How far to look for evidence that a leaf is readable rather than opaque.
 _OPAQUE_PROBE_CHARS = 4096
+# BF-761: probes spent locating the largest per-leaf allowance that fits.
+# Interpolation usually lands in two or three; the rest is the geometric
+# fallback needed when the render is a step function and a probe measures the
+# same length twice.
+_ALLOWANCE_PROBES = 8
 
 
 def _looks_like_text(value: str) -> bool:
@@ -254,6 +258,7 @@ def _shrink(
     list_keep: int,
     dict_keep: int,
     depth: int,
+    truncate: bool = True,
 ) -> Any:
     """Return ``value`` with oversized leaves replaced by elision markers.
 
@@ -276,6 +281,11 @@ def _shrink(
     to a verbatim string. :func:`render_tool_output` therefore requires a grown
     render to be no shorter than the one it replaces, rather than trusting
     monotonicity.
+
+    ``truncate=False`` restores BF-728's whole-leaf elision. Keeping a slice
+    costs a 31-character marker, so at a cap too small to carry content the
+    marker is the overflow; the final pass uses this to fit where a slice
+    cannot.
     """
     if depth >= _MAX_DEPTH:
         return "<elided: nesting too deep>"
@@ -294,11 +304,19 @@ def _shrink(
                     list_keep=list_keep,
                     dict_keep=dict_keep,
                     depth=depth + 1,
+                    truncate=truncate,
                 )
             except Exception:  # noqa: BLE001 — not JSON after all; cut it
                 pass
-        if not _looks_like_text(value):
-            return _ELIDED_TEXT.format(n=len(value))
+        if not truncate or not _looks_like_text(value):
+            # Same never-inflate rule as _truncate_leaf, and it is load-bearing
+            # in both directions: '1.43.67' has no whitespace, so it reads as
+            # opaque, and '<elided 7 chars>' costs 16 characters to replace 7.
+            # At a zero allowance that inflated the floor render enough that
+            # every better allowance looked SHORTER and was rejected, taking
+            # PyPI's version field with it - the exact field BF-728 exists for.
+            marker = _ELIDED_TEXT.format(n=len(value))
+            return marker if len(marker) < len(value) else value
         return _truncate_leaf(value, value_max)
 
     if isinstance(value, dict):
@@ -328,6 +346,7 @@ def _shrink(
                 list_keep=list_keep,
                 dict_keep=dict_keep,
                 depth=depth + 1,
+                truncate=truncate,
             )
         if dropped:
             out[_ELIDED_KEYS.format(n=dropped)] = "..."
@@ -341,6 +360,7 @@ def _shrink(
                 list_keep=list_keep,
                 dict_keep=dict_keep,
                 depth=depth + 1,
+                truncate=truncate,
             )
             for v in value[:list_keep]
         ]
@@ -361,12 +381,12 @@ def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
     rendering already fits. Only an oversized structure takes the new path, so
     every tool whose results are small is unaffected.
 
-    A bounded number of renders, never a shrink loop: at most three tightening
-    renders after the initial plain one, each tighter than the last, then BF-759
-    spends any leftover budget in one further render. Anything still oversized
-    falls through to the existing character-level bound, which is strictly no
-    worse than the pre-BF-728 behaviour and now operates on a shape-preserved
-    string instead of raw bulk.
+    A fixed number of renders, never a shrink loop: one rung probe per container
+    ration (at most three) plus ``_ALLOWANCE_PROBES`` allowance probes, on top of
+    the initial plain render. Anything still oversized falls through to the
+    existing character-level bound, which is strictly no worse than the
+    pre-BF-728 behaviour and now operates on a shape-preserved string instead of
+    raw bulk.
 
     Never raises: a value that cannot be walked or re-rendered falls back to
     ``str(value)``, exactly today's behaviour.
@@ -381,56 +401,107 @@ def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
     if max_chars <= 0 or len(plain) <= max_chars:
         return plain
 
-    # Scale the per-leaf allowance to the budget rather than fixing it, so a
-    # generous cap keeps more of each value instead of eliding just as hard.
-    # At most four renders, never a shrink loop (AD-1151 R3): each pass
-    # tightens, and the first one that fits wins.
+    # BF-761: find the largest per-leaf allowance whose render fits, rather
+    # than guessing one. The allowance cannot be computed: ``_shrink`` measures
+    # a leaf in RAW characters while the budget is checked against the repr,
+    # where every ``\r``, ``\n``, quote and backslash expands. CRLF markdown is
+    # about 1.10x, so a raw slice sized to the budget renders past it. Measured
+    # on the vessel at a 6,000 cap, guessing once and giving up delivered
+    # 379-460 characters on every real page - 2-4% of the document - and the
+    # agent re-fetched seven times trying to get the rest.
     try:
-        passes = (
-            (max(_MIN_VALUE_CHARS, max_chars // 20), _LIST_KEEP, _DICT_KEEP),
-            (_MIN_VALUE_CHARS, 4, 8),
-            (48, 2, 3),
-        )
-        rendered = plain
-        fitted: tuple[int, int, int] | None = None
-        for value_max, list_keep, dict_keep in passes:
-            rendered = str(
+        # Rung one: how densely containers are kept, probed at a zero allowance
+        # because that is the cheapest render for a rung in the ordinary case.
+        rungs = ((_LIST_KEEP, _DICT_KEEP), (4, 8), (2, 3))
+
+        def render(value_max: int, keeps: tuple[int, int]) -> str:
+            return str(
                 _shrink(
                     value,
                     value_max=value_max,
-                    list_keep=list_keep,
-                    dict_keep=dict_keep,
+                    list_keep=keeps[0],
+                    dict_keep=keeps[1],
                     depth=0,
                 )
             )
-            if len(rendered) <= max_chars:
-                fitted = (value_max, list_keep, dict_keep)
-                break
-        if fitted is None or len(rendered) >= max_chars:
-            return rendered
 
-        # BF-759: the passes only ever tighten, so a structure whose payload is
-        # a single leaf settles far under budget with that leaf gone. Raise the
-        # allowance by the unspent remainder and keep the result if it still
-        # fits. It must also be no SHORTER than what it replaces. ``_shrink`` is
-        # monotone in ``value_max`` everywhere except at the JSON-recursion
-        # boundary: a JSON-looking string is walked only while it EXCEEDS the
-        # allowance, so raising ``value_max`` past its length returns it
-        # verbatim instead - a different shape, not a longer one. Measured live
-        # at cap 300 on a JSON body carrying a 125-character JSON string: the
-        # fitted render is 210 characters and the grown one 181, and without
-        # this comparison the shorter render would be returned.
-        value_max, list_keep, dict_keep = fitted
-        grown = str(
+        best: str | None = None
+        keeps = rungs[-1]
+        zero_render = plain
+        for candidate_keeps in rungs:
+            keeps = candidate_keeps
+            zero_render = render(0, keeps)
+            if len(zero_render) <= max_chars:
+                best = zero_render
+                break
+
+        # A zero allowance overflowing does NOT prove the rung impossible: at
+        # the JSON-recursion boundary a LARGER allowance renders SHORTER,
+        # because a JSON-looking string is walked only while it EXCEEDS the
+        # allowance and is returned verbatim once it fits. Measured on the
+        # AD-1123 nested-body fixture: allowances 0-124 render 210 characters
+        # and allowance 125 renders 181, so a 190-character cap is reachable
+        # only by searching past a zero that overflowed. So the search below
+        # runs either way, and simply accepts the first candidate that fits
+        # when nothing has yet.
+
+        # Rung two: the allowance itself, searched rather than computed.
+        # Interpolation steers - a many-leaf payload needs a tiny allowance and
+        # a single-leaf document needs an enormous one, so halving alone
+        # converges badly at one end or the other. But a probe that measures the
+        # SAME length as the bound it updates has told us nothing: the render is
+        # a STEP function (a leaf shorter than the allowance is returned
+        # verbatim), and on a plateau interpolation creeps by fractions of a
+        # percent and the search stalls. Measured stalls: a backslash-heavy page
+        # at a 12,000 cap collapsed to 88 characters, and a mixed opaque payload
+        # probed 195, 383, 565, 741, 912 without ever reaching the 3,000 it
+        # needed. So an uninformative probe forces the next one to the midpoint,
+        # which closes the bracket geometrically whatever the shape.
+        low, low_len = 0, len(zero_render)
+        high: int | None = None
+        high_len = 0
+        force_midpoint = False
+        for _ in range(_ALLOWANCE_PROBES):
+            if high is None:
+                probe = max_chars
+            elif high - low <= 1:
+                break
+            elif force_midpoint or high_len <= low_len:
+                probe = (low + high) // 2
+            else:
+                reach = (max_chars - low_len) / (high_len - low_len)
+                probe = low + max(1, int((high - low) * reach))
+                probe = min(probe, (low + high) // 2)
+            probe = min(max(probe, low + 1), high - 1 if high is not None else max_chars)
+            if probe <= low:
+                break
+            candidate = render(probe, keeps)
+            length = len(candidate)
+            if length <= max_chars and (best is None or length >= len(best)):
+                force_midpoint = length == low_len
+                best, low, low_len = candidate, probe, length
+            else:
+                force_midpoint = high is not None and length == high_len
+                high, high_len = probe, length
+        if best is not None:
+            return best
+
+        # Nothing fits at any allowance on any rung. BF-728's whole-leaf
+        # elision is a few characters shorter than a zero-width slice plus its
+        # marker, so it is the last thing worth trying; if it still overflows,
+        # the AD-1148 character bound downstream is the backstop, exactly as
+        # this function's docstring promises.
+        emergency = str(
             _shrink(
                 value,
-                value_max=value_max + (max_chars - len(rendered)),
-                list_keep=list_keep,
-                dict_keep=dict_keep,
+                value_max=48,
+                list_keep=rungs[-1][0],
+                dict_keep=rungs[-1][1],
                 depth=0,
+                truncate=False,
             )
         )
-        return grown if len(rendered) <= len(grown) <= max_chars else rendered
+        return emergency if len(emergency) < len(zero_render) else zero_render
     except Exception:  # noqa: BLE001 — degrade to the pre-BF-728 rendering
         return plain
 
