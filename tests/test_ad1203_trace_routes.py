@@ -103,6 +103,84 @@ def test_get_trace_returns_every_call_and_a_summary() -> None:
     assert body["summary"]["stalled"] is False
 
 
+def test_get_trace_puts_the_arguments_on_the_wire() -> None:
+    """BF-774 crosses the HTTP seam.
+
+    The summary knowing what a call asked is worth nothing if the projection
+    drops it: a client cannot see a mis-aimed-but-successful run any other way,
+    because every failure field is empty for exactly that run.
+    """
+    r = _client(_populated()).get(f"/api/traces/{REF_OK}")
+
+    summary = r.json()["summary"]
+    assert summary["requests"] == ['recall_artifact(ref="0aaf7ab7b54f")']
+    assert summary["requests_total"] == 1
+    assert 'ref="0aaf7ab7b54f"' in summary["render"]
+
+
+def test_list_traces_puts_the_arguments_on_the_wire() -> None:
+    r = _client(_populated()).get("/api/traces")
+
+    by_ref = {t["ref"]: t for t in r.json()["traces"]}
+    assert by_ref[REF_OK]["summary"]["requests"] == [
+        'recall_artifact(ref="0aaf7ab7b54f")',
+    ]
+    assert by_ref[REF_STALLED]["summary"]["requests"] == [
+        'browser(action="click", index=90)',
+        'browser(action="key_type")',
+        'browser(action="key_type")',
+    ]
+    assert by_ref[REF_STALLED]["summary"]["requests_total"] == 3
+
+
+def test_an_index_row_carries_only_what_a_summary_would_show() -> None:
+    """An index row's request list is multiplied by the page size.
+
+    At the full per-trace cap and limit=100 a measured response reached ~5 MB,
+    which is a payload risk the detail route does not have. The true count
+    still travels, so a client knows the list is partial, and /{ref} serves it
+    in full.
+    """
+    ref = "f" * 64
+    trace = [{"id": str(i), "name": "t", "arguments": {"i": i},
+              "output": "ok", "is_error": False} for i in range(30)]
+    store = _FakeAttachmentStore(
+        blobs={ref: json.dumps(trace).encode("utf-8")}, index=[(ref, 100.0)],
+    )
+
+    listed = _client(store).get("/api/traces").json()["traces"][0]["summary"]
+    detail = _client(store).get(f"/api/traces/{ref}").json()["summary"]
+
+    assert len(listed["requests"]) == 6
+    assert listed["requests_total"] == 30
+    assert len(detail["requests"]) == 30
+    assert detail["requests_total"] == 30
+
+
+def test_one_bad_character_does_not_fail_the_whole_listing() -> None:
+    """A lone surrogate in a persisted argument is an encoding error, not a
+    character. Rendered into a summary unsanitised it fails JSONResponse, so a
+    single malformed trace would take out the listing for every other trace.
+
+    Scoped to the list route deliberately. GET /api/traces/{ref} still returns
+    500 here, because it echoes the raw ``calls`` array verbatim and the bad
+    character is in the source data -- a pre-existing exposure on a line this
+    change does not touch, tracked separately as BF-775.
+    """
+    ref = "e" * 64
+    trace = [{"id": "1", "name": "t", "arguments": {"q": "before\ud800after"},
+              "output": "ok", "is_error": False}]
+    store = _FakeAttachmentStore(
+        blobs={ref: json.dumps(trace).encode("utf-8")},
+        index=[(ref, 100.0)],
+    )
+
+    r = _client(store).get("/api/traces")
+
+    assert r.status_code == 200
+    assert r.json()["traces"][0]["summary"]["requests_total"] == 1
+
+
 def test_get_trace_surfaces_the_stall_that_the_agents_own_account_would_not() -> None:
     """The BF-701 shape: the agent reached the target on call 1 and was refused
     the verb for using it, then narrated a different reason. The trace shows the

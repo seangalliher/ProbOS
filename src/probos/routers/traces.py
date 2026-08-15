@@ -52,6 +52,10 @@ _REF_MAX = 64
 # an unbounded number of blob reads.
 _LIST_LIMIT_DEFAULT = 20
 _LIST_LIMIT_MAX = 100
+# BF-774 review: an index row's requests list is multiplied by the page size.
+# At the full 40 per row and limit=100 a measured response reached ~5 MB, so
+# index rows carry only what a summary would render.
+_LIST_REQUESTS_MAX = 6
 
 
 def _store(runtime: Any):
@@ -70,12 +74,21 @@ def _clean_ref(ref: str) -> str:
     return ref
 
 
-def _summary_dict(entries: list[Any]) -> dict:
+def _summary_dict(entries: list[Any], *, max_requests: int | None = None) -> dict:
     summary = analyse_trace(entries)
+    requests = list(summary.requests)
+    if max_requests is not None:
+        requests = requests[:max_requests]
     return {
         "total_calls": summary.total_calls,
         "failed_calls": summary.failed_calls,
         "tools_used": list(summary.tools_used),
+        # BF-774: what each call asked, not just which tools ran. A run that
+        # succeeded against the wrong target has nothing in the failure fields.
+        # ``requests`` is capped, so ``requests_total`` travels with it -- a
+        # client that renders the list needs to know it is not the whole list.
+        "requests": requests,
+        "requests_total": summary.requests_total,
         "repeated_failures": [asdict(f) for f in summary.repeated_failures],
         "last_success_index": summary.last_success_index,
         "trailing_failure_count": summary.trailing_failure_count,
@@ -119,7 +132,11 @@ async def list_traces(
             record["readable"] = False
         else:
             record["readable"] = True
-            record["summary"] = _summary_dict(decoded)
+            # An index row is multiplied by the page size, so it carries only
+            # the requests the render would show. ``requests_total`` still
+            # reports the true count, and /{ref} serves the summary's full
+            # bounded list (up to _REQUESTS_MAX) plus the raw calls.
+            record["summary"] = _summary_dict(decoded, max_requests=_LIST_REQUESTS_MAX)
         out.append(record)
     return {"traces": out, "total": len(entries or [])}
 
