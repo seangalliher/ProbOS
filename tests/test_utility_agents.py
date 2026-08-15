@@ -180,16 +180,21 @@ class TestBF611DdgParsing:
 
         Regression for BF-611: the result titles must survive even though they
         sit far past the 8000-char truncation point in the raw page.
+
+        BF-769 moved the seam to ``_mesh_fetch_detailed``, which returns
+        ``(body, status_code)`` -- the search loop needs the status to tell a
+        429 refusal apart from a page with nothing on it. The property under
+        test is unchanged; only the double had to follow the seam.
         """
         from probos.agents.utility import web_agents
 
         agent = _make_agent(WebSearchAgent)
 
         async def _fake_fetch(runtime, url):
-            return _DDG_HTML_FIXTURE
+            return _DDG_HTML_FIXTURE, 200, url
 
         agent._runtime = MagicMock()
-        with patch.object(web_agents, "_mesh_fetch", _fake_fetch):
+        with patch.object(web_agents, "_mesh_fetch_detailed", _fake_fetch):
             msg = IntentMessage(
                 intent="web_search", params={"query": "example"}
             )

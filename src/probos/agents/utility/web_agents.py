@@ -47,22 +47,54 @@ class _BundledMixin:
 # Helper: dispatch http_fetch through the mesh
 # ------------------------------------------------------------------
 
-async def _mesh_fetch(runtime: Any, url: str) -> str | None:
-    """Broadcast ``http_fetch`` through the mesh and return body text."""
+async def _mesh_fetch_detailed(
+    runtime: Any, url: str
+) -> tuple[str | None, int | None, str | None]:
+    """``(body, status_code, final_url)`` for one URL, fetched through the mesh.
+
+    BF-769: the status is what tells a rate-limit page apart from a page with
+    nothing on it. ``HttpFetchAgent`` reports EVERY HTTP status as a successful
+    fetch -- a 429 challenge and a 200 empty-result page are both
+    ``success=True`` -- so a caller that drops the status cannot tell "the
+    engine refused me" from "the engine found nothing", and will state the
+    second with confidence when the first is true.
+
+    The final URL matters for the same reason: the fetch follows redirects, so
+    a DuckDuckGo bang (``!w langchain``) lands on Wikipedia. That body has no
+    search-result blocks and is not a search failure -- it is the page the
+    Captain asked for.
+    """
     if not runtime or not hasattr(runtime, "intent_bus"):
-        return None
-    msg = IntentMessage(
-        intent="http_fetch",
-        params={"url": url},
-    )
+        return None, None, None
+    msg = IntentMessage(intent="http_fetch", params={"url": url})
     results = await runtime.intent_bus.broadcast(msg)
     for r in results:
         if r.success and r.result:
-            body = r.result
-            if isinstance(body, dict):
-                body = body.get("body", body.get("content", str(body)))
-            return str(body)
-    return None
+            payload = r.result
+            if isinstance(payload, dict):
+                status = payload.get("status_code")
+                final = payload.get("url")
+                body = payload.get("body", payload.get("content"))
+                if body is None:
+                    body = str(payload)
+                return (
+                    str(body),
+                    status if isinstance(status, int) else None,
+                    final if isinstance(final, str) else None,
+                )
+            return str(payload), None, None
+    return None, None, None
+
+
+async def _mesh_fetch(runtime: Any, url: str) -> str | None:
+    """Body text for one URL, fetched through the mesh. Status discarded.
+
+    Kept for callers that only ever read a page they expect to exist. Anything
+    that must distinguish "refused" from "empty" wants
+    :func:`_mesh_fetch_detailed` instead.
+    """
+    body, _status, _final = await _mesh_fetch_detailed(runtime, url)
+    return body
 
 
 # ------------------------------------------------------------------
@@ -134,6 +166,33 @@ def _format_ddg_results(results: list[dict[str, str]]) -> str:
 
 
 # ------------------------------------------------------------------
+# BF-769: telling a refusal apart from a result
+# ------------------------------------------------------------------
+
+def _duckduckgo_url(query: str) -> str:
+    return "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote_plus(query)
+
+
+# The markers on a bot-challenge page. Matching one is sufficient to know the
+# search was refused; NOT matching one proves nothing, because this list cannot
+# anticipate every block page DuckDuckGo will ever serve. Emptiness is therefore
+# never inferred from the absence of a challenge -- see ``perceive``.
+#
+# Only ever applied to a body that actually came FROM DuckDuckGo: the engine
+# echoes the query into its own page, and an unrelated site can mention these
+# words in earnest (Wikipedia ships "hcaptcha" in its page config).
+_DDG_CHALLENGE_RE = re.compile(
+    r"anomaly-modal|bots use duckduckgo|unfortunately, bots|captcha|"
+    r"unusual traffic", re.IGNORECASE
+)
+
+
+def _is_duckduckgo(url: str | None) -> bool:
+    host = urllib.parse.urlparse(url or "").hostname or ""
+    return host == "duckduckgo.com" or host.endswith(".duckduckgo.com")
+
+
+# ------------------------------------------------------------------
 # WebSearchAgent
 # ------------------------------------------------------------------
 
@@ -143,10 +202,11 @@ class WebSearchAgent(_BundledMixin, CognitiveAgent):
     agent_type = "web_search"
     instructions = (
         "You are a web search agent. When given a search query:\n"
-        "1. The system has already fetched DuckDuckGo search results for you.\n"
-        "2. Parse the provided HTML to extract the top results (title + snippet + URL).\n"
-        "3. Present the results clearly to the user.\n\n"
-        "If no results were fetched, explain what went wrong. Never fabricate search results."
+        "1. The system has already run the search and parsed the results for you.\n"
+        "2. Present the results clearly to the user.\n"
+        "3. If no results were fetched, say the search failed and why. Do NOT\n"
+        "   answer from memory as though you had searched, and never fabricate\n"
+        "   results.\n"
     )
     intent_descriptors = [
         IntentDescriptor(
@@ -163,28 +223,92 @@ class WebSearchAgent(_BundledMixin, CognitiveAgent):
     async def perceive(self, intent: Any) -> dict:
         obs = await super().perceive(intent)
         query = obs.get("params", {}).get("query", "")
-        if query and self._runtime:
-            encoded = urllib.parse.quote_plus(query)
-            url = f"https://html.duckduckgo.com/html/?q={encoded}"
-            body = await _mesh_fetch(self._runtime, url)
-            if body:
-                # BF-611: parse the result blocks (title/url/snippet) BEFORE
-                # truncating. Passing raw HTML to a fixed char budget spent the
-                # budget on page chrome (head/CSS/search form) and cut off the
-                # result <div>s, so the LLM never saw any results.
-                results = _parse_ddg_results(body)
-                if results:
-                    obs["fetched_content"] = _format_ddg_results(results)[:8000]
-                else:
-                    # No parseable results — fall back to tag-stripped text so
-                    # the LLM gets readable context (not raw markup) to explain
-                    # what came back. Never fabricate (enforced by instructions).
-                    obs["fetched_content"] = _strip_tags(body)[:8000]
+        if not self._runtime:
+            return obs
+        if not query:
+            # Reachable: the tool schema requires the property but permits "".
+            # Falling through used to hand the LLM an empty observation, which
+            # it answered from anyway -- a fabricated search reported as a
+            # success, which is this defect wearing a different hat.
+            obs["search_failed"] = True
+            obs["search_error"] = "no search results were obtained: the query was empty"
+            return obs
+        body, status, final_url = await _mesh_fetch_detailed(
+            self._runtime, _duckduckgo_url(query)
+        )
+        results = _parse_ddg_results(body) if body else []
+        if results:
+            # BF-611: parse the result blocks (title/url/snippet) BEFORE
+            # truncating. Passing raw HTML to a fixed char budget spent the
+            # budget on page chrome (head/CSS/search form) and cut off the
+            # result <div>s, so the LLM never saw any results.
+            obs["fetched_content"] = _format_ddg_results(results)[:8000]
+            return obs
+
+        on_duckduckgo = final_url is None or _is_duckduckgo(final_url)
+        if (
+            body
+            and (status is None or 200 <= status < 300)
+            and not on_duckduckgo
+        ):
+            # A DuckDuckGo bang (`!w langchain`) redirects off-site. The body is
+            # the page the Captain asked for, not a search-result page, so the
+            # absence of result blocks is expected rather than a failure.
+            obs["fetched_content"] = _strip_tags(body)[:8000]
+            return obs
+
+        # BF-769: no results parsed. This used to fall through to tag-stripped
+        # page text for EVERY body, so a bot-challenge page was handed to the
+        # LLM, narrated as "Search Results Unavailable", and returned as a
+        # SUCCESS -- invisible in the trace, and the agent then sourced the
+        # answer from whichever tool still worked without saying its search had
+        # failed.
+        #
+        # The reason is reported when it is known, but the OUTCOME is the same
+        # either way: no results were obtained. It deliberately does not say
+        # "there are none" -- a challenge page, an unfamiliar block page and a
+        # genuinely empty result set are indistinguishable here, and asserting
+        # absence on that evidence would be a more confident lie than the
+        # silence this fixes.
+        if body is None:
+            reason = "the search request did not come back"
+        elif status is not None and not (200 <= status < 300):
+            reason = f"the search engine answered HTTP {status}"
+        elif _DDG_CHALLENGE_RE.search(body):
+            # Reached only for a body that came from DuckDuckGo: an off-site
+            # redirect with a usable status returned above, so a page that
+            # merely mentions "hcaptcha" in earnest never gets here.
+            reason = "the search engine returned a bot challenge"
+        else:
+            reason = "the search engine returned nothing this parser could read"
+        obs["search_failed"] = True
+        obs["search_error"] = f"no search results were obtained: {reason}"
+        logger.warning(
+            "BF-769: web_search obtained no results (%s); reporting failure so "
+            "the agent does not answer from memory as though it had searched. "
+            "Query length %d chars (not logged: a failed search can carry a "
+            "credential the Captain pasted).", reason, len(query),
+        )
         return obs
+
+    async def decide(self, observation: dict) -> dict:
+        # Short-circuit before the LLM: with no results there is nothing to
+        # reason over, and ``act`` discards the output anyway -- so calling the
+        # model here spends a request and its latency to produce a string
+        # nobody reads, on the path that is already the slowest.
+        if observation.get("search_failed"):
+            return {
+                "action": "search_failed",
+                "search_failed": True,
+                "search_error": observation.get("search_error", ""),
+            }
+        return await super().decide(observation)
 
     async def act(self, decision: dict) -> dict:
         if decision.get("action") == "error":
             return {"success": False, "error": decision.get("reason")}
+        if decision.get("search_failed"):
+            return {"success": False, "error": decision.get("search_error", "")}
         return {"success": True, "result": decision.get("llm_output", "")}
 
 
