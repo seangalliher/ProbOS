@@ -20,13 +20,19 @@ up to :attr:`AgenticDispatchConfig.max_convergence_rounds` (Safety Budget). A
 still-refuted result after the last round is escalated as ``unverified`` — never
 silently accepted.
 
-Attribution reuses the consensus path, not a parallel one: each verdict is
-recorded against the :class:`TrustNetwork` ledger (synchronously) so good
-verifiers and good producers both earn trust over runs, and each verdict maps
-to the real :class:`Vote` shape so AD-861 can compute Shapley values. This
-module does NOT call ``compute_shapley_values`` (that is AD-861) and does NOT
-add a ``done -> in_progress`` duty transition (re-run via the AD-859a executor
-is state-machine-independent).
+Attribution maps each verdict to the real :class:`Vote` shape so AD-861 can
+compute Shapley values. This module does NOT call ``compute_shapley_values``
+(that is AD-861) and does NOT add a ``done -> in_progress`` duty transition
+(re-run via the AD-859a executor is state-machine-independent).
+
+BF-778: no path in this module writes verifier trust today. ``verify()`` used to
+record each verdict against the :class:`TrustNetwork` at judgement time with
+``success=verdict.accepted`` -- which paid a verifier to accept and penalised
+every refusal, inverting the point of an adversarial layer. Whether a judgement
+was CORRECT is not knowable when it is made, and no proxy available here
+establishes it later, so the ledger stays neutral. ``record_verification_outcome``
+is the seam a future adjudicator will call and is the only thing here that CAN
+write; nothing calls it. See BF-782 (#1246) and BF-783 (#1247).
 """
 
 from __future__ import annotations
@@ -121,6 +127,10 @@ def validate_session_denied_tools(value: Any) -> tuple[str, ...] | None:
     return tuple(validated)
 
 
+_MISSING_VERDICT_FIELD = object()
+"""Sentinel: distinguishes an absent ``accepted`` from a present ``False``."""
+
+
 @dataclass
 class VerificationVerdict:
     """The outcome of one adversarial verification pass over a sub-task result.
@@ -131,12 +141,21 @@ class VerificationVerdict:
     convergence re-run on refusal), and ``verifier_agent_id`` is the independent
     agent that rendered the verdict (empty string when honest-degraded because
     no independent verifier was available).
+
+    ``verification_defect`` marks a verdict that is refused because the
+    VERIFICATION failed, not because the work did (BF-777): an unparseable
+    reply, a non-bool ``accepted``, or an unavailable judge. Such a verdict
+    still refuses -- the conservative direction -- but it is not evidence about
+    the producer, so it must never be fed back as a convergence critique and
+    never resolves into verifier trust. The session path already separates
+    these as ``verification_defect``; this brings the legacy path in line.
     """
 
     accepted: bool
     confidence: float
     critique: str
     verifier_agent_id: str
+    verification_defect: bool = False
 
 
 @dataclass
@@ -1069,10 +1088,13 @@ class SubtaskVerifier:
 
         Picks an independent verifier (different from the producer), resolves the
         declared acceptance criterion from the work item's metadata, asks the
-        LLM judge to refute the result, records the verdict against the trust
-        ledger, and returns the :class:`VerificationVerdict`. Honest-degrades to
-        an ``unverified`` verdict (empty ``verifier_agent_id``, no trust write)
-        when no independent agent is available.
+        LLM judge to refute the result, and returns the
+        :class:`VerificationVerdict`. Honest-degrades to an ``unverified``
+        verdict (empty ``verifier_agent_id``) when no independent agent is
+        available.
+
+        BF-778: this writes NO trust. It used to record the verifier with
+        ``success=verdict.accepted``, which paid it to accept.
         """
         verifier_id = self._pick_independent_verifier(result.agent_id)
         if verifier_id is None:
@@ -1087,6 +1109,7 @@ class SubtaskVerifier:
                 confidence=0.0,
                 critique="No independent verifier available; result unverified.",
                 verifier_agent_id="",
+                verification_defect=True,
             )
 
         expected = await self._resolve_expected_output(result.work_item_id)
@@ -1110,31 +1133,72 @@ class SubtaskVerifier:
                 confidence=0.0,
                 critique="LLM judge unavailable; result could not be verified.",
                 verifier_agent_id=verifier_id,
+                verification_defect=True,
             )
 
-        # Reuse the consensus path for attribution — record the verifier's
-        # outcome against the trust ledger SYNCHRONOUSLY (keywords only; the
-        # producer is the verifier_id field). Skip when honest-degraded.
-        if verdict.verifier_agent_id:
-            try:
-                self._trust.record_outcome(
-                    verdict.verifier_agent_id,
-                    success=verdict.accepted,
-                    intent_type="crew_verification",
-                    verifier_id=result.agent_id,
-                    source="crew_verification",
-                )
-            except RuntimeError as exc:
-                if str(exc) != "trust_write_in_progress":
-                    raise
-                logger.warning(
-                    "AD-1130: Legacy verifier trust observation skipped for "
-                    "verifier=%s target=%s because a durable trust write is in "
-                    "progress; the completed verdict is preserved",
-                    verdict.verifier_agent_id,
-                    result.agent_id,
-                )
+        # BF-778: no trust write here. This used to record the VERIFIER with
+        # success=verdict.accepted, which paid it to accept and penalised every
+        # refusal -- exactly inverting what an adversarial layer is for. The
+        # correctness of a judgement is not knowable at the moment it is made;
+        # it becomes knowable when a correction either closes the gap the
+        # refusal named or contradicts it. `record_verification_outcome` is
+        # called from the convergence path once that resolves, and
+        # `verify_for_session` has always had this shape.
         return verdict
+
+    def record_verification_outcome(
+        self,
+        verifier_agent_id: str,
+        producer_agent_id: str,
+        *,
+        refusal_was_upheld: bool,
+    ) -> None:
+        """Record a RESOLVED verification outcome against the verifier (BF-778).
+
+        ``refusal_was_upheld`` is the judgement's correctness, NOT its
+        direction: an upheld refusal and a sound acceptance are both successes.
+
+        NOTE: nothing calls this yet, deliberately. ``verify()`` used to score
+        the verifier with ``success=verdict.accepted``, which paid it to accept;
+        that write is gone and its removal is the live half of BF-778. The
+        replacement requires knowing whether a judgement was CORRECT, which
+        needs real adjudication -- a grounded acceptance criterion or a
+        downstream outcome. A text-diff proxy was tried and rejected: it is
+        farmable by a whitespace edit and makes refusing weakly dominate
+        accepting, which is BF-778 mirrored rather than fixed.
+
+        This method is the seam that adjudication will call. BF-782 (#1246)
+        owns designing it; BF-783 (#1247) owns the acceptance incentive AD-861
+        still applies through ``crew_synth``.
+        """
+        if type(refusal_was_upheld) is not bool:
+            # Validated BEFORE the empty-id no-op: TrustNetwork branches on
+            # truthiness, so a string "false" would record a SUCCESS, and a
+            # bypass here would make the guard depend on an unrelated argument.
+            raise TypeError(
+                "refusal_was_upheld must be a bool, got "
+                f"{type(refusal_was_upheld).__name__}"
+            )
+        if not verifier_agent_id:
+            return
+        try:
+            self._trust.record_outcome(
+                verifier_agent_id,
+                success=refusal_was_upheld,
+                intent_type="crew_verification",
+                verifier_id=producer_agent_id,
+                source="crew_verification",
+            )
+        except RuntimeError as exc:
+            if str(exc) != "trust_write_in_progress":
+                raise
+            logger.warning(
+                "AD-1130: resolved verifier trust observation skipped for "
+                "verifier=%s target=%s because a durable trust write is in "
+                "progress; the resolved outcome is lost for this cycle",
+                verifier_agent_id,
+                producer_agent_id,
+            )
 
     async def converge(
         self,
@@ -1151,19 +1215,27 @@ class SubtaskVerifier:
         ``task_text``, update ``result.output`` from the re-run, then re-verify.
         A still-refuted result after the final round is escalated as
         ``unverified`` — never silently accepted.
+
+        BF-777: a verification DEFECT (unparseable reply, non-bool or absent
+        ``accepted``, judge unavailable, no independent verifier) terminates
+        immediately as ``unverified``, on ANY round. It is a failure of the
+        VERIFIER, not evidence about the producer, so re-running the producer
+        against it would be asking them to fix someone else's protocol error.
+
+        BF-778: this writes no trust in either direction, on any path.
         """
         verdict = await self.verify(result)
         if verdict.accepted:
             return ConvergenceOutcome(
                 result=result, verdict=verdict, status=_STATUS_CONVERGED, rounds=0
             )
+        if verdict.verification_defect:
+            return self._defective_outcome(result, verdict, rounds=0)
 
         rounds = 0
         while rounds < self._max_rounds:
             rounds += 1
-            critiqued_task = (
-                f"{task_text}\n\nCRITIQUE:\n{verdict.critique}"
-            )
+            critiqued_task = f"{task_text}\n\nCRITIQUE:\n{verdict.critique}"
             try:
                 outcome = await self._executor.run(
                     agent_id=result.agent_id,
@@ -1181,18 +1253,63 @@ class SubtaskVerifier:
                 )
             verdict = await self.verify(result)
             if verdict.accepted:
+                # BF-778: NO trust is recorded here, in either direction.
+                #
+                # An earlier revision credited a refusal whose re-run changed
+                # the output and was then accepted, calling that "the refusal
+                # was knowably correct". It is not. A whitespace-only edit
+                # satisfies it, so the credit is farmable -- and the incentive
+                # it creates is strictly worse than neutral: accepting pays 0,
+                # refusing pays (chance any later edit is accepted) x credit, so
+                # refusing weakly dominates. That is BF-778 mirrored, not fixed.
+                #
+                # Judging correctness needs real adjudication (a grounded
+                # acceptance criterion, or a downstream outcome), which does not
+                # exist yet. BF-782 (#1246) owns designing it. Until then the
+                # ledger stays neutral, which is the one position that cannot
+                # teach the mesh the wrong lesson.
                 return ConvergenceOutcome(
                     result=result,
                     verdict=verdict,
                     status=_STATUS_CONVERGED,
                     rounds=rounds,
                 )
+            if verdict.verification_defect:
+                # BF-777: checked after EVERY verify, not only the first. A
+                # defect surfacing on round 2 would otherwise re-run the
+                # producer against "Unparseable judge response: ..." as if it
+                # were a critique -- the exact thing the pre-loop guard exists
+                # to prevent, one round later.
+                return self._defective_outcome(result, verdict, rounds=rounds)
 
         logger.warning(
             "AD-860: sub-task %s (producer=%s) still refuted after %d "
             "convergence round(s); escalating as unverified — not silently "
             "accepting a refuted result",
             result.work_item_id, result.agent_id, rounds,
+        )
+        return ConvergenceOutcome(
+            result=result, verdict=verdict, status=_STATUS_UNVERIFIED, rounds=rounds
+        )
+
+    def _defective_outcome(
+        self,
+        result: "SubtaskResult",
+        verdict: VerificationVerdict,
+        *,
+        rounds: int,
+    ) -> ConvergenceOutcome:
+        """Terminate convergence on a VERIFIER failure (BF-777).
+
+        The producer's work was never actually judged, so re-running them
+        against the defect text would be asking them to fix someone else's
+        protocol error.
+        """
+        logger.warning(
+            "BF-777: verification of sub-task %s (producer=%s) failed as a "
+            "VERIFIER defect after %d round(s) (%s); escalating as unverified "
+            "without re-running the producer -- their work was never judged",
+            result.work_item_id, result.agent_id, rounds, verdict.critique,
         )
         return ConvergenceOutcome(
             result=result, verdict=verdict, status=_STATUS_UNVERIFIED, rounds=rounds
@@ -2134,7 +2251,10 @@ class SubtaskVerifier:
 
         Honest-degrades an unparseable response to a refuted verdict — the
         conservative direction — so a malformed judge reply never silently
-        accepts a result.
+        accepts a result. BF-777: that also covers a parseable reply whose
+        ``accepted`` is not a real bool. ``bool("false")`` is ``True``, so the
+        old coercion read a refusal as an approval, which is the one direction
+        this parser must never fail in.
         """
         raw = (content or "").strip()
         payload = self._extract_json_object(raw)
@@ -2150,8 +2270,37 @@ class SubtaskVerifier:
                 confidence=0.0,
                 critique=f"Unparseable judge response: {raw[:200]}",
                 verifier_agent_id=verifier_id,
+                verification_defect=True,
             )
-        accepted = bool(payload.get("accepted", False))
+        accepted_raw = payload.get("accepted", _MISSING_VERDICT_FIELD)
+        # Exact type check, matching the strict sibling `_parse_session_verdict`.
+        # A MISSING field is malformed too: defaulting it to False produced an
+        # ordinary-looking refusal that the producer was then asked to fix.
+        if type(accepted_raw) is not bool:
+            missing = accepted_raw is _MISSING_VERDICT_FIELD
+            logger.warning(
+                "BF-777: judge returned %s 'accepted' (%r, verifier=%s); "
+                "honest-degrading to a verification DEFECT rather than "
+                "coercing -- bool('false') is True, so coercion reads a "
+                "refusal as an approval",
+                "no" if missing else "a non-bool",
+                None if missing else accepted_raw,
+                verifier_id,
+            )
+            return VerificationVerdict(
+                accepted=False,
+                confidence=0.0,
+                critique=(
+                    "Malformed judge verdict: 'accepted' was "
+                    + (
+                        "absent" if missing
+                        else f"{type(accepted_raw).__name__}, not bool"
+                    )
+                ),
+                verifier_agent_id=verifier_id,
+                verification_defect=True,
+            )
+        accepted = accepted_raw
         try:
             confidence = float(payload.get("confidence", 0.0))
         except (TypeError, ValueError):

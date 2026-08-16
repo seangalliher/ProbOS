@@ -4590,7 +4590,13 @@ async def test_legacy_verifier_synthesizer_and_ordinary_orchestrator_remain_unch
     )
     verdict = await verifier.verify(result)
     assert verdict.accepted is True
-    assert len(trust.records) == 1
+    # BF-778: was `== 1`. That pinned the defect as contract -- `verify()` wrote
+    # the VERIFIER's trust with success=verdict.accepted, paying it to accept
+    # and penalising every refusal. No path in crew_verifier writes verifier
+    # trust now; a non-farmable replacement is BF-782 (#1246). The legacy
+    # orchestrator/synthesizer behaviour this test covers is otherwise
+    # unchanged -- only the trust write is gone.
+    assert len(trust.records) == 0
     parent = await stores.work.create_work_item(
         title="legacy parent",
         work_type="task",

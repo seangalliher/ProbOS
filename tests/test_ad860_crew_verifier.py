@@ -135,7 +135,17 @@ def _make_verifier(
 # ------------------------------------------------------------------ verify
 
 @pytest.mark.asyncio
-async def test_verify_accepted_records_positive_trust():
+async def test_verify_accepted_records_no_immediate_trust():
+    """BF-778: judging is not the moment to score the judge.
+
+    This test previously asserted ``trust.get_score("verifier") > 0.5`` after an
+    acceptance -- it pinned the defect as contract. ``verify()`` recorded the
+    VERIFIER with ``success=verdict.accepted``, so accepting paid and refusing
+    cost, regardless of whether either call was right. Whether a judgement was
+    correct is not knowable when it is made, and no signal available in this
+    module establishes it later either, so no path here writes verifier trust.
+    BF-782 (#1246) owns designing one that is not farmable.
+    """
     verifier, _llm, _ex, trust = _make_verifier(responses=[_accept()])
 
     verdict = await verifier.verify(_result())
@@ -143,25 +153,35 @@ async def test_verify_accepted_records_positive_trust():
     assert verdict.accepted is True
     assert verdict.verifier_agent_id == "verifier"
     assert verdict.verifier_agent_id != "producer"
-    # Real TrustNetwork: a success raises the verifier's score above the prior.
-    assert trust.get_record("verifier") is not None
-    assert trust.get_score("verifier") > 0.5
+    # No trust written at judgement time, in EITHER direction.
+    assert trust.get_record("verifier") is None
 
 
 @pytest.mark.asyncio
-async def test_verify_refuted_records_negative_trust():
+async def test_verify_refuted_records_no_immediate_trust():
+    """BF-778: a refusal must not cost the verifier anything by itself.
+
+    Previously asserted ``< 0.5`` -- the name said it outright, and it was the
+    inversion: the adversarial layer exists to refuse work that does not hold
+    up, and its trust signal paid it not to.
+    """
     verifier, _llm, _ex, trust = _make_verifier(responses=[_refute()])
 
     verdict = await verifier.verify(_result())
 
     assert verdict.accepted is False
     assert verdict.critique == "missing requirement X"
-    assert trust.get_record("verifier") is not None
-    assert trust.get_score("verifier") < 0.5
+    assert trust.get_record("verifier") is None
 
 
 @pytest.mark.asyncio
 async def test_verify_busy_trust_preserves_completed_verdict():
+    """BF-778: retargeted from ``verify()``, which no longer writes trust.
+
+    The behaviour under test is unchanged -- a busy durable trust write must be
+    swallowed, not propagated -- but it now lives at the resolved-outcome site.
+    Left against ``verify()`` this test would have passed vacuously.
+    """
     trust = TrustNetwork()
     trust.record_outcome = lambda *args, **kwargs: (_ for _ in ()).throw(
         RuntimeError("trust_write_in_progress"),
@@ -175,10 +195,15 @@ async def test_verify_busy_trust_preserves_completed_verdict():
 
     assert verdict.accepted is True
     assert verdict.verifier_agent_id == "verifier"
+    # The busy store is swallowed at the site that now owns the write.
+    verifier.record_verification_outcome(
+        "verifier", "producer", refusal_was_upheld=True
+    )
 
 
 @pytest.mark.asyncio
 async def test_verify_other_trust_runtime_error_propagates():
+    """BF-778: retargeted -- a non-busy trust defect must still surface."""
     trust = TrustNetwork()
     trust.record_outcome = lambda *args, **kwargs: (_ for _ in ()).throw(
         RuntimeError("trust store defect"),
@@ -189,7 +214,9 @@ async def test_verify_other_trust_runtime_error_propagates():
     )
 
     with pytest.raises(RuntimeError, match="^trust store defect$"):
-        await verifier.verify(_result())
+        verifier.record_verification_outcome(
+            "verifier", "producer", refusal_was_upheld=True
+        )
 
 
 @pytest.mark.asyncio
