@@ -3271,16 +3271,26 @@ class ExecutionConfig(BaseModel):
     BF-763 / BF-779: **neither** ``run_python`` path is quorum-approved before it
     runs. The agentic tool is permission-resolved but nothing votes on the
     script; the mesh intent declares consensus and executes during the broadcast,
-    so quorum votes on a script that has already run. Neither path writes a
-    mandatory execution-specific audit record: the agentic path can persist a
-    generic tool trace, optionally, and on the mesh side what is recorded varies
-    BY INGRESS — the decomposed-plan route writes generic intent rows (plus a
-    quorum row only when the plan's model-chosen ``use_consensus`` was true), the
-    federation MCP route writes none. Those runtime rows carry neither the source
-    nor its output; the tool trace and the DAG checkpoint can carry both, and a
-    caller-preserved workdir retains ``script.py`` (source only). What is absent
-    is a MANDATORY record, not any record. AD-1247 tracks one — whether it covers
-    both paths is not settled there. Do not read authorization into either.
+    so quorum votes on a script that has already run.
+
+    What is recorded, precisely. AD-1247 gives the AGENTIC path a
+    ``code_execution`` audit record, ATTEMPTED once per run that reached the
+    sandbox, when ``security_infra.audit_enabled`` is on. Each record carries a
+    ``launch_state``: ``launched`` when a child was confirmed, ``unknown`` when
+    the turn was torn down before the sandbox could answer and a script MAY have
+    run. With the sink off there is no record and a warning says so; if the
+    append raises, whether the entry landed is UNCONFIRMED, because the sink can
+    store and then fail. It is a best effort under stated conditions, never an
+    unconditional guarantee, because an audit write that could fail an execution
+    would be a new way to lose work.
+    The MESH path has no execution-specific record at all (BF-787); what it
+    writes varies BY INGRESS -- the decomposed-plan route writes generic intent
+    rows (plus a quorum row only when the plan's model-chosen ``use_consensus``
+    was true), the federation MCP route writes none, and none of those rows
+    carries the source or its output. Separately, the DAG checkpoint and a
+    caller-preserved workdir's ``script.py`` can hold source.
+
+    Do not read authorization into any of it.
     """
 
     enabled: bool = False                   # opt-in; arbitrary code execution

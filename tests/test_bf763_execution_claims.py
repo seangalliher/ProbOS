@@ -94,8 +94,11 @@ def test_isolation_does_not_claim_a_consensus_gate() -> None:
     assert "which defaults false" in source
     # Same stale framing as the other two files' summary lines.
     assert "governed ephemeral code execution" not in source
-    # AD-1247's scope is not decided; the module must not write it as settled.
-    assert "scope across the two paths is not yet settled there" in source
+    # AD-1247 built the agentic record, so the "scope not settled" hedge is
+    # itself now stale. What must stay is that the module does not restate its
+    # callers' conclusions -- it links them.
+    assert "scope across the two paths is not yet settled there" not in source
+    assert "the mesh path's absence is BF-787" in source
     # And the tool is permission-resolved -- "ungoverned" would be the opposite
     # overclaim to the one being fixed.
     assert "NEITHER is quorum-approved" in source
@@ -151,18 +154,28 @@ def test_code_runner_does_not_claim_a_gate_it_lacks() -> None:
     # record, so the claim has to be narrowed rather than reversed.
     assert "**Not audited.**" not in source
     assert "No dedicated execution audit" in source
-    # ...and the trace must stay QUALIFIED. `_persist_tool_trace` returns None
-    # when no store is configured or the write fails, so "always"/"mandatory"
-    # would be the same overclaim one more time.
-    assert "can persist a generic tool trace, optionally" in source
+    # AD-1247: the agentic path now has a MANDATORY per-execution record, so
+    # "can persist a generic tool trace, optionally" understates it. What this
+    # file exists to prevent is THIS path claiming a control it lacks, so the
+    # assertion moves to the distinction that is still load-bearing: the mesh
+    # path has no execution-specific record and must not imply one.
+    assert "can persist a generic tool trace, optionally" not in source
+    assert "No dedicated execution audit on THIS path" in source
+    assert "BF-787 tracks" in source
     assert "always persists" not in source
     # The reason it is optional must survive too, or "optionally" degrades into
-    # a word with no stated cause: `_persist_tool_trace` returns None when no
-    # store is configured or the write fails.
-    assert "skipped when no store is configured or the write" in source
+    # a word with no stated cause.
+    #
+    # AD-1247: this sentence described the AGENTIC path's optional tool trace,
+    # in the MESH path's module. That cross-reference is gone -- code_runner.py
+    # now states what THIS path does and links BF-787 for what it lacks -- so
+    # the qualifier moved with the claim it qualified.
+    assert "skipped when no store is configured or the write" not in source
     # The deferred issue's scope is not settled; do not write it as decided.
     assert "AD-1247 will add one" not in source
-    assert "is not settled there" in source
+    # AD-1247 settled it: the record covers the AGENTIC path only, and this
+    # module now says which side of that line it is on rather than deferring.
+    assert "is not settled there" not in source
     # The header must not claim to enumerate every constraint.
     assert "under these constraints, and no" not in source
     # The timeout bounds nothing reliably: it is a trigger, and on POSIX it
@@ -183,32 +196,22 @@ def test_code_runner_does_not_claim_a_gate_it_lacks() -> None:
     # in a persistent workdir, and the DAG checkpoint serializes both. Scope the
     # claim to the runtime ROWS and say plainly that other stores do carry it.
     assert "No ingress records the submitted source" not in source
-    assert "Those runtime rows carry neither the submitted source" in source
-    # Anchored on the FULL phrase including its "Do NOT read that as" prefix:
-    # asserting the bare quote survives its own inversion ("This means the
-    # source is never stored"), which is precisely the assertion-vs-denial
-    # blindness that substring guards have. A mutation proved it.
-    assert 'Do NOT read that as "the source is never stored"' in source
+    # AD-1247 reshaped this bullet: it used to describe the AGENTIC path's
+    # optional trace and the other stores that can hold source, from inside the
+    # MESH path's module. Now it states what THIS path does and links BF-787 for
+    # what it lacks, so the cross-path inventory moved to config.py where the
+    # comparison belongs. The negative guards below stay -- they ban the wrong
+    # claims regardless of which module makes them.
+    assert "None of those rows carries the submitted source" in source
     assert "This means the source is never stored" not in source
-    # ...and the trace must not be described as source-free either.
     assert "never includes source or output" not in source
-    # `script.py` holds the SOURCE only -- the sandbox never writes stdout there
-    # (verified: SCRIPT_HAS_SOURCE True, SCRIPT_HAS_OUTPUT False). Distributing
-    # "both" across all three stores was false for that one.
-    assert "``script.py`` (source only;" in source
-    # The per-store SPLIT must be pinned too, not just script.py's parenthetical:
-    # a mutation that redistributed "both" across all three stores while leaving
-    # the parenthetical intact survived, leaving the sentence self-contradictory.
-    assert "the DAG checkpoint can each contain both" in source
     assert "all contain both" not in source
     # The rows DO carry correlation ids; a mutation denying it survived once.
     assert "carry no correlation identifier" not in source
-    assert "MANDATORY execution-specific record, not any record" in source
     # ...and quorum_evaluated is CONDITIONAL: use_consensus comes from the
     # decomposer's model JSON and defaults false, so listing it unconditionally
     # alongside the always-written rows was an overstatement.
-    assert "``quorum_evaluated`` only when" not in source
-    assert "quorum row only when the plan's model-chosen" in source
+    assert "``quorum_evaluated`` only when the plan's model-chosen" in source
     # The descriptor's requires_consensus does NOT force use_consensus true.
     assert "every run_python plan sets use_consensus" not in source
     # And the ingress list must not be written as closed: a third route (the
@@ -216,12 +219,11 @@ def test_code_runner_does_not_claim_a_gate_it_lacks() -> None:
     # at all. "on both submission paths" was the fourth exhaustive claim this
     # fix has had to retract, so the text names ingress variation explicitly.
     assert "on both submission paths" not in source
-    assert "varies BY INGRESS" in source
+    assert "nothing at all on" in source
     # The MCP route writing NO rows is the concrete counterexample that makes
     # the ingress variation real; without it the sentence is a hedge with no
     # content, and a mutation deleting it survived.
     assert "broadcasts straight to the bus" in source
-    assert "and writes none" in source
 
 
 def test_execution_config_does_not_claim_authorization() -> None:
@@ -236,18 +238,28 @@ def test_execution_config_does_not_claim_authorization() -> None:
     # version of this guard PINNED that false sentence as contract, which is the
     # exact failure mode this file exists to prevent.
     assert "Neither path writes an audit record today" not in source
-    assert "mandatory execution-specific audit record" in source
-    assert "can persist a" in source
+    # AD-1247 rewrote this stanza: the old "neither path writes a mandatory
+    # record" sentence became false for the agentic path, and leaving it beside
+    # the new paragraph made the docstring say two contradictory things. The
+    # guard now pins the CONDITIONAL claim, which is the only true one.
+    assert "mandatory execution-specific audit record" not in source
+    assert "MANDATORY record, not any record" not in source
+    assert "ATTEMPTED once per run that reached the" in source
+    assert "security_infra.audit_enabled" in source
+    # An unconditional claim is the original BF-763 defect returning, so the
+    # failure modes are named explicitly rather than implied. And the record is
+    # NOT written only for confirmed launches -- an unconfirmed teardown writes
+    # one too, labelled `unknown`, so "per LAUNCHED run" would undercount.
+    assert "never an\n    unconditional guarantee".replace("\n    ", " ") in source
+    assert "launch_state" in source
+    assert "UNCONFIRMED" in source
     # ...and the mesh path is not empty either; saying so was the over-correction.
     assert "the mesh path has nothing" not in source
+    assert "no execution-specific record at all (BF-787)" in source
     assert "quorum row only when the plan's model-chosen" in source
     assert "No ingress records the source or its" not in source
-    assert "Those runtime rows carry neither the source" in source
-    # Split by store: only the trace and the checkpoint carry output.
-    assert "the tool trace and the DAG checkpoint can carry both" in source
-    assert "retains ``script.py`` (source only)" in source
+    assert "none of those rows\n    carries the source".replace("\n    ", " ") in source
     assert "carry no correlation identifier" not in source
-    assert "MANDATORY record, not any record" in source
     # `persistent_workspaces` defaults True, so the summary line must not call
     # the default execution ephemeral -- the same phrase this file already
     # rejects in code_runner.py.

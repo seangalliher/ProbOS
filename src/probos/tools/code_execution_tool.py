@@ -11,15 +11,18 @@ Governance: offered to the loop ONLY when ``config.execution.enabled`` (the
 operator opt-in, AD-994). Execution runs through the AD-993 ``SubprocessSandbox``
 (process isolation, a wall-clock timeout, output caps, POSIX-only best-effort
 memory bounds, and a proxy-level network deterrent that is NOT a block -- see
-BF-781 and ``_network_clause``). The tool never raises out of ``invoke`` --
-every failure becomes an error ``ToolResult`` the loop can reason over.
+BF-781 and ``_network_clause``). ``invoke`` turns every ordinary failure into an
+error ``ToolResult`` the loop can reason over; it does NOT swallow
+``BaseException``, so a cancelled turn propagates (AD-1247).
 """
 
 from __future__ import annotations
 
 import ast
+import asyncio
 import hashlib
 import importlib.util
+import json
 import logging
 import shutil
 import sys
@@ -33,7 +36,11 @@ from probos.execution.fetch_broker import (
     SANDBOX_HELPER_SOURCE,
     SandboxFetchBroker,
 )
-from probos.execution.isolation import ExecutionRequest, SubprocessSandbox
+from probos.execution.isolation import (
+    ExecutionRequest,
+    LaunchOutcome,
+    SubprocessSandbox,
+)
 from probos.tools.protocol import ToolResult, ToolType
 
 logger = logging.getLogger(__name__)
@@ -65,6 +72,33 @@ _WORKDIR_PROVIDED_MODULES = frozenset(
 _SKIP_DIR_PARTS = {".venv", "venv", "__pycache__", ".git", "node_modules", ".pytest_cache"}
 # Per-file cap so a runaway script can't push a huge blob into the store.
 _MAX_ARTIFACT_BYTES = 25 * 1024 * 1024  # 25 MiB
+
+# AD-1247: the exact keys an execution audit record may carry. The submitted
+# source is represented by a DIGEST and never by its text: code an agent runs
+# can contain credentials it was legitimately given, and an audit trail is the
+# wrong place to copy them to.
+_AUDIT_DETAIL_ALLOWLIST: frozenset[str] = frozenset({
+    "execution_id",
+    "agent_id",
+    "launch_state",
+    "code_sha256",
+    "code_chars",
+    "success",
+    "exit_code",
+    "timed_out",
+    "timeout_seconds",
+    "duration_ms",
+    "artifact_count",
+    "fetch_broker",
+    "error_type",
+})
+
+# AD-1247: how long the abnormal path waits for the executor thread to answer
+# the launch question. Cancelling the awaiting task does not cancel that thread,
+# so without this a script that is about to spawn is recorded as never having
+# run. Bounded because it briefly blocks the loop, and only reached when a run
+# is torn down before `sandbox.run` returned.
+_LAUNCH_RESOLVE_SECONDS = 2.0
 
 # BF-726: what the tool may ADVERTISE, checked against what the sandbox can
 # actually import rather than hand-listed in the description.
@@ -284,6 +318,9 @@ class CodeExecutionTool:
 
     def __init__(self, *, runtime: Any) -> None:
         self._runtime = runtime
+        # AD-1247: warn once per instance that execution is running untrailed,
+        # rather than on every run.
+        self._audit_absence_warned = False
 
     # ── Tool protocol ─────────────────────────────────────────────
     @property
@@ -480,6 +517,111 @@ class CodeExecutionTool:
     def _cfg(self) -> Any:
         return getattr(getattr(self._runtime, "config", None), "execution", None)
 
+    def _audit(
+        self,
+        *,
+        execution_id: str,
+        agent_id: str,
+        code: str,
+        timeout_seconds: float,
+        duration_ms: float,
+        launch_state: str,
+        result: Any = None,
+        artifact_count: int | None = None,
+        fetch_broker: bool = False,
+        error_type: str | None = None,
+    ) -> None:
+        """Record an execution attempt against the accountability trail (AD-1247).
+
+        BF-763 established that the agentic ``run_python`` path has no quorum
+        gate and, by the Captain's decision, should not acquire one -- a
+        foreground coding agent does not vote before each command. What a
+        foreground agent pays for that freedom is a human watching it. This
+        record is what an unattended agent pays instead, so it is not
+        decoration: it is the control that makes the capability defensible
+        (Design Principle #13).
+
+        ``launch_state`` must come from the sandbox's launch outcome, never
+        from the caller's intent. ``"launched"`` means a child was confirmed to
+        exist; ``"unknown"`` means the run was torn down before the sandbox
+        could answer and a script MAY have run; anything else writes nothing. A
+        record for a run that never started corrupts the trail in the opposite
+        direction to a missing one, so the uncertain case is labelled rather
+        than guessed either way.
+
+        Swallows ``Exception`` from the sink -- an audit write that could fail
+        an execution would turn the accountability trail into a new way to lose
+        work. It does NOT swallow ``BaseException``: a cancellation arriving
+        mid-append belongs to the turn, not to this record, and the caller sets
+        its attempted-flag BEFORE calling so such an unwind cannot produce a
+        duplicate.
+        """
+        if launch_state not in ("launched", "unknown"):
+            return
+        audit = getattr(self._runtime, "audit_log", None)
+        if audit is None:
+            # AD-1247 acceptance 6: the sink is gated by
+            # `security_infra.audit_enabled`, so a deployment can run code with
+            # no trail. That is allowed -- requiring a sink would make auditing
+            # a new way for execution to fail -- but it must not be SILENT, and
+            # no docstring may claim a record this can switch off. Warned once
+            # per tool instance so a long-running vessel does not spam.
+            if not self._audit_absence_warned:
+                self._audit_absence_warned = True
+                logger.warning(
+                    "AD-1247: code executed with no audit sink "
+                    "(security_infra.audit_enabled is off), so this run and "
+                    "any that follow leave no accountability record. Execution "
+                    "is unaffected; enable audit to restore the trail.",
+                )
+            return
+        detail: dict[str, Any] = {
+            "execution_id": execution_id,
+            "agent_id": agent_id or "unknown",
+            "launch_state": launch_state,
+            "code_sha256": hashlib.sha256(code.encode("utf-8", "replace")).hexdigest(),
+            "code_chars": len(code),
+            "timeout_seconds": float(timeout_seconds),
+            "duration_ms": round(float(duration_ms), 1),
+            "fetch_broker": bool(fetch_broker),
+        }
+        # AD-1247: OMITTED rather than defaulted to 0. A run torn down partway
+        # through artifact capture had already persisted one artifact while the
+        # record said zero -- an acknowledged absence beats a false count, which
+        # is this AD's whole premise.
+        if artifact_count is not None:
+            detail["artifact_count"] = int(artifact_count)
+        if result is not None:
+            detail["success"] = bool(getattr(result, "success", False))
+            detail["exit_code"] = getattr(result, "exit_code", None)
+            detail["timed_out"] = bool(getattr(result, "timed_out", False))
+        if error_type:
+            detail["error_type"] = str(error_type)[:80]
+        # The browser tool (AD-706) filters at runtime and deviating to save
+        # three lines was not worth it. A test asserting the emitted record is
+        # release-time detection; this is a production boundary. Note it bounds
+        # KEYS only -- a leak inside an allowed VALUE is a separate problem,
+        # which is why `error_type` is a class name and never `str(exc)`: an
+        # exception message can carry script source, a path, or a credential,
+        # and 80 characters of it is a size bound rather than sanitisation.
+        for key in list(detail):
+            if key not in _AUDIT_DETAIL_ALLOWLIST:
+                detail.pop(key, None)
+        try:
+            audit.append(
+                category="code_execution",
+                detail=json.dumps(detail, sort_keys=True, default=str),
+            )
+        except Exception:
+            logger.warning(
+                "AD-1247: audit append did not complete for agent=%s "
+                "(execution %s); the execution itself is unaffected, but "
+                "whether this run reached the accountability trail is "
+                "UNCONFIRMED -- the sink may have stored the entry before "
+                "raising",
+                agent_id, execution_id, exc_info=True,
+            )
+
     def _governed_fetcher(self) -> Any:
         """The registered agent that can perform a governed HTTP fetch, if any.
 
@@ -578,6 +720,25 @@ class CodeExecutionTool:
         scratch_root = Path(getattr(cfg, "scratch_dir", "data/execution/scratch"))
         workdir = scratch_root / f"exec-{uuid.uuid4().hex}"
         broker: SandboxFetchBroker | None = None
+        # AD-1247: `launch` resolves to "a child existed" or "one never will",
+        # and only after the executor thread says so -- cancelling the awaiting
+        # task does not stop that thread, so reading a flag at cancellation time
+        # can report False for a script that is about to run. `audit_attempted`
+        # is set BEFORE the append, because `AuditLog.append` adds the entry and
+        # THEN emits an event: a listener raising BaseException there would
+        # otherwise leave the flag false and let `finally` write a duplicate.
+        # `broker_env`, `res` and `artifact_count` are held out so the fallback
+        # paths report what was actually known instead of `_audit` defaults.
+        launch = LaunchOutcome()
+        sandbox_submitted = False
+        audit_attempted = False
+        broker_env: dict[str, str] = {}
+        res: Any = None
+        artifact_count: int | None = None
+        execution_id = uuid.uuid4().hex
+        timeout = self._resolve_timeout(
+            (params or {}).get("timeout"), getattr(cfg, "timeout_seconds", 30),
+        )
         try:
             workdir.mkdir(parents=True, exist_ok=True)
             # AD-1074d: stage the thread's current documents into the workdir so
@@ -593,13 +754,16 @@ class CodeExecutionTool:
                 code, requested_by=requesting_agent
             )
             sandbox = SubprocessSandbox(scratch_root=str(scratch_root))
-            timeout = self._resolve_timeout(
-                (params or {}).get("timeout"), getattr(cfg, "timeout_seconds", 30),
-            )
             # AD-1221: stand up a loopback fetch relay for THIS run only, so the
             # script can fetch and extract in one process. Returns ({}, None)
             # when the capability is off, which is the byte-identical old path.
             broker_env, broker = await self._start_fetch_broker(cfg, workdir)
+            # AD-1247: from here a worker may exist, so the launch question is
+            # real. Before this point nothing was submitted and no script can
+            # have run -- waiting on the outcome would stall the loop for the
+            # full bound and then record an "unknown" that is not uncertain at
+            # all, it is a definite no.
+            sandbox_submitted = True
             res = await sandbox.run(
                 ExecutionRequest(
                     code=code,
@@ -610,10 +774,25 @@ class CodeExecutionTool:
                     allow_network=False,
                     env=(broker_env or None),
                     import_workdir=bool(broker_env),
+                    launch_outcome=launch,
                 )
             )
             produced = await self._capture_artifacts(
                 workdir, thread_id, created_by, staged,
+            )
+            artifact_count = len(produced)
+            audit_attempted = True
+            self._audit(
+                execution_id=execution_id,
+                agent_id=requesting_agent,
+                code=code,
+                timeout_seconds=timeout,
+                duration_ms=(time.monotonic() - t0) * 1000.0,
+                result=res,
+                artifact_count=artifact_count,
+                fetch_broker=bool(broker_env),
+                error_type=("sandbox_error" if res.error else None),
+                launch_state=("launched" if launch.launched else "not_launched"),
             )
             output: dict[str, Any] = {
                 "stdout": res.stdout,
@@ -644,21 +823,109 @@ class CodeExecutionTool:
                 "AD-1066: code execution tool failed for agent=%s: %s",
                 created_by, exc, exc_info=True,
             )
+            # AD-1247: `not audit_attempted` as well as launched. Without it, a
+            # failure AFTER the normal audit -- `_unimportable_summary` was the
+            # probe -- wrote a SECOND record, so one execution appeared in the
+            # trail as a success plus a RuntimeError, indistinguishable from two
+            # separate runs. `res` and `artifact_count` are carried so the
+            # fallback keeps what was already known rather than defaults.
+            if launch.launched and not audit_attempted:
+                audit_attempted = True
+                self._audit(
+                    execution_id=execution_id,
+                    agent_id=requesting_agent,
+                    code=code,
+                    timeout_seconds=timeout,
+                    duration_ms=(time.monotonic() - t0) * 1000.0,
+                    result=res,
+                    artifact_count=artifact_count,
+                    fetch_broker=bool(broker_env),
+                    error_type=type(exc).__name__,
+                    launch_state="launched",
+                )
             return ToolResult(error=f"execution failed: {exc}")
         finally:
-            # AD-1221: the relay must not outlive the script it was minted for.
-            # Closed here rather than after `sandbox.run` so a timeout, an
-            # exception, or a cancelled turn all still take the socket down.
-            if broker is not None:
-                try:
-                    await broker.stop()
-                except Exception:  # noqa: BLE001 — teardown, run already over
-                    logger.warning(
-                        "AD-1221: sandbox fetch broker failed to close cleanly; "
-                        "the listener may linger until process exit",
-                        exc_info=True,
+            # AD-1247: audit first, in its OWN try/finally, so a sink that
+            # raises cannot skip the teardown below. A leaked workdir and a
+            # lingering listener are how an audit write turns into two new
+            # defects.
+            try:
+                # A BaseException -- cancellation being the one that happens --
+                # misses both branches above, and by then the script may already
+                # have run and written files. The executor thread is NOT
+                # cancelled with us, so the launch question may still be open:
+                # wait briefly for its answer rather than recording "never ran"
+                # for a child that is about to exist. Bounded, and only reached
+                # on the abnormal path.
+                if (
+                    sandbox_submitted
+                    and not audit_attempted
+                    and not launch.resolved.is_set()
+                ):
+                    launch.resolved.wait(timeout=_LAUNCH_RESOLVE_SECONDS)
+                if not audit_attempted and sandbox_submitted and (
+                    launch.launched or not launch.resolved.is_set()
+                ):
+                    audit_attempted = True
+                    # AD-1247: if the bound expired the answer is still UNKNOWN,
+                    # and a worker that has not reached Popen yet may still
+                    # spawn. Recording nothing would silently drop a real
+                    # execution; recording it as launched would assert something
+                    # unverified. So the record is written and SAYS it is
+                    # unverified -- an acknowledged uncertainty, which is the
+                    # only honest third option.
+                    resolved = launch.resolved.is_set()
+                    self._audit(
+                        execution_id=execution_id,
+                        agent_id=requesting_agent,
+                        code=code,
+                        timeout_seconds=timeout,
+                        duration_ms=(time.monotonic() - t0) * 1000.0,
+                        result=res,
+                        artifact_count=artifact_count,
+                        fetch_broker=bool(broker_env),
+                        # Named for what is known here. Cancellation is the
+                        # reachable case; anything else arriving as a
+                        # BaseException is recorded as such rather than
+                        # mislabelled as a cancelled turn.
+                        error_type=(
+                            "cancelled"
+                            if isinstance(sys.exc_info()[1], asyncio.CancelledError)
+                            else "interrupted"
+                        ),
+                        launch_state=("launched" if resolved else "unknown"),
                     )
-            shutil.rmtree(workdir, ignore_errors=True)
+                    if not resolved:
+                        logger.warning(
+                            "AD-1247: execution %s was torn down before the "
+                            "sandbox could confirm whether a child started; "
+                            "recorded with launch_state=unknown rather than "
+                            "guessing. A script MAY have run.",
+                            execution_id,
+                        )
+            finally:
+                # AD-1221: the relay must not outlive the script it was minted
+                # for. Closed here rather than after `sandbox.run` so a timeout,
+                # an exception, or a cancelled turn all still take the socket
+                # down. AD-1247 nested this inside its own `finally` so an audit
+                # sink that raises cannot skip the cleanup ATTEMPT, and `rmtree`
+                # sits in a further `finally` so a broker whose `stop()` raises
+                # BaseException cannot skip it either. Neither guarantees the
+                # directory is gone -- a Windows child still holding a handle
+                # can defeat `ignore_errors=True`.
+                try:
+                    if broker is not None:
+                        try:
+                            await broker.stop()
+                        except Exception:  # noqa: BLE001 — teardown, run over
+                            logger.warning(
+                                "AD-1221: sandbox fetch broker failed to close "
+                                "cleanly; the listener may linger until process "
+                                "exit",
+                                exc_info=True,
+                            )
+                finally:
+                    shutil.rmtree(workdir, ignore_errors=True)
 
     def _unimportable_summary(self, code: str) -> dict[str, Any] | None:
         """AD-1178: turn an unresolvable import into a structured request the

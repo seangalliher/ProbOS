@@ -55,9 +55,9 @@ Tiered isolation (the ``IsolationBackend`` abstraction):
   controls the calling paths did not have; that framing produced a false claim
   three revisions running, because a module cannot honestly summarise what its
   callers do. So it no longer tries. For what actually governs each caller see
-  BF-779 (what consensus does and does not gate) and AD-1247 (a dedicated
-  execution audit record; scope across the two paths is not yet settled there).
-  Do not restate their conclusions here -- link them.
+  BF-779 (what consensus does and does not gate) and AD-1247 (the agentic path
+  attempts a per-execution audit record when the sink is enabled; the mesh
+  path's absence is BF-787). Do not restate their conclusions here -- link them.
 * **Tier 2 — OS-native sandbox (AD-995, future).** Policy-driven, kernel-enforced
   isolation: bubblewrap (Linux), seatbelt (macOS), AppContainer (Windows), or
   ``microsoft/mxc`` once it matures — behind THIS SAME protocol.
@@ -79,6 +79,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -105,6 +106,32 @@ class IsolationTier(IntEnum):
 
 
 @dataclass
+class LaunchOutcome:
+    """AD-1247: whether a child process was created, and whether that is known.
+
+    ``run()`` hands work to an executor thread, and cancelling the awaiting task
+    does NOT stop that thread -- it keeps going and may spawn the child after
+    the caller has already given up. A bare "launched" flag read at that moment
+    reports False for a script that is about to run, which is the one failure an
+    audit trail must not have.
+
+    So ``resolved`` is set as soon as the launch question has an ANSWER: right
+    after ``Popen`` returns on the spawn path, and in a ``finally`` on every
+    path that exits without spawning. It does NOT wait for the run to finish --
+    an earlier revision resolved it on return, which made a caller unwinding
+    beside a long-running child block for its whole bounded wait.
+
+    ``launched`` is written before ``resolved`` is set and read after waiting on
+    it, so the Event is the memory barrier between the two threads. A caller
+    whose bounded wait EXPIRES has neither answer and must say so rather than
+    assume either one.
+    """
+
+    resolved: threading.Event = field(default_factory=threading.Event)
+    launched: bool = False
+
+
+@dataclass
 class ExecutionRequest:
     """One unit of work to run under isolation. Either ``code`` (Python source,
     written to ``script.py`` in the scratch dir) OR ``argv`` (an explicit command
@@ -123,11 +150,23 @@ class ExecutionRequest:
     # ship generated there (e.g. `ship.py`) can be imported by the script.
     # Default False keeps every existing caller byte-identical.
     import_workdir: bool = False
+    # AD-1247: set once the child process actually exists. `run()` only QUEUES
+    # work on an executor -- `Popen` happens later, inside `_run_sync` -- so a
+    # caller that flips its own flag before awaiting `run()` is recording an
+    # intention, not an execution. Probes produced audit records for a missing
+    # executable and for a run cancelled while still queued, neither of which
+    # ever started a process. See `LaunchOutcome` for why this resolves both
+    # answers rather than only signalling success.
+    launch_outcome: LaunchOutcome | None = None
 
 
 @dataclass
 class ExecutionResult:
-    """The outcome of an isolated execution. Never raises out of ``run``."""
+    """The outcome of an isolated execution.
+
+    ``run`` honest-degrades ordinary failures into one of these rather than
+    raising; it is not proof against cancellation of the awaiting task.
+    """
 
     success: bool
     stdout: str = ""
@@ -168,7 +207,11 @@ class SubprocessSandbox:
     Mirrors ``ShellCommandAgent`` execution mechanics (``subprocess.Popen`` in a
     thread executor) so it works under any event-loop policy, including the
     Windows selector loop. Resource limits are applied via ``preexec_fn`` on
-    POSIX; on Windows the bound is the timeout. Never raises out of ``run``.
+    POSIX; on Windows the bound is the timeout. ``run`` honest-degrades every
+    ordinary failure into a failed ``ExecutionResult`` rather than raising --
+    but it is not exception-proof: cancelling the awaiting task raises
+    ``CancelledError`` out of the await, and the executor thread keeps going
+    (see ``LaunchOutcome``).
     """
 
     tier: IsolationTier = IsolationTier.SUBPROCESS
@@ -186,6 +229,16 @@ class SubprocessSandbox:
     # ------------------------------------------------------------------
 
     def _run_sync(self, request: ExecutionRequest) -> ExecutionResult:
+        try:
+            return self._run_sync_inner(request)
+        finally:
+            # AD-1247: the launch question ALWAYS gets an answer, on every exit
+            # path including the ones that never reached Popen. A caller
+            # unwinding under cancellation is waiting on this.
+            if request.launch_outcome is not None:
+                request.launch_outcome.resolved.set()
+
+    def _run_sync_inner(self, request: ExecutionRequest) -> ExecutionResult:
         started = time.monotonic()
         created_workdir = request.workdir is None
         workdir = Path(request.workdir) if request.workdir else (
@@ -234,6 +287,19 @@ class SubprocessSandbox:
                 stderr=subprocess.PIPE,
                 **popen_kwargs,
             )
+            # AD-1247: the child exists from here. `launched` is written FIRST
+            # and `resolved` set immediately after, so a caller that waits on
+            # `resolved` and then reads `launched` cannot see a torn value --
+            # the Event is the memory barrier between this thread and the loop.
+            #
+            # Resolved HERE, not in the wrapper's `finally`: setting it only on
+            # return would make it mean "the whole run finished", so a caller
+            # unwinding while a 30-second child is still running would block for
+            # its entire bounded wait despite the answer being known the moment
+            # Popen returned.
+            if request.launch_outcome is not None:
+                request.launch_outcome.launched = True
+                request.launch_outcome.resolved.set()
             try:
                 out_b, err_b = proc.communicate(timeout=request.timeout_seconds)
                 timed_out = False

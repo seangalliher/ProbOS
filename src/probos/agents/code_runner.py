@@ -13,19 +13,16 @@ but are not limited to:
   similarly MCP invocation and device actuation. This agent has no commit phase.
   ``run_command`` does not either, so the "exactly like ``run_command``" this
   line used to claim was accidentally true. See BF-779.
-* **No dedicated execution audit.** The agentic path can persist a generic tool
-  trace, optionally -- it is skipped when no store is configured or the write
-  fails. On the mesh side, what gets recorded varies BY INGRESS: the
-  decomposed-plan route writes generic intent rows via ``runtime`` (plus a quorum
-  row only when the plan's model-chosen ``use_consensus`` was true, which defaults
-  false, BF-779), while the federation MCP route broadcasts straight to the bus
-  and writes none. Those runtime rows carry neither the submitted source nor its
-  execution output. Do NOT read that as "the source is never stored" -- the
-  agentic tool trace and the DAG checkpoint can each contain both, and a
-  caller-preserved workdir retains the submitted ``script.py`` (source only;
-  the sandbox never writes output there). What is missing is a MANDATORY
-  execution-specific record, not any record. AD-1247 tracks one; whether it
-  covers this mesh path as well as the agentic one is not settled there.
+* **No dedicated execution audit on THIS path.** The agentic
+  ``CodeExecutionTool`` ATTEMPTS a per-execution ``code_execution`` record when
+  ``security_infra.audit_enabled`` is on (AD-1247). This mesh path attempts
+  nothing. What it writes is generic event-log rows via ``runtime`` --
+  ``intent_broadcast`` and ``intent_resolved`` on the decomposed-plan route,
+  ``quorum_evaluated`` only when the plan's model-chosen ``use_consensus`` was
+  true (it defaults false, BF-779), and nothing at all on the federation MCP
+  route, which broadcasts straight to the bus. None of those rows carries the
+  submitted source or its execution output. BF-787 tracks giving this path the
+  same record.
 * **Default OFF.** Inert unless ``config.execution.enabled`` is set by the
   operator. Package install is separately gated (``allow_package_install``).
 * **Isolated (Tier 1).** Runs through the AD-993 ``SubprocessSandbox``:
