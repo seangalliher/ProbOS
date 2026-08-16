@@ -1,27 +1,58 @@
-"""AD-994: CodeRunnerAgent — governed ephemeral Python execution for crew agents.
+"""AD-994: CodeRunnerAgent — Tier-1 isolated Python execution for crew agents.
 
 Gives crew agents the GitHub Copilot / Claude Code capability — *create and run a
-Python script, installing libraries as needed* — done the ProbOS way:
+Python script, installing libraries as needed* — under constraints that include,
+but are not limited to:
 
-* **Consensus-gated.** Both intents set ``requires_consensus=True``; every
-  execution is quorum-authorized, exactly like ``run_command``.
+* **NOT consensus-gated, despite the descriptors.** Both intents set
+  ``requires_consensus=True``, and that does not authorize anything: the runtime
+  broadcasts (this agent executes, below) and evaluates quorum on the results
+  afterwards, with no rollback. The intents that DO get a real gate have a
+  proposal/commit pair behind a dedicated runtime method -- ``write_file`` via
+  ``submit_write_with_consensus`` / ``FileWriterAgent.commit_write``, and
+  similarly MCP invocation and device actuation. This agent has no commit phase.
+  ``run_command`` does not either, so the "exactly like ``run_command``" this
+  line used to claim was accidentally true. See BF-779.
+* **No dedicated execution audit.** The agentic path can persist a generic tool
+  trace, optionally -- it is skipped when no store is configured or the write
+  fails. On the mesh side, what gets recorded varies BY INGRESS: the
+  decomposed-plan route writes generic intent rows via ``runtime`` (plus a quorum
+  row only when the plan's model-chosen ``use_consensus`` was true, which defaults
+  false, BF-779), while the federation MCP route broadcasts straight to the bus
+  and writes none. Those runtime rows carry neither the submitted source nor its
+  execution output. Do NOT read that as "the source is never stored" -- the
+  agentic tool trace and the DAG checkpoint can each contain both, and a
+  caller-preserved workdir retains the submitted ``script.py`` (source only;
+  the sandbox never writes output there). What is missing is a MANDATORY
+  execution-specific record, not any record. AD-1247 tracks one; whether it
+  covers this mesh path as well as the agentic one is not settled there.
 * **Default OFF.** Inert unless ``config.execution.enabled`` is set by the
   operator. Package install is separately gated (``allow_package_install``).
-* **Isolated (Tier 1).** Runs through the AD-993 ``SubprocessSandbox``: a fresh
-  ephemeral working folder per task, subprocess isolation, resource + time bounds,
-  output caps, network-off-by-default. Tier 1 is process-isolation +
-  confinement-by-convention governed by consensus — not kernel containment (that
-  is the Tier-2 AD-995 escalation). The whole scratch tree, including any
-  per-task venv, is reaped after the run.
+* **Isolated (Tier 1).** Runs through the AD-993 ``SubprocessSandbox``:
+  subprocess isolation, a timeout trigger that does not guarantee the call
+  returns by the deadline, output caps, and memory bounds that are POSIX-only
+  and best-effort. Tier 1 is process-isolation + confinement-by-convention --
+  not kernel containment (that is the Tier-2 AD-995 escalation).
+
+  ``allow_network=False`` is **not** a network block. It sets a discard-port
+  proxy, which deters libraries that honour ``*_proxy`` (requests, urllib) and
+  which a raw socket walks straight past -- verified by execution. Hard network
+  isolation is Tier 2.
+
+  The working folder is **not** ephemeral by default: ``persistent_workspaces``
+  defaults True and ``_resolve_workdir`` keeps a per-owner folder across runs,
+  ``.venv`` included. Only the ephemeral branch reaps.
 
 Two intents:
 
-* ``run_python`` — write + execute Python source. Optional ``packages`` are
-  installed into a throwaway per-task venv first ("install libraries as needed"),
-  then the script runs in that venv. No packages → runs in the host interpreter,
-  no venv.
-* ``install_package`` — validate that a package set installs cleanly into a
-  throwaway venv (a standalone availability probe). Same machinery, no script run.
+* ``run_python`` -- write + execute Python source. Optional ``packages`` are
+  installed into the owner's workspace venv first ("install libraries as
+  needed"), then the script runs in it. That venv is REUSED across runs under
+  the default ``persistent_workspaces``, so installed packages persist; only the
+  ephemeral branch gives a fresh one. No packages -> runs in the host
+  interpreter, no venv.
+* ``install_package`` -- validate that a package set installs cleanly (a
+  standalone availability probe). Same machinery, no script run.
 """
 
 from __future__ import annotations
@@ -53,10 +84,13 @@ def _venv_python(venv_dir: Path) -> Path:
 
 
 class CodeRunnerAgent(BaseAgent):
-    """Execute ephemeral Python (and install its libraries) under Tier-1 isolation.
+    """Execute Python (and install its libraries) under Tier-1 isolation.
 
-    HIGH-RISK: arbitrary code execution. Consensus-gated + default-OFF +
-    sandboxed. Capabilities: run_python, install_package.
+    HIGH-RISK: arbitrary code execution. Default-OFF + sandboxed, and NOT
+    quorum-approved despite ``requires_consensus=True`` -- see the module
+    docstring and BF-779. The workspace is persistent by default, so neither
+    the folder nor its venv is ephemeral. Capabilities: run_python,
+    install_package.
     """
 
     agent_type: str = "code_runner"
@@ -91,7 +125,7 @@ class CodeRunnerAgent(BaseAgent):
         IntentDescriptor(
             name="install_package",
             params={"packages": "<list[str] of pip packages>"},
-            description="Validate that Python packages install cleanly into an isolated throwaway venv.",
+            description="Validate that Python packages install cleanly into an isolated venv.",
             requires_consensus=True,
             requires_reflect=True,
         ),
@@ -270,8 +304,10 @@ class CodeRunnerAgent(BaseAgent):
             if not create.success:
                 return {"success": False, "error": f"venv creation failed: {create.stderr or create.error}"}
         # 2. pip install (network ON, scoped index url). Tier 1 cannot scope the
-        #    network to PyPI only — that is a Tier-2 guarantee — so this is
-        #    consensus-gated and the package names are surfaced in the intent.
+        #    network to PyPI only -- that is a Tier-2 guarantee. The package
+        #    names are surfaced in the intent, but nothing votes on them before
+        #    this runs: the quorum this comment used to invoke is evaluated
+        #    after the fact (BF-779).
         install = await sandbox.run(ExecutionRequest(
             argv=[
                 str(py), "-m", "pip", "install",

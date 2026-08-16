@@ -3261,12 +3261,26 @@ class SelfModConfig(BaseModel):
 
 
 class ExecutionConfig(BaseModel):
-    """AD-993/994: governed ephemeral code execution (tiered isolation).
+    """AD-993/994: sandboxed code execution (tiered isolation).
 
     Lets crew agents create + run Python scripts and install libraries to perform
-    tasks (the Copilot / Claude Code pattern), governed by consensus + the
-    episodic log. **Default OFF** — this is the highest-risk capability in the
-    system; the operator must opt in deliberately after reviewing the tier model.
+    tasks (the Copilot / Claude Code pattern), bounded by the tier model.
+    **Default OFF** — this is the highest-risk capability in the system; the
+    operator must opt in deliberately after reviewing the tier model.
+
+    BF-763 / BF-779: **neither** ``run_python`` path is quorum-approved before it
+    runs. The agentic tool is permission-resolved but nothing votes on the
+    script; the mesh intent declares consensus and executes during the broadcast,
+    so quorum votes on a script that has already run. Neither path writes a
+    mandatory execution-specific audit record: the agentic path can persist a
+    generic tool trace, optionally, and on the mesh side what is recorded varies
+    BY INGRESS — the decomposed-plan route writes generic intent rows (plus a
+    quorum row only when the plan's model-chosen ``use_consensus`` was true), the
+    federation MCP route writes none. Those runtime rows carry neither the source
+    nor its output; the tool trace and the DAG checkpoint can carry both, and a
+    caller-preserved workdir retains ``script.py`` (source only). What is absent
+    is a MANDATORY record, not any record. AD-1247 tracks one — whether it covers
+    both paths is not settled there. Do not read authorization into either.
     """
 
     enabled: bool = False                   # opt-in; arbitrary code execution
@@ -3319,9 +3333,11 @@ class ExecutionConfig(BaseModel):
     # a thread with many artifacts can't bloat the sandbox.
     stage_thread_artifacts: bool = False
     max_staged_artifacts: int = 20
-    # Library installation (pip into a per-task ephemeral venv). Separately
-    # gated because installing arbitrary PyPI packages is a supply-chain risk;
-    # the package names are surfaced in the consensus-gated intent.
+    # Library installation (pip into the owner's workspace venv, which is REUSED
+    # across runs under the default persistent_workspaces). Separately gated
+    # because installing arbitrary PyPI packages is a supply-chain risk, and the
+    # install persists. The package names are surfaced in the intent, but that
+    # intent is not quorum-approved before it runs (BF-779).
     allow_package_install: bool = False
     pip_index_url: str = "https://pypi.org/simple"
     install_timeout_seconds: float = 180.0  # venv create + pip install is slower

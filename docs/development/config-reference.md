@@ -483,7 +483,7 @@ AD-838c: Dynamic dependency installation for the task path.
 
 ## `execution`
 
-AD-993/994: governed ephemeral code execution (tiered isolation).
+AD-993/994: sandboxed code execution (tiered isolation).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|

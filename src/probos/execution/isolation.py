@@ -1,24 +1,63 @@
-"""AD-993: Tier-1 isolation substrate for governed ephemeral code execution.
+"""AD-993: Tier-1 isolation substrate for sandboxed code execution.
 
 This is the foundation for letting crew agents safely create + run Python scripts
 and install libraries to perform tasks (the GitHub Copilot / Claude Code pattern),
-done the ProbOS way: governed by consensus + trust + the episodic log, with a
-**tiered isolation model** so the strength of the boundary can grow without
-changing callers.
+bounded by a **tiered isolation model** so the strength of the boundary can grow
+without changing callers. (Not "attributable" -- ``ExecutionRequest`` and
+``ExecutionResult`` carry no actor, intent or correlation field. AD-1247.)
+
+**Two things are named ``run_python`` and NEITHER is quorum-approved before it
+runs** (BF-763, BF-779). The agentic TOOL (``CodeExecutionTool``) resolves an
+effective tool permission via ``tools/executor.py`` and ``tools/registry.py`` --
+note that registration grants it ship-wide READ, so with no permission store
+configured that check passes by default -- and nothing votes on the script. The
+mesh INTENT declares ``requires_consensus=True`` on ``CodeRunnerAgent``, and that
+agent executes in ``act()``, i.e. during the broadcast phase, while ``runtime``
+evaluates quorum on the results afterwards -- and only when the plan's
+model-chosen ``use_consensus`` was true, which defaults false. Compare
+``FileWriterAgent``, which is
+the pattern done right: its ``act()`` returns a proposal explicitly "not
+executed" and a separate ``commit_write()`` runs after approval. Say "not
+quorum-approved", not "ungoverned" -- the distinction is the whole point of
+BF-763.
 
 Tiered isolation (the ``IsolationBackend`` abstraction):
 
-* **Tier 1 — ``SubprocessSandbox`` (this module).** Subprocess isolation +
-  ephemeral working folder + resource limits (POSIX) + timeout + output caps +
-  network-off-by-default. This is the Copilot "restrict the harness to a working
-  folder" model. **Be honest about what it is:** PROCESS ISOLATION + RESOURCE
-  BOUNDS + CONFINEMENT-BY-CONVENTION, *governed by consensus* — NOT a
-  kernel-enforced containment boundary. A determined script can still read host
-  files by absolute path, and network cannot be hard-blocked cross-platform
-  without OS namespaces. The real boundary at Tier 1 is: (a) the consensus gate
-  (every execution is quorum-authorized), (b) resource + time bounds (it can't
-  exhaust the host), (c) the ephemeral scratch dir, and (d) it runs out-of-process
-  so it cannot corrupt the runtime. Hard containment is Tier 2.
+* **Tier 1 — ``SubprocessSandbox`` (this module).** Runs the submitted source in
+  a child process against a working folder, with a timeout and output
+  caps, and ``allow_network`` defaulting off. This is the Copilot "restrict the
+  harness to a working folder" model.
+
+  **What this module provides:** a child process, so the script does not share
+  the runtime's interpreter state -- but it runs as the same user, and on the
+  tested Windows host a child recovered 34/34 canary bytes from its parent via
+  ``OpenProcess`` / ``ReadProcessMemory``, so a separate address space is not a
+  confinement boundary (such access is OS-policy dependent, not universal); a
+  timeout TRIGGER, which is not a return deadline -- ``run()`` can return well
+  after it, because a surviving descendant can hold the output pipe open
+  (observed on Windows: a 200 ms request returned at ~1.3 s). What ``_kill``
+  signals differs by platform and has fallbacks; read it rather than trusting a
+  summary here. See BF-781; output caps; environment scrubbing and ``-I``;
+  and, on POSIX only, best-effort ``RLIMIT_AS`` / ``RLIMIT_CPU`` / ``RLIMIT_FSIZE``
+  -- best-effort because setting them can fail and the failure is swallowed, and
+  Windows has no equivalent hook here. It is NOT a kernel-enforced containment
+  boundary: a determined script can read host files by absolute path, and network
+  cannot be hard-blocked cross-platform without OS namespaces. Hard containment is
+  Tier 2.
+
+  This list is deliberately not written as exhaustive. Two earlier revisions
+  claimed to enumerate the boundary completely and were wrong both times -- once
+  by naming a consensus gate that does not exist, once by presenting an
+  incomplete inventory as complete. Read the code for the full set.
+
+  **Callers, not this module, decide what else applies.** Earlier revisions of
+  this docstring enumerated "the real boundary at Tier 1" as a list including
+  controls the calling paths did not have; that framing produced a false claim
+  three revisions running, because a module cannot honestly summarise what its
+  callers do. So it no longer tries. For what actually governs each caller see
+  BF-779 (what consensus does and does not gate) and AD-1247 (a dedicated
+  execution audit record; scope across the two paths is not yet settled there).
+  Do not restate their conclusions here -- link them.
 * **Tier 2 — OS-native sandbox (AD-995, future).** Policy-driven, kernel-enforced
   isolation: bubblewrap (Linux), seatbelt (macOS), AppContainer (Windows), or
   ``microsoft/mxc`` once it matures — behind THIS SAME protocol.
