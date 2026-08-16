@@ -59,23 +59,46 @@ class TestTheNetworkClaimIsAccurate:
         """The headline. `isolation.py` provides a proxy hint, not isolation."""
         assert "HAS NO NETWORK ACCESS" not in _description()
 
-    def test_it_still_states_the_block_plainly(self) -> None:
+    def test_it_still_states_the_failure_plainly(self) -> None:
         """BF-719's property, preserved. The behavioural effect is the whole
         point of the sentence: an agent that knows outbound calls fail routes
-        to http_fetch instead of writing a doomed script."""
+        to http_fetch instead of writing a doomed script.
+
+        BF-781: was ``"OUTBOUND NETWORK IS BLOCKED HERE" in desc``. That pinned
+        an enforcement claim the code does not provide -- the sandbox sets
+        proxy env vars to a discard port, which a raw socket walks past. This
+        test and its sibling below were AD-1217's own guards against exactly
+        that overclaim, and they were pinning it. Updated, not deleted: what
+        must survive is the FORCE of the instruction, not its false absolutism.
+        """
         desc = _description()
-        assert "OUTBOUND NETWORK IS BLOCKED HERE" in desc
-        assert "requests fail" in desc
+        assert "DO NOT FETCH URLS WITH run_python" in desc
+        assert "FAILS here" in desc
+
+    def test_it_discloses_that_the_deterrent_is_bypassable(self) -> None:
+        """BF-781: the reason the absolute wording had to go.
+
+        Naming the mechanism is what stops a later reviewer or AD building on
+        "BLOCKED" as though it were containment -- the failure AD-1217's own
+        comment predicted and then did not prevent.
+        """
+        desc = _description()
+        assert "127.0.0.1:9" in desc
+        assert "deterrent, not isolation" in desc
 
     def test_it_still_names_the_alternative(self) -> None:
         """BF-719's actual finding: a constraint that does not name the
         alternative does not change the choice."""
         assert "http_fetch" in _description()
 
-    def test_the_block_still_precedes_the_library_housekeeping(self) -> None:
-        """BF-719's ordering property, unchanged."""
+    def test_the_instruction_still_precedes_the_library_housekeeping(self) -> None:
+        """BF-719's ordering property, unchanged in effect.
+
+        BF-781 strengthened it: the imperative now LEADS the clause rather than
+        trailing the rationale, so the ordering margin is wider than before.
+        """
         desc = _description()
-        assert desc.index("OUTBOUND NETWORK IS BLOCKED HERE") < desc.index("libraries")
+        assert desc.index("DO NOT FETCH URLS") < desc.index("libraries")
 
     def test_the_wording_is_safe_against_the_real_gap_detector(self) -> None:
         """A tool description reading as a capability gap drives self-mod.
@@ -94,8 +117,22 @@ class TestTheLimitsAreStated:
     def test_the_output_cap_is_stated(self) -> None:
         assert "64 KB of captured output" in _description(max_output_bytes=65536)
 
-    def test_the_memory_cap_is_stated(self) -> None:
+    def test_the_memory_cap_is_stated(self, monkeypatch) -> None:
+        # BF-781: `RLIMIT_AS` is POSIX-only, so the memory clause is now
+        # suppressed on Windows, where a 64 MB-configured run was measured
+        # allocating 96 MB. The property under test -- that a configured cap IS
+        # announced where it is enforced -- is unchanged; the platform is
+        # pinned so the test asserts it on every host rather than only on POSIX.
+        import probos.tools.code_execution_tool as mod
+        monkeypatch.setattr(mod.sys, "platform", "linux")
         assert "512 MB memory" in _description(max_memory_mb=512)
+
+    def test_the_memory_cap_is_not_stated_where_it_is_not_enforced(self, monkeypatch) -> None:
+        """BF-781: the other half. Announcing a bound Windows never applies
+        invites the agent to size work against a ceiling that will not hold."""
+        import probos.tools.code_execution_tool as mod
+        monkeypatch.setattr(mod.sys, "platform", "win32")
+        assert "512 MB memory" not in _description(max_memory_mb=512)
 
     def test_it_says_what_to_do_instead(self) -> None:
         """BF-719's lesson applied to the new constraints: naming a limit
@@ -111,10 +148,17 @@ class TestTheLimitsAreStated:
         ],
     )
     def test_the_limits_are_derived_not_written_down(
-        self, field, value, expected
+        self, field, value, expected, monkeypatch
     ) -> None:
         """The BF-726 property. A re-tuned sandbox must not start lying about
-        itself, which is exactly what a hardcoded number would do."""
+        itself, which is exactly what a hardcoded number would do.
+
+        BF-781: platform pinned to POSIX so the memory case still exercises the
+        derivation. Suppressing that clause on Windows must not cost the check
+        that the number comes from config rather than a literal.
+        """
+        import probos.tools.code_execution_tool as mod
+        monkeypatch.setattr(mod.sys, "platform", "linux")
         assert expected in _description(**{field: value})
 
     def test_a_runtime_without_config_still_yields_a_usable_description(
@@ -124,7 +168,9 @@ class TestTheLimitsAreStated:
         rather than claimed wrongly or the property raising."""
         desc = CodeExecutionTool(runtime=None).description
         assert "Limits:" not in desc
-        assert "OUTBOUND NETWORK IS BLOCKED HERE" in desc
+        # BF-781: was "OUTBOUND NETWORK IS BLOCKED HERE" -- an enforcement
+        # claim the sandbox does not provide.
+        assert "DO NOT FETCH URLS WITH run_python" in desc
         assert "http_fetch" in desc
 
     def test_a_zeroed_limit_is_not_advertised(self) -> None:

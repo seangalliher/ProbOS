@@ -9,9 +9,10 @@ to the AD-797 ArtifactStore and surfaced to the Captain as a downloadable card.
 
 Governance: offered to the loop ONLY when ``config.execution.enabled`` (the
 operator opt-in, AD-994). Execution runs through the AD-993 ``SubprocessSandbox``
-(process isolation, time/output/memory bounds, network OFF). The tool never
-raises out of ``invoke`` — every failure becomes an error ``ToolResult`` the loop
-can reason over.
+(process isolation, a wall-clock timeout, output caps, POSIX-only best-effort
+memory bounds, and a proxy-level network deterrent that is NOT a block -- see
+BF-781 and ``_network_clause``). The tool never raises out of ``invoke`` --
+every failure becomes an error ``ToolResult`` the loop can reason over.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import hashlib
 import importlib.util
 import logging
 import shutil
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -346,7 +348,13 @@ class CodeExecutionTool:
                 parts.append(f"{float(timeout):.0f}s wall clock")
             if out_bytes:
                 parts.append(f"{int(out_bytes) // 1024} KB of captured output")
-            if memory_mb:
+            if memory_mb and sys.platform != "win32":
+                # BF-781: `RLIMIT_AS` is POSIX-only and best-effort, so on
+                # Windows this bound is not applied at all -- a run configured
+                # for 64 MB was measured allocating 96 MB. Advertising a limit
+                # the platform does not enforce invites the model to size work
+                # against a ceiling that will not hold. The timeout and output
+                # caps below ARE enforced everywhere, so they stay unconditional.
                 parts.append(f"{int(memory_mb)} MB memory")
             if parts:
                 limits = (
@@ -404,8 +412,11 @@ class CodeExecutionTool:
         """
         if getattr(self._cfg(), "fetch_broker_enabled", False):
             return (
-                "Direct network access is blocked here, but you can fetch "
-                "through the ship: `import ship; r = ship.fetch(url)` "
+                # BF-781: was "Direct network access is blocked here" -- the
+                # same false enforcement claim as the default branch.
+                "Direct requests from this sandbox are pointed at a dead "
+                "proxy, so fetch through the ship instead: "
+                "`import ship; r = ship.fetch(url)` "
                 "returns a dict with `body`, `status_code`, `truncated` and "
                 "`total_bytes`. The ship performs the request under its normal "
                 "SSRF checks and rate limits. PREFER THIS over http_fetch when "
@@ -416,10 +427,32 @@ class CodeExecutionTool:
                 "declines. Required libraries must already be installed."
             )
         return (
-            "OUTBOUND NETWORK IS BLOCKED HERE — requests fail. To "
-            "fetch a URL use the http_fetch tool instead, then pass the result "
-            "into this tool if you need to process it. Required libraries must "
-            "already be installed."
+            # BF-781: this used to read "OUTBOUND NETWORK IS BLOCKED HERE".
+            # AD-1217's comment above already claimed the wording was "no longer
+            # phrased as an enforcement guarantee" -- while this string still
+            # said BLOCKED. A comment asserting a property its own code
+            # contradicts is the BF-763 defect class, and this instance is worse
+            # than most because the string is PROMPT TEXT: the model consumes it
+            # at decision time, not a reviewer at review time.
+            #
+            # BF-719's routing force is preserved and in fact strengthened: the
+            # measured failure was an agent writing a fetch script and losing a
+            # whole turn, so the instruction now LEADS instead of trailing the
+            # rationale. Naming the mechanism removes the false guarantee
+            # without softening the instruction.
+            #
+            # Wording is constrained by `_CAPABILITY_GAP_RE` (decomposer.py):
+            # "cannot", "unable to", "not possible" and friends would trip the
+            # capability-gap detector from inside a tool description. A draft of
+            # this very fix said "cannot reach the network" and was caught by
+            # the AD-1217 guard.
+            "DO NOT FETCH URLS WITH run_python — use the http_fetch tool "
+            "instead, then pass its result into this tool if you need to "
+            "process it. The sandbox points the HTTP proxy variables at "
+            "127.0.0.1:9, so a default requests/httpx/urllib call FAILS here. "
+            "That is a deterrent, not isolation: a raw socket, or a client told "
+            "to ignore environment proxies, still reaches the network. "
+            "Required libraries must already be installed."
         )
 
     @property

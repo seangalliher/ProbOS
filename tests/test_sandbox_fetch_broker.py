@@ -229,16 +229,31 @@ def test_broker_cap_exceeds_the_bus_cap() -> None:
 
 def test_description_declares_the_posture_it_actually_has() -> None:
     """AD-1217's defect was a description asserting a boundary the code no
-    longer had. Assert both directions so the same drift cannot recur."""
+    longer had. Assert both directions so the same drift cannot recur.
+
+    BF-781: the broker-OFF branch used to be asserted as
+    ``"OUTBOUND NETWORK IS BLOCKED"``, and the broker-ON branch said "Direct
+    network access is blocked here". Both were the very drift this test was
+    written to catch -- it pinned the enforcement claim while checking that the
+    posture switched. Updated to assert the switch AND that neither branch
+    claims a block.
+    """
     cfg = ExecutionConfig()
     tool = CodeExecutionTool(runtime=_runtime(cfg, None))
 
-    assert "OUTBOUND NETWORK IS BLOCKED" in tool.description
-    assert "ship.fetch" not in tool.description
+    off = tool.description
+    assert "DO NOT FETCH URLS WITH run_python" in off
+    assert "ship.fetch" not in off
 
     cfg.fetch_broker_enabled = True
-    assert "OUTBOUND NETWORK IS BLOCKED" not in tool.description
-    assert "ship.fetch" in tool.description
+    on = tool.description
+    assert "ship.fetch" in on
+    assert "DO NOT FETCH URLS WITH run_python" not in on
+
+    # Neither posture may claim an enforced network boundary.
+    for desc in (off, on):
+        assert "OUTBOUND NETWORK IS BLOCKED" not in desc
+        assert "network access is blocked" not in desc.lower()
 
 
 def test_helper_must_not_shadow_the_installed_package() -> None:

@@ -34,26 +34,30 @@ class TestTheConstraintNamesTheAlternative:
         # model has nowhere to route and picks the tool it was already holding.
         assert "http_fetch" in _description()
 
-    def test_it_still_states_the_sandbox_has_no_network(self):
+    def test_it_still_states_the_network_failure_plainly(self):
         # Assert
         #
         # AD-1217 (#1177) reworded this from "THIS SANDBOX HAS NO NETWORK
-        # ACCESS" to "OUTBOUND NETWORK IS BLOCKED HERE". UPDATED, not deleted:
-        # BF-719's property is that the blocking fact is stated plainly enough
-        # to change the agent's routing, and that survives. What did not
-        # survive is the phrasing as an ENFORCEMENT GUARANTEE - isolation.py
-        # sets blackhole proxy variables and its own comment calls that a
-        # "soft deterrent only". requests/httpx honour them, so the practical
-        # claim holds; a raw socket would not.
-        lowered = _description().lower()
-        assert "outbound network is blocked" in lowered
-        assert "requests fail" in lowered
-
-    def test_the_no_network_statement_precedes_the_library_note(self):
-        """Order matters: the blocking fact should not trail the housekeeping."""
-        # Assert — same property, AD-1217's wording.
+        # ACCESS" to "OUTBOUND NETWORK IS BLOCKED HERE". BF-781 reworded it
+        # again, because the second phrasing was still an enforcement claim:
+        # isolation.py sets blackhole proxy variables and its own comment calls
+        # that a "soft deterrent only". requests/httpx/urllib honour them, so
+        # the practical claim holds; a raw socket, or any client built with
+        # trust_env=False, does not.
+        #
+        # UPDATED twice, deleted neither time. BF-719's property is that the
+        # failure is stated plainly enough to change the agent's routing, and
+        # that survives -- now as a leading imperative rather than a trailing
+        # fact, which is strictly stronger for the behaviour BF-719 measured.
         d = _description()
-        assert d.index("OUTBOUND NETWORK IS BLOCKED HERE") < d.index("libraries")
+        assert "DO NOT FETCH URLS WITH run_python" in d
+        assert "FAILS here" in d
+
+    def test_the_routing_instruction_precedes_the_library_note(self):
+        """Order matters: the routing fact should not trail the housekeeping."""
+        # Assert — same property, BF-781's wording.
+        d = _description()
+        assert d.index("DO NOT FETCH URLS") < d.index("libraries")
 
     def test_it_does_not_claim_an_enforcement_level_the_code_lacks(self):
         """AD-1217. The risk was never an agent breaking out — it was a
@@ -64,6 +68,11 @@ class TestTheConstraintNamesTheAlternative:
         honesty."""
         d = _description()
         assert "HAS NO NETWORK ACCESS" not in d
+        # BF-781: the replacement was itself an enforcement claim. Both are
+        # banned now, and the honest mechanism is asserted positively so a
+        # future edit cannot quietly restore absolutism.
+        assert "OUTBOUND NETWORK IS BLOCKED" not in d
+        assert "deterrent, not isolation" in d
 
     def test_it_no_longer_invites_general_task_use(self):
         """"to perform a task" is what made a fetch look in-scope."""

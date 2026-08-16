@@ -136,8 +136,13 @@ class TestBf719IsNotRegressed:
     It is load-bearing and observed working live; a rewrite must not lose it."""
 
     def test_still_states_the_constraint_and_names_the_alternative(self) -> None:
+        # BF-781: was `"OUTBOUND NETWORK IS BLOCKED HERE" in desc`. That pinned
+        # an enforcement claim the sandbox does not provide (proxy env vars to a
+        # discard port, which a raw socket ignores). What BF-719 actually needs
+        # is that the constraint is stated with force AND the alternative is
+        # named -- both asserted here, against the new wording.
         desc = _description()
-        assert "OUTBOUND NETWORK IS BLOCKED HERE" in desc
+        assert "DO NOT FETCH URLS WITH run_python" in desc
         assert "http_fetch" in desc
 
     def test_still_explains_where_produced_files_go(self) -> None:
