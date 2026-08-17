@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from probos.crew_utils import is_crew_agent
+from probos.mesh.intent import IntentAuthorizationDenied
 
 if TYPE_CHECKING:
     from probos.cognitive.episodic import EpisodicMemory
@@ -684,8 +685,24 @@ class WardRoomRouter:
         # Agents receive notifications via durable JetStream consumers and
         # post their own responses via WardRoomPostPipeline. The router's
         # job ends at dispatch — no result collection needed.
-        for agent_id, intent in eligible:
-            await self._intent_bus.dispatch_async(intent)
+        dispatched = 0
+        for index, (agent_id, intent) in enumerate(eligible):
+            try:
+                # BF-771: opt in to the raise so a denied recipient is not
+                # counted as dispatched, which would inflate the round counter.
+                await self._intent_bus.dispatch_async(intent, raise_on_denial=True)
+            except IntentAuthorizationDenied as exc:
+                # BF-771: per recipient. A denial used to propagate out of the
+                # loop, so refusing ONE agent silently cancelled the dispatch to
+                # every agent after it in the list -- a policy about one crew
+                # member becoming an outage for the rest of the room.
+                logger.info(
+                    "BF-771: ward room dispatch to %s denied by '%s'; "
+                    "continuing with the remaining %d recipient(s)",
+                    agent_id[:12], exc.reason, len(eligible) - index - 1,
+                )
+            else:
+                dispatched += 1
 
         # ---------------------------------------------------------------
         # Phase 3: Removed (AD-654a)
@@ -699,7 +716,12 @@ class WardRoomRouter:
         # Increment the round counter on agent-authored events ONLY when
         # at least one agent was dispatched to (otherwise round counter
         # inflates on events where all agents are filtered out).
-        if is_agent_post and eligible:
+        #
+        # BF-771: keyed on DISPATCHED, not on `eligible`. Once a denial stopped
+        # propagating out of the loop, an all-denied batch still looked like a
+        # round, so the budget drained and the thread went quiet with zero
+        # deliveries -- eligibility is not delivery.
+        if is_agent_post and dispatched:
             self._thread_rounds[thread_id] = current_round + 1
 
     async def _extract_recreation_commands(

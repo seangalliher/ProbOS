@@ -24,6 +24,34 @@ logger = logging.getLogger(__name__)
 # Type for subscriber callbacks
 IntentHandler = Callable[[IntentMessage], Awaitable[IntentResult | None]]
 
+
+class IntentAuthorizationDenied(PermissionError):
+    """A pre-intent authorization hook refused this intent (BF-771).
+
+    OPT-IN ONLY. The bus reports a denial in each entry point's pre-existing
+    refusal shape by default (``send`` -> ``None``, ``broadcast`` -> ``[]``,
+    ``dispatch_async`` -> no-op). This exception is raised only when a caller
+    passes ``raise_on_denial=True`` because it must tell a policy refusal apart
+    from a silent no-op -- ``accept_notification`` acknowledged a notification
+    whose dispatch had been refused, which is the case that motivated it.
+
+    It is deliberately NOT the default: it subclasses ``PermissionError``, so
+    ``except Exception`` catches it, and of the 35 bus call seams 14 sit inside
+    a broad handler that would swallow it and degrade with a misleading cause
+    -- one renders a refusal as "the lookup didn't finish in time". Raising
+    there relocates the defect rather than fixing it. Every consumer that opts
+    in is verified individually.
+    """
+
+    def __init__(self, intent_name: str, reason: str, entry_point: str) -> None:
+        self.intent_name = intent_name
+        self.reason = reason
+        self.entry_point = entry_point
+        super().__init__(
+            f"intent {intent_name!r} denied by pre-auth hook {reason!r} "
+            f"(via {entry_point})"
+        )
+
 _DETERMINISTIC_HANDLER_LATENCY_MS = 100.0
 _NETWORK_HANDLER_LATENCY_MS = 10_000.0
 _COGNITIVE_HANDLER_LATENCY_MS = 30_000.0
@@ -762,7 +790,105 @@ class IntentBus:
         """Return whether an exact local subscriber is registered for agent_id."""
         return agent_id in self._subscribers
 
-    async def send(self, intent: IntentMessage) -> IntentResult | None:
+    def _authorize(
+        self,
+        intent: IntentMessage,
+        *,
+        entry_point: str,
+        raise_on_denial: bool,
+    ) -> bool:
+        """Evaluate AD-698 pre-intent authorization. True to proceed (BF-771).
+
+        Called from every entry point that can reach a handler -- ``broadcast``,
+        ``send`` and ``dispatch_async``. It used to sit only in ``broadcast``,
+        and below the targeted-dispatch branch, so setting ``target_agent_id``
+        or calling ``send``/``dispatch_async`` directly bypassed it entirely.
+        ``send`` alone has 14 direct callers, so RBAC or rate limiting could be
+        skipped by choosing the entry point.
+
+        Evaluated ONCE per intent: ``broadcast`` checks only on the fan-out
+        path, because its targeted path delegates to ``send``, which checks.
+
+        DENIAL SHAPE. A denial is reported in each entry point's PRE-EXISTING
+        refusal shape -- ``send`` returns ``None``, ``broadcast`` returns
+        ``[]``, ``dispatch_async`` no-ops -- so none of the 35 call seams sees
+        a type it did not already handle. Those seams are 14 ``send``, 19
+        ``broadcast``, one ``dispatch_async`` and one ``publish`` (the alias
+        that forwards ``**kwargs`` to ``broadcast``; do not omit it, its
+        WatchManager consumer is a real one). Raising unconditionally was tried
+        and rejected: ``IntentAuthorizationDenied`` subclasses
+        ``PermissionError``, so 14 of those seams sit inside a broad
+        ``except Exception`` that swallows it, which relocates the defect
+        instead of fixing it (one renders a policy refusal as "the lookup
+        didn't finish in time"). A caller that must tell a denial apart from a
+        silent no-op opts in with ``raise_on_denial=True`` and handles the
+        exception itself.
+
+        A type-compatible default is NOT automatically a safe one: a consumer
+        that records success after a refused dispatch needs the opt-in. Known
+        outstanding cases are tracked as BF-790 (#1254).
+
+        SCOPE, stated plainly because an earlier version of this comment
+        overclaimed: this covers the PRODUCER side only -- a caller on this
+        node reaching the bus. It does NOT cover intents arriving over the
+        wire: the NATS request/reply callback, the JetStream callback, the
+        AD-654b cognitive queue and the AD-654c ``Dispatcher`` all reach a
+        handler without passing here. That is BF-789 (#1253), and it is a
+        different problem -- checking at both transport ends would
+        double-charge a stateful hook such as a rate limiter.
+        """
+        try:
+            from probos.extensions.overlay import evaluate_pre_intent_authorization
+        except Exception as exc:
+            # DENY. `probos.extensions.overlay` is OSS core, not the optional
+            # overlay package -- "no overlay installed" is already represented
+            # by an empty hook registry, which returns (True, ""). So an import
+            # failure here means broken core, version skew, or a missing export,
+            # and allowing in that state silently removes policy enforcement at
+            # exactly the moment the code is untrustworthy.
+            logger.error(
+                "AD-698: pre-intent authorization module failed to import "
+                "(%s) for intent %s; DENYING. This is core code -- an absent "
+                "overlay presents as an empty hook registry, not an ImportError",
+                type(exc).__name__, intent.intent, exc_info=True,
+            )
+            if raise_on_denial:
+                raise IntentAuthorizationDenied(
+                    intent.intent, f"import:{type(exc).__name__}", entry_point
+                ) from exc
+            return False
+        try:
+            allowed, reason = evaluate_pre_intent_authorization(intent)
+        except Exception as exc:
+            # The evaluator itself breaking is not a licence to proceed. The old
+            # code caught this in the same `except` as the import and allowed
+            # the intent, so a crashing evaluator authorized everything.
+            logger.error(
+                "AD-698: pre-intent authorization evaluator raised %s for "
+                "intent %s; DENYING rather than proceeding unauthorized",
+                type(exc).__name__, intent.intent, exc_info=True,
+            )
+            if raise_on_denial:
+                raise IntentAuthorizationDenied(
+                    intent.intent, f"evaluator:{type(exc).__name__}", entry_point
+                ) from exc
+            return False
+        if allowed:
+            return True
+        logger.info(
+            "AD-698: intent %s denied by pre-auth hook '%s' (via %s)",
+            intent.intent, reason, entry_point,
+        )
+        if raise_on_denial:
+            raise IntentAuthorizationDenied(intent.intent, reason, entry_point)
+        return False
+
+    async def send(
+        self,
+        intent: IntentMessage,
+        *,
+        raise_on_denial: bool = False,
+    ) -> IntentResult | None:
         """Deliver an intent to a specific agent (targeted dispatch, AD-397).
 
         AD-637b: Uses NATS request/reply when connected, direct-call fallback otherwise.
@@ -773,6 +899,11 @@ class IntentBus:
 
         BF-296: returns ``None`` if the bus has been closed via
         ``close_to_new_dispatches()`` (shutdown Phase A).
+
+        BF-771: also returns ``None`` when a pre-intent authorization hook
+        denies the intent -- the same shape as the BF-296 gate, which every
+        caller already handles. Pass ``raise_on_denial=True`` to receive
+        ``IntentAuthorizationDenied`` instead.
         """
         if not intent.target_agent_id:
             raise ValueError("send() requires target_agent_id")
@@ -783,6 +914,11 @@ class IntentBus:
                 "BF-296: send rejected on closed bus intent=%s target=%s",
                 intent.intent, intent.target_agent_id[:12],
             )
+            return None
+
+        if not self._authorize(
+            intent, entry_point="send", raise_on_denial=raise_on_denial
+        ):
             return None
 
         _send_start = time.monotonic()  # AD-470: timing
@@ -844,6 +980,7 @@ class IntentBus:
         timeout: float | None = None,
         *,
         federated: bool = True,
+        raise_on_denial: bool = False,
     ) -> list[IntentResult]:
         """Broadcast an intent to all subscribers, collect results.
 
@@ -855,6 +992,11 @@ class IntentBus:
 
         BF-296: returns ``[]`` if the bus has been closed via
         ``close_to_new_dispatches()`` (shutdown Phase A).
+
+        BF-771: also returns ``[]`` when a pre-intent authorization hook denies
+        the intent -- the shape AD-698 has always used for a denial. Pass
+        ``raise_on_denial=True`` to receive ``IntentAuthorizationDenied``
+        instead; it propagates through the targeted path as well.
         """
         # BF-296: shutdown gate. Honest-degrade — return empty result list
         # so callers see "no agent responded" rather than an exception, which
@@ -866,23 +1008,17 @@ class IntentBus:
             )
             return []
 
-        # AD-397: targeted dispatch
+        # AD-397: targeted dispatch. `send` performs the AD-698 authorization,
+        # so this path must NOT check first -- that would evaluate every hook
+        # twice for one intent.
         if intent.target_agent_id:
-            result = await self.send(intent)
+            result = await self.send(intent, raise_on_denial=raise_on_denial)
             return [result] if result else []
 
-        # AD-698: pre-intent authorization seam. Default-empty registry
-        # means zero overhead. Overlay packages register hooks for RBAC,
-        # rate limiting, etc.
-        try:
-            from probos.extensions.overlay import evaluate_pre_intent_authorization
-            allowed, reason = evaluate_pre_intent_authorization(intent)
-        except Exception:
-            allowed, reason = True, ""
-        if not allowed:
-            logger.info(
-                "AD-698: intent %s denied by pre-auth hook '%s'", intent.intent, reason,
-            )
+        # AD-698 / BF-771: fan-out path authorization.
+        if not self._authorize(
+            intent, entry_point="broadcast", raise_on_denial=raise_on_denial
+        ):
             return []
 
         timeout = timeout if timeout is not None else intent.ttl_seconds
@@ -974,7 +1110,12 @@ class IntentBus:
         """Alias for broadcast() — used by WatchManager dispatch (runtime.py:689)."""
         return await self.broadcast(intent, **kwargs)
 
-    async def dispatch_async(self, intent: IntentMessage) -> None:
+    async def dispatch_async(
+        self,
+        intent: IntentMessage,
+        *,
+        raise_on_denial: bool = False,
+    ) -> None:
         """Fire-and-forget dispatch to a specific agent via JetStream (AD-654a).
 
         Publishes the intent to the agent's durable JetStream consumer.
@@ -998,6 +1139,11 @@ class IntentBus:
                 "BF-296: dispatch_async rejected on closed bus intent=%s target=%s",
                 intent.intent, intent.target_agent_id[:12],
             )
+            return
+
+        if not self._authorize(
+            intent, entry_point="dispatch_async", raise_on_denial=raise_on_denial
+        ):
             return
 
         # JetStream path when connected

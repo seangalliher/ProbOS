@@ -184,9 +184,13 @@ async def test_api_endpoint_uses_intent_bus_send_with_target_agent_id() -> None:
     from probos.types import IntentMessage, IntentResult
 
     captured: list[IntentMessage] = []
+    opted_in: list[bool] = []
 
-    async def _send(msg: IntentMessage) -> IntentResult:
+    async def _send(
+        msg: IntentMessage, *, raise_on_denial: bool = False,
+    ) -> IntentResult:
         captured.append(msg)
+        opted_in.append(raise_on_denial)
         return IntentResult(
             intent_id=msg.id,
             agent_id="counselor",
@@ -218,6 +222,10 @@ async def test_api_endpoint_uses_intent_bus_send_with_target_agent_id() -> None:
     )
     assert resp.status_code == 200, resp.text
     assert len(captured) == 1
+    # BF-771: the route opts in to the denial raise so a policy refusal is not
+    # rendered as 503 mediator_unreachable. Pinned here because the stub's
+    # signature is what caught the change.
+    assert opted_in == [True]
     sent = captured[0]
     assert sent.intent == "mediate_appearance_revision"
     assert sent.target_agent_id == "counselor"

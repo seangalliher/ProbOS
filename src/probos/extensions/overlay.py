@@ -203,11 +203,24 @@ def register_pre_intent_authorization_hook(
     Hooks receive the ``IntentMessage`` and must return ``True`` to allow
     or ``False`` to deny. Any exception is treated as deny + warning.
     All registered hooks must return ``True`` for the broadcast to
-    proceed. Hooks must be fast and side-effect free — they sit on the
-    hot path of every broadcast.
+    proceed. Hooks must be fast — they sit on the hot path of every
+    dispatch.
+
+    BF-771: a hook MAY carry internal state. A rate limiter counts, and that
+    is precisely why the bus evaluates hooks exactly once per intent. What a
+    hook must not do is mutate ship state or block. This previously read
+    "side-effect free", which contradicted the rate-limiting use case the seam
+    exists to serve.
     """
-    if not name:
-        raise ValueError("AD-698: pre-intent auth hook name must be non-empty")
+    if not isinstance(name, str) or not name:
+        # BF-771: `if not name` accepted any truthy object. The name becomes the
+        # denial `reason` shown to the operator and is the only handle for
+        # attributing or removing the policy, so an unnameable hook is a policy
+        # nobody can audit or turn off.
+        raise ValueError(
+            "AD-698: pre-intent auth hook name must be a non-empty str, got "
+            f"{type(name).__name__}"
+        )
     _PRE_INTENT_AUTH_HOOKS.append((name, hook))
     if provider:
         _PROVIDERS.add(provider)

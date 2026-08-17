@@ -68,14 +68,23 @@ def test_registered_hook_names_snapshot() -> None:
 
 @pytest.mark.asyncio
 async def test_intent_bus_broadcast_skips_when_denied() -> None:
-    """End-to-end smoke: a denying hook drops the broadcast."""
+    """End-to-end smoke: a denying hook drops the broadcast.
+
+    BF-771 briefly repointed this to expect ``IntentAuthorizationDenied``, on
+    the way to making every denial raise. That design was rejected -- the
+    exception subclasses ``PermissionError`` and 14 of the bus's 34 call seams
+    sit inside a broad ``except Exception`` that would swallow it. The raise is
+    now opt-in, ``[]`` is the default denial shape again, and AD-698's original
+    assertion is correct as written. The opt-in path is covered by
+    ``test_bf771_intent_authorization.py``.
+    """
     from probos.mesh.intent import IntentBus
     from probos.mesh.signal import SignalManager
     from probos.types import IntentMessage
 
     received: list[str] = []
 
-    async def handler(msg, agent_id):  # pragma: no cover — should not be called
+    async def handler(msg):  # pragma: no cover — should not be called
         received.append(msg.intent)
         return None
 

@@ -33,6 +33,7 @@ from probos.api_models import (
 )
 from probos.config import format_trust
 from probos.crew_utils import is_crew_agent
+from probos.mesh.intent import IntentAuthorizationDenied
 from probos.cognitive.commands.personality_command import (
     handle_personality_command,
     is_personality_command,
@@ -1764,7 +1765,15 @@ async def mediate_appearance_revision(
         },
     )
     try:
-        intent_result = await runtime.intent_bus.send(msg)
+        # BF-771: opt in to the raise so a denial is distinguishable here; the
+        # default None is indistinguishable from an unreachable mediator.
+        intent_result = await runtime.intent_bus.send(msg, raise_on_denial=True)
+    except IntentAuthorizationDenied:
+        # BF-771: a policy denial is not an unreachable mediator. Re-raised so
+        # the app-wide handler renders 403; the broad catch below would report
+        # 503 "mediator_unreachable", which sends the operator to diagnose an
+        # outage that is not happening.
+        raise
     except Exception:
         logger.warning(
             "AD-721d-2: intent_bus.send failed mediator=%s",

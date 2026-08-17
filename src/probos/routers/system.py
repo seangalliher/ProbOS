@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from probos.api_models import ShutdownRequest
 from probos.events import OSActivityEvent
+from probos.mesh.intent import IntentAuthorizationDenied
 from probos.proactive import build_proactive_status_snapshot
 from probos.routers.deps import get_runtime, get_task_tracker
 from probos.types import IntentMessage
@@ -457,8 +458,22 @@ async def accept_notification(
         target_agent_id=action.get("target_agent_id"),
     )
     try:
-        # broadcast() delegates to send() when target_agent_id is set (intent.py).
-        results = await bus.broadcast(msg)
+        # broadcast() delegates to send() when target_agent_id is set (intent.py);
+        # raise_on_denial propagates through that delegation.
+        results = await bus.broadcast(msg, raise_on_denial=True)
+    except IntentAuthorizationDenied as exc:
+        # BF-771: a denial is NOT "no responders". Before this, authorization
+        # returned an empty list, so this handler reported
+        # {"dispatched": true, "responders": 0} and acknowledged the
+        # notification -- the Captain watched a pending action recede although
+        # nothing had run. Left unacknowledged so it stays actionable.
+        logger.warning(
+            "BF-771: dispatch of accepted notification %s (intent=%s) was "
+            "DENIED by pre-intent authorization (%s); leaving it "
+            "unacknowledged",
+            notification_id, intent_name, exc.reason,
+        )
+        return {"dispatched": False, "reason": "denied"}
     except Exception:
         logger.warning(
             "AD-1053: dispatch of accepted notification %s (intent=%s) failed; "

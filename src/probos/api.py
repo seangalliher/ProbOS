@@ -15,9 +15,11 @@ from typing import Any
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from probos.mesh.intent import IntentAuthorizationDenied
 from probos.routers.auth import verify_ws_token
 from probos.ws_event_stream import WSEventStreamHub
 
@@ -141,6 +143,37 @@ def create_app(runtime: Any) -> FastAPI:
                     _background_tasks.clear()
 
     app = FastAPI(title="ProbOS", version="0.1.0", lifespan=_lifespan)
+
+    # BF-771: a pre-intent authorization denial is a POLICY outcome, not a
+    # server fault, so a route that opts in to `raise_on_denial` renders 403
+    # instead of letting the exception escape as a 500. Registered app-wide
+    # rather than per-route so a route opting in later cannot reintroduce the
+    # 500 by omission.
+    #
+    # SCOPE: only routes that pass `raise_on_denial=True` reach this, because
+    # the bus returns its ordinary refusal shape by default. Today that is the
+    # mediation endpoint alone -- /api/chat and /api/agent/{id}/chat call
+    # `send` WITHOUT opting in, so a denial there currently returns 200 with an
+    # empty reply (BF-790, #1254). It also does not cover a route that catches the
+    # denial itself (see system.py) or a WebSocket, which never reaches an
+    # exception handler.
+    @app.exception_handler(IntentAuthorizationDenied)
+    async def _denied(_request: Request, exc: IntentAuthorizationDenied) -> JSONResponse:
+        logger.info(
+            "BF-771: intent %s denied by '%s' (via %s) at the API boundary",
+            exc.intent_name, exc.reason, exc.entry_point,
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "intent_denied",
+                # Coerced: a hook name is caller-supplied and reaches us
+                # unvalidated, and a non-serialisable one would turn the 403
+                # this exists to produce back into a 500.
+                "intent": str(exc.intent_name),
+                "reason": str(exc.reason),
+            },
+        )
 
     # CORS for HXI dev server (AD-260)
     app.add_middleware(

@@ -137,7 +137,10 @@ class TestCaptainParallelDispatch:
         router = _make_router()
         call_order = []
 
-        async def _tracking_dispatch(intent):
+        # BF-771: `**_kwargs` absorbs `raise_on_denial`. This stub pins dispatch
+        # ORDER, not authorization -- pinning the signature here would just move
+        # the breakage to the next keyword the bus grows.
+        async def _tracking_dispatch(intent, **_kwargs):
             call_order.append(intent.target_agent_id)
             await asyncio.sleep(0.01)
 
@@ -233,7 +236,9 @@ class TestCaptainParallelDispatch:
         router = _make_router()
         dispatch_order = []
 
-        async def _tracking_dispatch(intent):
+        # BF-771: `**_kwargs` absorbs `raise_on_denial`; this stub pins dispatch
+        # ORDER, not authorization.
+        async def _tracking_dispatch(intent, **_kwargs):
             dispatch_order.append(intent.target_agent_id)
 
         router._intent_bus.dispatch_async = _tracking_dispatch
