@@ -3378,13 +3378,17 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # see the same instance via ``self.ctx.sanity_gate``.
     sanity_gate = getattr(runtime, "dm_sanity_gate", None)
     from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+    from probos.cognitive.dm.reply_value import DmReply, require_rendered  # AD-1248
     pipeline = DmReplyPipeline(DmReplyContext(
         runtime=runtime,
         agent=agent,
         agent_id=agent_id,
         callsign=callsign,
         req_message=req.message,
-        response_text=response_text,
+        # AD-1248: reconstruct the value from the result rather than taking the
+        # bare string, so the run's tool failures survive the 34 body rewrites
+        # the pipeline performs and reach both sinks on this route.
+        reply=DmReply.from_intent_result(result).with_body(response_text),
         has_image_attachment=has_image_attachment,
         per_attachment=per_attachment,
         sanity_gate=sanity_gate,
@@ -3401,6 +3405,16 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # log-and-degrade so an outage in the thread store cannot block a
     # successful DM round-trip.
     if thread is not None:
+        # AD-1248 sink 1 / DD-12 layer 2. Deliberately OUTSIDE the
+        # log-and-degrade catch below: that catch exists for a thread-store
+        # OUTAGE, and swallowing an egress-contract violation there is what made
+        # the first version of this bug invisible -- the append raised, the
+        # except logged, and the Captain's transcript silently lost the reply
+        # while the HTTP call still returned 200. A marker that eroded on the
+        # way here is a programming error and must be loud.
+        _rendered = require_rendered(
+            response.get("response", ""), sink="chat_thread_append",
+        )
         try:
             # AD-1203: bind the claim to the calls behind it. The agentic run
             # already persists a crew_trace blob; without the ref here there was
@@ -3418,11 +3432,15 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
                 _trace_ref = ""
             if _trace_ref:
                 _reply_meta["tool_trace_ref"] = _trace_ref
+            # The store validates with ``type(body) is not str``, which a
+            # subclass fails, so flatten AFTER verifying. The token is an
+            # admission credential for this boundary, not a value that travels
+            # into storage.
             _thread_store.append_message(
                 thread.id,
                 author_id=agent_id,
                 role="agent",
-                body=response.get("response", "") or "",
+                body=str(_rendered),
                 metadata=_reply_meta,
             )
         except Exception:

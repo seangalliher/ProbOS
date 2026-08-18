@@ -36,6 +36,7 @@ from probos.cognitive.yeoman import (
 from probos.crew_profile import CallsignRegistry
 from probos.substrate.registry import AgentRegistry
 from probos.workforce import WorkItemStore
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +95,7 @@ def _make_pipeline(
         agent_id="yeoman-001",
         callsign="Yeo",
         req_message="Go research the new Nvidia SPARK devices.",
-        response_text=response_text,
+        reply=DmReply(body=response_text),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=sanity_gate,

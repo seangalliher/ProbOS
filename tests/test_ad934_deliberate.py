@@ -25,6 +25,7 @@ from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.dm.reply_pipeline import DmReplyContext, DmReplyPipeline
 from probos.cognitive.dm_sanity_gate import DmSanityGate
 from probos.config import DmDeliberateConfig
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # --------------------------------------------------------------------------- #
@@ -72,7 +73,7 @@ def _make_ctx(*, runtime, response_text: str, sanity_gate) -> DmReplyContext:
         agent_id="a1",
         callsign="Scout",
         req_message="What is the best approach here, and why?",
-        response_text=response_text,
+        reply=DmReply(body=response_text),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=sanity_gate,

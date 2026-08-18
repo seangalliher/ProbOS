@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
+
 
 def test_bf296_step_4b_present_in_pipeline_tuple() -> None:
     """The new sub-step must be wired into the run() iteration tuple
@@ -87,9 +89,9 @@ def test_bf296_step_4b_strips_marker_when_proactive_loop_available() -> None:
         agent_id="counselor-1",
         callsign="ezri",
         req_message="check on Atlas",
-        response_text=(
+        reply=DmReply(body=(
             "On it.\n[DM @Atlas]\nAtlas, just checking in.\n[/DM]\nDone."
-        ),
+        )),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=None,
@@ -123,7 +125,7 @@ def test_bf296_step_4b_honest_degrade_when_no_proactive_loop() -> None:
         agent_id="counselor-1",
         callsign="ezri",
         req_message="x",
-        response_text=original,
+        reply=DmReply(body=original),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=None,

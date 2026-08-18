@@ -49,6 +49,95 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+#: AD-1248: facts about THIS run, which a replayed answer cannot honestly claim.
+_PER_RUN_PROVENANCE_KEYS = ("_dm_tool_failures", "_tool_trace_ref")
+
+
+def _cacheable_decision(decision: dict) -> dict:
+    """AD-1248: the decision minus per-run provenance, for the AD-272 cache.
+
+    A cache hit replays a previous turn's answer. Serving that turn's tool
+    failures or trace ref with it would bind a Captain-visible claim to a run
+    that did not happen on this turn.
+    """
+    return {k: v for k, v in decision.items() if k not in _PER_RUN_PROVENANCE_KEYS}
+
+
+def _attach_run_provenance(decision: dict, observation: dict) -> None:
+    """AD-1203 + AD-1248: carry the run's facts from the observation onto the
+    decision, beside ``llm_output`` rather than inside it.
+
+    ``llm_output`` stays a plain ``str`` because downstream code slices it and
+    calls ``.split()`` / ``.lower()`` / ``.strip()`` on it, and several of those
+    failures are swallowed.
+    """
+    ref = str(observation.get("_tool_trace_ref", "") or "")
+    if ref:
+        decision["_tool_trace_ref"] = ref
+    failures = observation.get("_dm_tool_failures")
+    if failures is not None and not failures.is_empty:
+        decision["_dm_tool_failures"] = failures
+
+
+def _accumulate_pass_failures(observation: dict, outcome: Any) -> None:
+    """AD-1248: fold one agentic pass's tool failures into the turn's running set.
+
+    Accumulate rather than overwrite. A re-invoked pass (AD-1164) supersedes the
+    calls IT retried; one it never touched must survive, because the
+    continuation prompt says "build on the previous output, do not start over".
+    Every pass of a turn shares a scope, so supersession is per call.
+    """
+    failures = getattr(outcome, "tool_failures", None)
+    if failures is None:
+        return
+    prior = observation.get("_dm_tool_failures")
+    observation["_dm_tool_failures"] = (
+        prior.superseded_by(failures) if prior is not None else failures
+    )
+
+
+def _build_result_metadata(
+    report: dict,
+    decision: dict | None = None,
+    observation: dict | None = None,
+) -> dict[str, Any]:
+    """AD-1203 + AD-1248: out-of-band facts about how the result was produced.
+
+    Reconciled at the SINGLE ``IntentResult`` construction site rather than
+    relying on every ``act()`` override to forward private keys. ``act()`` is
+    overridden by ``CounselorAgent`` and by generated agents, and those overrides
+    copy only ``llm_output`` -- so a chain that depends on them silently drops
+    the disclosure for the very agents that do most of the Captain's DMs.
+
+    The observation is the most authoritative source: the producer writes there,
+    and it survives both an override and the empty-agentic-output fallback that
+    rebuilds the decision. Report and decision are consulted first only so an
+    explicitly-forwarded value still wins.
+
+    Empty on every non-agentic path, so an unchanged turn carries an unchanged
+    (empty) metadata dict.
+    """
+    sources = [s for s in (report, decision, observation) if isinstance(s, dict)]
+
+    metadata: dict[str, Any] = {}
+    for source in sources:
+        if source.get("_tool_trace_ref"):
+            metadata["tool_trace_ref"] = source["_tool_trace_ref"]
+            break
+    for source in sources:
+        failures = source.get("_dm_tool_failures")
+        if failures is None:
+            continue
+        payload = failures.to_wire()
+        if payload is not None:
+            from probos.cognitive.dm.reply_value import DM_REPLY_METADATA_KEY
+
+            metadata[DM_REPLY_METADATA_KEY] = payload
+        break
+    return metadata
+
+
 # Module-level decision cache keyed by agent_type (AD-272)
 _DECISION_CACHES: dict[str, dict[str, tuple[dict, float, float]]] = {}
 # {agent_type: {hash: (decision_dict, created_at_monotonic, ttl_seconds)}}
@@ -3326,7 +3415,7 @@ class CognitiveAgent(BaseAgent):
 
         # --- Store in cache ---
         ttl = self._get_cache_ttl()
-        cache[cache_key] = (decision, time.monotonic(), ttl)
+        cache[cache_key] = (_cacheable_decision(decision), time.monotonic(), ttl)
 
         # Evict oldest entry if cache exceeds 1000 per agent type
         if len(cache) > 1000:
@@ -3826,10 +3915,8 @@ class CognitiveAgent(BaseAgent):
                 "llm_output": _agentic_output,
                 "tier_used": "agentic",
             }
-            # AD-1203: provenance for the turn, set by the run above.
-            _trace_ref = str(observation.get("_tool_trace_ref", "") or "")
-            if _trace_ref:
-                decision["_tool_trace_ref"] = _trace_ref
+            # AD-1203 + AD-1248: provenance for the turn, set by the run above.
+            _attach_run_provenance(decision, observation)
             if applied_strategy_ids:
                 decision["_applied_strategy_ids"] = applied_strategy_ids
             return decision
@@ -4130,6 +4217,10 @@ class CognitiveAgent(BaseAgent):
                     # model. Every other caller passes a static ``instructions``
                     # attribute and therefore wants the default, True.
                     compose_disposition=False,
+                    # AD-1248: every pass of THIS turn shares one scope, so a
+                    # continuation supersedes its own earlier calls while a
+                    # sibling's failures stay untouched.
+                    failure_scope=str(observation.get("correlation_id", "") or ""),
                 )
                 _last_stop["reason"] = str(
                     getattr(outcome, "stopped_reason", "") or ""
@@ -4143,6 +4234,7 @@ class CognitiveAgent(BaseAgent):
                 _ref = str(getattr(outcome, "tool_trace_ref", "") or "")
                 if _ref:
                     observation["_tool_trace_ref"] = _ref
+                _accumulate_pass_failures(observation, outcome)
                 return outcome
 
             async def _agentic_turn() -> str:
@@ -5080,6 +5172,11 @@ class CognitiveAgent(BaseAgent):
         _ref = str(decision.get("_tool_trace_ref", "") or "")
         if _ref:
             _out["_tool_trace_ref"] = _ref
+        # AD-1248: forward the run's tool failures the same way, so the single
+        # IntentResult site can attach them without reaching back into decide.
+        _failures = decision.get("_dm_tool_failures")
+        if _failures is not None and not _failures.is_empty:
+            _out["_dm_tool_failures"] = _failures
         return _out
 
     async def report(self, result: dict) -> dict:
@@ -6359,10 +6456,12 @@ class CognitiveAgent(BaseAgent):
             confidence=self.confidence,
             # AD-1203: so the caller recording this turn can bind the claim to
             # the calls behind it. Empty on every non-agentic path.
-            metadata=(
-                {"tool_trace_ref": report["_tool_trace_ref"]}
-                if report.get("_tool_trace_ref") else {}
-            ),
+            # AD-1248: plus the DM reply's attachments, bounded and versioned.
+            # The BODY stays in ``result`` un-rendered -- duplicating it here
+            # doubles a large reply and can fail the whole NATS request.
+            # Reconciled from the observation too, because ``act()`` overrides
+            # copy only ``llm_output``.
+            metadata=_build_result_metadata(report, decision, observation),
         )
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:

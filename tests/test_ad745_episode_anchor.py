@@ -6,6 +6,7 @@ import pytest
 from probos.cognitive.dm.action_dispatcher import ActionDispatcher
 from probos.cognitive.dm.reply_pipeline import DmReplyContext, DmReplyPipeline
 from probos.config import SystemConfig
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 class _FakeSession:
@@ -52,7 +53,7 @@ def _runtime():
 def _pipeline(rt, reply: str) -> DmReplyPipeline:
     ctx = DmReplyContext(
         runtime=rt, agent=object(), agent_id="counselor", callsign="Counselor",
-        req_message="hi", response_text=reply, has_image_attachment=False,
+        req_message="hi", reply=DmReply(body=reply), has_image_attachment=False,
         per_attachment=[], sanity_gate=None,
         params={"thread_id": "tt", "dm_turn_id": "td"},
         message_text="hi", sampling_state=None, avatar_event_bus=None,

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 from probos.cognitive.dm_sanity_gate import DmSanityGate
 from probos.cognitive.skill_catalog import (
     CognitiveSkillCatalog,
@@ -70,7 +71,7 @@ def _ctx(*, response_text: str, agent: _RecordingAgent | None = None) -> DmReply
         agent_id="ezri",
         callsign="ezri",
         req_message="hello",
-        response_text=response_text,
+        reply=DmReply(body=response_text),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=DmSanityGate(),

@@ -34,6 +34,7 @@ from probos.cognitive.conversation_trust import (
     extract_conversation_trust_outcomes,
 )
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 from probos.cognitive.confab_probe import probe_referent
 from probos.cognitive.emergence_taxonomy import BehaviorCode
 from probos.cognitive.referent_gate import (
@@ -663,7 +664,11 @@ async def _fan_one_round(
                     agent_id=agent_id,
                     callsign=callsign,
                     req_message=trigger_body,
-                    response_text=reply_text,
+                    # AD-1248: no attachments here by design -- the
+                    # conversational agentic loop does not run on the group
+                    # fan-out path, so this reply has no tool run behind it and
+                    # renders byte-identically to before.
+                    reply=DmReply(body=reply_text),
                     has_image_attachment=bool(vision_messages),
                     per_attachment=[],
                     sanity_gate=sanity_gate,

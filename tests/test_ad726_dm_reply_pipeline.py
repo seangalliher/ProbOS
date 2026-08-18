@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # --------------------------------------------------------------------------- #
@@ -54,7 +55,7 @@ def _ctx(**overrides: Any) -> DmReplyContext:
         "agent_id": "ezri",
         "callsign": "ezri",
         "req_message": "hello",
-        "response_text": "hi there",
+        "reply": DmReply(body="hi there"),
         "has_image_attachment": False,
         "per_attachment": [],
         "sanity_gate": None,
@@ -64,6 +65,10 @@ def _ctx(**overrides: Any) -> DmReplyContext:
         "avatar_event_bus": None,
     }
     base.update(overrides)
+    # AD-1248: callers still express the body as text; the ctx now holds the
+    # canonical value, so translate here rather than at 30 call sites.
+    if "response_text" in base:
+        base["reply"] = DmReply(body=base.pop("response_text"))
     return DmReplyContext(**base)
 
 

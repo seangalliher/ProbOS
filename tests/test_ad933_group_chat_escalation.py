@@ -29,6 +29,7 @@ from probos.routers.thread_fanout import group_chat_fanout
 from probos.threads import ChatThreadStore
 from probos.types import IntentMessage, IntentResult
 from probos.workforce import WorkItemStore
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # ---------------- BF-287 real-but-fake substrate stubs ----------------
@@ -352,7 +353,7 @@ def _bare_pipeline() -> DmReplyPipeline:
         agent_id="a1",
         callsign="Scout",
         req_message="hi",
-        response_text="reply",
+        reply=DmReply(body="reply"),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=None,

@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 from probos.hooks.bus import HookEvent
 
 logger = logging.getLogger(__name__)
@@ -83,9 +84,13 @@ class DmReplyContext:
 
     NOT frozen by design: ``response_text`` and ``emotion`` are mutated
     in place by the sanity gate, challenge/move strip, divergence check,
-    and emotion-resolution steps. AD-726c will introduce a frozen
-    ``DmReply`` final shape once AD-726a + AD-726b land and the full
-    contract stabilizes.
+    and emotion-resolution steps.
+
+    AD-1248: ``reply`` is now the canonical value and ``response_text`` is a
+    PROPERTY over ``reply.body``. Reading returns the body; assigning rewrites
+    the body and preserves the attachments. That is why all 34 existing
+    ``ctx.response_text = ...`` lines are untouched and yet every one of them
+    now carries a tool-failure disclosure through to the egress sink.
     """
 
     runtime: Any
@@ -93,7 +98,7 @@ class DmReplyContext:
     agent_id: str
     callsign: str | None
     req_message: str
-    response_text: str
+    reply: DmReply
     has_image_attachment: bool
     per_attachment: list[dict[str, object]]
     sanity_gate: Any | None
@@ -125,6 +130,15 @@ class DmReplyContext:
     generated_attachment_ids: list[str] = field(default_factory=list)
     # NOTE: ``sanity_result`` is intentionally NOT a ctx field — it is
     # produced and consumed entirely within step_1_sanity_gate_retry.
+
+    @property
+    def response_text(self) -> str:
+        """The reply body. Assigning rewrites it and keeps the attachments."""
+        return self.reply.body
+
+    @response_text.setter
+    def response_text(self, value: str) -> None:
+        self.reply = self.reply.with_body(value)
 
 
 class DmReplyPipeline:
@@ -1759,9 +1773,14 @@ class DmReplyPipeline:
             )
 
     def build_response(self) -> dict[str, Any]:
-        """Return the final response dict — verbatim move of routers/agents.py:1553..1559."""
+        """Return the final response dict — verbatim move of routers/agents.py:1553..1559.
+
+        AD-1248: this is the route's SINGLE composition point. Both sinks on
+        this route — the HTTP body and the thread append — read the value
+        composed here, so the disclosure cannot reach one and miss the other.
+        """
         response: dict[str, Any] = {
-            "response": self.ctx.response_text,
+            "response": self.ctx.reply.render(),
             "callsign": self.ctx.callsign,
             "agentId": self.ctx.agent_id,
             "emotion": self.ctx.emotion,

@@ -16,6 +16,7 @@ import pytest
 
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
 from probos.cognitive.dm_sanity_gate import DmSanityGate
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +73,7 @@ def _runtime(*, result_text: str, llm, enabled: bool = True) -> SimpleNamespace:
 def _ctx(*, runtime, response_text: str, question: str = "Latest on the Fable LLM?") -> DmReplyContext:
     return DmReplyContext(
         runtime=runtime, agent=SimpleNamespace(agent_id="ezri"), agent_id="ezri",
-        callsign="Ezri", req_message=question, response_text=response_text,
+        callsign="Ezri", req_message=question, reply=DmReply(body=response_text),
         has_image_attachment=False, per_attachment=[], sanity_gate=DmSanityGate(),
         params={}, message_text=question, sampling_state=None, avatar_event_bus=None,
     )

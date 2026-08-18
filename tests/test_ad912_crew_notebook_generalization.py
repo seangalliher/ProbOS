@@ -30,6 +30,7 @@ from probos.cognitive.dm.reply_pipeline import DmReplyContext, DmReplyPipeline
 from probos.cognitive.yeoman import YeomanAgent
 from probos.config import RecordsConfig
 from probos.proactive import ProactiveCognitiveLoop
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ def _make_pipeline(*, runtime, agent, response_text: str) -> DmReplyPipeline:
         agent_id=getattr(agent, "id", "agent-001"),
         callsign=getattr(agent, "callsign", "Agent"),
         req_message="Save this to your notebook",
-        response_text=response_text,
+        reply=DmReply(body=response_text),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=None,

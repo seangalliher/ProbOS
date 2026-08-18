@@ -35,6 +35,7 @@ from probos.cognitive.dm.a2ui_extractor import (
     replace_a2ui_with_stubs,
 )
 from probos.cognitive.dm.reply_pipeline import DmReplyContext, DmReplyPipeline
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # --------------------------------------------------------------------------- #
@@ -50,11 +51,14 @@ def _stores(tmp_path):
 def _ctx(**overrides) -> DmReplyContext:
     base = dict(
         runtime=None, agent=None, agent_id="yeo", callsign=None,
-        req_message="", response_text="", has_image_attachment=False,
+        req_message="", reply=DmReply(body=""), has_image_attachment=False,
         per_attachment=[], sanity_gate=None, params={}, message_text="",
         sampling_state=None, avatar_event_bus=None,
     )
     base.update(overrides)
+    # AD-1248: callers still express the body as text.
+    if "response_text" in base:
+        base["reply"] = DmReply(body=base.pop("response_text"))
     return DmReplyContext(**base)
 
 

@@ -10,6 +10,7 @@ import pytest
 
 from probos.artifacts import ArtifactStore
 from probos.cognitive.dm.reply_pipeline import DmReplyContext, DmReplyPipeline
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 class _FakeAttachmentStore:
@@ -41,7 +42,7 @@ def _make_ctx(runtime: _FakeRuntime, response_text: str) -> DmReplyContext:
         agent_id="agent-1",
         callsign="Tester",
         req_message="hi",
-        response_text=response_text,
+        reply=DmReply(body=response_text),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=None,

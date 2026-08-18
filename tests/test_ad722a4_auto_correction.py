@@ -24,6 +24,7 @@ from probos.avatars.telemetry import (
     apply_voice_modulation,
 )
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # --------------------------------------------------------------------------- #
@@ -264,7 +265,7 @@ async def test_pipeline_step_1_clears_stale_slot() -> None:
     }
     ctx = DmReplyContext(
         runtime=rt, agent=SimpleNamespace(), agent_id="ezri",
-        callsign="ezri", req_message="hi", response_text="", 
+        callsign="ezri", req_message="hi", reply=DmReply(body=""),
         has_image_attachment=False, per_attachment=[], sanity_gate=None,
         params={}, message_text="hi", sampling_state=None, avatar_event_bus=None,
     )

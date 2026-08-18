@@ -91,6 +91,13 @@ class IntentResult:
     # ``tool_trace_ref`` -- the content hash of the crew_trace blob for the
     # agentic run behind this result -- so a claim can be resolved to the calls
     # that produced it. Not for payload: results belong in ``result``.
+    #
+    # AD-1248 keeps that rule true and states its edge explicitly, because a
+    # ``DmReply``'s attachments now ride here under ``dm_reply``. The PAYLOAD
+    # still lives in ``result`` -- the reply body travels there un-rendered and
+    # is never duplicated into metadata. Only *facts about* the payload belong
+    # here, and they are bounded and versioned so this cannot become a second
+    # body channel. See ``prompts/ad-1248-dm-reply-value.md`` DD-5.
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

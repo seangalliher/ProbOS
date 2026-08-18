@@ -394,6 +394,12 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
     parameter exists so the conversational DM path can hand over the priority
     AD-637f already classifies, putting a Captain turn back in the reserved
     interactive LLM lane instead of the shared background one.
+    AD-1248 added ``failure_scope`` on the same terms. It defaults to ``None``,
+    which mints a fresh scope -- correct for a standalone run and safe for a
+    sibling -- so the five other callers behave exactly as before. It exists so
+    the conversational DM path can make every pass of one turn share a scope,
+    which is what lets an AD-1164 continuation supersede its OWN earlier tool
+    failure without erasing a delegated child's.
     """
     params = inspect.signature(WorkItemAgenticExecutor.run).parameters
     assert list(params) == [
@@ -413,6 +419,7 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
         "compactor",
         "compaction_threshold",
         "token_budget",
+        "failure_scope",  # AD-1248
     ]
     assert not any(
         "loop_until_done" in name or "continuation" in name for name in params

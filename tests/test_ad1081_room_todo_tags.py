@@ -24,6 +24,7 @@ from probos.cognitive.dm.todo_extractor import (
     derive_prose_plan,
 )
 from probos.workforce import WorkItemStore
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # ---------------- pure parser ----------------
@@ -93,7 +94,7 @@ def _runtime(store, *, trust: float, enabled: bool = True, task_id: str | None =
 def _ctx(runtime, *, response_text: str, agent_id: str = "senior-1"):
     return DmReplyContext(
         runtime=runtime, agent=None, agent_id=agent_id, callsign=None,
-        req_message="", response_text=response_text, has_image_attachment=False,
+        req_message="", reply=DmReply(body=response_text), has_image_attachment=False,
         per_attachment=[], sanity_gate=None, params={}, message_text="",
         sampling_state=None, avatar_event_bus=None, chat_thread_id="room-1",
     )

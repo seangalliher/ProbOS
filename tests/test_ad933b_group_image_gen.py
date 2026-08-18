@@ -38,6 +38,7 @@ from probos.mesh.signal import SignalManager
 from probos.routers.thread_fanout import group_chat_fanout
 from probos.threads import ChatThreadMessage, ChatThreadStore
 from probos.types import IntentMessage, IntentResult
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # ---------------- pipeline-level step inventory ----------------
@@ -86,7 +87,7 @@ def _minimal_ctx() -> DmReplyContext:
         agent_id="a1",
         callsign="A",
         req_message="hi",
-        response_text="hi",
+        reply=DmReply(body="hi"),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=None,

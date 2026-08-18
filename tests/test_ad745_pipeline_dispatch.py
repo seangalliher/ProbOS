@@ -14,6 +14,7 @@ import pytest
 from probos.cognitive.dm.action_dispatcher import ActionDispatcher, ActionStatus
 from probos.cognitive.dm.reply_pipeline import DmReplyContext, DmReplyPipeline
 from probos.config import SystemConfig
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 class _FakeBrowserTool:
@@ -81,7 +82,7 @@ def _build_pipeline(runtime: Any, reply_text: str) -> DmReplyPipeline:
         agent_id="counselor",
         callsign="Counselor",
         req_message="captain DM text",
-        response_text=reply_text,
+        reply=DmReply(body=reply_text),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=None,

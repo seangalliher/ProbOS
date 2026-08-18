@@ -35,6 +35,7 @@ from probos.cognitive.image_gen_dispatch import (
 )
 from probos.cognitive.llm_client import _LLM_TIERS, _TIER_ORDER
 from probos.config import SystemConfig
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 PNG_1x1 = bytes.fromhex(
@@ -292,7 +293,7 @@ async def test_pipeline_step_4c_attaches_sha_on_success(
         agent_id="diag",
         callsign="DIAG",
         req_message="show me",
-        response_text="Here you go: [GEN_IMAGE sensor chart]",
+        reply=DmReply(body="Here you go: [GEN_IMAGE sensor chart]"),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=gate,
@@ -323,7 +324,7 @@ async def test_pipeline_step_4c_strips_marker_when_disabled() -> None:
         agent_id="diag",
         callsign="DIAG",
         req_message="show me",
-        response_text="text [GEN_IMAGE chart]",
+        reply=DmReply(body="text [GEN_IMAGE chart]"),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=gate,

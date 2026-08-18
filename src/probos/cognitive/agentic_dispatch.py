@@ -27,6 +27,12 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
+from probos.cognitive.dm.reply_value import (  # AD-1248
+    ToolFailures,
+    correlate_tool_outcomes,
+    mint_scope,
+    scope_from_source,
+)
 from probos.integrations.mcp_bridge.risk import (
     McpToolRisk,
     resolve_tool_risk,
@@ -1457,6 +1463,12 @@ class WorkItemAgenticOutcome:
     # ``NativeSWEHarnessConfig``; a drift guard in tests/test_bf680_token_usage_
     # fallback.py keeps the two in step.
     token_source: str = "measured"
+    # AD-1248: which tool calls failed, keyed by ``{root}.{scope}:{signature}``
+    # so a later pass can supersede its own calls without erasing a sibling's.
+    # Merge-open here -- it still carries the success tombstones, which are
+    # dropped only when it crosses a serialization boundary. Appended last and
+    # defaulted, so every existing construction site is untouched.
+    tool_failures: ToolFailures = field(default_factory=ToolFailures)
 
 
 class WorkItemAgenticExecutor:
@@ -1537,6 +1549,12 @@ class WorkItemAgenticExecutor:
         compactor: Any = None,
         compaction_threshold: int | None = None,
         token_budget: int | None = None,
+        # AD-1248: the logical execution these tool failures belong to. Every
+        # pass of one turn must share it, or an AD-1164 continuation cannot
+        # supersede its own earlier failure. Callers that own a turn pass their
+        # correlation id; a caller that does not supply one gets a fresh scope,
+        # which is correct for a standalone run and safe for a sibling.
+        failure_scope: str | None = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -1998,10 +2016,19 @@ class WorkItemAgenticExecutor:
         non_mcp_ids = [t for t in tool_ids if t not in _mcp_id_set]
 
         tools: list[dict] = []
+        # AD-1248: one scope for this whole run, so every pass of a turn shares
+        # it and a continuation supersedes its own earlier calls. Root == scope
+        # here because these are the execution's OWN calls; a delegated child
+        # inherits this root under a fresh scope.
+        _failure_scope = (
+            scope_from_source(failure_scope) if failure_scope else mint_scope()
+        )
         # AD-1163: resolved once, before the loop, so the browser offer can name
         # the Captain's open page. AD-1158/1162 made the binding WORK; this is
         # what makes the agent aware it exists.
         _captain_row = _captain_browser_session(runtime)
+
+        offered_names: set[str] = set()
 
         def _build_tools(ids: list[str]) -> list[dict]:
             """BF-755: assemble the offer for *ids*. Extracted so the same
@@ -2039,7 +2066,16 @@ class WorkItemAgenticExecutor:
             # BF-757: last gate before the provider. A duplicate function name
             # makes it reject the WHOLE request, so one collision would cost the
             # agent every tool rather than the one.
-            return dedupe_llm_definitions(built, agent_id=agent_id)
+            deduped = dedupe_llm_definitions(built, agent_id=agent_id)
+            # AD-1248 / DD-1a: record what the model was ACTUALLY offered, POST
+            # dedupe -- a pre-dedupe capture names tools that were never sent.
+            # Accumulated because BF-755 can re-offer mid-turn, so a single
+            # snapshot would miss a tool the agent really did call.
+            for _definition in deduped:
+                _offered = (_definition.get("function") or {}).get("name")
+                if isinstance(_offered, str) and _offered:
+                    offered_names.add(_offered)
+            return deduped
 
         tools = _build_tools(tool_ids)
 
@@ -2247,6 +2283,16 @@ class WorkItemAgenticExecutor:
             total_tokens=total_tokens,
             artifact_refs=artifact_refs,
             token_source=token_source,
+            # AD-1248: correlated HERE because this is the only scope holding
+            # the raw call/result pairs -- ``WorkItemAgenticOutcome`` is the
+            # projection callers see, and the pairs do not survive it.
+            tool_failures=correlate_tool_outcomes(
+                agentic_result,
+                root=_failure_scope,
+                scope=_failure_scope,
+                known_tools=offered_names,
+                excluded_tools=executor.denied_tools,
+            ),
         )
 
     async def _persist_tool_trace(

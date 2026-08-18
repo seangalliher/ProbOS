@@ -41,6 +41,7 @@ from probos.mesh.intent import IntentBus
 from probos.mesh.signal import SignalManager
 from probos.substrate.registry import AgentRegistry
 from probos.types import IntentMessage, IntentResult
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +95,7 @@ def _make_pipeline(
         agent_id="yeoman-001",
         callsign="Yeo",
         req_message="What's in the config directory?",
-        response_text=response_text,
+        reply=DmReply(body=response_text),
         has_image_attachment=False,
         per_attachment=[],
         sanity_gate=sanity_gate,

@@ -23,6 +23,7 @@ from fastapi import HTTPException
 from probos.api_models import SetCapability
 from probos.cognitive.intent_grants import IntentAccessGrant, IntentGrantStore
 from probos.routers.agents import get_agent_capabilities, set_agent_capability
+from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +231,7 @@ def _dm_ctx(*, runtime, response_text):
     from probos.cognitive.dm_sanity_gate import DmSanityGate
     return DmReplyContext(
         runtime=runtime, agent=SimpleNamespace(agent_id="ezri"), agent_id="ezri",
-        callsign="ezri", req_message="hi", response_text=response_text,
+        callsign="ezri", req_message="hi", reply=DmReply(body=response_text),
         has_image_attachment=False, per_attachment=[], sanity_gate=DmSanityGate(),
         params={}, message_text="hi", sampling_state=None, avatar_event_bus=None,
     )

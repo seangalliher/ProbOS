@@ -529,7 +529,14 @@ async def test_the_outcome_carries_the_source_beside_the_total() -> None:
 
     assert "token_source" in names
     assert names.index("token_source") > names.index("total_tokens")
-    assert names[-1] == "token_source"  # appended; existing ordering untouched
+    # AD-1248 appended ``tool_failures`` after this one, so "last field" is no
+    # longer what BF-680 is protecting. What it protects is that ``token_source``
+    # was ADDED WITHOUT DISTURBING the fields that preceded it -- assert that
+    # directly rather than pinning a position the next additive field breaks.
+    assert names[:names.index("token_source")] == [
+        "final_text", "stopped_reason", "denied_tools", "tool_trace_ref",
+        "total_tokens", "artifact_refs",
+    ]
 
 
 async def test_the_outcome_default_matches_the_loop_constant() -> None:

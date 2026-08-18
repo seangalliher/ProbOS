@@ -602,12 +602,20 @@ def test_the_dispatch_module_applies_dedupe_to_the_offered_tools() -> None:
     start = source.index("def _build_tools(")
     builder = source[start:source.index("tools = _build_tools(")]
 
-    assert "return dedupe_llm_definitions(built, agent_id=agent_id)" in builder, (
+    # AD-1248 bound the result to a name so the offered names can be recorded
+    # before returning, so the call is no longer spelled ``return dedupe...``.
+    # What BF-754 protects is that dedupe is APPLIED to the built list inside
+    # this one builder, which the call itself proves.
+    assert "dedupe_llm_definitions(built, agent_id=agent_id)" in builder, (
         "the offer must dedupe; a duplicate name makes the provider reject the "
         "whole request"
     )
+    assert "return deduped" in builder, (
+        "the deduped list must be what the builder returns; returning ``built`` "
+        "would apply dedupe and then discard it"
+    )
     assert builder.index("built.append(definition)") < builder.index(
-        "return dedupe_llm_definitions("
+        "dedupe_llm_definitions("
     )
 
 
