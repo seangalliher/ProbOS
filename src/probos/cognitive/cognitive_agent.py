@@ -131,7 +131,7 @@ def _build_result_metadata(
             continue
         payload = failures.to_wire()
         if payload is not None:
-            from probos.cognitive.dm.reply_value import DM_REPLY_METADATA_KEY
+            from probos.dm_reply import DM_REPLY_METADATA_KEY
 
             metadata[DM_REPLY_METADATA_KEY] = payload
         break
@@ -1930,7 +1930,7 @@ class CognitiveAgent(BaseAgent):
             if result is not None and getattr(result, "result", None):
                 # AD-1248: the fallback goes through the full lifecycle, so its
                 # attachments ride on the IntentResult rather than the sink.
-                from probos.cognitive.dm.reply_value import DmReply
+                from probos.dm_reply import DmReply
 
                 _reply = DmReply.from_intent_result(result)
                 reply_text = _reply.body
@@ -1938,7 +1938,7 @@ class CognitiveAgent(BaseAgent):
         # AD-1248: compose BEFORE testing for emptiness. A run that produced no
         # prose but DID fail a tool has the disclosure as its only truthful
         # content; gating on the raw body discards exactly that.
-        from probos.cognitive.dm.reply_value import DmReply, ToolFailures
+        from probos.dm_reply import DmReply, ToolFailures
 
         _failures = _dispatch_failures.get("tool_failures")
         _composed = (

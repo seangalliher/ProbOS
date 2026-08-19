@@ -34,7 +34,7 @@ from probos.cognitive.conversation_trust import (
     extract_conversation_trust_outcomes,
 )
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
-from probos.cognitive.dm.reply_value import DmReply  # AD-1248
+from probos.dm_reply import DmReply  # AD-1248
 from probos.cognitive.confab_probe import probe_referent
 from probos.cognitive.emergence_taxonomy import BehaviorCode
 from probos.cognitive.referent_gate import (

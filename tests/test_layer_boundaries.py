@@ -27,7 +27,14 @@ LAYER_MAP = {
 }
 
 # Foundation tier — importable by ANY layer (not violations)
-FOUNDATION_MODULES = {"types", "config", "crew_profile", "service_profile"}
+# ``dm_reply`` (AD-1248 / BF-801): the DM reply VALUE is a contract about
+# ``IntentResult``, which lives here in ``types.py`` — so it belongs at the same
+# tier, not in cognitive. Two layers wanted it and neither could have it
+# (channels for the adapter disclosure, federation for BF-799 carriage), which
+# is the module being misplaced rather than two independent judgement calls.
+FOUNDATION_MODULES = {
+    "types", "config", "crew_profile", "service_profile", "dm_reply",
+}
 
 # Layers that ANY other layer may import from (skip violation checks)
 # - "utils" = pure helper functions, no domain logic
@@ -51,19 +58,6 @@ ALLOWED_IMPORTS = {
 
 # (source_file_relative, imported_module) tuples
 ALLOWED_EXCEPTIONS = {
-    # AD-1248: channels → cognitive.dm.reply_value — function-local import of a
-    # frozen value type with no runtime dependencies beyond stdlib. The channel
-    # base is the ONE place a direct_message IntentResult becomes reply text for
-    # all seven adapters, so composing the tool-failure disclosure here reaches
-    # Discord/Slack/Matrix/Telegram/Gmail/Teams/Webhook alike; composing in each
-    # adapter is how one gets forgotten.
-    #
-    # This is a SYMPTOM, not the right answer. ``DmReply`` is a contract ABOUT
-    # ``IntentResult``, which lives in foundation ``types.py`` — so the value
-    # belongs at foundation too, not in cognitive. Two layers now want it
-    # (channels here, federation in BF-799 #1263, which is blocked on exactly
-    # this). Filed as BF-801; when it lands, delete this exception.
-    ("channels/base.py", "probos.cognitive.dm.reply_value"),
     # AD-399: cognitive → consensus.trust — trust is a Ship's Computer service
     ("cognitive/dreaming.py", "probos.consensus.trust"),
     ("cognitive/emergent_detector.py", "probos.consensus.trust"),
@@ -76,8 +70,6 @@ ALLOWED_EXCEPTIONS = {
     # AD-399: substrate → mesh — TYPE_CHECKING + DI
     ("substrate/heartbeat.py", "probos.mesh.gossip"),
     ("substrate/scaler.py", "probos.mesh.intent"),
-    # experience → agents (QA panel renders agent reports)
-    ("experience/qa_panel.py", "probos.agents.system_qa"),
     # AD-700a: experience → agents.medical.diagnostic_levels — pure enum +
     # parse_level helper for the /diagnostic slash command. No behavioral
     # coupling (the agent invocation goes through the canonical pool lookup +
@@ -218,6 +210,29 @@ def test_no_undocumented_cross_layer_imports():
             "or add it to ALLOWED_EXCEPTIONS with a justification comment."
         )
         raise AssertionError(msg)
+
+
+def test_no_stale_allowed_exceptions():
+    """Every ALLOWED_EXCEPTIONS entry must correspond to an import that exists.
+
+    Added after AD-1248 slice B committed an exception for an import that had
+    already been reverted in the same change. A stale exemption is worse than a
+    missing one: it silently pre-authorises a future violation nobody decided
+    to allow, and it reads as though someone weighed it.
+    """
+    stale: list[str] = []
+    for rel, module_name in sorted(ALLOWED_EXCEPTIONS):
+        path = PROBOS_SRC / rel
+        if not path.exists():
+            stale.append(f"{rel} (file gone) -> {module_name}")
+            continue
+        imported = {m for _, m in _extract_probos_imports(path)}
+        if module_name not in imported:
+            stale.append(f"{rel} no longer imports {module_name}")
+
+    assert not stale, (
+        "stale cross-layer exceptions — delete them:\n  " + "\n  ".join(stale)
+    )
 
 
 def test_lint_catches_violations():

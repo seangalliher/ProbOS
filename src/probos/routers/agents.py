@@ -3378,7 +3378,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # see the same instance via ``self.ctx.sanity_gate``.
     sanity_gate = getattr(runtime, "dm_sanity_gate", None)
     from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
-    from probos.cognitive.dm.reply_value import DmReply, require_rendered  # AD-1248
+    from probos.dm_reply import DmReply, require_rendered  # AD-1248
     pipeline = DmReplyPipeline(DmReplyContext(
         runtime=runtime,
         agent=agent,

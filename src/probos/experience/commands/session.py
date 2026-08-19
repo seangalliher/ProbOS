@@ -127,7 +127,7 @@ class SessionManager:
             # the emptiness test below: a failures-only reply has the
             # disclosure as its only truthful content, and gating on
             # ``result.result`` first turns that into a false "(no response)".
-            from probos.cognitive.dm.reply_value import DmReply
+            from probos.dm_reply import DmReply
 
             response_text = str(DmReply.from_intent_result(result).render())
         if not response_text:

@@ -366,6 +366,58 @@ def test_a_clean_reply_is_unchanged_by_composition() -> None:
     assert str(DmReply.from_intent_result(clean).render()) == "All good."
 
 
+# ── BF-801: the value at foundation, the producer in cognitive ──────────────
+
+
+def test_every_declared_export_actually_exists() -> None:
+    """``__all__`` is what ``import *`` consumes, so an entry that does not
+    resolve breaks the whole import -- not just that name. The BF-801 split left
+    the foundation module advertising two functions that stayed in cognitive."""
+    import probos.cognitive.dm.reply_value as producer
+    import probos.dm_reply as foundation
+
+    for mod in (foundation, producer):
+        missing = [n for n in mod.__all__ if not hasattr(mod, n)]
+        assert not missing, f"{mod.__name__}.__all__ advertises {missing}"
+
+
+def test_the_shim_is_a_namespace_alias_not_a_second_definition() -> None:
+    """Two distinct classes would break every ``isinstance`` check and the DD-12
+    token, silently, on whichever import path lost the race."""
+    import probos.cognitive.dm.reply_value as producer
+    import probos.dm_reply as foundation
+
+    for name in ("DmReply", "RenderedDmText", "ToolFailures", "ToolFailuresMergeClosed"):
+        assert getattr(producer, name) is getattr(foundation, name), name
+
+
+def test_the_foundation_module_imports_only_stdlib() -> None:
+    """Registering a module in FOUNDATION_MODULES documents intent; it does not
+    prove dependency purity. This does -- any probos import here would make the
+    module unusable by the layers it was moved down for."""
+    tree = ast.parse((SRC / "dm_reply.py").read_text(encoding="utf-8"))
+    probos_imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("probos"):
+            probos_imports.append(node.module or "")
+        if isinstance(node, ast.Import):
+            probos_imports += [
+                a.name for a in node.names if a.name.startswith("probos")
+            ]
+    assert not probos_imports, (
+        f"foundation module imports probos packages: {probos_imports}"
+    )
+
+
+def test_the_producer_stayed_in_cognitive() -> None:
+    """The half that reads agentic-run shapes is genuinely cognitive knowledge
+    and must NOT follow the value down."""
+    import probos.dm_reply as foundation
+
+    assert not hasattr(foundation, "correlate_tool_outcomes")
+    assert not hasattr(foundation, "offered_display_name")
+
+
 # ── failure-only replies: the disclosure is the ONLY truthful content ────────
 #
 # I made this mistake in the slice A gaps, the reviewer caught it, I fixed it in

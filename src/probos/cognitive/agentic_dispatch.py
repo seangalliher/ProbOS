@@ -27,12 +27,8 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
-from probos.cognitive.dm.reply_value import (  # AD-1248
-    ToolFailures,
-    correlate_tool_outcomes,
-    mint_scope,
-    scope_from_source,
-)
+from probos.cognitive.dm.reply_value import correlate_tool_outcomes  # AD-1248
+from probos.dm_reply import ToolFailures, mint_scope, scope_from_source  # AD-1248
 from probos.integrations.mcp_bridge.risk import (
     McpToolRisk,
     resolve_tool_risk,

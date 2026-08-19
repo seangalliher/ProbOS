@@ -245,7 +245,7 @@ async def chat(
                 # prose but DID fail a tool has the disclosure as its only
                 # truthful content, and gating on ``result.result`` first turns
                 # that into a false "(no response)".
-                from probos.cognitive.dm.reply_value import DmReply
+                from probos.dm_reply import DmReply
 
                 reply_text = (
                     str(DmReply.from_intent_result(result).render())
@@ -515,7 +515,7 @@ async def chat(
             # HTTP response and the thread append below -- and review round 4
             # found exactly this shape concealing on one while disclosing on
             # the other.
-            from probos.cognitive.dm.reply_value import DmReply
+            from probos.dm_reply import DmReply
 
             _inline_body = (
                 str(DmReply.from_intent_result(result).render())

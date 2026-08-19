@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from probos.cognitive.dm.reply_value import DmReply  # AD-1248
+from probos.dm_reply import DmReply  # AD-1248
 from probos.hooks.bus import HookEvent
 
 logger = logging.getLogger(__name__)

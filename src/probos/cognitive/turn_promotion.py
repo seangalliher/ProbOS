@@ -322,7 +322,7 @@ def _post_report(
     artifact -- and composing twice is how one of them ends up with a different
     story. Render once per route, reuse.
     """
-    from probos.cognitive.dm.reply_value import DmReply, ToolFailures
+    from probos.dm_reply import DmReply, ToolFailures
 
     if tool_failures is not None and not isinstance(tool_failures, ToolFailures):
         # The probe is caller-supplied and typed ``Any``. A wrong shape here
