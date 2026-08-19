@@ -30,7 +30,7 @@ from typing import Any
 import pytest
 
 from probos.cognitive.agentic_dispatch import WorkItemAgenticOutcome
-from probos.cognitive.crew_finalizer import _EXECUTION_KEYS
+from probos.crew_utils import CREW_EXECUTION_KEYS as _EXECUTION_KEYS
 from probos.cognitive.swe_harness import agentic_loop as agentic_loop_module
 from probos.cognitive.swe_harness.agentic_loop import (
     TOKEN_SOURCE_ESTIMATED,

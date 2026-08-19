@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from probos.cognitive.crew_session import CrewSynthesisMetadata
+from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.cognitive.crew_trust import (
     MAX_CREW_TRUST_EFFECTS,
     CrewSessionTrustRecorder,
@@ -67,22 +68,7 @@ _ARTIFACT_KEYS = {
     "size_bytes",
     "version",
 }
-_EXECUTION_KEYS = {
-    "version",
-    "parent_id",
-    "work_item_id",
-    "thread_id",
-    "assigned_to",
-    "status",
-    "stopped_reason",
-    "output_summary",
-    "tool_trace_ref",
-    "artifact_refs",
-    "tokens_used",
-    "started_at",
-    "finished_at",
-    "blocked_dependency_ids",
-}
+
 
 
 def _id(value: Any) -> str:
@@ -1182,7 +1168,7 @@ class CrewSessionFinalizer:
             or child.parent_id != parent_id
             or child.status != "done"
             or type(execution) is not dict
-            or set(execution) != _EXECUTION_KEYS
+            or set(execution) != CREW_EXECUTION_KEYS
             or execution["parent_id"] != parent_id
             or execution["work_item_id"] != child.id
             or execution["thread_id"] != thread_id
@@ -1228,7 +1214,7 @@ class CrewSessionFinalizer:
             if (
                 child.status != "done"
                 or type(execution) is not dict
-                or set(execution) != _EXECUTION_KEYS
+                or set(execution) != CREW_EXECUTION_KEYS
                 or type(output_ref) is not dict
                 or set(output_ref) != {"version", "content_hash", "mime", "size_bytes"}
                 or output_ref["mime"] != "text/plain"
@@ -2429,7 +2415,7 @@ class CrewSessionFinalizer:
         ):
             raise ValueError("child_result_invalid")
         execution = (child.metadata or {}).get("crew_execution")
-        if type(execution) is not dict or set(execution) != _EXECUTION_KEYS:
+        if type(execution) is not dict or set(execution) != CREW_EXECUTION_KEYS:
             raise ValueError("child_result_invalid")
         result_tokens = getattr(result, "actual_tokens", None)
         result_started = getattr(result, "started_at", None)

@@ -62,6 +62,7 @@ from probos.cognitive.swe_harness.tool_call import (
     ToolUseBlock,
 )
 from probos.config import AgenticLoopConfig
+from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.tools.protocol import Tool, ToolResult
 from probos.types import LLMRequest, LLMResponse
 from probos.workforce import WorkItem
@@ -75,26 +76,6 @@ _BIG_OUTPUT = _HEAD_SENTINEL + ("x" * 20_000) + _TAIL_SENTINEL
 # DD-2: the four keys that existed before this AD and must never be lost.
 _LEGACY_KEYS = frozenset({"name", "arguments", "id", "timestamp"})
 _RESULT_KEYS = frozenset({"output", "is_error", "output_chars", "output_truncated"})
-
-# The exact 14-key crew_execution evidence set this AD must not perturb.
-_EVIDENCE_KEYS = frozenset(
-    {
-        "version",
-        "parent_id",
-        "work_item_id",
-        "thread_id",
-        "assigned_to",
-        "status",
-        "stopped_reason",
-        "output_summary",
-        "tool_trace_ref",
-        "artifact_refs",
-        "tokens_used",
-        "started_at",
-        "finished_at",
-        "blocked_dependency_ids",
-    }
-)
 
 
 # ---------------------------------------------------------------- fixtures
@@ -512,8 +493,7 @@ def test_crew_execution_evidence_key_set_is_unchanged() -> None:
         blocked_dependency_ids=[],
     )
 
-    assert set(record) == _EVIDENCE_KEYS
-    assert len(_EVIDENCE_KEYS) == 14
+    assert set(record) == CREW_EXECUTION_KEYS
 
 
 # ------------------------------------------------------------------- BOUNDS

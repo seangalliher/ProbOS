@@ -22,6 +22,10 @@ from probos.crew_session_delivery import (
     CrewSessionDeliveryRecord,
     build_crew_session_delivery_record,
 )
+# Re-exported: modules and tests read this shape off `crew_session`, where it
+# used to be declared. `crew_utils` is now its one home -- see the rationale
+# there.
+from probos.crew_utils import CREW_EXECUTION_KEYS  # noqa: F401
 
 if TYPE_CHECKING:
     from probos.cognitive.crew_synth import SynthesisResult
@@ -130,22 +134,6 @@ _PLAN_ASSIGNMENT_KEYS = frozenset({
     "delegation_reason",
     "assigned_capability",
     "assigned_department",
-})
-_PLAN_EXECUTION_KEYS = frozenset({
-    "version",
-    "parent_id",
-    "work_item_id",
-    "thread_id",
-    "assigned_to",
-    "status",
-    "stopped_reason",
-    "output_summary",
-    "tool_trace_ref",
-    "artifact_refs",
-    "tokens_used",
-    "started_at",
-    "finished_at",
-    "blocked_dependency_ids",
 })
 _RECOVERY_PHASE_INDEX = {
     phase: index
@@ -1321,7 +1309,7 @@ def _validate_execution_metadata(row: Any, metadata: dict[str, Any]) -> None:
         if output is not _MISSING:
             raise ValueError("crew_recovery_plan_runtime_invalid")
     else:
-        if type(execution) is not dict or set(execution) != _PLAN_EXECUTION_KEYS:
+        if type(execution) is not dict or set(execution) != CREW_EXECUTION_KEYS:
             raise ValueError("crew_recovery_plan_runtime_invalid")
         try:
             from probos.cognitive.crew_executor import (

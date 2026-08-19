@@ -22,6 +22,7 @@ from probos.knowledge.provo import (
     project_crew_execution,
     project_record_frontmatter,
 )
+from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.routers.records import read_record
 
 _PROVO_SOURCE = Path(__file__).resolve().parents[1] / "src" / "probos" / "knowledge" / "provo.py"
@@ -114,24 +115,14 @@ def _iris(document: dict[str, Any], prefix: str) -> set[str]:
 # --------------------------------------------------------------------------- #
 
 
-def test_crew_execution_fixture_matches_the_frozen_14_key_set() -> None:
-    assert set(_crew_execution()) == {
-        "version",
-        "parent_id",
-        "work_item_id",
-        "thread_id",
-        "assigned_to",
-        "status",
-        "stopped_reason",
-        "output_summary",
-        "tool_trace_ref",
-        "artifact_refs",
-        "tokens_used",
-        "started_at",
-        "finished_at",
-        "blocked_dependency_ids",
-    }
-    assert len(_crew_execution()) == 14
+def test_crew_execution_fixture_matches_the_contract_key_set() -> None:
+    """The fixture tracks the real contract, not a restatement of it.
+
+    Compared against the canonical constant so a field added to the record
+    fails HERE, pointing at the fixture, rather than by way of a diff between
+    two literals that both have to be edited.
+    """
+    assert set(_crew_execution()) == CREW_EXECUTION_KEYS
 
 
 # --------------------------------------------------------------------------- #

@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable
 
-from probos.crew_utils import is_crew_agent
+from probos.crew_utils import CREW_EXECUTION_KEYS, is_crew_agent
 from probos.events import EventType
 
 if TYPE_CHECKING:
@@ -1408,22 +1408,7 @@ class CrewTaskExecutor:
     ) -> SubtaskResult:
         metadata = child.metadata
         execution = metadata.get("crew_execution")
-        if type(execution) is not dict or set(execution) != {
-            "version",
-            "parent_id",
-            "work_item_id",
-            "thread_id",
-            "assigned_to",
-            "status",
-            "stopped_reason",
-            "output_summary",
-            "tool_trace_ref",
-            "artifact_refs",
-            "tokens_used",
-            "started_at",
-            "finished_at",
-            "blocked_dependency_ids",
-        }:
+        if type(execution) is not dict or set(execution) != CREW_EXECUTION_KEYS:
             raise ValueError("crew_execution_evidence_invalid")
         if (
             type(execution["version"]) is not int

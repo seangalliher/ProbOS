@@ -79,6 +79,7 @@ from probos.cognitive.crew_verifier import SubtaskVerifier
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.swe_harness import session_compactor as session_compactor_module
 from probos.config import AgenticDispatchConfig, SystemConfig
+from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.workforce import STEP_STATUSES, WorkItemStore, _all_steps_done
 
 pytestmark = pytest.mark.asyncio
@@ -1024,37 +1025,22 @@ async def test_the_persisted_description_is_byte_identical_after_three_passes(
     assert _plan_identity(row) == before_hashes
 
 
-_CREW_EXECUTION_KEYS = frozenset({
-    "version",
-    "parent_id",
-    "work_item_id",
-    "thread_id",
-    "assigned_to",
-    "status",
-    "stopped_reason",
-    "output_summary",
-    "tool_trace_ref",
-    "artifact_refs",
-    "tokens_used",
-    "started_at",
-    "finished_at",
-    "blocked_dependency_ids",
-})
-
-
-async def test_the_evidence_record_is_still_the_exact_fourteen_key_set(
+async def test_the_evidence_record_is_still_the_exact_contract_key_set(
     store,
 ) -> None:
     """The set is frozen and cannot carry a list of intermediate trace refs;
-    inventing a companion key is the 'one extra breaks recovery' hazard."""
+    inventing a companion key is the 'one extra breaks recovery' hazard.
+
+    Compared against the canonical contract rather than a private copy. The
+    literal is pinned once, in ``test_bf680_token_usage_fallback``.
+    """
     agentic = _ScriptedExecutor(
         [_outcome(stopped_reason="max_iterations"), _outcome()]
     )
 
     row = await _run_one(store, agentic, crew_loop_until_done_enabled=True)
 
-    assert frozenset(row.metadata["crew_execution"]) == _CREW_EXECUTION_KEYS
-    assert len(_CREW_EXECUTION_KEYS) == 14
+    assert frozenset(row.metadata["crew_execution"]) == CREW_EXECUTION_KEYS
     assert not any(
         "loop" in key or "iteration" in key or "continuation" in key
         for key in row.metadata["crew_execution"]

@@ -66,6 +66,7 @@ from probos.cognitive.swe_harness.tool_call import (
     ToolUseBlock,
 )
 from probos.config import AgenticDispatchConfig, SystemConfig
+from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
 from probos.workforce import WorkItemStore
@@ -474,23 +475,6 @@ async def test_run_signature_keeps_the_three_kwargs_optional_and_none() -> None:
 # 2. Crew contracts untouched
 # ===========================================================================
 
-_CREW_EXECUTION_KEYS = {
-    "version",
-    "parent_id",
-    "work_item_id",
-    "thread_id",
-    "assigned_to",
-    "status",
-    "stopped_reason",
-    "output_summary",
-    "tool_trace_ref",
-    "artifact_refs",
-    "tokens_used",
-    "started_at",
-    "finished_at",
-    "blocked_dependency_ids",
-}
-
 _SUBTASK_RESULT_FIELDS = {
     "work_item_id",
     "spec_id",
@@ -507,9 +491,13 @@ _SUBTASK_RESULT_FIELDS = {
 }
 
 
-async def test_gate_on_evidence_is_still_the_exact_fourteen_key_set(store) -> None:
+async def test_gate_on_evidence_is_still_the_exact_contract_key_set(store) -> None:
     """One extra key raises ``crew_execution_evidence_invalid`` on every
-    restart, so compaction metrics go to logs and events, never here."""
+    restart, so compaction metrics go to logs and events, never here.
+
+    Compared against the canonical contract rather than a private copy. The
+    literal is pinned once, in ``test_bf680_token_usage_fallback``.
+    """
     parent = await store.create_work_item(title="parent", work_type="work_order")
     child = await _child(store, parent_id=parent.id)
     ex = _executor(
@@ -523,8 +511,7 @@ async def test_gate_on_evidence_is_still_the_exact_fourteen_key_set(store) -> No
     await ex.run(parent.id)
 
     row = await store.get_work_item(child.id)
-    assert set(row.metadata["crew_execution"]) == _CREW_EXECUTION_KEYS
-    assert len(_CREW_EXECUTION_KEYS) == 14
+    assert set(row.metadata["crew_execution"]) == CREW_EXECUTION_KEYS
     assert not any("compact" in key for key in row.metadata["crew_execution"])
 
 

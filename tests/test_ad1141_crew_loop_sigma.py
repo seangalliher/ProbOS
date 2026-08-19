@@ -46,6 +46,7 @@ from probos.cognitive.crew_executor import (
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.oracle_service import OracleResult, OracleService
 from probos.config import AgenticToolsConfig, RecordsConfig, SystemConfig
+from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.knowledge.records_store import RecordsStore
 from probos.tools.oracle_query_tool import SIGMA_TIERS, SOVEREIGN_TIER
 from probos.tools.publish_finding_tool import PublishFindingTool
@@ -458,23 +459,6 @@ async def test_persisted_evidence_is_key_for_key_identical_on_and_off(store) -> 
 # 2. Crew contracts untouched
 # ===========================================================================
 
-_CREW_EXECUTION_KEYS = {
-    "version",
-    "parent_id",
-    "work_item_id",
-    "thread_id",
-    "assigned_to",
-    "status",
-    "stopped_reason",
-    "output_summary",
-    "tool_trace_ref",
-    "artifact_refs",
-    "tokens_used",
-    "started_at",
-    "finished_at",
-    "blocked_dependency_ids",
-}
-
 _SUBTASK_RESULT_FIELDS = {
     "work_item_id",
     "spec_id",
@@ -491,8 +475,15 @@ _SUBTASK_RESULT_FIELDS = {
 }
 
 
-async def test_crew_execution_evidence_is_the_exact_fourteen_key_set(store) -> None:
-    """One extra key raises ``crew_execution_evidence_invalid`` on every restart."""
+async def test_crew_execution_evidence_is_the_exact_contract_key_set(store) -> None:
+    """One extra key raises ``crew_execution_evidence_invalid`` on every restart.
+
+    Compared against the canonical contract rather than a private copy of the
+    key list. This file held one of FOUR restatements of the same set; a field
+    added to the record had to land in every one of them simultaneously or the
+    suite broke. The literal is pinned once, in
+    ``test_bf680_token_usage_fallback``.
+    """
     parent = await store.create_work_item(title="parent", work_type="work_order")
     child = await _child(store, parent_id=parent.id)
     ex = _executor(
@@ -506,8 +497,7 @@ async def test_crew_execution_evidence_is_the_exact_fourteen_key_set(store) -> N
     await ex.run(parent.id)
 
     row = await store.get_work_item(child.id)
-    assert set(row.metadata["crew_execution"]) == _CREW_EXECUTION_KEYS
-    assert len(_CREW_EXECUTION_KEYS) == 14
+    assert set(row.metadata["crew_execution"]) == CREW_EXECUTION_KEYS
 
 
 async def test_subtask_result_field_set_is_frozen_at_twelve() -> None:

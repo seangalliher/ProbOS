@@ -27,6 +27,7 @@ from probos.cognitive.crew_orchestrator import CrewOrchestrator
 from probos.cognitive.crew_session import CrewSessionService
 from probos.cognitive.crew_synth import SynthesisResult
 from probos.config import GroupChatConfig, SystemConfig
+from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.events import EventType
 from probos.startup.finalize import _wire_crew_orchestrator
 from probos.storage.sqlite_factory import SQLiteConnectionFactory
@@ -49,22 +50,6 @@ from probos.workforce import (
 _SHA_A = "a" * 64
 _SHA_B = "b" * 64
 _CREW_PARENT_IDS = itertools.count(1)
-_EVIDENCE_KEYS = {
-    "version",
-    "parent_id",
-    "work_item_id",
-    "thread_id",
-    "assigned_to",
-    "status",
-    "stopped_reason",
-    "output_summary",
-    "tool_trace_ref",
-    "artifact_refs",
-    "tokens_used",
-    "started_at",
-    "finished_at",
-    "blocked_dependency_ids",
-}
 _ARTIFACT_KEYS = {
     "artifact_id",
     "content_hash",
@@ -555,7 +540,7 @@ async def test_real_room_bound_run_python_persists_child_evidence_and_parent_exe
     assert stored_child is not None and stored_child.status == "done"
     assert stored_child.actual_tokens == 18
     evidence = stored_child.metadata["crew_execution"]
-    assert set(evidence) == _EVIDENCE_KEYS
+    assert set(evidence) == CREW_EXECUTION_KEYS
     assert evidence["tokens_used"] == 18
     assert evidence["status"] == "done"
     assert evidence["stopped_reason"] == "complete"
@@ -1266,7 +1251,7 @@ async def test_child_evidence_contract_and_persistence_failure_fallback(
 
     assert stored is not None and result.actual_tokens == 17
     evidence = stored.metadata["crew_execution"]
-    assert set(evidence) == _EVIDENCE_KEYS
+    assert set(evidence) == CREW_EXECUTION_KEYS
     assert len(evidence["output_summary"]) <= 4_096
     assert evidence["output_summary"].endswith("...[truncated]")
     assert len(json.dumps(evidence, separators=(",", ":")).encode("utf-8")) <= 32_768
