@@ -57,6 +57,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from probos.cognitive.dm.bypass_egress import compose_bypass_reply
+
 logger = logging.getLogger(__name__)
 
 # Wording note: every string this module posts is asserted clean against the
@@ -289,6 +291,11 @@ class DeferredTurnQueue:
                 reply = ""
             if self._held.get(entry.thread_id) is not entry:
                 continue  # expired or flushed mid-dispatch; its answer is stale
+            # BF-791/792: the replay returns the model's text without the DM
+            # reply pipeline, so the emotion self-tag and any A2UI block would
+            # reach the Captain raw. An all-marker reply composes to "" and is
+            # correctly treated as no answer rather than posted bare.
+            reply = compose_bypass_reply(reply)
             if reply:
                 ago = format_ago(max(0.0, self._now() - entry.queued_at))
                 self._deliver(entry, _ANSWER_PREFIX.format(ago=ago) + reply)

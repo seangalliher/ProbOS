@@ -60,6 +60,8 @@ import logging
 import time
 from typing import Any, Awaitable, Callable
 
+from probos.cognitive.dm.bypass_egress import compose_bypass_reply
+
 logger = logging.getLogger(__name__)
 
 # Bounds on what is copied out of the Captain's message into the work item.
@@ -554,21 +556,15 @@ async def _finish_promoted_turn(
     if failed:
         body = _REPORT_FAILED
     else:
-        # BF-702: a promoted run returns the agentic loop's text directly, so it
-        # never passes through ``DmReplyPipeline.step_7_divergence_check`` --
-        # the step whose own comment reads "never leak the tag to the Captain".
-        # A report ending in ``<intent emotion=warm>`` is exactly that leak, and
-        # it was visible in the reference vessel's transcript.
+        # BF-702/791: a promoted run returns the agentic loop's text directly, so
+        # it never passes through ``DmReplyPipeline`` -- and every marker the
+        # pipeline strips reaches the transcript raw. BF-702 fixed the emotion
+        # self-tag here and the A2UI block still leaked, so the transformations
+        # now live in one place both bypass paths call.
         #
-        # Stripping here rather than teaching the pipeline about promotion keeps
-        # the fix where the bypass is. The helper is idempotent, removes the tag
-        # from any position, and returns untagged text unchanged, so it is safe
-        # whether or not divergence detection is enabled -- and if the tag was
-        # the entire reply, the empty result correctly falls through to the
-        # empty-report wording instead of posting a bare tag.
-        from probos.avatars.divergence_detector import strip_intent_self_tag
-
-        body = strip_intent_self_tag(str(text or "")) or _REPORT_EMPTY
+        # A reply that was nothing but markers composes to "" and correctly
+        # falls through to the empty-report wording.
+        body = compose_bypass_reply(text) or _REPORT_EMPTY
     # AD-1248: the awaited task returns a plain string, so the run's tool
     # failures cannot be recovered here -- exactly the reason BF-704 introduced
     # ``completed_probe``. Same shape, same reason. Omitting it renders

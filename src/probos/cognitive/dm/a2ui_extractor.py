@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # [A2UI]{json}[/A2UI] — non-greedy body, case-insensitive tag, DOTALL so
 # the JSON payload may span lines.
-_A2UI_PATTERN = re.compile(r"\[A2UI\](.*?)\[/A2UI\]", re.DOTALL | re.IGNORECASE)
+A2UI_PATTERN = re.compile(r"\[A2UI\](.*?)\[/A2UI\]", re.DOTALL | re.IGNORECASE)
 
 
 def extract_a2ui(
@@ -50,7 +50,7 @@ def extract_a2ui(
     if not text:
         return []
     specs: list[A2UISpec] = []
-    for m in _A2UI_PATTERN.finditer(text):
+    for m in A2UI_PATTERN.finditer(text):
         body = (m.group(1) or "").strip()
         if not body:
             continue
@@ -151,5 +151,5 @@ async def replace_a2ui_with_stubs(
         stub = build_a2ui_stub(artifact.name, artifact.version, spec.kind)
         # Replace only the first remaining [A2UI] block; the lambda form
         # avoids re.sub interpreting any backslash/group ref in the stub.
-        new_text = _A2UI_PATTERN.sub(lambda _m: stub, new_text, count=1)
+        new_text = A2UI_PATTERN.sub(lambda _m: stub, new_text, count=1)
     return new_text, persisted
