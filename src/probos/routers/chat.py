@@ -238,7 +238,19 @@ async def chat(
                         callsign=resolved["callsign"],
                         text="(delivery failed)",
                     )
-                reply_text = (result.result if result and result.result else "(no response)")
+                # AD-1248: composed ONCE here, so both sinks on this route --
+                # the per-agent HTTP reply and the main-chat thread append
+                # below -- carry the same text. Composed whenever a result
+                # exists, THEN tested for emptiness: a run that produced no
+                # prose but DID fail a tool has the disclosure as its only
+                # truthful content, and gating on ``result.result`` first turns
+                # that into a false "(no response)".
+                from probos.cognitive.dm.reply_value import DmReply
+
+                reply_text = (
+                    str(DmReply.from_intent_result(result).render())
+                    if result is not None else ""
+                ) or "(no response)"
                 return PerAgentReply(
                     agent_id=resolved["agent_id"],
                     callsign=resolved["callsign"],
@@ -499,7 +511,17 @@ async def chat(
                 thread_id=_inline_thread.id if _inline_thread is not None else None,  # AD-791a
             )
             result = await runtime.intent_bus.send(intent)
-            response = f"{resolved['callsign']}: {result.result}" if result and result.result else f"{resolved['callsign']}: (no response)"
+            # AD-1248: composed ONCE for this route. It has TWO sinks -- the
+            # HTTP response and the thread append below -- and review round 4
+            # found exactly this shape concealing on one while disclosing on
+            # the other.
+            from probos.cognitive.dm.reply_value import DmReply
+
+            _inline_body = (
+                str(DmReply.from_intent_result(result).render())
+                if result is not None else ""
+            ) or "(no response)"
+            response = f"{resolved['callsign']}: {_inline_body}"
             # AD-791a: log the agent reply on the thread for parity with the
             # 1:1 endpoint. The bare ``response`` string is the user-visible
             # text; if it's the "(no response)" fallback we still log it so
@@ -510,7 +532,7 @@ async def chat(
                         _inline_thread.id,
                         author_id=resolved["agent_id"],
                         role="agent",
-                        body=result.result if (result and result.result) else "(no response)",
+                        body=_inline_body,
                         metadata={"intent_id": intent.id, "source": "inline_callsign"},
                     )
                 except Exception:

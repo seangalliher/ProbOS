@@ -296,7 +296,21 @@ class DmReplyPipeline:
                         retry_text = str(retry_resp.result)
                     if retry_text:
                         retry_result = self.ctx.sanity_gate.process(self.ctx.agent_id, retry_text)
-                        self.ctx.response_text = retry_result.cleaned_text
+                        # AD-1248 / BF-800: a retry is a FRESH ANSWER to the same
+                        # question, so DD-2 makes it ``replaced_by`` -- not the
+                        # ``with_body`` the ``response_text`` property performs.
+                        # Assigning through the property preserved the FIRST
+                        # attempt's tool failures onto a reply that never made
+                        # those calls, and dropped the retry's own. Measured
+                        # wrong in both directions. Only on a valid result: the
+                        # empty and error branches below still retain the
+                        # previous reply, or a failed retry would erase a good
+                        # disclosure.
+                        self.ctx.reply = self.ctx.reply.replaced_by(
+                            DmReply.from_intent_result(retry_resp).with_body(
+                                retry_result.cleaned_text
+                            )
+                        )
                         logger.info(
                             "AD-724-1: DM retry for agent %s — "
                             "original_warnings=%s retry_warnings=%s",

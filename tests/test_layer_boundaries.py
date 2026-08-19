@@ -51,6 +51,19 @@ ALLOWED_IMPORTS = {
 
 # (source_file_relative, imported_module) tuples
 ALLOWED_EXCEPTIONS = {
+    # AD-1248: channels → cognitive.dm.reply_value — function-local import of a
+    # frozen value type with no runtime dependencies beyond stdlib. The channel
+    # base is the ONE place a direct_message IntentResult becomes reply text for
+    # all seven adapters, so composing the tool-failure disclosure here reaches
+    # Discord/Slack/Matrix/Telegram/Gmail/Teams/Webhook alike; composing in each
+    # adapter is how one gets forgotten.
+    #
+    # This is a SYMPTOM, not the right answer. ``DmReply`` is a contract ABOUT
+    # ``IntentResult``, which lives in foundation ``types.py`` — so the value
+    # belongs at foundation too, not in cognitive. Two layers now want it
+    # (channels here, federation in BF-799 #1263, which is blocked on exactly
+    # this). Filed as BF-801; when it lands, delete this exception.
+    ("channels/base.py", "probos.cognitive.dm.reply_value"),
     # AD-399: cognitive → consensus.trust — trust is a Ship's Computer service
     ("cognitive/dreaming.py", "probos.consensus.trust"),
     ("cognitive/emergent_detector.py", "probos.consensus.trust"),

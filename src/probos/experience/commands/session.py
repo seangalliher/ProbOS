@@ -121,9 +121,15 @@ class SessionManager:
 
         result = await runtime.intent_bus.send(intent)
         response_text = ""
-        if result and result.result:
-            response_text = str(result.result)
+        if result is not None:
+            # AD-1248: the shell is an egress sink -- it bypasses the reply
+            # pipeline, so it composes the disclosure itself. Composed before
+            # the emptiness test below: a failures-only reply has the
+            # disclosure as its only truthful content, and gating on
+            # ``result.result`` first turns that into a false "(no response)".
+            from probos.cognitive.dm.reply_value import DmReply
 
+            response_text = str(DmReply.from_intent_result(result).render())
         if not response_text:
             response_text = "(no response)"
 
