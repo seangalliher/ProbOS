@@ -47,6 +47,7 @@ __all__ = [
     "DmReply",
     "mint_scope",
     "scope_from_source",
+    "split_for_wire",
     "call_signature",
     "failure_key",
     "key_scope",
@@ -74,8 +75,10 @@ _RENDER_TOKEN = object()
 class RenderedDmText(str):
     """The composed, Captain-visible form of a :class:`DmReply`.
 
-    Produced ONLY by :meth:`DmReply.render`. Every registered human egress
-    accepts this and not a bare ``str``.
+    Produced ONLY by :meth:`DmReply.render`. The sinks guarded by
+    :func:`require_rendered` accept this and not a bare ``str``. Channel
+    adapters deliberately still take plain strings -- they are handed the
+    result of composition, not the value.
 
     This is an *admission token*, not durable provenance. Every string
     operation -- ``str()``, f-strings, ``.join``, slicing, ``+``, ``.strip``,
@@ -287,8 +290,15 @@ class ToolFailures:
 
         Applied after construction and after every merge. Summarising only at
         serialization would leave the SUMMARY algebra in :meth:`superseded_by`
-        unreachable -- documented behaviour that never runs is not behaviour --
-        and would let an in-process value grow without limit.
+        unreachable -- documented behaviour that never runs is not behaviour.
+
+        BF-797: this bounds FAILING entries only. Success tombstones are not
+        counted and can accumulate freely in memory -- 1,000 tombstones stay
+        1,000 entries with ``is_summary`` False. That is deliberate: tombstones
+        are what make supersession expressible (DD-1), dropping them to save
+        memory would silently break the algebra, and they never cross a
+        serialization boundary. A turn is bounded by its iteration count, so
+        the growth is bounded in practice by the run itself.
         """
         if sum(1 for _, v in self.entries if v) <= _MAX_ENTRIES:
             return self
@@ -488,6 +498,13 @@ class ToolFailures:
                 return cls()
             key, name = pair
             if not isinstance(key, str) or not _KEY_RE.fullmatch(key):
+                logger.warning(
+                    "AD-1248: dm_reply entry key %r fails the lineage grammar; "
+                    "returning an empty failure set, so the caller composes "
+                    "with no attachments. A short or non-hex root is the usual "
+                    "cause.",
+                    key,
+                )
                 return cls()
             if not isinstance(name, str) or not name:
                 return cls()
@@ -521,6 +538,57 @@ def _compose_disclosure(names: tuple[str, ...], count: int) -> str:
 def _count_only(count: int) -> str:
     plural = "" if count == 1 else "s"
     return f"{max(count, 1)} tool call{plural} failed while answering this."
+
+
+def split_for_wire(text: str, limit: int) -> list[str]:
+    """Divide text into pieces of at most ``limit`` characters, losing nothing.
+
+    ``"".join(split_for_wire(t, n)) == t`` for every input -- exactly, not
+    modulo whitespace.
+
+    Prefers a newline boundary, then a space, then a hard cut -- the strategy
+    the Discord adapter has used since AD-472, hoisted here so every
+    wire-limited sink shares one implementation rather than each inventing its
+    own (BF-802 found only one of seven adapters had one at all).
+
+    Adversarial review found two defects in the hoisted original, both fixed
+    here:
+
+    * It could **not terminate**. ``split_for_wire(" x", 1)`` chose a cut at
+      index 0, appended an empty piece and left the text unchanged -- an
+      infinite loop that would hang a live vessel. Every cut is now >= 1, and
+      a non-positive ``limit`` raises instead of looping forever.
+    * It **deleted the delimiter** it split on (``.lstrip("\\n")``), so
+      ``"a\\nb"`` came back as ``["a", "b"]`` and rejoining lost the newline.
+      The cut is now taken just AFTER the boundary, keeping that character
+      with the preceding piece -- lossless, while the next piece still does
+      not begin with a blank line.
+    """
+    if limit <= 0:
+        raise ValueError(f"split_for_wire(limit={limit}) needs a positive limit")
+    if len(text) <= limit:
+        return [text]
+
+    pieces: list[str] = []
+    while text:
+        if len(text) <= limit:
+            pieces.append(text)
+            break
+
+        # +1 keeps the delimiter with the piece being emitted, so nothing is
+        # dropped and the FOLLOWING piece does not start with the boundary.
+        cut = text.rfind("\n", 0, limit)
+        cut = cut + 1 if cut != -1 else -1
+        if cut <= 0 or cut < limit // 2:
+            space = text.rfind(" ", 0, limit)
+            cut = space + 1 if space != -1 else -1
+        if cut <= 0 or cut < limit // 2:
+            cut = limit  # hard cut; >= 1, so progress is guaranteed
+
+        pieces.append(text[:cut])
+        text = text[cut:]
+
+    return pieces
 
 
 @dataclass(frozen=True)

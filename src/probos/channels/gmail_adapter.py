@@ -76,7 +76,35 @@ class GmailAdapter(ChannelAdapter):
             try:
                 messages = await loop.run_in_executor(None, self._fetch_unseen)
                 for msg in messages:
-                    await self.handle_message(msg)
+                    # BF-802 (#1266): handle_message RETURNS the reply; it does
+                    # not send it. Gmail discarded that return, so every email
+                    # was reasoned about and then answered with silence.
+                    #
+                    # The try is PER MESSAGE, not around the batch. Adversarial
+                    # review found that a batch-wide guard let one failure skip
+                    # every remaining message -- and `_fetch_unseen` has already
+                    # marked them Seen, so those were lost permanently. Adding
+                    # a send inside this loop widened that window, so the
+                    # isolation has to come with it.
+                    try:
+                        reply = await self.handle_message(msg)
+                        if reply:
+                            await self.send_response(
+                                msg.channel_id,
+                                reply,
+                                # ChannelMessage has no `message_id`; Gmail
+                                # stores the inbound Message-ID here, and
+                                # `_reply_context` is keyed by exactly that.
+                                reply_to_message_id=msg.reply_to_message_id,
+                            )
+                    except Exception:
+                        logger.warning(
+                            "BF-802: processing the message from %s failed; "
+                            "continuing with the rest of the batch. If this "
+                            "message was already marked Seen it will not be "
+                            "re-fetched.",
+                            msg.channel_id, exc_info=True,
+                        )
                     # avoid swamping LLM if a flurry arrived at once
                     await asyncio.sleep(0)
             except Exception:

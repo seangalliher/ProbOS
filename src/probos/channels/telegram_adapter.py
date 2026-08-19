@@ -25,8 +25,13 @@ from typing import Any
 from probos.channels.base import ChannelAdapter, ChannelMessage
 from probos.channels.telegram_client import TelegramAPIError, TelegramClient
 from probos.channels.telegram_config import TelegramAdapterConfig
+from probos.dm_reply import split_for_wire
 
 logger = logging.getLogger(__name__)
+
+# Telegram Bot API documents sendMessage.text as 1-4096 characters and
+# rejects the entire call above it (BF-802, #1266).
+_MAX_MESSAGE_LENGTH = 4096
 
 
 class TelegramAdapter(ChannelAdapter):
@@ -95,10 +100,18 @@ class TelegramAdapter(ChannelAdapter):
         logger.info("AD-803a: Telegram adapter stopped")
 
     async def send_response(self, channel_id: str, response: str, **kwargs: Any) -> None:
-        """Send a text reply to the Telegram chat.
+        """Send a text reply to the Telegram chat, split to fit the wire limit.
 
         ``channel_id`` is the str representation of ``chat.id``; we cast
         back to int when numeric so the Bot API doesn't reject it.
+
+        BF-802 (#1266): the Bot API documents ``sendMessage.text`` as 1-4096
+        characters and rejects the whole call above that. Sending one
+        unbounded string meant a 4,053-character reply that grew to 4,124 when
+        a tool-failure disclosure was appended produced "message is too long"
+        and the Captain received NOTHING -- the disclosure did not merely fail
+        to arrive, it destroyed the answer it was attached to. Splitting keeps
+        both.
         """
         if not response:
             return
@@ -108,17 +121,28 @@ class TelegramAdapter(ChannelAdapter):
         except (TypeError, ValueError):
             target = channel_id
         reply_id = kwargs.get("reply_to_message_id")
-        try:
-            await self._client.send_message(
-                chat_id=target,
-                text=response,
-                reply_to_message_id=int(reply_id) if reply_id else None,
-            )
-        except TelegramAPIError as exc:
-            logger.warning(
-                "AD-803a: send_message to chat=%s failed: %s",
-                channel_id, exc,
-            )
+        parts = split_for_wire(response, _MAX_MESSAGE_LENGTH)
+        for index, part in enumerate(parts):
+            try:
+                await self._client.send_message(
+                    chat_id=target,
+                    text=part,
+                    # Only the first part threads onto the incoming message;
+                    # the rest follow it so the chat reads in order.
+                    reply_to_message_id=(
+                        int(reply_id) if reply_id and index == 0 else None
+                    ),
+                )
+            except TelegramAPIError as exc:
+                logger.warning(
+                    "AD-803a/BF-802: send_message part %d/%d to chat=%s failed: %s; "
+                    "remaining parts are abandoned",
+                    index + 1,
+                    len(parts),
+                    channel_id,
+                    exc,
+                )
+                return
 
     # ---------- internals ----------
 
@@ -179,7 +203,15 @@ class TelegramAdapter(ChannelAdapter):
             )
             return
         if response:
-            await self.send_response(message.channel_id, response)
+            # BF-802: the threading id was normalised in `_convert_update` and
+            # then dropped here, so NO part threaded -- the "first part
+            # threads" behaviour in send_response was unreachable from the
+            # only route that calls it.
+            await self.send_response(
+                message.channel_id,
+                response,
+                reply_to_message_id=message.reply_to_message_id,
+            )
 
     async def _poll_loop(self) -> None:
         """Long-polling main loop. Runs until ``stop()`` cancels it.

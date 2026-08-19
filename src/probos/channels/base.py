@@ -201,6 +201,7 @@ class ChannelAdapter(ABC):
     async def _handle_callsign_resolved(self, resolved: dict, callsign: str, message_text: str) -> str:
         """Route to a resolved crew member (AD-397, BF-009). One-shot, no session."""
         from probos.types import IntentMessage
+        from probos.dm_reply import DmReply
 
         if resolved["agent_id"] is None:
             return f"{resolved['callsign']} is not currently on duty."
@@ -214,6 +215,20 @@ class ChannelAdapter(ABC):
             target_agent_id=resolved["agent_id"],
         )
         result = await self.runtime.intent_bus.send(intent)
-        if result and result.result:
-            return f"{resolved['callsign']}: {result.result}"
-        return f"{resolved['callsign']}: (no response)"
+        if result is None:
+            return f"{resolved['callsign']}: (no response)"
+
+        # BF-802 (#1266) / AD-1248: compose here rather than gating on
+        # `result.result`. A run whose tools all failed produces empty text but
+        # a non-empty failure set, and the old `if result and result.result`
+        # threw that away -- the Captain was told "(no response)" when the
+        # truthful answer was "web_search failed". This is the fifth sink where
+        # that same gate hid a disclosure.
+        #
+        # `render()` returns RenderedDmText (a str SUBCLASS). Interpolating it
+        # into an f-string yields a plain str, which matters because
+        # `threads/__init__.py` rejects `type(body) is not str`.
+        rendered = DmReply.from_intent_result(result).render()
+        if not str(rendered):
+            return f"{resolved['callsign']}: (no response)"
+        return f"{resolved['callsign']}: {rendered}"

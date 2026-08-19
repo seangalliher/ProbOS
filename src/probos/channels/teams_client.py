@@ -3,8 +3,11 @@
 Bot Framework outbound flow:
     1. Bot Service POSTs an inbound ``Activity`` to our webhook.
     2. We extract ``serviceUrl`` + ``conversation.id`` from the activity.
-    3. We POST a reply Activity to
-       ``{serviceUrl}/v3/conversations/{conversation_id}/activities``
+    3. We POST an Activity to
+       ``{serviceUrl}/v3/conversations/{conversation_id}/activities``, or to
+       ``.../activities/{activityId}`` when replying to a specific activity
+       (BF-802 -- the plain path is the non-reply "send to conversation"
+       operation, which the Connector accepts without threading),
        with a Bearer token obtained from the Azure AD token endpoint
        (``https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token``).
 
@@ -19,6 +22,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import httpx
 
@@ -96,11 +100,22 @@ class TeamsClient:
         text: str,
         reply_to_id: str | None = None,
     ) -> dict:
-        """POST a reply activity to a Teams conversation."""
+        """POST a reply activity to a Teams conversation.
+
+        BF-802: when ``reply_to_id`` is present this must target the Bot
+        Framework *reply* operation, ``.../activities/{activityId}``. The plain
+        ``.../activities`` path is the non-reply "send to conversation"
+        operation; posting there with only ``replyToId`` in the body may return
+        2xx while the Connector does not treat it as a contracted threaded
+        reply.
+
+        This path was unreachable until BF-802 -- the Teams dispatcher dropped
+        the id, so ``reply_to_id`` was always ``None`` and the reply endpoint
+        was never exercised.
+        """
         token = await self._get_token()
-        url = (
-            f"{service_url.rstrip('/')}/v3/conversations/{conversation_id}/activities"
-        )
+        base = f"{service_url.rstrip('/')}/v3/conversations/{conversation_id}/activities"
+        url = f"{base}/{quote(reply_to_id, safe='')}" if reply_to_id else base
         body: dict = {
             "type": "message",
             "text": text,

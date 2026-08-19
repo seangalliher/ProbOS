@@ -32,8 +32,16 @@ class TestChunkMessage:
         msg = part1 + "\n" + part2
         chunks = _chunk_message(msg)
         assert len(chunks) == 2
-        assert chunks[0] == part1
+        # BF-802: this previously asserted `chunks[0] == part1`, i.e. that the
+        # newline split on was DELETED. That pinned lossy behaviour as a
+        # contract. The splitter is now shared with Telegram and carries
+        # tool-failure disclosures, where dropping characters is not
+        # acceptable, so the delimiter is kept with the preceding chunk.
+        # Cosmetically identical in Discord (a trailing newline does not
+        # render); the difference is that rejoining is now exact.
+        assert chunks[0] == part1 + "\n"
         assert chunks[1] == part2
+        assert "".join(chunks) == msg, "the split must be lossless"
 
     def test_very_long_hard_splits(self):
         msg = "X" * 5000  # No spaces or newlines

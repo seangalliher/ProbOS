@@ -8,7 +8,8 @@ us and we dispatch via ``dispatch_activity()``.
 Outbound: via :class:`TeamsClient.send_activity` which acquires a
 client-credentials token from
 ``login.microsoftonline.com/botframework.com`` (cached in-memory) and
-POSTs to ``{serviceUrl}/v3/conversations/{id}/activities``.
+POSTs to ``{serviceUrl}/v3/conversations/{id}/activities``, or to
+``.../activities/{activityId}`` when threading a reply (BF-802).
 
 Pairing: AD-802a hook fires via ``channel_name = "teams"`` and the
 base-class ``_check_pairing`` machinery. The sender's AAD object ID
@@ -133,7 +134,20 @@ class TeamsAdapter(ChannelAdapter):
         if msg is None:
             return {"status": "ignored", "reason": "non-message-or-filtered"}
 
-        await self.handle_message(msg)
+        # BF-802 (#1266): handle_message RETURNS the reply; it does not send
+        # it. Teams discarded that return, so the crew reasoned, produced an
+        # answer, and the Captain saw silence. Forward it to send_response the
+        # way Telegram and Discord already do.
+        reply = await self.handle_message(msg)
+        if reply:
+            await self.send_response(
+                msg.channel_id,
+                reply,
+                # BF-802: `_extract_message` sets this and the dispatcher used
+                # to drop it, so every Teams reply reached the client with
+                # reply_to_id=None and threaded nowhere.
+                reply_to_message_id=msg.reply_to_message_id,
+            )
         return {"status": "ok"}
 
     async def send_response(

@@ -142,7 +142,11 @@ class DmReplyContext:
 
 
 class DmReplyPipeline:
-    """Nine-step post-LLM cleanup chain for the DM one-shot path."""
+    """Post-LLM cleanup chain for the DM one-shot path.
+
+    BF-796: the count lives in :meth:`_full_steps` and its guard test, not in
+    prose here -- this docstring said "nine-step" across six insertions.
+    """
 
     def __init__(self, ctx: DmReplyContext) -> None:
         self.ctx = ctx
@@ -157,7 +161,10 @@ class DmReplyPipeline:
 
     def _full_steps(self) -> tuple[Callable, ...]:
         """AD-933: the full DM one-shot chain in load-bearing order, the single
-        source of truth executed by :meth:`run`. 18 steps after AD-934 inserted
+        source of truth executed by :meth:`run`. **20 steps** (BF-796: this said
+        18 while the tuple returned 20 -- a reader trusts this line when judging
+        whether an insertion is in scope, so it is now guarded by a test rather
+        than maintained by hand) after AD-934 inserted
         ``step_4j_deliberate_parse`` between ``step_4g_create_task_parse`` and
         ``step_5_episodic_store`` (so the deep-tier re-rolled reply is what gets
         stored / divergence-checked / emitted). Ordering is invariant (sanity

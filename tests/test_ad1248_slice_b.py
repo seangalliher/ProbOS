@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import inspect
 import pathlib
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -172,15 +173,39 @@ def test_the_inline_callsign_route_composes_once_for_both_sinks() -> None:
 # Also blocked on BF-801 (#1265): channels/ may not import cognitive/.
 
 
-def test_channel_adapters_do_not_yet_compose() -> None:
-    """Pinned so the gap is visible in the suite, not only in an issue."""
-    from probos.channels import base
+def test_channel_adapters_now_compose_with_egress_prerequisites_in_place() -> None:
+    """The inverse of the tripwire this replaces (BF-802, #1266).
 
-    source = inspect.getsource(base)
-    assert "DmReply" not in source, (
-        "BF-802 (#1266): if channels start composing, Gmail/Teams wiring and "
-        "Telegram chunking must land first, or long replies are lost entirely"
-    )
+    Slice B pinned ``"DmReply" not in source`` so the gap stayed visible in the
+    suite rather than only in an issue. That tripwire fired the moment
+    composition landed, which is exactly what it was for. It is replaced --
+    never deleted -- by an assertion that the three prerequisites it guarded
+    are genuinely present, so the guarantee survives rather than evaporating.
+    """
+    import inspect as _inspect
+
+    from probos.channels import base, gmail_adapter, teams_adapter, telegram_adapter
+
+    base_src = _inspect.getsource(base)
+    assert "DmReply" in base_src, "composition is expected to have landed"
+    # NOTE: deliberately no `"result.result" not in base_src` assertion. The
+    # first attempt at one matched the explanatory COMMENT that documents the
+    # old gate -- a source scan cannot tell a requirement from a mention of it.
+    # The real guarantee is behavioural and lives in
+    # test_bf802_adapter_egress.py::test_a_callsign_reply_whose_tools_all_failed_names_the_failure
+
+    # Prerequisite 1: Telegram must split, or a disclosure can push a valid
+    # reply past 4096 and the API rejects the whole call.
+    tg_src = _inspect.getsource(telegram_adapter)
+    assert "split_for_wire" in tg_src and "4096" in tg_src
+
+    # Prerequisites 2 and 3: Gmail and Teams must forward what handle_message
+    # returns, or composing merely produces a better string that nobody sends.
+    for module in (gmail_adapter, teams_adapter):
+        src = _inspect.getsource(module)
+        assert "await self.send_response(" in src, (
+            f"{module.__name__} must forward the reply, not discard it"
+        )
 
 
 def test_the_channel_adapter_surface_is_pinned_exactly() -> None:
@@ -228,13 +253,11 @@ def test_the_shell_session_composes() -> None:
 #: function in chat.py holds Captain, system, ordinary-agent and DM appends
 #: together, so a file exemption would silence the DM path by accident.
 _AUDITED_EXEMPTIONS: dict[str, str] = {
-    "channels/base.py::_handle_callsign_resolved": (
-        "BF-802 (#1266): composing here was implemented and REVERTED. Gmail and "
-        "Teams discard the returned string entirely, Webhook's send_response is "
-        "a no-op, and only Discord chunks -- a 4,053-char Telegram reply became "
-        "4,124 after composition and delivered ZERO messages. Also blocked on "
-        "BF-801: channels/ may not import cognitive/."
-    ),
+    # BF-802 (#1266) is CLOSED: `_handle_callsign_resolved` now composes, so
+    # its exemption is gone and the AST safeguard covers it again. Leaving a
+    # stale exemption here would let a future removal of that composition slip
+    # past the guard silently -- exemption rot is what this register exists to
+    # prevent, so it must not be the thing that rots.
     "routers/thread_fanout.py::_fan_one_round": (
         "Group fan-out. AD-1248 excludes it deliberately: the conversational "
         "agentic loop does not run there, so these replies have no tool run "
@@ -393,20 +416,53 @@ def test_the_shim_is_a_namespace_alias_not_a_second_definition() -> None:
 
 def test_the_foundation_module_imports_only_stdlib() -> None:
     """Registering a module in FOUNDATION_MODULES documents intent; it does not
-    prove dependency purity. This does -- any probos import here would make the
-    module unusable by the layers it was moved down for."""
+    prove dependency purity. This does.
+
+    BF-802: this previously only rejected imports beginning with ``probos``,
+    so ``import httpx`` or ``from pydantic import BaseModel`` passed cleanly --
+    it enforced "no layer violation" while claiming "stdlib only", and the
+    second is the property the module is registered for. Every imported root
+    is now checked against ``sys.stdlib_module_names``.
+    """
     tree = ast.parse((SRC / "dm_reply.py").read_text(encoding="utf-8"))
-    probos_imports: list[str] = []
+    allowed = set(sys.stdlib_module_names) | {"__future__"}
+
+    foreign: list[str] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("probos"):
-            probos_imports.append(node.module or "")
-        if isinstance(node, ast.Import):
-            probos_imports += [
-                a.name for a in node.names if a.name.startswith("probos")
-            ]
-    assert not probos_imports, (
-        f"foundation module imports probos packages: {probos_imports}"
+        if isinstance(node, ast.ImportFrom):
+            # level > 0 is a relative import, which is a probos import by
+            # definition and never stdlib.
+            root = (node.module or "").split(".")[0]
+            if node.level and node.level > 0:
+                foreign.append(f".{node.module or ''}")
+            elif root and root not in allowed:
+                foreign.append(node.module or "")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root not in allowed:
+                    foreign.append(alias.name)
+
+    assert not foreign, (
+        f"foundation module imports non-stdlib packages: {foreign}. It is "
+        f"imported by every layer, so a third-party dependency here makes the "
+        f"whole tree depend on it."
     )
+
+
+def test_the_stdlib_guard_would_actually_catch_a_violation() -> None:
+    """The guard above passed for years while checking the wrong property.
+
+    A guard nobody has seen fail is indistinguishable from one that cannot.
+    """
+    allowed = set(sys.stdlib_module_names) | {"__future__"}
+    for third_party in ("httpx", "pydantic", "chromadb", "aiosqlite"):
+        assert third_party not in allowed, (
+            f"{third_party} must be recognised as non-stdlib, or the guard "
+            f"cannot catch it"
+        )
+    for stdlib in ("json", "re", "uuid", "dataclasses", "logging"):
+        assert stdlib in allowed
 
 
 def test_the_producer_stayed_in_cognitive() -> None:
@@ -416,6 +472,44 @@ def test_the_producer_stayed_in_cognitive() -> None:
 
     assert not hasattr(foundation, "correlate_tool_outcomes")
     assert not hasattr(foundation, "offered_display_name")
+
+
+# ── BF-796 / BF-797: docstrings that described code inaccurately ────────────
+
+
+def test_the_step_count_in_prose_matches_the_tuple() -> None:
+    """BF-796 (#1260): the docstring said 18 while the tuple returned 20, and
+    the class docstring said "nine-step". A reader trusts these lines when
+    judging whether an insertion is in scope. Guarded rather than maintained."""
+    from probos.cognitive.dm import reply_pipeline as rp
+
+    pipeline = rp.DmReplyPipeline.__new__(rp.DmReplyPipeline)
+    actual = len(rp.DmReplyPipeline._full_steps(pipeline))
+    doc = inspect.getdoc(rp.DmReplyPipeline._full_steps) or ""
+
+    assert f"**{actual} steps**" in doc, (
+        f"_full_steps returns {actual} entries; its docstring must say so"
+    )
+    assert "Nine-step" not in (inspect.getdoc(rp.DmReplyPipeline) or "")
+
+
+def test_the_bound_docstring_admits_what_it_does_not_bound() -> None:
+    """BF-797 (#1261): the comment claimed it stopped in-memory growth. It
+    bounds FAILING entries only -- 1,000 tombstones stay 1,000 entries. The
+    behaviour is right; the description was not."""
+    from probos.dm_reply import ToolFailures, call_signature, failure_key
+
+    tombstones = ToolFailures.from_mapping({
+        failure_key(ROOT, ROOT, call_signature("t", i)): "" for i in range(200)
+    })
+    assert not tombstones.is_summary
+    assert len(tombstones.entries) == 200
+
+    doc = " ".join((inspect.getdoc(ToolFailures._bounded) or "").split())
+    assert "BF-797" in doc
+    assert "tombstones are not counted" in doc.lower(), (
+        "the docstring must admit the bound it does NOT apply"
+    )
 
 
 # ── failure-only replies: the disclosure is the ONLY truthful content ────────

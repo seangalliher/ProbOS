@@ -16,6 +16,7 @@ from typing import Any
 
 from probos.channels.base import ChannelAdapter, ChannelMessage
 from probos.config import DiscordConfig
+from probos.dm_reply import split_for_wire
 
 logger = logging.getLogger(__name__)
 
@@ -26,27 +27,14 @@ def _chunk_message(text: str, limit: int = _MAX_MESSAGE_LENGTH) -> list[str]:
     """Split a long response into chunks that fit Discord's 2000-char limit.
 
     Tries to split on newlines first, then on spaces, then hard-splits.
+
+    BF-802 (#1266) hoisted the implementation to :func:`probos.dm_reply.
+    split_for_wire` so Telegram (4096) and Discord (2000) share one splitter
+    instead of Discord having the only one. This wrapper is retained because
+    it is the name the adapter's tests exercise -- which now also cover the
+    shared implementation.
     """
-    if len(text) <= limit:
-        return [text]
-
-    chunks: list[str] = []
-    while text:
-        if len(text) <= limit:
-            chunks.append(text)
-            break
-
-        # Try to find a newline to split on
-        split_at = text.rfind("\n", 0, limit)
-        if split_at == -1 or split_at < limit // 2:
-            split_at = text.rfind(" ", 0, limit)
-        if split_at == -1 or split_at < limit // 2:
-            split_at = limit
-
-        chunks.append(text[:split_at])
-        text = text[split_at:].lstrip("\n")
-
-    return chunks
+    return split_for_wire(text, limit)
 
 
 class DiscordAdapter(ChannelAdapter):
