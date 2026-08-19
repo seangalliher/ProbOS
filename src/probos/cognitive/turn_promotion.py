@@ -308,14 +308,43 @@ def _post_report(
     thread_id: str,
     work_item_id: str,
     body: str,
-) -> None:
+    tool_failures: Any = None,
+) -> str:
     """Append a promoted run's report into the thread it came from.
 
     Synchronous on purpose — ``ChatThreadStore`` is a synchronous SQLite store,
     and its commit callback is what emits ``CHAT_THREAD_MESSAGE_APPENDED``, the
     event the HXI already consumes to live-refresh an open transcript (AD-1133).
     So the Captain sees the report arrive without any new UI wiring.
+
+    AD-1248: composes the disclosure and RETURNS the composed text, because this
+    route has two Captain-visible sinks -- this thread post and the outcome
+    artifact -- and composing twice is how one of them ends up with a different
+    story. Render once per route, reuse.
     """
+    from probos.cognitive.dm.reply_value import DmReply, ToolFailures
+
+    if tool_failures is not None and not isinstance(tool_failures, ToolFailures):
+        # The probe is caller-supplied and typed ``Any``. A wrong shape here
+        # would raise inside a DETACHED reporter whose contract is "never raises
+        # apart from cancellation", costing the Captain the whole report.
+        logger.warning(
+            "AD-1248: failure probe for work item %s returned %s, not "
+            "ToolFailures; the report is delivered without a disclosure",
+            work_item_id, type(tool_failures).__name__,
+        )
+        tool_failures = None
+    try:
+        body = str(DmReply(
+            body=body,
+            tool_failures=tool_failures if tool_failures is not None else ToolFailures(),
+        ).render())
+    except Exception:
+        logger.warning(
+            "AD-1248: could not compose the disclosure for work item %s; the "
+            "report is delivered with its body unchanged",
+            work_item_id, exc_info=True,
+        )
     store = getattr(runtime, "chat_thread_store", None)
     if store is None:
         logger.warning(
@@ -323,7 +352,7 @@ def _post_report(
             "nowhere to land; it is recorded here instead: %s",
             work_item_id, _shorten(body, 400),
         )
-        return
+        return body
     try:
         store.append_message(
             thread_id,
@@ -338,6 +367,7 @@ def _post_report(
             "%s; it is recorded here instead: %s",
             work_item_id, thread_id, _shorten(body, 400), exc_info=True,
         )
+    return body
 
 
 async def _store_promoted_episode(
@@ -492,6 +522,7 @@ async def _finish_promoted_turn(
     work_item_id: str,
     request_text: str = "",
     completed_probe: Callable[[], bool] | None = None,
+    failures_probe: Callable[[], Any] | None = None,
 ) -> None:
     """Await a promoted run, report it into the thread, close the work item.
 
@@ -538,12 +569,31 @@ async def _finish_promoted_turn(
         from probos.avatars.divergence_detector import strip_intent_self_tag
 
         body = strip_intent_self_tag(str(text or "")) or _REPORT_EMPTY
-    _post_report(
+    # AD-1248: the awaited task returns a plain string, so the run's tool
+    # failures cannot be recovered here -- exactly the reason BF-704 introduced
+    # ``completed_probe``. Same shape, same reason. Omitting it renders
+    # byte-identically to before.
+    _failures = None
+    if not failed and failures_probe is not None:
+        try:
+            _failures = failures_probe()
+        except Exception:
+            logger.warning(
+                "AD-1248: failure probe for work item %s raised; the promoted "
+                "report is delivered without a tool-failure disclosure",
+                work_item_id, exc_info=True,
+            )
+    # AD-1248: the composed text, reused below. This route has TWO
+    # Captain-visible sinks -- the thread post and the outcome artifact -- and
+    # the artifact previously received the raw body, so a promoted run's stored
+    # evidence disagreed with its transcript about whether a tool failed.
+    reported = _post_report(
         runtime=runtime,
         agent_id=agent_id,
         thread_id=thread_id,
         work_item_id=work_item_id,
         body=body,
+        tool_failures=_failures,
     )
 
     # BF-704: did the run finish, or did it stop? ``completed_probe`` is the
@@ -567,7 +617,7 @@ async def _finish_promoted_turn(
         thread_id=thread_id,
         work_item_id=work_item_id,
         request_text=request_text,
-        body=body,
+        body=reported,
         complete=complete,
         failed=failed,
     )
@@ -606,6 +656,7 @@ async def _report_holding_slot(
     work_item_id: str,
     request_text: str = "",
     completed_probe: Callable[[], bool] | None = None,
+    failures_probe: Callable[[], Any] | None = None,
     background_slot: Callable[[], Any] | None = None,
 ) -> None:
     """BF-732: hold a concurrency slot for as long as the promoted run lives.
@@ -631,6 +682,7 @@ async def _report_holding_slot(
             work_item_id=work_item_id,
             request_text=request_text,
             completed_probe=completed_probe,
+            failures_probe=failures_probe,
         )
         return
 
@@ -656,6 +708,7 @@ async def _report_holding_slot(
             work_item_id=work_item_id,
             request_text=request_text,
             completed_probe=completed_probe,
+            failures_probe=failures_probe,
         )
         return
 
@@ -668,6 +721,7 @@ async def _report_holding_slot(
             work_item_id=work_item_id,
             request_text=request_text,
             completed_probe=completed_probe,
+            failures_probe=failures_probe,
         )
 
 
@@ -681,6 +735,7 @@ async def run_with_promotion(
     request_text: str,
     hold: set["asyncio.Task[Any]"],
     completed_probe: Callable[[], bool] | None = None,
+    failures_probe: Callable[[], Any] | None = None,
     on_promoted: Callable[[str], None] | None = None,
     background_slot: Callable[[], Any] | None = None,
 ) -> str:
@@ -711,6 +766,12 @@ async def run_with_promotion(
     budget is otherwise indistinguishable from one that completed, and the work
     item closes ``done`` either way. Omitting it preserves that behaviour
     exactly, which is why it is optional.
+
+    ``failures_probe`` (AD-1248) is the same shape for the same reason: the
+    awaited task returns a plain string, so the run's tool failures cannot be
+    recovered at report time either. It reads the turn's accumulated
+    ``ToolFailures`` so the promoted report discloses a failed tool instead of
+    silently claiming success. Omitting it renders byte-identically to before.
 
     ``on_promoted`` (AD-1204) is the reverse direction of ``completed_probe``:
     it publishes the work item's id back to the still-running ``work`` the
@@ -808,6 +869,7 @@ async def run_with_promotion(
             work_item_id=work_item.id,
             request_text=request_text,
             completed_probe=completed_probe,
+            failures_probe=failures_probe,
             background_slot=background_slot,
         ),
         name=f"ad1165-report-{work_item.id[:8]}",

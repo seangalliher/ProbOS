@@ -2684,8 +2684,14 @@ def _wire_deferred_turns(*, runtime: Any, config: "SystemConfig") -> bool:
             ttl_seconds=60.0,
             thread_id=thread_id,
         ))
-        if result is not None and result.result:
-            return str(result.result)
+        if result is not None:
+            # AD-1248: this is a Captain-visible sink and it bypasses the reply
+            # pipeline entirely, so it composes here. Composed BEFORE the
+            # emptiness test: a replayed turn that produced no prose but DID
+            # fail a tool has the disclosure as its only truthful content.
+            from probos.cognitive.dm.reply_value import DmReply
+
+            return str(DmReply.from_intent_result(result).render())
         return ""
 
     def _post(thread_id: str, agent_id: str, body: str) -> None:

@@ -1916,24 +1916,44 @@ class CognitiveAgent(BaseAgent):
         # dependencies are wired, execute the work item through the AgenticLoop
         # so the agent can call tools across iterations. Otherwise fall back to
         # the single-shot direct-message lifecycle (AD-839 behaviour).
+        _dispatch_failures: dict = {}
         reply_text = await self._run_agentic_dispatch(
             work_item_id=work_item_id,
             task_text=task_text,
             runtime=runtime,
+            failures_sink=_dispatch_failures,
         )
+        _reply = None
         if reply_text is None:
             result = await self.handle_intent(dm)
             reply_text = ""
             if result is not None and getattr(result, "result", None):
-                reply_text = str(result.result)
+                # AD-1248: the fallback goes through the full lifecycle, so its
+                # attachments ride on the IntentResult rather than the sink.
+                from probos.cognitive.dm.reply_value import DmReply
 
-        if thread is not None and thread_store is not None and reply_text:
+                _reply = DmReply.from_intent_result(result)
+                reply_text = _reply.body
+
+        # AD-1248: compose BEFORE testing for emptiness. A run that produced no
+        # prose but DID fail a tool has the disclosure as its only truthful
+        # content; gating on the raw body discards exactly that.
+        from probos.cognitive.dm.reply_value import DmReply, ToolFailures
+
+        _failures = _dispatch_failures.get("tool_failures")
+        _composed = (
+            _reply.with_body(reply_text) if _reply is not None
+            else DmReply(body=reply_text, tool_failures=_failures or ToolFailures())
+        )
+        _body = str(_composed.render())
+
+        if thread is not None and thread_store is not None and _body:
             try:
                 thread_store.append_message(
                     thread.id,
                     author_id=self.id,
                     role="agent",
-                    body=reply_text,
+                    body=_body,
                     metadata={"intent_id": intent.id, "work_item_id": work_item_id},
                 )
             except Exception:
@@ -1979,7 +1999,7 @@ class CognitiveAgent(BaseAgent):
             intent_id=intent.id,
             agent_id=self.id,
             success=True,
-            result=reply_text or "[NO_RESPONSE]",
+            result=_body or reply_text or "[NO_RESPONSE]",
             confidence=self.confidence,
         )
 
@@ -1989,6 +2009,7 @@ class CognitiveAgent(BaseAgent):
         work_item_id: str,
         task_text: str,
         runtime: Any,
+        failures_sink: dict | None = None,
     ) -> str | None:
         """AD-856: Execute a dispatched work item via the AgenticLoop.
 
@@ -2002,6 +2023,11 @@ class CognitiveAgent(BaseAgent):
         ``DispatchToolExecutor`` and surfaced to the AD-855 capability-gap
         driver after the loop finishes, so a missing tool becomes a tracked
         capability request rather than a silent dead end.
+
+        AD-1248: ``failures_sink`` receives the run's ``ToolFailures``. An
+        out-parameter rather than a changed return type, because the return
+        feeds ``decision["llm_output"]`` which downstream code slices and
+        ``.split()``s -- the same reason DD-7 keeps the value beside the string.
         """
         if runtime is None:
             return None
@@ -2025,7 +2051,12 @@ class CognitiveAgent(BaseAgent):
             instructions=getattr(self, "instructions", "") or "",
             task_text=task_text,
             runtime=runtime,
+            # AD-1248: a work item has no cognitive correlation id -- this path
+            # never calls ``perceive()`` -- so the item's own id is the scope.
+            failure_scope=str(work_item_id or ""),
         )
+        if failures_sink is not None:
+            failures_sink["tool_failures"] = getattr(outcome, "tool_failures", None)
 
         for denied_tool in outcome.denied_tools:
             try:
@@ -4318,6 +4349,11 @@ class CognitiveAgent(BaseAgent):
                     completed_probe=(
                         lambda: _last_stop["reason"] not in _INCOMPLETE_STOP_REASONS
                     ),
+                    # AD-1248: read at REPORT time, not now -- the promoted run
+                    # keeps accumulating passes after this call returns the
+                    # acknowledgement, and the observation is the object those
+                    # passes fold into.
+                    failures_probe=lambda: observation.get("_dm_tool_failures"),
                     on_promoted=_record_promotion,
                     background_slot=_bg_slot,
                 )
