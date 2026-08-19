@@ -267,10 +267,6 @@ _AUDITED_EXEMPTIONS: dict[str, str] = {
     "routers/thread_fanout.py::_dispatch_intent": (
         "Group fan-out -- see _fan_one_round. Same exclusion, same reason."
     ),
-    "federation/bridge.py::forward_direct_message": (
-        "BF-799 (#1263): directed federation is a transport hop, not a sink. "
-        "Carriage is deferred pending the layer + frozen-AST decisions."
-    ),
     "cognitive/qualification_tests.py::_send_probe": (
         "Surfaced by this test, not by the hand-built register -- which is the "
         "point of it. The probe's reply is scored into a TestResult and never "

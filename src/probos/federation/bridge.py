@@ -14,6 +14,7 @@ from collections.abc import Callable, Awaitable
 from typing import Any, TYPE_CHECKING
 
 from probos.config import FederationConfig
+from probos.dm_reply import DM_REPLY_METADATA_KEY
 from probos.federation.relay import (
     RELAY_RATE_LIMIT_PER_SECOND,
     FederationRelayTopic,
@@ -79,6 +80,12 @@ _DIRECTED_RESULT_KEYS = frozenset({
     "error",
     "confidence",
 })
+#: BF-799: the SAME shape plus the AD-1248 disclosure. Two exact shapes rather
+#: than relaxing to "ignore unknown keys" -- the exact-key check is a relay
+#: control against key smuggling, and one additional documented shape keeps it.
+#: A turn with nothing to disclose still serialises as the six-key shape above,
+#: byte for byte, so this is additive on the wire.
+_DIRECTED_RESULT_KEYS_WITH_DM_REPLY = _DIRECTED_RESULT_KEYS | {DM_REPLY_METADATA_KEY}
 _DIRECTED_PARAM_KEYS = frozenset({
     "text",
     "attachment_ref",
@@ -530,11 +537,18 @@ def _detach_directed_result_value(
     value: Any,
     *,
     _string_budget: list[int] | None = None,
+    _node_budget: list[int] | None = None,
 ) -> Any:
-    """Return an exact-built-in detached result under fixed work bounds."""
+    """Return an exact-built-in detached result under fixed work bounds.
+
+    BF-799: ``_node_budget`` is threaded like ``_string_budget`` so that two
+    fields detached for the same message SHARE the node allowance. Left local,
+    carrying a second field would silently grant 2 x ``_MAX_NODES`` per
+    message.
+    """
     root: list[Any] = [None]
     active_container_ids: set[int] = set()
-    node_count = 0
+    node_budget = [0] if _node_budget is None else _node_budget
     string_budget = [0] if _string_budget is None else _string_budget
     stack: list[tuple[Any, ...]] = [("visit", value, 0, root, 0)]
 
@@ -583,8 +597,8 @@ def _detach_directed_result_value(
                 key, item = next(iterator)
             except StopIteration:
                 continue
-            node_count += 1
-            if node_count > _DIRECTED_RESULT_MAX_NODES:
+            node_budget[0] += 1
+            if node_budget[0] > _DIRECTED_RESULT_MAX_NODES:
                 raise ValueError("federation_result_not_serializable")
             if depth + 1 > _DIRECTED_RESULT_MAX_DEPTH or type(key) is not str:
                 raise ValueError("federation_result_not_serializable")
@@ -596,9 +610,9 @@ def _detach_directed_result_value(
             continue
 
         item, depth, parent, slot = frame[1:]
-        node_count += 1
+        node_budget[0] += 1
         if (
-            node_count > _DIRECTED_RESULT_MAX_NODES
+            node_budget[0] > _DIRECTED_RESULT_MAX_NODES
             or depth > _DIRECTED_RESULT_MAX_DEPTH
         ):
             raise ValueError("federation_result_not_serializable")
@@ -654,7 +668,10 @@ def _detach_serialized_directed_result(
     *,
     malformed_error: str,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    if not _has_exact_dict_keys(raw_result, _DIRECTED_RESULT_KEYS):
+    if not (
+        _has_exact_dict_keys(raw_result, _DIRECTED_RESULT_KEYS)
+        or _has_exact_dict_keys(raw_result, _DIRECTED_RESULT_KEYS_WITH_DM_REPLY)
+    ):
         return None, malformed_error
     intent_id = dict.__getitem__(raw_result, "intent_id")
     agent_id = dict.__getitem__(raw_result, "agent_id")
@@ -679,6 +696,7 @@ def _detach_serialized_directed_result(
     if not math.isfinite(normalized_confidence):
         return None, malformed_error
     string_budget = [0]
+    node_budget = [0]
     if error is not None:
         try:
             string_budget[0] = len(str.encode(error, "utf-8"))
@@ -693,22 +711,79 @@ def _detach_serialized_directed_result(
         detached_value = _detach_directed_result_value(
             dict.__getitem__(raw_result, "result"),
             _string_budget=string_budget,
+            _node_budget=node_budget,
         )
     except ValueError:
         return None, "federation_result_not_serializable"
-    return {
+
+    detached = {
         "intent_id": intent_id,
         "agent_id": agent_id,
         "success": success,
         "result": detached_value,
         "error": error,
         "confidence": normalized_confidence,
-    }, None
+    }
+
+    # BF-799: the disclosure is detached AFTER the body and can only ever drop
+    # ITSELF. Letting it fail the whole record would mean a malformed or
+    # oversized disclosure destroys the answer it was attached to -- exactly
+    # the BF-802 defect, one layer down. The body is already safely detached
+    # above, so the worst case here is a reply that arrives without its
+    # disclosure, which is what happens today anyway.
+    if dict.__contains__(raw_result, DM_REPLY_METADATA_KEY):
+        raw_payload = dict.__getitem__(raw_result, DM_REPLY_METADATA_KEY)
+        if type(raw_payload) is not dict:
+            logger.warning(
+                "BF-799: directed result disclosure is %s, not a dict; "
+                "delivering the reply without it",
+                type(raw_payload).__name__,
+            )
+        else:
+            try:
+                detached[DM_REPLY_METADATA_KEY] = _detach_directed_result_value(
+                    raw_payload,
+                    _string_budget=string_budget,
+                    _node_budget=node_budget,
+                )
+            except ValueError:
+                logger.warning(
+                    "BF-799: directed result disclosure exceeded the shared "
+                    "detachment budget; delivering the reply without it"
+                )
+
+    return detached, None
 
 
 def _compact_detach_directed_response(
     serialized_result: dict[str, Any],
 ) -> dict[str, Any] | None:
+    """Encode the response envelope, dropping the disclosure before the answer.
+
+    BF-799: a result sized just under the cap plus even a small disclosure tips
+    the envelope, and returning ``None`` here discards the Captain's whole
+    answer. Measured: a body compacting to exactly 262,144 bytes went to
+    262,176 with a tiny disclosure attached. So when the payload does not fit,
+    retry once WITHOUT the disclosure -- the answer is what must survive.
+    """
+    encoded = _encode_directed_response(serialized_result)
+    if encoded is None and dict.__contains__(serialized_result, DM_REPLY_METADATA_KEY):
+        without = dict(serialized_result)
+        dict.__delitem__(without, DM_REPLY_METADATA_KEY)
+        encoded = _encode_directed_response(without)
+        if encoded is not None:
+            logger.warning(
+                "BF-799: directed response exceeded %d bytes with its "
+                "disclosure attached; delivering the reply without it",
+                _DIRECTED_RESPONSE_MAX_JSON_BYTES,
+            )
+    if encoded is None:
+        return None
+    detached = json.loads(encoded.decode("utf-8"))
+    return detached if type(detached) is dict else None
+
+
+def _encode_directed_response(serialized_result: dict[str, Any]) -> bytes | None:
     payload = {
         "delivery_mode": _DIRECTED_DM_MODE,
         "results": [serialized_result],
@@ -724,8 +799,7 @@ def _compact_detach_directed_response(
         return None
     if len(encoded) > _DIRECTED_RESPONSE_MAX_JSON_BYTES:
         return None
-    detached = json.loads(encoded.decode("utf-8"))
-    return detached if type(detached) is dict else None
+    return encoded
 
 
 def _finalize_directed_result_for_origin(
@@ -846,7 +920,17 @@ def _validate_directed_wire_params(
 
 
 def _serialize_directed_result(result: IntentResult) -> dict[str, Any]:
-    return {
+    """Serialize for the wire, adding the AD-1248 disclosure only if there is one.
+
+    BF-799: directed federation is a transport HOP, not a sink -- the origin
+    reconstructs an ``IntentResult`` and a LOCAL sink renders it -- so the
+    disclosure has to ride across rather than be rendered remotely. Dropping it
+    here is what made a tool failure invisible on the far side.
+
+    The key is omitted entirely when absent, so a turn with nothing to disclose
+    produces the identical six-key payload it always has.
+    """
+    serialized = {
         "intent_id": result.intent_id,
         "agent_id": result.agent_id,
         "success": result.success,
@@ -854,6 +938,12 @@ def _serialize_directed_result(result: IntentResult) -> dict[str, Any]:
         "error": result.error,
         "confidence": result.confidence,
     }
+    metadata = getattr(result, "metadata", None)
+    if type(metadata) is dict:
+        payload = metadata.get(DM_REPLY_METADATA_KEY)
+        if payload is not None:
+            serialized[DM_REPLY_METADATA_KEY] = payload
+    return serialized
 
 
 def _detach_local_directed_result(
@@ -1292,6 +1382,13 @@ class FederationBridge:
             error=dict.__getitem__(detached_result, "error"),
             confidence=dict.__getitem__(detached_result, "confidence"),
         )
+        # BF-799: put the carried disclosure back where the LOCAL sink looks for
+        # it. The bridge never interprets it -- `ToolFailures.from_wire` at the
+        # consumer validates and degrades to empty on anything malformed.
+        if dict.__contains__(detached_result, DM_REPLY_METADATA_KEY):
+            remote_result.metadata[DM_REPLY_METADATA_KEY] = dict.__getitem__(
+                detached_result, DM_REPLY_METADATA_KEY
+            )
         if self._validate_fn:
             try:
                 valid = await self._validate_fn(remote_result)

@@ -1801,8 +1801,15 @@ async def test_directed_dm_target_and_correlation_path_remains_available() -> No
 _FROZEN_METHOD_HASHES = {
     ("src/probos/federation/bridge.py", "FederationBridge", "forward_intent"):
         "595c3fd2fc311b91f8ba3049909d0c383985dbdb15f9d9f19b35f806bf1a7eac",
+    # BF-799 (#1263): rewritten deliberately, not as a side effect. The only
+    # change to this method is putting the carried AD-1248 disclosure back onto
+    # `metadata` after reconstruction, so a tool failure on a remote node is
+    # visible to the Captain instead of being dropped at the hop. The bridge
+    # still never interprets the payload -- `ToolFailures.from_wire` at the
+    # local consumer validates it and degrades to empty on anything malformed.
+    # Previous hash: 8189296e1b8902126031f0f9e35050c48eebce5f2e03ea142ecc968285595cb4
     ("src/probos/federation/bridge.py", "FederationBridge", "forward_direct_message"):
-        "8189296e1b8902126031f0f9e35050c48eebce5f2e03ea142ecc968285595cb4",
+        "3d5920d7631f6d306d27315c7191133d362662a329158fb6eb76d1a5dc0b6de7",
     ("src/probos/federation/bridge.py", "FederationBridge", "_handle_intent_request"):
         "e9f950e1c291249f86a6181c1198284da4e783945540c486b148a21978a47348",
     ("src/probos/federation/bridge.py", "FederationBridge", "_send_directed_response"):

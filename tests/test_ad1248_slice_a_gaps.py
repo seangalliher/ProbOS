@@ -347,49 +347,39 @@ def test_an_empty_body_with_failures_still_renders_something() -> None:
     assert "web_search" in rendered
 
 
-# ── directed federation carriage — DEFERRED, see BF-799 ─────────────────────
+# ── directed federation carriage — LANDED, BF-799 ───────────────────────────
 #
 # Directed federation is a TRANSPORT HOP, not a sink: the origin reconstructs an
-# IntentResult (bridge.py:1287) and a LOCAL sink displays it, so the payload must
-# ride across rather than be rendered remotely. That was implemented and then
-# REVERTED here, deliberately:
+# IntentResult and a LOCAL sink displays it, so the payload rides across rather
+# than being rendered remotely.
 #
-#   * federation/ importing probos.cognitive.dm.reply_value is an undocumented
-#     cross-layer import and fails test_layer_boundaries. Doing it properly needs
-#     DM_REPLY_METADATA_KEY to move down to types.py (where the metadata contract
-#     it names already lives) and the semantic revalidation to move to the local
-#     consumer, which already calls DmReply.from_intent_result.
-#   * bridge.py's executable AST is FROZEN by AD-1123 as a review gate on the
-#     relay path. Rewriting that hash is a deliberate, separately-reviewed act,
-#     not a side effect of an AD-1248 slice.
-#   * forward_direct_message has no production caller today (enumerated in
-#     review round 5), so nothing conceals from the Captain in the meantime.
+# The two blockers that deferred this in slice A are both resolved:
+#   * the layer violation went away when BF-801 moved the value to the
+#     foundation module, so federation/ imports probos.dm_reply (a documented
+#     FOUNDATION_MODULE) and nothing from cognitive/. The issue's suggestion of
+#     moving the key to types.py is therefore unnecessary — and would not work,
+#     because dm_reply.py is asserted stdlib-only and so cannot import types.
+#   * the AD-1123 frozen AST hash for forward_direct_message was rewritten
+#     deliberately, with the previous hash and the reason recorded beside it.
 #
-# A working implementation and its round-trip test existed and passed; the
-# round-trip test found a real bug on the way (the detacher rebuilds the record
-# key by key and silently dropped an unlisted key). Both are recorded in BF-799
-# so the next attempt starts from the finding rather than rediscovering it.
+# The round-trip test below is the one that mattered: adding the payload to the
+# serializer and the accepted key set was NOT enough, because the detacher
+# rebuilds the record key by key. The full two-bridge crossing lives in
+# tests/test_bf799_federation_carriage.py.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BF-799: directed federation drops dm_reply across the hop. Asserted as "
-        "the CORRECT behaviour, not the current one -- a test demanding "
-        "'metadata is absent' would encode the defect as contract and would "
-        "fail the eventual fix. strict=True means this goes RED the moment "
-        "BF-799 lands, forcing the marker off rather than letting a green xfail "
-        "hide a finished fix."
-    ),
-)
 def test_a_metadata_bearing_record_survives_the_full_round_trip() -> None:
     """serialize -> detach -> reconstruct, in ONE test.
 
-    The reverted implementation proved this is the test that matters: adding
-    ``metadata`` to the serializer and the accepted key set was NOT enough,
-    because ``_detach_serialized_directed_result`` rebuilds the record key by
-    key and silently drops anything unlisted. Two end tests both passed while
-    the hop stayed dead.
+    BF-799 has LANDED, so the strict xfail that guarded this gap is gone. The
+    reverted implementation proved this is the test that matters: adding the
+    payload to the serializer and the accepted key set was NOT enough, because
+    ``_detach_serialized_directed_result`` rebuilds the record key by key and
+    silently dropped anything unlisted. Two end tests both passed while the hop
+    stayed dead.
+
+    The full two-bridge crossing lives in ``test_bf799_federation_carriage.py``;
+    this stays as the unit-level guard on the three module-level transforms.
     """
     from probos.federation.bridge import (
         _detach_serialized_directed_result,
@@ -407,7 +397,7 @@ def test_a_metadata_bearing_record_survives_the_full_round_trip() -> None:
     reconstructed = IntentResult(
         intent_id="i", agent_id="ezri", success=True,
         result=detached["result"],
-        metadata=detached.get("metadata") or {},
+        metadata={DM_REPLY_METADATA_KEY: detached[DM_REPLY_METADATA_KEY]},
     )
     assert DmReply.from_intent_result(reconstructed).tool_failures.names() == (
         "web_search",
