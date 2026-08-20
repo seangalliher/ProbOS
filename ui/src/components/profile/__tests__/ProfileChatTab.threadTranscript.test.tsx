@@ -167,10 +167,10 @@ describe('BF-718 speech ledger', () => {
     const ledger = createSpeechLedger();
     const filler = Array.from({ length: SPEECH_SCOPE_CAP }, (_, i) => agentMsg(`m${i}`));
     admitMessages(ledger, 's', filler, { seed: true });
-    expect(ledger.scopes.get('s')?.size).toBe(SPEECH_SCOPE_CAP);
+    expect(ledger.scopes.get('s')?.keys.size).toBe(SPEECH_SCOPE_CAP);
 
     admitMessages(ledger, 's', [agentMsg('newest')], { seed: true });
-    expect(ledger.scopes.get('s')?.size).toBe(SPEECH_SCOPE_CAP);
+    expect(ledger.scopes.get('s')?.keys.size).toBe(SPEECH_SCOPE_CAP);
     // m0 was evicted, so it is speakable again; the newest entry is not.
     expect(admitMessages(ledger, 's', [agentMsg('m0')], { seed: false }).length).toBe(1);
     expect(admitMessages(ledger, 's', [agentMsg('newest')], { seed: false })).toEqual([]);

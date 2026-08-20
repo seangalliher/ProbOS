@@ -143,19 +143,41 @@ export async function loadThreadMessages(
 // navigated away from (BF-671), and the conversation-mode turn-taking signal
 // that has to fire from whoever actually spoke (BF-290).
 
-/** Per-scope memory of what has already been decided about. A scope is one
- *  thread, or the per-agent buffer for a 1:1 that has no thread yet. Keeping
- *  them separate matters: a late response from one thread must not wipe the
- *  state of the thread the Captain is now looking at. */
-export interface SpeechLedger {
-  scopes: Map<string, Set<string>>;
-}
+/** BF-765: the ledger shape and its app-lifetime singleton live in an
+ *  importless module so the global vitest setup can reset it safely.
+ *  Re-exported here because this is where every caller already looks. */
+import type { SpeechLedger, SpeechScope } from './speechLedgerStore';
+
+export type { SpeechLedger, SpeechScope } from './speechLedgerStore';
+export {
+  createSpeechLedger,
+  resetSharedSpeechLedger,
+  sharedSpeechLedger,
+} from './speechLedgerStore';
 
 /** Bound per scope. Insertion-ordered, oldest evicted first. */
 export const SPEECH_SCOPE_CAP = 500;
 
-export function createSpeechLedger(): SpeechLedger {
-  return { scopes: new Map<string, Set<string>>() };
+/** BF-768: bound on the number of SCOPES, not just keys within one.
+ *
+ *  Nothing capped this while the ledger lived on a component ref, because a
+ *  remount discarded the whole thing. BF-765 makes it outlive the mount, which
+ *  turns an unbounded map into a real leak: one entry per thread or per-agent
+ *  buffer ever visited, for the life of the tab. Evicted least-recently-used,
+ *  so the scopes the Captain is actually moving between survive.
+ *
+ *  Sized above the sidebar's 100-thread hydration so a Captain moving among
+ *  loaded threads does not cross it in ordinary use. Past the bound an evicted
+ *  scope forgets and its content may be spoken again -- the accepted cost, and
+ *  the reason the cap is not smaller. */
+export const SPEECH_LEDGER_SCOPE_CAP = 128;
+
+/** Has this scope's existing history been seeded yet? Marks it as seeded. */
+export function markScopeSeen(ledger: SpeechLedger, scopeKey: string): boolean {
+  const scope = scopeRecord(ledger, scopeKey);
+  const first = !scope.seen;
+  scope.seen = true;
+  return first;
 }
 
 /** Identity for speech: role + author + trimmed text, NOT the message id.
@@ -199,13 +221,26 @@ export function isSpeakableAgentMessage(msg: AgentProfileMessage): boolean {
   return text.length > 0 && !text.startsWith('(');
 }
 
-function scopeSet(ledger: SpeechLedger, scopeKey: string): Set<string> {
-  let set = ledger.scopes.get(scopeKey);
-  if (!set) {
-    set = new Set<string>();
-    ledger.scopes.set(scopeKey, set);
+/** The scope's record, touched for LRU and evicting past the bound.
+ *
+ *  Every reader goes through here, so claims and the seeded flag are always
+ *  evicted as one unit. */
+function scopeRecord(ledger: SpeechLedger, scopeKey: string): SpeechScope {
+  let scope = ledger.scopes.get(scopeKey);
+  if (!scope) {
+    scope = { keys: new Set<string>(), seen: false };
+  } else {
+    // Re-insert so Map insertion order is recency order, making the eviction
+    // below least-recently-USED rather than least-recently-created.
+    ledger.scopes.delete(scopeKey);
   }
-  return set;
+  ledger.scopes.set(scopeKey, scope);
+  while (ledger.scopes.size > SPEECH_LEDGER_SCOPE_CAP) {
+    const oldest = ledger.scopes.keys().next();
+    if (oldest.done) break;
+    ledger.scopes.delete(oldest.value);
+  }
+  return scope;
 }
 
 function remember(set: Set<string>, key: string): void {
@@ -234,7 +269,7 @@ export function claimSpeech(
   msg: AgentProfileMessage,
   defaultAuthorId = '',
 ): boolean {
-  const set = scopeSet(ledger, scopeKey);
+  const set = scopeRecord(ledger, scopeKey).keys;
   const key = speechKeyFor(msg, defaultAuthorId);
   if (set.has(key)) return false;
   remember(set, key);

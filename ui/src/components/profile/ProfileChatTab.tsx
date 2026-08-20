@@ -47,7 +47,8 @@ import type {
 // AD-936 ChatMessageRow precedent; keeps the heavy audio deps out of the test).
 import {
   selectTranscriptMessages, threadDtoToMessage, buildTranscriptItems,
-  createSpeechLedger, admitMessages, claimSpeech, speechScopeKey, speechKeyFor,
+  admitMessages, claimSpeech, speechScopeKey, speechKeyFor,
+  sharedSpeechLedger, markScopeSeen,
 } from './profileTranscript';
 import { ModulationIndicator } from './ModulationIndicator';
 import { GroupChatHeader } from './GroupChatHeader';
@@ -624,8 +625,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // the first time it is seen and after any reload that was not triggered by a
   // specific message, which is exactly the set of moments when a whole
   // transcript appears at once.
-  const speechLedgerRef = useRef(createSpeechLedger());
-  const speechSeenScopesRef = useRef(new Set<string>());
+  // BF-765: the ledger is module-scoped, not a ref. A claim scoped to one
+  // mount is not a claim -- switching profile tabs while an in-flight sendText
+  // continuation still held the old ledger gave the new mount a blank one and
+  // both speakers fired. `seenScopes` moved with it for the same reason.
+  const speechLedgerRef = useRef(sharedSpeechLedger());
   const speechSeedScopesRef = useRef(new Set<string>());
   // Message ids the server told us about explicitly. A push can land WHILE a
   // seeding load is in flight and be inside that load's response, so seeding
@@ -1217,8 +1221,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const defersToMeetingSequencer = meetingParticipantIds.length >= 2;
   useEffect(() => {
     const scopeKey = speechScopeKey(activeThreadId, agentId);
-    const firstSight = !speechSeenScopesRef.current.has(scopeKey);
-    speechSeenScopesRef.current.add(scopeKey);
+    const firstSight = markScopeSeen(speechLedgerRef.current, scopeKey);
     const seed = firstSight || speechSeedScopesRef.current.delete(scopeKey);
     const arrivals = admitMessages(speechLedgerRef.current, scopeKey, messages, {
       seed, defaultAuthorId: agentId, liveIds: speechLiveIdsRef.current,

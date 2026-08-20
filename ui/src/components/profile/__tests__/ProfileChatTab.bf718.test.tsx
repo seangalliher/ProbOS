@@ -89,6 +89,7 @@ vi.mock('../../workspace/WorkspaceFilesRail', () => ({
 }));
 
 import { ProfileChatTab } from '../ProfileChatTab';
+import { sharedSpeechLedger } from '../speechLedgerStore';
 import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
 import type { Agent } from '../../../store/types';
 
@@ -297,8 +298,7 @@ describe('BF-718 — a pushed message is spoken', () => {
     await serverPushes('Now I have a good picture of both products.');
     await act(async () => { await Promise.resolve(); });
 
-    expect(spokenTexts()).not.toContain('Now I have a good picture of both products.');
-  });
+    expect(spokenTexts()).not.toContain('Now I have a good picture of both products.');  });
 });
 
 describe('BF-718 — an ordinary reply is spoken exactly once', () => {
@@ -657,5 +657,27 @@ describe('BF-718 — the inherited rules still hold', () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(spokenTexts()).not.toContain('a peer reply in a crew room');
+  });
+});
+
+describe('BF-765 — the claim outlives the mount', () => {
+  it('the mounted component claims into the SHARED ledger, not a private one', async () => {
+    // The consumer crossing. The lifetime unit tests never mount the
+    // component, so reverting `useRef(sharedSpeechLedger())` back to
+    // `useRef(createSpeechLedger())` would leave every one of them green --
+    // the claim would work perfectly inside a ledger nothing else can see.
+    seed({ tts: true });
+    await mount();
+
+    await serverPushes('The scan is complete.');
+    await waitFor(() => {
+      expect(spokenTexts()).toContain('The scan is complete.');
+    });
+
+    const scope = sharedSpeechLedger().scopes.get(THREAD_ID);
+    expect(
+      scope, 'the component spoke but the shared ledger never saw the claim',
+    ).toBeDefined();
+    expect(scope!.keys.size).toBeGreaterThan(0);
   });
 });
