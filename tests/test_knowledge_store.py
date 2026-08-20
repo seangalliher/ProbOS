@@ -2091,9 +2091,16 @@ class TestGitIntegration:
         store = KnowledgeStore(cfg)
         await store.initialize()
         await store.store_episode(_make_test_episode("ac1"))
-        # Wait for debounce
-        await asyncio.sleep(0.3)
-        count = await store.commit_count()
+        # BF-816: poll rather than sleep a fixed 0.3s. The commit is done by a
+        # real `git` subprocess, and under `-n 16` on Windows the spawn alone
+        # can exceed that -- the assertion was a coin flip that red-flagged
+        # unrelated commits. Costs nothing when it passes promptly.
+        count = 0
+        for _ in range(200):  # up to ~10s
+            count = await store.commit_count()
+            if count >= 1:
+                break
+            await asyncio.sleep(0.05)
         assert count >= 1
 
     @requires_git
