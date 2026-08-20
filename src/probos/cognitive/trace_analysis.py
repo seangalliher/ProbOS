@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from itertools import islice
@@ -191,6 +192,73 @@ def _clip(text: Any, limit: int) -> str:
 
 def _quote(text: Any) -> str:
     return _clip(text, _ERROR_QUOTE_MAX)
+
+
+_TRANSPORT_MAX_DEPTH = 120
+
+
+def sanitise_for_transport(value: Any, *, _depth: int = 0) -> tuple[Any, bool]:
+    """``value`` made renderable as JSON, and whether anything had to change.
+
+    BF-775: the trace detail route echoes raw call records, which are model-
+    and tool-written. ``json.dumps`` accepts a lone surrogate so one survives
+    the write, but rendering the response encodes to UTF-8 and raises -- so a
+    single bad character made that whole trace permanently unreadable through
+    the API. The trace is the flight recorder, and the likeliest way to persist
+    a surrogate is a tool returning malformed output, i.e. exactly the failing
+    run someone would then go and look at.
+
+    Three things cannot reach the wire and are handled here:
+
+    * unpaired surrogates in strings, and in dict KEYS -- a bad key fails the
+      same encode as a bad value;
+    * non-finite floats, which ``json.dumps`` emits as ``NaN``/``Infinity``
+      literals that are not valid JSON;
+    * depth beyond ``_TRANSPORT_MAX_DEPTH``, which would otherwise trade a
+      surrogate error for a ``RecursionError``.
+
+    KEY COLLISIONS ARE PRESERVED, NOT DROPPED. Sanitising maps both
+    ``"a\\ud800b"`` and a legitimate ``"a?b"`` onto ``"a?b"``, so a naive
+    assignment silently deletes one call argument -- data loss concealed behind
+    a successful response, which for a flight recorder is worse than the 500
+    being fixed. A collision can only arise from sanitising, because the source
+    mapping's keys were distinct, so a suffix is appended and reported.
+
+    Numbers, bools and ``None`` are otherwise returned untouched: ``_clip``
+    deliberately preserves ``0`` and ``False`` for auditors and this must not
+    undo that by stringifying.
+
+    Returns the flag rather than logging it, because the caller has to tell the
+    reader the echo is no longer byte-exact. Silently rewriting a field
+    documented as verbatim is the defect this avoids, one layer on.
+    """
+    if _depth > _TRANSPORT_MAX_DEPTH:
+        return "<depth-limited>", True
+    if isinstance(value, str):
+        clean = value.encode("utf-8", "replace").decode("utf-8", "replace")
+        return clean, clean != value
+    if isinstance(value, float) and not math.isfinite(value):
+        return None, True
+    if isinstance(value, dict):
+        out: dict[Any, Any] = {}
+        changed = False
+        for key, item in value.items():
+            new_key, key_changed = sanitise_for_transport(key, _depth=_depth + 1)
+            new_item, item_changed = sanitise_for_transport(item, _depth=_depth + 1)
+            changed = changed or key_changed or item_changed
+            if new_key in out:
+                suffix = 1
+                while f"{new_key}~{suffix}" in out:
+                    suffix += 1
+                new_key = f"{new_key}~{suffix}"
+                changed = True
+            out[new_key] = new_item
+        return out, changed
+    if isinstance(value, (list, tuple)):
+        items = [sanitise_for_transport(item, _depth=_depth + 1) for item in value]
+        changed = any(flag for _, flag in items)
+        return [item for item, _ in items], changed
+    return value, False
 
 
 def _type_name(value: Any) -> str:

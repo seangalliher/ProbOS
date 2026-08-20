@@ -162,10 +162,8 @@ def test_one_bad_character_does_not_fail_the_whole_listing() -> None:
     character. Rendered into a summary unsanitised it fails JSONResponse, so a
     single malformed trace would take out the listing for every other trace.
 
-    Scoped to the list route deliberately. GET /api/traces/{ref} still returns
-    500 here, because it echoes the raw ``calls`` array verbatim and the bad
-    character is in the source data -- a pre-existing exposure on a line this
-    change does not touch, tracked separately as BF-775.
+    The detail route is covered by the BF-775 tests below; it echoed the raw
+    ``calls`` array verbatim and used to 500 on the same input.
     """
     ref = "e" * 64
     trace = [{"id": "1", "name": "t", "arguments": {"q": "before\ud800after"},
@@ -179,6 +177,221 @@ def test_one_bad_character_does_not_fail_the_whole_listing() -> None:
 
     assert r.status_code == 200
     assert r.json()["traces"][0]["summary"]["requests_total"] == 1
+
+
+# ── BF-775: the detail route survives a bad character too ────────
+
+
+def _surrogate_store(ref: str, trace: list) -> _FakeAttachmentStore:
+    return _FakeAttachmentStore(
+        blobs={ref: json.dumps(trace).encode("utf-8")},
+        index=[(ref, 100.0)],
+    )
+
+
+def test_a_lone_surrogate_no_longer_makes_the_detail_route_500() -> None:
+    """The trace is the flight recorder. The likeliest way to persist a
+    surrogate is a tool returning malformed output -- i.e. exactly the failing
+    run someone would then go and look at."""
+    ref = "e" * 64
+    trace = [{"id": "1", "name": "t", "arguments": {"q": "before\ud800after"},
+              "output": "ok", "is_error": False}]
+
+    r = _client(_surrogate_store(ref, trace)).get(f"/api/traces/{ref}")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["calls"][0]["arguments"]["q"].startswith("before")
+
+
+def test_a_sanitised_echo_says_it_is_not_byte_exact() -> None:
+    """`calls` is documented as verbatim, so a silent rewrite would relocate
+    the defect rather than fix it."""
+    ref = "e" * 64
+    trace = [{"id": "1", "name": "t", "arguments": {"q": "x\ud800y"},
+              "output": "ok", "is_error": False}]
+
+    body = _client(_surrogate_store(ref, trace)).get(f"/api/traces/{ref}").json()
+
+    assert body["calls_sanitised"] is True
+
+
+def test_a_clean_trace_is_not_flagged_as_sanitised() -> None:
+    """The flag must mean something; setting it always would make it noise."""
+    r = _client(_populated()).get(f"/api/traces/{REF_OK}")
+
+    assert r.status_code == 200
+    assert "calls_sanitised" not in r.json()
+
+
+def test_the_summary_is_still_served_alongside_a_sanitised_echo() -> None:
+    """The summary answers "what happened" and is already clean (BF-774)."""
+    ref = "e" * 64
+    trace = [{"id": "1", "name": "t", "arguments": {"q": "x\ud800y"},
+              "output": "ok", "is_error": False}]
+
+    body = _client(_surrogate_store(ref, trace)).get(f"/api/traces/{ref}").json()
+
+    assert body["summary"]["requests_total"] == 1
+
+
+def test_a_surrogate_in_a_key_is_also_survivable() -> None:
+    """A bad key fails the same encode as a bad value."""
+    ref = "e" * 64
+    trace = [{"id": "1", "name": "t", "arguments": {"bad\ud800key": "v"},
+              "output": "ok", "is_error": False}]
+
+    r = _client(_surrogate_store(ref, trace)).get(f"/api/traces/{ref}")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["calls_sanitised"] is True
+
+
+def test_a_key_collision_does_not_delete_a_call_argument() -> None:
+    """Sanitising maps both "a\\ud800b" and a legitimate "a?b" onto "a?b".
+
+    A naive assignment drops one and still returns 200 with the flag set --
+    forensic data loss concealed behind a successful response, which for a
+    flight recorder is worse than the 500 being fixed.
+    """
+    ref = "e" * 64
+    trace = [{"id": "1", "name": "t",
+              "arguments": {"bad\ud800key": "surrogate-value",
+                            "bad?key": "literal-question-value"},
+              "output": "ok", "is_error": False}]
+
+    r = _client(_surrogate_store(ref, trace)).get(f"/api/traces/{ref}")
+
+    assert r.status_code == 200, r.text
+    args = r.json()["calls"][0]["arguments"]
+    assert len(args) == 2, f"a call argument was silently dropped: {args}"
+    assert set(args.values()) == {"surrogate-value", "literal-question-value"}
+
+
+def test_a_deeply_nested_argument_is_still_readable() -> None:
+    """The production writer accepts nested ``arguments``; FastAPI's annotated-
+    dict serializer fails around 96 levels down, before JSONResponse.
+
+    Depth chosen to sit BELOW the transport truncation bound and ABOVE the
+    serializer's limit, so it discriminates. A depth past the bound is
+    truncated first and would pass either way.
+    """
+    ref = "e" * 64
+    deep: Any = "leaf"
+    for _ in range(110):
+        deep = {"n": deep}
+    trace = [{"id": "1", "name": "t", "arguments": {"tree": deep},
+              "output": "ok", "is_error": False}]
+
+    r = _client(_surrogate_store(ref, trace)).get(f"/api/traces/{ref}")
+
+    assert r.status_code == 200, r.text[:400]
+
+
+def test_nesting_past_the_transport_bound_is_truncated_and_flagged() -> None:
+    """Without a bound, a pathological trace trades a surrogate error for a
+    RecursionError -- still a 500, just a different one."""
+    from probos.cognitive.trace_analysis import (
+        _TRANSPORT_MAX_DEPTH,
+        sanitise_for_transport,
+    )
+
+    deep: Any = "leaf"
+    for _ in range(_TRANSPORT_MAX_DEPTH + 40):
+        deep = {"n": deep}
+
+    clean, changed = sanitise_for_transport(deep)
+
+    assert changed is True, "truncation happened but was not reported"
+    rendered = json.dumps(clean)
+    assert "<depth-limited>" in rendered
+
+
+def test_a_non_finite_float_does_not_produce_invalid_json() -> None:
+    """json.dumps emits bare NaN/Infinity, which is not valid JSON."""
+    from probos.cognitive.trace_analysis import sanitise_for_transport
+
+    clean, changed = sanitise_for_transport(
+        {"nan": float("nan"), "inf": float("inf"), "ok": 1.5}
+    )
+
+    assert changed is True
+    assert clean["nan"] is None
+    assert clean["inf"] is None
+    assert clean["ok"] == 1.5
+
+
+def test_astral_characters_are_not_mangled() -> None:
+    """Correctly paired non-BMP characters are real data, not encoding errors."""
+    from probos.cognitive.trace_analysis import sanitise_for_transport
+
+    value = {"emoji": "\U0001F600", "cjk": "\U00020000"}
+
+    clean, changed = sanitise_for_transport(value)
+
+    assert changed is False
+    assert clean == value
+
+
+def test_a_surrogate_nested_deep_in_the_arguments_is_reached() -> None:
+    """``arguments`` is the nested field the production writer preserves;
+    ``output`` is stringified before persistence."""
+    ref = "e" * 64
+    trace = [{"id": "1", "name": "t",
+              "arguments": {"rows": [{"cell": "deep\ud800bad"}]},
+              "output": "ok", "is_error": False}]
+
+    r = _client(_surrogate_store(ref, trace)).get(f"/api/traces/{ref}")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["calls_sanitised"] is True
+
+
+def test_sanitising_preserves_non_string_scalars() -> None:
+    """0, 0.0 and False are values an auditor needs to see. Stringifying them
+    is the mistake _clip's docstring already warns about."""
+    from probos.cognitive.trace_analysis import sanitise_for_transport
+
+    value = {"zero": 0, "float": 0.0, "false": False, "none": None,
+             "nested": [1, {"deep": True}]}
+
+    clean, changed = sanitise_for_transport(value)
+
+    assert changed is False
+    assert clean == value
+    assert clean["false"] is False
+    assert clean["none"] is None
+
+
+def test_sanitising_reports_no_change_for_clean_input() -> None:
+    from probos.cognitive.trace_analysis import sanitise_for_transport
+
+    clean, changed = sanitise_for_transport({"a": ["b", {"c": "d"}]})
+
+    assert changed is False
+    assert clean == {"a": ["b", {"c": "d"}]}
+
+
+def test_sanitised_output_actually_encodes() -> None:
+    """The property that matters: the result can reach the wire.
+
+    Uses the REAL response encoder. A bare ``json.dumps`` defaults to
+    ``ensure_ascii=True``, which renders an unpaired surrogate as the ASCII
+    escape ``\\ud800`` and passes whether or not anything was sanitised -- the
+    first version of this test was vacuous for exactly that reason.
+    """
+    from fastapi.responses import JSONResponse
+
+    from probos.cognitive.trace_analysis import sanitise_for_transport
+
+    clean, changed = sanitise_for_transport(
+        {"k\ud800": ["v\udfff", {"n": "\ud800"}]}
+    )
+
+    assert changed is True
+    JSONResponse(content=clean).body  # must not raise
+
+    with pytest.raises(UnicodeEncodeError):
+        json.dumps({"n": "\ud800"}, ensure_ascii=False).encode("utf-8")
 
 
 def test_get_trace_surfaces_the_stall_that_the_agents_own_account_would_not() -> None:

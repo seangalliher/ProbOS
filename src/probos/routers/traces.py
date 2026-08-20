@@ -34,8 +34,13 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 
-from probos.cognitive.trace_analysis import analyse_trace, load_trace
+from probos.cognitive.trace_analysis import (
+    analyse_trace,
+    load_trace,
+    sanitise_for_transport,
+)
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -142,20 +147,39 @@ async def list_traces(
 
 
 @router.get("/{ref}")
-async def get_trace(ref: str, runtime: Any = Depends(get_runtime)) -> dict:
+async def get_trace(ref: str, runtime: Any = Depends(get_runtime)) -> JSONResponse:
     """The full decoded trace for one run: every call, its arguments, and
     whether it errored -- plus the AD-1171 summary over it.
 
     This is the answer to "what did the agent actually do?", which its own
     account of the run is only a hypothesis about.
+
+    BF-775: returns ``JSONResponse`` explicitly rather than an annotated
+    ``dict``. FastAPI's serializer for the latter raises "Circular reference
+    detected (depth exceeded)" from about 96 levels down, and the only
+    production writer accepts nested ``ToolCallRequest.arguments`` -- 496
+    levels were observed persisting fine. Since ``sanitise_for_transport`` has
+    already made the payload JSON-safe, that intermediate pass adds a failure
+    mode without adding a guarantee.
     """
     store = _store(runtime)
     clean = _clean_ref(ref)
     entries = await load_trace(store, clean)
     if entries is None:
         raise HTTPException(status_code=404, detail="Trace not found or unreadable")
-    return {
+    # `calls` is documented as verbatim, so when the echo is altered the
+    # response says so rather than quietly differing.
+    safe_entries, sanitised = sanitise_for_transport(entries)
+    payload: dict[str, Any] = {
         "ref": clean,
-        "calls": entries,
+        "calls": safe_entries,
         "summary": _summary_dict(entries),
     }
+    if sanitised:
+        logger.warning(
+            "BF-775: trace %s carries values that cannot be rendered as JSON; "
+            "`calls` was normalised for transport and is not byte-exact",
+            clean[:12],
+        )
+        payload["calls_sanitised"] = True
+    return JSONResponse(content=payload)
