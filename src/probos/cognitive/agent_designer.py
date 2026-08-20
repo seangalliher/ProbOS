@@ -82,8 +82,17 @@ WEB DATA FETCHING — when the intent requires real-time data from the internet:
           for r in results:
               if r.success and r.result:
                   body = r.result
+                  status = None
                   if isinstance(body, dict):
+                      status = body.get("status_code")
                       body = body.get("body", body.get("content", str(body)))
+                  # BF-772: a non-2xx is the server refusing. Its body is an
+                  # error page, not your content. Reading it as content is how
+                  # an agent reports a rate-limit page as though it were the
+                  # answer.
+                  if status is not None and not (200 <= int(status) < 300):
+                      fetched_content = "FETCH_ERROR: the server answered HTTP " + str(status)
+                      break
                   fetched_content = str(body)[:8000]
                   break
       if not fetched_content:
@@ -173,8 +182,15 @@ class {class_name}(CognitiveAgent):
             for r in results:
                 if r.success and r.result:
                     body = r.result
+                    status = None
                     if isinstance(body, dict):
+                        status = body.get("status_code")
                         body = body.get("body", body.get("content", str(body)))
+                    # BF-772: a non-2xx is a refusal, and a refusal is not
+                    # content.
+                    if status is not None and not (200 <= int(status) < 300):
+                        fetched_content = "FETCH_ERROR: the server answered HTTP " + str(status)
+                        break
                     fetched_content = str(body)[:8000]
                     break
         if not fetched_content:

@@ -436,23 +436,24 @@ class TestBF769FetchCarriesStatus:
         assert final is None
 
     @pytest.mark.asyncio
-    async def test_the_plain_wrapper_still_returns_just_the_body(self):
-        # PageReader/Weather/News still use it; they must be unaffected.
-        from probos.mesh.intent import IntentBus
-        from probos.mesh.signal import SignalManager
-        from probos.types import IntentResult as _IR
+    async def test_the_plain_wrapper_is_gone(self):
+        """Inverted by BF-772 (#1229), and kept rather than deleted.
 
-        bus = IntentBus(SignalManager())
+        This asserted that ``_mesh_fetch`` returned just the body, on the
+        premise in its own comment: "PageReader/Weather/News still use it; they
+        must be unaffected." That premise was the defect. Being unaffected meant
+        all three kept reading a 429 body as content, which is what BF-772
+        fixed by moving them to ``_mesh_fetch_detailed``.
 
-        async def _ok(intent):
-            return _IR(intent_id=intent.id, agent_id="http-0", success=True,
-                       result={"body": "page text", "status_code": 200})
+        With its last callers gone the helper is deleted, not deprecated: a
+        wrapper whose whole purpose is discarding the status is an invitation
+        to repeat this. Inverted so the history stays visible and nobody
+        reintroduces it as a convenience.
+        """
+        from probos.agents.utility import web_agents
 
-        bus.subscribe("http-0", _ok, ["http_fetch"])
-        runtime = MagicMock()
-        runtime.intent_bus = bus
-
-        assert await web_agents._mesh_fetch(runtime, "https://e.co/x") == "page text"
+        assert not hasattr(web_agents, "_mesh_fetch")
+        assert hasattr(web_agents, "_mesh_fetch_detailed")
 
 
 class TestBF769NotASearch:

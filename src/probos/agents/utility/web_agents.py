@@ -86,15 +86,79 @@ async def _mesh_fetch_detailed(
     return None, None, None
 
 
-async def _mesh_fetch(runtime: Any, url: str) -> str | None:
-    """Body text for one URL, fetched through the mesh. Status discarded.
+class _FetchGatedMixin:
+    """A non-2xx is a refusal, and a refusal is not content.
 
-    Kept for callers that only ever read a page they expect to exist. Anything
-    that must distinguish "refused" from "empty" wants
-    :func:`_mesh_fetch_detailed` instead.
+    BF-769 gave ``WebSearchAgent`` this shape; BF-772 (#1229) found the three
+    siblings still reading an error body as though it were the page. Measured
+    by injecting a 429: PageReader summarised the string ``429 Too Many
+    Requests`` as page content, Weather reported from the HTML error page, and
+    News said ``No headlines found in RSS feed.`` -- an authoritative-sounding
+    absence produced by a refusal, which is the same class of defect BF-769
+    fixed in search.
+
+    Shared rather than copied into each agent. Three identical ``decide``/
+    ``act`` pairs are three chances for the next one to drift, and the reason
+    this defect existed at all is that the BF-769 fix landed on one caller.
+
+    Subclasses set :attr:`_fetch_failure_prefix` and call :meth:`_fetch_or_fail`.
     """
-    body, _status, _final = await _mesh_fetch_detailed(runtime, url)
-    return body
+
+    #: How this agent names what it did not obtain, e.g. "no page was read".
+    _fetch_failure_prefix = "the fetch did not succeed"
+
+    async def _fetch_or_fail(self, obs: dict, url: str) -> str | None:
+        """Body for a non-empty 2xx; otherwise flag the observation and return ``None``.
+
+        An empty 2xx counts as a failure. The first draft let it through,
+        reasoning that an empty page really was served and callers treat a
+        falsy body as nothing to show. Review disproved that by execution: with
+        no ``fetched_content`` the agents still call the LLM with no evidence,
+        and News returned a fabricated headline set as ``success=True``. An
+        empty response is also not a valid RSS feed -- a feed that was served
+        and carried no items is a different thing, still arrives as real XML,
+        and still honestly yields "No headlines found".
+        """
+        body, status, _final = await _mesh_fetch_detailed(
+            getattr(self, "_runtime", None), url
+        )
+        if body is None:
+            reason = "the request did not come back"
+        elif status is not None and not (200 <= status < 300):
+            reason = f"the server answered HTTP {status}"
+        elif not body.strip():
+            reason = "the response was empty"
+        else:
+            return body
+
+        obs["fetch_failed"] = True
+        obs["fetch_error"] = f"{self._fetch_failure_prefix}: {reason}"
+        logger.warning(
+            "BF-772: %s reporting failure rather than reading the response as "
+            "content (%s); the URL is not logged because a failed fetch can "
+            "carry a credential the Captain pasted",
+            type(self).__name__, reason,
+        )
+        return None
+
+    async def decide(self, observation: dict) -> dict:
+        # Short-circuit before the LLM, as BF-769 does: with no content there is
+        # nothing to reason over and ``act`` discards the output anyway, so a
+        # model call would spend a request to produce a string nobody reads.
+        if observation.get("fetch_failed"):
+            return {
+                "action": "fetch_failed",
+                "fetch_failed": True,
+                "fetch_error": observation.get("fetch_error", ""),
+            }
+        return await super().decide(observation)  # type: ignore[misc]
+
+    async def act(self, decision: dict) -> dict:
+        if decision.get("action") == "error":
+            return {"success": False, "error": decision.get("reason")}
+        if decision.get("fetch_failed"):
+            return {"success": False, "error": decision.get("fetch_error", "")}
+        return {"success": True, "result": decision.get("llm_output", "")}
 
 
 # ------------------------------------------------------------------
@@ -316,7 +380,7 @@ class WebSearchAgent(_BundledMixin, CognitiveAgent):
 # PageReaderAgent
 # ------------------------------------------------------------------
 
-class PageReaderAgent(_BundledMixin, CognitiveAgent):
+class PageReaderAgent(_FetchGatedMixin, _BundledMixin, CognitiveAgent):
     """Read and summarize a web page (fetched through mesh http_fetch)."""
 
     agent_type = "page_reader"
@@ -338,12 +402,13 @@ class PageReaderAgent(_BundledMixin, CognitiveAgent):
     ]
     _handled_intents = {"read_page"}
     default_capabilities = [CapabilityDescriptor(can="read_page")]
+    _fetch_failure_prefix = "no page was read"
 
     async def perceive(self, intent: Any) -> dict:
         obs = await super().perceive(intent)
         url = obs.get("params", {}).get("url", "")
         if url and self._runtime:
-            body = await _mesh_fetch(self._runtime, url)
+            body = await self._fetch_or_fail(obs, url)
             if body:
                 # Strip HTML tags for cleaner LLM context
                 text = re.sub(r"<[^>]+>", " ", body)
@@ -351,17 +416,12 @@ class PageReaderAgent(_BundledMixin, CognitiveAgent):
                 obs["fetched_content"] = text[:8000]
         return obs
 
-    async def act(self, decision: dict) -> dict:
-        if decision.get("action") == "error":
-            return {"success": False, "error": decision.get("reason")}
-        return {"success": True, "result": decision.get("llm_output", "")}
-
 
 # ------------------------------------------------------------------
 # WeatherAgent
 # ------------------------------------------------------------------
 
-class WeatherAgent(_BundledMixin, CognitiveAgent):
+class WeatherAgent(_FetchGatedMixin, _BundledMixin, CognitiveAgent):
     """Get current weather for a location (via wttr.in JSON through mesh)."""
 
     agent_type = "weather"
@@ -382,6 +442,7 @@ class WeatherAgent(_BundledMixin, CognitiveAgent):
     ]
     _handled_intents = {"get_weather"}
     default_capabilities = [CapabilityDescriptor(can="get_weather")]
+    _fetch_failure_prefix = "no weather data was obtained"
 
     async def perceive(self, intent: Any) -> dict:
         obs = await super().perceive(intent)
@@ -389,15 +450,10 @@ class WeatherAgent(_BundledMixin, CognitiveAgent):
         if location and self._runtime:
             encoded = urllib.parse.quote_plus(location)
             url = f"https://wttr.in/{encoded}?format=j1"
-            body = await _mesh_fetch(self._runtime, url)
+            body = await self._fetch_or_fail(obs, url)
             if body:
                 obs["fetched_content"] = body[:8000]
         return obs
-
-    async def act(self, decision: dict) -> dict:
-        if decision.get("action") == "error":
-            return {"success": False, "error": decision.get("reason")}
-        return {"success": True, "result": decision.get("llm_output", "")}
 
 
 # ------------------------------------------------------------------
@@ -412,7 +468,7 @@ _DEFAULT_RSS_FEEDS: dict[str, str] = {
 }
 
 
-class NewsAgent(_BundledMixin, CognitiveAgent):
+class NewsAgent(_FetchGatedMixin, _BundledMixin, CognitiveAgent):
     """Get latest news headlines from RSS feeds (fetched through mesh)."""
 
     agent_type = "news"
@@ -434,6 +490,7 @@ class NewsAgent(_BundledMixin, CognitiveAgent):
     ]
     _handled_intents = {"get_news"}
     default_capabilities = [CapabilityDescriptor(can="get_news")]
+    _fetch_failure_prefix = "no headlines were obtained"
 
     async def perceive(self, intent: Any) -> dict:
         obs = await super().perceive(intent)
@@ -445,7 +502,11 @@ class NewsAgent(_BundledMixin, CognitiveAgent):
             rss_url = source
 
         if self._runtime:
-            body = await _mesh_fetch(self._runtime, rss_url)
+            # The worst shape this fixes: an unserved feed used to arrive as
+            # "No headlines found in RSS feed." -- a confident statement about
+            # the world produced by a refusal. That sentence now means only
+            # what it says: the feed was served and carried no items.
+            body = await self._fetch_or_fail(obs, rss_url)
             if body:
                 # Parse RSS XML and extract headlines
                 headlines = self._parse_rss(body)
@@ -479,8 +540,3 @@ class NewsAgent(_BundledMixin, CognitiveAgent):
         if not items:
             return "No headlines found in RSS feed."
         return "\n\n".join(items)
-
-    async def act(self, decision: dict) -> dict:
-        if decision.get("action") == "error":
-            return {"success": False, "error": decision.get("reason")}
-        return {"success": True, "result": decision.get("llm_output", "")}
