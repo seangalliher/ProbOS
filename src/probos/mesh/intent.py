@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from probos.types import HandlerLatencyClass, IntentMessage, IntentResult, Priority
 from probos.mesh.signal import SignalManager
+from probos.mesh.pre_intent_auth import IntentAuthorizationDenied, authorize_intent
 
 if TYPE_CHECKING:
     from probos.mesh.nats_bus import NATSBus
@@ -25,32 +26,11 @@ logger = logging.getLogger(__name__)
 IntentHandler = Callable[[IntentMessage], Awaitable[IntentResult | None]]
 
 
-class IntentAuthorizationDenied(PermissionError):
-    """A pre-intent authorization hook refused this intent (BF-771).
-
-    OPT-IN ONLY. The bus reports a denial in each entry point's pre-existing
-    refusal shape by default (``send`` -> ``None``, ``broadcast`` -> ``[]``,
-    ``dispatch_async`` -> no-op). This exception is raised only when a caller
-    passes ``raise_on_denial=True`` because it must tell a policy refusal apart
-    from a silent no-op -- ``accept_notification`` acknowledged a notification
-    whose dispatch had been refused, which is the case that motivated it.
-
-    It is deliberately NOT the default: it subclasses ``PermissionError``, so
-    ``except Exception`` catches it, and of the 35 bus call seams 14 sit inside
-    a broad handler that would swallow it and degrade with a misleading cause
-    -- one renders a refusal as "the lookup didn't finish in time". Raising
-    there relocates the defect rather than fixing it. Every consumer that opts
-    in is verified individually.
-    """
-
-    def __init__(self, intent_name: str, reason: str, entry_point: str) -> None:
-        self.intent_name = intent_name
-        self.reason = reason
-        self.entry_point = entry_point
-        super().__init__(
-            f"intent {intent_name!r} denied by pre-auth hook {reason!r} "
-            f"(via {entry_point})"
-        )
+# BF-789: the class itself moved to `mesh.pre_intent_auth` so that consumers
+# opting into the raising denial shape -- the AD-654c Dispatcher among them --
+# can catch it without a module-level import of this module. Re-exported here
+# because five production modules import it from `probos.mesh.intent`.
+IntentAuthorizationDenied = IntentAuthorizationDenied
 
 _DETERMINISTIC_HANDLER_LATENCY_MS = 100.0
 _NETWORK_HANDLER_LATENCY_MS = 10_000.0
@@ -837,48 +817,23 @@ class IntentBus:
         different problem -- checking at both transport ends would
         double-charge a stateful hook such as a rate limiter.
         """
-        try:
-            from probos.extensions.overlay import evaluate_pre_intent_authorization
-        except Exception as exc:
-            # DENY. `probos.extensions.overlay` is OSS core, not the optional
-            # overlay package -- "no overlay installed" is already represented
-            # by an empty hook registry, which returns (True, ""). So an import
-            # failure here means broken core, version skew, or a missing export,
-            # and allowing in that state silently removes policy enforcement at
-            # exactly the moment the code is untrustworthy.
-            logger.error(
-                "AD-698: pre-intent authorization module failed to import "
-                "(%s) for intent %s; DENYING. This is core code -- an absent "
-                "overlay presents as an empty hook registry, not an ImportError",
-                type(exc).__name__, intent.intent, exc_info=True,
-            )
-            if raise_on_denial:
-                raise IntentAuthorizationDenied(
-                    intent.intent, f"import:{type(exc).__name__}", entry_point
-                ) from exc
-            return False
-        try:
-            allowed, reason = evaluate_pre_intent_authorization(intent)
-        except Exception as exc:
-            # The evaluator itself breaking is not a licence to proceed. The old
-            # code caught this in the same `except` as the import and allowed
-            # the intent, so a crashing evaluator authorized everything.
-            logger.error(
-                "AD-698: pre-intent authorization evaluator raised %s for "
-                "intent %s; DENYING rather than proceeding unauthorized",
-                type(exc).__name__, intent.intent, exc_info=True,
-            )
-            if raise_on_denial:
-                raise IntentAuthorizationDenied(
-                    intent.intent, f"evaluator:{type(exc).__name__}", entry_point
-                ) from exc
-            return False
+        # BF-789: the evaluation itself lives in `mesh.pre_intent_auth`, because
+        # the AD-654c Dispatcher reaches handlers without touching this class and
+        # needs to ask the identical question. Fail-closed handling for a broken
+        # import and for a raising evaluator lives there; this method only maps
+        # the verdict onto the bus's denial shape.
+        #
+        # DIAGNOSTIC CHANGE, stated because it is a real difference: the
+        # import-failure and evaluator-failure paths used to raise `from exc`,
+        # so `__cause__` carried the underlying error. The shared helper reports
+        # a verdict rather than an exception, so `__cause__` is now None on
+        # those two paths. Reason strings (`import:*`, `evaluator:*`) and
+        # `entry_point` are unchanged, and the full traceback is still logged
+        # with `exc_info=True` -- under `probos.mesh.pre_intent_auth` now, not
+        # `probos.mesh.intent`. No consumer inspects the cause.
+        allowed, reason = authorize_intent(intent, entry_point=entry_point)
         if allowed:
             return True
-        logger.info(
-            "AD-698: intent %s denied by pre-auth hook '%s' (via %s)",
-            intent.intent, reason, entry_point,
-        )
         if raise_on_denial:
             raise IntentAuthorizationDenied(intent.intent, reason, entry_point)
         return False

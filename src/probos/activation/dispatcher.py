@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from probos.activation.task_event import AgentTarget, TaskEvent
 from probos.types import IntentMessage
+from probos.mesh.pre_intent_auth import IntentAuthorizationDenied, authorize_intent
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,17 @@ class Dispatcher:
             queue = self._get_queue(agent_id)
 
             if queue is not None:
+                # BF-789: authorize HERE, not above the branch. The
+                # `_dispatch_async_fn` arm below delegates to
+                # `IntentBus.dispatch_async`, which already evaluates AD-698, so
+                # a check at the top of this loop would evaluate the hook twice
+                # for that arm -- harmless for a stateless RBAC hook, but it
+                # silently halves the allowance of a stateful one (rate limit,
+                # quota) with nothing reporting that it happened. Only the two
+                # arms that reach a handler with nobody else asking are guarded.
+                if not authorize_intent(intent, entry_point="dispatcher_queue")[0]:
+                    rejected += 1
+                    continue
                 ok = queue.enqueue(intent, event.priority)
                 if ok:
                     accepted += 1
@@ -131,9 +143,23 @@ class Dispatcher:
                     rejected += 1
             elif self._dispatch_async_fn is not None:
                 try:
-                    await self._dispatch_async_fn(intent)
+                    # BF-789: opt into the raising denial shape. This arm does
+                    # NOT authorize -- `IntentBus.dispatch_async` already does,
+                    # and checking here too would charge a stateful hook twice.
+                    # But its DEFAULT denial shape is a silent no-op, and the
+                    # very next line increments `accepted`, so a refused intent
+                    # was reported to callers as dispatched. Asking to be told
+                    # changes nothing about how often the hook runs.
+                    await self._dispatch_async_fn(intent, raise_on_denial=True)
                     accepted += 1
                     dispatched_ids.append(agent_id)
+                except IntentAuthorizationDenied as exc:
+                    logger.info(
+                        "AD-654c: dispatch of %s to %s refused by pre-intent "
+                        "policy '%s'; counting rejected, not accepted",
+                        event.event_type, agent_id[:12], exc.reason,
+                    )
+                    rejected += 1
                 except Exception:
                     logger.debug(
                         "AD-654c: dispatch_async fallback failed for %s",
@@ -144,6 +170,13 @@ class Dispatcher:
                 # Last-resort: fire-and-forget via create_task
                 agent = self._registry.get(agent_id)
                 if agent and hasattr(agent, "handle_intent"):
+                    # BF-789: this arm calls the handler directly -- no bus, no
+                    # transport, nothing else evaluates AD-698 for it.
+                    if not authorize_intent(
+                        intent, entry_point="dispatcher_direct"
+                    )[0]:
+                        rejected += 1
+                        continue
                     task = asyncio.create_task(agent.handle_intent(intent))
                     self._pending_fallback_tasks.add(task)
                     task.add_done_callback(self._pending_fallback_tasks.discard)
