@@ -60,6 +60,13 @@ def _cacheable_decision(decision: dict) -> dict:
     A cache hit replays a previous turn's answer. Serving that turn's tool
     failures or trace ref with it would bind a Captain-visible claim to a run
     that did not happen on this turn.
+
+    BF-798: applied at EVERY cache write, including the two chain paths. Those
+    cannot carry provenance today -- ``_attach_run_provenance`` is the only
+    writer and only the agentic path calls it -- so this is a projection over
+    something already clean. It is here because a gate on one of three writers
+    is not a gate, and the next path to gain provenance should not have to
+    rediscover that.
     """
     return {k: v for k, v in decision.items() if k not in _PER_RUN_PROVENANCE_KEYS}
 
@@ -3401,7 +3408,9 @@ class CognitiveAgent(BaseAgent):
             chain_result = await self._execute_sub_task_chain(chain, observation)
             if chain_result is not None:
                 _cache_ttl = self._get_cache_ttl()
-                cache[cache_key] = (chain_result, time.monotonic(), _cache_ttl)
+                cache[cache_key] = (
+                    _cacheable_decision(chain_result), time.monotonic(), _cache_ttl,
+                )
                 return chain_result
             logger.info("AD-632f: Falling back to single-call for %s", self.agent_type)
 
@@ -3428,7 +3437,9 @@ class CognitiveAgent(BaseAgent):
                     _avatar_event_bus.notify(self.id)
             if chain_result is not None:
                 _cache_ttl = self._get_cache_ttl()
-                cache[cache_key] = (chain_result, time.monotonic(), _cache_ttl)
+                cache[cache_key] = (
+                    _cacheable_decision(chain_result), time.monotonic(), _cache_ttl,
+                )
                 return chain_result
             # chain_result is None → fall through to _decide_via_llm()
             # Skills may already be loaded in observation from intent routing
