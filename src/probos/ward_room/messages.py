@@ -267,7 +267,17 @@ class MessageStore:
                             },
                             thread_id=thread_id,
                         )
-                        await self._dispatcher.dispatch(event)
+                        _res = await self._dispatcher.dispatch(event)
+                        if not _res.accepted:
+                            # BF-810: no success record here to correct, but an
+                            # unheard mention is indistinguishable from an agent
+                            # choosing not to answer.
+                            logger.warning(
+                                "AD-654d: mention of @%s (%s) reached no agent "
+                                "(rejected=%d unroutable=%d)",
+                                callsign, resolved["agent_id"][:12],
+                                _res.rejected, _res.unroutable,
+                            )
                     except Exception:
                         logger.debug("AD-654d: mention TaskEvent emission failed", exc_info=True)
 

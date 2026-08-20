@@ -312,8 +312,9 @@ class QuartermasterAgent(BaseAgent):
             )
 
             if decision.action == "live_redispatch":
-                await self._router.dispatch_work_item(wi)
-                counts["redispatched"] += 1
+                # BF-810: only count it if the delivery substrate admitted it.
+                if await self._router.dispatch_work_item(wi):
+                    counts["redispatched"] += 1
             elif decision.action == "strand_terminal":
                 # BF-730: a stalled item the router may never dispatch. Ends it
                 # rather than rerouting it -- rerouting would replay an AD-1165

@@ -26,8 +26,10 @@ class _FakeRouter:
     def is_dispatchable(self, wi: dict[str, Any]) -> bool:
         return bool((wi.get("metadata") or {}).get("dispatchable", False))
 
-    async def dispatch_work_item(self, wi: dict[str, Any]) -> None:
+    async def dispatch_work_item(self, wi: dict[str, Any]) -> bool:
+        # BF-810: the real router reports whether the substrate admitted it.
         self.dispatched.append(wi.get("id", ""))
+        return True
 
 
 @pytest.fixture

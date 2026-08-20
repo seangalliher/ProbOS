@@ -706,9 +706,9 @@ class WardRoomRouter:
             else:
                 # BF-815: a denial was already excluded above, but the bus also
                 # drops silently on a closed bus, a missing handler and the
-                # pending-task cap. Those counted as dispatched too, which is
-                # the same round-counter inflation BF-771 fixed for denials --
-                # admission is not the same as the call returning.
+                # pending-task cap. Those counted as dispatched too -- the same
+                # round-counter inflation BF-771 fixed for denials. Admission is
+                # not the same as the call returning.
                 if admission is not None and not admission.admitted:
                     logger.warning(
                         "BF-815: ward room dispatch to %s was not admitted "

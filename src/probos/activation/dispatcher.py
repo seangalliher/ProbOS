@@ -156,9 +156,16 @@ class Dispatcher:
                     # BF-815: the call returning is not delivery. dispatch_async
                     # drops silently on a closed bus, a missing handler and the
                     # pending-task cap, and this incremented `accepted` for all
-                    # three. `None` is tolerated for test doubles that predate
-                    # the receipt; production always returns one, which
-                    # test_bf815 pins at the real seam.
+                    # three.
+                    #
+                    # `None` is tolerated deliberately. Failing closed on it was
+                    # tried and reverted: this arm INVOKES the delegate before it
+                    # can inspect any receipt, so under a deny-all policy the
+                    # side effect still happened (measured: policy_calls=0,
+                    # delegate_deliveries=1) and only the accounting refused.
+                    # A check after invocation cannot prove authorization
+                    # retroactively -- see #1275, which needs the delegate
+                    # authorized BEFORE it is called, not audited afterwards.
                     if admission is not None and not admission.admitted:
                         logger.warning(
                             "AD-654c: dispatch of %s to %s was not admitted "

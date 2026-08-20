@@ -24,14 +24,19 @@ from probos.workforce import WorkItemStore
 class _FakeRouter:
     """Records dispatch order; is_dispatchable reads metadata['dispatchable']."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, admits: bool = True) -> None:
         self.dispatched: list[str] = []
+        self._admits = admits
 
     def is_dispatchable(self, wi: dict[str, Any]) -> bool:
         return bool((wi.get("metadata") or {}).get("dispatchable", False))
 
-    async def dispatch_work_item(self, wi: dict[str, Any]) -> None:
+    async def dispatch_work_item(self, wi: dict[str, Any]) -> bool:
+        # BF-810: the real router reports whether the delivery substrate
+        # admitted the item, and the Quartermaster counts on that. Returning
+        # None made every redispatch look failed.
         self.dispatched.append(wi.get("id", ""))
+        return self._admits
 
 
 @pytest.fixture

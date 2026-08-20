@@ -4427,7 +4427,15 @@ class WorkItemStore(EventEmitterMixin):
                         "assigned_by": source,
                     },
                 )
-                await self._dispatcher.dispatch(event)
+                _res = await self._dispatcher.dispatch(event)
+                if not _res.accepted:
+                    # BF-810: the booking is durable and stands; only the
+                    # notification failed. Say so rather than dropping it.
+                    logger.warning(
+                        "AD-654d: work_item_assigned for %s reached no agent "
+                        "(rejected=%d unroutable=%d); booking still stands",
+                        work_item_id, _res.rejected, _res.unroutable,
+                    )
             except Exception:
                 logger.debug("AD-654d: work_item_assigned TaskEvent emission failed", exc_info=True)
 

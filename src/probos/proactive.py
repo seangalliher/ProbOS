@@ -3553,9 +3553,19 @@ class ProactiveCognitiveLoop:
                                 "task_description": task_description,
                             },
                         )
-                        await rt.dispatcher.dispatch(event)
-                        actions_executed.append({"type": "assign", "target": target_callsign, "task": task_description})
-                        logger.info("AD-654d: %s assigned task to @%s", agent.id[:12], target_callsign)
+                        _res = await rt.dispatcher.dispatch(event)
+                        # BF-810: a dispatch nobody accepted is not an
+                        # assignment. This recorded one unconditionally.
+                        if _res.accepted:
+                            actions_executed.append({"type": "assign", "target": target_callsign, "task": task_description})
+                            logger.info("AD-654d: %s assigned task to @%s", agent.id[:12], target_callsign)
+                        else:
+                            logger.warning(
+                                "AD-654d: assignment from %s to @%s not accepted "
+                                "(rejected=%d unroutable=%d); not recorded",
+                                agent.id[:12], target_callsign,
+                                _res.rejected, _res.unroutable,
+                            )
         text = re.sub(assign_pattern, '', text, flags=re.DOTALL).strip()
 
         # --- CREW (AD-868) — Lieutenant+ only: self-originate a crew task ---
@@ -3634,9 +3644,18 @@ class ProactiveCognitiveLoop:
                             "handoff_context": handoff_context,
                         },
                     )
-                    await rt.dispatcher.dispatch(event)
-                    actions_executed.append({"type": "handoff", "target": target_callsign, "context": handoff_context})
-                    logger.info("AD-654d: %s handed off to @%s", agent.id[:12], target_callsign)
+                    _res = await rt.dispatcher.dispatch(event)
+                    # BF-810: a handoff nobody accepted is not a handoff.
+                    if _res.accepted:
+                        actions_executed.append({"type": "handoff", "target": target_callsign, "context": handoff_context})
+                        logger.info("AD-654d: %s handed off to @%s", agent.id[:12], target_callsign)
+                    else:
+                        logger.warning(
+                            "AD-654d: handoff from %s to @%s not accepted "
+                            "(rejected=%d unroutable=%d); not recorded",
+                            agent.id[:12], target_callsign,
+                            _res.rejected, _res.unroutable,
+                        )
         text = re.sub(handoff_pattern, '', text, flags=re.DOTALL).strip()
 
         # BF-203: Strip unrecognized bracket command tags that the LLM hallucinated.

@@ -10,6 +10,7 @@ Covers 4 emitters:
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -569,6 +570,221 @@ class TestWardRoomMention:
             ch.id, "agent-author", "No Dispatch", "@Reed ignored",
             author_callsign="Author",
         )
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# 6) BF-810 — a dispatch that reached nobody is reported, not swallowed
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def _rejecting_dispatcher():
+    d = MagicMock()
+    d.dispatch = AsyncMock(
+        return_value=_make_dispatch_result(accepted=0, rejected=1)
+    )
+    return d
+
+
+class TestUnrecordedDelegationWhenNobodyAccepts:
+    """BF-810: [ASSIGN] and [HANDOFF] recorded an action unconditionally, so a
+    dispatch nobody took was reported to the Captain as delegated work.
+
+    Behavioural, not structural. An earlier version of this asserted the AST
+    shape only, and review showed `if True or _res.accepted` satisfied it while
+    restoring the defect.
+    """
+
+    def _harness(self, disp, callsign: str, agent_id: str):
+        holder = TestDelegationTags()
+        cr = _make_callsign_registry({callsign: agent_id})
+        rt = holder._make_runtime(
+            dispatcher=disp, callsign_registry=cr, trust_score=0.8
+        )
+        return holder, rt, holder._make_agent()
+
+    async def test_a_rejected_assign_is_not_recorded_as_an_action(self):
+        disp = _rejecting_dispatcher()
+        holder, rt, agent = self._harness(disp, "Atlas", "agent-atlas")
+
+        _cleaned, actions = await holder._run_extract(
+            "[ASSIGN @Atlas] investigate anomaly [/ASSIGN]", rt, agent
+        )
+
+        disp.dispatch.assert_called()
+        assert not [a for a in actions if a["type"] == "assign"], (
+            "an assignment nobody accepted was recorded as executed"
+        )
+
+    async def test_an_accepted_assign_is_still_recorded(self):
+        disp = _make_dispatcher()
+        holder, rt, agent = self._harness(disp, "Atlas", "agent-atlas")
+
+        _cleaned, actions = await holder._run_extract(
+            "[ASSIGN @Atlas] investigate anomaly [/ASSIGN]", rt, agent
+        )
+
+        assert [a for a in actions if a["type"] == "assign"]
+
+    async def test_a_rejected_handoff_is_not_recorded_as_an_action(self):
+        disp = _rejecting_dispatcher()
+        holder = TestDelegationTags()
+        cr = _make_callsign_registry({"Reed": "agent-reed"})
+        rt = holder._make_runtime(
+            dispatcher=disp, callsign_registry=cr, trust_score=0.3
+        )
+        agent = holder._make_agent()
+
+        _cleaned, actions = await holder._run_extract(
+            "[HANDOFF @Reed] taking over analysis [/HANDOFF]", rt, agent
+        )
+
+        disp.dispatch.assert_called()
+        assert not [a for a in actions if a["type"] == "handoff"], (
+            "a handoff nobody accepted was recorded as executed"
+        )
+
+    async def test_an_accepted_handoff_is_still_recorded(self):
+        disp = _make_dispatcher()
+        holder = TestDelegationTags()
+        cr = _make_callsign_registry({"Reed": "agent-reed"})
+        rt = holder._make_runtime(
+            dispatcher=disp, callsign_registry=cr, trust_score=0.3
+        )
+        agent = holder._make_agent()
+
+        _cleaned, actions = await holder._run_extract(
+            "[HANDOFF @Reed] taking over analysis [/HANDOFF]", rt, agent
+        )
+
+        assert [a for a in actions if a["type"] == "handoff"]
+
+
+class TestUnacceptedNotificationsAreReported:
+
+    async def test_recreation_reports_an_unheard_move_prompt(self, caplog):
+        from probos.recreation.service import RecreationService
+
+        disp = _rejecting_dispatcher()
+        cr = _make_callsign_registry({"Wesley": "agent-wes"})
+        svc = RecreationService(
+            ward_room=MagicMock(), records_store=None,
+            emit_event_fn=MagicMock(), dispatcher=disp, callsign_registry=cr,
+        )
+        game_info = await svc.create_game("tictactoe", "Atlas", "Wesley")
+
+        with caplog.at_level(logging.WARNING):
+            await svc.make_move(game_info["game_id"], "Atlas", "0")
+
+        assert any(
+            "move_required" in r.message and "reached no agent" in r.message
+            for r in caplog.records
+        ), f"no warning for an unheard move prompt; got {[r.message for r in caplog.records]}"
+
+    async def test_workforce_reports_an_unheard_assignment(self, tmp_path, caplog):
+        from probos.workforce import BookableResource, WorkItemStore
+
+        store = WorkItemStore(db_path=str(tmp_path / "w.db"), emit_event=MagicMock())
+        await store.start()
+        try:
+            store.attach_dispatcher(_rejecting_dispatcher())
+            item = await store.create_work_item(title="Fix bug", work_type="task")
+            store.register_resource(
+                BookableResource(resource_id="agent-eng", callsign="Eng")
+            )
+
+            with caplog.at_level(logging.WARNING):
+                await store.assign_work_item(item.id, "agent-eng", source="captain")
+
+            assert any(
+                "work_item_assigned" in r.message and "reached no agent" in r.message
+                for r in caplog.records
+            ), "no warning for an unheard assignment notification"
+        finally:
+            await store.stop()
+
+    async def test_ward_room_post_reports_an_unheard_mention(self, tmp_path, caplog):
+        from probos.ward_room.service import WardRoomService
+
+        svc = WardRoomService(db_path=str(tmp_path / "wr.db"), emit_event=MagicMock())
+        await svc.start()
+        try:
+            svc.attach_dispatcher(
+                _rejecting_dispatcher(), _make_callsign_registry({"Reed": "agent-reed"})
+            )
+            ch = await svc.create_channel("test", "department", "system")
+            thread = await svc.create_thread(
+                ch.id, "agent-author", "T", "body", author_callsign="Author",
+            )
+
+            with caplog.at_level(logging.WARNING):
+                await svc.create_post(
+                    thread.id, "agent-author", "Hey @Reed look",
+                    author_callsign="Author",
+                )
+
+            assert any(
+                "mention" in r.message and "reached no agent" in r.message
+                for r in caplog.records
+            ), (
+                "no warning for an unheard post mention -- if the warning "
+                "raised, the broad except swallowed it at debug level"
+            )
+        finally:
+            await svc.stop()
+
+    async def test_ward_room_thread_reports_an_unheard_mention(self, tmp_path, caplog):
+        from probos.ward_room.service import WardRoomService
+
+        svc = WardRoomService(db_path=str(tmp_path / "wr.db"), emit_event=MagicMock())
+        await svc.start()
+        try:
+            svc.attach_dispatcher(
+                _rejecting_dispatcher(), _make_callsign_registry({"Reed": "agent-reed"})
+            )
+            ch = await svc.create_channel("test", "department", "system")
+
+            with caplog.at_level(logging.WARNING):
+                await svc.create_thread(
+                    ch.id, "agent-author", "T", "Hey @Reed look",
+                    author_callsign="Author",
+                )
+
+            assert any(
+                "mention" in r.message and "reached no agent" in r.message
+                for r in caplog.records
+            ), (
+                "no warning for an unheard thread mention -- if the warning "
+                "raised, the broad except swallowed it at debug level"
+            )
+        finally:
+            await svc.stop()
+
+    async def test_an_accepted_notification_warns_about_nothing(self, tmp_path, caplog):
+        """The happy path must stay silent, or the warning is just noise."""
+        from probos.ward_room.service import WardRoomService
+
+        svc = WardRoomService(db_path=str(tmp_path / "wr.db"), emit_event=MagicMock())
+        await svc.start()
+        try:
+            svc.attach_dispatcher(
+                _make_dispatcher(), _make_callsign_registry({"Reed": "agent-reed"})
+            )
+            ch = await svc.create_channel("test", "department", "system")
+            thread = await svc.create_thread(
+                ch.id, "agent-author", "T", "body", author_callsign="Author",
+            )
+
+            with caplog.at_level(logging.WARNING):
+                await svc.create_post(
+                    thread.id, "agent-author", "Hey @Reed look",
+                    author_callsign="Author",
+                )
+
+            assert not [
+                r for r in caplog.records if "reached no agent" in r.message
+            ]
+        finally:
+            await svc.stop()
 
 
 # ───────────────────────────────────────────────────────────────────────────

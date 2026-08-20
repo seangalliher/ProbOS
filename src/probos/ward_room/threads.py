@@ -521,7 +521,16 @@ class ThreadManager:
                             },
                             thread_id=thread.id,
                         )
-                        await self._dispatcher.dispatch(event)
+                        _res = await self._dispatcher.dispatch(event)
+                        if not _res.accepted:
+                            # BF-810: as in ward_room/messages.py -- an unheard
+                            # mention looks exactly like a declined one.
+                            logger.warning(
+                                "AD-654d: mention of @%s (%s) reached no agent "
+                                "(rejected=%d unroutable=%d)",
+                                callsign, resolved["agent_id"][:12],
+                                _res.rejected, _res.unroutable,
+                            )
                     except Exception:
                         logger.debug("AD-654d: mention TaskEvent emission failed", exc_info=True)
 

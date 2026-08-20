@@ -65,16 +65,26 @@ class WorkItemRouter:
         meta = work_item_dict.get("metadata") or {}
         return bool(meta.get("dispatchable"))
 
-    async def dispatch_work_item(self, wi: dict[str, Any]) -> None:
+    async def dispatch_work_item(self, wi: dict[str, Any]) -> bool:
         """Route + dispatch a single work-item dict.
+
+        Returns True when the delivery substrate admitted the item -- NOT that
+        an agent has processed it, or ever will. See ``DispatchAdmission``.
 
         AD-874: extracted from ``on_work_item_created`` so the create-listener
         and the Quartermaster reconciler (AD-875) share one dispatch path
         (Open/Closed). Behavior-preserving for the create path: keeps the
         ``is_dispatchable`` early-return and every emit/log line.
+
+        BF-810: returns the outcome instead of discarding it. The Quartermaster
+        counted every call as a redispatch, so a rejected queue or an intent no
+        substrate admitted was reported to the Captain as work that went out.
+        ``False`` also covers the not-dispatchable early return -- no caller
+        distinguishes "correctly skipped" from "tried and failed", verified
+        across all three call sites.
         """
         if not self.is_dispatchable(wi):
-            return
+            return False
 
         intent = f"work_item:{wi.get('work_type', '')}".strip(":")
         assigned = wi.get("assigned_to") or None
@@ -154,7 +164,14 @@ class WorkItemRouter:
                         exc_info=True,
                     )
 
-        await self._dispatcher.dispatch(task_event)
+        result = await self._dispatcher.dispatch(task_event)
+        if not result.accepted:
+            logger.warning(
+                "AD-874: work item %s reached no agent (accepted=0 rejected=%d "
+                "unroutable=%d); not counted as dispatched",
+                wi.get("id", ""), result.rejected, result.unroutable,
+            )
+        return bool(result.accepted)
 
     async def on_work_item_created(self, event: dict[str, Any]) -> None:
         """Handle the WORK_ITEM_CREATED event envelope.

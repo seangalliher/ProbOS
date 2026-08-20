@@ -105,7 +105,9 @@ class _FakeDispatcher:
         if self.raise_on_dispatch:
             raise RuntimeError("boom")
         self.events.append(event)
-        return SimpleNamespace(success=True)
+        # BF-810: the router reads `.accepted`; `success` was never its field,
+        # and the missing attribute was swallowed by on_work_item_created.
+        return SimpleNamespace(accepted=1, rejected=0, unroutable=0, agent_ids=[])
 
 
 # ─── DepartmentDispatcher ─────────────────────────────────────────

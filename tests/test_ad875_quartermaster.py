@@ -41,17 +41,24 @@ class _LiveAgent(BaseAgent):
 class _FakeRouter:
     """Records dispatch calls; is_dispatchable reads metadata['dispatchable']."""
 
-    def __init__(self, *, raise_on_id: str | None = None) -> None:
+    def __init__(
+        self, *, raise_on_id: str | None = None, admits: bool = True
+    ) -> None:
         self.dispatched: list[str] = []
         self._raise_on_id = raise_on_id
+        self._admits = admits
 
     def is_dispatchable(self, wi: dict[str, Any]) -> bool:
         if self._raise_on_id is not None and wi.get("id") == self._raise_on_id:
             raise RuntimeError("boom")
         return bool((wi.get("metadata") or {}).get("dispatchable", False))
 
-    async def dispatch_work_item(self, wi: dict[str, Any]) -> None:
+    async def dispatch_work_item(self, wi: dict[str, Any]) -> bool:
+        # BF-810: the real router returns whether an agent took the item, and
+        # the Quartermaster now counts on that. A double returning None made
+        # every redispatch look failed.
         self.dispatched.append(wi.get("id", ""))
+        return self._admits
 
 
 @pytest.fixture
@@ -105,6 +112,29 @@ async def test_reconcile_live_assignee_open_redispatches(store: WorkItemStore) -
     assert counts["cleared"] == 0
     assert counts["degraded"] is False
     assert len(router.dispatched) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_does_not_count_a_redispatch_nobody_took(
+    store: WorkItemStore,
+) -> None:
+    """BF-810: this counted every attempt, so a work item the delivery
+    substrate never admitted was reported to the Captain as redispatched."""
+    reg = await _registry_with("slot-live")
+    router = _FakeRouter(admits=False)
+    await store.create_work_item(
+        title="t", status="open", assigned_to="slot-live",
+        metadata={"dispatchable": True},
+    )
+    qm = _qm(store=store, registry=reg, router=router)
+
+    counts = await qm.reconcile()
+
+    assert len(router.dispatched) == 1, "it should still have been attempted"
+    assert counts["redispatched"] == 0, (
+        "a redispatch nobody took was counted as redispatched"
+    )
+    assert counts["degraded"] is False
 
 
 @pytest.mark.asyncio

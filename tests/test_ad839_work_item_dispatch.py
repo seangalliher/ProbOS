@@ -344,11 +344,20 @@ class _RouterAgent(BaseAgent):
 
 
 class _RecordingDispatcher:
-    def __init__(self) -> None:
+    def __init__(self, *, accepted: int = 1) -> None:
         self.dispatched: list[Any] = []
+        self._accepted = accepted
 
-    async def dispatch(self, task_event: Any) -> None:
+    async def dispatch(self, task_event: Any) -> Any:
+        # BF-810: the real Dispatcher returns a DispatchResult and the router
+        # now reads `.accepted`. Returning None made the router raise.
         self.dispatched.append(task_event)
+        return SimpleNamespace(
+            accepted=self._accepted,
+            rejected=0 if self._accepted else 1,
+            unroutable=0,
+            agent_ids=[],
+        )
 
 
 class _FakeDecision:
@@ -379,10 +388,12 @@ class _RecordingDeptDispatcher:
         return self._decision
 
 
-async def _make_router(decision: _FakeDecision, emit: Any = None) -> tuple[Any, Any, Any]:
+async def _make_router(
+    decision: _FakeDecision, emit: Any = None, dispatcher: Any = None
+) -> tuple[Any, Any, Any]:
     registry = AgentRegistry()
     await registry.register(_RouterAgent(pool="workers", agent_id="agent-1"))
-    dispatcher = _RecordingDispatcher()
+    dispatcher = dispatcher or _RecordingDispatcher()
     dept = _RecordingDeptDispatcher(decision)
     router = WorkItemRouter(
         dispatcher=dispatcher,
@@ -410,12 +421,25 @@ async def test_dispatch_work_item_direct_routes_to_agent() -> None:
         emit=lambda et, payload: emitted.append((et, payload)),
     )
 
-    await router.dispatch_work_item(_dispatchable_wi())
+    assert await router.dispatch_work_item(_dispatchable_wi()) is True
 
     assert len(dispatcher.dispatched) == 1
     assert dispatcher.dispatched[0].target.agent_id == "agent-1"
     assert emitted[0][0] == EventType.HYBRID_DISPATCH_DIRECT
     assert emitted[0][1]["agent_id"] == "agent-1"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_work_item_reports_false_when_no_agent_took_it() -> None:
+    """BF-810: the Quartermaster counts redispatches on this bool, so it must
+    reflect delivery rather than merely that the call completed."""
+    router, dispatcher, _ = await _make_router(
+        _FakeDecision(direct=True, agent_id="agent-1"),
+        dispatcher=_RecordingDispatcher(accepted=0),
+    )
+
+    assert await router.dispatch_work_item(_dispatchable_wi()) is False
+    assert len(dispatcher.dispatched) == 1, "it should still have been attempted"
 
 
 @pytest.mark.asyncio
@@ -426,7 +450,7 @@ async def test_dispatch_work_item_broadcast_routes_to_all() -> None:
         emit=lambda et, payload: emitted.append((et, payload)),
     )
 
-    await router.dispatch_work_item(_dispatchable_wi())
+    assert await router.dispatch_work_item(_dispatchable_wi()) is True
 
     assert len(dispatcher.dispatched) == 1
     assert dispatcher.dispatched[0].target.broadcast is True
@@ -439,7 +463,7 @@ async def test_dispatch_work_item_not_dispatchable_early_returns() -> None:
         _FakeDecision(direct=True, agent_id="agent-1")
     )
 
-    await router.dispatch_work_item({"id": "wi-x", "tags": [], "metadata": {}})
+    assert await router.dispatch_work_item({"id": "wi-x", "tags": [], "metadata": {}}) is False
 
     assert dispatcher.dispatched == []
     assert dept.calls == []

@@ -227,7 +227,15 @@ class RecreationService:
                         },
                         thread_id=game_info.get("thread_id"),
                     )
-                    await self._dispatcher.dispatch(event)
+                    _res = await self._dispatcher.dispatch(event)
+                    if not _res.accepted:
+                        # BF-810: a move prompt nobody received stalls the game
+                        # silently -- the player is simply never asked.
+                        logger.warning(
+                            "AD-654d: move_required for @%s reached no agent "
+                            "(rejected=%d unroutable=%d)",
+                            next_player_callsign, _res.rejected, _res.unroutable,
+                        )
                 except Exception:
                     logger.debug("AD-654d: move_required TaskEvent emission failed", exc_info=True)
 

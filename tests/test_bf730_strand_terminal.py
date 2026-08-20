@@ -187,8 +187,10 @@ class _Router:
             return True
         return bool((wi.get("metadata") or {}).get("dispatchable"))
 
-    async def dispatch_work_item(self, wi: Any) -> None:
+    async def dispatch_work_item(self, wi: Any) -> bool:
+        # BF-810: the real router reports whether the substrate admitted it.
         self.dispatched.append(wi)
+        return True
 
 
 class _Item:
