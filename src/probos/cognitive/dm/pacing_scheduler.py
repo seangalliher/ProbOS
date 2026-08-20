@@ -31,6 +31,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ...types import IntentMessage
+from ...mesh.pre_intent_auth import IntentAuthorizationDenied
 
 if TYPE_CHECKING:  # pragma: no cover - import-cycle guard
     from ...runtime import ProbOSRuntime
@@ -215,7 +216,8 @@ class ConversationPacingScheduler:
                     reason,
                 )
                 return
-            await bus.send(intent)
+            # BF-790: opt in, so a refused follow-up is not logged as emitted.
+            await bus.send(intent, raise_on_denial=True)
             logger.info(
                 "AD-743: follow-up emitted agent=%s conv=%s reason=%r",
                 agent_id,
@@ -224,6 +226,17 @@ class ConversationPacingScheduler:
             )
         except asyncio.CancelledError:
             raise
+        except IntentAuthorizationDenied as exc:
+            # BF-790: distinct from the failure below -- nothing broke, policy
+            # refused. Logging it as "failed to emit" would send anyone reading
+            # the log looking for a fault that does not exist.
+            logger.info(
+                "AD-743: follow-up refused by pre-intent policy '%s' agent=%s "
+                "reason=%r",
+                exc.reason,
+                agent_id,
+                reason,
+            )
         except Exception:
             logger.warning(
                 "AD-743: failed to emit follow-up agent=%s reason=%r",

@@ -51,6 +51,7 @@ from probos.crew_profile import (
     extract_handoff_callsign,
 )
 from probos.crew_utils import is_crew_agent
+from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
 from probos.types import IntentMessage
 
 logger = logging.getLogger(__name__)
@@ -606,21 +607,34 @@ async def _fan_one_round(
             ttl_seconds=60.0,
             thread_id=thread_id,
         )
-        async def _dispatch_intent() -> tuple[Any, str]:
-            """BF-636: one send attempt -> (result, cleaned_text). An empty/None
-            result OR a delivery exception yields text="" — NOT a visible
-            "(no response)"/"(delivery failed)" placeholder — so the _declined
-            check below thins it exactly like a [NO_RESPONSE] decline. A transient
-            LLM failure (proxy timeout / echo / overload) therefore never gets
-            persisted into the transcript as a fake agent reply."""
+        async def _dispatch_intent() -> tuple[Any, str, bool]:
+            """BF-636: one send attempt -> (result, cleaned_text, denied). An
+            empty/None result OR a delivery exception yields text="" — NOT a
+            visible "(no response)"/"(delivery failed)" placeholder — so the
+            _declined check below thins it exactly like a [NO_RESPONSE] decline.
+            A transient LLM failure (proxy timeout / echo / overload) therefore
+            never gets persisted into the transcript as a fake agent reply.
+
+            BF-790: the third element says the send was REFUSED by policy rather
+            than merely empty. Without it a denial looked transient and the
+            addressed-retry below re-sent the same intent, charging a stateful
+            hook twice for one turn -- the exact harm BF-771's evaluate-once
+            rule exists to prevent."""
             try:
-                res = await runtime.intent_bus.send(intent)
+                res = await runtime.intent_bus.send(intent, raise_on_denial=True)
+            except IntentAuthorizationDenied as exc:
+                logger.info(
+                    "AD-914 fan-out send to %s refused by pre-intent policy "
+                    "'%s'; not retrying, other recipients unaffected",
+                    agent_id, exc.reason,
+                )
+                return None, "", True
             except Exception as exc:
                 logger.warning(
                     "AD-914 fan-out send failed for %s: %s: %s; other recipients unaffected",
                     agent_id, type(exc).__name__, exc,
                 )
-                return None, ""
+                return None, "", False
             txt = str(res.result) if (res and res.result) else ""
             # BF-622: a degraded LLM proxy can echo its INPUT (the AD-978 scene
             # block) back as the completion. Strip any visual-context scaffolding
@@ -629,9 +643,9 @@ async def _fan_one_round(
             if txt and "Current Visual Context" in txt:
                 from probos.perception.working_memory import strip_visual_context_block
                 txt = strip_visual_context_block(txt) or ""
-            return res, txt
+            return res, txt, False
 
-        result, reply_text = await _dispatch_intent()
+        result, reply_text, _denied = await _dispatch_intent()
         # BF-636: an EMPTY result is a transient LLM failure, NOT a reply. For an
         # explicitly ADDRESSED (hard-included) agent — the peer a prior speaker or
         # the Captain named (AD-951) — retry ONCE before giving up; un-addressed
@@ -641,8 +655,8 @@ async def _fan_one_round(
         _is_addressed = bool(
             addressed_callsigns and callsign and callsign.lower() in addressed_callsigns
         )
-        if not reply_text.strip() and _is_addressed:
-            result, reply_text = await _dispatch_intent()
+        if not reply_text.strip() and _is_addressed and not _denied:
+            result, reply_text, _denied = await _dispatch_intent()
         # AD-933b: SHA refs of any image step_4c generates below. Initialized
         # here so it is always defined for the persist block even when the
         # escalation subset is skipped (no reply / no agent) or raises.

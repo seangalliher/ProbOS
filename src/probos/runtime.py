@@ -1788,10 +1788,36 @@ class ProbOSRuntime:
     # --- AD-471: Autonomous operations helpers ---
 
     async def _dispatch_watch_intent(self, intent_type: str, params: dict) -> Any:
-        """Bridge between WatchManager and intent bus."""
-        from probos.intent import IntentMessage
-        intent = IntentMessage(intent=intent_type, **params)
-        return await self.intent_bus.publish(intent)
+        """Bridge between WatchManager and intent bus.
+
+        BF-790: opts into the raising denial shape. ``publish`` forwards
+        ``**kwargs`` to ``broadcast``, whose default denial shape is ``[]`` --
+        indistinguishable here from "nobody handled it". WatchManager then
+        counted the order executed and, for a one-shot, deactivated it, so a
+        REFUSED Captain order was permanently consumed having never run.
+        WatchManager's existing exception paths leave the order untouched and
+        still active, which is the correct outcome for a refusal.
+
+        BF-790a: the import below read ``from probos.intent import IntentMessage``.
+        There is no ``probos.intent`` module -- enumerated: zero files match
+        ``src/probos/intent*.py``, and this was the only site importing it. So
+        every Captain's order and every standing task raised ModuleNotFoundError
+        here, was caught by WatchManager's ``except Exception``, and logged as
+        "captain-order failed". The watch dispatch path has never delivered
+        anything. Found because the BF-790 fix above was inert -- the order
+        never reached the bus, so no hook could refuse it.
+
+        ``params`` is the intent's PARAMS, not envelope kwargs. It was splatted
+        as ``**params``, which is this repository's only such construction --
+        the other 54 pass ``params=``. Since ``intent_params`` on a
+        ``CaptainOrder`` carries payload keys (``agent_id``, ``gap_id``, ...),
+        splatting raised TypeError for every realistic order. Fixing only the
+        import would have swapped a silent ModuleNotFoundError for a silent
+        TypeError and left the path just as dead.
+        """
+        from probos.types import IntentMessage
+        intent = IntentMessage(intent=intent_type, params=params)
+        return await self.intent_bus.publish(intent, raise_on_denial=True)
 
     def _populate_watch_roster(self) -> None:
         """Populate watch roster from ontology assignments.

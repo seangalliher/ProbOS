@@ -249,7 +249,11 @@ class GapRemediationTracker:
                     "reason": candidate.reason,
                 },
             )
-            await bus.broadcast(intent, timeout=2.0)
+            # BF-790: opt in. A denial returned `[]` from broadcast, which is
+            # indistinguishable from "no subscriber", and this returned
+            # executed=True regardless. The existing handler below already
+            # renders a raised denial as executed=False with the reason.
+            await bus.broadcast(intent, timeout=2.0, raise_on_denial=True)
             return {
                 "executed": True,
                 "action": candidate.proposed_action,

@@ -14,6 +14,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Awaitable
 
+from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
+
 logger = logging.getLogger(__name__)
 
 
@@ -248,6 +250,15 @@ class WatchManager:
                 try:
                     await self._dispatch_fn(task.intent_type, task.intent_params)
                     task.last_executed = time.time()
+                except IntentAuthorizationDenied as e:
+                    # BF-790: do NOT stamp `last_executed`. It gates `is_due`,
+                    # so recording a refused dispatch as run would make the task
+                    # wait a full interval before trying again.
+                    logger.warning(
+                        "standing-task id=%s refused by pre-intent policy '%s'; "
+                        "left due so it retries next sweep",
+                        task.id, e.reason,
+                    )
                 except Exception as e:
                     logger.warning("standing-task failed id=%s: %s", task.id, e)
 
@@ -267,6 +278,15 @@ class WatchManager:
                 order.executed_count += 1
                 if order.one_shot:
                     order.active = False
+            except IntentAuthorizationDenied as e:
+                # BF-790: neither count it nor deactivate it. A refused one-shot
+                # Captain order that was marked executed was gone for good --
+                # the most damaging case in this issue. It stays actionable.
+                logger.warning(
+                    "captain-order id=%s refused by pre-intent policy '%s'; "
+                    "order remains active and uncounted",
+                    order.id, e.reason,
+                )
             except Exception as e:
                 logger.warning("captain-order failed id=%s: %s", order.id, e)
 

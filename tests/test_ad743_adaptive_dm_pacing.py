@@ -64,8 +64,15 @@ def test_followup_strip_removes_both_forms() -> None:
 class _FakeBus:
     def __init__(self) -> None:
         self.sent: list[IntentMessage] = []
+        self.raise_on_denial_flags: list[bool] = []
 
-    async def send(self, intent: IntentMessage) -> None:
+    async def send(
+        self, intent: IntentMessage, *, raise_on_denial: bool = False
+    ) -> None:
+        # BF-790: recorded, not just tolerated. A double that merely swallows
+        # `**kwargs` would keep passing if the scheduler stopped opting in,
+        # and a refused follow-up would go back to being logged as emitted.
+        self.raise_on_denial_flags.append(raise_on_denial)
         self.sent.append(intent)
 
 
@@ -97,6 +104,8 @@ async def test_scheduler_schedules_after_delay() -> None:
                 break
             await asyncio.sleep(0.1)
         assert len(runtime.intent_bus.sent) == 1
+        # BF-790: without the opt-in a refused follow-up is logged as emitted.
+        assert runtime.intent_bus.raise_on_denial_flags == [True]
         intent = runtime.intent_bus.sent[0]
         assert intent.intent == "direct_message"
         assert intent.target_agent_id == "e1"

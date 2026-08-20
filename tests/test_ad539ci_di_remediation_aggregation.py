@@ -92,11 +92,18 @@ async def test_request_data_routing_broadcasts() -> None:
     sent: list = []
 
     class _Bus:
-        async def broadcast(self, intent, timeout=2.0):
+        def __init__(self) -> None:
+            self.raise_on_denial_flags: list[bool] = []
+
+        async def broadcast(self, intent, timeout=2.0, *, raise_on_denial=False):
+            # BF-790: recorded so this double cannot mask the remediation path
+            # dropping its opt-in and returning executed=True for a refusal.
+            self.raise_on_denial_flags.append(raise_on_denial)
             sent.append(intent)
             return []
 
-    rt = _runtime_with_flag(True, bus=_Bus())
+    bus = _Bus()
+    rt = _runtime_with_flag(True, bus=bus)
     tracker = GapRemediationTracker(rt)
     gap = _GapReport(gap_type="data", qualification_path_id="")
     cand = tracker.record_candidate(gap)
@@ -104,6 +111,9 @@ async def test_request_data_routing_broadcasts() -> None:
     assert out["executed"] is True
     assert len(sent) == 1
     assert sent[0].intent == "data_routing_requested"
+    # BF-790: without the opt-in a refused broadcast returns [] and this path
+    # reports executed=True for work that never went out.
+    assert bus.raise_on_denial_flags == [True]
 
 
 @pytest.mark.asyncio
