@@ -690,7 +690,9 @@ class WardRoomRouter:
             try:
                 # BF-771: opt in to the raise so a denied recipient is not
                 # counted as dispatched, which would inflate the round counter.
-                await self._intent_bus.dispatch_async(intent, raise_on_denial=True)
+                admission = await self._intent_bus.dispatch_async(
+                    intent, raise_on_denial=True
+                )
             except IntentAuthorizationDenied as exc:
                 # BF-771: per recipient. A denial used to propagate out of the
                 # loop, so refusing ONE agent silently cancelled the dispatch to
@@ -702,7 +704,19 @@ class WardRoomRouter:
                     agent_id[:12], exc.reason, len(eligible) - index - 1,
                 )
             else:
-                dispatched += 1
+                # BF-815: a denial was already excluded above, but the bus also
+                # drops silently on a closed bus, a missing handler and the
+                # pending-task cap. Those counted as dispatched too, which is
+                # the same round-counter inflation BF-771 fixed for denials --
+                # admission is not the same as the call returning.
+                if admission is not None and not admission.admitted:
+                    logger.warning(
+                        "BF-815: ward room dispatch to %s was not admitted "
+                        "(%s); not counted toward the round",
+                        agent_id[:12], admission.reason,
+                    )
+                else:
+                    dispatched += 1
 
         # ---------------------------------------------------------------
         # Phase 3: Removed (AD-654a)

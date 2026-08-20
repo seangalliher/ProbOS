@@ -101,6 +101,41 @@ class IntentResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class DispatchAdmission:
+    """What actually happened to a fire-and-forget dispatch (BF-815).
+
+    ``IntentBus.dispatch_async`` returned ``None`` on every path, so its
+    silent-drop cases -- closed bus, policy denial, no handler, and the
+    pending-task cap -- were indistinguishable from a successful hand-off.
+    ``Dispatcher`` counted every one as ``accepted``, and the Ward Room counted
+    every one as ``dispatched``.
+
+    ``admitted`` means **the delivery substrate accepted responsibility** for
+    the intent: a JetStream ACK, a core-NATS publish, an enqueue onto a
+    cognitive queue, or a scheduled handler task.
+
+    It deliberately does NOT mean an agent has processed the work, and it does
+    not mean an agent ever will -- a JetStream ACK with no bound consumer is a
+    real admission whose message expires unread. Substrate acceptance is
+    determinable at the call site; agent uptake is not, and a fire-and-forget
+    dispatch that claimed it would be the same overclaim this type exists to
+    remove. ``route`` says which substrate took it, so a caller that needs a
+    stronger guarantee knows what it actually got.
+
+    ``__bool__`` is deliberate rather than ornamental. Without it, the natural
+    ``if not await bus.dispatch_async(...)`` reads as false on every object and
+    silently reintroduces exactly the bug being fixed.
+    """
+
+    admitted: bool
+    route: str = ""
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return self.admitted
+
+
 class Priority(StrEnum):
     """Three-tier priority model (AD-637f).
 

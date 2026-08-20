@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
-from probos.types import HandlerLatencyClass, IntentMessage, IntentResult, Priority
+from probos.types import HandlerLatencyClass, IntentMessage, IntentResult, Priority, DispatchAdmission
 from probos.mesh.signal import SignalManager
 from probos.mesh.pre_intent_auth import IntentAuthorizationDenied, authorize_intent
 
@@ -1070,7 +1070,7 @@ class IntentBus:
         intent: IntentMessage,
         *,
         raise_on_denial: bool = False,
-    ) -> None:
+    ) -> DispatchAdmission:
         """Fire-and-forget dispatch to a specific agent via JetStream (AD-654a).
 
         Publishes the intent to the agent's durable JetStream consumer.
@@ -1084,6 +1084,17 @@ class IntentBus:
         ``close_to_new_dispatches()`` (shutdown Phase A). Note this also
         prevents new JetStream publishes during shutdown, so peer nodes
         will not see fresh dispatch messages from this node post-Phase-A.
+
+        BF-815: returns a ``DispatchAdmission`` rather than ``None``. Four paths
+        here reject the intent -- closed bus, policy denial, no handler, and the
+        pending-task cap -- and all four were previously indistinguishable from
+        success, because the method returned ``None`` whether it handed the work
+        off or binned it. Consumers counted every call as delivered. Adding a
+        return value is backward-compatible: callers that ignore it behave
+        exactly as before.
+
+        ``admitted`` means the delivery SUBSTRATE accepted responsibility, not
+        that an agent processed the work or ever will. See ``DispatchAdmission``.
         """
         if not intent.target_agent_id:
             raise ValueError("dispatch_async() requires target_agent_id")
@@ -1094,23 +1105,35 @@ class IntentBus:
                 "BF-296: dispatch_async rejected on closed bus intent=%s target=%s",
                 intent.intent, intent.target_agent_id[:12],
             )
-            return
+            return DispatchAdmission(False, reason="bus_closed")
 
         if not self._authorize(
             intent, entry_point="dispatch_async", raise_on_denial=raise_on_denial
         ):
-            return
+            return DispatchAdmission(False, reason="denied")
 
         # JetStream path when connected
         if self._nats_bus and self._nats_bus.connected:
             subject = f"intent.dispatch.{intent.target_agent_id}"
             try:
-                await self._nats_bus.js_publish(subject, self._serialize_intent(intent))
-                logger.debug(
-                    "AD-654a: Dispatched %s → %s via JetStream",
+                outcome = await self._nats_bus.js_publish(
+                    subject, self._serialize_intent(intent)
+                )
+                # BF-815: js_publish returns normally even when BOTH JetStream
+                # and core NATS failed and it logged "event dropped", so this
+                # used to report a lost message as dispatched. A drop now falls
+                # through to the local paths below rather than claiming success.
+                if outcome != "dropped":
+                    logger.debug(
+                        "AD-654a: Dispatched %s → %s via %s",
+                        intent.intent, intent.target_agent_id[:12], outcome,
+                    )
+                    return DispatchAdmission(True, route=outcome)
+                logger.warning(
+                    "BF-815: both transports dropped %s → %s; falling back to "
+                    "local dispatch",
                     intent.intent, intent.target_agent_id[:12],
                 )
-                return
             except Exception as e:
                 logger.warning(
                     "AD-654a: JetStream dispatch failed for %s → %s: %s, falling back to direct",
@@ -1134,7 +1157,7 @@ class IntentBus:
             )
             # js_msg=None — no JetStream backing for fallback path
             if queue.enqueue(intent, priority):
-                return
+                return DispatchAdmission(True, route="queue")
             # enqueue returned False — fall through to create_task
 
         # Existing AD-654a fallback: direct handler invocation for agents
@@ -1142,7 +1165,7 @@ class IntentBus:
         handler = self._subscribers.get(intent.target_agent_id)
         if handler is None:
             logger.debug("AD-654a: No handler for %s, dropping", intent.target_agent_id[:12])
-            return
+            return DispatchAdmission(False, reason="no_handler")
 
         # Soft cap on pending fallback tasks to prevent unbounded growth
         _MAX_PENDING_TASKS = 200
@@ -1151,7 +1174,7 @@ class IntentBus:
                 "AD-654a: Pending task cap (%d) reached, dropping dispatch for %s",
                 _MAX_PENDING_TASKS, intent.target_agent_id[:12],
             )
-            return
+            return DispatchAdmission(False, reason="pending_cap")
 
         async def _run_handler() -> None:
             try:
@@ -1167,7 +1190,13 @@ class IntentBus:
             _run_handler(),
             name=f"dispatch-async-{intent.target_agent_id[:12]}",
         )
-        self._track_pending_task(task)
+        # BF-815: `_track_pending_task` CANCELS the task and returns False when
+        # shutdown has closed registration. Ignoring that reported an admission
+        # for a handler that was cancelled before it ran -- reachable whenever
+        # the bus closes while an awaited transport call is in flight.
+        if not self._track_pending_task(task):
+            return DispatchAdmission(False, reason="registration_closed")
+        return DispatchAdmission(True, route="task")
 
     # ── AD-654b: Cognitive queue management ─────────────────────────
 

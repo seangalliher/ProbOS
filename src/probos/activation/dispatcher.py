@@ -150,7 +150,23 @@ class Dispatcher:
                     # very next line increments `accepted`, so a refused intent
                     # was reported to callers as dispatched. Asking to be told
                     # changes nothing about how often the hook runs.
-                    await self._dispatch_async_fn(intent, raise_on_denial=True)
+                    admission = await self._dispatch_async_fn(
+                        intent, raise_on_denial=True
+                    )
+                    # BF-815: the call returning is not delivery. dispatch_async
+                    # drops silently on a closed bus, a missing handler and the
+                    # pending-task cap, and this incremented `accepted` for all
+                    # three. `None` is tolerated for test doubles that predate
+                    # the receipt; production always returns one, which
+                    # test_bf815 pins at the real seam.
+                    if admission is not None and not admission.admitted:
+                        logger.warning(
+                            "AD-654c: dispatch of %s to %s was not admitted "
+                            "(%s); counting rejected, not accepted",
+                            event.event_type, agent_id[:12], admission.reason,
+                        )
+                        rejected += 1
+                        continue
                     accepted += 1
                     dispatched_ids.append(agent_id)
                 except IntentAuthorizationDenied as exc:

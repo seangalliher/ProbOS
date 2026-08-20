@@ -748,17 +748,25 @@ class NATSBus:
         subject: str,
         data: dict[str, Any],
         headers: dict[str, str] | None = None,
-    ) -> None:
+    ) -> str:
         """Publish to a JetStream subject (durable, at-least-once).
 
         BF-230: Retry once on transient failure, then fall back to core NATS.
         BF-242: Track consecutive failures. After threshold, suspend JetStream
         and trigger recovery. While suspended, publishes bypass directly to
         core NATS (no timeout penalty).
+
+        BF-815: returns which transport took it -- ``"jetstream"`` (durable
+        ACK), ``"core_nats"`` (at-most-once fallback), or ``"dropped"`` (both
+        failed; the event is gone). This returned ``None`` for all three, so a
+        caller could not tell a durable ACK from a logged "event dropped", and
+        ``dispatch_async`` reported a dropped message as successfully
+        dispatched. Adding a return value is backward-compatible -- existing
+        callers ignore it.
         """
         if not self._js:
             await self.publish(subject, data, headers=headers)
-            return
+            return "core_nats"
 
         # BF-242: When JetStream is suspended, go straight to core NATS
         if self._js_suspended:
@@ -770,7 +778,8 @@ class NATSBus:
                     "event dropped: %s",
                     self._full_subject(subject), fallback_err,
                 )
-            return
+                return "dropped"
+            return "core_nats"
 
         full_subject = self._full_subject(subject)
         payload = json.dumps(data).encode()
@@ -784,7 +793,7 @@ class NATSBus:
                 # BF-242: Success — reset failure counter
                 if self._js_consecutive_failures > 0:
                     self._js_consecutive_failures = 0
-                return  # Success
+                return "jetstream"
             except Exception as e:
                 if attempt == 0:
                     logger.warning(
@@ -818,6 +827,8 @@ class NATSBus:
                 "event dropped. Check NATS server health: %s",
                 full_subject, fallback_err,
             )
+            return "dropped"
+        return "core_nats"
 
     async def js_subscribe(
         self,
