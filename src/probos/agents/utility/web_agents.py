@@ -12,6 +12,7 @@ import logging
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from typing import Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
@@ -47,10 +48,72 @@ class _BundledMixin:
 # Helper: dispatch http_fetch through the mesh
 # ------------------------------------------------------------------
 
-async def _mesh_fetch_detailed(
-    runtime: Any, url: str
-) -> tuple[str | None, int | None, str | None]:
-    """``(body, status_code, final_url)`` for one URL, fetched through the mesh.
+@dataclass(frozen=True)
+class FetchOutcome:
+    """What one mesh fetch actually produced.
+
+    BF-807: this was a 3-tuple ``(body, status_code, final_url)``, and
+    ``HttpFetchAgent``'s two truncation fields were dropped at that seam. A
+    3-tuple that grows to a 5-tuple is the shape that invites the next caller
+    to unpack the first three and discard the rest -- which is exactly how the
+    status came to be dropped and how BF-772 happened. A record makes the extra
+    fields available without making them easy to lose, and gives the next field
+    somewhere to go.
+    """
+
+    body: str | None = None
+    status_code: int | None = None
+    final_url: str | None = None
+    #: The producer capped the response. A prefix that cannot be told apart
+    #: from a whole document is what produced a confident wrong answer on
+    #: 2026-08-07 -- see the comment beside these fields in ``http_fetch.py``.
+    truncated: bool = False
+    #: Size of the full response, when the producer reported one.
+    total_bytes: int | None = None
+
+
+#: Said to the model, not inferred by it. Wording avoids `_CAPABILITY_GAP_RE`
+#: (no "cannot"/"unable to"/"not available") so a truncated page never reads to
+#: the decomposer as a capability gap.
+#:
+#: Deliberately states no "kept" figure. The producer caps RAW BYTES and decodes
+#: afterwards, and the agents then slice the decoded text to 8,000 CHARACTERS --
+#: three different quantities, no one of which is the amount the model holds. A
+#: stated ratio would be wrong for any multibyte page: measured, a 5-byte cap
+#: over `é` characters yields a 3-character body, which is neither 5 bytes nor
+#: 3 bytes of anything the reader has. The FACT of the cut is what should change
+#: the model's behaviour; a wrong number would only tell it something false with
+#: confidence, which is the defect this exists to fix.
+_TRUNCATION_NOTICE = (
+    "[Note: the source was larger than the fetch limit. Only the beginning of a "
+    "{total:,}-byte response was retrieved; the rest was cut off. Treat it as a "
+    "partial document and say so if the answer might depend on the rest.]"
+)
+
+_TRUNCATION_NOTICE_NO_SIZE = (
+    "[Note: the source was larger than the fetch limit and was cut off. Treat "
+    "it as a partial document and say so if the answer might depend on the rest.]"
+)
+
+
+def _with_truncation_notice(text: str, outcome: FetchOutcome) -> str:
+    """Append the producer's truncation fact to what the model will read.
+
+    Appended AFTER the agent's own 8,000-char slice, deliberately: prepending
+    it would put it inside the slice and a long page would cut it away again.
+    """
+    if not outcome.truncated:
+        return text
+    total = outcome.total_bytes
+    if not isinstance(total, int) or total <= 0:
+        # Truncation is reported without a size on some paths; the fact still
+        # matters more than the number.
+        return f"{text}\n\n{_TRUNCATION_NOTICE_NO_SIZE}"
+    return f"{text}\n\n{_TRUNCATION_NOTICE.format(total=total)}"
+
+
+async def _mesh_fetch_detailed(runtime: Any, url: str) -> FetchOutcome:
+    """One URL fetched through the mesh, with everything the producer reported.
 
     BF-769: the status is what tells a rate-limit page apart from a page with
     nothing on it. ``HttpFetchAgent`` reports EVERY HTTP status as a successful
@@ -63,9 +126,12 @@ async def _mesh_fetch_detailed(
     a DuckDuckGo bang (``!w langchain``) lands on Wikipedia. That body has no
     search-result blocks and is not a search failure -- it is the page the
     Captain asked for.
+
+    BF-807: truncation matters for the same reason again. The producer states
+    it rather than leaving it to be inferred, and this seam used to drop it.
     """
     if not runtime or not hasattr(runtime, "intent_bus"):
-        return None, None, None
+        return FetchOutcome()
     msg = IntentMessage(intent="http_fetch", params={"url": url})
     results = await runtime.intent_bus.broadcast(msg)
     for r in results:
@@ -77,13 +143,16 @@ async def _mesh_fetch_detailed(
                 body = payload.get("body", payload.get("content"))
                 if body is None:
                     body = str(payload)
-                return (
-                    str(body),
-                    status if isinstance(status, int) else None,
-                    final if isinstance(final, str) else None,
+                total = payload.get("total_bytes")
+                return FetchOutcome(
+                    body=str(body),
+                    status_code=status if isinstance(status, int) else None,
+                    final_url=final if isinstance(final, str) else None,
+                    truncated=payload.get("truncated") is True,
+                    total_bytes=total if isinstance(total, int) else None,
                 )
-            return str(payload), None, None
-    return None, None, None
+            return FetchOutcome(body=str(payload))
+    return FetchOutcome()
 
 
 class _FetchGatedMixin:
@@ -107,8 +176,8 @@ class _FetchGatedMixin:
     #: How this agent names what it did not obtain, e.g. "no page was read".
     _fetch_failure_prefix = "the fetch did not succeed"
 
-    async def _fetch_or_fail(self, obs: dict, url: str) -> str | None:
-        """Body for a non-empty 2xx; otherwise flag the observation and return ``None``.
+    async def _fetch_or_fail(self, obs: dict, url: str) -> FetchOutcome | None:
+        """The outcome for a non-empty 2xx; otherwise flag ``obs`` and return ``None``.
 
         An empty 2xx counts as a failure. The first draft let it through,
         reasoning that an empty page really was served and callers treat a
@@ -118,18 +187,23 @@ class _FetchGatedMixin:
         empty response is also not a valid RSS feed -- a feed that was served
         and carried no items is a different thing, still arrives as real XML,
         and still honestly yields "No headlines found".
+
+        BF-807: returns the whole outcome rather than the body alone, so a
+        caller can tell a capped prefix from a whole document. Returning the
+        body was how the producer's truncation fields got discarded.
         """
-        body, status, _final = await _mesh_fetch_detailed(
-            getattr(self, "_runtime", None), url
-        )
+        outcome = await _mesh_fetch_detailed(getattr(self, "_runtime", None), url)
+        body = outcome.body
         if body is None:
             reason = "the request did not come back"
-        elif status is not None and not (200 <= status < 300):
-            reason = f"the server answered HTTP {status}"
+        elif outcome.status_code is not None and not (
+            200 <= outcome.status_code < 300
+        ):
+            reason = f"the server answered HTTP {outcome.status_code}"
         elif not body.strip():
             reason = "the response was empty"
         else:
-            return body
+            return outcome
 
         obs["fetch_failed"] = True
         obs["fetch_error"] = f"{self._fetch_failure_prefix}: {reason}"
@@ -297,16 +371,19 @@ class WebSearchAgent(_BundledMixin, CognitiveAgent):
             obs["search_failed"] = True
             obs["search_error"] = "no search results were obtained: the query was empty"
             return obs
-        body, status, final_url = await _mesh_fetch_detailed(
-            self._runtime, _duckduckgo_url(query)
-        )
+        outcome = await _mesh_fetch_detailed(self._runtime, _duckduckgo_url(query))
+        body = outcome.body
+        status = outcome.status_code
+        final_url = outcome.final_url
         results = _parse_ddg_results(body) if body else []
         if results:
             # BF-611: parse the result blocks (title/url/snippet) BEFORE
             # truncating. Passing raw HTML to a fixed char budget spent the
             # budget on page chrome (head/CSS/search form) and cut off the
             # result <div>s, so the LLM never saw any results.
-            obs["fetched_content"] = _format_ddg_results(results)[:8000]
+            obs["fetched_content"] = _with_truncation_notice(
+                _format_ddg_results(results)[:8000], outcome
+            )
             return obs
 
         on_duckduckgo = final_url is None or _is_duckduckgo(final_url)
@@ -318,7 +395,9 @@ class WebSearchAgent(_BundledMixin, CognitiveAgent):
             # A DuckDuckGo bang (`!w langchain`) redirects off-site. The body is
             # the page the Captain asked for, not a search-result page, so the
             # absence of result blocks is expected rather than a failure.
-            obs["fetched_content"] = _strip_tags(body)[:8000]
+            obs["fetched_content"] = _with_truncation_notice(
+                _strip_tags(body)[:8000], outcome
+            )
             return obs
 
         # BF-769: no results parsed. This used to fall through to tag-stripped
@@ -408,12 +487,14 @@ class PageReaderAgent(_FetchGatedMixin, _BundledMixin, CognitiveAgent):
         obs = await super().perceive(intent)
         url = obs.get("params", {}).get("url", "")
         if url and self._runtime:
-            body = await self._fetch_or_fail(obs, url)
-            if body:
+            outcome = await self._fetch_or_fail(obs, url)
+            if outcome and outcome.body:
                 # Strip HTML tags for cleaner LLM context
-                text = re.sub(r"<[^>]+>", " ", body)
+                text = re.sub(r"<[^>]+>", " ", outcome.body)
                 text = re.sub(r"\s+", " ", text).strip()
-                obs["fetched_content"] = text[:8000]
+                obs["fetched_content"] = _with_truncation_notice(
+                    text[:8000], outcome
+                )
         return obs
 
 
@@ -450,9 +531,11 @@ class WeatherAgent(_FetchGatedMixin, _BundledMixin, CognitiveAgent):
         if location and self._runtime:
             encoded = urllib.parse.quote_plus(location)
             url = f"https://wttr.in/{encoded}?format=j1"
-            body = await self._fetch_or_fail(obs, url)
-            if body:
-                obs["fetched_content"] = body[:8000]
+            outcome = await self._fetch_or_fail(obs, url)
+            if outcome and outcome.body:
+                obs["fetched_content"] = _with_truncation_notice(
+                    outcome.body[:8000], outcome
+                )
         return obs
 
 
@@ -506,11 +589,13 @@ class NewsAgent(_FetchGatedMixin, _BundledMixin, CognitiveAgent):
             # "No headlines found in RSS feed." -- a confident statement about
             # the world produced by a refusal. That sentence now means only
             # what it says: the feed was served and carried no items.
-            body = await self._fetch_or_fail(obs, rss_url)
-            if body:
+            outcome = await self._fetch_or_fail(obs, rss_url)
+            if outcome and outcome.body:
                 # Parse RSS XML and extract headlines
-                headlines = self._parse_rss(body)
-                obs["fetched_content"] = headlines
+                headlines = self._parse_rss(outcome.body)
+                # A capped feed yields a short headline list that reads exactly
+                # like a genuinely short feed, so the cut has to be stated.
+                obs["fetched_content"] = _with_truncation_notice(headlines, outcome)
         return obs
 
     @staticmethod

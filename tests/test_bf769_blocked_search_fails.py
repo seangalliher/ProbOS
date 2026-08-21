@@ -51,15 +51,27 @@ _DDG_GOOD_PAGE = (
 )
 
 
-def _agent_with_fetch(body, status=200, final_url=None):
-    """A WebSearchAgent whose mesh fetch returns ``(body, status, final_url)``."""
+def _agent_with_fetch(body, status=200, final_url=None, *, truncated=False,
+                      total_bytes=None):
+    """A WebSearchAgent whose mesh fetch returns a :class:`FetchOutcome`.
+
+    BF-807 replaced the 3-tuple with a record. The double is faithful to the
+    real return type -- a double still handing back a tuple would keep passing
+    while production could no longer see truncation.
+    """
     agent = _make_agent(WebSearchAgent)
     agent._runtime = MagicMock()
     calls: list[str] = []
 
     async def _fake_fetch(_runtime, url):
         calls.append(url)
-        return body, status, final_url
+        return web_agents.FetchOutcome(
+            body=body,
+            status_code=status,
+            final_url=final_url,
+            truncated=truncated,
+            total_bytes=total_bytes,
+        )
 
     return agent, calls, _fake_fetch
 
@@ -403,13 +415,13 @@ class TestBF769FetchCarriesStatus:
         runtime = MagicMock()
         runtime.intent_bus = bus
 
-        body, status, final = await web_agents._mesh_fetch_detailed(
+        outcome = await web_agents._mesh_fetch_detailed(
             runtime, "https://html.duckduckgo.com/html/?q=x"
         )
 
-        assert body == "No results."
-        assert status == 429
-        assert final == "https://html.duckduckgo.com/html/?q=x"
+        assert outcome.body == "No results."
+        assert outcome.status_code == 429
+        assert outcome.final_url == "https://html.duckduckgo.com/html/?q=x"
 
     @pytest.mark.asyncio
     async def test_a_result_without_a_status_yields_none_not_a_crash(self):
@@ -427,13 +439,13 @@ class TestBF769FetchCarriesStatus:
         runtime = MagicMock()
         runtime.intent_bus = bus
 
-        body, status, final = await web_agents._mesh_fetch_detailed(
+        outcome = await web_agents._mesh_fetch_detailed(
             runtime, "https://e.co/x"
         )
 
-        assert body == _DDG_GOOD_PAGE
-        assert status is None
-        assert final is None
+        assert outcome.body == _DDG_GOOD_PAGE
+        assert outcome.status_code is None
+        assert outcome.final_url is None
 
     @pytest.mark.asyncio
     async def test_the_plain_wrapper_is_gone(self):

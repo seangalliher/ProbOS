@@ -75,8 +75,8 @@ async def test_a_non_2xx_is_reported_as_failure_not_read_as_content(
     while ``act`` still returned ``success=True`` -- which is precisely the
     shape that let this survive BF-769.
     """
-    async def _fetch(runtime: object, url: str) -> tuple[str, int, str]:
-        return error_body, 429, url
+    async def _fetch(runtime: object, url: str) -> web_agents.FetchOutcome:
+        return web_agents.FetchOutcome(body=error_body, status_code=429, final_url=url)
 
     agent = _agent(cls, monkeypatch, _fetch)
 
@@ -105,8 +105,8 @@ async def test_a_2xx_still_reads_normally(
         else "<html><body>real content here</body></html>"
     )
 
-    async def _fetch(runtime: object, url: str) -> tuple[str, int, str]:
-        return good, 200, url
+    async def _fetch(runtime: object, url: str) -> web_agents.FetchOutcome:
+        return web_agents.FetchOutcome(body=good, status_code=200, final_url=url)
 
     agent = _agent(cls, monkeypatch, _fetch)
 
@@ -119,8 +119,8 @@ async def test_a_2xx_still_reads_normally(
 async def test_a_fetch_that_never_came_back_is_also_a_failure(
     cls: type, params: dict, error_body: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _fetch(runtime: object, url: str) -> tuple[None, None, None]:
-        return None, None, None
+    async def _fetch(runtime: object, url: str) -> web_agents.FetchOutcome:
+        return web_agents.FetchOutcome()
 
     agent = _agent(cls, monkeypatch, _fetch)
 
@@ -138,8 +138,10 @@ async def test_an_unserved_feed_no_longer_claims_the_feed_was_empty(
     Produced by a refusal it is a lie, and it is the exact defect class BF-769
     fixed in search: a failure narrated as a fact.
     """
-    async def _fetch(runtime: object, url: str) -> tuple[str, int, str]:
-        return "<html>429</html>", 429, url
+    async def _fetch(runtime: object, url: str) -> web_agents.FetchOutcome:
+        return web_agents.FetchOutcome(
+            body="<html>429</html>", status_code=429, final_url=url
+        )
 
     agent = _agent(NewsAgent, monkeypatch, _fetch)
 
