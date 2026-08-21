@@ -23,6 +23,11 @@ from probos.types import (
 
 logger = logging.getLogger(__name__)
 
+#: Exactly the set httpx's `Response.has_redirect_location` uses. 300 and 304
+#: are deliberately absent: a 304 can legally carry a Location and is a cache
+#: answer, not a redirect.
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
 
 @dataclass
 class DomainRateState:
@@ -66,6 +71,16 @@ class HttpFetchAgent(BaseAgent):
     # either completes or raises TimeoutException before asyncio.wait()
     # cancels the task.
     DEFAULT_TIMEOUT: float = 8.0
+    # BF-819: what this defends and what it costs, per Design Principle 13(a).
+    #
+    # DEFENDS: bounded work per fetch. Redirects are now followed by hand so the
+    # SSRF guard sees every hop, and a hand-rolled loop needs its own stop.
+    #
+    # COSTS: a chain longer than this fails rather than resolving. Five is above
+    # what the paths we actually use need -- a DuckDuckGo bang is one hop, a
+    # canonical-host plus http->https pairing is two -- and well under httpx's
+    # own default of 20, which is sized for a browser rather than an agent.
+    MAX_REDIRECTS: int = 5
     # BF-729: what this defends and what it costs, per Design Principle 13(a)
     # (a capability ceiling must be a decision, never an inheritance).
     #
@@ -358,33 +373,125 @@ class HttpFetchAgent(BaseAgent):
         self, url: str, method: str, cap: int
     ) -> dict[str, Any]:
         """One real outbound request, with timeout, body capping and per-domain
-        rate limiting. Callers go through ``_fetch_url``."""
+        rate limiting. Callers go through ``_fetch_url``.
+
+        BF-819: redirects are followed HERE rather than by httpx, because
+        ``follow_redirects=True`` validated only the URL the caller submitted.
+        Measured: ``https://example.com/`` redirecting to ``127.0.0.1``,
+        ``169.254.169.254`` and ``[::1]`` all fetched successfully and returned
+        the private body, while ``validate_public_url`` refused every one of
+        them when asked. The guard was correct and simply never consulted past
+        hop one. Each hop's URL is now validated before it is requested.
+
+        What that does NOT close: the guard resolves the hostname, and httpx
+        resolves it again when connecting, so a hostile nameserver can answer
+        differently for the two lookups. Closing that needs the connection
+        pinned to the address the guard approved -- tracked separately, and not
+        claimed here.
+        """
         domain, state = self._get_domain_state(url)
         delay = await self._wait_for_rate_limit(domain, state)
 
+        # One budget for the whole chain, expressed once rather than per
+        # request. Per-request timeouts stopped bounding this the moment a chain
+        # could hold several requests plus a rate-limit wait before each: five
+        # hops against a 2s-spaced host spends 10s sleeping, and the DAG
+        # executor cancels the broadcast at 10s, so a legal chain vanished as
+        # "no agent responded" rather than saying it had timed out. The comment
+        # on DEFAULT_TIMEOUT states that invariant; this keeps it true.
+        try:
+            async with asyncio.timeout(self.DEFAULT_TIMEOUT):
+                return await self._follow_and_fetch(url, method, cap, domain, state, delay)
+        except TimeoutError:
+            return {
+                "success": False,
+                "error": (
+                    f"Request timed out after {self.DEFAULT_TIMEOUT}s "
+                    f"following redirects"
+                ),
+            }
+
+    async def _follow_and_fetch(
+        self,
+        url: str,
+        method: str,
+        cap: int,
+        domain: str,
+        state: DomainRateState,
+        delay: float,
+    ) -> dict[str, Any]:
+        """The redirect chain itself. Split out so one ``asyncio.timeout`` can
+        bound every request and every rate-limit wait in it."""
         try:
             async with httpx.AsyncClient(
                 timeout=self.DEFAULT_TIMEOUT,
                 headers={"User-Agent": self.USER_AGENT},
-                follow_redirects=True,
+                follow_redirects=False,
             ) as client:
-                req_start = time.monotonic()
-                response = await client.request(method, url)
-                latency_ms = (time.monotonic() - req_start) * 1000
+                current = url
+                for hop in range(self.MAX_REDIRECTS + 1):
+                    req_start = time.monotonic()
+                    response = await client.request(method, current)
+                    latency_ms = (time.monotonic() - req_start) * 1000
 
-                self._update_rate_state(state, response)
-                self._record_to_profile(domain, latency_ms, response.status_code)
-
-                # Auto-retry once on 429 (AD-270)
-                if response.status_code == 429:
-                    retry_delay = await self._wait_for_rate_limit(domain, state)
-                    state.last_request_time = time.monotonic()
-                    req_start2 = time.monotonic()
-                    response = await client.request(method, url)
-                    latency_ms2 = (time.monotonic() - req_start2) * 1000
                     self._update_rate_state(state, response)
-                    self._record_to_profile(domain, latency_ms2, response.status_code)
-                    delay += retry_delay
+                    self._record_to_profile(domain, latency_ms, response.status_code)
+
+                    # Auto-retry once on 429 (AD-270)
+                    if response.status_code == 429:
+                        retry_delay = await self._wait_for_rate_limit(domain, state)
+                        state.last_request_time = time.monotonic()
+                        req_start2 = time.monotonic()
+                        response = await client.request(method, current)
+                        latency_ms2 = (time.monotonic() - req_start2) * 1000
+                        self._update_rate_state(state, response)
+                        self._record_to_profile(
+                            domain, latency_ms2, response.status_code
+                        )
+                        delay += retry_delay
+
+                    # httpx's own predicate, spelled out rather than read off
+                    # `response.has_redirect_location` so a duck-typed response
+                    # still works. Same statuses, same Location requirement: a
+                    # bare `300 <= code < 400` would also chase a 304, which
+                    # httpx treats as a cache answer rather than a redirect.
+                    if not (
+                        response.status_code in _REDIRECT_STATUSES
+                        and response.headers.get("location")
+                    ):
+                        break
+
+                    if hop >= self.MAX_REDIRECTS:
+                        return {
+                            "success": False,
+                            "error": (
+                                f"Too many redirects (limit {self.MAX_REDIRECTS})"
+                            ),
+                        }
+
+                    # Relative Locations are legal and common, and resolving them
+                    # wrongly would hand the guard a string it cannot judge.
+                    previous = httpx.URL(current)
+                    current = str(previous.join(response.headers["location"]))
+
+                    error = self._validate_url(current)
+                    if error:
+                        return {
+                            "success": False,
+                            "error": f"SSRF protection: {error}",
+                        }
+
+                    method = self._redirect_method(method, response.status_code)
+
+                    # A new host is a new budget: charging the origin domain for
+                    # a hop elsewhere is how a chain slips the limiter. A hop
+                    # within the SAME host is not a new request to that host --
+                    # it is the rest of the one already charged for, and pacing
+                    # it again is what blew the deadline above.
+                    next_domain, next_state = self._get_domain_state(current)
+                    if next_domain != domain:
+                        domain, state = next_domain, next_state
+                        delay += await self._wait_for_rate_limit(domain, state)
 
                 raw = response.content
                 truncated = len(raw) > cap
@@ -425,9 +532,35 @@ class HttpFetchAgent(BaseAgent):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @staticmethod
+    def _redirect_method(method: str, status_code: int) -> str:
+        """The method for the next hop, mirroring ``httpx._client._redirect_method``.
+
+        Kept identical to httpx rather than to a reading of RFC 9110, because
+        following redirects by hand should change WHO validates the hop and
+        nothing else. A hand-rolled rule that turned a HEAD into a GET, or a
+        301-on-PUT into a GET, would be a silent behaviour change riding along
+        with a security fix.
+        """
+        if status_code == 303 and method != "HEAD":
+            return "GET"
+        if status_code == 302 and method != "HEAD":
+            return "GET"
+        if status_code == 301 and method == "POST":
+            return "GET"
+        return method
+
     def _get_domain_state(self, url: str) -> tuple[str, DomainRateState]:
-        """Look up or create rate-limit state for the URL's domain."""
-        domain = urllib.parse.urlparse(url).netloc
+        """Look up or create rate-limit state for the URL's domain.
+
+        BF-819: keyed on host[:port], NOT on ``netloc``. ``netloc`` carries any
+        ``user:pass@`` prefix, so the same host under two credentials got two
+        independent budgets -- a redirect chain varying the userinfo could pace
+        itself out of the limiter entirely -- and the credentials were then
+        written into the service-profile store as part of the key.
+        """
+        parsed = urllib.parse.urlparse(url)
+        domain = parsed.netloc.rpartition("@")[2].lower()
         if domain not in self._domain_state:
             if self._profile_store:
                 interval = self._profile_store.get_interval(domain)

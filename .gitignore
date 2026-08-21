@@ -139,3 +139,11 @@ data/avatar-assets/ATTRIBUTION.txt
 
 # Playwright MCP browser-tool session artifacts
 .playwright-mcp/
+# Agent working scratch: mutation harnesses, captured diffs, pytest tails.
+# These accumulate at the repo root during long defect-fixing sessions and are
+# indistinguishable from real work in `git status`, which is how the wrong
+# file gets staged.
+/.tmp_*.py
+/staged_diff*.patch
+/pytest_out.txt
+/output.txt
