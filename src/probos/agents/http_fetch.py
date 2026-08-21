@@ -103,6 +103,24 @@ class HttpFetchAgent(BaseAgent):
     # Class-level shared state — all pool members share rate limit knowledge (AD-270)
     _domain_state: ClassVar[dict[str, DomainRateState]] = {}
 
+    # BF-770: identical fetches in flight at the same moment, keyed by
+    # (method, url, cap). CLASS-level, like `_domain_state`, because the
+    # multiplier being fixed is across INSTANCES: `IntentBus.broadcast()`
+    # invokes every subscriber, the fleet runs three HttpFetchAgents, and two
+    # WebSearchAgents each broadcast -- so one Captain-visible search made six
+    # outbound DuckDuckGo requests, and DDG blocks after roughly two. The rate
+    # limit was self-inflicted.
+    _inflight: ClassVar[dict[tuple[str, str, int], asyncio.Task]] = {}
+
+    # How many callers are still awaiting each in-flight fetch. When the last
+    # one leaves via cancellation the fetch is cancelled too: `asyncio.shield`
+    # keeps one caller's exit from killing the request its peers need, but a
+    # request nobody can still receive should not keep a socket or a rate slot.
+    # Keyed by TASK rather than by request key: one key sees many flights, and
+    # a shared counter would let a finished flight's waiters vouch for its
+    # replacement.
+    _waiters: ClassVar[dict[asyncio.Task, int]] = {}
+
     # Persistent service profile store (AD-382) — set via runtime wiring
     _profile_store: ClassVar[Any] = None
 
@@ -254,13 +272,93 @@ class HttpFetchAgent(BaseAgent):
     async def _fetch_url(
         self, url: str, method: str, *, max_body_bytes: int | None = None
     ) -> dict[str, Any]:
-        """Fetch a URL with timeout, body capping, and per-domain rate limiting."""
+        """Fetch a URL, sharing one outbound request across identical callers.
+
+        BF-770: the N agents still each reason over the result -- best-of-N
+        cognition is deliberate and preserved -- but ACQUISITION is single.
+        Rate limiting stays inside the shared work, so one shared fetch consumes
+        one slot rather than N.
+
+        The key includes ``cap``: a caller asking for more body than an
+        in-flight one must not be handed the shorter answer.
+
+        A task belonging to a different (typically closed) event loop is never
+        reused: the map is class-level and outlives any one loop, and awaiting
+        a dead loop's task raises rather than fetching.
+        """
         error = self._validate_url(url)
         if error:
             return {"success": False, "error": f"SSRF protection: {error}"}
 
         cap = self.MAX_BODY_BYTES if max_body_bytes is None else max_body_bytes
+        key = (method, url, cap)
 
+        task = self._inflight.get(key)
+        if (
+            task is None
+            or task.done()
+            or task.cancelling() > 0
+            or task.get_loop() is not asyncio.get_running_loop()
+        ):
+            task = asyncio.create_task(self._fetch_url_uncoalesced(url, method, cap))
+            self._inflight[key] = task
+            # Cleared by the task itself, not by any awaiter: an awaiter that is
+            # cancelled must not strand the entry for everyone else. Guarded on
+            # identity -- a finished task's callback runs a tick later, by which
+            # time a NEW task may hold the key, and an unguarded pop would evict
+            # that live one and let the next caller start a duplicate fetch.
+            def _release(finished: asyncio.Task, _k: Any = key) -> None:
+                if self._inflight.get(_k) is finished:
+                    del self._inflight[_k]
+
+            task.add_done_callback(_release)
+
+        # Shielded so one caller's cancellation does not cancel the fetch the
+        # other callers are waiting on. Counted per TASK, not per key: a key
+        # outlives the flight under it, so a shared counter would let one
+        # generation's waiters vouch for the next one's.
+        self._waiters[task] = self._waiters.get(task, 0) + 1
+        try:
+            result = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # The shield protects the fetch from ONE caller leaving; it must not
+            # outlive ALL of them. `broadcast` cancels straggler handlers on
+            # timeout, and an unobserved fetch would keep burning a socket and a
+            # rate slot for a request nobody can still receive.
+            if self._waiters.get(task, 0) <= 1:
+                # Deregistered BEFORE cancelling, because `cancel()` is only a
+                # REQUEST: until the task runs again `done()` is False, and a
+                # fresh caller would attach to a doomed flight and be handed a
+                # CancelledError instead of a fetch.
+                if self._inflight.get(key) is task:
+                    del self._inflight[key]
+                task.cancel()
+            raise
+        finally:
+            remaining = self._waiters.get(task, 0) - 1
+            if remaining > 0:
+                self._waiters[task] = remaining
+            else:
+                self._waiters.pop(task, None)
+
+        # Copied per caller: the result is shared, and a consumer mutating its
+        # own reply must not reach into another agent's. `headers` is nested one
+        # deeper and needs its own copy, or the isolation is only claimed.
+        copied = dict(result)
+        data = copied.get("data")
+        if isinstance(data, dict):
+            data = dict(data)
+            headers = data.get("headers")
+            if isinstance(headers, dict):
+                data["headers"] = dict(headers)
+            copied["data"] = data
+        return copied
+
+    async def _fetch_url_uncoalesced(
+        self, url: str, method: str, cap: int
+    ) -> dict[str, Any]:
+        """One real outbound request, with timeout, body capping and per-domain
+        rate limiting. Callers go through ``_fetch_url``."""
         domain, state = self._get_domain_state(url)
         delay = await self._wait_for_rate_limit(domain, state)
 
