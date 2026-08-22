@@ -575,6 +575,22 @@ def _format_escalation(escalation: dict) -> list[str]:
     lines = [f"    [yellow]\u2191 Escalated (Tier: {tier})[/yellow] \u2014 [{colour}]{status}[/{colour}]"]
     if reason:
         lines.append(f"      {reason}")
+    # BF-831: a tier deliberately not attempted, and why. BF-830 skips the retry
+    # tier for a consensus rejection because retrying re-executes the act; a
+    # reader seeing only the tier that DID run cannot tell that from a cascade
+    # that never got there.
+    skipped = escalation.get("tiers_skipped") or {}
+    if isinstance(skipped, dict):
+        from rich.markup import escape as _escape
+
+        for tier_name, why in skipped.items():
+            # BF-831: ESCAPED, for the same reason as the approval prompt -- an
+            # unmatched tag here raised MarkupError while rendering the Panel
+            # and suppressed the WHOLE results panel, not just this line.
+            lines.append(
+                f"      [dim]not tried ({_escape(str(tier_name))}): "
+                f"{_escape(str(why))}[/dim]"
+            )
     return lines
 
 

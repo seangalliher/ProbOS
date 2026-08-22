@@ -7,6 +7,8 @@ from typing import Any
 
 from rich.console import Console
 
+from probos.types import EscalationTier
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,11 +35,43 @@ async def user_escalation_callback(
 
     console.print(f"  [bold]Error:[/bold] [red]{error}[/red]")
 
-    # Show what was already tried
+    # Show what was already tried.
+    #
+    # BF-831: the tier being consulted RIGHT NOW is appended to
+    # ``tiers_attempted`` before the callback runs, so listing it verbatim told
+    # the Captain that the prompt they are standing in had already been tried.
     tiers_tried = context.get('tiers_attempted', [])
-    if tiers_tried:
-        tried_names = [t.value if hasattr(t, 'value') else str(t) for t in tiers_tried]
+    tried_names = [
+        t.value if hasattr(t, 'value') else str(t) for t in tiers_tried
+    ]
+    # Drop only the LAST entry, and only when it is the tier being consulted.
+    # Filtering every ``user`` by value would hide an EARLIER, legitimate user
+    # consultation -- measured with ``["user", "retry", "user"]``, which
+    # rendered only ``retry``. The cascade appends USER once today, so that is
+    # not reachable yet; the value rule would simply be wrong if it were.
+    if tried_names and tried_names[-1] == EscalationTier.USER.value:
+        tried_names = tried_names[:-1]
+    if tried_names:
         console.print(f"  [bold]Already tried:[/bold] [dim]{' \u2192 '.join(tried_names)}[/dim]")
+
+    # BF-831: and what was deliberately NOT tried, with the reason. The Captain
+    # is being asked to approve an act the crew declined (BF-830), so why the
+    # retry was skipped is part of that decision -- and its absence from
+    # "Already tried" cannot say whether it was skipped or simply not reached.
+    tiers_skipped = context.get('tiers_skipped') or {}
+    if isinstance(tiers_skipped, dict):
+        from rich.markup import escape as _escape
+
+        for tier_name, why in tiers_skipped.items():
+            # BF-831: ESCAPED. These are interpolated into Rich markup, and an
+            # unmatched closing tag raises MarkupError -- measured, a reason of
+            # "[/dim]BROKEN" raised here BEFORE ``input()`` ran, so the Captain
+            # was never asked at all. That is the opposite of this block's
+            # purpose: the decision matters more than the annotation.
+            console.print(
+                f"  [bold]Not tried ({_escape(str(tier_name))}):[/bold] "
+                f"[dim]{_escape(str(why))}[/dim]"
+            )
 
     console.print(
         f"\n  [dim]'y' = force approve  |  'n' = reject  |  Enter = skip[/dim]"
