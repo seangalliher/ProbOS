@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import time
@@ -14,6 +15,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from probos.types import HandlerLatencyClass, IntentMessage, IntentResult, Priority, DispatchAdmission
+from probos.mesh.nats_bus import DEFAULT_MAX_PAYLOAD_BYTES
 from probos.mesh.signal import SignalManager
 from probos.mesh.pre_intent_auth import IntentAuthorizationDenied, authorize_intent
 
@@ -532,21 +534,58 @@ class IntentBus:
                 result = await handler(intent)
                 if msg.reply:
                     if result is not None:
-                        await msg.respond(self._serialize_result(result))
+                        await msg.respond_encoded(
+                            self._reply_bytes(result, self._reply_budget(msg))
+                        )
                     else:
                         # Agent declined — send empty success response
                         await msg.respond({"declined": True})
             except Exception as e:
                 logger.warning("NATS intent handler error for %s: %s", agent_id[:8], e)
                 if msg.reply:
+                    intent_id = (
+                        msg.data.get("id", "") if isinstance(msg.data, dict) else ""
+                    )
                     error_result = IntentResult(
-                        intent_id=msg.data.get("id", "") if isinstance(msg.data, dict) else "",
+                        intent_id=intent_id,
                         agent_id=agent_id,
                         success=False,
                         error=str(e),
                         confidence=0.0,
                     )
-                    await msg.respond(self._serialize_result(error_result))
+                    budget = self._reply_budget(msg)
+                    try:
+                        payload = self._reply_bytes(error_result, budget)
+                    except Exception:
+                        # BF-805: this branch is the last thing standing between
+                        # the caller and silence, so it must not fail the same
+                        # way the reply it is reporting on did. Measured live:
+                        # a legal request whose echoed headers left a 111-byte
+                        # budget could carry neither the 170-byte answer nor the
+                        # 290-byte error about it, so BOTH raised, the second
+                        # escaped the callback, and the requester timed out
+                        # holding nothing -- exactly the outcome this BF exists
+                        # to prevent, reached by its own error path.
+                        payload = IntentBus._smallest_error_bytes(
+                            intent_id, str(e), budget
+                        )
+                        if payload is None:
+                            logger.error(
+                                "BF-805: no reply of any size fits the %d-byte "
+                                "budget for intent %s on agent %s (the request's "
+                                "echoed headers consume the payload limit); the "
+                                "caller will time out with nothing",
+                                budget, intent_id[:16], agent_id[:12],
+                            )
+                            return
+                    try:
+                        await msg.respond_encoded(payload)
+                    except Exception:
+                        logger.error(
+                            "BF-805: the error reply to intent %s on agent %s "
+                            "could not be sent; the caller will time out",
+                            intent_id[:16], agent_id[:12], exc_info=True,
+                        )
 
         sub = await self._nats_bus.subscribe(subject, _on_nats_intent)
 
@@ -1487,9 +1526,9 @@ class IntentBus:
     def _serialize_result(result: IntentResult) -> dict[str, Any]:
         """Serialize IntentResult for NATS reply.
 
-        result.result must be JSON-serializable. Non-serializable values
-        will raise TypeError — this is intentional (fail fast). Handlers
-        using the NATS path must return serializable results.
+        Shape only. Whether the shape can actually cross the wire is
+        ``_reply_bytes``'s question — see there for why ``metadata`` is
+        allowed to be dropped and ``result`` is not.
 
         BF-742: ``metadata`` is carried. AD-1203 put the per-turn tool-trace
         ref there and this omission dropped it on every NATS reply.
@@ -1504,6 +1543,247 @@ class IntentBus:
             "timestamp": result.timestamp.isoformat(),
             "metadata": result.metadata,
         }
+
+    @staticmethod
+    def _encoded(payload: Any) -> bytes | None:
+        """The bytes ``respond`` would send, or ``None`` if it cannot encode.
+
+        Catches ``Exception``, not a chosen tuple. Encoding runs caller-supplied
+        objects' own code: a deeply nested value raises ``RecursionError``
+        (measured, and it took a valid answer down), and a ``dict`` subclass
+        whose ``items()`` raises produces whatever it likes. The question here
+        is only "will this encode", and every failure answers it the same way.
+        """
+        try:
+            return json.dumps(payload).encode()
+        except Exception:
+            return None
+
+    def _wire_limit(self) -> int:
+        """Bytes the reply transport will accept, asked of the transport."""
+        bus = getattr(self, "_nats_bus", None)
+        limit = getattr(bus, "max_payload", None)
+        if isinstance(limit, int) and limit > 0:
+            return limit
+        return DEFAULT_MAX_PAYLOAD_BYTES
+
+    def _reply_budget(self, msg: Any) -> int:
+        """Bytes left for THIS reply's body after its echoed headers.
+
+        ``Msg.respond`` carries the request's headers onto the reply and the
+        server counts them against the limit, so the body ceiling is
+        per-message rather than global. A message that cannot say (a double
+        without the accessor) falls back to the whole limit, which is the
+        pre-BF-805 assumption.
+        """
+        limit = self._wire_limit()
+        budget = getattr(msg, "reply_body_budget", None)
+        if callable(budget):
+            try:
+                value = budget(limit)
+            except Exception:
+                return limit
+            if isinstance(value, int) and value >= 0:
+                return value
+        return limit
+
+    def _reply_bytes(
+        self, result: IntentResult, limit: int | None = None
+    ) -> bytes:
+        """BF-805: a reply the wire will take, minus only what it will not.
+
+        ``metadata`` is out-of-band provenance ABOUT the answer — AD-1203's
+        ``tool_trace_ref``, AD-1248's ``dm_reply``. It must never be able to
+        take the answer down with it. Measured through the real adapter: one
+        ``object()`` under ``metadata["dm_reply"]`` turned a successful reply
+        into ``success=False, result=None, error="Object of type object is not
+        JSON serializable"``. The Captain lost the answer and was handed a
+        serialization fault about their request instead. Measured against a
+        live server: 1 MB of perfectly valid metadata did the same thing with
+        ``nats: maximum payload exceeded``.
+
+        Three properties, each of which cost a review round:
+
+        **The answer is checked alone first.** If the envelope will not go even
+        with no provenance attached, nothing here can rescue it, and pruning
+        metadata would only produce a log claiming a delivery that never
+        happened.
+
+        **Keys are tested inside the real envelope, cumulatively.** A value can
+        encode alone and still fail nested under ``metadata`` (recursion depth),
+        and two values can each fit and together exceed the payload limit.
+        Probing a key in a shallower or emptier envelope than the consumer
+        receives answers a different question.
+
+        **A metadata container that is not a mapping is dropped whole.** There
+        are no keys to prune, and the answer is what matters.
+
+        A ``result`` that cannot be encoded still raises, so the caller receives
+        the error reply the handler-error branch builds. Fail fast is right for
+        the answer and wrong for provenance.
+
+        This is BF-799's judgement one layer down: the federation bridge already
+        drops the disclosure and delivers the reply. A drop is recorded in the
+        log and nowhere else — the receiver cannot distinguish "no provenance
+        existed" from "provenance was dropped", which is the honest cost of not
+        inventing a wire field nothing reads.
+
+        Returns the BYTES, and the caller sends exactly these. Encoding again at
+        the transport would let the check and the send see different artifacts
+        — measured with a mapping whose ``items()`` succeeds once and then
+        raises, which passed the check and destroyed the answer on the second
+        encode, reproducing the very defect being fixed.
+        """
+        limit = self._wire_limit() if limit is None else limit
+        payload = IntentBus._serialize_result(result)
+        metadata = payload.get("metadata")
+        mapping = isinstance(metadata, dict)
+        if mapping:
+            encoded = IntentBus._encoded(payload)
+            if encoded is not None and len(encoded) <= limit:
+                return encoded
+
+        bare = dict(payload)
+        bare["metadata"] = {}
+        bare_bytes = IntentBus._encoded(bare)
+        if bare_bytes is None:
+            # The answer itself cannot be encoded. Encode it once more so the
+            # caller sees the encoder's own error rather than a synthesised one,
+            # and the handler-error branch builds the error reply.
+            bare_bytes = json.dumps(bare).encode()
+        if len(bare_bytes) > limit:
+            # Returning it anyway would hand nats-py a body under its own guard
+            # (which checks the body alone) and a FRAME the server refuses --
+            # measured: it resets the responder connection asynchronously, so
+            # the reply never fails locally and the caller simply times out
+            # holding nothing. Raising here reaches the handler-error branch,
+            # which sends a short reply the wire will actually take.
+            raise ValueError(
+                f"BF-805: the reply to intent {result.intent_id} is "
+                f"{len(bare_bytes)} bytes with no provenance attached at all, "
+                f"past the {limit}-byte body budget for this wire"
+            )
+
+        if not mapping:
+            # A container that is not a mapping has no keys to prune, and
+            # ``_deserialize_result`` would silently turn it into ``{}`` at the
+            # far end anyway -- so a JSON-safe list crossed the wire and became
+            # nothing, with no record that provenance had been lost.
+            candidate_bytes: bytes = bare_bytes
+            dropped = ["<metadata>"]
+        else:
+            try:
+                kept, dropped = self._prune_metadata(
+                    metadata, len(bare_bytes), limit
+                )
+            except Exception:
+                # Naming or iterating the keys can itself raise -- a hostile
+                # ``items()`` or a ``__str__`` that throws. The answer has
+                # already proved sendable without provenance, so losing all of
+                # it beats losing the answer to a pruning accident.
+                logger.warning(
+                    "BF-805: could not inspect the metadata on the reply to "
+                    "intent %s; dropping it whole and delivering the answer",
+                    result.intent_id, exc_info=True,
+                )
+                kept, dropped = {}, ["<metadata>"]
+            candidate = dict(bare)
+            candidate["metadata"] = kept
+            assembled = IntentBus._encoded(candidate)
+            if assembled is None or len(assembled) > limit:
+                # Byte accounting cannot see a value that encodes at this depth
+                # and fails one level deeper, so a key can survive the pass and
+                # still sink the envelope. Fall back to no provenance at all
+                # rather than announce a drop for something still unsendable.
+                candidate_bytes = bare_bytes
+                dropped = ["<metadata>"]
+            else:
+                candidate_bytes = assembled
+
+        if not dropped:
+            return candidate_bytes
+
+        logger.warning(
+            "BF-805: dropping metadata %s from the reply to intent %s by "
+            "agent=%s — it does not fit the wire (unserializable, or past the "
+            "%d-byte limit). The answer is kept and only this provenance is "
+            "lost",
+            dropped, result.intent_id, result.agent_id[:12], limit,
+        )
+        return candidate_bytes
+
+    @staticmethod
+    def _smallest_error_bytes(
+        intent_id: str, error: str, limit: int
+    ) -> bytes | None:
+        """The shortest failure envelope that still fits, or ``None``.
+
+        BF-805: when the echoed request headers eat the payload limit, even the
+        synthesised error reply can be too big — and raising there hands the
+        caller silence instead of a failure they can act on. Each candidate
+        drops one more thing the far end can live without: ``_deserialize_result``
+        reads every field with a defaulted ``.get()``, so ``{"success": false}``
+        is a complete, correctly-shaped IntentResult carrying the one fact that
+        matters.
+
+        ``None`` means the budget will not take even eighteen bytes. Nothing can
+        be sent, and the caller times out; the point of returning it rather than
+        raising is that the caller of THIS method can say so in the log.
+        """
+        for candidate in (
+            {"intent_id": intent_id, "success": False, "error": error[:200]},
+            {"intent_id": intent_id, "success": False},
+            {"success": False},
+        ):
+            encoded = IntentBus._encoded(candidate)
+            if encoded is not None and len(encoded) <= limit:
+                return encoded
+        return None
+
+    @staticmethod
+    def _prune_metadata(
+        metadata: dict[Any, Any], bare_bytes: int, limit: int
+    ) -> tuple[dict[Any, Any], list[str]]:
+        """Keep the metadata keys that still fit, in one linear pass.
+
+        Each key is encoded ONCE as its own ``{"k": v}`` fragment and charged
+        the bytes it would add inside the metadata object: the fragment less
+        its braces, plus a separating comma after the first. Re-encoding the
+        growing envelope per key instead was quadratic — measured at 0.85s for
+        5,001 keys, synchronously inside the NATS callback, delaying every task
+        on that event loop.
+
+        Size accounting alone cannot see a value that encodes at this depth and
+        fails one level deeper, so the caller still checks the assembled
+        envelope once and falls back to dropping the container whole.
+
+        Greedy in iteration order, so an early large key can starve later small
+        ones. Tolerable while the known producers insert ``tool_trace_ref``
+        before ``dm_reply`` and both are small; an explicit retention priority
+        belongs here before a third field is added.
+        """
+        kept: dict[Any, Any] = {}
+        dropped: list[str] = []
+        room = limit - bare_bytes
+        spent = 0
+        for key, value in metadata.items():
+            fragment = IntentBus._encoded({key: value})
+            if fragment is None:
+                dropped.append(str(key))
+                continue
+            # ``{"k": v}`` minus its own braces, plus the ``", "`` that joins
+            # it to whatever is already kept. Two bytes, not one: measured, a
+            # one-byte charge under-counted every key after the first, kept a
+            # key that did not fit, and lost the whole container at the final
+            # check -- including the earlier keys that would have fitted.
+            cost = len(fragment) - 2 + (2 if kept else 0)
+            if spent + cost <= room:
+                kept[key] = value
+                spent += cost
+            else:
+                dropped.append(str(key))
+        return kept, dropped
+
 
     @staticmethod
     def _deserialize_result(data: dict[str, Any]) -> IntentResult:

@@ -86,6 +86,82 @@ def _subscription_mutation_lock(bus: Any) -> asyncio.Lock:
 # NATSMessage
 # ---------------------------------------------------------------------------
 
+# BF-805: the NATS server default. A connected client reports the real figure
+# (``NATSBus.max_payload``); this is only the floor for a caller with no live
+# connection to ask.
+DEFAULT_MAX_PAYLOAD_BYTES: int = 1024 * 1024
+
+
+@lru_cache(maxsize=1)
+def _header_framing() -> tuple[bytes, bytes]:
+    """The header line and line terminator nats-py frames headers with.
+
+    Read from the library when it is installed, so a change to its framing
+    surfaces here rather than being silently approximated. The protocol
+    literals are the fallback for a build without the optional NATS extra,
+    where nothing is going to be published anyway.
+    """
+    try:
+        from nats.aio.client import NATS_HDR_LINE, _CRLF_  # type: ignore
+
+        return bytes(NATS_HDR_LINE), bytes(_CRLF_)
+    except Exception:  # pragma: no cover - only without nats-py installed
+        return b"NATS/1.0", b"\r\n"
+
+
+_NO_HEADERS: Any = object()
+"""Distinguishes "this message has no headers attribute" from ``None`` or ``{}``."""
+
+
+def encoded_header_size(headers: Any) -> int:
+    """Bytes NATS frames for ``headers``, mirroring nats-py's own encoder.
+
+    BF-805: ``Msg.respond`` republishes the REQUEST's headers onto the reply,
+    and the server counts those bytes against ``max_payload`` alongside the
+    body — while nats-py's own guard checks ``len(payload)`` alone. Measured
+    against a live server: a 1,048,568-byte body plus 279 bytes of echoed
+    headers was refused at a 1,048,576 limit, and the requester timed out
+    holding nothing.
+
+    Mirrors the loop in ``Client._send_publish``: header line, then
+    ``key: value`` per entry, then a blank line, with empty keys skipped and
+    values stripped exactly as it does.
+
+    ``None`` and ``{}`` are NOT the same thing: the library sends a plain PUB
+    for ``None`` and costs nothing, but an empty dict still takes the HPUB
+    branch and frames a 12-byte header block.
+    """
+    if headers is None:
+        return 0
+    try:
+        items = list(headers.items())
+    except Exception:
+        return 0
+    hdr_line, crlf = _header_framing()
+    size = len(hdr_line) + len(crlf)
+    for key, value in items:
+        # ``k.strip()`` exactly as the library does, not ``str(k).strip()``:
+        # nats-py's own ``Header`` is a ``str`` subtype whose ``str()`` renders
+        # as ``Header.DESCRIPTION`` while ``.strip()`` yields the wire name, and
+        # the difference showed up as 39 predicted bytes against 32 real ones.
+        try:
+            name = key.strip()
+        except AttributeError:
+            name = str(key).strip()
+        if not name:
+            continue
+        try:
+            rendered = value.strip()
+        except AttributeError:
+            rendered = str(value).strip()
+        size += (
+            len(name.encode())
+            + 2  # b": "
+            + len(rendered.encode())
+            + len(crlf)
+        )
+    return size + len(crlf)
+
 
 class NATSMessage:
     """Wrapper around a NATS message for consumer-side processing."""
@@ -126,6 +202,41 @@ class NATSMessage:
         if self._msg and hasattr(self._msg, "respond"):
             payload = json.dumps(data).encode()
             await self._msg.respond(payload)
+
+    async def respond_encoded(self, payload: bytes) -> None:
+        """Reply with bytes a caller has already encoded and checked.
+
+        BF-805: the caller that decides whether a reply fits must send the
+        BYTES it measured. Encoding twice means the check and the send can see
+        different artifacts — measured with a mapping whose ``items()`` succeeds
+        once and then raises, which passed the check and destroyed the answer on
+        the second encode, reproducing the very defect being fixed.
+        """
+        if self._msg and hasattr(self._msg, "respond"):
+            await self._msg.respond(payload)
+
+    def reply_body_budget(self, max_payload: int) -> int:
+        """BF-805: bytes left for a reply BODY after the echoed headers.
+
+        ``Msg.respond`` carries the request's headers onto the reply, so the
+        body's real ceiling is lower than the server's advertised limit by
+        exactly their framed size. Never negative: a header block that alone
+        exceeds the limit leaves nothing, and the caller's own checks then fail
+        the reply honestly rather than sending something the server refuses.
+
+        The headers charged are the ones ``respond`` will actually echo, which
+        live on the raw message. ``or`` would collapse a raw ``{}`` -- a real
+        12-byte HPUB block -- into this wrapper's own copy, so absent is
+        distinguished from empty explicitly.
+        """
+        headers = getattr(self._msg, "headers", _NO_HEADERS)
+        if headers is _NO_HEADERS:
+            # This wrapper coerces absent headers to ``{}`` at construction, so
+            # its own copy cannot tell "none" from "an empty HPUB block". Only
+            # the raw message carries that distinction -- and only the raw
+            # message's headers are what ``respond`` actually echoes.
+            headers = self.headers or None
+        return max(0, max_payload - encoded_header_size(headers))
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +297,24 @@ class NATSBus:
     def connected(self) -> bool:
         """True when NATS client is connected and not draining."""
         return self._connected and self._nc is not None and self._nc.is_connected
+
+    @property
+    def max_payload(self) -> int:
+        """Bytes the connected server will accept in one message.
+
+        BF-805: a producer sizing a reply has to ask the transport, not guess.
+        The server advertises this at connect (1 MiB by default) and enforces
+        it with ``nats: maximum payload exceeded`` — which, on the reply path,
+        replaces a perfectly good answer with a synthetic failure.
+
+        Falls back to the NATS default when there is no live client, so an
+        offline caller is bounded by the number the server almost certainly
+        advertises rather than by nothing at all.
+        """
+        value = getattr(self._nc, "max_payload", None)
+        if isinstance(value, int) and value > 0:
+            return value
+        return DEFAULT_MAX_PAYLOAD_BYTES
 
     @property
     def subject_prefix(self) -> str:
