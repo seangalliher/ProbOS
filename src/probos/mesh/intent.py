@@ -538,8 +538,38 @@ class IntentBus:
                             self._reply_bytes(result, self._reply_budget(msg))
                         )
                     else:
-                        # Agent declined — send empty success response
-                        await msg.respond({"declined": True})
+                        # Agent declined — send empty success response.
+                        #
+                        # BF-827: budgeted like the other two reply sites. The
+                        # body is 18 bytes, so it cannot overflow on its own —
+                        # but ``Msg.respond`` echoes the REQUEST's headers and
+                        # the server counts body + headers, so a peer that
+                        # sends a tiny body under a very large header block
+                        # leaves no room even for this. nats-py's own guard
+                        # checks the body alone, so the send would succeed
+                        # locally and the server would reset the connection
+                        # asynchronously: the caller times out holding nothing,
+                        # with no local error. Every ProbOS caller sends a full
+                        # serialized intent, so reaching it needs a
+                        # non-standard peer — which is exactly the case a
+                        # budget is for.
+                        #
+                        # Read the budget ONCE. Deciding from one call and
+                        # logging another lets the warning name a size the
+                        # decision was never made on — a log that confabulates
+                        # its own reason.
+                        budget = self._reply_budget(msg)
+                        declined = self._decline_bytes(budget)
+                        if declined is not None:
+                            await msg.respond_encoded(declined)
+                        else:
+                            logger.warning(
+                                "BF-827: cannot send the decline for intent on "
+                                "agent %s — the request's echoed headers leave "
+                                "%d bytes, less than the smallest decline this "
+                                "can encode; the caller will time out",
+                                agent_id[:12], budget,
+                            )
             except Exception as e:
                 logger.warning("NATS intent handler error for %s: %s", agent_id[:8], e)
                 if msg.reply:
@@ -1521,6 +1551,34 @@ class IntentBus:
             # is the pre-fix behaviour rather than a hard failure.
             thread_id=data.get("thread_id"),
         )
+
+    @staticmethod
+    def _decline_bytes(limit: int) -> bytes | None:
+        """The smallest decline that still fits, or ``None`` if none does.
+
+        BF-827: the ordinary encoding is 18 bytes and is what every peer has
+        always received, so it is tried first and is byte-identical to the
+        pre-fix reply. Below that there is still one honest option: JSON's
+        whitespace is optional, and ``{"declined":true}`` is 17 bytes and
+        decodes to exactly the same object.
+
+        Review measured that 17-byte case against a live server — headers left
+        exactly 17 bytes, the compact form crossed at the limit and decoded
+        correctly, and the first version of this fix logged and gave up on a
+        reply that was deliverable. A refusal where delivery is possible is a
+        capability ceiling nobody chose (DP-13a), not a safety property.
+
+        ``None`` means the budget will not take even seventeen bytes. Nothing
+        can be sent then; returning it rather than raising lets the caller say
+        so in the log.
+        """
+        for payload in (
+            b'{"declined": true}',  # the historical encoding, byte-for-byte
+            b'{"declined":true}',   # the same object, JSON whitespace dropped
+        ):
+            if len(payload) <= limit:
+                return payload
+        return None
 
     @staticmethod
     def _serialize_result(result: IntentResult) -> dict[str, Any]:

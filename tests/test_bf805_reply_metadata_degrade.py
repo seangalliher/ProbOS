@@ -838,18 +838,20 @@ def test_the_jetstream_dispatch_path_has_no_reply_to_lose() -> None:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr in ("respond", "respond_encoded")
     ]
-    # Exactly three reply sites on the bus. The decline carries a dict literal;
-    # the other two carry an IntentResult and must send pre-encoded bytes.
+    # Exactly three reply sites on the bus, and BF-827 (#1291) closed the last
+    # gap: ALL THREE now send pre-encoded bytes against a budget. This asserted
+    # that the decline was a plain ``respond`` with a dict literal, because
+    # that is what shipped -- correct as a record, wrong as a contract, since
+    # keeping it would have required the one un-budgeted path to stay
+    # un-budgeted. Updated rather than deleted, so the change is recorded where
+    # the old shape was.
     assert len(calls) == 3, [ast.dump(c) for c in calls]
-    declines = [
-        call
-        for call in calls
-        if call.func.attr == "respond" and call.args
-        and isinstance(call.args[0], ast.Dict)
-    ]
-    assert len(declines) == 1, [ast.dump(c) for c in calls]
-    encoded = [c for c in calls if c.func.attr == "respond_encoded"]
-    assert len(encoded) == 2, [ast.dump(c) for c in calls]
+    assert [c.func.attr for c in calls] == ["respond_encoded"] * 3, (
+        [ast.dump(c) for c in calls]
+    )
+    assert not [c for c in calls if c.args and isinstance(c.args[0], ast.Dict)], (
+        "a reply built from a dict literal is not budgeted"
+    )
 
     # And both IntentResult payloads are built by the degrading builder --
     # whether inline or via a local, which the error path needs so it can fall
