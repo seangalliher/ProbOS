@@ -185,7 +185,41 @@ async def test_capability_context_is_reset_after_execute() -> None:
 
 # --- HttpFetchAgent egress integration ----------------------------------------
 
-def test_httpfetchagent_validate_url_blocks_when_egress_policy_denies() -> None:
+
+@pytest.fixture
+def _public_dns(monkeypatch):
+    """BF-828 (#1292): resolve the test host WITHOUT touching the network.
+
+    These assertions are about the EGRESS policy. The SSRF guard runs first and
+    resolves the hostname for real (``security/url_guard.py:92``), so a resolver
+    hiccup on the gate machine turned an egress assertion into::
+
+        assert 'Egress policy' in 'Cannot resolve hostname: example.com'
+
+    Observed on a full gate run; it passed in isolation and on a re-run, so it
+    was purely a network flake — and a rotating false red on the gate trains
+    the reader to dismiss gate failures, which is how a real regression gets
+    waved through.
+
+    A public address is returned so the guard's private-range checks still run
+    exactly as they would against the real host.
+    """
+    import socket as _socket
+
+    real = _socket.getaddrinfo
+
+    def _fake(host, port, *args, **kwargs):
+        if host in ("example.com", "allowed.example.com"):
+            return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+        return real(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(_socket, "getaddrinfo", _fake)
+    return _fake
+
+
+def test_httpfetchagent_validate_url_blocks_when_egress_policy_denies(
+    _public_dns,
+) -> None:
     from probos.agents.http_fetch import HttpFetchAgent
     from probos.security.egress import EgressPolicy
 
@@ -196,8 +230,8 @@ def test_httpfetchagent_validate_url_blocks_when_egress_policy_denies() -> None:
     HttpFetchAgent.set_egress_policy(policy)
     try:
         agent = HttpFetchAgent(pool="http")
-        # Use a public-DNS-resolving host that will pass the SSRF guards but
-        # fail the egress check. example.com resolves to public IPs.
+        # A host that passes the SSRF guards (public address, stubbed above)
+        # and fails the egress check.
         error = agent._validate_url("https://example.com/")
         assert error is not None
         assert "Egress policy" in error
@@ -206,7 +240,9 @@ def test_httpfetchagent_validate_url_blocks_when_egress_policy_denies() -> None:
         HttpFetchAgent.set_egress_policy(None)
 
 
-def test_httpfetchagent_validate_url_passes_when_egress_policy_allows() -> None:
+def test_httpfetchagent_validate_url_passes_when_egress_policy_allows(
+    _public_dns,
+) -> None:
     from probos.agents.http_fetch import HttpFetchAgent
     from probos.security.egress import EgressPolicy
 
@@ -218,9 +254,10 @@ def test_httpfetchagent_validate_url_passes_when_egress_policy_allows() -> None:
     try:
         agent = HttpFetchAgent(pool="http")
         error = agent._validate_url("https://example.com/")
-        # Either None (allowed) or a non-egress error (e.g., DNS); the egress
-        # branch must NOT be the source of the block.
-        assert error is None or "Egress policy" not in error
+        # BF-828: the resolution is stubbed, so this is now an exact assertion
+        # rather than "None or some other error" -- which would have passed
+        # against a DNS failure and so could not tell allow from unreachable.
+        assert error is None, error
     finally:
         HttpFetchAgent.set_egress_policy(None)
 
