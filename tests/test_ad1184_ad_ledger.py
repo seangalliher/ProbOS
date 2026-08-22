@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import socket
 import subprocess
@@ -332,8 +333,22 @@ def test_derived_ceilings_clear_the_known_floor(ledger: types.ModuleType) -> Non
     assert ceilings["BF"] >= 712, f"BF ceiling regressed to {ceilings['BF']}"
 
     published = _section(_REPORT.read_text(encoding="utf-8"), "Ceilings")
-    assert "**AD-1202**" in published or "**AD-12" in published
-    assert "**BF-712**" in published or "**BF-7" in published
+    # Parse the numbers rather than matching a prefix.
+    #
+    # This read `"**AD-1202**" in published or "**AD-12" in published` and
+    # `"**BF-712**" ... or "**BF-7"`, which silently encoded "BF is in the
+    # 700s". The docstring says this must fail on a LOWER number; the prefix
+    # form failed on a HIGHER one instead. It went red the moment the ceiling
+    # reached BF-833 -- growth, which is the opposite of the regression it
+    # exists to catch, and it would have taken the AD series with it at
+    # AD-1300. Updated rather than deleted, so the change is recorded where
+    # the old shape was.
+    for series, floor in (("AD", 1202), ("BF", 712)):
+        found = [int(n) for n in re.findall(rf"\*\*{series}-(\d+)\*\*", published)]
+        assert found, f"the published Ceilings section names no {series} number"
+        assert max(found) >= floor, (
+            f"published {series} ceiling regressed to {max(found)}"
+        )
 
 
 def test_the_report_refuses_to_call_unmentioned_numbers_free() -> None:
