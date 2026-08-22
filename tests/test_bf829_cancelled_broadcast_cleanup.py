@@ -289,7 +289,14 @@ async def test_a_slow_cancelling_handler_does_not_block_the_timeout_path() -> No
 
 @pytest.mark.asyncio
 async def test_a_straggler_that_resumes_after_the_pop_cannot_re_leak_the_key() -> None:
-    """The non-await is only safe because `_invoke_handler` guards its append.
+    """The non-await must not let a late handler resurrect the popped key.
+
+    This originally read "safe because `_invoke_handler` guards its append with
+    `if intent.id in self._pending_results`". BF-833 (#1298) DELETED both those
+    guards -- the round's list is handed to the handler instead, so a straggler
+    never touches the dict at all. The property is unchanged and now structural;
+    the explanation was updated rather than the test deleted, so the change is
+    recorded where the old reasoning was.
 
     The handler must SUPPRESS its cancellation and run on to the append --
     review caught the first version of this test re-raising `CancelledError`,

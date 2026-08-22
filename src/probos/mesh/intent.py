@@ -1069,9 +1069,15 @@ class IntentBus:
         # moves the leak somewhere quieter. `untrack` is idempotent and both
         # cleanups tolerate partial setup.
         tasks: list[asyncio.Task] = []
+        # THE round's result list. Held as a local, not looked up again: every
+        # ID-keyed read is a chance to pick up a different round's work, which
+        # is the whole of BF-833. `_pending_results` stays a registry so the
+        # leak assertions BF-829 added remain meaningful, but it is no longer
+        # how this round finds its own results.
+        sink: list[IntentResult] = []
         try:
             self._signal_manager.track(intent)
-            self._pending_results[intent.id] = []
+            self._pending_results[intent.id] = sink
 
             logger.info(
                 "Intent broadcast: %s id=%s urgency=%.1f subscribers=%d",
@@ -1112,10 +1118,32 @@ class IntentBus:
                 }
 
             # Fan out to selected subscribers concurrently
+            #
+            # BF-833 (#1298): hand each handler THIS round's list object, not the
+            # intent id. `_invoke_handler` used to look the id up in
+            # `_pending_results` before appending -- a presence test, which
+            # cannot tell one round from the next, because `broadcast` recreates
+            # the key on every call. A straggler that suppressed its
+            # `CancelledError` and finished during a later broadcast of the same
+            # id appended into that later round: measured
+            # `second=[('stale-first','STALE'), ('fresh','FRESH')]`. Well-formed,
+            # so nothing logged and nothing failed -- and every result is fed to
+            # Hebbian routing and quorum before the caller sees it, so it
+            # reinforced the wrong edge and voted in a round it was not part of.
+            #
+            # The capture is HERE, synchronously, and deliberately not inside
+            # `_invoke_handler`: `create_task` only schedules. Review opened
+            # that window -- two broadcasts of one ID released together, where
+            # round 2 replaces the dict entry before round 1's handler runs its
+            # first line, 10 runs out of 10. My own attempt with SEQUENTIAL
+            # rounds could not open it in 33 orderings, which is why the
+            # concurrent case is now a test.
             for agent_id, (handler, latency_class) in list(candidates.items()):
                 tasks.append(
                     asyncio.create_task(
-                        self._invoke_handler(intent, agent_id, handler, latency_class),
+                        self._invoke_handler(
+                            intent, agent_id, handler, latency_class, sink,
+                        ),
                         name=f"intent-{intent.id[:8]}-{agent_id[:8]}",
                     )
                 )
@@ -1124,9 +1152,10 @@ class IntentBus:
                 # Wait for all handlers, bounded by timeout
                 await asyncio.wait(tasks, timeout=timeout)
 
-            # Read before the cleanup below drops the key. No await separates
-            # these, so a straggler cannot append between the read and the pop.
-            results = list(self._pending_results.get(intent.id, ()))
+            # Read THIS round's list. Reading `_pending_results[intent.id]`
+            # here would hand a concurrent round's results to this caller and
+            # lose its own -- measured, and identical before BF-833.
+            results = list(sink)
         finally:
             # Cancel stragglers. Not awaited: that is deliberate. The timeout
             # path has always returned without waiting for stragglers to
@@ -1134,23 +1163,22 @@ class IntentBus:
             # cancellation cleanup block every broadcast that times out --
             # measured at 2.2s against 0.2s.
             #
-            # Safe against RE-LEAKING this key: `_invoke_handler` guards both
-            # of its appends with `if intent.id in self._pending_results`, so
-            # a straggler resuming after the pop finds the key gone and skips.
-            #
-            # NOT safe against a straggler that suppresses its cancellation and
-            # then appends into a LATER broadcast which re-created the same
-            # key. That guard tests presence, not which broadcast the key
-            # belongs to. Measured, and reproduces identically before this
-            # change -- it is a separate pre-existing defect needing a
-            # per-broadcast result buffer, tracked as BF-833 (#1298). Recorded
-            # here so the non-await above is not read as covering more than it
-            # does.
+            # A straggler cannot touch `_pending_results` at all: BF-833 gives
+            # it this round's list object directly, so once the pop below runs
+            # nothing but the straggler holds that list and its append is
+            # inert. Before BF-833 the appends were guarded by an id presence
+            # test, which stopped a re-leak of the popped key but NOT an append
+            # into a later round that had recreated it. That distinction is
+            # gone; the object now identifies the round.
             for task in tasks:
                 if not task.done():
                     task.cancel()
 
-            self._pending_results.pop(intent.id, None)
+            # Drop the registry entry ONLY if it is still this round's list. A
+            # later broadcast of the same ID has already replaced it, and
+            # popping then would delete a live round's entry.
+            if self._pending_results.get(intent.id) is sink:
+                self._pending_results.pop(intent.id, None)
             self._signal_manager.untrack(intent.id)
 
         # AD-470: Record metrics
@@ -1406,8 +1434,18 @@ class IntentBus:
         agent_id: str,
         handler: IntentHandler,
         latency_class: HandlerLatencyClass,
+        sink: list[IntentResult],
     ) -> None:
-        """Invoke a single subscriber's handler, catching errors."""
+        """Invoke a single subscriber's handler, catching errors.
+
+        ``sink`` is the result list belonging to the broadcast that launched
+        this task, captured before the task was scheduled (BF-833). Appending
+        to it directly is what makes a late result land in its OWN round: once
+        that round returns, its list is dropped from ``_pending_results`` and
+        nothing else holds it, so a straggler's append is inert rather than
+        misattributed. There is no presence test because there is nothing left
+        to test -- the object identifies the round.
+        """
         t0 = time.monotonic()
         try:
             result = await handler(intent)
@@ -1437,8 +1475,7 @@ class IntentBus:
                 )
             if result is not None:
                 # Agent accepted and responded
-                if intent.id in self._pending_results:
-                    self._pending_results[intent.id].append(result)
+                sink.append(result)
         except Exception as e:
             elapsed_ms = (time.monotonic() - t0) * 1000
             self._metrics.record_handler(
@@ -1457,16 +1494,15 @@ class IntentBus:
                 e,
             )
             # Record the failure as a result
-            if intent.id in self._pending_results:
-                self._pending_results[intent.id].append(
-                    IntentResult(
-                        intent_id=intent.id,
-                        agent_id=agent_id,
-                        success=False,
-                        error=str(e),
-                        confidence=0.0,
-                    )
+            sink.append(
+                IntentResult(
+                    intent_id=intent.id,
+                    agent_id=agent_id,
+                    success=False,
+                    error=str(e),
+                    confidence=0.0,
                 )
+            )
 
     # ------------------------------------------------------------------
     # AD-514: Public API

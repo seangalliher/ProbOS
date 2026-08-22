@@ -931,13 +931,20 @@ class TestIntentBus:
             return IntentResult(intent_id=intent.id, agent_id="cancelled", success=True)
 
         intent = IntentMessage(intent="cancelled.intent")
-        intent_bus._pending_results[intent.id] = []
+        # BF-833: the sink is passed in rather than looked up by id. Kept as
+        # the NEGATIVE CONTROL for the new cross-round tests -- a handler that
+        # re-raises CancelledError reaches neither append branch, so a test
+        # written that way pins nothing about attribution. This one asserts
+        # exactly that nothing is recorded, which is still worth holding.
+        sink: list[IntentResult] = []
+        intent_bus._pending_results[intent.id] = sink
         task = asyncio.create_task(
             intent_bus._invoke_handler(
                 intent,
                 "cancelled-agent",
                 handler,
                 HandlerLatencyClass.COGNITIVE,
+                sink,
             )
         )
         await started.wait()
@@ -947,6 +954,7 @@ class TestIntentBus:
             with pytest.raises(asyncio.CancelledError):
                 await task
 
+        assert sink == []
         assert intent_bus._pending_results[intent.id] == []
         assert intent_bus.get_metrics()["handlers"] == []
         assert caplog.records == []
