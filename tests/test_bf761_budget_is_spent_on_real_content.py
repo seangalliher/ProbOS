@@ -194,36 +194,51 @@ class TestTheBudgetIsSpentOnRealContent:
             f"fixture expansion drifted to {measured:.2f}x"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="BF-762 (#1220): the container ration, not the allowance, bounds this",
-    )
     def test_a_json_array_delivers_the_budget(self) -> None:
-        """BF-762 (#1220): NOT YET TRUE, and expressed as the contract it should
-        be rather than as the shape it currently has.
+        """BF-762 (#1220): now true. Written by BF-761 as a strict xfail.
 
-        A valid indented JSON array spends only ~7% of the budget. The allowance
-        search is not what limits it — ``_LIST_KEEP`` rations the array to eight
-        entries, so raising the allowance changes nothing and the search
-        correctly saturates. That is the other dimension, and BF-761 does not
-        touch it.
+        A valid indented JSON array spent only ~7% of the budget. The allowance
+        search was not what limited it -- ``_LIST_KEEP`` rationed the array to
+        eight entries, so raising the allowance changed nothing and the search
+        correctly saturated. BF-762 searches that second dimension too, and this
+        fixture now renders 5,834 of 6,000 characters (97.2%).
 
-        ``strict=True`` so this flips to a failure the moment BF-762 lands,
-        which is the point: a green test that requires the defect would make the
-        fix look like a regression.
+        The ``strict=True`` marker was the point: it flipped to a failure the
+        moment BF-762 landed, so the fix could not be mistaken for a regression
+        and the contract could not stay green while requiring the defect. It is
+        removed rather than the assertion weakened.
         """
         doc = _indented_json(7_500)
         rendered = render_tool_output(_envelope(doc), max_chars=LIVE_CAP)
         assert len(rendered) > LIVE_CAP * 0.8
 
-    def test_a_json_array_is_currently_bounded_by_the_ration(self) -> None:
-        """The shape as it actually ships, so the gap is visible and counted."""
+    def test_a_json_array_is_no_longer_bounded_by_the_ration(self) -> None:
+        """The shape as it ships AFTER BF-762, replacing the pin on the defect.
+
+        This asserted ``"more items" in rendered`` -- the counted ration marker
+        -- because that was what shipped. It was correct as a record of the gap
+        and wrong as a contract: kept unchanged it would have required the
+        array to stay rationed. Updated rather than deleted, so the change of
+        behaviour is recorded where the old behaviour was.
+
+        At this cap the array now fits whole, so there is nothing to count.
+        """
         doc = _indented_json(7_500)
         rendered = render_tool_output(_envelope(doc), max_chars=LIVE_CAP)
 
-        assert "more items" in rendered, "the ration must be counted"
-        assert "'name': 'row 0'" in rendered, "and the shape must stay legible"
+        assert "more items" not in rendered, "the array fits whole at this cap"
         assert len(rendered) <= LIVE_CAP
+
+        # Absence of the marker is not completeness: review built a
+        # marker-free rendering carrying 104 of 125 rows that passed every
+        # weaker assertion, including the 80% budget one, while silently
+        # dropping the last row. So count them.
+        import json as _json
+
+        rows = _json.loads(doc)["rows"]
+        assert rows, "premise: the fixture has rows"
+        for row in rows:
+            assert f"'name': '{row['name']}'" in rendered, row["name"]
 
     def test_the_old_single_attempt_really_did_fall_back(self) -> None:
         """The counterfactual, computed rather than asserted from memory.
@@ -269,10 +284,17 @@ class TestTheBudgetIsSpentOnRealContent:
             assert "more items" in rendered, f"cap {cap} lost the ration marker"
             retained[cap] = sum(1 for i in range(1_000) if f"'id': {i}" in rendered)
 
-        assert retained == {150: 2, 200: 2, 300: 4, 600: 8}, (
+        assert retained == {150: 2, 200: 3, 300: 4, 600: 10}, (
             f"the rungs must widen with the cap; got {retained}. A single-rung "
             f"ladder returns 2 records at every cap."
         )
+        # BF-762 (#1220) raised the counts at 200 (2 -> 3) and 600 (8 -> 10):
+        # the ration is now SEARCHED past BF-728's defaults rather than being
+        # capped at the widest rung, so a cap with room to spare buys more
+        # records. The property this test guards is unchanged -- retention is
+        # monotone in the cap and no single-rung ladder can produce this
+        # sequence -- so the expected mapping moved rather than the assertion
+        # weakening.
 
     def test_a_short_opaque_scalar_is_never_replaced_by_a_longer_marker(self) -> None:
         """Found by this suite, after the allowance search made it reachable.

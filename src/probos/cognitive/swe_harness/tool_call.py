@@ -216,6 +216,13 @@ _OPAQUE_PROBE_CHARS = 4096
 # fallback needed when the render is a step function and a probe measures the
 # same length twice.
 _ALLOWANCE_PROBES = 8
+# BF-762: probes spent moving the container ration past BF-728's defaults. Five,
+# because the ration search brackets rather than only doubling: the measured
+# 120-row array needs one doubling to overflow and three bisections to land,
+# reaching 92.2% of the budget against 13.6% before. A sixth probe was measured
+# to buy a further 6.5 percentage points; the bound is deliberate, and is what
+# keeps the render count fixed as AD-1151 R3 requires.
+_RATION_PROBES = 5
 
 
 def _looks_like_text(value: str) -> bool:
@@ -406,11 +413,12 @@ def render_tool_output_sourced(value: Any, *, max_chars: int = 0) -> tuple[str, 
     every tool whose results are small is unaffected.
 
     A fixed number of renders, never a shrink loop: one rung probe per container
-    ration (at most three) plus ``_ALLOWANCE_PROBES`` allowance probes, on top of
-    the initial plain render. Anything still oversized falls through to the
-    existing character-level bound, which is strictly no worse than the
-    pre-BF-728 behaviour and now operates on a shape-preserved string instead of
-    raw bulk.
+    ration (at most three), plus ``_ALLOWANCE_PROBES`` allowance probes, plus
+    ``_RATION_PROBES`` ration probes (BF-762), on top of the initial plain
+    render -- 16 depth-zero renders in the worst adversarial case. Anything
+    still oversized falls through to the existing character-level bound, which
+    is strictly no worse than the pre-BF-728 behaviour and now operates on a
+    shape-preserved string instead of raw bulk.
 
     Never raises: a value that cannot be walked or re-rendered falls back to
     ``str(value)``, exactly today's behaviour.
@@ -482,32 +490,139 @@ def render_tool_output_sourced(value: Any, *, max_chars: int = 0) -> tuple[str, 
         # probed 195, 383, 565, 741, 912 without ever reaching the 3,000 it
         # needed. So an uninformative probe forces the next one to the midpoint,
         # which closes the bracket geometrically whatever the shape.
-        low, low_len = 0, len(zero_render)
-        high: int | None = None
-        high_len = 0
-        force_midpoint = False
-        for _ in range(_ALLOWANCE_PROBES):
-            if high is None:
-                probe = max_chars
-            elif high - low <= 1:
+        def search_allowance(
+            keeps: tuple[int, int], floor_render: str, best: str | None
+        ) -> tuple[str | None, int]:
+            """The largest per-leaf allowance that fits AT THIS RATION.
+
+            Extracted for readability and to hand the chosen allowance to the
+            ration search below, which reuses it. It is called ONCE: re-running
+            it after each widening was implemented and removed, see there.
+            Returns ``(best, allowance)``.
+            """
+            low, low_len = 0, len(floor_render)
+            high: int | None = None
+            high_len = 0
+            force_midpoint = False
+            for _ in range(_ALLOWANCE_PROBES):
+                if high is None:
+                    probe = max_chars
+                elif high - low <= 1:
+                    break
+                elif force_midpoint or high_len <= low_len:
+                    probe = (low + high) // 2
+                else:
+                    reach = (max_chars - low_len) / (high_len - low_len)
+                    probe = low + max(1, int((high - low) * reach))
+                    probe = min(probe, (low + high) // 2)
+                probe = min(max(probe, low + 1), high - 1 if high is not None else max_chars)
+                if probe <= low:
+                    break
+                candidate = render(probe, keeps)
+                length = len(candidate)
+                if length <= max_chars and (best is None or length >= len(best)):
+                    force_midpoint = length == low_len
+                    best, low, low_len = candidate, probe, length
+                else:
+                    force_midpoint = high is not None and length == high_len
+                    high, high_len = probe, length
+            return best, low
+
+        best, allowance = search_allowance(keeps, zero_render, best)
+
+        # Rung three: the container RATION (BF-762). The allowance search above
+        # can saturate with most of the budget unspent, because it is not the
+        # binding dimension for an array: ``_LIST_KEEP`` rations a list to eight
+        # entries whatever the allowance, so a larger one changes nothing and
+        # the search correctly stops. Measured on 120 rows of ordinary record
+        # JSON at a 6,000-character cap: 816 characters rendered, 13.6% of the
+        # budget, eight rows kept and 112 elided. That shape -- any list
+        # endpoint, any search result set, any ``rows``/``items``/``results``
+        # envelope -- is common enough that leaving 86% unspent is the same
+        # "a bound sized for one shape starves another" mistake BF-759 and
+        # BF-761 each fixed one layer up.
+        #
+        # BF-728's rations remain right when the budget IS tight: PyPI's
+        # ``releases`` is ~1,500 entries of noise beside the keys that are the
+        # answer. So this only ever WIDENS from them, and only while the render
+        # both still fits and still grows -- a ration that buys nothing is
+        # rejected, which is what keeps a deep dict from being widened
+        # superlinearly by ``max(1, dict_keep >> depth)``.
+        #
+        # The two dimensions interact, so the order is stated rather than
+        # discovered: the allowance is searched FIRST, and the ration search
+        # then reuses it. Re-running the allowance search after each widening
+        # was implemented and then removed -- measured across seven payload
+        # shapes at three caps, twenty of the twenty-one combinations rendered
+        # identically and review found a twenty-second, a mixed JSON payload,
+        # where a faithful re-run rendered 5,805 characters against 5,805 and
+        # added no rows. It costs four renders per widening to move the byte
+        # count without moving the content, so it is not carried.
+        #
+        # A ceiling on the ration multiplier was likewise written and removed:
+        # at 512 it left the final render, render count, largest intermediate
+        # string and elapsed time identical on the shapes measured here. Review
+        # found one where it does bite -- ``{"rows": list(range(100000))}`` at
+        # a 50,000 cap keeps 8,192 items with the ceiling against 7,930 without
+        # -- so this is a small loss on a flat integer array, recorded rather
+        # than claimed away.
+        #
+        # Doubling ALONE is not enough, which is BF-761's lesson one dimension
+        # over: at the measured shape 32 rows rendered 3,173 characters and 64
+        # overflowed 6,000, so a doubling-only search stopped at 52.9% having
+        # never tried 48. A ration that overflows therefore becomes the upper
+        # bracket and the search bisects into it. The render count stays a
+        # fixed bound: at most ``_RATION_PROBES`` further renders, measured at
+        # 16 depth-zero renders in the worst adversarial case.
+        fits = keeps
+        overflows: tuple[int, int] | None = None
+        for _ in range(_RATION_PROBES):
+            if best is None:
                 break
-            elif force_midpoint or high_len <= low_len:
-                probe = (low + high) // 2
+            if overflows is None:
+                # Aim at the budget rather than walking toward it, but land on
+                # a CAP-INDEPENDENT ladder. The render grows roughly linearly
+                # in kept entries, so the ratio of the budget to the current
+                # render estimates how much wider the ration can be -- rounded
+                # DOWN to a power of two, so every cap explores the same set of
+                # rations and a larger cap can only reach the same rung or a
+                # further one.
+                #
+                # The raw ratio is what a first version used, and it broke cap
+                # monotonicity: a budget of 5,954 characters rendered 126 rows
+                # and 5,955 rendered 120, because one extra character moved the
+                # whole ladder. Swept across caps 3,000-12,000 on three shapes,
+                # the raw ratio dipped at 20 adjacent caps (worst 612
+                # characters) and the quantised ladder at none.
+                #
+                # Pure doubling is also monotone but cannot reach far enough:
+                # eleven rounds to a 20,000-row array, which delivered 10.8% of
+                # a 60,000 cap within the probe budget.
+                reach = max(2, int(max_chars / max(1, len(best))))
+                scale = 1 << max(1, reach.bit_length() - 1)
+                trial = (fits[0] * scale, fits[1] * scale)
             else:
-                reach = (max_chars - low_len) / (high_len - low_len)
-                probe = low + max(1, int((high - low) * reach))
-                probe = min(probe, (low + high) // 2)
-            probe = min(max(probe, low + 1), high - 1 if high is not None else max_chars)
-            if probe <= low:
+                trial = (
+                    (fits[0] + overflows[0]) // 2,
+                    (fits[1] + overflows[1]) // 2,
+                )
+                if trial[0] <= fits[0] and trial[1] <= fits[1]:
+                    break
+                trial = (max(trial[0], fits[0]), max(trial[1], fits[1]))
+            grown = render(allowance, trial)
+            if len(grown) > max_chars:
+                overflows = trial
+                continue
+            if len(grown) <= len(best):
+                # A wider ration that buys nothing means the ration was not the
+                # binding dimension. Stop rather than spend the remaining
+                # probes -- and, for a deep dict, this is what keeps
+                # ``max(1, dict_keep >> depth)`` from widening every level
+                # superlinearly for no gain.
                 break
-            candidate = render(probe, keeps)
-            length = len(candidate)
-            if length <= max_chars and (best is None or length >= len(best)):
-                force_midpoint = length == low_len
-                best, low, low_len = candidate, probe, length
-            else:
-                force_midpoint = high is not None and length == high_len
-                high, high_len = probe, length
+            fits = keeps = trial
+            best = grown
+
         if best is not None:
             return best, len(plain)
 
