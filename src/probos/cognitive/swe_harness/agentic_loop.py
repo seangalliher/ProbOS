@@ -309,6 +309,19 @@ def build_tool_trace_payload(
     received" is already the BF-728 rendering, not what the tool returned, so
     this cannot be read as the original length for those.
 
+    **BF-760 — ``source_chars``.** When the tool's own output was longer than
+    what reached here, the entry carries ``source_chars`` with the tool's
+    length, so "the tool returned this much" and "this is what the model saw"
+    are separable. Absent when they are the same, which keeps every
+    string-output blob byte-identical; readers version by key presence.
+
+    What this does NOT fix: a ``tool_trace_output_max_chars`` larger than
+    ``tool_result_max_chars`` still cannot retain more than the context render,
+    because only the LENGTH survives to here and not the value. Keeping the
+    value is AD-1240's question (#1239, open) — the trace should reference an
+    offloaded result rather than become a second copy of it, so a field holding
+    the full text was deliberately not added.
+
     **Requests are never dropped.** If a fully-elided blob still exceeds
     ``blob_max_bytes`` it is returned anyway; losing call records to save bytes
     would regress the guarantee this AD is protecting. The caller inspects the
@@ -349,6 +362,20 @@ def build_tool_trace_payload(
             entry["is_error"] = tcr.is_error
             entry["output_chars"] = len(original)
             entry["output_truncated"] = bounded != original
+            # BF-760: what the TOOL returned, when that differs from what the
+            # trace received. ``output_chars`` is the length as received, and
+            # for a structured result "as received" is already the BF-728
+            # context rendering -- so without this the trace asserts the tool
+            # returned the rendered length and that nothing was lost. Emitted
+            # only when it adds information, which keeps every string-output
+            # blob byte-identical; readers version by key presence.
+            source_chars = getattr(tcr, "source_chars", None)
+            # ``type(...) is int`` rather than ``isinstance``: a hand-built
+            # result or a double can carry a bool, which isinstance accepts and
+            # the encoder then writes as ``true``. Negatives are rejected for
+            # the same reason -- this key is a count or it is absent.
+            if type(source_chars) is int and source_chars >= 0 and source_chars != len(original):
+                entry["source_chars"] = source_chars
         entries.append(entry)
 
     blob = _encode_tool_trace(entries)
@@ -699,12 +726,18 @@ class AgenticResult:
     total_tokens: int = 0
     stopped_reason: str = "complete"  # complete|max_iterations|token_budget|error
     error: str = ""
-    # AD-1151 / DD-1: the FULL untruncated outputs, in REQUEST order, correlated
-    # to ``tool_calls`` by ``ToolCallResult.id``. Captured at the loop so both
+    # AD-1151 / DD-1: the tool outputs, in REQUEST order, correlated to
+    # ``tool_calls`` by ``ToolCallResult.id``. Captured at the loop so both
     # construction sites (agentic_dispatch and native_builder) can reach them;
-    # AD-1148 bounding is applied strictly later and only to message content, so
-    # what lands here is what the tool actually returned. Appended last and
-    # defaulted so the two zero-argument construction sites keep working.
+    # AD-1148 bounding is applied strictly later and only to message content.
+    #
+    # BF-728/BF-760: these are NOT the tool's untruncated outputs for a
+    # STRUCTURED result. ``ToolCallResult.from_tool_result`` renders those
+    # shape-first at ``tool_result_max_chars`` before they reach here, so what
+    # lands is the context rendering; ``ToolCallResult.source_chars`` carries
+    # how long the tool's own output was. A string result IS untouched.
+    # Appended last and defaulted so the two zero-argument construction sites
+    # keep working.
     tool_results: list[ToolCallResult] = field(default_factory=list)
     # BF-680: provenance of ``total_tokens`` — ``measured`` when every
     # accumulation came from provider-reported usage, ``estimated`` when every

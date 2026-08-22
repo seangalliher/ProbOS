@@ -1,8 +1,13 @@
 """AD-1171: read the flight recorder.
 
-Every agentic run persists a complete tool trace to the AttachmentStore under
+Every agentic run persists a tool trace to the AttachmentStore under
 ``origin="crew_trace"`` (AD-1151). Nothing has ever read one back. It is
 written, retained, reaped, and never opened.
+
+The CALL list is complete; the outputs are bounded. BF-760 (#1218): for a
+structured tool result the recorded output is the BF-728 context rendering, not
+what the tool returned, and the entry's ``source_chars`` says how much longer
+the original was. Retaining the value itself is AD-1240 (#1239).
 
 Its value is not theoretical. Reading a single trace by hand gave the root cause
 of BF-701 in about thirty seconds, after three sessions of inference from the
@@ -45,8 +50,9 @@ logger = logging.getLogger(__name__)
 # AD-1168's and AD-1170's threshold: once is a transient, twice is the tool.
 REPEAT_THRESHOLD: int = 2
 
-# Bound on quoted error text in a summary. The full text is in the trace; a
-# summary needs enough to recognise the failure, not all of it.
+# Bound on quoted error text in a summary. A summary needs enough to recognise
+# the failure, not all of it. (The trace's own text may itself be a bounded
+# rendering -- see the module docstring.)
 _ERROR_QUOTE_MAX: int = 300
 
 # BF-774: bounds on rendered call arguments. Arguments are written by the model,

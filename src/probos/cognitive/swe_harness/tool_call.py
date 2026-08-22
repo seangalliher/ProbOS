@@ -376,6 +376,30 @@ def _shrink(
 def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
     """BF-728: flatten a tool's return value, preserving shape when it is big.
 
+    See :func:`render_tool_output_sourced` for the behaviour; this projects the
+    rendering and discards the source length, which is what almost every caller
+    wants.
+    """
+    return render_tool_output_sourced(value, max_chars=max_chars)[0]
+
+
+def render_tool_output_sourced(value: Any, *, max_chars: int = 0) -> tuple[str, int]:
+    """BF-728: flatten a tool's return value, preserving shape when it is big.
+
+    Returns ``(rendered, source_chars)`` where ``source_chars`` is the length of
+    the plain rendering this function measured BEFORE shrinking anything.
+
+    BF-760: that second value exists so a caller can report what the tool
+    returned without serialising it again. Calling ``str(value)`` a second time
+    is not equivalent -- ``ToolResult.output`` is ``Any``, so a stateful
+    ``__repr__`` can answer differently on the second call. Measured: first
+    representation 8 chars, second 47, which would have the trace report
+    ``output_chars=8, source_chars=47`` about one value; and two results with
+    identical rendered output produced source lengths 8 and 9, giving different
+    blobs for identical renderings and breaking AD-1151's DD-3 determinism. It
+    also avoids a second unbounded serialisation on the async tool path --
+    measured at 14.4 ms and 5 MB for one MCP leaf.
+
     Byte-identical to the previous bare ``str()`` coercion whenever bounding is
     off (``max_chars <= 0``), the value is not a container, or its plain
     rendering already fits. Only an oversized structure takes the new path, so
@@ -392,14 +416,15 @@ def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
     ``str(value)``, exactly today's behaviour.
     """
     if not isinstance(value, (dict, list, tuple)):
-        return str(value)
+        text = str(value)
+        return text, len(text)
 
     try:
         plain = str(value)
     except Exception:  # noqa: BLE001 — a hostile __repr__ is not our problem
-        return ""
+        return "", 0
     if max_chars <= 0 or len(plain) <= max_chars:
-        return plain
+        return plain, len(plain)
 
     # BF-761: find the largest per-leaf allowance whose render fits, rather
     # than guessing one. The allowance cannot be computed: ``_shrink`` measures
@@ -484,7 +509,7 @@ def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
                 force_midpoint = high is not None and length == high_len
                 high, high_len = probe, length
         if best is not None:
-            return best
+            return best, len(plain)
 
         # Nothing fits at any allowance on any rung. BF-728's whole-leaf
         # elision is a few characters shorter than a zero-width slice plus its
@@ -501,9 +526,12 @@ def render_tool_output(value: Any, *, max_chars: int = 0) -> str:
                 truncate=False,
             )
         )
-        return emergency if len(emergency) < len(zero_render) else zero_render
+        return (
+            emergency if len(emergency) < len(zero_render) else zero_render,
+            len(plain),
+        )
     except Exception:  # noqa: BLE001 — degrade to the pre-BF-728 rendering
-        return plain
+        return plain, len(plain)
 
 
 @dataclass(frozen=True)
@@ -524,6 +552,12 @@ class ToolCallResult:
     output: str = ""
     is_error: bool = False
     duration_ms: float = 0.0
+    #: BF-760: how many characters the tool ACTUALLY returned, before the
+    #: BF-728 context rendering shrank it. ``None`` means ``output`` is what
+    #: the tool returned, so no second number is needed -- which is the case
+    #: for every string result and every existing construction, including test
+    #: doubles, so this field changes nothing that does not set it.
+    source_chars: int | None = None
 
     @classmethod
     def from_tool_result(
@@ -544,6 +578,21 @@ class ToolCallResult:
         shape-first rather than blindly, because this is the last point where
         the value is still a structure. Defaults to 0 (off), which keeps the
         bare ``str()`` coercion and every existing caller byte-identical.
+
+        BF-760: that rendering is lossy, and until now nothing downstream could
+        tell. ``source_chars`` records what the tool returned so the durable
+        trace stops reporting the rendered length as the original -- measured on
+        an MCP content envelope, a 26,303-character result reached the trace as
+        ``output_chars=552, output_truncated=False``, which asserts the tool
+        returned 552 characters and that nothing was lost.
+
+        The number comes from the renderer's OWN first serialisation rather than
+        a second ``str(raw)``: ``ToolResult.output`` is ``Any``, so a stateful
+        ``__repr__`` can answer differently the second time, and serialising a
+        large structure twice is unbounded synchronous work on the tool path.
+
+        This records the LENGTH only. Keeping the value itself is AD-1240's
+        question (#1239, open), and deliberately not answered here.
         """
         if tool_result.error is not None:
             return cls(
@@ -553,17 +602,19 @@ class ToolCallResult:
                 duration_ms=duration_ms,
             )
         raw = tool_result.output
+        source_chars: int | None = None
         if isinstance(raw, str):
             out = raw
         elif raw is None:
             out = ""
         else:
-            out = render_tool_output(raw, max_chars=max_chars)
+            out, source_chars = render_tool_output_sourced(raw, max_chars=max_chars)
         return cls(
             id=request_id,
             output=out,
             is_error=False,
             duration_ms=duration_ms,
+            source_chars=source_chars,
         )
 
 

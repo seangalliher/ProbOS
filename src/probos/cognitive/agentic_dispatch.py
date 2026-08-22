@@ -2299,11 +2299,17 @@ class WorkItemAgenticExecutor:
     ) -> str | None:
         """Persist the loop's tool calls AND their outputs; return the SHA ref.
 
-        AD-1151: the blob records what each tool actually returned, not just
-        that it was called, so the durable trace matches the Nooplex §3.3
-        Transparency guarantee that AD-1142 and AD-1148 both cited. The shape is
+        AD-1151: the blob records each tool's output, not just that it was
+        called, so the durable trace matches the Nooplex §3.3 Transparency
+        guarantee that AD-1142 and AD-1148 both cited. The shape is
         unchanged for existing readers — still a bare JSON array, still carrying
         every ``ToolCallRequest`` key — so versioning is by key presence.
+
+        BF-760: for a STRUCTURED tool result the recorded output is the BF-728
+        context rendering rather than what the tool returned, because the
+        rendering happens before the result reaches the loop. The entry carries
+        ``source_chars`` so the loss is visible; retaining the value itself is
+        AD-1240 (#1239).
 
         Honest-degrade to ``None`` (log a warning) when the store is unwired or
         the write fails — the trace ref is provenance, not correctness, so a

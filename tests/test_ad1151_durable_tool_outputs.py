@@ -995,11 +995,25 @@ async def test_off_path_blob_is_byte_identical_to_the_legacy_expression() -> Non
 
 
 def test_tool_call_dataclasses_are_unchanged() -> None:
+    """AD-1151 changed neither dataclass. Later ADs may, and must say so here.
+
+    BF-760 (#1218) appended ``source_chars``: how many characters the tool
+    actually returned, before the BF-728 context rendering shrank it. Without
+    it the durable trace reported the rendered length as the original and
+    ``output_truncated=False`` — measured, a 26,303-character MCP envelope was
+    recorded as ``output_chars=552``, asserting nothing had been lost.
+
+    APPENDED with a default, deliberately: every existing construction and test
+    double is positional-compatible and unaffected. The order is asserted, not
+    just the set, so an insertion in the middle — which would silently rebind
+    positional callers — still fails here.
+    """
     assert [f.name for f in fields(ToolCallResult)] == [
         "id",
         "output",
         "is_error",
         "duration_ms",
+        "source_chars",  # BF-760
     ]
     assert [f.name for f in fields(ToolCallRequest)] == [
         "name",
