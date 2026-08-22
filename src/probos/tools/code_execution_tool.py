@@ -384,7 +384,12 @@ class CodeExecutionTool:
             if timeout:
                 parts.append(f"{float(timeout):.0f}s wall clock")
             if out_bytes:
-                parts.append(f"{int(out_bytes) // 1024} KB of captured output")
+                # BF-786: the cap is sliced onto stdout and stderr separately
+                # (isolation.py), so a total figure understates it by half.
+                parts.append(
+                    f"{int(out_bytes) // 1024} KB of captured output per "
+                    "stream (stdout and stderr each)"
+                )
             if memory_mb and sys.platform != "win32":
                 # BF-781: `RLIMIT_AS` is POSIX-only and best-effort, so on
                 # Windows this bound is not applied at all -- a run configured
@@ -402,9 +407,11 @@ class CodeExecutionTool:
         network = self._network_clause()
         return (
             opening
-            + "Any file the "
-            "script writes into the current working directory is saved and shown "
-            "to the Captain as a downloadable artifact. Write files to the "
+            + "Files the "
+            "script writes into the current working directory are saved and "
+            "shown to the Captain as downloadable artifacts. Empty files, "
+            "files over 25 MiB, and staged inputs the script did not modify "
+            "are not saved. Write files to the "
             "current directory by plain filename, e.g. "
             "doc.save('report.docx'). Returns stdout, stderr, the exit code, and "
             "the names of the files produced. "
@@ -447,7 +454,14 @@ class CodeExecutionTool:
         BF-728 failure mode, where the work succeeded and the agent disbelieved
         its own result.
         """
-        if getattr(self._cfg(), "fetch_broker_enabled", False):
+        # BF-785: the flag alone is not the capability -- `_start_fetch_broker`
+        # also needs a registered agent exposing `fetch_governed`, or there is
+        # no relay and `import ship` raises ImportError. The registry is
+        # readable here, so the offer can require what the run will need.
+        if (
+            getattr(self._cfg(), "fetch_broker_enabled", False)
+            and self._governed_fetcher() is not None
+        ):
             return (
                 # BF-781: was "Direct network access is blocked here" -- the
                 # same false enforcement claim as the default branch.
