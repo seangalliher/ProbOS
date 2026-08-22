@@ -103,13 +103,52 @@ class EscalationManager:
         Returns when resolved or fully exhausted.
         """
         tiers_attempted: list[EscalationTier] = []
+        tiers_skipped: dict[str, str] = {}
 
         # ---- Tier 1: Retry with different agent ----
-        tiers_attempted.append(EscalationTier.RETRY)
-        tier1_result = await self._tier1_retry(node, error, context)
-        if tier1_result.resolved:
-            tier1_result.tiers_attempted = tiers_attempted
-            return tier1_result
+        #
+        # BF-830: NOT for a consensus rejection. Tier 1's premise -- "try again,
+        # perhaps with a different agent" -- is sound for a transport or agent
+        # failure. It is wrong for a GOVERNANCE outcome: the crew considered the
+        # act and declined it, and retrying is not recovery, it is the act
+        # happening again.
+        #
+        # Measured: ``submit_intent_with_consensus`` broadcasts at step 1 (agents
+        # RUN) and evaluates quorum at step 2, so each retry is another real
+        # execution. With ``max_retries=2``, one rejected ``run_command``
+        # performed the command THREE times -- the original broadcast plus two
+        # retries. The decomposer instructs the model to promote every
+        # ``run_command`` (decomposer.py:123), so that is the ordinary path for
+        # a shell command, not an edge case.
+        #
+        # ``write_file`` was already safe: escalation routes it to
+        # ``submit_write_with_consensus``, which proposes and only commits after
+        # the vote, so retrying a PROPOSAL costs nothing. Every other intent
+        # took the ``else`` branch and re-ran the act.
+        #
+        # Tier 2 is entered instead. It does not execute the intent for a
+        # consensus rejection -- but only because the arbiter's "modify" branch
+        # is withheld there for the same reason; left alone it re-submitted the
+        # act with new parameters, which review measured as a second execution
+        # with ``attempts`` still reporting 0. Tier 3 remains the one place a
+        # declined act may proceed, and only after explicit user approval.
+        if str((context or {}).get("category") or "") == "consensus":
+            tiers_skipped[EscalationTier.RETRY.value] = (
+                "consensus rejected the act; retrying would perform it again"
+            )
+            logger.info(
+                "BF-830: skipping Tier 1 retry for node %s (%s) -- consensus "
+                "rejected it, and this cascade's retry re-executes rather than "
+                "re-proposing. Escalating to arbitration instead",
+                getattr(node, "id", "?"), getattr(node, "intent", "?"),
+            )
+        else:
+            tiers_attempted.append(EscalationTier.RETRY)
+            tier1_result = await self._tier1_retry(node, error, context)
+            if tier1_result.resolved:
+                tier1_result.tiers_attempted = tiers_attempted
+                tier1_result.tiers_skipped = tiers_skipped
+                return tier1_result
 
         # ---- Tier 2: LLM arbitration ----
         if self.llm_client is not None and not self._is_mock_llm():
@@ -117,6 +156,7 @@ class EscalationManager:
             tier2_result = await self._tier2_arbitrate(node, error, context)
             if tier2_result.resolved:
                 tier2_result.tiers_attempted = tiers_attempted
+                tier2_result.tiers_skipped = tiers_skipped
                 return tier2_result
             # If tier2 returned "modify" and retry failed, fall through to tier 3
             # If tier2 returned "reject", fall through to tier 3
@@ -127,13 +167,22 @@ class EscalationManager:
                 tier2_result = await self._tier2_arbitrate(node, error, context)
                 if tier2_result.resolved:
                     tier2_result.tiers_attempted = tiers_attempted
+                    tier2_result.tiers_skipped = tiers_skipped
                     return tier2_result
 
         # ---- Tier 3: User consultation ----
         tiers_attempted.append(EscalationTier.USER)
-        context_with_tiers = {**context, "tiers_attempted": tiers_attempted}
+        context_with_tiers = {
+            **context,
+            "tiers_attempted": tiers_attempted,
+            # BF-830: the Captain is being asked to approve an act the crew
+            # declined. Why a tier was skipped is part of that decision, so it
+            # travels WITH the prompt rather than arriving only in the result.
+            "tiers_skipped": dict(tiers_skipped),
+        }
         tier3_result = await self._tier3_user(node, error, context_with_tiers)
         tier3_result.tiers_attempted = tiers_attempted
+        tier3_result.tiers_skipped = tiers_skipped
         return tier3_result
 
     def _is_mock_llm(self) -> bool:
@@ -262,6 +311,30 @@ class EscalationManager:
             elif action == "modify":
                 # Retry once with modified params
                 modified_params = decision.get("params", {})
+                if str((context or {}).get("category") or "") == "consensus":
+                    # BF-830: not for a governance rejection. The crew declined
+                    # the act; an arbiter deciding it would be acceptable with
+                    # different parameters is a PROPOSAL, not an authorization,
+                    # and submitting it here would perform the act a second time
+                    # without the Captain — measured, one re-execution with
+                    # ``attempts`` still 0, so the run was hidden as well.
+                    # Carry the suggestion to Tier 3, which is the one place a
+                    # declined act may proceed and only after explicit approval.
+                    logger.info(
+                        "BF-830: arbiter proposed modified params for node %s "
+                        "after a consensus rejection; not submitting it here — "
+                        "a declined act needs the Captain, not new parameters",
+                        getattr(node, "id", "?"),
+                    )
+                    return EscalationResult(
+                        tier=EscalationTier.ARBITRATION,
+                        resolved=False,
+                        original_error=error,
+                        reason=(
+                            f"Arbiter suggested modified parameters, withheld "
+                            f"pending approval: {reason}"
+                        ),
+                    )
                 try:
                     if node.use_consensus:
                         result = await self.runtime.submit_intent_with_consensus(

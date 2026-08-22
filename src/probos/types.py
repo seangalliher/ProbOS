@@ -345,11 +345,22 @@ class EscalationResult:
     attempts: int = 0                       # How many retry attempts were made
     user_approved: bool | None = None       # User's decision (Tier 3 only)
     tiers_attempted: list[EscalationTier] = field(default_factory=list)
+    # BF-830: tiers deliberately NOT attempted, and why. An observer must be
+    # able to tell "we skipped it" from "it was tried and failed" -- absence
+    # from ``tiers_attempted`` alone cannot say which.
+    tiers_skipped: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        """Serialize to JSON-safe dict. Required because TaskNode gets serialized
-        for workflow cache deep copy, episodic memory, working memory snapshots,
-        and debug output."""
+        """Serialize to JSON-safe dict.
+
+        BF-830: the docstring formerly said the workflow cache, episodic
+        memory and working-memory snapshots serialize this. Review checked and
+        they do not — they store plan fields, status/result summaries, or
+        outcome summaries, and none of them carries ``node.escalation_result``.
+        What this is actually for is ``node.escalation_result`` itself and
+        debug output. Nothing reconstructs an ``EscalationResult`` from an old
+        dict, so appending a key is safe.
+        """
         return {
             "tier": self.tier.value,
             "resolved": self.resolved,
@@ -360,6 +371,7 @@ class EscalationResult:
             "attempts": self.attempts,
             "user_approved": self.user_approved,
             "tiers_attempted": [t.value for t in self.tiers_attempted],
+            "tiers_skipped": dict(self.tiers_skipped),
         }
 
 

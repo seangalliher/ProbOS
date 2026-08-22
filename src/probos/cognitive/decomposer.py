@@ -951,14 +951,37 @@ class DAGExecutor:
                 }
                 node.status = "completed" if success else "failed"
 
-            if on_event and node.status == "completed":
-                await on_event(EventType.NODE_COMPLETE, {"node": node, "result": results.get(node.id)})
-            elif on_event and node.status == "failed":
-                await on_event(EventType.NODE_FAILED, {"node": node, "result": results.get(node.id)})
+            # BF-830: observing and recording a node are NOT part of executing
+            # it, and must not be able to look like an execution failure. Both
+            # sit after the act has already happened, inside the broad
+            # ``except`` below, which escalates -- and escalation's Tier 1
+            # RE-EXECUTES. Measured: an event consumer raising once turned a
+            # single consensus-rejected ``run_command`` into three executions,
+            # because the fallback escalate() carries no category and so takes
+            # the retry ladder. Degrading here keeps a failed listener or a full
+            # disk from re-running the Captain's command.
+            try:
+                if on_event and node.status == "completed":
+                    await on_event(EventType.NODE_COMPLETE, {"node": node, "result": results.get(node.id)})
+                elif on_event and node.status == "failed":
+                    await on_event(EventType.NODE_FAILED, {"node": node, "result": results.get(node.id)})
+            except Exception:
+                logger.warning(
+                    "BF-830: a %s listener raised for node %s; the node's own "
+                    "outcome stands and is NOT escalated",
+                    node.status, node.id, exc_info=True,
+                )
 
             # Checkpoint after node state change (AD-405)
             if self._checkpoint_dir:
-                write_checkpoint(self._checkpoint_dir, dag, results)
+                try:
+                    write_checkpoint(self._checkpoint_dir, dag, results)
+                except Exception:
+                    logger.warning(
+                        "BF-830: could not checkpoint after node %s; the node's "
+                        "outcome stands and is NOT escalated",
+                        node.id, exc_info=True,
+                    )
 
         except Exception as e:
             logger.error("Node %s failed: %s", node.id, e)
@@ -969,7 +992,20 @@ class DAGExecutor:
                         "category": "consensus", "event": "escalation_start",
                     })
                 esc_result = await self.escalation_manager.escalate(
-                    node, str(e), {"intent": node.intent, "params": node.params},
+                    node, str(e),
+                    {
+                        "intent": node.intent,
+                        "params": node.params,
+                        # BF-830: a node that was ALREADY promoted has, on this
+                        # path, already been broadcast once. Retrying it would
+                        # perform the act again, so the category travels here
+                        # too -- belt to the braces above.
+                        **(
+                            {"category": "consensus"}
+                            if getattr(node, "use_consensus", False)
+                            else {}
+                        ),
+                    },
                 )
                 node.escalation_result = esc_result.to_dict()
                 if esc_result.resolved:
@@ -1035,7 +1071,15 @@ class DAGExecutor:
                     "category": "consensus", "event": "escalation_start",
                 })
             esc_result = await self.escalation_manager.escalate(
-                node, error, {"intent": node.intent, "params": node.params},
+                node, error,
+                # BF-830: the escalation manager is told the failure CATEGORY,
+                # not asked to infer it. A consensus rejection must not enter
+                # the Tier 1 retry, because that ladder re-executes the act.
+                {
+                    "intent": node.intent,
+                    "params": node.params,
+                    "category": "consensus",
+                },
             )
             logger.info(
                 "Escalation result for node %s: resolved=%s tier=%s "
