@@ -179,7 +179,12 @@ class ResourcePool:
         old_agent = self.registry.get(agent_id)
         await self._notify_agent_removing(agent_id)
         try:
-            new_agent = await self.spawner.recycle(agent_id, respawn=True)
+            # BF-808: the pool owns the dependencies its members were built
+            # with, so it hands them back on recycle. Without this the
+            # replacement returns alive, answering and permanently dataless.
+            new_agent = await self.spawner.recycle(
+                agent_id, respawn=True, **self._spawn_kwargs
+            )
         except BaseException as recycle_error:
             existing = self.registry.get(agent_id)
             if existing is None and agent_id in self._agent_ids:

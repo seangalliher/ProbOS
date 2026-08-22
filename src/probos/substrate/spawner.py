@@ -73,11 +73,34 @@ class AgentSpawner:
             raise start_error
         return agent
 
-    async def recycle(self, agent_id: str, respawn: bool = True) -> BaseAgent | None:
+    #: Dependencies a recycled agent visibly loses when the caller does not pass
+    #: them. Reported, NOT enforced -- see the note in :meth:`recycle`.
+    _RECYCLE_CRITICAL_DEPS = ("_runtime", "_llm_client")
+
+    async def recycle(
+        self, agent_id: str, respawn: bool = True, **spawn_kwargs: Any
+    ) -> BaseAgent | None:
         """Stop an agent, unregister it, and optionally spawn a replacement.
 
         The replacement gets the SAME agent_id — the individual persists
         through recycling (Phase 14c).
+
+        BF-808: ``spawn_kwargs`` carries the dependencies the agent was built
+        with. Recycling used to pass only ``agent_id``, so a replacement came
+        back with ``_runtime = None`` and no ``llm_client`` -- alive, answering,
+        and permanently unable to do its job. The caller owns those kwargs
+        (``ResourcePool`` holds them for exactly this reason), so the caller
+        supplies them rather than the factory guessing.
+
+        A lost dependency is REPORTED, not refused. Refusing was the first
+        draft and was worse in two measured ways: the raise escaped
+        ``check_health`` before its refill loop and killed the pool's health
+        task outright (there is no supervisor to restart it), and it implied a
+        completeness the check does not have -- a recycled Quartermaster keeps
+        ``_runtime``, passes this check, and is still degraded because its
+        store, router and reconciler are wired after construction in
+        ``finalize`` and are not constructor kwargs at all. Making recycle
+        whole needs a runtime-owned rehydration hook, tracked separately.
         """
         agent = self.registry.get(agent_id)
         if agent is None:
@@ -86,13 +109,33 @@ class AgentSpawner:
 
         agent_type = agent.agent_type
         pool = agent.pool
+        # Snapshot from the PREDECESSOR rather than a fixed list, so an agent
+        # that legitimately has no llm_client is not reported as losing one.
+        had = {
+            name
+            for name in self._RECYCLE_CRITICAL_DEPS
+            if getattr(agent, name, None) is not None
+        }
 
         await agent.stop()
         await self.registry.unregister(agent_id)
         logger.info("Recycled agent: type=%s id=%s", agent_type, agent_id[:8])
 
         if respawn and agent_type in self._templates:
-            return await self.spawn(agent_type, pool, agent_id=agent_id)
+            replacement = await self.spawn(
+                agent_type, pool, agent_id=agent_id, **spawn_kwargs
+            )
+            lost = sorted(
+                name for name in had if getattr(replacement, name, None) is None
+            )
+            if lost:
+                logger.error(
+                    "BF-808: recycled agent type=%s id=%s came back without %s. "
+                    "It will report healthy and never have data. The caller did "
+                    "not pass the dependencies the original was built with.",
+                    agent_type, agent_id[:8], ", ".join(lost),
+                )
+            return replacement
         return None
 
     # ------------------------------------------------------------------
