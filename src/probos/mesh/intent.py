@@ -1049,66 +1049,109 @@ class IntentBus:
         _broadcast_start = time.monotonic()  # AD-470: timing
 
         self.record_broadcast(intent.intent)
-        self._signal_manager.track(intent)
-        self._pending_results[intent.id] = []
 
-        logger.info(
-            "Intent broadcast: %s id=%s urgency=%.1f subscribers=%d",
-            intent.intent,
-            intent.id[:8],
-            intent.urgency,
-            len(self._subscribers),
-        )
+        # BF-829: the straggler-cancel and both state cleanups used to sit
+        # BELOW the await, on the normal path only. A caller cancelled
+        # mid-flight -- a request timeout, shutdown, or an OUTER broadcast
+        # cancelling this one as its own straggler -- raised CancelledError out
+        # of `asyncio.wait` and skipped all three. Measured against the real
+        # bus: the child was neither cancelled nor completed, still sleeping
+        # with nothing left holding a reference that would ever cancel it,
+        # while `_pending_results` and the SignalManager entry both leaked.
+        # The nested case compounds: stranding the inner broadcast's children
+        # strands theirs in turn.
+        #
+        # The `try` opens BEFORE `track()` and the `_pending_results` entry, not
+        # at the fan-out. Review measured why: nothing between them awaits, so
+        # cancellation cannot land there -- but a synchronous raise can, and a
+        # logging handler whose `emit()` raised left BOTH registries dirty. A
+        # `try` that starts after the registration it is meant to unwind only
+        # moves the leak somewhere quieter. `untrack` is idempotent and both
+        # cleanups tolerate partial setup.
+        tasks: list[asyncio.Task] = []
+        try:
+            self._signal_manager.track(intent)
+            self._pending_results[intent.id] = []
 
-        # Determine which agents to fan out to
-        indexed_agents = self._intent_index.get(intent.intent)
-        if indexed_agents is not None:
-            # Pre-filtered: only invoke agents indexed for this intent
-            # Plus any agents not in the index at all (fallback subscribers)
-            all_indexed = set()
-            for agent_set in self._intent_index.values():
-                all_indexed.update(agent_set)
-            candidates = {
-                aid: (
-                    handler,
-                    self._subscriber_latency_classes.get(
-                        aid, HandlerLatencyClass.DETERMINISTIC
-                    ),
-                )
-                for aid, handler in self._subscribers.items()
-                if aid in indexed_agents or aid not in all_indexed
-            }
-        else:
-            # No index entry: fall back to all subscribers
-            candidates = {
-                aid: (
-                    handler,
-                    self._subscriber_latency_classes.get(
-                        aid, HandlerLatencyClass.DETERMINISTIC
-                    ),
-                )
-                for aid, handler in self._subscribers.items()
-            }
-
-        # Fan out to selected subscribers concurrently
-        tasks = []
-        for agent_id, (handler, latency_class) in list(candidates.items()):
-            tasks.append(
-                asyncio.create_task(
-                    self._invoke_handler(intent, agent_id, handler, latency_class),
-                    name=f"intent-{intent.id[:8]}-{agent_id[:8]}",
-                )
+            logger.info(
+                "Intent broadcast: %s id=%s urgency=%.1f subscribers=%d",
+                intent.intent,
+                intent.id[:8],
+                intent.urgency,
+                len(self._subscribers),
             )
 
-        if tasks:
-            # Wait for all handlers, bounded by timeout
-            done, pending = await asyncio.wait(tasks, timeout=timeout)
-            # Cancel stragglers
-            for task in pending:
-                task.cancel()
+            # Determine which agents to fan out to
+            indexed_agents = self._intent_index.get(intent.intent)
+            if indexed_agents is not None:
+                # Pre-filtered: only invoke agents indexed for this intent
+                # Plus any agents not in the index at all (fallback subscribers)
+                all_indexed = set()
+                for agent_set in self._intent_index.values():
+                    all_indexed.update(agent_set)
+                candidates = {
+                    aid: (
+                        handler,
+                        self._subscriber_latency_classes.get(
+                            aid, HandlerLatencyClass.DETERMINISTIC
+                        ),
+                    )
+                    for aid, handler in self._subscribers.items()
+                    if aid in indexed_agents or aid not in all_indexed
+                }
+            else:
+                # No index entry: fall back to all subscribers
+                candidates = {
+                    aid: (
+                        handler,
+                        self._subscriber_latency_classes.get(
+                            aid, HandlerLatencyClass.DETERMINISTIC
+                        ),
+                    )
+                    for aid, handler in self._subscribers.items()
+                }
 
-        results = self._pending_results.pop(intent.id, [])
-        self._signal_manager.untrack(intent.id)
+            # Fan out to selected subscribers concurrently
+            for agent_id, (handler, latency_class) in list(candidates.items()):
+                tasks.append(
+                    asyncio.create_task(
+                        self._invoke_handler(intent, agent_id, handler, latency_class),
+                        name=f"intent-{intent.id[:8]}-{agent_id[:8]}",
+                    )
+                )
+
+            if tasks:
+                # Wait for all handlers, bounded by timeout
+                await asyncio.wait(tasks, timeout=timeout)
+
+            # Read before the cleanup below drops the key. No await separates
+            # these, so a straggler cannot append between the read and the pop.
+            results = list(self._pending_results.get(intent.id, ()))
+        finally:
+            # Cancel stragglers. Not awaited: that is deliberate. The timeout
+            # path has always returned without waiting for stragglers to
+            # unwind, and awaiting here would let one handler with slow
+            # cancellation cleanup block every broadcast that times out --
+            # measured at 2.2s against 0.2s.
+            #
+            # Safe against RE-LEAKING this key: `_invoke_handler` guards both
+            # of its appends with `if intent.id in self._pending_results`, so
+            # a straggler resuming after the pop finds the key gone and skips.
+            #
+            # NOT safe against a straggler that suppresses its cancellation and
+            # then appends into a LATER broadcast which re-created the same
+            # key. That guard tests presence, not which broadcast the key
+            # belongs to. Measured, and reproduces identically before this
+            # change -- it is a separate pre-existing defect needing a
+            # per-broadcast result buffer, tracked as BF-833 (#1298). Recorded
+            # here so the non-await above is not read as covering more than it
+            # does.
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+
+            self._pending_results.pop(intent.id, None)
+            self._signal_manager.untrack(intent.id)
 
         # AD-470: Record metrics
         elapsed_ms = (time.monotonic() - _broadcast_start) * 1000
