@@ -33,22 +33,66 @@ import pytest
 from probos.security.url_guard import validate_public_url
 from probos.tools.browser.tool import BrowserTool
 
+_PUBLIC = "93.184.216.34"
+
+# Resolution is pinned per host so every refusal below is attributable.
+#
+# It must be host-AWARE, not uniformly public: `localhost` is refused only
+# BECAUSE it resolves to a loopback address, so a stub that resolved everything
+# publicly would let it through and the test would be wrong rather than
+# stricter. `metadata.google.internal` is deliberately mapped to a PUBLIC
+# address so that only the name blocklist can refuse it.
+_RESOLVES_TO = {
+    "localhost": "127.0.0.1",
+    "localtest.me": "127.0.0.1",
+    "metadata.google.internal": _PUBLIC,
+}
+
+
+@pytest.fixture
+def pinned_resolver(monkeypatch):
+    """Make every refusal below the floor's, never the network's.
+
+    BF-832 (#1297): these assertions were `is not None`, which any refusal
+    satisfies -- including `"Cannot resolve hostname"`. Measured:
+    `metadata.google.internal` does not resolve off GCP, so emptying
+    `BLOCKED_HOSTS` entirely STILL passed, the DNS failure standing in for the
+    protection that had just been deleted. Under this fixture the same deletion
+    yields `None` and the assertion fails, which is the point.
+    """
+    def _stub(host, *_a, **_kw):
+        ip = _RESOLVES_TO.get(host, _PUBLIC)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", _stub)
+
 
 # ── the floor itself ──────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("url", [
-    "http://127.0.0.1:8000/api/agents",   # ProbOS's own API
-    "http://localhost:8000/",
-    "http://[::1]:8000/",
-    "http://169.254.169.254/latest/meta-data/",  # cloud instance credentials
-    "http://192.168.1.1/",                # LAN router admin
-    "http://10.0.0.5/",
-    "http://172.16.4.4/",
-    "http://metadata.google.internal/",
+@pytest.mark.parametrize("url,reason", [
+    # ProbOS's own API
+    ("http://127.0.0.1:8000/api/agents", "Blocked private/reserved IP: 127.0.0.1"),
+    ("http://localhost:8000/", "Blocked private/reserved IP: 127.0.0.1"),
+    ("http://[::1]:8000/", "Blocked private/reserved IP: ::1"),
+    # cloud instance credentials
+    ("http://169.254.169.254/latest/meta-data/",
+     "Blocked private/reserved IP: 169.254.169.254"),
+    ("http://192.168.1.1/", "Blocked private/reserved IP: 192.168.1.1"),  # LAN router
+    ("http://10.0.0.5/", "Blocked private/reserved IP: 10.0.0.5"),
+    ("http://172.16.4.4/", "Blocked private/reserved IP: 172.16.4.4"),
+    ("http://metadata.google.internal/",
+     "Blocked metadata endpoint: metadata.google.internal"),
 ])
-def test_the_floor_refuses_what_never_should_be_reachable(url: str) -> None:
-    assert validate_public_url(url) is not None, url
+def test_the_floor_refuses_what_never_should_be_reachable(
+    url: str, reason: str, pinned_resolver,
+) -> None:
+    """Assert WHICH refusal fired, not merely that one did.
+
+    `is not None` cannot tell the floor from a broken network, and for the one
+    host here that needs resolving, that difference is the whole test.
+    """
+    assert validate_public_url(url) == reason, url
 
 
 @pytest.mark.parametrize("url", [
@@ -225,14 +269,25 @@ def test_the_browser_does_not_resolve_dns_on_the_navigation_path() -> None:
     assert "check_resolved_address" not in src.split("\n\n")[0]
 
 
-def test_the_residual_gap_is_real_and_named() -> None:
+def test_the_residual_gap_is_real_and_named(pinned_resolver) -> None:
     """A NAME pointing at a private address still reaches the browser. Stated in
     the module, and asserted here so it is a known limit rather than a
     discovery. ``http_fetch`` does catch it.
+
+    BF-832 (#1297): the second assertion read
+    ``validate_public_url(...) is not None or True``. ``X or True`` is
+    unconditionally true -- it held for ``None``, ``""`` and ``0`` alike, so it
+    asserted nothing while its name claimed to check the floor. Removing the
+    disjunct alone would not have been enough: with a live resolver the same
+    assertion passes on ``"Cannot resolve hostname"`` too. It now names the
+    exact refusal, under a pinned resolver, so it can only be satisfied by the
+    floor catching what the browser missed.
     """
     tool = _tool()
     assert tool._check_domain("http://localtest.me/") == ""
-    assert validate_public_url("http://localtest.me/") is not None or True
+    assert validate_public_url("http://localtest.me/") == (
+        "Blocked private/reserved IP: 127.0.0.1"
+    )
 
 
 def test_the_mesh_fetch_refusal_strings_are_unchanged() -> None:
