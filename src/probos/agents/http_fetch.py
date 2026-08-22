@@ -136,6 +136,27 @@ class HttpFetchAgent(BaseAgent):
     # replacement.
     _waiters: ClassVar[dict[asyncio.Task, int]] = {}
 
+    # BF-820: one lock per (event loop, domain), held across the WHOLE
+    # reservation -- read, compute, sleep, and commit. Without it every
+    # concurrent caller reads the same pre-sleep `last_request_time`, computes
+    # the same delay, and wakes together: measured, three distinct URLs on one
+    # host with a 50 ms interval went out with gaps [0.062, 0.0]. BF-770's
+    # coalescing removes the identical-URL multiplier; this removes the
+    # distinct-URL one, which is what a Captain issuing two searches produces.
+    #
+    # Keyed by the loop OBJECT, not by ``id(loop)``: ids are recycled once a
+    # loop is collected, so an id key could hand a brand-new loop the previous
+    # one's lock -- a lock belonging to a dead loop, which is worse than no lock
+    # at all.
+    #
+    # A plain dict with an explicit sweep, deliberately. A ``WeakKeyDictionary``
+    # looks like the right answer and cannot work here: once an ``asyncio.Lock``
+    # has been contended it binds and strongly retains its loop, so the value
+    # pins the key and the entry never expires. Measured -- after contention,
+    # closing and collecting a loop left the entry in place, and a strong dict
+    # behaved identically. Closed loops are dropped in ``_domain_lock`` instead.
+    _domain_locks: ClassVar[dict[Any, dict[str, asyncio.Lock]]] = {}
+
     # Persistent service profile store (AD-382) — set via runtime wiring
     _profile_store: ClassVar[Any] = None
 
@@ -390,7 +411,6 @@ class HttpFetchAgent(BaseAgent):
         claimed here.
         """
         domain, state = self._get_domain_state(url)
-        delay = await self._wait_for_rate_limit(domain, state)
 
         # One budget for the whole chain, expressed once rather than per
         # request. Per-request timeouts stopped bounding this the moment a chain
@@ -399,8 +419,18 @@ class HttpFetchAgent(BaseAgent):
         # executor cancels the broadcast at 10s, so a legal chain vanished as
         # "no agent responded" rather than saying it had timed out. The comment
         # on DEFAULT_TIMEOUT states that invariant; this keeps it true.
+        #
+        # BF-820: the FIRST reservation is inside the budget too. It used to sit
+        # outside, which was survivable while every caller computed its delay
+        # from the same stale timestamp and slept concurrently. Now they queue,
+        # so on a 2s-spaced host the fifth waiter reaches its slot at 10.02s --
+        # past the DAG executor's own 10s cancel. Measured: the broadcast came
+        # back with zero results while a request went out to the host anyway.
+        # Inside the budget, a caller that cannot get a slot in time returns an
+        # honest timeout instead of being cancelled into silence.
         try:
             async with asyncio.timeout(self.DEFAULT_TIMEOUT):
+                delay = await self._wait_for_rate_limit(domain, state)
                 return await self._follow_and_fetch(url, method, cap, domain, state, delay)
         except TimeoutError:
             return {
@@ -439,8 +469,12 @@ class HttpFetchAgent(BaseAgent):
 
                     # Auto-retry once on 429 (AD-270)
                     if response.status_code == 429:
+                        # BF-820: no commit here. ``_wait_for_rate_limit``
+                        # already sets ``last_request_time`` as the last act of
+                        # its critical section; writing it again out here races
+                        # every other waiter on this domain for the one field
+                        # the lock exists to protect.
                         retry_delay = await self._wait_for_rate_limit(domain, state)
-                        state.last_request_time = time.monotonic()
                         req_start2 = time.monotonic()
                         response = await client.request(method, current)
                         latency_ms2 = (time.monotonic() - req_start2) * 1000
@@ -570,27 +604,93 @@ class HttpFetchAgent(BaseAgent):
             self._domain_state[domain] = DomainRateState(min_interval_seconds=interval)
         return domain, self._domain_state[domain]
 
+    @classmethod
+    def _domain_lock(cls, domain: str) -> asyncio.Lock:
+        """BF-820: the per-loop lock guarding this domain's rate-limit slot.
+
+        Created on first use for the RUNNING loop. A lock made on a dead loop
+        would either never be waited on or raise when it was, and the state dict
+        this guards is class-level, so it genuinely does see more than one loop
+        across a process's life (tests, and warm reboot).
+
+        Closed loops are dropped here. Nothing else will do it: a contended lock
+        retains its own loop, so a weak-keyed table would keep an entry alive for
+        exactly the loops that were used. The table only ever holds one entry per
+        live loop, so the sweep is cheap.
+        """
+        loop = asyncio.get_running_loop()
+        for known in list(cls._domain_locks):
+            if known is not loop and known.is_closed():
+                cls._domain_locks.pop(known, None)
+        per_domain = cls._domain_locks.get(loop)
+        if per_domain is None:
+            per_domain = {}
+            cls._domain_locks[loop] = per_domain
+        lock = per_domain.get(domain)
+        if lock is None:
+            lock = asyncio.Lock()
+            per_domain[domain] = lock
+        return lock
+
     async def _wait_for_rate_limit(self, domain: str, state: DomainRateState) -> float:
-        """Sleep if the domain was requested too recently. Returns delay in seconds."""
-        now = time.monotonic()
+        """Sleep if the domain was requested too recently. Returns delay in seconds.
 
-        # Respect Retry-After if set
-        wait = 0.0
-        if state.retry_after is not None and state.retry_after > now:
-            wait = state.retry_after - now
-            state.retry_after = None
-        elif state.last_request_time > 0:
-            elapsed = now - state.last_request_time
-            if elapsed < state.min_interval_seconds:
-                wait = state.min_interval_seconds - elapsed
+        BF-820: the whole reservation is one critical section per domain. Reading
+        ``last_request_time``, computing the delay, sleeping it, and committing
+        the new time have to be indivisible, or concurrent callers all compute
+        from the same stale value and wake together -- measured as gaps of
+        ``[0.062, 0.0]`` for three distinct URLs on a 50 ms interval, a burst of
+        two against a host the limiter had promised to space.
 
-        if wait > 0:
-            wait = min(wait, 10.0)  # Never wait more than 10s — fail fast
-            logger.debug("Rate limit courtesy delay: %.1fs for %s", wait, domain)
-            await asyncio.sleep(wait)
+        The returned delay is the time this call really cost, queueing included.
+        Reporting only the sleep after the lock was acquired understated it by
+        most of the wait once callers started queueing -- measured, a third
+        concurrent caller reported 0.050s having spent 0.125s -- and that number
+        is what ``rate_limit_delay`` hands back to whoever asked.
 
-        state.last_request_time = time.monotonic()
-        return wait
+        The per-waiter ``min(wait, 10.0)`` cap still bounds each SLEEP, but it no
+        longer bounds the total time a caller spends here: N waiters on one
+        domain now queue, so the last one waits roughly N x the interval. That is
+        the point -- the alternative is the burst -- and ``_fetch_url`` runs this
+        inside its own ``asyncio.timeout`` so a caller that cannot get a slot in
+        time gets an honest error rather than being cancelled into silence.
+        Cancellation while queued or sleeping releases the lock and commits
+        nothing, so a caller giving up costs the next waiter nothing.
+        """
+        began = time.monotonic()
+        async with self._domain_lock(domain):
+            now = time.monotonic()
+
+            # Respect Retry-After if set
+            wait = 0.0
+            claimed: float | None = None
+            if state.retry_after is not None and state.retry_after > now:
+                wait = state.retry_after - now
+                claimed = state.retry_after
+            elif state.last_request_time > 0:
+                elapsed = now - state.last_request_time
+                if elapsed < state.min_interval_seconds:
+                    wait = state.min_interval_seconds - elapsed
+
+            if wait > 0:
+                wait = min(wait, 10.0)  # Never wait more than 10s — fail fast
+                logger.debug("Rate limit courtesy delay: %.1fs for %s", wait, domain)
+                await asyncio.sleep(wait)
+
+            if claimed is not None and state.retry_after == claimed:
+                # Cleared only once the wait has actually been served, and only
+                # if nothing newer arrived meanwhile. Clearing it up front meant
+                # a caller cancelled mid-sleep consumed the server's directive
+                # without honouring it, and the next waiter went straight out.
+                state.retry_after = None
+
+            # Inside the lock deliberately. Committing just after releasing
+            # happens to be equivalent today -- releasing an `asyncio.Lock` does
+            # not yield, so the next waiter cannot run in between -- but that is
+            # a property of the event loop, not of this code, and it is not
+            # worth depending on for nothing.
+            state.last_request_time = time.monotonic()
+            return time.monotonic() - began
 
     def _update_rate_state(self, state: DomainRateState, response: httpx.Response) -> None:
         """Update domain rate state from response status and headers."""
