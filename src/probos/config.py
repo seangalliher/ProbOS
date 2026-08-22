@@ -6286,6 +6286,32 @@ class DmAgenticConfig(BaseModel):  # AD-1065
             "a report nothing would deliver."
         ),
     )
+    promoted_run_deadline_seconds: float = Field(
+        default=1800.0,
+        ge=0.0,
+        le=86400.0,
+        description=(
+            "BF-733: seconds a PROMOTED background run may keep going before it "
+            "is stopped and reported as stopped. Only applies after promotion; "
+            "an unpromoted turn is still bounded by the chat TTL. Before this "
+            "bound existed the reporter awaited the run unconditionally, so a "
+            "run that suspended \u2014 measured on the reference vessel through a "
+            "four-minute LLM endpoint outage \u2014 never reported and never "
+            "reached a terminal state: the Captain held an acknowledgement "
+            "promising a report nothing would ever deliver, and the concurrency "
+            "slot the reporter holds was never released. The cost is stated "
+            "rather than hidden: a run genuinely still working at this deadline "
+            "is stopped, and reported as stopped rather than as finished. This "
+            "is a CUTOFF the operator chooses, not a computed ceiling \u2014 "
+            "dm_agentic max_iterations (up to 25) multiplied by a tier timeout "
+            "(300s on the shipped standard tier) can exceed it before tool time "
+            "is counted, so raise it if your promoted runs legitimately take "
+            "longer. If the run does not answer the stop within a short grace "
+            "it is reported as unconfirmed and its work item is left OPEN, "
+            "because a terminal status would be a claim about a run that may "
+            "still be executing. 0 restores the unbounded wait."
+        ),
+    )
     hold_degraded_turns: bool = Field(
         default=False,
         description=(

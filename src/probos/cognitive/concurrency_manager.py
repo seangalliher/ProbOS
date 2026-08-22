@@ -68,6 +68,10 @@ class ConcurrencyManager:
         self._lock = asyncio.Lock()
         self._last_capacity_warning: float = 0.0
         self._capacity_warning_cooldown: float = 30.0
+        # BF-733: releases scheduled when a queued waiter is cancelled after its
+        # promotion already landed. Held so the task is not garbage-collected
+        # mid-flight (Async Discipline).
+        self._cancelled_promotion_releases: set[asyncio.Task[None]] = set()
 
     @property
     def active_count(self) -> int:
@@ -112,6 +116,15 @@ class ConcurrencyManager:
                 )
                 return thread_id
 
+            # BF-733: a waiter cancelled while queued leaves its entry behind
+            # until the next release pops it. Deadline-cancelled reporters make
+            # that routine rather than rare, so without this a queue of
+            # tombstones sheds live callers -- measured at queue_max_size=2, two
+            # cancelled futures made an ordinary acquire raise, which the
+            # conversational path renders to the Captain as no response at all.
+            self._queue = [
+                queued for queued in self._queue if not queued.future.cancelled()
+            ]
             if len(self._queue) >= self._queue_max_size:
                 raise ValueError(
                     f"AD-672: Concurrency queue full for agent {self._agent_id} "
@@ -136,7 +149,55 @@ class ConcurrencyManager:
                 len(self._queue),
             )
 
-        return await queued_intent.future
+        try:
+            return await queued_intent.future
+        except asyncio.CancelledError:
+            self._hand_back_cancelled_promotion(queued_intent)
+            raise
+
+    def _hand_back_cancelled_promotion(self, queued_intent: QueuedIntent) -> None:
+        """BF-733: return a slot whose waiter was cancelled after promotion.
+
+        ``release`` moves a queued intent into ``_active`` and *then* resolves
+        its future, so a cancellation arriving in that window strands the slot:
+        the promotion happened, and the only handle that could give it back is
+        the value the caller's ``await`` never returned. Measured against this
+        manager at ``max_concurrent=1``, one such race left ``active=1`` with
+        nobody holding the thread id — a permanent loss of that agent's only
+        slot.
+
+        A cancelled future means the promotion never landed and there is
+        nothing to return, which is the ordinary case.
+        """
+        future = queued_intent.future
+        if future.cancelled() or not future.done():
+            return
+        try:
+            thread_id = future.result()
+        except Exception:  # pragma: no cover - a resolved future carries an id
+            return
+        if not thread_id:
+            return
+        logger.warning(
+            "BF-733: agent %s was promoted into concurrency thread %s as its "
+            "waiter was cancelled; returning the slot rather than leaving it "
+            "held by nobody",
+            self._agent_id, thread_id,
+        )
+        try:
+            task = asyncio.get_running_loop().create_task(
+                self.release(thread_id), name=f"ad672-cancel-release-{thread_id[:8]}",
+            )
+        except RuntimeError:
+            logger.error(
+                "BF-733: agent %s could not schedule the return of concurrency "
+                "thread %s (no running loop); the slot stays held and this "
+                "agent's ceiling is one lower until restart",
+                self._agent_id, thread_id,
+            )
+            return
+        self._cancelled_promotion_releases.add(task)
+        task.add_done_callback(self._cancelled_promotion_releases.discard)
 
     async def release(self, thread_id: str) -> None:
         """Release a concurrency slot and promote the next queued intent."""

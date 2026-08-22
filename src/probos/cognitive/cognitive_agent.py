@@ -4367,6 +4367,14 @@ class CognitiveAgent(BaseAgent):
                     failures_probe=lambda: observation.get("_dm_tool_failures"),
                     on_promoted=_record_promotion,
                     background_slot=_bg_slot,
+                    # BF-733: bound the promoted run. Same defensive coercion as
+                    # the budget above and for the same reason -- a MagicMock
+                    # config would otherwise hand a truthy proxy to a numeric
+                    # comparison. A non-number reads as 0, which is the
+                    # unbounded wait that shipped before this BF.
+                    deadline_seconds=_coerce_promotion_budget(
+                        getattr(cfg, "promoted_run_deadline_seconds", 0.0)
+                    ),
                 )
             return text.strip() or None
         except Exception:
