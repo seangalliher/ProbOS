@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -112,9 +113,31 @@ def _runtime(store, threads):
     return SimpleNamespace(work_item_store=store, chat_thread_store=threads)
 
 
-async def _settle(hold: set, *, seconds: float) -> None:
-    """Let the detached reporter run, then tear down whatever is left."""
-    await asyncio.sleep(seconds)
+async def _settle(
+    hold: set,
+    *,
+    seconds: float,
+    until: Callable[[], bool] | None = None,
+) -> None:
+    """Let the detached reporter run, then tear down whatever is left.
+
+    With ``until``, ``seconds`` is an UPPER BOUND rather than a fixed wait: it
+    returns as soon as the observable holds, so the bound can be generous
+    without costing anything on an idle machine. A fixed sleep encodes how fast
+    the box is, and under ``-n 16`` the box is not idle -- BF-835 (#1300).
+
+    On expiry it RETURNS rather than raising, so the caller's own assertion
+    reports what was actually missing instead of an opaque timeout.
+    """
+    if until is None:
+        await asyncio.sleep(seconds)
+        return
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    while not until():
+        if loop.time() >= deadline:
+            return
+        await asyncio.sleep(0.01)
 
 
 async def _teardown(hold: set) -> None:
@@ -928,7 +951,7 @@ async def test_a_run_that_refuses_to_stop_stays_accounted_for() -> None:
             hold=hold,
             background_slot=lambda: manager.slot("direct_message_promoted", 4),
         )
-        await _settle(hold, seconds=0.8)
+        await _settle(hold, seconds=10.0, until=lambda: bool(threads.appended))
 
         # The interim notice landed -- it is not gated on capacity.
         assert [m["body"] for m in threads.appended] == [
@@ -940,7 +963,7 @@ async def test_a_run_that_refuses_to_stop_stays_accounted_for() -> None:
         release.set()
         run_task = next(t for t in hold if t.get_name().startswith("ad1165-turn"))
         run_task.cancel()
-        await _settle(hold, seconds=0.5)
+        await _settle(hold, seconds=10.0, until=lambda: manager.active_count == 0)
         assert manager.active_count == 0, manager.snapshot()
     finally:
         tp._ABANDON_GRACE_SECONDS = original_grace
