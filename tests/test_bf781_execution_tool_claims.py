@@ -41,6 +41,18 @@ def _tool(**cfg_kw):
     cfg = SimpleNamespace(**defaults)
     tool = CodeExecutionTool.__new__(CodeExecutionTool)
     tool._cfg = lambda: cfg  # type: ignore[method-assign]
+    # BF-785: the broker clause now also requires a registered `fetch_governed`
+    # agent, so these tests must supply one to reach the branch they assert on.
+    # Awaitable, because production awaits it.
+    async def _fetch_governed(url, method, **kwargs):
+        return {"body": b"", "status_code": 200, "truncated": False,
+                "total_bytes": 0}
+
+    tool._runtime = SimpleNamespace(  # type: ignore[attr-defined]
+        registry=SimpleNamespace(
+            all=lambda: [SimpleNamespace(fetch_governed=_fetch_governed)],
+        ),
+    )
     return tool
 
 

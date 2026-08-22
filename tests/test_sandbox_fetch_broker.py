@@ -237,9 +237,16 @@ def test_description_declares_the_posture_it_actually_has() -> None:
     written to catch -- it pinned the enforcement claim while checking that the
     posture switched. Updated to assert the switch AND that neither branch
     claims a block.
+
+    BF-785: this passed ``None`` for the fetcher while asserting the broker
+    wording, which pinned the defect as contract -- the offer was made on the
+    flag alone, when a relay also needs a registered ``fetch_governed`` agent.
+    Now supplies one, so it still tests the posture SWITCH rather than the
+    missing dependency. The no-fetcher case has its own test in
+    ``test_bf785_ship_fetch_is_offered_only_when_usable.py``.
     """
     cfg = ExecutionConfig()
-    tool = CodeExecutionTool(runtime=_runtime(cfg, None))
+    tool = CodeExecutionTool(runtime=_runtime(cfg, _RecordingFetcher()))
 
     off = tool.description
     assert "DO NOT FETCH URLS WITH run_python" in off
