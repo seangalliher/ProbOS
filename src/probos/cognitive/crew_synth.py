@@ -402,6 +402,9 @@ class CrewSynthesizer:
                         "producer_agent_id": oc.result.agent_id,
                         "verifier_agent_id": oc.verdict.verifier_agent_id,
                         "accepted": oc.verdict.accepted,
+                        # BF-784: without this a reader cannot tell work that was
+                        # judged and found wanting from work that was never judged.
+                        "verification_defect": oc.verdict.verification_defect,
                         "confidence": oc.verdict.confidence,
                         "status": oc.status,
                         "rounds": oc.rounds,
@@ -559,6 +562,7 @@ class CrewSynthesizer:
                     "producer_agent_id": oc.result.agent_id,
                     "verifier_agent_id": oc.verdict.verifier_agent_id,
                     "accepted": oc.verdict.accepted,
+                    "verification_defect": oc.verdict.verification_defect,
                     "status": oc.status,
                 }
                 for oc in outcomes
