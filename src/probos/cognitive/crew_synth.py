@@ -168,7 +168,7 @@ class CrewSynthesizer:
 
         votes = self._build_votes(accepted)
         shapley = self._attribute(votes)
-        self._record_trust(shapley)
+        self._record_trust(shapley, accepted)
         await self._store_episode(parent_id, final_output, accepted, outcomes, shapley)
 
         self._emit(EventType.CREW_TASK_COMPLETED, {
@@ -487,8 +487,11 @@ class CrewSynthesizer:
 
         Skips the honest-degrade ``unverified`` case (empty ``verifier_agent_id``
         — producer Vote only). Shapley keys by ``agent_id``: an agent that is both
-        a producer and a verifier in the same set yields two Votes the consensus
-        path attributes together (intentional merge, not a silent overwrite)."""
+        a producer and a verifier in the same set yields two Votes, and
+        ``compute_shapley_values`` builds ``{v.agent_id: v}`` — so the LAST one
+        wins outright rather than being combined. Filed separately; it does not
+        reach trust today because ``_record_trust`` writes a flat success rather
+        than a Shapley-weighted one."""
         votes: list[Vote] = []
         for oc in accepted:
             votes.append(Vote(
@@ -513,12 +516,45 @@ class CrewSynthesizer:
             use_confidence_weights=self._policy.use_confidence_weights,
         )
 
-    def _record_trust(self, shapley: dict[str, float]) -> None:
-        """Record each contributing agent's success against the trust ledger.
+    def _record_trust(
+        self,
+        shapley: dict[str, float],
+        accepted: list["ConvergenceOutcome"],
+    ) -> None:
+        """Record each contributing PRODUCER's success against the trust ledger.
 
-        Synchronous keyword call (mirrors AD-860) — never ``await``."""
+        BF-783: this recorded every attributed agent with `success=True`, which
+        included accepted verifiers and so reconstituted the exact incentive
+        BF-778 removed one layer down -- accepting paid, refusing paid nothing,
+        because a refused result never reaches synthesis at all. Measured: an
+        accepting verifier went from Beta(2,2) to Beta(3,2) on acceptance alone.
+
+        A producer contributed work the synthesis shows was good. A verifier
+        contributed a JUDGEMENT, whose correctness the work shipping does not
+        establish -- a judge that waves everything through appears in every
+        successful synthesis.
+
+        Verifier trust is therefore left NEUTRAL here, and no other live path
+        moves it: `record_verification_outcome` has no production caller
+        pending BF-782. This is a deliberate absence, not a delegation -- a
+        verifier earns trust only in another role until that lands.
+
+        Agents that both produced and verified keep their producer credit; the
+        exclusion is verifier-ONLY agents. `accepted` is required rather than
+        defaulted: an omitted argument would silently restore the defect.
+
+        Synchronous keyword call (mirrors AD-860) -- never ``await``.
+        """
+        producers = {oc.result.agent_id for oc in accepted if oc.result.agent_id}
+        verifiers = {
+            oc.verdict.verifier_agent_id
+            for oc in accepted
+            if oc.verdict.verifier_agent_id
+        }
+        verifier_only = verifiers - producers
+
         for agent_id in shapley:
-            if not agent_id:
+            if not agent_id or agent_id in verifier_only:
                 continue
             try:
                 self._trust.record_outcome(
