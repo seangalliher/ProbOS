@@ -45,8 +45,9 @@ from probos.cognitive.crew_executor import (
     SubtaskResult,
     resolve_crew_compaction_settings,
 )
-# The REAL regex, imported rather than re-typed (AD-1140's lesson — ``lack`` is
-# a bare substring in it, so reasoning about a match is not evidence).
+# The REAL regex, imported rather than re-typed (AD-1140's lesson — reasoning
+# about a match is not evidence; ``lack`` matches as a standalone word, and since
+# BF-707 the alternation is ``\b``-anchored so "black"/"slack" are safe).
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.swe_harness import agentic_loop as agentic_loop_module
 from probos.cognitive.swe_harness import session_compactor as session_compactor_module
@@ -1163,8 +1164,8 @@ async def test_model_facing_compaction_strings_are_clean_under_the_real_regex(
     name: str, text: str
 ) -> None:
     """These reach a crew child's prompt for the first time in this AD. Asserted
-    against the REAL imported regex — ``lack`` is a bare substring in it, so a
-    re-typed copy is not acceptable evidence."""
+    against the REAL imported regex — reasoning about a match is not evidence,
+    so a re-typed copy is not acceptable."""
     match = _CAPABILITY_GAP_RE.search(text)
     assert match is None, f"{name} trips the gap regex on {match.group(0)!r}"
 

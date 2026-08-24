@@ -293,7 +293,8 @@ def test_the_generated_description_names_exactly_the_actions_given() -> None:
 
 def test_the_generated_description_is_clean_under_the_real_gap_regex() -> None:
     """A description that trips ``_CAPABILITY_GAP_RE`` would make the offer
-    itself read as a capability gap. Note ``lack`` is a BARE substring there."""
+    itself read as a capability gap. Checked against the real imported regex,
+    because reasoning about a match is not evidence."""
     text = _browser_read_only_description(sorted(_BROWSER_LOOP_ACTIONS))
     match = _CAPABILITY_GAP_RE.search(text)
     assert match is None, f"tripped on {match.group(0)!r} in: {text}"

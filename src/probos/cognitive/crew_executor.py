@@ -104,8 +104,9 @@ _ENTRY_ELISION = " ...[entry shortened]"
 # DD-4: framing travels inline. ``AgenticLoop`` renders a bare user message and
 # has no consumer-side wrapper, so anything unframed "just appears" to the
 # agent. Every string below is asserted against the real imported
-# ``decomposer._CAPABILITY_GAP_RE`` in tests — ``lack`` is a bare substring in
-# that pattern, so "black hole" and "slack" trip it.
+# ``decomposer._CAPABILITY_GAP_RE`` in tests — that pattern is ``\b``-anchored
+# (BF-707), so ``lack``/``lacks``/``lacking`` match as standalone words while
+# "black hole" and "slack" do not. Prove a match, never reason about one.
 _COMMONS_HEADER = "## What the ship already knows about this"
 
 _COMMONS_DISPOSITION: str = (
@@ -256,8 +257,10 @@ _MAX_CONTINUATION_TODO_CHARS = 120
 
 # DD-4: every string below is asserted clean against the REAL imported
 # ``decomposer._CAPABILITY_GAP_RE``. The natural English for "you didn't
-# finish" is a minefield there — "you were unable to complete" trips it twice,
-# and ``lack`` is a bare substring, so "slack" and "black hole" trip it too.
+# finish" is a minefield there — "you were unable to complete" trips it on
+# ``unable to``, and ``lack``/``lacks``/``lacking`` match as standalone words.
+# Since BF-707 the alternation is ``\b``-anchored, so "slack" and "black hole"
+# are safe.
 _CONTINUATION_HEADER = "## Continue this task"
 
 _CONTINUATION_STOP_REASON_NOTE: str = (

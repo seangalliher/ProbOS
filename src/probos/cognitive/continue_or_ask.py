@@ -102,9 +102,10 @@ _MAX_EXCERPT_CHARS = 120
 # Every string below is asserted clean against the REAL imported
 # ``decomposer._CAPABILITY_GAP_RE`` by the test suite. That regex is a minefield
 # for this exact sentiment — the natural phrasing for "I did not finish" reaches
-# for "could not", "unable to" and "ran out of", and ``lack`` is a BARE
-# substring so "black", "slack" and "blacklist" trip it too. Any reword must be
-# re-run there. The text also must not read as a completion: the whole point is
+# for "could not", "unable to" and "ran out of", and ``lack``/``lacks``/
+# ``lacking`` match as standalone words. Since BF-707 the alternation is
+# ``\b``-anchored, so "black", "slack" and "blacklist" are safe. Any reword must
+# be re-run there. The text also must not read as a completion: the whole point is
 # that the agent can now say it stopped mid-task instead of implying it is done.
 #
 # The separator is kept OUT of the lead so a turn that produced no text at all

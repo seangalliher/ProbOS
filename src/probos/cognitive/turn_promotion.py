@@ -107,7 +107,9 @@ PROMOTION_TAG = "conversational-turn"
 # self-modification, so an acknowledgement that trips it would make the runtime
 # try to *design a new agent* every time a turn ran long. The phrasing is
 # constrained accordingly: no "can't" / "cannot" / "unable to" / "not
-# available", and no word containing the bare substring "lack".
+# available", and not the standalone words "lack", "lacks" or "lacking".
+# Words merely CONTAINING "lack" — "black", "slack", "blacklist" — are safe:
+# the alternation has been ``\b``-anchored since BF-707.
 #
 # The acknowledgement also has to be true at the moment it is spoken. It says
 # the work is running, because it is — the task is already executing when this

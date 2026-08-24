@@ -43,8 +43,9 @@ from probos.cognitive.continue_or_ask import (
     file_continue_request,
     resolve_exhausted_turn,
 )
-# The REAL regex, imported rather than re-typed: ``lack`` is a bare substring in
-# it, so reasoning about a match is not evidence.
+# The REAL regex, imported rather than re-typed: reasoning about a match is not
+# evidence. ``lack`` matches as a standalone word; since BF-707 the alternation
+# is ``\b``-anchored, so "black"/"slack"/"blacklist" are safe.
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.turn_promotion import run_with_promotion
 from probos.config import DmAgenticConfig
@@ -868,7 +869,7 @@ class TestFulfilOnApproval:
 
 class TestBlockedReasonWording:
     def test_the_blocked_reason_does_not_read_as_a_capability_gap(self):
-        """Checked against the REAL regex — ``lack`` is a bare substring in it."""
+        """Checked against the REAL regex, because reasoning is not evidence."""
         # Act / Assert
         assert _CAPABILITY_GAP_RE.search(_BLOCKED_REASON) is None
 

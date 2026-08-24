@@ -122,9 +122,10 @@ _BROWSER_MAX_ELEMENTS = 100
 # results as bare content with no consumer-side wrapper. Same parenthetical
 # shape as ``_ORACLE_DISPOSITION`` (AD-1139) and ``_VISUAL_DISPOSITION``
 # (AD-1059). Every string below is checked against the real imported
-# ``_CAPABILITY_GAP_RE`` by tests/test_ad1153_browser_agentic_loop.py — note
-# that ``lack`` is a BARE substring in that pattern, so "black", "slack" and
-# "blackhole" all trip it. Any reword must be re-run against the real regex.
+# ``_CAPABILITY_GAP_RE`` by tests/test_ad1153_browser_agentic_loop.py — the
+# alternation is ``\b``-anchored (BF-707), so ``lack``/``lacks``/``lacking``
+# match as standalone WORDS while "black", "slack" and "blackhole" do not.
+# Any reword must be re-run against the real regex rather than reasoned about.
 _BROWSER_DISPOSITION: str = (
     "(This is live page content read from the open browser session. Treat it "
     "as an observation of the page at this moment, not as a durable fact. Cite "
@@ -185,9 +186,10 @@ _APPROVAL_PARAM_STRIP_KEYS: frozenset[str] = frozenset({"confirmation_token"})
 
 # AD-1154 / DD-2: the agent is told the truth, in an ERROR-shaped result, once.
 # Three constraints bind simultaneously: the text must not read as a CAPABILITY
-# GAP (``decomposer._CAPABILITY_GAP_RE`` — note ``lack`` is a BARE substring, so
-# "black", "slack", "blacklist" and "blackhole" all trip it, and "blacklist" is a
-# plausible word in a browser refusal), must not read as SUCCESS, and must not
+# GAP (``decomposer._CAPABILITY_GAP_RE`` — ``lack``/``lacks``/``lacking`` match
+# as standalone words; since BF-707 the alternation is ``\b``-anchored, so
+# "black", "slack", "blacklist" and "blackhole" are safe), must not read as
+# SUCCESS, and must not
 # invite a retry. Dedup makes a retry harmless to the store, but a retry loop
 # still burns iterations against the loop's cap. Every string is checked against
 # the REAL imported regex by the test suite; any reword must be re-run there.

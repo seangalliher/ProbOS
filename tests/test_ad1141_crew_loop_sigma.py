@@ -40,9 +40,10 @@ from probos.cognitive.crew_executor import (
     _render_commons_block,
     _render_expected_output_block,
 )
-# The REAL regex, imported rather than re-typed. ``lack`` is a bare substring in
-# it, so "black hole" / "slack" / "blackhole" all trip it — AD-1140 hit this for
-# real, which is why a re-typed copy is not acceptable here.
+# The REAL regex, imported rather than re-typed. ``lack``/``lacks``/``lacking``
+# match as standalone words; since BF-707 the alternation is ``\b``-anchored, so
+# "black hole" / "slack" / "blackhole" are safe. AD-1140 hit a real match here,
+# which is why a re-typed copy is not acceptable evidence.
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.oracle_service import OracleResult, OracleService
 from probos.config import AgenticToolsConfig, RecordsConfig, SystemConfig

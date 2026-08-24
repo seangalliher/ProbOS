@@ -74,8 +74,9 @@ from probos.cognitive.crew_session import (
     _final_plan_hash,
 )
 from probos.cognitive.crew_verifier import SubtaskVerifier
-# The REAL regex, imported rather than re-typed (AD-1140's lesson — ``lack`` is
-# a bare substring in it, so reasoning about a match is not evidence).
+# The REAL regex, imported rather than re-typed (AD-1140's lesson — reasoning
+# about a match is not evidence; ``lack`` matches as a standalone word, and since
+# BF-707 the alternation is ``\b``-anchored so "black"/"slack" are safe).
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.swe_harness import session_compactor as session_compactor_module
 from probos.config import AgenticDispatchConfig, SystemConfig
@@ -1162,8 +1163,9 @@ async def test_an_empty_continuation_block_stops_the_loop(
 
 
 async def test_every_authored_string_is_clean_under_the_real_gap_regex() -> None:
-    """Re-run against the IMPORTED regex, not a re-typed copy. ``lack`` is a
-    bare substring in it and "you were unable to complete" trips it twice."""
+    """Re-run against the IMPORTED regex, not a re-typed copy. "you were unable
+    to complete" trips it on ``unable to``, and ``lack`` matches as a
+    standalone word."""
     authored = [
         _CONTINUATION_HEADER,
         _CONTINUATION_STOP_REASON_NOTE,

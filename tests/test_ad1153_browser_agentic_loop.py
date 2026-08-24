@@ -536,7 +536,7 @@ async def test_an_error_result_is_returned_unframed_and_unbounded() -> None:
 def test_every_authored_string_is_clean_under_the_real_capability_gap_regex(
     text: str,
 ) -> None:
-    """Imported, never re-typed — ``lack`` is a BARE substring in that pattern."""
+    """Imported, never re-typed — proving a match beats reasoning about one."""
     match = _CAPABILITY_GAP_RE.search(text)
     assert match is None, f"trips the gap regex on {match.group(0)!r}: {text!r}"
 
