@@ -383,7 +383,29 @@ class ResourcePool:
         return await self._run_lifecycle_transition(self._check_health_inner)
 
     async def _health_loop(self) -> None:
-        """Periodic health check loop."""
+        """Periodic health check loop.
+
+        BF-824: the check is wrapped, because `await self.check_health()` used
+        to be unguarded -- one exception ended this task, and **nothing in
+        `src/` restarts a pool health task**. The failure was invisible: the
+        pool kept its members, kept answering, and simply never checked or
+        refilled again for the remaining life of the process.
+
+        Scope is deliberately just this boundary. Containing failures per
+        MEMBER inside `check_health` would also let a failing pass reach its own
+        refill step, but `check_health` is public and callers rely on it
+        RAISING (`agents/medical/surgeon.py`, `test_ad1019c_consensus`), so that
+        is a contract change with its own consumer migration -- filed
+        separately.
+
+        The residual is therefore real: while a member keeps failing to recycle,
+        the exception still escapes before refill and the pool stays short. What
+        this boundary buys is that the loop SURVIVES, so the pool recovers by
+        itself the moment the failure clears.
+
+        `CancelledError` is deliberately NOT caught: shutdown must still be
+        able to end this loop.
+        """
         interval = self.config.health_check_interval_seconds
         while not self._stop_event.is_set():
             try:
@@ -393,7 +415,16 @@ class ResourcePool:
                 break  # Stop event was set
             except asyncio.TimeoutError:
                 pass  # Timeout means it's time for a health check
-            await self.check_health()
+            try:
+                await self.check_health()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Pool %r health check failed; the loop survives and will "
+                    "try again in %ss.",
+                    self.name, interval,
+                )
 
     async def _add_agent_inner(self, **kwargs: Any) -> str | None:
         """Spawn one additional agent. Returns new agent ID, or None if at max.
