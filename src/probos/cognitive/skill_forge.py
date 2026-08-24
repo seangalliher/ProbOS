@@ -36,7 +36,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.skill_catalog import _validate_spec, parse_skill_file
-from probos.execution.isolation import ExecutionRequest, SubprocessSandbox
+from probos.execution.isolation import (
+    ExecutionRequest,
+    SubprocessSandbox,
+    remove_workdir_off_loop,
+)
 from probos.types import LLMRequest
 
 if TYPE_CHECKING:
@@ -380,4 +384,10 @@ class SkillForge:
                 return _SmokeOutcome(False, "script produced no deliverable file")
             return _SmokeOutcome(True, "", produced)
         finally:
-            shutil.rmtree(workdir, ignore_errors=True)
+            # BF-840: was a one-shot ``rmtree(workdir, ignore_errors=True)``,
+            # which cannot remove a directory a live smoke-test child still
+            # holds and reports nothing when it fails -- measured to leave the
+            # directory on disk even after the child had exited, because
+            # nothing retried. Off-loop because this is a ``finally`` on the
+            # event loop and the retry budget runs to ~9s.
+            await remove_workdir_off_loop(workdir)

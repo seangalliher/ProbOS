@@ -60,7 +60,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from probos.execution.isolation import ExecutionRequest, SubprocessSandbox
+from probos.execution.isolation import (
+    ExecutionRequest,
+    SubprocessSandbox,
+    remove_workdir_off_loop,
+)
 from probos.execution.workspace import WorkspaceManager
 from probos.substrate.agent import BaseAgent
 from probos.types import (
@@ -247,7 +251,7 @@ class CodeRunnerAgent(BaseAgent):
             }
         finally:
             if not persistent:
-                self._reap(workdir)
+                await self._reap(workdir)
 
     async def _install_package(self, packages: list[str], owner: str) -> dict[str, Any]:
         cfg = self._execution_config()
@@ -275,7 +279,7 @@ class CodeRunnerAgent(BaseAgent):
             }
         finally:
             if not persistent:
-                self._reap(workdir)
+                await self._reap(workdir)
 
     async def _prepare_venv(
         self, sandbox: SubprocessSandbox, venv_dir: Path, packages: list[str], cfg: Any,
@@ -383,6 +387,19 @@ class CodeRunnerAgent(BaseAgent):
         return max(1.0, min(t, 300.0))
 
     @staticmethod
-    def _reap(path: Path) -> None:
-        import shutil
-        shutil.rmtree(path, ignore_errors=True)
+    async def _reap(path: Path) -> None:
+        """Remove a run's scratch dir, retrying while something still holds it.
+
+        BF-840: this was a one-shot ``shutil.rmtree(path, ignore_errors=True)``,
+        which on Windows cannot remove a directory a live child still holds and
+        reports nothing when it fails. Measured: with a child holding a file
+        under ``path``, the one-shot form left the directory on disk and raised
+        no exception -- and it was STILL there after the child exited, because
+        nothing retried. That is the BF-788 signature, at a caller BF-788 did
+        not reach.
+
+        Async because the callers clean up in a ``finally`` on the event loop
+        and the retry budget runs to ~9s; see `remove_workdir_off_loop` for why
+        the work is submitted before it is awaited.
+        """
+        await remove_workdir_off_loop(path)

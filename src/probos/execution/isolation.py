@@ -238,10 +238,87 @@ def _remove_workdir(workdir: Path, *, attempts: int = 8, delay: float = 0.2) -> 
             wait = min(wait * 2, 2.0)
 
     logger.warning(
-        "BF-788: sandbox workdir %s survived %d removal attempts; it is left "
-        "on disk. Something may still hold it -- a detached descendant, or a "
-        "child that could not be reaped.", workdir, attempts,
+        "BF-788: sandbox workdir %s was still present after %d removal "
+        "attempts and may remain on disk. Something may still hold it -- a "
+        "detached descendant, or a child that could not be reaped.",
+        workdir, attempts,
     )
+
+
+#: BF-840: the supported name. ``_remove_workdir`` stays as an alias because
+#: BF-788's consumer and its tests bind and monkeypatch that name; renaming
+#: those would be churn on just-shipped code for no behavioural gain. New
+#: consumers outside this module import ``remove_workdir``.
+remove_workdir = _remove_workdir
+
+
+async def remove_workdir_off_loop(workdir: Path) -> None:
+    """Remove a scratch dir without freezing the event loop.
+
+    BF-840: both `CodeRunnerAgent._reap` and `SkillForge._smoke_test` clean up
+    in a ``finally`` inside ``async def``. Calling `remove_workdir` directly
+    there blocks the loop for as long as it retries -- measured at a 0.250s
+    heartbeat gap for a 0.25s sleep, so the real 0.2->2.0s backoff would stall
+    every other task for up to ~9s.
+
+    **The ``shield`` is what makes this survive cancellation.** Measured, with
+    a second cancellation landing on the await; ``queued`` is the executor's
+    queue depth at that moment:
+
+        staged (run_in_executor + shield)  queued=1 calls=1
+        bare to_thread (no shield)         queued=1 calls=0
+        shield(to_thread(...))             queued=0 calls=1
+
+    An unshielded await -- ``to_thread`` or otherwise -- lets the cancellation
+    cancel the future while it is still QUEUED, and the cleanup never runs.
+    (Cancellation cannot stop a removal that has already started on a worker.)
+    The shielded ``to_thread`` row shows ``queued=0`` because that task had not
+    submitted yet when the cancellation arrived, and it still cleaned up:
+    shielding, not submission order, is the property that matters.
+    ``run_in_executor`` is used rather than ``to_thread`` because it also
+    submits before the first suspension point, so the work is queued even if
+    the caller is never suspended; but that is a secondary property.
+
+    Falls back to a synchronous removal when submission fails. In practice that
+    means a running loop whose executor has already shut down, not the absence
+    of a loop -- reaching this via ``await`` implies one. The fallback blocks
+    the caller, potentially for the whole ~9s budget; blocking is strictly
+    better than silently skipping cleanup, which is the defect being fixed.
+
+    **The removal can run twice, and that is deliberate.**
+    ``ThreadPoolExecutor.submit`` can ENQUEUE the job and then raise while
+    starting a worker, so the fallback and the queued job may both remove the
+    same directory. `remove_workdir` is idempotent -- measured over 100
+    simultaneous two-thread removals with zero leftovers, warnings or
+    exceptions -- so the cost is redundant work plus, when a directory is
+    genuinely held, a duplicate or STALE give-up warning: one remover can give
+    up and warn while the other subsequently succeeds.
+
+    **Precondition: the directory must not be a reused path.** A queued
+    duplicate can land after the fallback has returned, so if the path were
+    recreated in between, the duplicate would delete the replacement --
+    measured. Both callers allocate fresh ``uuid4``/``mkdtemp`` paths per run,
+    which is what makes this safe; do not call this on a stable directory.
+
+    An earlier revision claimed the removal once and had the loser wait on a
+    completion Event. That was worse: it swallowed the winner's exception, its
+    bounded wait could expire and return indistinguishably from success, and it
+    documented a completion guarantee the code did not provide. A duplicated
+    idempotent removal is a smaller problem than a false guarantee, so the
+    machinery was removed rather than extended.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(None, remove_workdir, workdir)
+    except RuntimeError:
+        remove_workdir(workdir)
+        return
+    # Shielded: a cancellation landing here must not cancel the removal.
+    # An exception from the worker reaches a caller that is still awaiting.
+    # If a cancellation wins the await instead, the caller sees CancelledError
+    # and a later worker failure is reported by the loop's exception handler
+    # rather than to this caller.
+    await asyncio.shield(future)
 
 
 @dataclass
@@ -545,7 +622,15 @@ class SubprocessSandbox:
             )
         finally:
             if created_workdir:
-                shutil.rmtree(workdir, ignore_errors=True)
+                # BF-840: was a one-shot ``shutil.rmtree(ignore_errors=True)``.
+                # ``ExecutionRequest.workdir`` defaults to None and this class
+                # is exported, so this branch belongs to any caller that lets
+                # the sandbox pick the directory -- measured surviving a single
+                # transient removal failure. Every in-repo production caller
+                # currently passes an explicit workdir, but "no caller in this
+                # repo" is not the same as dead, and this is already on a
+                # worker thread, so the retry costs the loop nothing.
+                remove_workdir(workdir)
 
     # ------------------------------------------------------------------
 
