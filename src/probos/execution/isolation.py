@@ -132,6 +132,119 @@ class LaunchOutcome:
 
 
 @dataclass
+class CancelCleanup:
+    """Ownership handshake for removing a scratch dir after a cancelled run.
+
+    BF-788: the worker outlives the cancelled await, so it is usually the only
+    place that can remove the directory once the child releases it. But a
+    single flag races -- the worker can read it in the instant before the loop
+    sets it, and then neither side cleans up. Each side publishes its own flag
+    before reading the other's, so the one that observes last does the work.
+    The loop side removes when the worker got there first, and the caller
+    removes when no worker ever ran, so the worker is the common owner rather
+    than the only one.
+
+    ``started`` answers a different question: whether a worker has ENTERED
+    ``_run_sync``. When the executor is saturated, cancelling the awaiting task
+    cancels the QUEUED job outright and ``_run_sync`` never runs, so nobody
+    would ever publish ``finished``. The caller must own removal in that case
+    -- and must NOT own it otherwise, because removing while a child is live
+    deletes the files it is using (measured: the script died with
+    FileNotFoundError).
+
+    NOT airtight: a ThreadPoolExecutor future stops being cancellable slightly
+    BEFORE it invokes the callable, so there is a window where the job is
+    running but ``started`` is still clear. Filed; HEAD removes unconditionally
+    and corrupts in that same window.
+    """
+
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    finished: threading.Event = field(default_factory=threading.Event)
+    started: threading.Event = field(default_factory=threading.Event)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _claimed: bool = False
+
+    def claim(self) -> bool:
+        """Take ownership of the removal. First caller wins; the rest decline.
+
+        The two flag reads can BOTH succeed: if `cancelled` and `finished` are
+        set before either side reads, each sees the other's and removes.
+        Measured `REMOVE_CALL_COUNT=2` on separate threads. `rmtree` is
+        idempotent, but two retry loops occupy two executor threads and can
+        both warn about the same directory.
+        """
+        with self._lock:
+            if self._claimed:
+                return False
+            self._claimed = True
+            return True
+
+
+def _still_present(workdir: Path) -> bool:
+    """Is the directory entry still there?
+
+    BF-788: anything that prevents a definite answer counts as PRESENT.
+    Guessing "gone" is exactly how the original leak stayed silent, and
+    ``os.path.lexists`` does precisely that -- it catches the error internally
+    and returns False, so a PermissionError reads as success.
+    """
+    try:
+        os.lstat(workdir)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _remove_workdir(workdir: Path, *, attempts: int = 8, delay: float = 0.2) -> None:
+    """Remove the scratch dir, retrying while something still holds it.
+
+    BF-788: normally called on a worker thread, but the shutdown fallbacks call
+    it inline, where its bounded sleeps run on the calling thread. It occupies
+    that thread for up to ~9s in the pathological case.
+
+    ``os.lstat``, NOT ``os.path.lexists``: `lexists` catches OSError internally
+    and returns False, so a PermissionError would read as "already gone" and
+    this function would report success while the directory remained -- exactly
+    the silent failure BF-788 exists to remove. Only FileNotFoundError means
+    gone; every other OSError is reported.
+
+    The delay backs off (0.2 -> 2.0s, ~9s total) because the process holding
+    the directory is not always the child: a DETACHED grandchild inherits the
+    workdir as its cwd and outlives it, and a flat 0.8s budget gave up while
+    one was still running. The bound is a decision, not an inheritance -- a
+    descendant can outlive any budget, so exhaustion warns rather than
+    pretending.
+    """
+    wait = delay
+    for remaining in range(attempts - 1, -1, -1):
+        shutil.rmtree(workdir, ignore_errors=True)
+        try:
+            os.lstat(workdir)
+        except FileNotFoundError:
+            return  # genuinely gone
+        except OSError as exc:
+            # Cannot tell whether it survived. Saying nothing here would
+            # restore the silent-leak property this fix exists to remove.
+            logger.warning(
+                "BF-788: could not determine whether sandbox workdir %s was "
+                "removed (%s: %s); it may be left on disk.",
+                workdir, type(exc).__name__, exc,
+            )
+            return
+        if remaining:
+            time.sleep(wait)
+            wait = min(wait * 2, 2.0)
+
+    logger.warning(
+        "BF-788: sandbox workdir %s survived %d removal attempts; it is left "
+        "on disk. Something may still hold it -- a detached descendant, or a "
+        "child that could not be reaped.", workdir, attempts,
+    )
+
+
+@dataclass
 class ExecutionRequest:
     """One unit of work to run under isolation. Either ``code`` (Python source,
     written to ``script.py`` in the scratch dir) OR ``argv`` (an explicit command
@@ -158,6 +271,11 @@ class ExecutionRequest:
     # ever started a process. See `LaunchOutcome` for why this resolves both
     # answers rather than only signalling success.
     launch_outcome: LaunchOutcome | None = None
+    # BF-788: opt in to removal of `workdir` when the awaiting caller is
+    # cancelled. Usually the worker does it -- it is still running after the
+    # child releases the directory -- but the loop side takes it when the
+    # worker finished first, and the caller takes it when no worker ever ran.
+    cleanup_on_cancel: "CancelCleanup | None" = None
 
 
 @dataclass
@@ -224,11 +342,68 @@ class SubprocessSandbox:
 
     async def run(self, request: ExecutionRequest) -> ExecutionResult:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._run_sync, request)
+        # BF-788: resolve BEFORE the child starts, so the request, the child's
+        # cwd and both cleanup sites name one absolute path. `_run_sync_inner`
+        # resolves a local copy; if the process cwd moved in between, cleanup
+        # would target a different directory than the child used.
+        if request.workdir is not None:
+            try:
+                request.workdir = Path(request.workdir).resolve()
+            except (OSError, ValueError) as exc:
+                # This class promises to degrade ordinary failures into a
+                # failed result. A malformed path (embedded NUL raises
+                # ValueError) is one, and resolving here is what introduced
+                # the chance of raising at all.
+                logger.warning(
+                    "BF-788: sandbox workdir %r could not be resolved (%s: %s); "
+                    "refusing the run rather than executing against an "
+                    "ambiguous path.", request.workdir, type(exc).__name__, exc,
+                )
+                # AD-1247: this is an exit path, so the launch question gets
+                # its answer here too. No child was created and none will be.
+                if request.launch_outcome is not None:
+                    request.launch_outcome.resolved.set()
+                return ExecutionResult(
+                    success=False,
+                    error=f"invalid workdir: {exc}",
+                    tier=int(self.tier),
+                )
+        try:
+            return await loop.run_in_executor(None, self._run_sync, request)
+        except asyncio.CancelledError:
+            cleanup = request.cleanup_on_cancel
+            if cleanup is not None:
+                cleanup.cancelled.set()
+                # The worker publishes `finished` BEFORE reading `cancelled`.
+                # If it is already visible, the worker has been past its check
+                # and will not clean up -- so this side owns it. Handing it to
+                # the executor keeps the sleep off the loop.
+                if (
+                    cleanup.finished.is_set()
+                    and request.workdir is not None
+                    and cleanup.claim()
+                ):
+                    try:
+                        loop.run_in_executor(None, _remove_workdir, request.workdir)
+                    except RuntimeError:
+                        # The executor is already shutting down. Letting this
+                        # escape would replace CancelledError with a
+                        # RuntimeError -- a caller unwinding would see the
+                        # wrong exception AND the directory would survive.
+                        # Bounded, and only on a loop that is going away.
+                        _remove_workdir(request.workdir)
+            raise
 
     # ------------------------------------------------------------------
 
     def _run_sync(self, request: ExecutionRequest) -> ExecutionResult:
+        cleanup = request.cleanup_on_cancel
+        if cleanup is not None:
+            # BF-788: FIRST statement. From here a child may come to exist, so
+            # the caller must stop treating the directory as its own. A queued
+            # job that was cancelled never reaches this line, which is exactly
+            # the distinction the caller needs.
+            cleanup.started.set()
         try:
             return self._run_sync_inner(request)
         finally:
@@ -237,7 +412,26 @@ class SubprocessSandbox:
             # unwinding under cancellation is waiting on this.
             if request.launch_outcome is not None:
                 request.launch_outcome.resolved.set()
-
+            # BF-788: normally reached after the child has exited, which is the
+            # earliest moment a Windows handle can be released. An abnormal
+            # `communicate()` now kills and reaps the child first; if that
+            # reaping itself fails, this can still run beside a live process
+            # (filed -- HEAD has the same hazard and does not even try).
+            #
+            # `finished` is published FIRST. The two ordered checks are what
+            # close the race: whichever side observes the other's flag last
+            # performs the removal, so neither can skip it believing the other
+            # will. `claim()` then ensures only ONE of them acts when both
+            # observe.
+            cleanup = request.cleanup_on_cancel
+            if cleanup is not None:
+                cleanup.finished.set()
+                if (
+                    cleanup.cancelled.is_set()
+                    and request.workdir is not None
+                    and cleanup.claim()
+                ):
+                    _remove_workdir(request.workdir)
     def _run_sync_inner(self, request: ExecutionRequest) -> ExecutionResult:
         started = time.monotonic()
         created_workdir = request.workdir is None
@@ -307,6 +501,24 @@ class SubprocessSandbox:
                 self._kill(proc)
                 out_b, err_b = proc.communicate()
                 timed_out = True
+            except BaseException:
+                # BF-788: any other failure here (a pipe error, a cancellation
+                # unwinding the thread) would otherwise return with the child
+                # STILL RUNNING, and every caller treats return as "the child
+                # is gone" -- cleanup then deletes files out from under it.
+                # Measured on both HEAD and this branch: the script saw
+                # FileNotFoundError. Reap it before returning. If the reap
+                # itself fails the hazard remains, which is why that path warns
+                # rather than pretending (filed).
+                self._kill(proc)
+                try:
+                    proc.wait(timeout=5)
+                except Exception:  # noqa: BLE001 — already failing; best effort
+                    logger.warning(
+                        "BF-788: sandbox child %s did not exit after being "
+                        "killed; its workdir may still be in use.", proc.pid,
+                    )
+                raise
 
             cap = request.max_output_bytes
             stdout = (out_b or b"")[:cap].decode("utf-8", errors="replace")

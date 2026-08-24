@@ -37,9 +37,12 @@ from probos.execution.fetch_broker import (
     SandboxFetchBroker,
 )
 from probos.execution.isolation import (
+    CancelCleanup,
     ExecutionRequest,
     LaunchOutcome,
     SubprocessSandbox,
+    _remove_workdir,
+    _still_present,
 )
 from probos.tools.protocol import ToolResult, ToolType
 
@@ -744,7 +747,9 @@ class CodeExecutionTool:
         # `broker_env`, `res` and `artifact_count` are held out so the fallback
         # paths report what was actually known instead of `_audit` defaults.
         launch = LaunchOutcome()
+        cleanup_on_cancel = CancelCleanup()
         sandbox_submitted = False
+        workdir_created = False
         audit_attempted = False
         broker_env: dict[str, str] = {}
         res: Any = None
@@ -754,6 +759,23 @@ class CodeExecutionTool:
             (params or {}).get("timeout"), getattr(cfg, "timeout_seconds", 30),
         )
         try:
+            # BF-788: resolve HERE, where the directory is owned. `scratch_dir`
+            # defaults to a relative path, and this same `workdir` is later
+            # used for artifact capture and for the `finally` removal;
+            # resolving it only inside the sandbox left those two joining a
+            # relative path against whatever the process cwd had become.
+            # INSIDE the guarded block: `resolve()` can raise on a bad
+            # configured path (measured: ValueError for an embedded null), and
+            # a configuration fault must degrade into a ToolResult, not escape.
+            workdir = workdir.resolve()
+            # Set BEFORE `mkdir`: it means "this path is resolvable and this
+            # call is responsible for it", not "creation finished". A
+            # BaseException between a successful mkdir and this line skipped
+            # teardown and leaked the directory -- measured under
+            # KeyboardInterrupt. It is responsibility, not proof of ownership;
+            # exclusive creation would be that, and a UUID collision is the
+            # residual (#1305).
+            workdir_created = True
             workdir.mkdir(parents=True, exist_ok=True)
             # AD-1074d: stage the thread's current documents into the workdir so
             # the script can read + modify them in place (the Cowork round-trip).
@@ -789,6 +811,12 @@ class CodeExecutionTool:
                     env=(broker_env or None),
                     import_workdir=bool(broker_env),
                     launch_outcome=launch,
+                    # BF-788: on cancellation the `finally` below runs while a
+                    # Windows child still holds the directory, and a cancelled
+                    # run never reaches artifact capture -- so the worker is
+                    # both the only place that CAN remove it and the only place
+                    # that is free to.
+                    cleanup_on_cancel=cleanup_on_cancel,
                 )
             )
             produced = await self._capture_artifacts(
@@ -922,11 +950,9 @@ class CodeExecutionTool:
                 # for. Closed here rather than after `sandbox.run` so a timeout,
                 # an exception, or a cancelled turn all still take the socket
                 # down. AD-1247 nested this inside its own `finally` so an audit
-                # sink that raises cannot skip the cleanup ATTEMPT, and `rmtree`
-                # sits in a further `finally` so a broker whose `stop()` raises
-                # BaseException cannot skip it either. Neither guarantees the
-                # directory is gone -- a Windows child still holding a handle
-                # can defeat `ignore_errors=True`.
+                # sink that raises cannot skip the cleanup ATTEMPT, and the
+                # removal sits in a further `finally` so a broker whose `stop()`
+                # raises BaseException cannot skip it either.
                 try:
                     if broker is not None:
                         try:
@@ -939,7 +965,46 @@ class CodeExecutionTool:
                                 exc_info=True,
                             )
                 finally:
-                    shutil.rmtree(workdir, ignore_errors=True)
+                    # BF-788 ownership, in one place:
+                    #
+                    # - Not cancelled: this side owns it. The plain attempt is
+                    #   SYNCHRONOUS, which is what AD-1247's teardown tests
+                    #   assert -- an earlier revision broke them by dispatching
+                    #   unconditionally. It is not a guarantee: a descendant
+                    #   holding the directory defeats it, and the escalation
+                    #   below is dispatched rather than awaited, so `invoke`
+                    #   can return with the directory still present.
+                    # - Cancelled and NO worker ever started: still this side.
+                    #   The queued job was cancelled outright, so no child can
+                    #   exist and nobody else will ever do it.
+                    # - Cancelled and a worker DID start: hands off entirely.
+                    #   A child may be live, and removing its files out from
+                    #   under it is worse than leaving them -- measured, the
+                    #   script died with FileNotFoundError. The worker removes
+                    #   the directory in its own `finally`, normally after the
+                    #   child has exited -- not guaranteed if reaping itself
+                    #   fails (#1305).
+                    if workdir_created and not (
+                        cleanup_on_cancel.cancelled.is_set()
+                        and cleanup_on_cancel.started.is_set()
+                    ):
+                        shutil.rmtree(workdir, ignore_errors=True)
+                        if _still_present(workdir):
+                            # Survived: a DETACHED descendant inherits the
+                            # workdir as its cwd and outlives the child, which
+                            # `ignore_errors=True` defeats silently. Measured:
+                            # an empty exec dir surviving 20s past a completed
+                            # run. Dispatched rather than awaited, so it does
+                            # not delay THIS call -- it can still delay a later
+                            # user of the shared executor.
+                            try:
+                                asyncio.get_running_loop().run_in_executor(
+                                    None, _remove_workdir, workdir,
+                                )
+                            except RuntimeError:
+                                # Loop/executor already going away; do it here
+                                # rather than not at all.
+                                _remove_workdir(workdir)
 
     def _unimportable_summary(self, code: str) -> dict[str, Any] | None:
         """AD-1178: turn an unresolvable import into a structured request the
