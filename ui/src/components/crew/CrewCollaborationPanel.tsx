@@ -63,20 +63,70 @@ function CrossGlyph({ color }: { color: string }) {
 }
 
 // ── Single subtask card ────────────────────────────────────────────
-function SubtaskCard({ child }: { child: LegacyCrewChildView }) {
+/**
+ * BF-836: a neutral "no verdict" mark — a circle with a dash. Not a check and
+ * not a cross, because neither has been said about the work.
+ */
+function UnverifiedGlyph({ color }: { color: string }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke={color} strokeWidth="1.5" />
+      <path d="M8 12h8" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+type VerdictState = 'none' | 'accepted' | 'rejected' | 'defect' | 'unknown';
+
+/**
+ * BF-836: one reading of a verdict, so the glyph and the label cannot disagree.
+ *
+ * `defect` beats `accepted`/`rejected`: a verifier that failed has said nothing
+ * about the work. `unknown` is a record the API could not read a flag from --
+ * written before BF-784, or carrying a malformed value; neither can establish
+ * whether the work was judged poor or never judged, so neither may be reported
+ * as a refusal.
+ */
+function verdictState(verdict: LegacyCrewChildView['verdict']): VerdictState {
+  if (!verdict) return 'none';
+  if (verdict.verification_defect === true) return 'defect';
+  if (verdict.accepted === true) return 'accepted';
+  if (verdict.verification_defect === null) return 'unknown';
+  if (verdict.accepted === false) return 'rejected';
+  return 'unknown';
+}
+
+const VERDICT_LABEL: Record<Exclude<VerdictState, 'none'>, string> = {
+  accepted: 'accepted',
+  rejected: 'rejected',
+  defect: 'not verified',
+  unknown: 'verification unavailable',
+};
+
+function SubtaskCard({ child, parentDone }: {
+  child: LegacyCrewChildView;
+  parentDone: boolean;
+}) {
   const inProgress = child.status === 'in_progress';
   const done = child.status === 'done';
   // Border accent: amber while live, dim once settled.
   const accent = inProgress ? ACTIVE_AMBER : DIM;
 
+  // BF-836: the glyph and the label are derived from ONE reading. They were
+  // computed separately, so a verification defect showed amber "not verified"
+  // beside a red rejection cross -- the Captain still read "rejected".
+  const state = verdictState(child.verdict);
+
   let statusGlyph = <SpinnerGlyph color={accent} />;
   if (done) {
-    if (child.verdict && child.verdict.accepted === true) {
+    if (state === 'accepted') {
       statusGlyph = <CheckGlyph color={ACCEPT_GREEN} />;
-    } else if (child.verdict && child.verdict.accepted === false) {
+    } else if (state === 'rejected') {
       statusGlyph = <CrossGlyph color={REJECT_RED} />;
     } else {
-      statusGlyph = <CheckGlyph color={DIM} />;
+      // Includes `none`: a settled child with no verdict at all. A check --
+      // even a dim one -- reads as "fine", and nothing verified it.
+      statusGlyph = <UnverifiedGlyph color={ACTIVE_AMBER} />;
     }
   }
 
@@ -107,10 +157,20 @@ function SubtaskCard({ child }: { child: LegacyCrewChildView }) {
         </span>
       </div>
 
-      {child.verdict ? (
+      {child.verdict && state !== 'none' ? (
         <div data-testid="crew-subtask-verdict" style={{ marginTop: 5, fontSize: 11, color: '#9aa4ba' }}>
-          <span style={{ color: child.verdict.accepted ? ACCEPT_GREEN : REJECT_RED }}>
-            {child.verdict.accepted ? 'accepted' : 'rejected'}
+          <span
+            data-testid={state === 'accepted' || state === 'rejected'
+              ? undefined
+              : 'crew-subtask-defect'}
+            data-verdict-state={state}
+            style={{
+              color: state === 'accepted'
+                ? ACCEPT_GREEN
+                : state === 'rejected' ? REJECT_RED : ACTIVE_AMBER,
+            }}
+          >
+            {VERDICT_LABEL[state]}
           </span>
           {typeof child.verdict.confidence === 'number' ? (
             <span> · conf {child.verdict.confidence.toFixed(2)}</span>
@@ -126,7 +186,11 @@ function SubtaskCard({ child }: { child: LegacyCrewChildView }) {
         </div>
       ) : (
         <div data-testid="crew-subtask-pending" style={{ marginTop: 5, fontSize: 11, color: DIM }}>
-          awaiting verification
+          {/* BF-836: once the parent is done, verification is not coming --
+              the router emits a null verdict for a completed parent whose
+              provenance is missing or unreadable. Promising it would be a
+              lie about work that is already over. */}
+          {parentDone ? 'verification unavailable' : 'awaiting verification'}
         </div>
       )}
     </div>
@@ -267,7 +331,11 @@ function LegacyCrewTree({ tree }: { tree: LegacyCrewTaskTree }) {
         </span>
       </div>
       {tree.children.map(child => (
-        <SubtaskCard key={child.id} child={child} />
+        <SubtaskCard
+          key={child.id}
+          child={child}
+          parentDone={tree.parent.status === 'done'}
+        />
       ))}
     </div>
   );

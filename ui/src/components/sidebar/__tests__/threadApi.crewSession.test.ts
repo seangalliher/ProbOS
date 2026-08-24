@@ -108,6 +108,9 @@ function legacyVerdict(): LegacyCrewVerdict {
     confidence: 0.9,
     critique: 'Accepted',
     verifier_agent_id: 'verifier-1',
+    // BF-836: the validator checks an EXACT key set, so the fixture has to
+    // carry this the moment the API does.
+    verification_defect: false,
   };
 }
 
@@ -245,6 +248,23 @@ describe('AD-1132 threadApi CrewSession contracts', () => {
         children: [{ ...child, verdict: { ...verdict, confidence: 'high' } }],
       }],
       ['wrong rounds type', { ...exact, children: [{ ...child, rounds: '2' }] }],
+      // BF-836: the panel-level test for this only requires the generic error
+      // state, which a validator that THREW would also produce. Asserted here,
+      // where the result is `{kind:'error', status:200}` from a clean
+      // rejection rather than from a catch. A key that is present but
+      // malformed stays invalid -- only an ABSENT key is defaulted.
+      ['non-boolean verification_defect', {
+        ...exact,
+        children: [{ ...child, verdict: { ...verdict, verification_defect: 'false' } }],
+      }],
+      // Pins `in` rather than `!== undefined` as the present/absent test.
+      // JSON cannot carry `undefined`, but the decoder also runs on in-memory
+      // objects; an own property explicitly set to `undefined` is PRESENT and
+      // must therefore be refused, not quietly defaulted to null.
+      ['own verification_defect explicitly undefined', {
+        ...exact,
+        children: [{ ...child, verdict: { ...verdict, verification_defect: undefined } }],
+      }],
     ];
 
     for (const [label, value] of invalid) {
@@ -254,6 +274,30 @@ describe('AD-1132 threadApi CrewSession contracts', () => {
         status: 200,
       });
     }
+  });
+
+  it('defaults an absent verification_defect to null rather than failing the tree', async () => {
+    // BF-836 review: the verdict guard is reached through the child guard, so
+    // before this default one missing key rejected the WHOLE tree and the
+    // Captain lost the thread. Absence is exactly what the tri-state's `null`
+    // means, so it decodes rather than refuses.
+    const verdict = legacyVerdict();
+    const stale = {
+      ...legacyTree(),
+      children: [{ ...legacyChild(), verdict: withoutKey(verdict, 'verification_defect') }],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(stale)));
+
+    const result = await fetchCrewTaskDetail('p1');
+
+    expect(result.kind).toBe('success');
+    const tree = (result as { response: LegacyCrewTaskTree }).response;
+    expect(tree.children[0].verdict?.verification_defect).toBeNull();
+    // Not coerced to false: `false` would assert the verifier was healthy.
+    expect(tree.children[0].verdict?.verification_defect).not.toBe(false);
+    // The rest of the verdict survives the rewrite untouched.
+    expect(tree.children[0].verdict?.accepted).toBe(verdict.accepted);
+    expect(tree.children[0].verdict?.critique).toBe(verdict.critique);
   });
 
   it('preserves exact generic summaries and accepts additive session summaries', async () => {

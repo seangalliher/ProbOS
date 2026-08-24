@@ -268,11 +268,14 @@ function isLegacyCrewVerdict(value: unknown): value is LegacyCrewVerdict {
   return isRecord(value)
     && hasExactKeys(value, [
       'accepted', 'confidence', 'critique', 'verifier_agent_id',
+      'verification_defect',
     ])
     && (value.accepted === null || typeof value.accepted === 'boolean')
     && isNullableNumber(value.confidence)
     && typeof value.critique === 'string'
-    && typeof value.verifier_agent_id === 'string';
+    && typeof value.verifier_agent_id === 'string'
+    && (value.verification_defect === null
+      || typeof value.verification_defect === 'boolean');
 }
 
 function isLegacyCrewChildView(value: unknown): value is LegacyCrewChildView {
@@ -282,6 +285,33 @@ function isLegacyCrewChildView(value: unknown): value is LegacyCrewChildView {
   return hasLegacyWorkItemFields(value)
     && (value.verdict === null || isLegacyCrewVerdict(value.verdict))
     && isNullableNumber(value.rounds);
+}
+
+/**
+ * Accept a tree from a backend predating BF-836, which omits
+ * `verification_defect` altogether, by defaulting it to the tri-state's
+ * `null` ("unknown").
+ *
+ * Absence is precisely what `null` means here, so refusing it would be
+ * incoherent -- and expensive: the verdict guard is reached through
+ * `isLegacyCrewChildView`, so one missing key fails the WHOLE tree and the
+ * Captain loses the thread rather than one glyph's precision.
+ *
+ * A key that is PRESENT but malformed is deliberately left untouched, so it
+ * still fails validation. This widens the accepted shape by one older
+ * version; it does not weaken type checking.
+ */
+function withDefaultedVerificationDefect(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.children)) return value;
+  let changed = false;
+  const children = value.children.map((child) => {
+    if (!isRecord(child)) return child;
+    const { verdict } = child;
+    if (!isRecord(verdict) || 'verification_defect' in verdict) return child;
+    changed = true;
+    return { ...child, verdict: { ...verdict, verification_defect: null } };
+  });
+  return changed ? { ...value, children } : value;
 }
 
 function isLegacyCrewTaskTree(value: unknown): value is LegacyCrewTaskTree {
@@ -306,8 +336,9 @@ export async function fetchCrewTaskDetail(parentId: string): Promise<CrewTaskDet
       && data.session.task_id === parentId) {
       return { kind: 'success', response: { session: data.session } };
     }
-    if (isLegacyCrewTaskTree(data)) {
-      return { kind: 'success', response: data };
+    const legacy = withDefaultedVerificationDefect(data);
+    if (isLegacyCrewTaskTree(legacy)) {
+      return { kind: 'success', response: legacy };
     }
     return { kind: 'error', status: res.status };
   } catch {

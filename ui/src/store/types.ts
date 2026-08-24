@@ -618,6 +618,11 @@ export interface LegacyCrewVerdict {
   readonly confidence: number | null;
   readonly critique: string;
   readonly verifier_agent_id: string;
+  /**
+   * BF-836: the verifier itself failed, rather than judging the work poor.
+   * `null` means the record cannot say — written before BF-784, or malformed.
+   */
+  readonly verification_defect: boolean | null;
 }
 
 export interface LegacyCrewWorkItemView {

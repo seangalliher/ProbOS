@@ -89,15 +89,30 @@ async def _provenance_by_work_item(runtime: Any, parent: Any) -> dict[str, Any]:
 def _verdict_from_subtask(sub: dict[str, Any]) -> dict[str, Any]:
     """Map an AD-861 provenance subtask record to the wire ``verdict`` shape.
 
-    Reads only the REAL fields the AD-861 blob carries (``accepted``,
-    ``confidence``, ``critique``, ``verifier_agent_id``); ``rounds`` is surfaced
-    as a sibling key, not nested in the verdict.
+    Reads the REAL fields the AD-861 blob carries; ``rounds`` is surfaced as a
+    sibling key, not nested in the verdict.
+
+    BF-836: ``verification_defect`` too. BF-784 put it in the durable records so
+    the trail could tell "the verifier failed" from "the work was refused";
+    dropping it here meant the HXI still rendered the first as the second.
+
+    THREE states, not two. ``True``/``False`` are the recorded answer. ``None``
+    means the record cannot say -- a blob written before BF-784 carries no such
+    key, and ``accepted=False`` alone cannot establish whether the work was
+    judged poor or never judged at all. Collapsing that to ``False`` would
+    assert a refusal the record does not support.
+
+    Type-check; do not coerce. A malformed blob could carry the string
+    ``"false"``, which ``bool()`` reports as a defect. Anything that is not a
+    real bool becomes ``None``.
     """
+    raw = sub.get("verification_defect")
     return {
         "accepted": sub.get("accepted"),
         "confidence": sub.get("confidence"),
         "critique": sub.get("critique"),
         "verifier_agent_id": sub.get("verifier_agent_id"),
+        "verification_defect": raw if isinstance(raw, bool) else None,
     }
 
 
