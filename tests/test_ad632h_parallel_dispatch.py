@@ -6,7 +6,6 @@ and backward compatibility with sequential chains.
 """
 
 import asyncio
-import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -37,10 +36,54 @@ def _make_spec(name: str, st_type: SubTaskType = SubTaskType.QUERY,
     )
 
 
+class _Rendezvous:
+    """BF-852: prove parallelism by construction, not by the wall clock.
+
+    These tests asserted elapsed-time budgets. Both were unsound, in opposite
+    directions. ``elapsed < 0.5`` for two 0.1s handlers could not detect
+    serialisation at all -- running them one after the other takes 0.2s and
+    passes. ``elapsed < 0.18`` for four 0.05s handlers did detect it (0.2s), but
+    with only 3.6x headroom over the expected time, and a loaded gate worker
+    blew it at 0.218s with the executor behaving correctly.
+
+    A rendezvous parks each caller until ``expected`` are inside together. That
+    cannot happen at all unless they really do overlap, so load can only make
+    the test slower, never wrong. A serialised executor parks the first caller
+    until the watchdog fires and the test fails naming the cause.
+    """
+
+    def __init__(self, expected: int, timeout: float = 10.0) -> None:
+        self._expected = expected
+        self._timeout = timeout
+        self._gate = asyncio.Event()
+        self.arrived = 0
+        self.peak = 0
+        self.timed_out = False
+
+    async def meet(self) -> None:
+        self.arrived += 1
+        self.peak = max(self.peak, self.arrived)
+        try:
+            if self.arrived >= self._expected:
+                self._gate.set()
+            try:
+                await asyncio.wait_for(self._gate.wait(), timeout=self._timeout)
+            except asyncio.TimeoutError:
+                # Released on the way out so a failing run pays one watchdog
+                # rather than one per caller.
+                self.timed_out = True
+                self._gate.set()
+        finally:
+            self.arrived -= 1
+
+
 def _make_handler(delay: float = 0.0, result_data: dict | None = None,
-                  fail: bool = False) -> AsyncMock:
+                  fail: bool = False,
+                  rendezvous: "_Rendezvous | None" = None) -> AsyncMock:
     """Create an async handler mock with optional delay and failure."""
     async def _handler(spec, context, prior_results):
+        if rendezvous is not None:
+            await rendezvous.meet()
         if delay:
             await asyncio.sleep(delay)
         if fail:
@@ -228,8 +271,11 @@ class TestParallelExecution:
     @pytest.mark.asyncio
     async def test_evaluate_reflect_concurrent(self):
         """EVALUATE and REFLECT with depends_on should run concurrently."""
-        eval_handler = _make_handler(delay=0.1)
-        reflect_handler = _make_handler(delay=0.1)
+        # BF-852: both must be inside the handler together before either may
+        # leave, which a sequential executor cannot satisfy at any speed.
+        wave = _Rendezvous(expected=2)
+        eval_handler = _make_handler(rendezvous=wave)
+        reflect_handler = _make_handler(rendezvous=wave)
         query_handler = _make_handler()
         analyze_handler = _make_handler()
         compose_handler = _make_handler()
@@ -255,16 +301,17 @@ class TestParallelExecution:
             chain_timeout_ms=10000,
         )
 
-        start = time.monotonic()
         results = await executor.execute(
             chain, {}, agent_id="test", agent_type="test",
         )
-        elapsed = time.monotonic() - start
 
         assert len(results) == 5
-        # If sequential, E+R = ~0.2s. If parallel, ~0.1s.
-        # Allow margin but should be well under 0.2s
-        assert elapsed < 0.5, f"Expected parallel execution, got {elapsed:.3f}s"
+        # The rendezvous IS the proof: evaluate and reflect were inside the
+        # handler at the same time. The budget this replaces could not detect
+        # serialisation at all -- two 0.1s handlers run one after the other
+        # take 0.2s, comfortably inside the 0.5s it allowed.
+        assert not wave.timed_out
+        assert wave.peak == 2
 
     @pytest.mark.asyncio
     async def test_sequential_no_depends_on(self):
@@ -348,12 +395,16 @@ class TestParallelExecution:
     @pytest.mark.asyncio
     async def test_three_step_parallel_wave(self):
         """Three steps depending on the same step run in parallel."""
-        handler = _make_handler(delay=0.05)
+        # BF-852: the root runs alone, so it must NOT share the wave's
+        # rendezvous -- it would park waiting for peers that cannot arrive.
+        wave = _Rendezvous(expected=3)
+        root_handler = _make_handler()
+        wave_handler = _make_handler(rendezvous=wave)
         executor = _make_executor(
-            (SubTaskType.COMPOSE, handler),
-            (SubTaskType.EVALUATE, handler),
-            (SubTaskType.REFLECT, handler),
-            (SubTaskType.QUERY, handler),
+            (SubTaskType.COMPOSE, root_handler),
+            (SubTaskType.EVALUATE, wave_handler),
+            (SubTaskType.REFLECT, wave_handler),
+            (SubTaskType.QUERY, wave_handler),
         )
 
         chain = SubTaskChain(
@@ -366,15 +417,19 @@ class TestParallelExecution:
             chain_timeout_ms=5000,
         )
 
-        start = time.monotonic()
         results = await executor.execute(
             chain, {}, agent_id="test", agent_type="test",
         )
-        elapsed = time.monotonic() - start
 
         assert len(results) == 4
-        # 3 parallel at 0.05s each → ~0.05s for the wave (not 0.15s)
-        assert elapsed < 0.18
+        # All three were inside the handler together. Unlike the budget in
+        # test_evaluate_reflect_concurrent, `elapsed < 0.18` did catch
+        # serialisation (4 x 0.05s = 0.2s) -- but with only 3.6x headroom over
+        # the expected time, which is what a loaded gate worker blew at 0.218s.
+        # Correct and fragile, rather than wrong: the rendezvous keeps the
+        # detection and drops the fragility.
+        assert not wave.timed_out
+        assert wave.peak == 3
 
     @pytest.mark.asyncio
     async def test_full_chain_wave_order(self):
