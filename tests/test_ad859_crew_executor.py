@@ -63,10 +63,23 @@ class _FakeAgenticExecutor:
         fail_agents: set[str] | None = None,
         delay: float = 0.0,
         trace_ref: str | None = "d" * 64,
+        rendezvous: int | None = None,
+        rendezvous_timeout: float = 10.0,
     ) -> None:
         self._fail_agents = fail_agents or set()
         self._delay = delay
         self._trace_ref = trace_ref
+        # BF-848: proving the cap is actually REACHED by sleeping and reading
+        # the peak makes the assertion a wall-clock race -- if the loop stalls
+        # longer than ``delay`` between two entries, the first call has already
+        # exited when the second arrives and the peak reads 1. A rendezvous
+        # proves the same property by construction: a call parks until the
+        # expected number of callers are inside together, which cannot happen
+        # at all unless they really do overlap.
+        self._rendezvous = rendezvous
+        self._rendezvous_timeout = rendezvous_timeout
+        self._rendezvous_reached = asyncio.Event()
+        self.rendezvous_timed_out = False
         self.calls: list[_Call] = []
         self.active = 0
         self.max_active = 0
@@ -87,9 +100,30 @@ class _FakeAgenticExecutor:
         self.max_active = max(self.max_active, self.active)
         started = time.time()
         try:
+            if self._rendezvous is not None:
+                if self.active >= self._rendezvous:
+                    self._rendezvous_reached.set()
+                try:
+                    await asyncio.wait_for(
+                        self._rendezvous_reached.wait(),
+                        timeout=self._rendezvous_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    # Recorded rather than raised: the test asserts on it, so a
+                    # serialised executor fails naming the cause instead of
+                    # surfacing as an opaque peak of 1. Release the gate on the
+                    # way out so the remaining callers do not each pay the full
+                    # timeout -- a failing run should be quick, not 5x slower.
+                    self.rendezvous_timed_out = True
+                    self._rendezvous_reached.set()
+            # The rendezvous proves the cap is REACHED. It cannot prove the cap
+            # is HONOURED: once the Event is set, later callers return from
+            # wait() without yielding, so they enter and leave one at a time and
+            # an over-admitting executor still reads a peak of 2. Holding here
+            # keeps excess admissions observable, so both bounds have a guard.
             if self._delay:
                 await asyncio.sleep(self._delay)
-            else:
+            elif self._rendezvous is None:
                 await asyncio.sleep(0)
         finally:
             self.active -= 1
@@ -270,7 +304,13 @@ async def test_failed_child_surfaces_status_without_unblocking_dependents(store)
 async def test_concurrency_cap_respected(store):
     parent = await store.create_work_item(title="parent", work_type="work_order")
     registry = _FakeRegistry({f"a{i}": _FakeAgent(f"a{i}") for i in range(5)})
-    agentic = _FakeAgenticExecutor(delay=0.03)
+    # BF-848: rendezvous rather than sleep. Two callers must be inside together
+    # before either may leave, so reaching the cap is proven by construction and
+    # not by whether a 30ms sleep happened to overlap on a loaded gate worker.
+    # The delay is kept as well: the rendezvous proves the cap is REACHED, the
+    # hold afterwards is what keeps an over-admitting executor observable, and
+    # the two assertions below fail in opposite directions.
+    agentic = _FakeAgenticExecutor(rendezvous=2, delay=0.03)
     for i in range(5):
         await _make_child(
             store, parent_id=parent.id, title=f"c{i}",
@@ -282,6 +322,9 @@ async def test_concurrency_cap_respected(store):
 
     assert len(results) == 5
     assert agentic.max_active <= 2  # cap honored
+    # A serialised executor parks the first caller until the timeout expires;
+    # asserting this names the cause instead of leaving a bare peak of 1.
+    assert not agentic.rendezvous_timed_out
     assert agentic.max_active == 2  # cap actually reached (real parallelism)
 
 
