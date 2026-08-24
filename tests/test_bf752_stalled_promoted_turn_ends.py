@@ -44,7 +44,6 @@ from probos.cognitive.work_reconciler import WorkItemReconciler
 from probos.config import WorkBoardReconcilerConfig
 
 STALL = 600.0
-NOW = time.time()
 
 
 class _Registry:
@@ -70,12 +69,19 @@ class _Router:
 
 class _Item:
     def __init__(self, *, idle_seconds: float) -> None:
+        # BF-847: read the clock HERE, not at module import. A module-level
+        # ``NOW`` freezes at collection, so the gap between collecting this file
+        # and running a test is silently added to every item's idle time. With
+        # ``strand_timeout`` at 600s, a worker that took ~10min to reach
+        # ``test_a_recently_updated_turn_is_untouched`` stranded an item the
+        # test had built to be one second old, and the suite only gets longer.
+        now = time.time()
         self.id = "05ed11de0dd0"
         self.status = "in_progress"
         self.assigned_to = "counselor_counselor_0_67c601cb"
         self.priority = 3
-        self.created_at = NOW - 100_000
-        self.updated_at = NOW - idle_seconds
+        self.created_at = now - 100_000
+        self.updated_at = now - idle_seconds
         self.tags: list[str] = []
         self.metadata: dict[str, Any] = {"source": "dm_agentic_promotion"}
 
@@ -225,3 +231,35 @@ def test_the_strand_default_is_far_outside_any_live_turn() -> None:
 
     assert cfg.strand_timeout_seconds >= 3600
     assert cfg.strand_timeout_seconds <= 86_400
+
+
+# ---------------------------------------------------------------------------
+# BF-847: the fixture's clock
+# ---------------------------------------------------------------------------
+
+def test_item_age_is_measured_from_construction_not_import() -> None:
+    """A module-level ``NOW = time.time()`` froze at collection, so the delay
+    between collecting this file and running a test was added to every item's
+    idle time. ``test_a_recently_updated_turn_is_untouched`` builds a
+    one-second-old item and asserts it is left alone; once a loaded worker took
+    longer than ``strand_timeout`` (600s) to reach it, that item was 600s old on
+    arrival and stranded. It failed in two consecutive full gates and passed
+    every time in isolation -- the signature of a clock, not a race.
+
+    Guarding behaviourally rather than by scanning the source for ``NOW``: what
+    matters is that the age tracks the wall clock at construction.
+    """
+    before = time.time()
+    item = _Item(idle_seconds=1.0)
+    after = time.time()
+
+    # The constructor's clock read must fall between these two samples, so the
+    # age must fall in the same window shifted by the requested age. A clock
+    # frozen at import lands far below `before` -- by however long ago
+    # collection happened.
+    #
+    # The bound comes from the same clock as the measurement, so this cannot
+    # flake the way a fixed tolerance would: descheduling the worker between
+    # `before` and `after` only widens the window it has to fall inside.
+    assert before - 1.0 <= item.updated_at <= after - 1.0
+    assert before - 100_000 <= item.created_at <= after - 100_000
