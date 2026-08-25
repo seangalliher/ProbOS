@@ -545,6 +545,14 @@ def test_a_denial_is_403_through_the_real_app():
     assert resp.json()["error"] == "intent_denied"
     assert resp.json()["reason"] == "rbac"
 
+    # BF-812: the HXI keys its refusal handling on this exact body. The UI
+    # helper is `ui/src/chat/policyDenial.ts` (`policyDenialOf`), pinned by
+    # `ui/src/chat/__tests__/policyDenial.test.ts`. Changing these keys without
+    # changing that helper leaves the Ward Room rerouting a refused DM through
+    # `ward_room_notification` -- completing by another intent what policy just
+    # refused. Pinned on both sides because no single test spans the languages.
+    assert set(resp.json()) == {"error", "intent", "reason"}
+
 
 def test_the_app_registers_the_denial_handler():
     """The handler must be registered app-wide, not per route.

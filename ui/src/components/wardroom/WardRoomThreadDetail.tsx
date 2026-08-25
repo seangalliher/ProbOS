@@ -6,6 +6,7 @@ import { EndorsementButtons } from './WardRoomEndorsement';
 import { WardRoomPostItem } from './WardRoomPostItem';
 import { timeAgo } from './timeAgo';
 import { captureScreenShareFrame } from '../../hooks/useScreenShare';
+import { denialNotice, policyDenialOf } from '../../chat/policyDenial';
 
 // AD-730-1: file-picker attachments for WardRoom DM replies. Mirrors the
 // ProfileChatTab pattern (same /api/agent/{id}/chat endpoint).
@@ -69,6 +70,9 @@ export function WardRoomThreadDetail() {
   // ``shareError`` surfaces a transient stroke-banner on failure (HXI #4).
   const [shareInFlight, setShareInFlight] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+  // BF-812: an AD-698 refusal is shown here rather than posted, so nothing the
+  // policy refused reaches the thread by any route.
+  const [denial, setDenial] = useState<string | null>(null);
 
   if (!detail || !activeThread) return null;
 
@@ -108,6 +112,7 @@ export function WardRoomThreadDetail() {
     }
 
     // Synchronous DM path with thinking indicator + dual-write.
+    setDenial(null);
     useStore.getState().setWardRoomDmPending({
       threadId: activeThread,
       captainText: text,
@@ -128,10 +133,30 @@ export function WardRoomThreadDetail() {
           attachment_ids: pendingAttachments.map(a => a.attachment_id),
         }),
       });
-      if (!res.ok) throw new Error(`chat ${res.status}`);
-      const data = await res.json();
-      const responseText = data.response || '(no response)';
-
+      // BF-812: read the body BEFORE deciding, so a policy refusal is never
+      // mistaken for a transport failure. Falling through to the catch posts
+      // the Captain's text into the thread, where the proactive cycle answers
+      // it on the next tick -- completing by a different intent the one policy
+      // just refused. A policy is evaluated per intent, so a hook refusing
+      // `direct_message` may well permit `ward_room_notification`.
+      const data = await res.json().catch(() => null);
+      const refusal = policyDenialOf(data);
+      if (refusal) {
+        setDenial(denialNotice(refusal));
+        return;
+      }
+      if (!res.ok) {
+        // BF-812: a 4xx is the server refusing this request, whatever shape the
+        // body took -- FastAPI's `{"detail": ...}`, an HTML error page, or an
+        // unparseable one. Rerouting any of them completes a refused request by
+        // another intent, so only transport failures and 5xx use the fallback.
+        if (res.status >= 400 && res.status < 500) {
+          setDenial(`The server refused this request (${res.status}). Nothing was sent.`);
+          return;
+        }
+        throw new Error(`chat ${res.status}`);
+      }
+      const responseText = data?.response || '(no response)';
       // Dual-write: post Captain message, then agent response. Sequential to
       // preserve created_at ordering.
       await postCaptain();
@@ -312,7 +337,7 @@ export function WardRoomThreadDetail() {
       {/* AD-730-1: attachment chip strip (DM-only). Renders above the
           textarea when the picker has staged at least one file or after a
           failed upload so the operator sees the error. */}
-      {isDm && targetAgentId && (pendingAttachments.length > 0 || attachError || shareError) && (
+      {isDm && targetAgentId && (pendingAttachments.length > 0 || attachError || shareError || denial) && (
         <div
           data-testid="wardroom-dm-attachment-chips"
           style={{
@@ -350,6 +375,9 @@ export function WardRoomThreadDetail() {
           )}
           {shareError && (
             <span data-testid="wardroom-dm-share-error" style={{ color: '#ff8080' }}>{shareError}</span>
+          )}
+          {denial && (
+            <span data-testid="wardroom-dm-policy-denial" style={{ color: '#f0b060' }}>{denial}</span>
           )}
         </div>
       )}

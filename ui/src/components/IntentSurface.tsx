@@ -29,6 +29,7 @@ import { ViewSwitcher } from './ViewSwitcher';
 import { deriveBridgeState } from './glass/ContextRibbon';
 import { Diamond, Check, XMark, StatusPending, DiamondOpen, Bullseye, ChevronDown, ChevronRight, Warning, Sparkle } from './icons/Glyphs';
 import { AgentAvatarBadge } from './AgentAvatarBadge';
+import { denialNotice, policyDenialOf } from '../chat/policyDenial';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -424,6 +425,14 @@ export function IntentSurface() {
     })
       .then((res) => res.json())
       .then((data) => {
+        // BF-812: an AD-698 refusal is a 403 body that otherwise falls all the
+        // way through to '(No response)', telling the Captain the agent had
+        // nothing to say. A refusal is not an outage.
+        const refusal = policyDenialOf(data);
+        if (refusal) {
+          addChatMessage('system', denialNotice(refusal));
+          return;
+        }
         // AD-719: multi-agent fan-out branch — render one ChatMessage per
         // attributed reply. When per_agent_replies is non-empty, the
         // top-level `response` is intentionally empty.

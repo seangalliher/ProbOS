@@ -413,6 +413,31 @@ describe('BF-718 — an ordinary reply is spoken exactly once', () => {
     expect(call?.[3]).toBeUndefined();
   });
 
+  // BF-812: an AD-698 refusal carries no `response`, so it fell through to the
+  // agent-authored '(no response)' — telling the Captain the agent had nothing
+  // to say. A refusal is not an outage.
+  it('renders a policy refusal as system state, not an agent turn', async () => {
+    seed({ tts: true });
+    chatReply = { error: 'intent_denied', reason: 'rbac', thread_id: THREAD_ID };
+    await mount();
+
+    await act(async () => {
+      sendTyped();
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    const msgs = useStore.getState().agentConversations.get(AGENT_ID)?.messages ?? [];
+    const last = msgs[msgs.length - 1];
+
+    expect(last.role).toBe('system');
+    expect(last.text).toContain('rbac');
+    expect(msgs.some((m) => m.role === 'agent' && m.text.includes('no response')))
+      .toBe(false);
+    // Nor may it be spoken as though the agent said it.
+    expect(spokenTexts().some((t) => t.includes('rbac'))).toBe(false);
+  });
+
   it('waits for the winning utterance before signalling conversation-mode completion', async () => {
     // The controller's reply can reach onAgentReply after the server already
     // pushed the same text and the transcript spoke it. Staying silent is

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import { speakResponse, stripMarkdownForSpeech, type VoiceProfile } from '../../audio/voice';
+import { denialNotice, policyDenialOf } from '../../chat/policyDenial';
 import { useMeetingVoice } from '../../audio/useMeetingVoice';
 import type { PerAgentReply } from '../../audio/meetingVoice';
 import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
@@ -1558,6 +1559,17 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       if (data?.system === true) {
         const _sysReply = data.response || '(personality command)';
         useStore.getState().addAgentMessage(requestAgentId, 'system', _sysReply);
+        return;
+      }
+      // BF-812: an AD-698 refusal has no `response`, so it fell through to the
+      // agent-authored '(no response)' below -- telling the Captain the agent
+      // had nothing to say. A refusal is not an outage; render it as system
+      // policy state and never mirror it into the transcript as an agent turn.
+      const refusal = policyDenialOf(data);
+      if (refusal) {
+        useStore.getState().addAgentMessage(
+          requestAgentId, 'system', denialNotice(refusal),
+        );
         return;
       }
       const reply = data.response || '(no response)';
