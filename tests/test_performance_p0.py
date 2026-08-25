@@ -133,7 +133,7 @@ class TestShapleyExplosionGuard:
         ]
 
     def test_exact_shapley_small_coalition(self):
-        """Exact computation for small coalitions (<= 10)."""
+        """Exact computation for small coalitions (<= MAX_EXACT_SHAPLEY)."""
         from probos.consensus.shapley import compute_shapley_values
 
         votes = self._make_votes(3, all_approve=True)
@@ -144,7 +144,7 @@ class TestShapleyExplosionGuard:
         assert abs(sum(values.values()) - 1.0) < 1e-6
 
     def test_approximate_shapley_large_coalition(self):
-        """Monte Carlo approximation for large coalitions (> 10)."""
+        """Monte Carlo approximation for large coalitions (> MAX_EXACT_SHAPLEY)."""
         from probos.consensus.shapley import compute_shapley_values
 
         votes = self._make_votes(15, all_approve=True)
@@ -193,6 +193,79 @@ class TestShapleyExplosionGuard:
             assert abs(exact[aid] - approx[aid]) < 0.1, (
                 f"Agent {aid}: exact={exact[aid]:.3f} approx={approx[aid]:.3f}"
             )
+
+    # -- BF-850: the bound is a decision, and it has to stay one ------------
+
+    def test_the_exact_bound_stays_inside_the_synchronous_budget(self):
+        """BF-850: ten was a factorial cliff wearing a round number.
+
+        ``quorum.py`` calls ``compute_shapley_values`` synchronously and
+        unguarded on the destructive-op path, so the exact path's cost is paid
+        inline. Measured: n=8 0.28s, n=9 3.4s, n=10 40.8s -- each extra voter
+        multiplies by roughly n.
+
+        Asserted structurally rather than by wall clock, because a timing
+        budget measures the machine. This one fails the moment someone raises
+        the bound, which is the regression that matters.
+        """
+        from probos.consensus.shapley import MAX_EXACT_SHAPLEY
+
+        assert MAX_EXACT_SHAPLEY <= 8
+
+    def test_a_coalition_above_the_bound_takes_the_approximate_path(self, monkeypatch):
+        """The bound is only worth having if the switch actually happens."""
+        from probos.consensus import shapley
+
+        took: list[str] = []
+        real_exact = shapley._exact_shapley
+        real_approx = shapley._approximate_shapley
+
+        def spy_exact(*a, **kw):
+            took.append("exact")
+            return real_exact(*a, **kw)
+
+        def spy_approx(*a, **kw):
+            took.append("approx")
+            return real_approx(*a, **kw)
+
+        monkeypatch.setattr(shapley, "_exact_shapley", spy_exact)
+        monkeypatch.setattr(shapley, "_approximate_shapley", spy_approx)
+
+        shapley.compute_shapley_values(
+            self._make_votes(shapley.MAX_EXACT_SHAPLEY), approval_threshold=0.5,
+        )
+        shapley.compute_shapley_values(
+            self._make_votes(shapley.MAX_EXACT_SHAPLEY + 1), approval_threshold=0.5,
+        )
+
+        assert took == ["exact", "approx"]
+
+    def test_a_coalition_at_the_bound_is_not_pathologically_slow(self):
+        """Backstop for the structural assertions above.
+
+        Deliberately loose. It exists to catch a factorial regression -- the
+        gap it guards is 0.28s against 40.8s -- so a wide budget still separates
+        them by an order of magnitude while leaving enough headroom that a
+        loaded gate worker cannot redden it. A tight budget here would be the
+        BF-848 / BF-852 mistake.
+        """
+        import time
+
+        from probos.consensus.shapley import (
+            MAX_EXACT_SHAPLEY,
+            compute_shapley_values,
+        )
+
+        votes = self._make_votes(MAX_EXACT_SHAPLEY)
+
+        start = time.monotonic()
+        compute_shapley_values(votes, approval_threshold=0.5)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 10.0, (
+            f"exact Shapley took {elapsed:.1f}s at n={MAX_EXACT_SHAPLEY}; "
+            "the bound has moved back onto the factorial cliff"
+        )
 
 
 # ---------------------------------------------------------------------------

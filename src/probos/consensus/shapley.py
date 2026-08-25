@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from probos.types import Vote
 
-MAX_EXACT_SHAPLEY = 10
+# BF-850: the exact path enumerates n! permutations, and quorum.py calls it
+# synchronously and unguarded on the destructive-op path. Measured cost of the
+# exact path: n=8 0.28s, n=9 3.4s, n=10 40.8s. Ten was a factorial cliff wearing
+# a round number; eight is the largest coalition that stays inside a 0.5s
+# synchronous budget. Above it the Monte Carlo path is used instead.
+MAX_EXACT_SHAPLEY = 8
 
 
 def _evaluate_coalition(
