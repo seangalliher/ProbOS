@@ -140,6 +140,27 @@ def validate_action_payload(payload: Any) -> dict[str, Any] | None:
         return None
     if len(encoded) > _ACTION_PAYLOAD_MAX_CHARS:
         return None
+    # BF-854: refuse what the dedup key cannot hash. A lone surrogate is a legal
+    # ``str`` and survives ``json.loads``; ``_canonical_json`` then passes it
+    # through untouched because it sets ``ensure_ascii=False``, so neither the
+    # guard above nor the length check sees anything wrong. ``action_dedup_key``
+    # raises ``UnicodeEncodeError`` on it -- and because ``_find_pending_action``
+    # re-derives the key for EVERY cached row on every filing, one such row makes
+    # ``file_action_request`` raise for every unrelated caller until it is
+    # removed. The same encode is what SQLite performs when binding the column.
+    #
+    # Checked on the canonical form rather than field by field: ``scope_key`` and
+    # both the keys and values of ``params`` feed the key material, and anything
+    # anywhere in the payload has to be encodable to be persisted at all.
+    #
+    # Deliberately NOT expressed by switching the bound above to bytes. That
+    # would tighten the limit for payloads already persisted and accepted, and
+    # ``_decode_payload`` re-validates on read -- silently dropping the payload
+    # of approvals that were valid when they were written.
+    try:
+        encoded.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
     return payload
 
 
