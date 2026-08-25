@@ -18,6 +18,10 @@ export function threadDtoToMessage(
   m: ThreadMessageDTO, agents: Map<string, Agent>,
 ): AgentProfileMessage {
   const isAgent = m.role === 'agent';
+  // BF-766: the emotion used to ride only on the chat HTTP response, but the
+  // server appends and pushes the row BEFORE returning that body, so the
+  // transcript usually wins the shared speech claim and spoke flat.
+  const rawEmotion = m.metadata?.emotion;
   return {
     id: m.id,
     role: m.role === 'captain' ? 'user' : (isAgent ? 'agent' : 'system'),
@@ -25,6 +29,9 @@ export function threadDtoToMessage(
     timestamp: m.created_at,
     authorId: isAgent ? m.author_id : undefined,
     callsign: isAgent ? (agents.get(m.author_id)?.callsign ?? undefined) : undefined,
+    emotion: typeof rawEmotion === 'string' && rawEmotion.length > 0
+      ? rawEmotion
+      : undefined,
   };
 }
 

@@ -111,16 +111,16 @@ async def test_act_result_is_unchanged_for_the_ad407b_conversational_intents(
 # ── the reply message carries it ──────────────────────────────────
 
 
-def _reply_metadata(result: Any) -> dict:
-    """The exact construction ``routers/agents.py`` performs at the append."""
-    meta: dict[str, Any] = {"intent_id": "intent-1"}
-    try:
-        ref = str((getattr(result, "metadata", None) or {}).get("tool_trace_ref", "") or "")
-    except Exception:
-        ref = ""
-    if ref:
-        meta["tool_trace_ref"] = ref
-    return meta
+def _reply_metadata(result: Any, response: dict | None = None) -> dict:
+    """The construction ``routers/agents.py`` performs at the append.
+
+    Calls the production helper rather than restating it. A restatement drifts
+    silently -- BF-766 review showed the mirror plus an existence check passed
+    while the real value came from the wrong source.
+    """
+    from probos.routers.agents import _build_reply_metadata
+
+    return _build_reply_metadata("intent-1", result, response)
 
 
 def test_reply_metadata_carries_the_ref_from_an_agentic_turn() -> None:
@@ -220,3 +220,64 @@ def test_the_router_records_the_ref_at_the_append_site() -> None:
 
     assert 'metadata=_reply_meta' in src
     assert '"tool_trace_ref"' in src
+
+
+def test_the_router_records_the_emotion_at_the_append_site() -> None:
+    """BF-766: the AD-738e-1 emotion rode only on the chat HTTP response, but
+    the server pushes CHAT_THREAD_MESSAGE_APPENDED before returning that body,
+    so the transcript usually wins the shared speech claim and spoke flat.
+
+    Asserted on the VALUE, not on the presence of an assignment. An existence
+    check -- even an AST one -- survives the assignment being fed the wrong
+    source, which review demonstrated.
+    """
+    result = IntentResult(intent_id="i1", agent_id="a1", success=True)
+
+    assert _reply_metadata(result, {"emotion": "warm"}) == {
+        "intent_id": "intent-1", "emotion": "warm",
+    }
+
+
+@pytest.mark.parametrize(
+    "response",
+    [None, {}, {"emotion": None}, {"emotion": ""}],
+    ids=["absent", "empty-dict", "null", "empty-string"],
+)
+def test_a_turn_without_an_emotion_keeps_byte_identical_metadata(response) -> None:
+    """Rows persisted before this carried no emotion key, and every turn whose
+    reply has none must stay exactly as it was."""
+    result = IntentResult(intent_id="i1", agent_id="a1", success=True)
+
+    assert _reply_metadata(result, response) == {"intent_id": "intent-1"}
+
+
+def test_the_emotion_and_the_trace_ref_do_not_displace_each_other() -> None:
+    result = IntentResult(
+        intent_id="i1", agent_id="a1", success=True,
+        metadata={"tool_trace_ref": REF},
+    )
+
+    assert _reply_metadata(result, {"emotion": "concerned"}) == {
+        "intent_id": "intent-1", "tool_trace_ref": REF, "emotion": "concerned",
+    }
+
+
+def test_a_malformed_response_never_breaks_the_append() -> None:
+    """The append carries the Captain's reply; recording prosody must not be
+    able to stop it."""
+    result = IntentResult(intent_id="i1", agent_id="a1", success=True)
+
+    for bad in ("a string", 0, SimpleNamespace()):
+        assert _reply_metadata(result, bad) == {"intent_id": "intent-1"}
+
+
+def test_the_append_site_uses_the_helper() -> None:
+    """The value tests above are only real if production calls this. A static
+    check, because the alternative is booting the whole DM router."""
+    import inspect
+
+    from probos.routers import agents as agents_router
+
+    src = inspect.getsource(agents_router)
+
+    assert "_reply_meta = _build_reply_metadata(intent.id, result, response)" in src

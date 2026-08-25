@@ -1232,7 +1232,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       const author = msg.authorId || agentId;
       if (!isOutputAudioEnabledNow(author, activeThreadId ?? undefined)) continue;
       speechInFlightRef.current.add(speechKeyFor(msg, agentId));
-      speakResponse(stripMarkdownForSpeech(msg.text), voiceProfile ?? undefined, author);
+      // BF-766: `msg.emotion` is undefined for rows persisted before the
+      // server carried it, which speakResponse omits exactly as before.
+      speakResponse(
+        stripMarkdownForSpeech(msg.text), voiceProfile ?? undefined, author,
+        msg.emotion,
+      );
     }
   }, [
     messages, activeThreadId, agentId, defersToMeetingSequencer,

@@ -106,6 +106,43 @@ describe('AD-938 threadDtoToMessage', () => {
     const msg = threadDtoToMessage(mkDto({ id: 'm5', role: 'agent', author_id: 'a1', created_at: 1_711_111_111 }), new Map());
     expect(msg.timestamp).toBe(1_711_111_111);
   });
+
+  // BF-766: the AD-738e-1 emotion rode only on the chat HTTP response, but the
+  // server pushes CHAT_THREAD_MESSAGE_APPENDED before returning that body, so
+  // the transcript usually wins the shared speech claim and spoke flat.
+  it('carries the persisted AD-738e-1 emotion off the row metadata', () => {
+    const msg = threadDtoToMessage(
+      mkDto({ id: 'm6', role: 'agent', author_id: 'a1', metadata: { emotion: 'concerned' } }),
+      new Map(),
+    );
+    expect(msg.emotion).toBe('concerned');
+  });
+
+  it('leaves emotion undefined when the row carries none', () => {
+    // Rows persisted before the server carried it, and every captain/system
+    // row. speakResponse omits the field for undefined, so prosody is
+    // unchanged rather than defaulted.
+    expect(threadDtoToMessage(mkDto({ id: 'm7', role: 'agent', author_id: 'a1' }), new Map()).emotion)
+      .toBeUndefined();
+    expect(threadDtoToMessage(mkDto({ id: 'm8', role: 'agent', author_id: 'a1', metadata: {} }), new Map()).emotion)
+      .toBeUndefined();
+    expect(threadDtoToMessage(mkDto({ id: 'm9', role: 'agent', author_id: 'a1', metadata: null }), new Map()).emotion)
+      .toBeUndefined();
+  });
+
+  it('ignores a non-string or empty emotion rather than passing it through', () => {
+    const bad = threadDtoToMessage(
+      mkDto({ id: 'm10', role: 'agent', author_id: 'a1', metadata: { emotion: 42 } }),
+      new Map(),
+    );
+    expect(bad.emotion).toBeUndefined();
+
+    const empty = threadDtoToMessage(
+      mkDto({ id: 'm11', role: 'agent', author_id: 'a1', metadata: { emotion: '' } }),
+      new Map(),
+    );
+    expect(empty.emotion).toBeUndefined();
+  });
 });
 
 describe('AD-938 selectTranscriptMessages', () => {

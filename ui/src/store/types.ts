@@ -397,6 +397,7 @@ export interface AgentProfileMessage {
   timestamp: number;
   authorId?: string;   // AD-936: per-message author (group replies); absent => host/1:1
   callsign?: string;   // AD-936: author callsign for the avatar + name label
+  emotion?: string;    // BF-766: AD-738e-1 prosody, persisted so the transcript speaker has it too
 }
 
 export interface AgentConversation {

@@ -2621,6 +2621,41 @@ def _hold_degraded_turn(
     )
 
 
+def _build_reply_metadata(
+    intent_id: str, result: Any, response: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Metadata for the persisted agent reply row.
+
+    Extracted from the append site so it can be tested against real values;
+    inline, the only reachable assertion was that some assignment existed,
+    which survives being given the wrong source (BF-766 review).
+
+    A key is added only when its value is non-empty, so a turn carrying
+    neither is byte-identical to before either was introduced.
+    """
+    meta: dict[str, Any] = {"intent_id": intent_id}
+    # AD-1203: bind the claim to the calls behind it. Absent on a non-agentic
+    # turn, and a fake runtime can return any shape, so never raise here — this
+    # must not break the append that carries the Captain's reply.
+    try:
+        ref = str((getattr(result, "metadata", None) or {}).get("tool_trace_ref", "") or "")
+    except Exception:
+        ref = ""
+    if ref:
+        meta["tool_trace_ref"] = ref
+    # BF-766: the AD-738e-1 emotion rode only on the HTTP response body, but the
+    # server emits CHAT_THREAD_MESSAGE_APPENDED before returning it, so the
+    # transcript usually wins the shared speech claim and spoke flat. On the row
+    # it reaches whichever speaker wins.
+    try:
+        emotion = str((response or {}).get("emotion", "") or "")
+    except Exception:
+        emotion = ""
+    if emotion:
+        meta["emotion"] = emotion
+    return meta
+
+
 @router.post("/{agent_id}/thread")
 async def get_or_create_agent_thread(
     agent_id: str, runtime: Any = Depends(get_runtime),
@@ -3421,17 +3456,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
             # no way, from outside the process, to resolve what the agent said
             # to what it did. Absent on a non-agentic turn, so the metadata is
             # byte-identical for those.
-            _reply_meta: dict[str, Any] = {"intent_id": intent.id}
-            _trace_ref = ""
-            try:
-                _trace_ref = str(
-                    (getattr(result, "metadata", None) or {}).get("tool_trace_ref", "")
-                    or ""
-                )
-            except Exception:
-                _trace_ref = ""
-            if _trace_ref:
-                _reply_meta["tool_trace_ref"] = _trace_ref
+            _reply_meta = _build_reply_metadata(intent.id, result, response)
             # The store validates with ``type(body) is not str``, which a
             # subclass fails, so flatten AFTER verifying. The token is an
             # admission credential for this boundary, not a value that travels

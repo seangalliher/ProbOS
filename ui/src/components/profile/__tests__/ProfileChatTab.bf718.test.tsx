@@ -140,10 +140,13 @@ function mkThread(id: string, participants: string[], meetingActive = false): AD
   };
 }
 
-function serverMsg(id: string, body: string, authorId = AGENT_ID, role = 'agent') {
+function serverMsg(
+  id: string, body: string, authorId = AGENT_ID, role = 'agent',
+  metadata: Record<string, unknown> = {},
+) {
   return {
     id, thread_id: THREAD_ID, author_id: authorId, role, body,
-    created_at: 1_700_000_000, metadata: {},
+    created_at: 1_700_000_000, metadata,
   };
 }
 
@@ -239,9 +242,12 @@ async function mount(): Promise<RenderResult> {
 
 /** A message the SERVER appended — a promoted turn's report. It lands in the
  *  transcript over the socket, never through the send round trip. */
-async function serverPushes(body: string, authorId = AGENT_ID): Promise<void> {
+async function serverPushes(
+  body: string, authorId = AGENT_ID,
+  metadata: Record<string, unknown> = {},
+): Promise<void> {
   const id = `pushed-${serverMessages.length}`;
-  serverMessages.push(serverMsg(id, body, authorId));
+  serverMessages.push(serverMsg(id, body, authorId, 'agent', metadata));
   await act(async () => {
     useStore.setState({ liveThreadRefresh: { threadId: THREAD_ID, requestId: id } });
     await Promise.resolve();
@@ -379,6 +385,32 @@ describe('BF-718 — an ordinary reply is spoken exactly once', () => {
       expect(call).toBeDefined();
       expect(call?.[3]).toBe('warm');
     });
+  });
+
+  // BF-766: the WebSocket-first ordering is the USUAL one -- the server emits
+  // CHAT_THREAD_MESSAGE_APPENDED before it returns the chat response body -- so
+  // the transcript wins the claim most of the time. It used to speak flat,
+  // because the emotion existed only on the response body it never saw.
+  it('forwards the emotion when the TRANSCRIPT wins the claim', async () => {
+    seed({ tts: true });
+    await mount();
+
+    await serverPushes('Pushed first.', AGENT_ID, { emotion: 'concerned' });
+
+    const call = mocks.speakResponse.mock.calls.find((c) => c[0] === 'Pushed first.');
+    expect(call).toBeDefined();
+    expect(call?.[3]).toBe('concerned');
+  });
+
+  it('omits the emotion for a row that carries none, rather than defaulting it', async () => {
+    seed({ tts: true });
+    await mount();
+
+    await serverPushes('No emotion here.');
+
+    const call = mocks.speakResponse.mock.calls.find((c) => c[0] === 'No emotion here.');
+    expect(call).toBeDefined();
+    expect(call?.[3]).toBeUndefined();
   });
 
   it('waits for the winning utterance before signalling conversation-mode completion', async () => {
