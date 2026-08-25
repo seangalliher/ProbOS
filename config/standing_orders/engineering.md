@@ -57,7 +57,7 @@ All code produced by Engineering department agents MUST comply with these princi
 - SEARCH blocks must match existing code EXACTLY — character-for-character
 - Keep SEARCH blocks small — just enough context to be unique
 - Order SEARCH/REPLACE pairs top-to-bottom in the file
-- Test-gate: run the full test suite after each logical build step. Do not proceed if tests fail.
+- Test-gate: run focused tests for the changed slice and its immediate consumers after each build step, and the full suite once after the issue or wave is frozen. Do not proceed if tests fail. A source or test change after a broad gate invalidates it — rerun before pushing.
 
 ## Testing Standards
 

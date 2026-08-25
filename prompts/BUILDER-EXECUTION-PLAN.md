@@ -82,7 +82,7 @@ pwsh scripts/wave-close-precheck.ps1
 Failure semantics:
 
 - `FAIL` (script exit `1`): stop, fix the reported issue, and rerun until clean.
-- `WARN` with no `FAIL` (script exit `0`): wave may proceed, but file a forward-marker BF for next-wave cleanup.
+ - `WARN` with no `FAIL` (script exit `0`): wave may proceed; record the cleanup as a forward marker. Outside burn-down mode that is a BF for next-wave cleanup; in burn-down mode it is a checklist item on the wave's single follow-up issue.
 - Do not bypass Check 1 (lock-file sync) or Check 5 (vitest exit-code gate).
 - Check 3 (runtime budget) may be skipped temporarily via `WAVE_CLOSE_FAST=1` during iteration, but must run before push.
 
@@ -230,7 +230,9 @@ After the 19 prompts are committed:
 3. Move all 19 completed prompts to `prompts/archive/` (matches prior sweep convention).
 4. Move per-prompt review files to `prompts/Reviews/archive/`.
 5. Surface a final summary message: commit hashes, final test count vs baseline, any deferred nits, and confirmation that AD-678 remains on hold pending AD-677 (now buildable in this wave but tracked as the lone sequenced item).
-6. **Forward-marker filing (HARD RULE, added 2026-05-08 after Wave 132).** Before push, scan every shipped prompt's "Forward markers" / "Out of scope" / "Defer to AD-NNNx" lines and the corresponding build report's deferred section. For EACH forward marker: file a GitHub issue with priority + verify-first anchor citations + cross-references to the parent AD; add a row to the roadmap's deferred-AD table. Forward markers in prompts alone are not sufficient tracking — they MUST become filed issues by gate-3 close. Recurring lesson: Wave 132 had 6 unfiled deferrals (AD-706a..f); Captain backfilled them as #516-#521 the same day. Don't repeat.
+6. **Forward-marker filing (HARD RULE, added 2026-05-08 after Wave 132; bounded 2026-08-24).** Before push, scan every shipped prompt's "Forward markers" / "Out of scope" / "Defer to AD-NNNx" lines and the corresponding build report's deferred section. **Deferred work must still be recorded** — forward markers in prompts alone are not sufficient tracking. Recurring lesson: Wave 132 had 6 unfiled deferrals (AD-706a..f); Captain backfilled them as #516-#521 the same day. Don't repeat.
+
+   **A forward marker does NOT automatically become one GitHub issue.** Outside burn-down mode, file each with priority + verify-first anchor citations + cross-references to the parent AD, and add a row to the roadmap's deferred-AD table. **In Backlog Burn-Down Mode** (see `.github/copilot-instructions.md`), non-blocking forward markers are consolidated into **one wave follow-up issue**, each retained as its own checklist item with severity, evidence, reproduction detail and code anchors so it stays independently actionable. Separate issues stay reserved for security, data integrity, independently reachable production failures, and blockers. The roadmap row is still added either way.
 7. Push: `git push`.
 
 ---

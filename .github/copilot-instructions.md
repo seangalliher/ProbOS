@@ -38,11 +38,51 @@ These errors cluster in the subsystems you know best, because familiarity is wha
 
 Invoke it with a different model than the one that wrote the code (`.github/agents/diff-reviewer.agent.md` pins `GPT-5.6 Sol`; the author is usually Claude). A second read by the same model shares the same blind spots. Tell it what the change claims to do, name the consumer that has to accept it, and point at anything live it can probe.
 
-**Act on the findings before committing.** A finding that would break the next run is a blocker; file the rest with a number and say so in the commit. Do not commit and "address it after" — that is how a known defect ships.
+**Scope the review to the changed behaviour, its immediate caller, and the consumer that must accept it.** Scoping is about not wandering into unrelated code — it is not permission to stop short. Trace every changed contract through all affected production consumers, and verify at least one end-to-end path where one exists. When the blast radius crosses layers, follow it; stopping at the immediate caller because the boundary looked tidy is how the seam defects in this repo survive.
+
+**Act on the findings before committing.** A finding that would break the next run is a blocker — repair it inside the current issue whenever practical. Do not commit and "address it after" — that is how a known defect ships. For findings you are not fixing here, follow the filing policy in **Backlog Burn-Down Mode** below rather than opening an issue per finding.
 
 Why this is a standing order rather than advice: on 2026-08-11 an external review of BF-753/AD-1239 found five defects in one wave, and the immediate re-review of the fix (BF-754) found four more — including a docstring claiming a validation property the code did not provide, in a commit written minutes after recording that exact lesson. The author had verified every change against the thing they had just changed, which is the one check that cannot see a seam. Every finding sat between the changed component and its consumer.
 
 The reviewer's advantage is stance, not intelligence: it asks *does the next component accept this*, having no memory of already believing the answer. That stance is not reachable by trying harder on your own diff.
+
+---
+
+## Backlog Burn-Down Mode (Standing Order)
+
+**Activates whenever the Captain asks to reduce or close the issue backlog.** Its primary metric is **net reduction in open GitHub issues** — not findings, commits, test count, architectural coverage, or roadmap breadth. It exists because a review discipline that files everything it notices can discover faster than it closes, and a backlog that grows while work is being done is indistinguishable from no work at all.
+
+### Scope of work
+
+- Work in progress is limited to **one issue**, or at most **three tightly coupled issues** in a bounded wave.
+- Select **existing, actionable** issues. Prefer bounded fixes and dependency blockers that unlock other open issues. Do not select new AD work while in this mode.
+- Every selected issue goes through the full path: implementation → focused validation → adversarial review → broad validation → push → **verified GitHub closure**.
+- Continue autonomously between issues. Stop only for a genuine product decision, an unavailable credential, or an irreducible external blocker.
+- If review rejects an implementation, repair or redesign **the same issue** and continue. Do not turn a difficult issue into several new issues to escape it.
+- **Prohibited while in this mode:** proactive adjacent audits, speculative investigation, new AD proposals, roadmap expansion, and unrelated prompt drafting.
+- Closures must be shipped fixes, verified duplicates, or demonstrably invalid reports. **Never game the count.**
+
+### Filing policy — bounded, not unbounded
+
+Search **open and closed** issues before filing anything. A separate issue may be opened immediately only for:
+
+1. a reproducible **security or data-integrity** defect;
+2. an **independently reachable production defect**; or
+3. a **blocker** that prevents completing the current issue.
+
+Everything else is consolidated into **at most one follow-up issue per wave**. Do not open standalone issues for speculative, latent, cleanup, or architectural observations during burn-down.
+
+**Consolidation must not destroy information.** Each finding stays a separate checklist item carrying its severity, evidence, reproduction detail, and code anchors. Batching is a filing convenience, not a summarisation step — independent findings must remain independently actionable.
+
+**Discovery budget: at most one new issue per three pre-existing issues closed.** Security and data-integrity findings may exceed it, but the report must justify each exception. Every new issue must state why it could not be fixed inside the current issue, and show the duplicate search performed.
+
+### Reporting
+
+After every three closures, report: open at wave start · pre-existing closed · new opened · net change · open at wave end · commit hashes · test and review results · any blocker or budget exception.
+
+### Definition of done
+
+A change is done when it satisfies its acceptance criteria, works through **all affected production consumers**, passes required tests and scoped review, carries **no unresolved Critical or High defect**, is committed and pushed, and its issue closure is **verified**. Medium and Low residual risks may be recorded for scheduled quality review and do not block completion. Done means *fit for intended purpose with understood and acceptable residual risk* — not that no further improvement exists.
 
 ---
 
@@ -84,7 +124,8 @@ All code MUST maintain the **ProbOS Principles Stack**. These are enforced durin
 ### Testing Standards
 
 - **Framework**: pytest + pytest-asyncio. Prefer `_Fake*` stub classes over complex mock chains. Test files mirror source paths.
-- **Test gates**: After each logical build step, run the full test suite. Do not proceed to the next step if tests fail. Report the test count after each step.
+- **Test gates**: Run focused tests for the changed slice and its immediate consumers after each implementation slice. Run the **full repository suite once, after the issue or tightly coupled wave is frozen** — not after every slice, which spends the broad-gate budget on a tree that is still moving. Run the adversarial review once the implementation is stable and repair its findings *before* spending that budget. Report the test count at each step.
+- **Broad-gate currency**: A source or test change made after a broad gate **invalidates that gate** — rerun it. No source commit may be pushed, and no issue closed, on stale gate evidence. Shared-contract and other high-risk changes may warrant an earlier broad gate; use one when the blast radius justifies it. None of this weakens coverage, boundary testing, final full-suite validation, or review requirements.
 - **Run tests with**: `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q`
 - **Coverage rule**: All new public methods and branches must have tests. Target 100% coverage on new code — gaps require justification.
 - **Test structure**: Follow Arrange-Act-Assert. Each test should verify one behavior. Name tests descriptively: `test_{method}_{scenario}_{expected}` (e.g., `test_get_template_missing_key_returns_none`).
