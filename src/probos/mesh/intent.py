@@ -1075,8 +1075,11 @@ class IntentBus:
         # leak assertions BF-829 added remain meaningful, but it is no longer
         # how this round finds its own results.
         sink: list[IntentResult] = []
+        # BF-834: None until tracked, so a failure before `track` returns does
+        # not release a lease this round never held.
+        signal_lease: int | None = None
         try:
-            self._signal_manager.track(intent)
+            signal_lease = self._signal_manager.track(intent)
             self._pending_results[intent.id] = sink
 
             logger.info(
@@ -1179,7 +1182,10 @@ class IntentBus:
             # popping then would delete a live round's entry.
             if self._pending_results.get(intent.id) is sink:
                 self._pending_results.pop(intent.id, None)
-            self._signal_manager.untrack(intent.id)
+            # BF-834: release THIS round's lease. A bare id would let a stale
+            # round, finishing after expiry, clear a fresh round that reused it.
+            if signal_lease is not None:
+                self._signal_manager.untrack(intent.id, signal_lease)
 
         # AD-470: Record metrics
         elapsed_ms = (time.monotonic() - _broadcast_start) * 1000
