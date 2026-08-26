@@ -105,7 +105,15 @@ async def agents_client(monkeypatch, tmp_path):
     intent_bus = SimpleNamespace()
     sent: list = []
 
-    async def _send(intent):
+    async def _send(intent, **kwargs):
+        # BF-790: the real ``IntentBus.send`` grew a ``raise_on_denial``
+        # keyword, and ``/api/agent/{id}/chat`` now passes it so a policy
+        # denial renders 403 instead of a 200 with an empty reply. This double
+        # rejected the keyword and every request through it became a 500.
+        #
+        # ``**kwargs`` rather than the one named parameter, because the point
+        # of this fixture is the VISION routing -- it should not have to be
+        # edited again the next time an unrelated keyword is added to the bus.
         sent.append(intent)
         return SimpleNamespace(result="ack", success=True)
 

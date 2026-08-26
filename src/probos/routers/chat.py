@@ -16,6 +16,8 @@ from probos.api_models import (
     EnrichRequest, SelfModRequest,
 )
 from probos.events import EventType
+# BF-790: the fan-out branch must tell a policy refusal from an outage.
+from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
 from probos.cognitive.commands.personality_command import (
     handle_personality_command,
     is_personality_command,
@@ -226,7 +228,29 @@ async def chat(
                     thread_id=(MAIN_CHAT_THREAD_ID if _main_thread_store is not None else None),  # AD-791g
                 )
                 try:
-                    result = await runtime.intent_bus.send(intent)
+                    result = await runtime.intent_bus.send(
+                        intent, raise_on_denial=True,
+                    )
+                except IntentAuthorizationDenied:
+                    # BF-790: caught HERE, ahead of the broad catch below, for
+                    # two reasons. Without the opt-in a denial returned ``None``
+                    # and this recipient rendered as an ordinary empty reply --
+                    # a refusal wearing an outage costume (DP 13(c)). And unlike
+                    # the two single-agent routes, this one must NOT reach the
+                    # app-wide 403: a fan-out has other recipients, and letting
+                    # one denial 403 the whole request would erase replies that
+                    # were authorised and did arrive. Per-recipient refusal is
+                    # the honest shape for a per-recipient decision.
+                    logger.info(
+                        "BF-790: fan-out to %s denied by policy; the other "
+                        "recipients are unaffected",
+                        resolved.get("callsign", callsign),
+                    )
+                    return PerAgentReply(
+                        agent_id=resolved["agent_id"],
+                        callsign=resolved["callsign"],
+                        text="(refused -- not permitted)",
+                    )
                 except Exception as e:
                     logger.warning(
                         "AD-719 fan-out send failed for %s: %s: %s; "
@@ -510,7 +534,12 @@ async def chat(
                 ttl_seconds=60.0,  # AD-636: Extended TTL for Captain DMs
                 thread_id=_inline_thread.id if _inline_thread is not None else None,  # AD-791a
             )
-            result = await runtime.intent_bus.send(intent)
+            # BF-790: same opt-in as the 1:1 route. A denial defaulted to
+            # ``None`` and rendered "(no response)", which reads as an agent
+            # with nothing to say rather than a refused request. The only
+            # ``except Exception`` after this wraps the thread append, so the
+            # denial reaches the app-wide 403 handler.
+            result = await runtime.intent_bus.send(intent, raise_on_denial=True)
             # AD-1248: composed ONCE for this route. It has TWO sinks -- the
             # HTTP response and the thread append below -- and review round 4
             # found exactly this shape concealing on one while disclosing on

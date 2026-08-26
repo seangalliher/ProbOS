@@ -19,6 +19,9 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+# BF-790: this module must tell a policy refusal from a delivery failure.
+from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
+
 logger = logging.getLogger(__name__)
 
 
@@ -171,7 +174,16 @@ class ProactiveVisionObserver:
             ttl_seconds=60.0,
         )
         try:
-            await self._runtime.intent_bus.send(intent)
+            # BF-790: opt in to the raise. The default denial shape is ``None``,
+            # which is indistinguishable here from a delivered DM -- so a REFUSED
+            # proactive vision DM was logged as "dispatched" AND nudged the mode
+            # controller from AMBIENT to ENGAGED, escalating the ship's
+            # perception posture on the strength of a message policy refused.
+            # Caught ahead of the broad handler below because a refusal is not a
+            # failure: nothing is retried, nothing is broken, and reporting it as
+            # a dispatch failure sends an operator to diagnose an outage that is
+            # not happening (DP 13(c)).
+            await self._runtime.intent_bus.send(intent, raise_on_denial=True)
             logger.info(
                 "AD-733b: proactive vision DM dispatched agent=%s reason=%s novelty=%.2f",
                 agent_id, reason, observation.novelty_score,
@@ -189,6 +201,15 @@ class ProactiveVisionObserver:
                         "AD-733c-2: note_high_novelty_event raised",
                         exc_info=True,
                     )
+        except IntentAuthorizationDenied as exc:
+            # BF-790: neither "dispatched" nor "failed" -- refused. The mode
+            # controller is deliberately NOT nudged: no DM reached the Captain,
+            # so there is nothing for the ship to become more engaged about.
+            logger.info(
+                "BF-790: proactive vision DM to %s refused by '%s'; the mode "
+                "controller is not nudged and nothing is retried",
+                agent_id, exc.reason,
+            )
         except Exception:
             logger.warning(
                 "AD-733b: proactive DM dispatch failed agent=%s reason=%s",

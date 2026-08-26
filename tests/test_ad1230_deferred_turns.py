@@ -557,6 +557,17 @@ def test_a_hold_read_that_is_not_a_number_dispatches_rather_than_gagging() -> No
 def test_the_router_declines_before_it_dispatches() -> None:
     """The whole point of the placement: a blocked thread must not spend an LLM
     call on an endpoint already in cooldown. Pins the order in the handler.
+
+    BF-790 broke this without touching the property. The anchor was the whole
+    line ``"if _held_notice else await runtime.intent_bus.send(intent)"``, and
+    adding a ``raise_on_denial=True`` keyword wrapped it across three lines, so
+    ``str.index`` raised ``ValueError: substring not found``. The decline still
+    preceded the send; only the formatting moved.
+
+    Re-anchored on the two call names, which survive reformatting. This remains
+    a source scan and is therefore weak -- it proves the two statements appear
+    in this order, not that a held thread actually skips the dispatch -- but
+    narrowing it is the fix for the brittleness, not for the weakness.
     """
     import inspect
 
@@ -564,7 +575,7 @@ def test_the_router_declines_before_it_dispatches() -> None:
 
     src = inspect.getsource(agents_router)
     decline = src.index("_held_notice = _decline_while_holding(")
-    send = src.index("if _held_notice else await runtime.intent_bus.send(intent)")
+    send = src.index("runtime.intent_bus.send(", decline)
     assert decline < send
 
 

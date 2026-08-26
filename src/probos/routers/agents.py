@@ -3351,7 +3351,15 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # check is here rather than after the send so a blocked thread does not
     # spend an LLM call on an endpoint that is already in cooldown.
     _held_notice = _decline_while_holding(runtime, thread=thread)
-    result = None if _held_notice else await runtime.intent_bus.send(intent)
+    # BF-790: opt in to the raise. The default denial shape is ``None``, which
+    # this route renders as "(no reply -- agent did not respond to intent)" with
+    # HTTP 200 -- telling the Captain the agent had nothing to say when the truth
+    # is the request was refused. DP 13(c): a refusal must not wear an outage
+    # costume. The app-wide handler renders 403; the only ``except Exception``
+    # below this point wraps the thread append, so the denial reaches it.
+    result = None if _held_notice else await runtime.intent_bus.send(
+        intent, raise_on_denial=True,
+    )
 
     callsign = ""
     if hasattr(runtime, 'callsign_registry'):

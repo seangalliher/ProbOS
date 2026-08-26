@@ -151,12 +151,17 @@ def create_app(runtime: Any) -> FastAPI:
     # 500 by omission.
     #
     # SCOPE: only routes that pass `raise_on_denial=True` reach this, because
-    # the bus returns its ordinary refusal shape by default. Today that is the
-    # mediation endpoint alone -- /api/chat and /api/agent/{id}/chat call
-    # `send` WITHOUT opting in, so a denial there currently returns 200 with an
-    # empty reply (BF-790, #1254). It also does not cover a route that catches the
-    # denial itself (see system.py) or a WebSocket, which never reaches an
-    # exception handler.
+    # the bus returns its ordinary refusal shape by default. BF-790 (#1254)
+    # opted the two single-agent chat routes in -- /api/agent/{id}/chat and the
+    # inline-callsign branch of /api/chat -- so a denial there now renders 403
+    # instead of 200 with an empty reply.
+    #
+    # Deliberately NOT reaching here: the multi-mention fan-out branch of
+    # /api/chat catches the denial itself and returns a per-recipient refusal,
+    # because one recipient's denial must not 403 a request whose other
+    # recipients were authorised and did reply. Also uncovered: a route that
+    # catches the denial itself (see system.py) and any WebSocket, which never
+    # reaches an exception handler at all.
     @app.exception_handler(IntentAuthorizationDenied)
     async def _denied(_request: Request, exc: IntentAuthorizationDenied) -> JSONResponse:
         logger.info(
