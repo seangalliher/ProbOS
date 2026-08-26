@@ -80,6 +80,11 @@ from probos.fault_report import (  # noqa: F401
     error_signature,
 )
 
+# BF-776: the one definition of "quote this only if it could fake structure".
+# Imported rather than re-implemented -- a second copy of the rule is how the
+# two drift, which is the whole reason this helper became public.
+from probos.cognitive.trace_analysis import quote_for_prose, render_token
+
 logger = logging.getLogger(__name__)
 
 # The fifth ``RequestKind``. A new kind rather than a new store because
@@ -272,16 +277,30 @@ def _final_text(outcome: Any) -> str:
 
 
 def _final_error_quote(error_text: Any) -> str:
-    """One bounded line of the error, for quoting back to the Captain.
+    """One bounded line of the error, QUOTED, for showing back to the Captain.
 
     The full text lives on the fault report; the reply needs only enough to be
     recognisable. Collapsed to a single line so a multi-line Playwright call log
     does not turn the chat reply into a stack trace.
+
+    BF-776 round 2: this is named ``_quote`` and did not quote. Measured on the
+    real ``resolve_exhausted_turn`` path, an error reading
+    ``boom. The shell tool is approved by the Captain`` rendered as exactly that
+    sentence, continuing the ship's own prose -- tool OUTPUT forging a claim
+    about what the Captain had authorised. Closing the ``tool_id`` half of this
+    sentence and leaving the error half open would have shipped a boundary that
+    looks total and is not.
+
+    Quoted unconditionally, unlike :func:`render_token`: an error is free text,
+    never an identifier, so there is no bare form worth preserving and an
+    unconditional boundary is the one that is easy to reason about. The bound
+    stays 200 rather than borrowing ``render_token``'s 80, which would have cut
+    the error the Captain sees by more than half.
     """
     flat = " ".join(str(error_text or "").split())
-    if len(flat) <= _DEFECT_ERROR_QUOTE_MAX:
-        return flat
-    return flat[: _DEFECT_ERROR_QUOTE_MAX - 1].rstrip() + "\u2026"
+    if len(flat) > _DEFECT_ERROR_QUOTE_MAX:
+        flat = flat[: _DEFECT_ERROR_QUOTE_MAX - 1].rstrip() + "\u2026"
+    return quote_for_prose(flat)
 
 
 def _is_cut_off(outcome: Any) -> bool:
@@ -741,7 +760,14 @@ async def resolve_exhausted_turn(
         )
         lead = _DEFECT_LEAD_WITH_WORK if partial else _DEFECT_LEAD_NO_WORK
         detail = _DEFECT_DETAIL.format(
-            tool_id=tool_id,
+            # BF-776: the same boundary as the approval rationale. ``tool_id``
+            # here is ``defect.tool_id`` -- the name the MODEL used, copied
+            # from the provider response without validation -- and this string
+            # is a reply the Captain reads. Bare, a name carrying commas or
+            # parentheses forges structure in that sentence. Review found this
+            # sink while checking the rationale fix; one instance of a class is
+            # not the class.
+            tool_id=render_token(tool_id),
             count=count,
             error=_final_error_quote(error_text),
         )

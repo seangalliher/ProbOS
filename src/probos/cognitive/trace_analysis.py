@@ -140,7 +140,7 @@ class TraceSummary:
                 # Quoted, not merely clipped: tools echo model-written
                 # arguments into their error text, so an error can otherwise
                 # forge a whole sentence of this summary.
-                f"{primary.count} times: {_json_str(_quote(primary.error_text))}"
+                f"{primary.count} times: {quote_for_prose(_quote(primary.error_text))}"
             )
             lines.append(
                 f"First at call {primary.first_index + 1}, again at call "
@@ -275,7 +275,7 @@ def _type_name(value: Any) -> str:
         return "unrenderable"
 
 
-def _json_str(text: str) -> str:
+def quote_for_prose(text: str) -> str:
     """``text`` as a JSON string literal.
 
     Unambiguous for the bounded representation, which is what this needs to be:
@@ -287,26 +287,50 @@ def _json_str(text: str) -> str:
     whitespace-collapsed.
 
     ``ensure_ascii=False`` because this is read by people: the alternative
-    prints the clipping ellipsis as a literal ``\\u2026``. Safe only because
-    every caller passes :func:`_clip` output, which has dropped unpaired
-    surrogates.
+    prints the clipping ellipsis as a literal ``\\u2026``.
+
+    BF-776 round 3: this used to say it was "safe only because every caller
+    passes :func:`_clip` output, which has dropped unpaired surrogates" -- and
+    then BF-776 gave it two callers that do not. Measured: ``json.dumps``
+    accepts a lone surrogate and emits it, so nothing raises HERE; the result
+    simply cannot be UTF-8 encoded, and the failure lands on whoever serialises
+    the reply -- the same whole-HTTP-response break :func:`_clip` documents at
+    BF-774, moved somewhere it is much harder to attribute.
+
+    So the guarantee is now made HERE rather than asked of callers: a helper
+    whose whole purpose is to make untrusted text safe to embed should not
+    depend on being handed pre-cleaned input. The replacement is idempotent,
+    so :func:`_clip` callers are unaffected.
     """
     try:
-        return json.dumps(text, ensure_ascii=False)
+        safe = str(text).encode("utf-8", "replace").decode("utf-8", "replace")
+        return json.dumps(safe, ensure_ascii=False)
     except Exception:
         return '"<unrenderable>"'
 
 
-def _render_token(text: Any) -> str:
+def render_token(text: Any) -> str:
     """An argument name or a tool name, quoted only if it could fake structure.
 
     Both are model-written. A key literally named ``x="fake", repoName`` renders
     as two arguments if emitted bare; a TOOL NAME containing parentheses does
     the same thing to whole calls, e.g. one call appearing to have targeted two
     repositories -- which is precisely the confusion BF-774 exists to remove.
+
+    BF-776 made this public. It was private while ``trace_analysis`` was its
+    only caller, but the same class of prose lives in ``repair_dispatch``'s
+    approval rationale, and a second copy of the rule is how the two drift.
+    Structured JSON fields do NOT need it -- JSON supplies its own boundaries.
+    Only prose does.
     """
     clipped = _clip(text, _ARG_VALUE_MAX)
-    return clipped if _SAFE_KEY_RE.match(clipped) else _json_str(clipped)
+    return clipped if _SAFE_KEY_RE.match(clipped) else quote_for_prose(clipped)
+
+
+# BF-776: the pre-BF-776 names, kept so nothing in-tree or out breaks on the
+# renames. One definition, two names -- in both cases.
+_render_token = render_token
+_json_str = quote_for_prose
 
 
 def _as_text(value: Any) -> str:
@@ -387,7 +411,7 @@ def _render_arguments(arguments: Any) -> str:
         elif isinstance(value, (int, float)):
             rendered = _clip(value, _ARG_VALUE_MAX)
         elif isinstance(value, str):
-            rendered = _json_str(_clip(value, _ARG_VALUE_MAX))
+            rendered = quote_for_prose(_clip(value, _ARG_VALUE_MAX))
         else:
             rendered = f"<{_clip(_type_name(value), _ARG_VALUE_MAX)}>"
         parts.append(f"{_render_token(key)}={rendered}")

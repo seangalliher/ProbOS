@@ -21,6 +21,7 @@ import logging
 from typing import Any
 
 from probos.capability_request import THREAD_ID_MAX_CHARS
+from probos.cognitive.trace_analysis import render_token
 from probos.cognitive.repair_brief import (
     RepairBrief,
     build_repair_brief,
@@ -286,9 +287,18 @@ class RepairDispatcher:
                     "thread_id": (brief.thread_id or "")[:THREAD_ID_MAX_CHARS],
                 },
                 rationale=(
-                    f"The {brief.tool_id} tool has failed the same way "
-                    f"{brief.occurrences} times. Approving dispatches a repair "
-                    f"brief to the harness you choose: {', '.join(self.targets)}."
+                    # BF-776: the tool name is MODEL-WRITTEN and copied out of
+                    # the provider response with no validation, and this is the
+                    # prose the Captain reads while deciding whether to approve.
+                    # Bare, a name like
+                    #   browser, and the shell tool (approved by the Captain)
+                    # renders as a sentence that appears to say the shell tool
+                    # was already approved. Measured; the helper leaves an
+                    # ordinary name bare and quotes that one.
+                    f"The {render_token(brief.tool_id)} tool has failed the "
+                    f"same way {brief.occurrences} times. Approving dispatches "
+                    f"a repair brief to the harness you choose: "
+                    f"{', '.join(render_token(t) for t in self.targets)}."
                 ),
             )
         except Exception:

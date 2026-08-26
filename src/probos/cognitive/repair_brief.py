@@ -37,6 +37,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+# BF-776: the one definition of the prose boundary, imported rather than
+# re-implemented -- a third copy of the rule is how the three drift.
+from probos.cognitive.trace_analysis import quote_for_prose, render_token
+
 logger = logging.getLogger(__name__)
 
 # The internal harness. Named rather than special-cased so it sits in the same
@@ -77,8 +81,13 @@ class RepairBrief:
 
     @property
     def title(self) -> str:
+        # BF-776 round 2: no production consumer today (enumerated: only a
+        # length assertion in test_ad1172), but the raw newlines a model-written
+        # ``tool_id`` can carry would break any single-line surface this is
+        # later pointed at. Collapsed here so the trap is not left armed.
         summary = " ".join(str(self.error_text or "").split())
-        head = f"{self.tool_id or 'tool'} fault: {summary}"
+        tool = " ".join(str(self.tool_id or "").split()) or "tool"
+        head = f"{tool} fault: {summary}"
         return head[: _TITLE_MAX - 1] + "\u2026" if len(head) > _TITLE_MAX else head
 
     def render_markdown(self) -> str:
@@ -120,18 +129,26 @@ class RepairBrief:
         portable artifact while silently rejoining the dedup key, or the
         reverse. A new volatile field is excluded here, in one place.
         """
+        # BF-776 round 2: ``tool_id`` is model-written and reaches BOTH the
+        # portable artifact and ``render_for_payload`` -- the text shown in the
+        # approval inbox. Measured before fixing: a name carrying newlines and
+        # a ``##`` rendered a real heading reading "APPROVED BY THE CAPTAIN"
+        # into the brief the Captain reads while deciding. ``render_token``
+        # collapses the whitespace that makes a heading possible at all, and
+        # quotes anything else structural.
+        tool = render_token(self.tool_id) if self.tool_id else "unknown tool"
         if include_occurrences:
             observed = (
-                f"The `{self.tool_id}` tool returned the same error "
+                f"The {tool} tool returned the same error "
                 f"{self.occurrences} time(s):"
             )
         else:
             observed = (
-                f"The `{self.tool_id}` tool returned the same error on more "
+                f"The {tool} tool returned the same error on more "
                 "than one occasion:"
             )
         lines: list[str] = [
-            f"# Repair brief: {self.tool_id or 'unknown tool'}",
+            f"# Repair brief: {tool}",
             "",
             "## What is wrong",
             "",
@@ -199,8 +216,10 @@ def _acceptance_for(tool_id: str, error_text: str) -> tuple[str, ...]:
     have to be the kind of thing that can be checked rather than judged.
     """
     return (
-        f"The `{tool_id}` tool no longer returns: "
-        f"{' '.join(str(error_text or '').split())[:200]}",
+        # BF-776 round 2: same boundary as the brief body -- this string is an
+        # acceptance criterion the Captain reads and a harness acts on.
+        f"The {render_token(tool_id)} tool no longer returns: "
+        f"{quote_for_prose(' '.join(str(error_text or '').split())[:200])}",
         "The original failing operation succeeds when retried.",
         "A regression test fails against the current code and passes after the fix.",
         "Verify compliance with the Engineering Principles in "
