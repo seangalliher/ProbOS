@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 import math
 import re
 from dataclasses import dataclass, field
@@ -309,6 +310,43 @@ def quote_for_prose(text: str) -> str:
         return '"<unrenderable>"'
 
 
+def _disambiguate(original: Any, clipped: str) -> str:
+    """Keep two distinct over-long names from rendering identically.
+
+    BF-856: the clip is the one part of this boundary that LOSES information
+    rather than neutralising it, and the loss was silent. Measured:
+
+        render_token("x"*100)        == render_token("x"*99 + "y")   -> True
+        render_token("x"*79 + "ABC") == render_token("x"*79 + "DEF") -> True
+
+    In a decision sentence that means the Captain cannot tell which tool
+    failed. A short digest of the FULL text is appended so distinct inputs stay
+    distinct.
+
+    This RAISES the rendered bound from ``_ARG_VALUE_MAX`` to
+    ``_ARG_VALUE_MAX + 6``, and only for names that were clipped -- review
+    flagged that the old cap was implicit and my first docstring here claimed
+    the bound was unchanged, which was wrong. Stated rather than re-clipped:
+    cutting the digest back off would restore the collision it exists to
+    remove. Pinned by ``TestTwoLongNamesStayDistinguishable``.
+
+    Detection is the trailing ellipsis ``_clip`` adds. A name that both ends in
+    an ellipsis AND is short enough not to be clipped therefore picks up a
+    spurious suffix; that is cosmetic, and the alternative is threading a
+    "was truncated" flag through ``_clip``'s many other callers for it.
+
+    Total: a raising ``__str__`` returns the clip unchanged rather than
+    propagating out of a rendering path whose whole contract is not to.
+    """
+    if not clipped.endswith("\u2026"):
+        return clipped
+    try:
+        material = str(original).encode("utf-8", "replace")
+    except Exception:
+        return clipped
+    return f"{clipped}{hashlib.sha256(material).hexdigest()[:6]}"
+
+
 def render_token(text: Any) -> str:
     """An argument name or a tool name, quoted only if it could fake structure.
 
@@ -324,6 +362,7 @@ def render_token(text: Any) -> str:
     Only prose does.
     """
     clipped = _clip(text, _ARG_VALUE_MAX)
+    clipped = _disambiguate(text, clipped)
     return clipped if _SAFE_KEY_RE.match(clipped) else quote_for_prose(clipped)
 
 

@@ -50,6 +50,26 @@ TARGET_ARCHITECT: str = "architect"
 _TITLE_MAX = 120
 _EVIDENCE_MAX = 4000
 
+
+def _sendable(text: str) -> str:
+    """``text`` with any malformed UTF-8 neutralised.
+
+    BF-856: every field on this brief is model-written or tool-returned, and a
+    lone surrogate in ANY of them produced a document that could not be UTF-8
+    encoded -- so the break landed on whoever serialised it, far from the cause.
+    Measured one field at a time before fixing: ``fault_id``, ``signature``,
+    ``error_text``, ``attempted`` and ``agent_id`` all rendered unsendable
+    payloads.
+
+    Applied once where the lines become a DOCUMENT rather than per field, so a
+    field added later is covered by construction. Per-field scrubbing is how one
+    gets missed, and the miss is invisible until a real tool misbehaves.
+
+    Whitespace is deliberately NOT collapsed here: this is markdown, and the
+    newlines are the structure.
+    """
+    return text.encode("utf-8", "replace").decode("utf-8", "replace")
+
 # AD-1267: the target list reaches the approval payload, whose canonical JSON is
 # capped at _ACTION_PAYLOAD_MAX_CHARS (4000). resolve_targets was unbounded, so a
 # long or long-named target list made an ordinary fault permanently unproposable.
@@ -87,7 +107,7 @@ class RepairBrief:
         # later pointed at. Collapsed here so the trap is not left armed.
         summary = " ".join(str(self.error_text or "").split())
         tool = " ".join(str(self.tool_id or "").split()) or "tool"
-        head = f"{tool} fault: {summary}"
+        head = _sendable(f"{tool} fault: {summary}")
         return head[: _TITLE_MAX - 1] + "\u2026" if len(head) > _TITLE_MAX else head
 
     def render_markdown(self) -> str:
@@ -189,7 +209,7 @@ class RepairBrief:
             lines.append(f"- Tool trace: `{self.tool_trace_ref[:16]}`")
         if self.agent_id:
             lines.append(f"- Reported by: `{self.agent_id}`")
-        return "\n".join(lines)
+        return _sendable("\n".join(lines))
 
     def to_dict(self) -> dict[str, Any]:
         return {

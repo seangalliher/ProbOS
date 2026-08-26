@@ -119,6 +119,29 @@ def normalise_error(text: Any) -> str:
     return flat[:_ERROR_MAX]
 
 
+def _digest(material: str) -> str:
+    """SHA-256 over ``material``, total on malformed UTF-8.
+
+    BF-856: the two callers below both read ``.encode("utf-8")``, and a tool
+    returning a lone surrogate made that raise ``UnicodeEncodeError``. Measured
+    on the real path, it propagated out of ``resolve_exhausted_turn`` at
+    ``continue_or_ask.py:733`` and killed the turn before any reply was built --
+    a buggy tool, not a hostile one, was enough.
+
+    One helper rather than the same two-word edit in two places, because
+    :meth:`ToolDefect.signature` documents itself as BYTE-IDENTICAL to
+    :func:`error_signature`. Two parallel edits can drift; a shared definition
+    cannot, and a drift here is invisible until faults silently stop coalescing
+    -- the failure BF-855 (#1325) is already open for.
+
+    ``"replace"`` leaves every well-formed digest unchanged, so no stored
+    signature moves and there is nothing to migrate.
+    """
+    return hashlib.sha256(
+        material.encode("utf-8", "replace"),
+    ).hexdigest()
+
+
 def error_signature(*, tool_id: Any, error_text: Any) -> str:
     """Stable identity of a fault: which tool, failing which way.
 
@@ -130,7 +153,7 @@ def error_signature(*, tool_id: Any, error_text: Any) -> str:
         str(tool_id or "")[:_TOOL_ID_MAX],
         normalise_error(error_text),
     ])
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+    return _digest(material)
 
 
 # AD-1170: a stalled turn has more than one possible cause, and until now the
@@ -256,7 +279,7 @@ class ToolDefect:
         ``normalise_error(error_text)``.
         """
         material = f"{self.tool_id}|{self.error_key}"
-        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+        return _digest(material)
 
 
 def _canonical_tool_id(

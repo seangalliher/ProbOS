@@ -301,14 +301,36 @@ class TestWhatRenderTokenChangesAboutTheName:
         assert render_token("name\nwith\nnewlines") == '"name with newlines"'
         assert render_token("tab\there") == '"tab here"'
 
-    def test_a_long_name_is_clipped_with_an_ellipsis(self) -> None:
-        """The one alteration that LOSES information. Accepted: an unbounded
-        model-written name in a decision sentence is its own problem, and the
-        clip is visible rather than silent."""
+    def test_a_long_name_is_clipped_and_disambiguated(self) -> None:
+        """BF-856 changed this. It previously asserted the rendered form ended
+        with a bare ellipsis, which pinned the COLLISION as contract: two
+        distinct over-long names rendered identically and the Captain could not
+        tell which tool failed. A short digest of the full text is now appended
+        so distinct inputs stay distinct.
+
+        That RAISES the rendered bound from 80 to 86 (+2 quote chars). An
+        earlier version of this docstring said the bound was unchanged, which
+        was wrong -- the same class of claim-without-a-property this whole file
+        exists to stop. The exact bound is pinned in the BF-856 file.
+
+        Updated rather than deleted, so the history of what this boundary
+        promised stays readable.
+        """
         rendered = render_token("x" * 100)
 
-        assert rendered.endswith('\u2026"')
-        assert len(rendered) < 100
+        assert rendered.startswith('"') and rendered.endswith('"')
+        assert "\u2026" in rendered, "the clip must still be visible"
+        assert len(rendered) < 100, "it must still be bounded"
+
+    def test_two_distinct_long_names_do_not_render_alike(self) -> None:
+        """The property the old assertion hid."""
+        assert render_token("x" * 100) != render_token("x" * 99 + "y")
+        assert render_token("x" * 79 + "ABC") != render_token("x" * 79 + "DEF")
+
+    def test_the_disambiguator_is_stable(self) -> None:
+        """A digest that changed between renders would make one tool look like
+        two across a pair of reports."""
+        assert render_token("x" * 100) == render_token("x" * 100)
 
     def test_non_ascii_survives_intact(self) -> None:
         """Quoted, but not mangled -- a name is still identifiable."""
