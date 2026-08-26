@@ -1186,9 +1186,15 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   }, [activeThreadId, liveRepairEpoch, refreshThreadTranscript]);
 
   // BF-718: an utterance has ended, so nothing is waiting on it any more.
-  // Cleared per agent rather than per utterance because the speech events carry
-  // only an agent id — erring toward "not speaking" keeps a missed correlation
-  // from stranding the conversation controller.
+  // Cleared per AGENT rather than per utterance, deliberately, even though
+  // BF-767 now publishes `utterance_id` on the event and the completion
+  // listener below correlates on it. This set is keyed by (agent, content) and
+  // has no utterance id to match against — the key is minted before
+  // `speakResponse` is called, and on the lost-claim path it is never called
+  // here at all. Erring toward "not speaking" keeps a missed correlation from
+  // stranding the conversation controller, which is the opposite of the
+  // failure BF-767 fixes: over-clearing here costs a redundant wait, while
+  // over-matching there ended the wrong turn.
   useEffect(() => onSpeechEvent((event) => {
     if (event.type !== 'end') return;
     const ended = event.agent_id;
@@ -1760,20 +1766,48 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           return;
         }
         // Subscribe BEFORE speakResponse so we don't race the 'start' event.
-        // We listen for the matching 'end' for this agent_id, then unsubscribe.
         // Set up whether or not this callback won: losing to an utterance that
         // IS in flight means completion has to track that utterance's end, or
         // the barge-in guard detaches and the silence timer starts while the
         // agent is still audibly talking.
-        const unsub = onSpeechEvent((event) => {
-          if (event.type !== 'end') return;
-          if (event.agent_id && event.agent_id !== armAgentId) return;
+        //
+        // BF-767: correlate on the UTTERANCE, not the agent. speakResponse's
+        // first action is to cancel whatever is speaking, and that cancellation
+        // emits a terminal 'end' carrying this same agent_id — straight into the
+        // listener armed one line earlier, for an utterance that has not started.
+        // The turn was completing on the death rattle of the one it cancelled.
+        // ``ourUtteranceId`` is only ever written from THIS call's return value,
+        // so the superseded utterance's id can never match it — and because the
+        // match is on id rather than on "not yet known", it holds whether that
+        // stale 'end' arrives synchronously inside speakResponse (Piper pause)
+        // or in a later task (real browsers queue both pause and cancel).
+        let ourUtteranceId: number | undefined;
+        let completed = false;
+        const complete = (): void => {
+          if (completed) return;
+          completed = true;
           try { unsub(); } catch { /* Tier-2 */ }
           markAgentReplyComplete();
+        };
+        const unsub = onSpeechEvent((event) => {
+          if (event.type !== 'end') return;
+          // BF-767: strict equality. An 'end' with NO agent_id used to match
+          // every agent, so an unattributed utterance elsewhere in the app
+          // could close this turn.
+          if (event.agent_id !== armAgentId) return;
+          // Lost the claim: a different caller owns the in-flight utterance and
+          // we cannot know its id, so that path stays agent-scoped (BF-718 —
+          // requiring an id we can never learn would strand the controller).
+          if (claimed && event.utterance_id !== ourUtteranceId) return;
+          complete();
         });
         if (!claimed) return;
         speechInFlightRef.current.add(speechKey);
-        speakResponse(stripMarkdownForSpeech(replyText), voiceProfile ?? undefined, armAgentId);
+        ourUtteranceId = speakResponse(
+          stripMarkdownForSpeech(replyText), voiceProfile ?? undefined, armAgentId,
+        );
+        // No TTS engine at all — nothing will ever emit an 'end' (BF-290).
+        if (ourUtteranceId === undefined) complete();
       },
       onStateChange: (state) => {
         console.info(`AD-747/BF-290: conversation state for ${armAgentId}: ${state}`);

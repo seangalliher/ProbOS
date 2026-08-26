@@ -442,7 +442,9 @@ export function IntentSurface() {
             addChatMessage('agent', r.text, { agent_id: r.agent_id, callsign: r.callsign });
           }
           if (voiceEnabled && replies[0]?.text && !replies[0].text.startsWith('(')) {
-            speakResponse(stripMarkdownForSpeech(replies[0].text));
+            // BF-767: attribute the utterance. Unscoped, its 'end' carried no
+            // agent_id and so matched every agent-scoped listener in the app.
+            speakResponse(stripMarkdownForSpeech(replies[0].text), undefined, replies[0].agent_id);
           }
           soundEngine.playIntentRouting();
           return;
@@ -466,6 +468,10 @@ export function IntentSurface() {
         }
         if (voiceEnabled && response && !response.startsWith('(')) {
           // Strip markdown formatting for cleaner TTS (AD-718: shared helper)
+          // BF-767: this reply is the Ship's Computer, not a crew agent — there
+          // is no agent_id to attribute it to and inventing one would misroute
+          // the agent-keyed lip-sync / modulation consumers. Agent-scoped
+          // listeners now require a matching agent_id, so a bare 'end' is inert.
           speakResponse(stripMarkdownForSpeech(response));
         }
         soundEngine.playIntentRouting();

@@ -42,6 +42,15 @@ export interface SpeechEvent {
   /** BF-293: which TTS path produced this event. Defaults to 'browser' for
    *  back-compat with any listener that didn't read this field. */
   source?: SpeechEventSource;
+  /** BF-767: identity of the ``speakResponse`` call that produced this event
+   *  (its AD-1071 generation token, also returned by ``speakResponse``). A
+   *  consumer that must know whether an 'end' belongs to ITS utterance has to
+   *  compare this, not ``agent_id``: superseding an utterance emits a terminal
+   *  'end' carrying the SAME agent_id as the reply that replaced it.
+   *  Granularity is per ``speakResponse`` CALL — under AD-1071 sentence
+   *  pipelining (default-off) every sentence of one reply shares this id.
+   *  Absent only on events from a build/mock that predates this field. */
+  utterance_id?: number;
 }
 type SpeechListener = (e: SpeechEvent) => void;
 
@@ -198,7 +207,11 @@ let _activeAudio: HTMLAudioElement | null = null;
 /** AD-1071: monotonic generation token. Each speakResponse call bumps it; the
  *  sentence-pipelining queue stops as soon as its captured generation is stale,
  *  so a newer reply cancels the in-flight one cleanly. Byte-identical for the
- *  default single-call path, which never reads it. */
+ *  default single-call path, which never reads it.
+ *  BF-767: the same token is now PUBLISHED as ``SpeechEvent.utterance_id`` and
+ *  returned by ``speakResponse``, so a consumer can tell its own utterance's
+ *  'end' from the superseded one's. Read-only reuse — the pipelining predicate
+ *  is unchanged. */
 let _speakGeneration = 0;
 
 /** BF-283 (2026-05-13): expose the active audio's playback position so the
@@ -216,15 +229,21 @@ export function getActiveAudioTimeMs(): number | null {
   }
 }
 
+/** BF-767: returns the utterance id this call will stamp on its own
+ *  ``SpeechEvent``s, or ``undefined`` when no TTS engine exists at all and
+ *  nothing will ever be spoken. */
 export function speakResponse(
   text: string,
   profile?: VoiceProfile,
   agent_id?: string,
   emotion?: string,
-): void {
-  if (!('speechSynthesis' in window) && typeof Audio !== 'function') return;
+): number | undefined {
+  if (!('speechSynthesis' in window) && typeof Audio !== 'function') return undefined;
 
   // Cancel any in-flight audio from a prior call (server path or browser path).
+  // BF-767: this runs BEFORE the generation bump below on purpose — the
+  // terminal 'end' these emit belongs to the SUPERSEDED utterance and must
+  // carry its older id, never this call's.
   if ('speechSynthesis' in window) {
     speechSynthesis.cancel();
   }
@@ -244,12 +263,12 @@ export function speakResponse(
   // default-config path AND avoids an async hop on every warm-cache call.
   if (typeof (globalThis as any).fetch !== 'function') {
     _ttsStatus = { enabled: false, backend: 'browser', sentence_pipelining_enabled: false };
-    _speakBrowserFallback(text, profile, agent_id);
-    return;
+    _speakBrowserFallback(text, profile, agent_id, myGen);
+    return myGen;
   }
   if (_ttsStatus !== null && (!_ttsStatus.enabled || _ttsStatus.backend !== 'piper')) {
-    _speakBrowserFallback(text, profile, agent_id);
-    return;
+    _speakBrowserFallback(text, profile, agent_id, myGen);
+    return myGen;
   }
 
   void (async () => {
@@ -257,7 +276,7 @@ export function speakResponse(
     // probe once, cache, and skip the POST entirely when backend != "piper".
     const status = await _fetchTtsStatus();
     if (status === null || !status.enabled || status.backend !== 'piper') {
-      _speakBrowserFallback(text, profile, agent_id);
+      _speakBrowserFallback(text, profile, agent_id, myGen);
       return;
     }
     // AD-1071: sentence-chunked pipelining (DEFAULT-OFF). When enabled AND the
@@ -271,15 +290,16 @@ export function speakResponse(
       if (sentences.length > 1) {
         await runSentenceQueue(
           sentences,
-          (sentence) => _synthesizeAndPlay(sentence, profile, agent_id, emotion),
+          (sentence) => _synthesizeAndPlay(sentence, profile, agent_id, emotion, myGen),
           () => myGen === _speakGeneration,
         );
         return;
       }
     }
     // Single-call path (default): one TTS POST for the whole reply.
-    await _synthesizeAndPlay(text, profile, agent_id, emotion);
+    await _synthesizeAndPlay(text, profile, agent_id, emotion, myGen);
   })();
+  return myGen;
 }
 
 /** AD-738 / AD-1071: synthesize ONE utterance via the server Piper backend,
@@ -294,6 +314,7 @@ async function _synthesizeAndPlay(
   profile: VoiceProfile | undefined,
   agent_id: string | undefined,
   emotion: string | undefined,
+  utterance_id: number,
 ): Promise<void> {
   try {
     // AD-738e-1: pass v1 emotion name (resolved server-side) so the TTS
@@ -315,7 +336,7 @@ async function _synthesizeAndPlay(
     });
     if (!resp.ok) {
       _invalidateTtsStatus();
-      _speakBrowserFallback(text, profile, agent_id);
+      _speakBrowserFallback(text, profile, agent_id, utterance_id);
       return;
     }
     const data = await resp.json();
@@ -327,7 +348,7 @@ async function _synthesizeAndPlay(
     ) {
       // Server flipped to disabled — invalidate so the next call re-probes.
       _invalidateTtsStatus();
-      _speakBrowserFallback(text, profile, agent_id);
+      _speakBrowserFallback(text, profile, agent_id, utterance_id);
       return;
     }
     // Build a synthetic utterance object so existing 'start'/'end' listeners
@@ -349,10 +370,10 @@ async function _synthesizeAndPlay(
         if (_settled) return;
         _settled = true;
         if (_activeAudio === audio) _activeAudio = null;
-        if (fireEnd) _fire({ type: 'end', agent_id, utterance: synth, source: 'server' });
+        if (fireEnd) _fire({ type: 'end', agent_id, utterance: synth, source: 'server', utterance_id });
         resolve();
       };
-      audio.addEventListener('play', () => _fire({ type: 'start', agent_id, utterance: synth, source: 'server' }));
+      audio.addEventListener('play', () => _fire({ type: 'start', agent_id, utterance: synth, source: 'server', utterance_id }));
       audio.addEventListener('ended', () => _finish(true));
       audio.addEventListener('error', () => _finish(true));
       // BF-655 (refines AD-1071): a newer speakResponse pauses _activeAudio to
@@ -377,13 +398,13 @@ async function _synthesizeAndPlay(
       audio.play().then(undefined, () => {
         // play() rejected — fall back to browser for THIS utterance, resolve.
         if (_activeAudio === audio) _activeAudio = null;
-        _speakBrowserFallback(text, profile, agent_id);
+        _speakBrowserFallback(text, profile, agent_id, utterance_id);
         _finish(false);
       });
     });
   } catch {
     _invalidateTtsStatus();
-    _speakBrowserFallback(text, profile, agent_id);
+    _speakBrowserFallback(text, profile, agent_id, utterance_id);
   }
 }
 
@@ -422,8 +443,35 @@ function _speakBrowserFallback(
   text: string,
   profile?: VoiceProfile,
   agent_id?: string,
+  utterance_id?: number,
 ): void {
-  if (!('speechSynthesis' in window)) return;
+  if (!('speechSynthesis' in window)) {
+    // BF-767 (review): this path used to return in silence, and the caller had
+    // already been handed an ``utterance_id``. Correlating on that id turned a
+    // silent no-op into a turn that waits forever -- before the id existed a
+    // stray same-agent ``end`` could still unstick it, so narrowing the match
+    // narrowed the rescue too. An id is a promise that an ``end`` follows, so
+    // pay it here rather than leave the promise unkept.
+    //
+    // Reachable when ``speechSynthesis`` is absent but ``Audio`` is present:
+    // ``speakResponse``'s own guard proceeds if EITHER exists. I could not
+    // reproduce that browser shape -- the control in my probe failed, so I am
+    // not claiming a measurement -- but the contract is wrong either way and
+    // this makes it true on every path, sync and async alike.
+    // ``utterance`` is required on SpeechEvent and there is no engine to build
+    // a real one from, so this carries the text and nothing else. Every
+    // in-tree listener reads ``type`` / ``agent_id`` / ``utterance_id``;
+    // ``useLipSyncCapture`` and ``wakeWord`` act on 'end' by stopping and by
+    // re-arming the mic, which is correct here -- nothing is going to play.
+    _fire({
+      type: 'end',
+      agent_id,
+      utterance: { text } as unknown as SpeechSynthesisUtterance,
+      source: 'browser',
+      utterance_id,
+    });
+    return;
+  }
   const utterance = new SpeechSynthesisUtterance(text);
   const effective = _resolveEffectiveProfile(profile, agent_id);
   utterance.rate = effective.rate ?? 0.95;
@@ -435,7 +483,7 @@ function _speakBrowserFallback(
   const langMatch = !named ? _resolveVoiceByLanguage(profile?.language) : null;
   const voice = named ?? langMatch ?? findPreferredVoice();
   if (voice) utterance.voice = voice;
-  utterance.onstart = () => _fire({ type: 'start', agent_id, utterance, source: 'browser' });
+  utterance.onstart = () => _fire({ type: 'start', agent_id, utterance, source: 'browser', utterance_id });
   // BF-655: onend and onerror share a single-settle guard so exactly one
   // terminal 'end' fires, whichever resolves first. speechSynthesis.cancel()
   // (a newer reply superseding this one) makes many browsers fire onerror
@@ -446,7 +494,7 @@ function _speakBrowserFallback(
   const _fireBrowserEnd = () => {
     if (_ended) return;
     _ended = true;
-    _fire({ type: 'end', agent_id, utterance, source: 'browser' });
+    _fire({ type: 'end', agent_id, utterance, source: 'browser', utterance_id });
   };
   utterance.onend = _fireBrowserEnd;
   utterance.onerror = _fireBrowserEnd;

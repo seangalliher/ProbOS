@@ -85,6 +85,8 @@ import type { Agent } from '../../../store/types';
 const AGENT_ID = 'audio-host';
 const PEER_ID = 'audio-peer';
 const OTHER_AGENT_ID = 'audio-other';
+/** BF-767: the id the mocked speakResponse stamps on the utterance it "starts". */
+const SPOKEN_UTTERANCE_ID = 4242;
 const TTS_KEY = `hxi_chat_tts_${AGENT_ID}`;
 const OTHER_TTS_KEY = `hxi_chat_tts_${OTHER_AGENT_ID}`;
 const MIC_KEY = `hxi_chat_mic_mode_${AGENT_ID}`;
@@ -378,6 +380,12 @@ async function startAudioCall(): Promise<void> {
 beforeEach(() => {
   for (const mock of Object.values(mocks)) mock.mockReset();
   mocks.onSpeechEvent.mockReturnValue(() => {});
+  // BF-767: speakResponse now returns the id it stamps on its own SpeechEvents,
+  // and returns undefined only when no TTS engine exists at all. A bare vi.fn()
+  // returns undefined, which the caller correctly reads as "nothing will ever
+  // speak" and completes the turn immediately — so the mock has to model the
+  // contract or every completion assertion here measures the wrong branch.
+  mocks.speakResponse.mockReturnValue(SPOKEN_UTTERANCE_ID);
   installOwnerRecordingArmMock();
   mocks.startCameraStream.mockResolvedValue(undefined);
   mocks.stopCameraStream.mockResolvedValue(undefined);
@@ -820,11 +828,27 @@ describe('BF-671 live conversation-controller callback', () => {
     expect(mocks.markAgentReplyComplete).not.toHaveBeenCalled();
     const speechCalls = mocks.onSpeechEvent.mock.calls as unknown[][];
     const listener = speechCalls[subscriptionsBefore][0] as
-      ((event: { type: string; agent_id?: string }) => void);
+      ((event: { type: string; agent_id?: string; utterance_id?: number }) => void);
+    // BF-767: the 'end' now has to match the utterance, not just the agent.
+    // Review round 1: these were fired in ONE act() with only the final count
+    // checked, so a bug that completed on the WRONG-agent end would still have
+    // left the count at 1 and passed. Each event now gets its own assertion.
     act(() => {
-      listener({ type: 'start', agent_id: AGENT_ID });
-      listener({ type: 'end', agent_id: OTHER_AGENT_ID });
-      listener({ type: 'end', agent_id: AGENT_ID });
+      listener({ type: 'start', agent_id: AGENT_ID, utterance_id: SPOKEN_UTTERANCE_ID });
+    });
+    expect(mocks.markAgentReplyComplete).not.toHaveBeenCalled();
+
+    act(() => {
+      listener({ type: 'end', agent_id: OTHER_AGENT_ID, utterance_id: SPOKEN_UTTERANCE_ID });
+    });
+    expect(
+      mocks.markAgentReplyComplete,
+      'a wrong-agent end must not complete this turn',
+    ).not.toHaveBeenCalled();
+    expect(unsubscribe, 'and must not tear the listener down').not.toHaveBeenCalled();
+
+    act(() => {
+      listener({ type: 'end', agent_id: AGENT_ID, utterance_id: SPOKEN_UTTERANCE_ID });
     });
     expect(mocks.markAgentReplyComplete).toHaveBeenCalledTimes(1);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
