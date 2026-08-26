@@ -34,6 +34,7 @@ from probos.capability_request import CapabilityRequestStore
 from probos.cognitive.dependency_resolver import DependencyResult
 from probos.config import DependencyConfig, SystemConfig
 from probos.runtime import ProbOSRuntime
+from probos.security.url_guard import PinnedTarget
 
 
 # ── BF-729: truncation must announce itself ────────────────────────────────
@@ -65,6 +66,12 @@ async def _fetch(monkeypatch, content: bytes) -> dict:
         httpx, "AsyncClient", lambda *a, **k: _Client(content)
     )
     monkeypatch.setattr(agent, "_validate_url", lambda url: None)
+    # BF-821: the request path pins through `_validate_and_pin` now. No
+    # addresses means nothing to pin, so the request goes out on the name
+    # exactly as it did before -- this test is about truncation, not DNS.
+    monkeypatch.setattr(
+        agent, "_validate_and_pin", lambda url: PinnedTarget(None, ())
+    )
     result = await agent._fetch_url("https://example.test/big.json", "GET")
     assert result["success"], result
     return result["data"]

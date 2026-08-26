@@ -597,7 +597,7 @@ class TestHttpFetchTimeoutMessage:
             async def __aexit__(self, *a):
                 pass
 
-            async def request(self, method, url):
+            async def request(self, method, url, **kwargs):
                 raise httpx.TimeoutException("timed out")
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())

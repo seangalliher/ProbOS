@@ -191,7 +191,7 @@ def _public_dns(monkeypatch):
     """BF-828 (#1292): resolve the test host WITHOUT touching the network.
 
     These assertions are about the EGRESS policy. The SSRF guard runs first and
-    resolves the hostname for real (``security/url_guard.py:92``), so a resolver
+    resolves the hostname for real (``security/url_guard.py:124``), so a resolver
     hiccup on the gate machine turned an egress assertion into::
 
         assert 'Egress policy' in 'Cannot resolve hostname: example.com'

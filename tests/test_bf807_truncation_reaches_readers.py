@@ -30,6 +30,7 @@ from probos.agents.utility.web_agents import (
     _with_truncation_notice,
 )
 from probos.types import IntentMessage
+from probos.security.url_guard import PinnedTarget
 
 
 class _Runtime:
@@ -391,6 +392,14 @@ class TestFromTheProducersCapToTheAgentsAnswer:
             lambda **kw: real_client(transport=transport, **kw),
         )
         monkeypatch.setattr(HttpFetchAgent, "_validate_url", lambda self, url: None)
+        # BF-821: the request path pins through `_validate_and_pin`. No
+        # addresses means nothing to pin, so the URL reaches MockTransport
+        # unrewritten -- this test is about truncation, not DNS.
+        monkeypatch.setattr(
+            HttpFetchAgent,
+            "_validate_and_pin",
+            lambda self, url: PinnedTarget(None, ()),
+        )
 
         async def _no_wait(self, _domain, state):
             state.last_request_time = 0
@@ -450,6 +459,14 @@ class TestFromTheProducersCapToTheAgentsAnswer:
             lambda **kw: real_client(transport=transport, **kw),
         )
         monkeypatch.setattr(HttpFetchAgent, "_validate_url", lambda self, url: None)
+        # BF-821: the request path pins through `_validate_and_pin`. No
+        # addresses means nothing to pin, so the URL reaches MockTransport
+        # unrewritten -- this test is about truncation, not DNS.
+        monkeypatch.setattr(
+            HttpFetchAgent,
+            "_validate_and_pin",
+            lambda self, url: PinnedTarget(None, ()),
+        )
 
         async def _no_wait(self, _domain, state):
             state.last_request_time = 0

@@ -23,8 +23,12 @@ and a rebinding attacker controls the mapping rather than the string.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import socket
+from dataclasses import dataclass
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 # Hostnames that serve cloud instance credentials. Blocked by name as well as by
 # address because the address check depends on resolution succeeding.
@@ -34,6 +38,28 @@ BLOCKED_HOSTS = frozenset({
 })
 
 ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+
+@dataclass(frozen=True)
+class PinnedTarget:
+    """A verdict together with the addresses it was reached on.
+
+    BF-821: the floor used to resolve, judge, then throw the addresses away and
+    answer about the URL *string*. httpx resolved the name again when it
+    connected, so a nameserver answering differently for the two lookups put a
+    connection on loopback with the guard's blessing -- reproduced end to end.
+    Handing back what was judged is what lets a caller connect to it.
+
+    ``addresses`` is in getaddrinfo order and is non-empty whenever ``reason``
+    is None and the URL had a hostname. That is enforced rather than merely
+    documented: review measured a shape where every getaddrinfo entry failed to
+    parse as an address, which approved the URL with nothing to pin and sent the
+    caller back to the name -- reopening the very second lookup this exists to
+    close. A hostname that resolves to nothing usable is now refused.
+    """
+
+    reason: str | None
+    addresses: tuple[str, ...] = ()
 
 
 def check_url_shape(url: str) -> str | None:
@@ -81,18 +107,32 @@ def check_resolved_address(url: str) -> str | None:
     rather than the string. Every returned address is checked: one hostile
     answer among several is enough to refuse.
     """
+    return resolve_and_pin(url).reason
+
+
+def resolve_and_pin(url: str) -> PinnedTarget:
+    """Resolve once, judge every address, and hand back the ones that passed.
+
+    Same refusals as :func:`check_resolved_address` in the same order -- that
+    function is now this one's verdict half, so the two cannot drift.
+
+    BF-821: judging addresses and then answering about the URL *string* left a
+    caller nothing to connect to but the name, which resolves again. Returning
+    what was judged is what lets the connection be pinned to it.
+    """
     try:
         hostname = urlparse(url).hostname
     except Exception:
-        return "Malformed URL"
+        return PinnedTarget("Malformed URL")
     if not hostname:
-        return None
+        return PinnedTarget(None)
 
     try:
         addrinfo = socket.getaddrinfo(hostname, None)
     except socket.gaierror:
-        return f"Cannot resolve hostname: {hostname}"
+        return PinnedTarget(f"Cannot resolve hostname: {hostname}")
 
+    approved: list[str] = []
     for _family, _type, _proto, _canon, sockaddr in addrinfo:
         try:
             ip = ipaddress.ip_address(sockaddr[0])
@@ -100,9 +140,23 @@ def check_resolved_address(url: str) -> str | None:
             continue
         reason = _reject_address(ip)
         if reason:
-            return reason
+            return PinnedTarget(reason)
+        approved.append(str(ip))
 
-    return None
+    if not approved:
+        # Fail CLOSED. Returning ``PinnedTarget(None, ())`` here would approve
+        # the URL with nothing to pin, and the caller would fall back to the
+        # name -- which resolves a second time, which is the entire defect.
+        # Reachable when getaddrinfo answers but no entry parses as an address.
+        logger.warning(
+            "BF-821: %s resolved to %d answer(s), none of which parsed as an "
+            "address; refusing rather than approving a target that cannot be "
+            "pinned",
+            hostname, len(addrinfo),
+        )
+        return PinnedTarget(f"No usable address for hostname: {hostname}")
+
+    return PinnedTarget(None, tuple(approved))
 
 
 def validate_public_url(url: str, *, resolve: bool = True) -> str | None:
@@ -119,6 +173,20 @@ def validate_public_url(url: str, *, resolve: bool = True) -> str | None:
     if shape is not None:
         return shape
     return check_resolved_address(url) if resolve else None
+
+
+def validate_and_pin_public_url(url: str) -> PinnedTarget:
+    """:func:`validate_public_url` plus the addresses the verdict was reached on.
+
+    Separate from ``validate_public_url`` rather than widening it: fourteen
+    assertions across ``test_bf743_browser_ssrf_floor`` pin that function's
+    ``str | None`` shape, one of them a standing contract that its refusal
+    strings never reword, and only one caller wants the address.
+    """
+    shape = check_url_shape(url)
+    if shape is not None:
+        return PinnedTarget(shape)
+    return resolve_and_pin(url)
 
 
 def _reject_address(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:

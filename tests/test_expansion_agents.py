@@ -317,7 +317,9 @@ class TestHttpFetchAgent:
             async def __aexit__(self, *a):
                 pass
 
-            async def request(self, method, url):
+            # BF-821: the request path pins the connection, so it passes a Host
+            # header and an sni_hostname extension that the real client accepts.
+            async def request(self, method, url, **kwargs):
                 return MockResponse()
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
@@ -351,7 +353,7 @@ class TestHttpFetchAgent:
             async def __aexit__(self, *a):
                 pass
 
-            async def request(self, method, url):
+            async def request(self, method, url, **kwargs):
                 raise httpx.ConnectError("unreachable")
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
@@ -491,7 +493,7 @@ class TestHttpFetchRateLimiter:
                 return self
             async def __aexit__(self, *a):
                 pass
-            async def request(self, method, url):
+            async def request(self, method, url, **kwargs):
                 return MockResponse()
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
@@ -585,7 +587,7 @@ class TestHttpFetchRateLimiter:
                 return self
             async def __aexit__(self, *a):
                 pass
-            async def request(self, method, url):
+            async def request(self, method, url, **kwargs):
                 return MockResponse()
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())
@@ -671,7 +673,7 @@ class TestExpansionIntegration:
             async def __aexit__(self, *a):
                 pass
 
-            async def request(self, method, url):
+            async def request(self, method, url, **kwargs):
                 return MockResponse()
 
         monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: MockAsyncClient())

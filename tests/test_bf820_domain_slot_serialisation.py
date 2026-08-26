@@ -30,6 +30,7 @@ import time
 import pytest
 
 from probos.agents.http_fetch import DomainRateState, HttpFetchAgent
+from probos.security.url_guard import PinnedTarget
 
 #: Windows' timer granularity is ~15.6 ms and `asyncio.sleep` rounds up, so an
 #: exact `>= interval` comparison is measuring the clock, not the limiter.
@@ -306,10 +307,18 @@ class _Unguarded(HttpFetchAgent):
 
     The guard runs before the limiter and is BF-819's subject, with its own
     tests; leaving it in would make every assertion here about DNS.
+
+    BF-821 split the request path onto ``_validate_and_pin``, so both entry
+    points are suppressed. It returns no addresses: there is nothing to pin,
+    and the request goes out on the name exactly as it did before, which keeps
+    these assertions about the rate-limit slot rather than the URL.
     """
 
     def _validate_url(self, url: str) -> str | None:
         return None
+
+    def _validate_and_pin(self, url: str) -> PinnedTarget:
+        return PinnedTarget(None, ())
 
 
 @pytest.mark.asyncio

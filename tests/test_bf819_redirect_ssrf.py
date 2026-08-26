@@ -29,6 +29,7 @@ import httpx
 import pytest
 
 from probos.agents.http_fetch import HttpFetchAgent
+from probos.security.url_guard import PinnedTarget
 
 
 @pytest.fixture(autouse=True)
@@ -44,11 +45,24 @@ def _clean():
 
 def _wire(monkeypatch, handler):
     """Install a MockTransport and disarm rate limiting. The SSRF guard is left
-    REAL -- stubbing it is what made an earlier draft of this file vacuous."""
+    REAL -- stubbing it is what made an earlier draft of this file vacuous.
+
+    BF-821: the guard stays real, but the ADDRESS PIN is suppressed. This file's
+    subject is which hops get validated; BF-821's is which address gets
+    connected to, and it has its own tests with real sockets. Pinning here would
+    rewrite every request URL to a literal, and these handlers dispatch on
+    ``request.url.host`` -- so the hop that is supposed to redirect would stop
+    matching and the file would silently stop testing redirects at all.
+    """
     real = httpx.AsyncClient
     monkeypatch.setattr(
         httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
     )
+
+    def _judge_without_pinning(self, url: str) -> PinnedTarget:
+        return PinnedTarget(HttpFetchAgent._validate_url(self, url), ())
+
+    monkeypatch.setattr(HttpFetchAgent, "_validate_and_pin", _judge_without_pinning)
 
     async def _no_wait(self, _domain, state):
         state.last_request_time = 0
@@ -439,6 +453,15 @@ class TestTheDestinationDomainIsCharged:
         )
         monkeypatch.setattr(HttpFetchAgent, "_wait_for_rate_limit", _record)
         monkeypatch.setattr(HttpFetchAgent, "_validate_url", lambda self, url: None)
+        # BF-821: the request path pins through `_validate_and_pin`. No
+        # addresses means nothing to pin, so the handler above still dispatches
+        # on the HOSTNAME -- pinning to a literal would make every hop look
+        # like the same host and this test would stop being about charging.
+        monkeypatch.setattr(
+            HttpFetchAgent,
+            "_validate_and_pin",
+            lambda self, url: PinnedTarget(None, ()),
+        )
 
         agent = HttpFetchAgent(agent_id="charge", pool="http")
         await agent._fetch_url("https://example.com/start", "GET")
@@ -516,6 +539,12 @@ class TestTheChainStaysInsideTheCallersBudget:
             lambda **kw: real(transport=httpx.MockTransport(handler), **kw),
         )
         monkeypatch.setattr(HttpFetchAgent, "_validate_url", lambda self, url: None)
+        # BF-821: as above -- no addresses, so the handler keeps seeing names.
+        monkeypatch.setattr(
+            HttpFetchAgent,
+            "_validate_and_pin",
+            lambda self, url: PinnedTarget(None, ()),
+        )
         monkeypatch.setattr(HttpFetchAgent, "DEFAULT_TIMEOUT", 0.25)
 
         async def _slow(self, domain, state):

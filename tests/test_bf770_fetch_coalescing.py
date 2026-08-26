@@ -20,6 +20,7 @@ import asyncio
 import pytest
 
 from probos.agents.http_fetch import HttpFetchAgent
+from probos.security.url_guard import PinnedTarget
 
 
 @pytest.fixture(autouse=True)
@@ -598,6 +599,14 @@ class TestAtTheLiteralHttpBoundary:
 
         monkeypatch.setattr(httpx, "AsyncClient", _client)
         monkeypatch.setattr(HttpFetchAgent, "_validate_url", lambda self, url: None)
+        # BF-821: the request path pins through `_validate_and_pin`. No
+        # addresses means nothing to pin, so the URL reaches the transport
+        # unrewritten -- this test is about coalescing, not DNS.
+        monkeypatch.setattr(
+            HttpFetchAgent,
+            "_validate_and_pin",
+            lambda self, url: PinnedTarget(None, ()),
+        )
 
         async def _no_wait(self, _domain, state):
             state.last_request_time = 0

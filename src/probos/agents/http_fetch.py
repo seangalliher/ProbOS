@@ -11,7 +11,11 @@ from typing import Any, ClassVar
 
 import httpx
 
-from probos.security.url_guard import validate_public_url
+from probos.security.url_guard import (
+    PinnedTarget,
+    validate_and_pin_public_url,
+    validate_public_url,
+)
 from probos.substrate.agent import BaseAgent
 from probos.types import (
     CapabilityDescriptor,
@@ -265,13 +269,20 @@ class HttpFetchAgent(BaseAgent):
         error = validate_public_url(url)
         if error is not None:
             return error
+        return self._check_egress(url)
 
-        # AD-456b: Egress policy consultation (active enforcement). Defense in
-        # depth — runs AFTER scheme/host/private-IP guards. EgressPolicy emits
-        # EGRESS_BLOCKED itself; we only need to surface the block to the
-        # caller. When _egress_policy is None (config.security_infra.
-        # egress_active_enforcement=False, the v1 default), this block is a
-        # no-op and AD-456 consultation-only behavior is preserved.
+    def _check_egress(self, url: str) -> str | None:
+        """AD-456b: Egress policy consultation (active enforcement).
+
+        Defense in depth -- runs AFTER the scheme / host / private-address
+        floor. EgressPolicy emits EGRESS_BLOCKED itself; we only surface the
+        block to the caller. When ``_egress_policy`` is None (config.
+        security_infra.egress_active_enforcement=False, the v1 default), this
+        is a no-op and AD-456 consultation-only behaviour is preserved.
+
+        Split out of :meth:`_validate_url` by BF-821 so the reason-only entry
+        point and the pinning one apply the identical rule.
+        """
         policy = type(self)._egress_policy
         if policy is not None:
             try:
@@ -284,6 +295,19 @@ class HttpFetchAgent(BaseAgent):
                 )
 
         return None
+
+    def _validate_and_pin(self, url: str) -> PinnedTarget:
+        """The floor plus AD-456b egress, returning the addresses it approved.
+
+        BF-821: ``_validate_url`` stays the reason-only entry point -- six tests
+        patch or override it to suppress DNS and two more call it directly, and
+        its ``str | None`` contract is unchanged.
+        """
+        target = validate_and_pin_public_url(url)
+        if target.reason is not None:
+            return target
+        egress = self._check_egress(url)
+        return PinnedTarget(egress) if egress else target
 
     async def fetch_governed(
         self,
@@ -409,6 +433,18 @@ class HttpFetchAgent(BaseAgent):
         differently for the two lookups. Closing that needs the connection
         pinned to the address the guard approved -- tracked separately, and not
         claimed here.
+
+        BF-821 closed it. ``_follow_and_fetch`` now pins each hop to an address
+        the guard actually judged, so httpx receives a literal and never
+        resolves the name a second time. Measured before the fix: the guard
+        approved a public address and the connection landed on 127.0.0.1.
+
+        Still NOT closed, and not implied by the above: ``BrowserTool``.
+        Playwright resolves inside the browser process, and BF-822's
+        ``context.route`` floor sees a URL rather than an address, so it has
+        nothing to pin. A hostname that resolves to a private address -- or one
+        that rebinds between lookups -- remains reachable through the browser.
+        That gap is acknowledged, not fixed here.
         """
         domain, state = self._get_domain_state(url)
 
@@ -460,8 +496,31 @@ class HttpFetchAgent(BaseAgent):
             ) as client:
                 current = url
                 for hop in range(self.MAX_REDIRECTS + 1):
+                    # BF-821: judge and pin HERE, per hop, hop 0 included. Hop 0
+                    # was already judged at the pre-coalescing gate in
+                    # `_fetch_url`, so it resolves twice -- that is not the bug
+                    # returning. The bug was that the address CONNECTED TO was
+                    # never judged; this second lookup is both the judged one
+                    # and the connected one, and the first is only an early
+                    # reject that avoids paying for a coalescing slot.
+                    #
+                    # The pin is rebound at the top of every hop and never
+                    # carried across one: hop N's approval says nothing about
+                    # hop N+1's host.
+                    target = self._validate_and_pin(current)
+                    if target.reason:
+                        return {
+                            "success": False,
+                            "error": f"SSRF protection: {target.reason}",
+                        }
+                    # `current` stays the NAME throughout: `previous.join` needs
+                    # it to resolve a relative Location, `_get_domain_state`
+                    # keys the limiter on it, and the reported url is it.
+                    logical = httpx.URL(current)
+                    attempts = self._pin_kwargs(logical, target.addresses)
+
                     req_start = time.monotonic()
-                    response = await client.request(method, current)
+                    response = await self._request_pinned(client, method, attempts)
                     latency_ms = (time.monotonic() - req_start) * 1000
 
                     self._update_rate_state(state, response)
@@ -476,7 +535,11 @@ class HttpFetchAgent(BaseAgent):
                         # the lock exists to protect.
                         retry_delay = await self._wait_for_rate_limit(domain, state)
                         req_start2 = time.monotonic()
-                        response = await client.request(method, current)
+                        # BF-821: the SAME pin. Re-validating would open a third
+                        # lookup inside one hop, which is the defect itself.
+                        response = await self._request_pinned(
+                            client, method, attempts
+                        )
                         latency_ms2 = (time.monotonic() - req_start2) * 1000
                         self._update_rate_state(state, response)
                         self._record_to_profile(
@@ -508,12 +571,10 @@ class HttpFetchAgent(BaseAgent):
                     previous = httpx.URL(current)
                     current = str(previous.join(response.headers["location"]))
 
-                    error = self._validate_url(current)
-                    if error:
-                        return {
-                            "success": False,
-                            "error": f"SSRF protection: {error}",
-                        }
+                    # BF-821: no validation here. The top of the loop pins the
+                    # next hop before requesting it, which both judges it and
+                    # decides what is connected to. Validating again here would
+                    # be a third lookup whose answer nothing uses.
 
                     method = self._redirect_method(method, response.status_code)
 
@@ -540,7 +601,10 @@ class HttpFetchAgent(BaseAgent):
                 return {
                     "success": True,
                     "data": {
-                        "url": str(response.url),
+                        # BF-821: the LOGICAL url, not ``response.url``. The
+                        # request url is the pinned address once the hop is
+                        # rewritten, and a caller asked for a name.
+                        "url": str(logical),
                         "status_code": response.status_code,
                         "headers": safe_headers,
                         "body": body,
@@ -565,6 +629,80 @@ class HttpFetchAgent(BaseAgent):
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    @staticmethod
+    def _pin_kwargs(
+        logical: httpx.URL, addresses: tuple[str, ...]
+    ) -> list[tuple[httpx.URL, dict[str, str], dict[str, str]]]:
+        """One attempt per approved address: connect to the address, speak to the name.
+
+        BF-821: ``Host`` alone is NOT enough. Measured against httpx 0.28.1 --
+        with only the header rewritten, TLS verifies the certificate against the
+        literal address and a legitimate host fails to connect, trading SSRF for
+        a broken chain. ``sni_hostname`` becomes ``server_hostname`` in
+        httpcore's ``start_tls``, which is what the ssl module matches the
+        certificate against, so the chain is still checked against the original
+        name. On ``http://`` the extension is inert, so it is set unconditionally
+        to keep one code path.
+
+        An empty ``addresses`` means there is nothing to pin -- reachable only
+        for a hostname-less URL, which ``check_url_shape`` refuses before this
+        is called -- so the request goes out unchanged rather than being
+        rewritten to nothing.
+        """
+        if not addresses:
+            return [(logical, {}, {})]
+        # httpx's ``netloc`` is host[:port] and already excludes userinfo;
+        # stripping is belt-and-braces so credentials can never reach a Host
+        # header if that ever changes.
+        host_header = logical.netloc.decode("ascii").rpartition("@")[2]
+        # ``raw_host``, NOT ``host``: for an internationalised name ``host`` is
+        # the unicode form and ``raw_host`` is the IDNA/ASCII one. httpcore's
+        # own default is ``origin.host.decode("ascii")``, which is the ASCII
+        # form, so anything else would change what TLS is verified against for
+        # exactly the hosts least likely to be tested.
+        sni = logical.raw_host.decode("ascii")
+        return [
+            (
+                logical.copy_with(host=addr),
+                {"Host": host_header},
+                {"sni_hostname": sni},
+            )
+            for addr in addresses
+        ]
+
+    async def _request_pinned(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        attempts: list[tuple[httpx.URL, dict[str, str], dict[str, str]]],
+    ) -> httpx.Response:
+        """Try each approved address in order; fail closed when they are exhausted.
+
+        BF-821: every address here came from the ONE judged lookup, so moving to
+        the next is not a second rebinding window. Sequential rather than
+        anyio's overlapped Happy Eyeballs, which pinning necessarily gives up: a
+        blackholed first address costs one connect timeout instead of 0.25s,
+        bounded by the chain's own ``asyncio.timeout``.
+        """
+        last: Exception | None = None
+        for url, headers, extensions in attempts:
+            try:
+                return await client.request(
+                    method, url, headers=headers, extensions=extensions
+                )
+            except httpx.ConnectError as e:
+                last = e
+                logger.warning(
+                    "BF-821: approved address %s refused the connection for %s; "
+                    "trying the next approved address (%s)",
+                    url.host,
+                    headers.get("Host", url.host),
+                    e,
+                )
+        if last is not None:
+            raise last
+        raise httpx.ConnectError("No approved address to connect to")
 
     @staticmethod
     def _redirect_method(method: str, status_code: int) -> str:

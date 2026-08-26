@@ -28,6 +28,7 @@ import pytest
 from probos.agents.utility import web_agents
 from probos.agents.utility.web_agents import WebSearchAgent
 from probos.cognitive.llm_client import MockLLMClient
+from probos.security.url_guard import PinnedTarget
 from probos.types import IntentMessage
 
 
@@ -397,11 +398,18 @@ class TestBF769FetchCarriesStatus:
             async def __aexit__(self, *_a):
                 return False
 
-            async def request(self, _method, url):
+            async def request(self, _method, url, **kwargs):
                 return _Response(url)
 
         agent = HttpFetchAgent(agent_id="http-real")
         monkeypatch.setattr(HttpFetchAgent, "_validate_url", lambda self, url: None)
+        # BF-821: the request path pins through `_validate_and_pin`. No
+        # addresses means nothing to pin, so the URL is unrewritten.
+        monkeypatch.setattr(
+            HttpFetchAgent,
+            "_validate_and_pin",
+            lambda self, url: PinnedTarget(None, ()),
+        )
 
         async def _no_wait(self, _domain, state):
             state.last_request_time = 0
