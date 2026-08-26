@@ -133,6 +133,58 @@ class RepairDispatcher:
             # guard entirely and letting every recurrence race.
             fault_id = str(getattr(report, "id", "") or "") or signature
 
+            # AD-1268: a decision is a standing answer. A fault report that has
+            # ever raised a DECIDED approval does not raise another -- denied
+            # means the Captain answered, approved means a dispatch is already
+            # in flight, and fulfilled/failed mean it ran. The escape hatch is
+            # resolution, not a timer: a resolved fault that recurs takes the
+            # create branch and arrives with a NEW id, so this lookup matches
+            # nothing and the ask is clean. The cost, deliberately: a repair
+            # that did not hold keeps reporting but does not re-ask until the
+            # report is resolved or dismissed, because ask -> approve ->
+            # dispatch -> fail -> ask spends deep-tier tokens on a repair
+            # already known not to work.
+            #
+            # Placed after the surface check so a missing store is still the
+            # cheaper return, and before the in-flight add so a held fault never
+            # enters the guard. Synchronous, so it opens no await window between
+            # that check and the reservation.
+            # ``callable``, not ``hasattr``: an attribute that exists but
+            # cannot be called would raise TypeError into the broad handler
+            # below and skip the honest degrade log entirely.
+            lookup = getattr(store, "find_action_requests_by_param", None)
+            if callable(lookup):
+                decided = lookup(
+                    "fault_id",
+                    fault_id,
+                    statuses=("approved", "denied", "fulfilled", "failed"),
+                    # Narrowed to THIS question. Review measured a denied
+                    # ``browser.navigate`` carrying the same fault_id
+                    # suppressing a repair that had never been proposed: a
+                    # param name is not an identity.
+                    tool_id=REPAIR_TOOL_ID,
+                    action=REPAIR_ACTION,
+                )
+                if decided:
+                    # DEBUG, not WARNING: this fires on every recurrence of a
+                    # decided fault, by design and possibly for a long time.
+                    logger.debug(
+                        "AD-1268: fault %s already raised approval %s, which "
+                        "is %s; not proposing again until the fault is "
+                        "resolved",
+                        fault_id, str(getattr(decided[0], "id", ""))[:12],
+                        getattr(decided[0], "status", "decided"),
+                    )
+                    return
+            else:
+                logger.debug(
+                    "AD-1268: the approval store cannot answer whether fault "
+                    "%s was already decided; repair proposals degrade to "
+                    "AD-1267 pending-only dedup, so a denied fault may be "
+                    "proposed again",
+                    fault_id,
+                )
+
             # No await between the check and the add: that atomicity with
             # respect to the event loop is what closes the storm without a lock.
             if fault_id in self._inflight:

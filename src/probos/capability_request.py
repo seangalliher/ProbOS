@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 import time
 import uuid
@@ -224,6 +225,29 @@ def action_dedup_key(
         ]
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _created_at_sort_key(req: "CapabilityRequest") -> tuple[int, float]:
+    """A total order over ``created_at``, including rows whose value is junk.
+
+    ``sorted(key=lambda r: r.created_at)`` raises ``TypeError`` on the first
+    mixed pair, so one corrupt row would make the whole lookup unanswerable.
+    Unusable timestamps sort LAST: an oldest-first caller wants the earliest
+    row it can actually date, not one it cannot.
+
+    Non-finite is unusable, not merely odd. ``float("nan")`` converts happily
+    and then compares false against everything, which does not raise but does
+    make the resulting order arbitrary -- review measured a NaN row ranking
+    alongside well-dated ones. ``inf`` is rejected for the same reason: it is
+    not a date.
+    """
+    try:
+        value = float(req.created_at)
+    except (TypeError, ValueError, OverflowError):
+        return (1, 0.0)
+    if not math.isfinite(value):
+        return (1, 0.0)
+    return (0, value)
 
 
 @dataclass
@@ -460,6 +484,80 @@ class CapabilityRequestStore(EventEmitterMixin):
             ):
                 return req
         return None
+
+    def find_action_requests_by_param(
+        self,
+        param_key: str,
+        param_value: str,
+        *,
+        statuses: tuple[str, ...] | None = None,
+        tool_id: str | None = None,
+        action: str | None = None,
+    ) -> list[CapabilityRequest]:
+        """AD-1268: ``action`` requests whose ``params[param_key]`` matches, oldest first.
+
+        ``statuses=None`` means every status; otherwise only those given.
+        ``tool_id`` / ``action`` narrow to one asking shape. Review measured why
+        that is not optional: a param name is not an identity, so a DENIED
+        ``browser.navigate`` that happened to carry the same ``fault_id``
+        suppressed a repair that had never been proposed once. A caller asking
+        "has THIS question already been answered" has to say which question.
+
+        Oldest-first by ``created_at``, so "was this ever decided" and "what was
+        decided first" are both answerable from one call.
+
+        Synchronous, matching :meth:`_find_pending_action` and
+        :meth:`count_pending_sync`. It reads the cache and does no I/O, so an
+        ``async`` signature would buy nothing and would open an await window
+        inside the repair dispatcher's reservation, which AD-1267 requires to
+        stay await-free.
+
+        Total on every shape reachable in the cache, because one malformed row
+        must not make the lookup unanswerable for the well-formed rows beside
+        it -- inside ``on_fault_event`` a raise here lands in the broad handler
+        and the fault is silently not proposed. ``file_request`` caches
+        ``payload`` verbatim with no validation, so neither the payload nor
+        ``params`` is guaranteed to be a dict, and ``created_at`` is not
+        guaranteed to be a number.
+
+        **Cost:** an O(n) scan of the cache, where n is every request ever filed
+        — :meth:`_refresh_cache` loads all statuses. Same cost as
+        :meth:`_find_pending_action`, now paid a second time per fault event.
+        """
+        matches: list[CapabilityRequest] = []
+        for req in self._cache.values():
+            # Per-row, because the point is that ONE bad row must not take the
+            # answer down for the good rows beside it. isinstance() is not
+            # enough on its own: a dict subclass satisfies it and can still
+            # raise from ``get`` -- review measured exactly that.
+            try:
+                if req.kind != "action" or not isinstance(req.payload, dict):
+                    continue
+                if statuses is not None and req.status not in statuses:
+                    continue
+                if tool_id is not None and req.payload.get("tool_id") != tool_id:
+                    continue
+                if action is not None and req.payload.get("action") != action:
+                    continue
+                params = req.payload.get("params")
+                # Presence-checked before comparing: an absent key stringifies
+                # to "None", which would match a caller asking for the literal
+                # "None".
+                if not isinstance(params, dict) or param_key not in params:
+                    continue
+                matched = str(params[param_key]) == str(param_value)
+            except Exception:
+                logger.warning(
+                    "AD-1268: skipping capability request %s while looking up "
+                    "%s=%s; its payload could not be read, so it is treated as "
+                    "no match and the remaining rows still answer",
+                    str(getattr(req, "id", ""))[:12], param_key, param_value,
+                    exc_info=True,
+                )
+                continue
+            if matched:
+                matches.append(req)
+        return sorted(matches, key=_created_at_sort_key)
 
     def count_pending_sync(self, agent_id: str, *, stale_before: float = 0.0) -> int:
         """AD-1154 / DD-6: pending asks for ``agent_id``, excluding stale ones.
