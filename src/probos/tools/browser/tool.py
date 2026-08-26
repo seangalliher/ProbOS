@@ -35,6 +35,7 @@ from probos.security.url_guard import check_url_shape
 from probos.tools.browser.actions import action_verify, classify_action, dispatch_action
 from probos.tools.browser.loop_host import shutdown_playwright_host
 from probos.tools.browser.session import BrowserSession
+from probos.tools.browser.url_route_guard import file_redirect_escalations
 from probos.tools.protocol import ToolResult, ToolType
 
 if TYPE_CHECKING:
@@ -535,6 +536,15 @@ class BrowserTool:
                 duration_ms=elapsed_ms,
                 metadata={"session_id": session.session_id, "tier": tier},
             )
+        finally:
+            # BF-822: every navigation this tool performs happens in the block
+            # above, and a refused method-preserving redirect makes the
+            # navigation FAIL -- so the escalation has to be filed on the
+            # exception exit as well as the normal one. This is the runtime's
+            # own loop; the route handler that recorded the escalation is not
+            # (BF-695 puts it on the Playwright host thread on Windows) and
+            # cannot await a store bound here.
+            await self._file_redirect_escalations(session, context)
 
         elapsed_ms = (time.monotonic() - t0) * 1000.0
         self._audit(
@@ -566,6 +576,68 @@ class BrowserTool:
     # Session bookkeeping
     # ------------------------------------------------------------------
 
+    async def _file_redirect_escalations(
+        self, session: Any, context: dict[str, Any] | None,
+    ) -> None:
+        """BF-822: turn the guard's refused hops into Captain-facing asks.
+
+        Never raises except on cancellation, and never changes the tool's
+        result: the hop was already refused inside the browser, so the worst
+        case here is that the Captain is asked one call later than they might
+        have been.
+
+        Records that have already left the guard are handed BACK on EVERY
+        failure lane. Review measured the first draft restoring only on
+        cancellation, which meant an ordinary fault at this seam silently
+        discarded the asks -- the same loss class the lock above exists to
+        prevent, on a different lane. Re-filing a record that did land is a
+        no-op; the store dedups.
+
+        Cancellation is re-raised rather than swallowed, per async discipline.
+        """
+        records: list[Any] = []
+        try:
+            drain = getattr(session, "drain_redirect_escalations", None)
+            if drain is None:
+                return
+            records = drain()
+            if not records:
+                return
+            thread_id = (context or {}).get("thread_id")
+            await file_redirect_escalations(
+                self._runtime,
+                records,
+                session_id=getattr(session, "session_id", ""),
+                thread_id=thread_id if isinstance(thread_id, str) else "",
+            )
+        except Exception:
+            self._restore_redirect_escalations(session, records)
+            logger.warning(
+                "BF-822: filing redirect escalations failed; the hops stay "
+                "refused and the asks are held for the next browser call",
+                exc_info=True,
+            )
+        except BaseException:
+            self._restore_redirect_escalations(session, records)
+            raise
+
+    @staticmethod
+    def _restore_redirect_escalations(session: Any, records: list[Any]) -> None:
+        if not records:
+            return
+        restore = getattr(session, "restore_redirect_escalations", None)
+        if restore is None:
+            return
+        try:
+            restore(records)
+        except Exception:
+            logger.warning(
+                "BF-822: %d redirect escalation(s) were lost while being "
+                "handed back to the guard; those hops stay refused and the "
+                "Captain is never asked",
+                len(records), exc_info=True,
+            )
+
     async def _get_or_create_session(
         self,
         session_id: str | None,
@@ -595,6 +667,11 @@ class BrowserTool:
             config=self._config,
             agent_id=agent_id,
             emit_event=self._emit_event,
+            # BF-822: lets this session's route guard consult a standing
+            # approval before refusing a method-preserving redirect. Passed
+            # only here and NOT to the AD-1052b bridge factory, which attaches
+            # to the Captain's own browser and is deliberately unguarded.
+            runtime=self._runtime,
         )
         await session.start()
         self._sessions[new_id] = session

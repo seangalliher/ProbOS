@@ -21,7 +21,12 @@ from probos.tools.browser.loop_host import (
     loop_supports_subprocess,
     wrap_host_object,
 )
-from probos.tools.browser.url_route_guard import install_url_route_guard
+from probos.tools.browser.url_route_guard import (
+    RedirectEscalation,
+    UrlRouteGuard,
+    install_url_route_guard,
+    make_redirect_grant_check,
+)
 
 if TYPE_CHECKING:
     from probos.config import BrowserToolConfig
@@ -98,11 +103,17 @@ class BrowserSession:
         config: BrowserToolConfig,
         agent_id: str,
         emit_event: Any | None = None,
+        runtime: Any | None = None,
     ) -> None:
         self.session_id = session_id
         self._config = config
         self._agent_id = agent_id
         self._emit_event = emit_event
+        # BF-822: reaches the approval stores so a refused method-preserving
+        # redirect can be escalated instead of dead-ending. Optional because
+        # every existing construction site omits it and must stay unchanged.
+        self._runtime = runtime
+        self._route_guard: UrlRouteGuard | None = None
         self._created_at = time.time()
         # Most recent state() snapshot — index -> {selector, role, text, ...}
         self._last_state_index: list[dict[str, Any]] = []
@@ -217,7 +228,12 @@ class BrowserSession:
             self._context = await self._browser.new_context()
         # BF-822: registered on the CONTEXT, before any page exists, so a popup
         # or a tab opened later inherits it.
-        await install_url_route_guard(self._context, session_id=self.session_id)
+        self._route_guard = await install_url_route_guard(
+            self._context,
+            session_id=self.session_id,
+            agent_id=self._agent_id,
+            is_granted=make_redirect_grant_check(self._runtime, self._agent_id),
+        )
         self._page = await self._context.new_page()
         try:
             self._page.set_default_timeout(self._config.default_timeout_ms)
@@ -437,6 +453,27 @@ class BrowserSession:
 
     def set_last_url(self, url: str) -> None:
         self._last_url = url
+
+    def drain_redirect_escalations(self) -> list[RedirectEscalation]:
+        """BF-822: take the method-preserving hops the guard refused since the
+        last call, so the caller can file them from the runtime's own loop.
+
+        Empty for a session whose context could not be routed, and for the
+        AD-1052b bridge, which is deliberately unguarded.
+        """
+        guard = self._route_guard
+        if guard is None:
+            return []
+        return guard.drain_escalations()
+
+    def restore_redirect_escalations(
+        self, records: list[RedirectEscalation]
+    ) -> None:
+        """BF-822: hand drained escalations back when filing did not complete."""
+        guard = self._route_guard
+        if guard is None:
+            return
+        guard.restore_escalations(records)
 
     @property
     def is_connected(self) -> bool:
