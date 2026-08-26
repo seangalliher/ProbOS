@@ -21,6 +21,7 @@ from probos.tools.browser.loop_host import (
     loop_supports_subprocess,
     wrap_host_object,
 )
+from probos.tools.browser.url_route_guard import install_url_route_guard
 
 if TYPE_CHECKING:
     from probos.config import BrowserToolConfig
@@ -214,6 +215,9 @@ class BrowserSession:
             )
         else:
             self._context = await self._browser.new_context()
+        # BF-822: registered on the CONTEXT, before any page exists, so a popup
+        # or a tab opened later inherits it.
+        await install_url_route_guard(self._context, session_id=self.session_id)
         self._page = await self._context.new_page()
         try:
             self._page.set_default_timeout(self._config.default_timeout_ms)
