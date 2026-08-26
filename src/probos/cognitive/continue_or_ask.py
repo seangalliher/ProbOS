@@ -48,7 +48,7 @@ discover it from a silent branch.
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Mapping
 
 # Single source of truth. AD-1155 owns the re-invokability decision and the
 # continuation block; importing them is the point. Cross-module import of a
@@ -59,6 +59,25 @@ from typing import Any, Awaitable, Callable
 from probos.cognitive.crew_executor import (
     _REINVOKABLE_STOPPED_REASONS,
     _render_continuation,
+)
+
+# AD-1257 moved ``detect_tool_defect``, ``ToolDefect`` and
+# ``_DEFECT_MIN_OCCURRENCES`` out of this module and into foundation
+# ``probos/fault_report.py``. The scope that actually holds the raw
+# call/result pairs the detector reads is ``WorkItemAgenticExecutor.run``, and
+# giving ``agentic_dispatch`` a runtime import edge into this module — which
+# imports ``crew_executor`` above at module level — is not worth the saving.
+# Foundation is the tier both callers can already reach.
+#
+# Re-exported here so existing importers keep working. This is a namespace
+# alias, NOT a second definition — the BF-801 / ``dm/reply_value.py``
+# precedent, already in the tree.
+from probos.fault_report import (  # noqa: F401
+    _DEFECT_MIN_OCCURRENCES,
+    ToolDefect,
+    detect_tool_defect,
+    resolve_tool_defect,
+    error_signature,
 )
 
 logger = logging.getLogger(__name__)
@@ -162,28 +181,9 @@ _CONTINUE_RATIONALE: str = (
 _BLOCKED_REASON: str = "continue: the turn reached its step limit"
 
 # AD-1170: a stalled turn has more than one possible cause, and until now the
-# system only modelled one of them.
-#
-# AD-1164 asks "do you want me to keep going?", which is the right question when
-# the turn simply needed more room. It is the wrong question when a tool is
-# broken -- more room buys more attempts at something that will keep failing.
-#
-# BF-701 is the case. The agent asked the browser tool for ``key_type`` at step
-# 2, was told ``unknown browser action: 'key_type'``, asked again at step 15,
-# got the same answer, and burned the steps between on workarounds. It then
-# filed a continue request, because that was the only verdict available. The
-# diagnosis was sitting in its own results the whole time.
-#
-# Two occurrences is the threshold. Once is a transient -- a timeout, a race, a
-# page that had not settled -- and retrying is the correct response. Twice is a
-# pattern: the same tool answered the same way, and the agent already tried the
-# obvious thing in between.
-#
-# The detection reads the outcome's OWN ``tool_calls``/``tool_results``, joined
-# on request id. No classifier, no extra model call, no re-reading the persisted
-# trace -- the same discipline as AD-1165 promoting on elapsed time. Evidence
-# the turn already produced cannot be wrong about what it measures.
-_DEFECT_MIN_OCCURRENCES: int = 2
+# system only modelled one of them. The detector, its threshold and its bounded
+# verdict now live in foundation ``probos/fault_report.py`` (AD-1257) and are
+# re-exported at the top of this module — see the import there for why.
 
 _DEFECT_LEAD_WITH_WORK: str = (
     "I stopped here because the same call kept coming back the same way. The "
@@ -207,67 +207,6 @@ _DEFECT_TAIL: str = (
 _DEFECT_ERROR_QUOTE_MAX: int = 200
 
 
-def detect_tool_defect(outcome: Any) -> tuple[str, str, int] | None:
-    """AD-1170: find a tool that failed the same way more than once.
-
-    Returns ``(tool_id, error_text, count)`` for the most-repeated failing
-    (tool, error) pair when it reaches the threshold, else ``None``.
-
-    ``ToolCallResult`` carries the request id and the error text but not the
-    tool name, and ``ToolCallRequest`` carries the id and the name -- so the two
-    are joined on id. Both lists live on the outcome the caller already holds.
-
-    Never raises: a malformed outcome yields ``None`` and the caller takes the
-    ordinary step-limit path, which is exactly today's behaviour.
-    """
-    try:
-        from probos.fault_report import normalise_error
-
-        calls = getattr(outcome, "tool_calls", None) or []
-        results = getattr(outcome, "tool_results", None) or []
-        if not calls or not results:
-            return None
-
-        name_by_id: dict[str, str] = {}
-        for call in calls:
-            call_id = getattr(call, "id", None)
-            name = getattr(call, "name", None)
-            if type(call_id) is str and type(name) is str and name:
-                name_by_id[call_id] = name
-
-        # (tool, normalised error) -> [count, first raw error text]
-        tally: dict[tuple[str, str], list[Any]] = {}
-        for result in results:
-            if getattr(result, "is_error", False) is not True:
-                continue
-            tool_id = name_by_id.get(getattr(result, "id", ""), "")
-            if not tool_id:
-                continue
-            raw = getattr(result, "output", "")
-            raw_text = raw if type(raw) is str else str(raw)
-            key = (tool_id, normalise_error(raw_text))
-            entry = tally.get(key)
-            if entry is None:
-                tally[key] = [1, raw_text]
-            else:
-                entry[0] += 1
-
-        if not tally:
-            return None
-        (tool_id, _sig), (count, raw_text) = max(
-            tally.items(), key=lambda kv: kv[1][0],
-        )
-        if count < _DEFECT_MIN_OCCURRENCES:
-            return None
-        return tool_id, raw_text, count
-    except Exception:
-        logger.debug(
-            "AD-1170: defect detection raised; the turn takes the ordinary "
-            "step-limit path", exc_info=True,
-        )
-        return None
-
-
 async def file_fault_from_turn(
     runtime: Any,
     *,
@@ -276,8 +215,24 @@ async def file_fault_from_turn(
     tool_id: str,
     error_text: str,
     attempted: str,
+    tool_trace_ref: str = "",
+    defect: ToolDefect | None = None,
 ) -> str:
     """File an AD-1169 fault report for a defect this turn ran into.
+
+    ``tool_trace_ref`` is the run's AD-731 trace ref. ``FaultReportStore`` has
+    always accepted one; nothing passed it, so every row this path wrote stored
+    ``None`` and the AD-1171/AD-1172 repair path could not recover the failing
+    arguments -- verification returned "inconclusive" for want of a ref the
+    caller was already holding. Defaulted, so existing call sites are unchanged.
+
+    AD-1269: ``defect`` is the detector's ``ToolDefect``, forwarded whole. It
+    carries the identity derived from the UNTRUNCATED error text -- the store's
+    own recompute reads the truncated text and would key a long error onto a
+    second row -- and the name the model used, which is what the persisted
+    trace records and therefore what AD-1173's argument recovery matches on.
+    The whole object rather than its fields, so the signature can never be
+    paired with a tool name it was not derived from.
 
     Returns the fault id, or ``""`` when there is nowhere to file. Never
     raises: a turn must finish even when the reporting channel is missing.
@@ -292,6 +247,8 @@ async def file_fault_from_turn(
             attempted=attempted,
             agent_id=agent_id,
             thread_id=thread_id,
+            tool_trace_ref=tool_trace_ref or None,
+            defect=defect,
         )
     except Exception:
         logger.warning(
@@ -618,6 +575,7 @@ async def resolve_exhausted_turn(
     thread_id: str = "",
     display_task_text: str = "",
     work_item_id: str | None = None,
+    already_filed: Mapping[str, str] | None = None,
     config: Any,
 ) -> str:
     """Turn a step-limit stop into a continuation or an honest, durable ask.
@@ -642,6 +600,13 @@ async def resolve_exhausted_turn(
     through the driver that has always done that. Omitted or ``None`` — a turn
     that finished inside the promotion budget, so there is no item — the ask is
     filed exactly as before and nothing is parked.
+    AD-1257: ``already_filed`` maps AD-1169 error signature -> fault id for the
+    faults THIS turn has already filed at the per-pass hook. Supplied and
+    matching, the defect branch below reuses that id instead of filing a second
+    time, so one turn contributes at most one occurrence per signature — and
+    ``occurrences`` stays a true number in the Captain-facing repair prompt.
+    Omitted or ``None`` — every existing call site — files exactly as it does
+    today.
     The order of the gates is load-bearing:
 
     1. Gate off  ⇒ return the outcome's text unchanged.
@@ -732,21 +697,47 @@ async def resolve_exhausted_turn(
 
     # AD-1170: before asking whether to keep going, ask whether going on would
     # help. A tool that answered the same way twice will answer that way again.
-    defect = detect_tool_defect(current)
+    defect = resolve_tool_defect(current)
     if defect is not None:
-        tool_id, error_text, count = defect
-        fault_id = await file_fault_from_turn(
-            runtime,
-            agent_id=agent_id,
-            thread_id=thread_id,
-            tool_id=tool_id,
-            error_text=error_text,
-            attempted=_display_task_text(display_task_text, base_task_text),
-        )
+        tool_id = defect.tool_id
+        error_text = defect.error_text
+        count = defect.count
+        # AD-1257: the per-pass hook may already have filed this exact fault on
+        # this turn. Reuse its id rather than filing again — a second filing
+        # coalesces onto the same report but increments ``occurrences``, which
+        # is the number the repair prompt quotes back to the Captain.
+        #
+        # Read, never recomputed: the value derives its signature from the
+        # UNTRUNCATED text. Recomputing here from the truncated ``error_text``
+        # would produce a different key than the hook stored, and the reuse
+        # would silently miss.
+        signature = defect.signature
+        reused = (already_filed or {}).get(signature)
+        if reused is not None:
+            fault_id = reused
+        else:
+            fault_id = await file_fault_from_turn(
+                runtime,
+                agent_id=agent_id,
+                thread_id=thread_id,
+                tool_id=tool_id,
+                error_text=error_text,
+                attempted=_display_task_text(display_task_text, base_task_text),
+                tool_trace_ref=str(
+                    getattr(current, "tool_trace_ref", "") or ""
+                ),
+                # AD-1269: forwarded whole for the same reason it is read
+                # above. The store recomputes from the TRUNCATED text when it
+                # is absent, so a long error filed here and the same error
+                # filed by the per-pass hook would land on two different rows.
+                defect=defect,
+            )
         logger.info(
             "AD-1170: agent %s stopped against a repeated failure of tool %r "
-            "(%d occurrences); filed fault %s instead of a continue request",
-            agent_id[:12], tool_id, count, fault_id[:12] or "<none>",
+            "(%d occurrences); %s fault %s instead of a continue request",
+            agent_id[:12], tool_id, count,
+            "reusing" if reused is not None else "filed",
+            fault_id[:12] or "<none>",
         )
         lead = _DEFECT_LEAD_WITH_WORK if partial else _DEFECT_LEAD_NO_WORK
         detail = _DEFECT_DETAIL.format(

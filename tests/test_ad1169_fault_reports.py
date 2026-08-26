@@ -9,6 +9,18 @@ for ``key_type`` at step 2, was told ``unknown browser action: 'key_type'``,
 asked again at step 15, got the identical answer, and filed a continue request
 — because that was the only thing it could file. The diagnosis was in its own
 results the whole time.
+
+**BF-793 / AD-1257 — what these tests were, and are.** Every assertion below is
+correct about ``detect_tool_defect`` and none is weakened. What they could not
+see is that the shape they fake, ``AgenticResult``, is the LOOP's output, while
+the detector's only production caller passed a ``WorkItemAgenticOutcome`` — the
+EXECUTOR's projection, which carries neither ``tool_calls`` nor
+``tool_results``. So the function proven here returned ``None`` on every real
+turn and AD-1170 never fired at all. AD-1257 moved the detection into
+``WorkItemAgenticExecutor.run``, where the raw pairs are still in scope, which
+is what makes the shape faked here the production input. It became correct
+then; it was not correct before. The seam these tests do not cross is crossed
+by ``tests/test_ad1257_defect_follows_failure.py``.
 """
 
 from __future__ import annotations
@@ -28,7 +40,13 @@ from probos.fault_report import (
 )
 
 
-# ── fakes shaped like the real loop output ────────────────────────
+# ── fakes shaped like the real loop output ──────────────────
+#
+# ...which is the AgenticResult the LOOP returns. Since AD-1257 that is also
+# what the detector is handed in production, because detection moved into
+# ``WorkItemAgenticExecutor.run``. Before AD-1257 it was handed a
+# ``WorkItemAgenticOutcome`` instead, and "shaped like the real loop output"
+# was true of the loop and false of the caller — which is BF-793.──────
 
 
 class _Call:
@@ -253,10 +271,13 @@ def test_a_repeated_tool_failure_is_detected() -> None:
     """THE AD-1170 regression, on the real BF-701 shape."""
     found = detect_tool_defect(_bf701_outcome())
     assert found is not None
-    tool_id, error_text, count = found
-    assert tool_id == "browser"
-    assert "key_type" in error_text
-    assert count == 2
+    # This read ``tool_id, error_text, count = found`` — the detector returned a
+    # bare ``tuple[str, str, int]``. AD-1257 made it a frozen ``ToolDefect``,
+    # because a value that crosses the executor boundary has to be BOUNDED and
+    # nothing bounds a tuple. The three assertions are unchanged.
+    assert found.tool_id == "browser"
+    assert "key_type" in found.error_text
+    assert found.count == 2
 
 
 def test_a_single_failure_is_not_a_defect() -> None:
@@ -315,8 +336,10 @@ def test_the_most_repeated_failure_wins() -> None:
     )
     found = detect_tool_defect(outcome)
     assert found is not None
-    assert found[1] == "common failure"
-    assert found[2] == 3
+    # Was ``found[1]`` / ``found[2]``, pinning the positional tuple AD-1257
+    # replaced with ``ToolDefect``. Same two facts, named rather than indexed.
+    assert found.error_text == "common failure"
+    assert found.count == 3
 
 
 @pytest.mark.parametrize(

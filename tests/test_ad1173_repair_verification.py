@@ -108,6 +108,47 @@ def test_a_malformed_trace_recovers_nothing(bad) -> None:
     assert find_failing_arguments(bad, tool_id="browser", signature=_SIG) is None
 
 
+def test_an_unrecoverable_argument_dict_is_not_reported_as_a_signature_miss(
+    caplog,
+) -> None:
+    """R1/R2: the diagnostic must not assert something it did not check.
+
+    Executed against the round-2 build: an entry matching the name AND the
+    signature but carrying a non-dict ``arguments`` still logged "none carries
+    error signature", which is false -- that entry carried it. The two causes
+    need different repairs (expose the tool's arguments vs. widen the trace
+    output bound), so they are counted and worded separately.
+    """
+    trace = [
+        {"name": "browser", "arguments": "not-a-dict",
+         "output": _ERROR, "is_error": True},
+    ]
+
+    with caplog.at_level("DEBUG", logger="probos.cognitive.repair_verification"):
+        assert find_failing_arguments(
+            trace, tool_id="browser", signature=_SIG,
+        ) is None
+
+    assert "none has a recoverable argument dictionary" in caplog.text
+    assert "none carries error signature" not in caplog.text
+
+
+def test_a_signature_miss_still_says_so(caplog) -> None:
+    """The other branch keeps its wording: named, but signed by nothing."""
+    trace = [
+        {"name": "browser", "arguments": {"action": "click"},
+         "output": "a completely different failure", "is_error": True},
+    ]
+
+    with caplog.at_level("DEBUG", logger="probos.cognitive.repair_verification"):
+        assert find_failing_arguments(
+            trace, tool_id="browser", signature=_SIG,
+        ) is None
+
+    assert "none carries error signature" in caplog.text
+    assert "none has a recoverable argument dictionary" not in caplog.text
+
+
 # ── the three outcomes ────────────────────────────────────────────
 
 

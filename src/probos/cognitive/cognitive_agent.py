@@ -104,6 +104,93 @@ def _accumulate_pass_failures(observation: dict, outcome: Any) -> None:
     )
 
 
+async def _file_pass_defect(
+    outcome: Any,
+    filed: dict[str, str],
+    *,
+    runtime: Any,
+    agent_id: str,
+    thread_id: str,
+    attempted: str,
+) -> None:
+    """AD-1257: file the AD-1169 fault THIS pass's own results describe.
+
+    Detection is attached to the tool failure, not to the step limit. AD-1170
+    only ever ran on an exhausted turn, and only ever on a
+    ``WorkItemAgenticOutcome``, which carries neither ``tool_calls`` nor
+    ``tool_results`` — so (BF-793) it never ran at all. A tool that answered the
+    same way twice is broken whether or not the turn also ran out of room.
+
+    ``filed`` maps AD-1169 error signature -> fault id for the WHOLE turn, and
+    is what keeps one turn to at most one ``occurrences`` increment per
+    signature across any number of AD-1164 passes and the exhaustion path
+    combined. ``occurrences`` is quoted back to the Captain when a repair is
+    proposed, so double-counting it would make that sentence false.
+
+    Silent: filing changes nothing the Captain reads. The AD-1248 disclosure
+    already tells them a tool failed. Never raises — log-and-degrade, because a
+    turn must finish even when the reporting channel is broken.
+    """
+    try:
+        # Through the SHARED resolver, not a raw attribute read. Review
+        # measured the raw read filing durable rows for a count below the
+        # threshold, an empty tool_id, and a duck-typed 1 MB look-alike --
+        # this hook writes to the same store the exhaustion path does, so it
+        # has to apply the same bar.
+        from probos.fault_report import resolve_tool_defect
+
+        defect = resolve_tool_defect(outcome)
+        if defect is None:
+            return
+        # Lazily imported for the same reason the AD-1164 arming site below
+        # does it: ``continue_or_ask`` pulls in ``crew_executor`` at module
+        # level, and a pass with no defect should not pay for that.
+        from probos.cognitive.continue_or_ask import file_fault_from_turn
+
+        # Read, never recomputed: ``ToolDefect`` derives this from the
+        # UNTRUNCATED text, which is the identity the detector tallied on.
+        # Recomputing from the truncated ``error_text`` splits one detected
+        # defect into two fault rows.
+        signature = defect.signature
+        if signature in filed:
+            return
+        fault_id = await file_fault_from_turn(
+            runtime,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            tool_id=defect.tool_id,
+            error_text=defect.error_text,
+            attempted=attempted,
+            # Without this the row stores None and the AD-1171/AD-1172 repair
+            # path cannot recover the failing arguments -- verification returns
+            # "inconclusive" for want of a ref the outcome was already holding.
+            tool_trace_ref=str(getattr(outcome, "tool_trace_ref", "") or ""),
+            # AD-1269: the verdict forwarded whole. The store recomputes from
+            # the truncated text when it is absent, which splits a long error
+            # across two rows; the trace records the observed name, so without
+            # it the repair path has nothing to match on. Whole rather than
+            # field-by-field so the signature cannot be paired with a tool name
+            # it was not derived from.
+            defect=defect,
+        )
+        # Recorded whether or not an id came back. An unwired fault store
+        # returns "", and retrying that on the next pass would be one failed
+        # attempt per pass rather than one per turn.
+        filed[signature] = fault_id
+        logger.info(
+            "AD-1257: agent %s saw tool %r fail the same way %d times on this "
+            "pass; filed fault %s. The turn continues either way",
+            agent_id[:12], defect.tool_id, defect.count,
+            fault_id[:12] or "<no store>",
+        )
+    except Exception:
+        logger.warning(
+            "AD-1257: filing a tool-defect fault for agent %s raised; the turn "
+            "continues and the defect goes unreported for this pass",
+            agent_id[:12], exc_info=True,
+        )
+
+
 def _build_result_metadata(
     report: dict,
     decision: dict | None = None,
@@ -4210,6 +4297,15 @@ class CognitiveAgent(BaseAgent):
             # before this AD.
             _promoted: dict[str, str] = {"work_item_id": ""}
 
+            # AD-1257: AD-1169 error signature -> the fault id THIS turn filed
+            # for it. Turn-level dedup lives here because this cell is the only
+            # object that spans every pass AND is visible to ``_agentic_turn``,
+            # which is what lets the exhaustion path reuse an id the per-pass
+            # hook already filed instead of adding a second occurrence. Same
+            # closure-cell shape as ``_last_stop`` and ``_promoted`` above.
+            # Cross-turn coalescing is unchanged and belongs to the store.
+            _filed_faults: dict[str, str] = {}
+
             def _record_promotion(work_item_id: str) -> None:
                 _promoted["work_item_id"] = work_item_id
 
@@ -4277,6 +4373,17 @@ class CognitiveAgent(BaseAgent):
                 if _ref:
                     observation["_tool_trace_ref"] = _ref
                 _accumulate_pass_failures(observation, outcome)
+                # AD-1257: the fold point for this pass's failure evidence is
+                # also where a repeated failure gets reported. No stop-reason
+                # condition — that is the entire point.
+                await _file_pass_defect(
+                    outcome,
+                    _filed_faults,
+                    runtime=runtime,
+                    agent_id=self.id,
+                    thread_id=thread_id,
+                    attempted=_promotion_request_text(observation, user_message),
+                )
                 return outcome
 
             async def _agentic_turn() -> str:
@@ -4309,6 +4416,10 @@ class CognitiveAgent(BaseAgent):
                         # approval can resume it. Empty (not promoted) becomes
                         # None, which is byte-identical to before this AD.
                         work_item_id=_promoted["work_item_id"] or None,
+                        # AD-1257: what this turn has already filed, so the
+                        # exhaustion path names the same fault rather than
+                        # incrementing its occurrence count a second time.
+                        already_filed=_filed_faults,
                         config=cfg,
                     )
                 return turn_text

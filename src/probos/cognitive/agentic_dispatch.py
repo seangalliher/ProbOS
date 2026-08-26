@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.dm.reply_value import correlate_tool_outcomes  # AD-1248
 from probos.dm_reply import ToolFailures, mint_scope, scope_from_source  # AD-1248
+from probos.fault_report import ToolDefect, detect_tool_defect  # AD-1257
 from probos.integrations.mcp_bridge.risk import (
     McpToolRisk,
     resolve_tool_risk,
@@ -1428,6 +1429,59 @@ def register_mesh_intent_tools(
     return available
 
 
+def _tool_id_resolver(registry: Any) -> Callable[[str], str] | None:
+    """AD-1269: map a name the model used back to its registered tool id.
+
+    A tool whose id the provider's ``^[A-Za-z0-9_-]{1,64}$`` regex rejects is
+    offered under a sanitised alias (BF-754), so ``mcp:docs:search`` reaches the
+    loop -- and therefore the failure tally -- as
+    ``mcp_docs_search_38c53abe80026e47``. Filing a fault under that name gives
+    the Captain a rationale naming a tool they cannot look up, and a repair
+    approval whose ``scope_key`` grants nothing.
+
+    Uses ``llm_function_name_claimants`` against ``registry.list_ids()`` -- the
+    same helper against the same authority ``ToolExecutor._resolve_tool_id``
+    uses, so the detector and the executor cannot disagree about which tool ran.
+    Deliberately NOT the names offered on this run: a name ambiguous over the
+    whole registry can be unambiguous over one offer, and a fault filed against
+    a tool that never executed is worse than one filed under an alias.
+
+    Returns ``None`` when there is no registry to ask, which leaves
+    ``detect_tool_defect`` at exactly its pre-AD-1269 behaviour.
+    """
+    if registry is None or not hasattr(registry, "list_ids"):
+        return None
+    try:
+        from probos.cognitive.swe_harness.tool_call import (
+            llm_function_name_claimants,
+        )
+    except Exception:  # pragma: no cover - import cycle guard
+        logger.debug(
+            "AD-1269: the alias resolver is unavailable; faults are filed "
+            "against the observed tool name", exc_info=True,
+        )
+        return None
+
+    def _resolve(observed: str) -> str:
+        claimants = llm_function_name_claimants(observed, registry.list_ids())
+        if len(claimants) == 1:
+            return claimants[0]
+        if claimants:
+            # BF-757's rule, applied to filing rather than invoking: which of
+            # two tools the model was shown depends on the order they were
+            # offered in, and that order is not recoverable here. Guessing
+            # would name an innocent tool in a durable record.
+            logger.warning(
+                "AD-1269: the failing tool name %r is claimed by %d registered "
+                "tools (%s); filing the fault under the observed name rather "
+                "than guessing which one the model was offered",
+                observed, len(claimants), claimants,
+            )
+        return observed
+
+    return _resolve
+
+
 @dataclass
 class WorkItemAgenticOutcome:
     """AD-859a: structured result of a single dispatched agentic work-item run.
@@ -1467,6 +1521,19 @@ class WorkItemAgenticOutcome:
     # dropped only when it crosses a serialization boundary. Appended last and
     # defaulted, so every existing construction site is untouched.
     tool_failures: ToolFailures = field(default_factory=ToolFailures)
+    # AD-1257: the AD-1170 defect this run's own results describe, or None.
+    # Detected HERE for the same reason ``tool_failures`` is correlated here --
+    # this is the only scope holding the raw call/result pairs, and they do not
+    # survive onto this projection. Bounded by construction; the pairs stay put.
+    tool_defect: ToolDefect | None = None
+    # AD-1269: whether ``tool_defect`` is a VERDICT or merely a default. A
+    # consumer cannot tell those apart from the field alone, and
+    # ``resolve_tool_defect`` has to: the shape test it used instead
+    # (``hasattr(outcome, "tool_calls")``) asks what class this is, when the
+    # question is what this object knows. Set only where the pairs were
+    # actually read. Appended last and defaulted, so every existing
+    # construction site is untouched.
+    tool_defect_evaluated: bool = False
 
 
 class WorkItemAgenticExecutor:
@@ -2291,6 +2358,17 @@ class WorkItemAgenticExecutor:
                 known_tools=offered_names,
                 excluded_tools=executor.denied_tools,
             ),
+            # AD-1257: same scope, same reason. BF-793 -- the detector's only
+            # production caller was handed this projection, which carries
+            # neither list, so it returned None on every DM turn no matter how
+            # often a tool had failed. Pure data: ``run()`` serves five callers
+            # and none of them is forced to act on this.
+            tool_defect=detect_tool_defect(
+                agentic_result, resolve_tool_id=_tool_id_resolver(registry),
+            ),
+            # AD-1269: says "the pairs were read here", which is the only thing
+            # that distinguishes a verdict of None from a field nobody set.
+            tool_defect_evaluated=True,
         )
 
     async def _persist_tool_trace(

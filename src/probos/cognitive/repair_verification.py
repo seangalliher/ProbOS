@@ -65,29 +65,67 @@ class VerificationResult:
         ).strip()
 
 
-def find_failing_arguments(entries: Any, *, tool_id: str, signature: str) -> dict | None:
+def find_failing_arguments(
+    entries: Any, *, tool_id: str, signature: str, observed_as: str = "",
+) -> dict | None:
     """Recover the arguments of the call that produced this fault.
 
     Scans a persisted AD-1151 trace for the last entry whose tool and error
     signature match. The LAST rather than the first, because an agent that
     retried a refused call has the same arguments each time and the final
     attempt is the one it settled on.
+
+    AD-1269: the trace stores ``asdict(ToolCallRequest)``, whose ``name`` is the
+    name the MODEL used -- an alias for any tool id the provider's name regex
+    rejects. The fault row's ``tool_id`` is the canonical registered id, so
+    matching on it alone would never find an MCP tool's call. ``observed_as``
+    carries the alias when there is one and is empty otherwise, which is why
+    the match falls back to ``tool_id``. The SIGNATURE is still computed over
+    the canonical id, because that is what the row was keyed on.
     """
     if not isinstance(entries, list):
         return None
+    traced_name = observed_as or tool_id
+    named = 0
+    signed = 0
     found: dict | None = None
     for entry in entries:
         if not isinstance(entry, dict) or entry.get("is_error") is not True:
             continue
-        if str(entry.get("name") or entry.get("tool") or "") != tool_id:
+        if str(entry.get("name") or entry.get("tool") or "") != traced_name:
             continue
+        named += 1
         raw = entry.get("output", "")
         raw_text = raw if isinstance(raw, str) else str(raw)
         if error_signature(tool_id=tool_id, error_text=raw_text) != signature:
             continue
+        signed += 1
         args = entry.get("arguments")
         if isinstance(args, dict):
             found = args
+    if found is None and signed:
+        # Counted separately because the two causes are different repairs. An
+        # entry that matched the signature and still yielded nothing has a
+        # missing or non-dict ``arguments``; saying "none carries the
+        # signature" here asserts something this branch did not check, and
+        # review measured exactly that message on an exact name-and-signature
+        # match with a non-dict ``arguments``.
+        logger.debug(
+            "AD-1173: %d trace entries name %r and carry error signature %s, "
+            "but none has a recoverable argument dictionary; verification will "
+            "report 'inconclusive'",
+            signed, traced_name, signature[:12],
+        )
+    elif found is None and named:
+        # The one place the AD-1269 truncation asymmetry becomes observable:
+        # the detector signs the UNTRUNCATED error while the persisted trace
+        # output is bounded by ``tool_trace_output_max_chars``, so an error
+        # longer than that bound cannot be matched back to its own trace.
+        logger.debug(
+            "AD-1173: %d trace entries name %r but none carries error "
+            "signature %s; verification will report 'inconclusive'",
+            named, traced_name, signature[:12],
+        )
     return found
 
 
@@ -129,6 +167,7 @@ async def verify_repair(
             )
             args = find_failing_arguments(
                 entries, tool_id=tool_id, signature=signature,
+                observed_as=str(getattr(fault, "observed_as", "") or ""),
             )
         except Exception:
             logger.debug(
