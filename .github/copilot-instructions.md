@@ -30,6 +30,10 @@ These errors cluster in the subsystems you know best, because familiarity is wha
 
 **Prefer empirical evidence to reading.** Comparing producer-marker and consumer-marker counts in the live log, or querying the live database, has surfaced more real defects here than source reading — which is what produces the confident wrong answers. A producer firing proves the producer, not the chain.
 
+**A probe must assert its own premise before you trust its answer.** A reproduction that finds nothing is indistinguishable from a reproduction that never ran, so make the probe fail loudly when its own setup did not discriminate. Measured on 2026-08-25: a query comparing a float `created_at` to a TEXT date literal — SQLite orders REAL before TEXT unconditionally, so the predicate was false for every row and "the population is closed" proved nothing. Two more the same day: a Playwright probe whose handler had to be shown firing on the FIRST request before "it never saw the redirect" meant anything, and a truncation regression that only discriminates on digit/hex runs (`normalise_error` collapses those and then truncates) — the whitespace version passed against the unfixed code.
+
+**A subagent's finding is a hypothesis, including a negative one.** Confirm it yourself before designing on it. On 2026-08-25 an independent check confirmed a reviewer's cross-store linkage claim and *refuted* its stated reproducer for a truncation split in the same session.
+
 ---
 
 ## Adversarial Review Before Every Commit (Standing Order, both modes)
@@ -37,6 +41,8 @@ These errors cluster in the subsystems you know best, because familiarity is wha
 **Before any commit that changes source, run the `Diff Reviewer` subagent on the staged diff and address what it finds.** Not optional, not "when the change feels risky" — the changes that felt safe are the ones this catches.
 
 Invoke it with a different model than the one that wrote the code (`.github/agents/diff-reviewer.agent.md` pins `GPT-5.6 Sol`; the author is usually Claude). A second read by the same model shares the same blind spots. Tell it what the change claims to do, name the consumer that has to accept it, and point at anything live it can probe.
+
+**When the reviewer fails to start, retry — do not skip it.** Measured 2026-08-25: three consecutive failures ("Sorry, no response was returned", then two "Server error. Stream terminated") before a fourth attempt on a different model succeeded. Fallbacks, in order: retry as-is; drop `agentName` and give the adversarial framing in the prompt; shorten the prompt to well under ~4 KB and scope it to named files rather than a large diff; then change model (`GPT-5.3-Codex` worked when `GPT-5.6 Sol` would not). The review that finally ran is the one that caught a 307/308 method-drift regression in a security control — skipping it would have shipped that.
 
 **Scope the review to the changed behaviour, its immediate caller, and the consumer that must accept it.** Scoping is about not wandering into unrelated code — it is not permission to stop short. Trace every changed contract through all affected production consumers, and verify at least one end-to-end path where one exists. When the blast radius crosses layers, follow it; stopping at the immediate caller because the boundary looked tidy is how the seam defects in this repo survive.
 
@@ -126,6 +132,14 @@ All code MUST maintain the **ProbOS Principles Stack**. These are enforced durin
 - **Framework**: pytest + pytest-asyncio. Prefer `_Fake*` stub classes over complex mock chains. Test files mirror source paths.
 - **Test gates**: Run focused tests for the changed slice and its immediate consumers after each implementation slice. Run the **full repository suite once, after the issue or tightly coupled wave is frozen** — not after every slice, which spends the broad-gate budget on a tree that is still moving. Run the adversarial review once the implementation is stable and repair its findings *before* spending that budget. Report the test count at each step.
 - **Broad-gate currency**: A source or test change made after a broad gate **invalidates that gate** — rerun it. No source commit may be pushed, and no issue closed, on stale gate evidence. Shared-contract and other high-risk changes may warrant an earlier broad gate; use one when the blast radius justifies it. None of this weakens coverage, boundary testing, final full-suite validation, or review requirements.
+- **Batched execution (Captain, 2026-08-25)**: Process up to **three bounded issues sequentially**, each with focused tests and a scoped adversarial review. Accumulate their reviewed local commits, **freeze the batch, then run ONE full repository gate** for the whole batch. Push and verify every closure only after that gate is green. A single issue may still take its own gate; the batch exists to stop paying ~15 minutes per issue for the same tree.
+- **Run broad gates synchronously, with no timeout.** The full suite takes roughly 15–19 minutes and sits at `[ 99%]` for several of them before the summary line appears — that is normal, not a hang. Do not poll it in a loop and do not background it unless you have unrelated non-source work to do meanwhile; a backgrounded gate reading a tree you then edit describes neither version.
+- **Mutation testing is targeted, not routine (Captain, 2026-08-25)**: use it when acceptance criteria demand it, when scoped review raises a test-validity concern ordinary regression tests cannot settle, or for Critical/High-risk behaviour. Do not run routine mutation campaigns.
+  - Run the unmutated baseline FIRST and abort if it is already red, or every mutant looks killed.
+  - Mutate **in place** with a `.mutbak` sibling and restore in `finally`. A copied tree is inert under an editable install.
+  - **Single-line anchors only** — this is a CRLF tree and multi-line anchors silently match nothing. An anchor that is not found is an INERT mutant, not a killed one; say so.
+  - Classify a timeout banner as **INVALID, never SURVIVED**: a run that never completed proves nothing.
+  - **A surviving mutant may mean the MUTANT is wrong, not the test.** Measured twice this session: a mutant that dropped a `<redacted>@` marker rather than the stripping itself, and one whose subclass was rejected by an earlier gate so the bound under test was never reached. Before concluding a test is weak, check that the mutant actually reaches the behaviour it claims to break.
 - **Run tests with**: `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q`
 - **Coverage rule**: All new public methods and branches must have tests. Target 100% coverage on new code — gaps require justification.
 - **Test structure**: Follow Arrange-Act-Assert. Each test should verify one behavior. Name tests descriptively: `test_{method}_{scenario}_{expected}` (e.g., `test_get_template_missing_key_returns_none`).
