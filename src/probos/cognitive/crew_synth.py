@@ -487,11 +487,10 @@ class CrewSynthesizer:
 
         Skips the honest-degrade ``unverified`` case (empty ``verifier_agent_id``
         — producer Vote only). Shapley keys by ``agent_id``: an agent that is both
-        a producer and a verifier in the same set yields two Votes, and
-        ``compute_shapley_values`` builds ``{v.agent_id: v}`` — so the LAST one
-        wins outright rather than being combined. Filed separately; it does not
-        reach trust today because ``_record_trust`` writes a flat success rather
-        than a Shapley-weighted one."""
+        a producer and a verifier in the same set yields two Votes, and since
+        BF-837 those are one player carrying both ballots — they combine by
+        confidence-weighted approval rather than the later one replacing the
+        earlier."""
         votes: list[Vote] = []
         for oc in accepted:
             votes.append(Vote(

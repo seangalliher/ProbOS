@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import itertools
+import logging
+import math
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from probos.types import Vote
+
+logger = logging.getLogger(__name__)
 
 # BF-850: the exact path enumerates n! permutations, and quorum.py calls it
 # synchronously and unguarded on the destructive-op path. Measured cost of the
@@ -15,6 +19,108 @@ if TYPE_CHECKING:
 # a round number; eight is the largest coalition that stays inside a 0.5s
 # synchronous budget. Above it the Monte Carlo path is used instead.
 MAX_EXACT_SHAPLEY = 8
+
+
+class _PlayerWeight(NamedTuple):
+    """One participant's whole ballot set, reduced to the two sums the rule needs.
+
+    BF-837: a participant that voted more than once is one player holding all of
+    its ballots, and the coalition rule is linear in them, so the ballots reduce
+    to a pair once instead of being re-summed inside every coalition. Measured at
+    the ``MAX_EXACT_SHAPLEY`` bound with 25 ballots per player: 0.061 s here
+    against 3.23 s for the equivalent form that carries the ballot lists, which
+    would have re-broken BF-850's 0.5 s synchronous budget.
+    """
+
+    approval: float
+    total: float
+
+
+def usable_confidence(value: object) -> float | None:
+    """A confidence that can actually be weighed, or ``None``.
+
+    ``confidence`` is producer-supplied and neither ``Vote`` nor
+    ``VerificationResult`` validates it, so both consensus paths reach this
+    boundary with whatever a producer put there.
+
+    Measured on each path, and the failures are not symmetric:
+
+    * verdicts (AD-1272) -- ``None`` raised ``TypeError`` out of the sum and
+      aborted the round; one ``NaN`` made the total NaN, slipped past a ``<= 0``
+      guard, and turned two APPROVALS into a rejection.
+    * ballots (AD-1263) -- before this change a duplicate ballot was discarded
+      by last-write-wins, so a malformed one was usually swallowed. Now that
+      every ballot counts, ``None`` aborted the round and ``NaN``/``inf`` lost
+      half the attributable mass (measured: sum 0.500000 against 1.0).
+
+    Negative is unusable for the same reason: it is not a confidence, and it
+    would subtract from a total that the rule divides by. ``bool`` is excluded
+    explicitly because it subclasses ``int``, so a ballot weighted ``True``
+    would otherwise silently mean ``1.0``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    weight = float(value)
+    if not math.isfinite(weight) or weight < 0.0:
+        return None
+    return weight
+
+
+def _clears_threshold(
+    weighted_approval: float, total_weight: float, approval_threshold: float,
+) -> bool:
+    """The consensus rule, in the one place it is allowed to live.
+
+    ``verification.combine_verdicts`` (AD-1272) documents itself as mirroring
+    this arithmetic; it is the same rule at a different scale, so it stays one
+    expression.
+    """
+    if total_weight == 0:
+        return False
+    return (weighted_approval / total_weight) >= approval_threshold
+
+
+def _summarise_players(
+    votes: list[Vote], use_confidence_weights: bool,
+) -> dict[str, _PlayerWeight]:
+    """Collapse ballots to one entry per ``agent_id``, first-appearance ordered.
+
+    A player whose ballots carry ANY unweighable confidence is summarised
+    unweighted -- one per ballot -- rather than having that ballot dropped.
+    Review measured why this cannot be left to raw arithmetic: making every
+    ballot count is exactly what stopped last-write-wins from swallowing a
+    malformed one, so the fix for BF-837 is what exposed the boundary. ``None``
+    aborted the whole consensus round and ``NaN``/``inf`` silently halved the
+    attributable mass.
+
+    The degrade is scoped to the PLAYER, not the round: one agent's broken
+    metadata must not discard the confidence signal of every other agent. It
+    mirrors ``verification.combine_verdicts``, which degrades its own set for
+    the same reason at the verdict scale.
+    """
+    ballots: dict[str, list[Vote]] = {}
+    for v in votes:
+        ballots.setdefault(v.agent_id, []).append(v)
+
+    players: dict[str, _PlayerWeight] = {}
+    for agent_id, cast in ballots.items():
+        if use_confidence_weights:
+            weights = [usable_confidence(v.confidence) for v in cast]
+        else:
+            weights = [1.0 for _ in cast]
+        if any(w is None for w in weights):
+            logger.debug(
+                "AD-1263: %d of %d ballot(s) from %s carry no usable confidence; "
+                "summarising that player unweighted so a metadata gap neither "
+                "aborts the round nor silently drops attributable mass",
+                sum(1 for w in weights if w is None), len(cast), agent_id,
+            )
+            weights = [1.0 for _ in cast]
+        players[agent_id] = _PlayerWeight(
+            sum(w for w, v in zip(weights, cast) if v.approved),
+            sum(weights),
+        )
+    return players
 
 
 def _evaluate_coalition(
@@ -34,9 +140,7 @@ def _evaluate_coalition(
         if v.approved:
             weighted_approval += weight
 
-    if total_weight == 0:
-        return False
-    return (weighted_approval / total_weight) >= approval_threshold
+    return _clears_threshold(weighted_approval, total_weight, approval_threshold)
 
 
 def compute_shapley_values(
@@ -52,26 +156,36 @@ def compute_shapley_values(
 
     where v(S) = 1 if coalition S achieves quorum, 0 otherwise.
 
-    For coalitions larger than MAX_EXACT_SHAPLEY, switches to Monte Carlo
-    approximation to avoid factorial explosion.
+    For coalitions larger than MAX_EXACT_SHAPLEY *players*, switches to Monte
+    Carlo approximation to avoid factorial explosion.
+
+    The players are agents, not ballots: an agent that voted more than once is
+    one player carrying all of its ballots, which enter every coalition together
+    and combine by confidence-weighted approval (BF-837).
 
     Returns {agent_id: shapley_value} normalized to [0, 1].
     """
     if not votes:
         return {}
 
-    n = len(votes)
-    if n == 1:
-        return {votes[0].agent_id: 1.0}
+    # BF-837: one player per agent_id, carrying every ballot it cast. A
+    # participant that voted twice used to have its earlier ballot replaced
+    # outright, which left the grand coalition failing votes the quorum engine
+    # had passed.
+    players = _summarise_players(votes, use_confidence_weights)
+    agent_ids = list(players.keys())
 
-    # Map agent_id -> Vote for quick lookup
-    vote_by_id: dict[str, Vote] = {v.agent_id: v for v in votes}
-    agent_ids = list(vote_by_id.keys())
+    # The game is played over players. ``n`` measures the set that actually gets
+    # enumerated -- the short circuit, the tier selection and the equal split
+    # below all read it, and all three were previously counting ballots.
+    n = len(agent_ids)
+    if n == 1:
+        return {agent_ids[0]: 1.0}
 
     if n <= MAX_EXACT_SHAPLEY:
-        raw_values = _exact_shapley(agent_ids, vote_by_id, approval_threshold, use_confidence_weights)
+        raw_values = _exact_shapley(agent_ids, players, approval_threshold)
     else:
-        raw_values = _approximate_shapley(agent_ids, vote_by_id, approval_threshold, use_confidence_weights)
+        raw_values = _approximate_shapley(agent_ids, players, approval_threshold)
 
     # Normalize: raw values sum to v(N). Normalize to [0, 1].
     total = sum(abs(v) for v in raw_values.values())
@@ -86,25 +200,23 @@ def compute_shapley_values(
 
 def _exact_shapley(
     agent_ids: list[str],
-    vote_by_id: dict[str, Vote],
+    players: dict[str, _PlayerWeight],
     approval_threshold: float,
-    use_confidence_weights: bool,
 ) -> dict[str, float]:
-    """Exact Shapley via full permutation enumeration."""
+    """Exact Shapley over agents via full permutation enumeration."""
     marginal_sums: dict[str, float] = {aid: 0.0 for aid in agent_ids}
     num_perms = 0
 
     for perm in itertools.permutations(agent_ids):
         num_perms += 1
-        coalition: list[Vote] = []
+        approval = 0.0
+        total = 0.0
         for aid in perm:
-            v_without = _evaluate_coalition(
-                coalition, approval_threshold, use_confidence_weights,
-            )
-            coalition.append(vote_by_id[aid])
-            v_with = _evaluate_coalition(
-                coalition, approval_threshold, use_confidence_weights,
-            )
+            v_without = _clears_threshold(approval, total, approval_threshold)
+            player = players[aid]
+            approval += player.approval
+            total += player.total
+            v_with = _clears_threshold(approval, total, approval_threshold)
             marginal_sums[aid] += float(v_with) - float(v_without)
 
     return {aid: marginal_sums[aid] / num_perms for aid in agent_ids}
@@ -112,26 +224,24 @@ def _exact_shapley(
 
 def _approximate_shapley(
     agent_ids: list[str],
-    vote_by_id: dict[str, Vote],
+    players: dict[str, _PlayerWeight],
     approval_threshold: float,
-    use_confidence_weights: bool,
     samples: int = 1000,
 ) -> dict[str, float]:
-    """Monte Carlo approximation of Shapley values via random permutation sampling."""
+    """Monte Carlo approximation of per-agent Shapley values via random permutations."""
     marginal_sums: dict[str, float] = {aid: 0.0 for aid in agent_ids}
 
     for _ in range(samples):
         perm = list(agent_ids)
         random.shuffle(perm)
-        coalition: list[Vote] = []
+        approval = 0.0
+        total = 0.0
         for aid in perm:
-            v_without = _evaluate_coalition(
-                coalition, approval_threshold, use_confidence_weights,
-            )
-            coalition.append(vote_by_id[aid])
-            v_with = _evaluate_coalition(
-                coalition, approval_threshold, use_confidence_weights,
-            )
+            v_without = _clears_threshold(approval, total, approval_threshold)
+            player = players[aid]
+            approval += player.approval
+            total += player.total
+            v_with = _clears_threshold(approval, total, approval_threshold)
             marginal_sums[aid] += float(v_with) - float(v_without)
 
     return {aid: marginal_sums[aid] / samples for aid in agent_ids}

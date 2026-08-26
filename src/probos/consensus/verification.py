@@ -12,39 +12,14 @@ confidence-weighted approval clears ``policy.approval_threshold``.
 from __future__ import annotations
 
 import logging
-import math
 from typing import TYPE_CHECKING
+
+from probos.consensus.shapley import usable_confidence
 
 if TYPE_CHECKING:
     from probos.types import VerificationResult
 
 logger = logging.getLogger(__name__)
-
-
-def _usable_weight(value: object) -> float | None:
-    """A confidence that can actually be weighed, or ``None``.
-
-    ``confidence`` is producer-supplied at this boundary and
-    ``VerificationResult`` does not validate it. Review measured two failures a
-    plain ``float`` arithmetic path cannot survive:
-
-    * ``None`` raised ``TypeError`` straight out of the sum, which aborted the
-      whole consensus round;
-    * one ``NaN`` made ``total_weight`` NaN, slipped past the ``<= 0`` guard,
-      and turned two APPROVALS into a rejection -- a trust penalty produced by
-      a metadata gap, which is exactly what the unweighted fallback exists to
-      prevent.
-
-    Negative is unusable for the same reason: it is not a confidence. ``bool``
-    is excluded explicitly because it is a subclass of ``int`` and a verdict
-    weighted ``True`` would silently mean ``1.0``.
-    """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    weight = float(value)
-    if not math.isfinite(weight) or weight < 0.0:
-        return None
-    return weight
 
 
 def combine_verdicts(
@@ -84,7 +59,7 @@ def combine_verdicts(
     unusable = 0
     if use_confidence_weights:
         for verdict in verdicts:
-            weight = _usable_weight(verdict.confidence)
+            weight = usable_confidence(verdict.confidence)
             if weight is None:
                 unusable += 1
                 continue

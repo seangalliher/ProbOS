@@ -176,6 +176,7 @@ class TestShapleyExplosionGuard:
             _approximate_shapley,
             _exact_shapley,
             _evaluate_coalition,
+            _summarise_players,
         )
 
         votes = [
@@ -183,11 +184,14 @@ class TestShapleyExplosionGuard:
             Vote(agent_id="b", approved=True, confidence=0.8, reason="yes"),
             Vote(agent_id="c", approved=False, confidence=0.7, reason="no"),
         ]
-        vote_by_id = {v.agent_id: v for v in votes}
-        agent_ids = list(vote_by_id.keys())
+        # BF-837: the enumerators play the game over players, not ballots, so
+        # they take the summarised weight pairs and apply confidence weighting
+        # during summarisation rather than inside every coalition.
+        players = _summarise_players(votes, True)
+        agent_ids = list(players.keys())
 
-        exact = _exact_shapley(agent_ids, vote_by_id, 0.5, True)
-        approx = _approximate_shapley(agent_ids, vote_by_id, 0.5, True, samples=5000)
+        exact = _exact_shapley(agent_ids, players, 0.5)
+        approx = _approximate_shapley(agent_ids, players, 0.5, samples=5000)
 
         for aid in agent_ids:
             assert abs(exact[aid] - approx[aid]) < 0.1, (

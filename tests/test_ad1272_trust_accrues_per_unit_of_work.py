@@ -397,7 +397,13 @@ class TestSpendConservation:
 
     @pytest.mark.asyncio
     async def test_mixed_verdict_denominator_is_below_one(self, runtime):
-        results = [_result("A"), _result("A"), _result("A"), _result("B", success=False)]
+        # BF-837: this fixture was [A, A, A, B(fail)], which clamped only because
+        # A's duplicate ballots were being discarded -- A held half a game. Now
+        # that an agent's ballots count as one player, A earns the whole
+        # attributable total there and nothing clamps. A distinct third agent
+        # restores the clamped shape this test exists to guard, honestly:
+        # measured {A: 0.625, B: 0.25, C: 0.0}, available over {A, B} = 0.875.
+        results = [_result("A"), _result("A"), _result("B"), _result("C", success=False)]
         verifiers = [_FakeVerifier("rt1"), _FakeVerifier("rt2")]
 
         out, calls = await _run_round(runtime, results, verifiers)
@@ -408,7 +414,7 @@ class TestSpendConservation:
             "coding 1.0 would pass only on all-approve rounds"
         )
         assert spent == pytest.approx(available, abs=1e-9)
-        assert {c["agent_id"] for c in calls} == {"A"}
+        assert {c["agent_id"] for c in calls} == {"A", "B"}
 
     @pytest.mark.asyncio
     async def test_nine_agents_monte_carlo_spend_is_conserved(self, runtime):
