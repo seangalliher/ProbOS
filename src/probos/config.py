@@ -4147,8 +4147,21 @@ class MCPConfig(BaseModel):
     # adapters, find_mcp_tool, the warm workbench + idle-TTL reaper, and the
     # tier-enforced invoke path). When False no adapters are registered,
     # find_mcp_tool is absent and the reaper never starts — byte-identical to
-    # AD-1019b. Independent of management_enabled (convention #14 transitional
-    # flag).
+    # AD-1019b. Convention #14 transitional flag.
+    #
+    # BF-756: what is and is not independent of management_enabled. Tool
+    # DISCOVERY AND INVOCATION are: either flag builds the server/grant/risk
+    # stores the workbench reads, so this flag works alone. The CRUD API is
+    # NOT: /api/mcp/servers and /api/mcp/departments stay 404 feature_disabled
+    # unless management_enabled is set. Setting this alone gives agents the
+    # servers declared in mcp.servers with no runtime mutation ENDPOINTS.
+    #
+    # Not "no writes", though: boot still creates mcp_servers.db,
+    # department_tool_grants.db and mcp_tool_risk.db under the data dir and
+    # seeds the first from mcp.servers, and those files outlive the process.
+    # The distinction review asked for: no API through which anything can be
+    # mutated at runtime, versus deterministic boot-time persistence of state
+    # the operator already declared in config.
     agent_tools_enabled: bool = False
     # AD-1019c: idle time-to-live (seconds) before a warm workbench adapter is
     # unloaded back to the toolbox. Default 24h.

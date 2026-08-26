@@ -4090,7 +4090,15 @@ async def finalize_startup(
         # stored rows register SECOND so config wins — the bridge returns False on
         # a duplicate key, so the seed loop never double-registers. A fresh DB has
         # an empty cache -> the seed loop is a no-op -> byte-identical boot.
-        if config.mcp.management_enabled:
+        #
+        # BF-756: built under EITHER flag. All three stores are the READ side --
+        # the workbench resolves every discovery and authorization decision
+        # against them -- while the CRUD API is the write side, and each of its
+        # handlers gates itself on management_enabled before touching a store.
+        # Widening this therefore cannot open the mutation API. Without it,
+        # agent_tools_enabled alone built a workbench with server_store=None,
+        # which discovers nothing.
+        if config.mcp.management_enabled or config.mcp.agent_tools_enabled:
             from probos.integrations.mcp_bridge.registration import register_record
             from probos.integrations.mcp_bridge.store import McpServerStore
 
