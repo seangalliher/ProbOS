@@ -1181,6 +1181,42 @@ _MISSING_METADATA_VALUE = object()
 # transaction — so growing them does not invalidate anything on disk.
 # AD-1176 added ``project_id``; ``test_ad1176_work_item_project.py`` guards the
 # agreement.
+# AD-1271: a row carrying this metadata flag is a UI BINDING, not a unit of
+# work — a chat thread needs a ``task_id`` for its FILES rail to bind to, and
+# BF-735's 36 ``Room workspace`` rows are what that left behind. Listers exclude
+# it by default so the Captain is not told about work nobody can act on.
+#
+# Reserved on the WRITE side too, and that is the load-bearing half. Review
+# measured an ordinary ``create_work_item`` / ``update_work_item`` setting the
+# flag on a REAL work item and the row vanishing from every default consumer —
+# an invisibility switch reachable from ``POST /api/work-items``. Only the
+# one-off migration writes it, and it does so in raw SQL, below this layer.
+SCAFFOLD_METADATA_FLAG = "ui_scaffold"
+
+# ``IS NOT 1`` rather than ``!= 1``: ``json_extract`` yields NULL for a row
+# whose metadata is absent or carries no such key, and ``NULL != 1`` is NULL,
+# which SQLite treats as false — that spelling would drop every ordinary row.
+# The ``json_valid`` guard keeps a hand-edited non-JSON column from raising
+# instead of degrading. Written against ``item.metadata`` so an aliased query
+# can use it verbatim.
+_SCAFFOLD_EXCLUSION_SQL = (
+    "(item.metadata IS NULL OR NOT json_valid(item.metadata) "
+    f"OR json_extract(item.metadata, '$.{SCAFFOLD_METADATA_FLAG}') IS NOT 1)"
+)
+
+
+def _reject_reserved_metadata(metadata: Any) -> None:
+    """Refuse an ordinary write that would set the scaffold flag.
+
+    Raises rather than stripping, mirroring ``crew_session_write_reserved``
+    beside it: a caller that silently had its value discarded would believe it
+    had taken effect. This is a data-integrity boundary — the flag decides
+    whether a row is visible to the Captain at all — so it propagates.
+    """
+    if type(metadata) is dict and SCAFFOLD_METADATA_FLAG in metadata:
+        raise ValueError("ui_scaffold_write_reserved")
+
+
 _WORK_ITEM_CHILD_SNAPSHOT_KEYS = frozenset({
     "id",
     "title",
@@ -2094,6 +2130,7 @@ class WorkItemStore(EventEmitterMixin):
         """Create and persist a new work item."""
         if kwargs.get("work_type", "task") == "crew_session":
             raise ValueError("crew_session_write_reserved")
+        _reject_reserved_metadata(kwargs.get("metadata"))
         now = time.time()
         kwargs.setdefault("created_at", now)
         kwargs.setdefault("updated_at", now)
@@ -2192,8 +2229,30 @@ class WorkItemStore(EventEmitterMixin):
         limit: int = 50,
         offset: int = 0,
         project_id: str | None = None,
+        include_scaffold: bool = False,
     ) -> list[WorkItem]:
-        """List work items with optional filters. Ordered by priority ASC, created_at DESC."""
+        """List work items with optional filters. Ordered by priority ASC, created_at DESC.
+
+        AD-1271: a row carrying ``metadata.ui_scaffold`` is a UI BINDING, not a
+        unit of work, and is excluded by default. BF-735's 36 ``Room workspace``
+        rows exist only because a chat thread needs a ``task_id`` for its FILES
+        rail to bind to; nothing was ever meant to complete them, and while they
+        sat in ``open`` the ship told the Captain it had 36 open work items in
+        THREE separate narrations (``captains_log``, ``plan_of_day``,
+        ``ship_state_snapshot``) on top of the board and the Quartermaster's
+        sweep.
+
+        The exclusion is here rather than in any one of those consumers for
+        exactly the reason #1194 gives against a per-view filter: "every
+        consumer then has to know better". One default at the store makes all of
+        them honest at once, and the Quartermaster inherits it, which retires
+        the ``unassigned_dispatchable`` reachability in ``work_reconciler``
+        rather than relying on a ``dispatchable_tags`` list that one line could
+        widen.
+
+        Pass ``include_scaffold=True`` to see them anyway -- a migration or an
+        operator asking "what is actually in there" needs the unfiltered view.
+        """
         if not self._db:
             return []
         conditions: list[str] = []
@@ -2218,6 +2277,11 @@ class WorkItemStore(EventEmitterMixin):
         if priority is not None:
             conditions.append("priority = ?")
             params.append(priority)
+        if not include_scaffold:
+            # AD-1271: in SQL, for the same reason as ``project_id`` — filtering
+            # after the fetch would let scaffolding consume the LIMIT and hide
+            # real work behind it.
+            conditions.append(_SCAFFOLD_EXCLUSION_SQL.replace("item.", ""))
         where = " AND ".join(conditions) if conditions else "1=1"
         query = f"SELECT * FROM work_items WHERE {where} ORDER BY priority ASC, created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
@@ -2246,6 +2310,13 @@ class WorkItemStore(EventEmitterMixin):
             "SELECT 1 FROM work_items AS parent "
             "WHERE parent.id = item.parent_id AND parent.work_type = ?"
             ") "
+            # AD-1271: the board's live source. Review measured scaffolding
+            # still reaching it after ``list_work_items`` was filtered -- this
+            # lister has its own SQL and does not go through it, so a per-method
+            # fix here is exactly the "every consumer has to know better" shape
+            # the store-level default exists to avoid. There is deliberately no
+            # override: nothing renders a UI binding on a work board.
+            f"AND {_SCAFFOLD_EXCLUSION_SQL} "
             "ORDER BY item.priority ASC, item.created_at DESC, item.id ASC "
             "LIMIT ?",
             ("crew_session", "crew_session", limit + 1),
@@ -3027,6 +3098,8 @@ class WorkItemStore(EventEmitterMixin):
             return None
         if updates.get("work_type") == "crew_session":
             raise ValueError("crew_session_write_reserved")
+        if "metadata" in updates:
+            _reject_reserved_metadata(updates.get("metadata"))
         async with self._work_item_row_write_lock:
             item = await self.get_work_item(work_item_id)
             if not item:
@@ -3202,6 +3275,7 @@ class WorkItemStore(EventEmitterMixin):
             return None
         if type(patch) is not dict or any(type(key) is not str for key in patch):
             raise ValueError("work_item_metadata_patch_invalid")
+        _reject_reserved_metadata(patch)
         if expected is not None and (
             type(expected) is not dict
             or any(type(key) is not str for key in expected)
