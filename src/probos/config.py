@@ -3296,10 +3296,23 @@ class ExecutionConfig(BaseModel):
     enabled: bool = False                   # opt-in; arbitrary code execution
     # Which isolation tier to run at: 1 = subprocess/working-folder (AD-993,
     # the only tier built today), 2 = OS-native sandbox (AD-995, future),
-    # 3 = container/VM (AD-996, future). A request unsafe for the configured
-    # tier should escalate, not silently downgrade.
+    # 3 = container/VM (AD-996, future).
+    #
+    # BF-781: this used to add "A request unsafe for the configured tier should
+    # escalate, not silently downgrade." Nothing escalates, and no module under
+    # `execution/` reads this field -- it is declaration-only, kept so the shape
+    # exists when a tier is built. A rule stated for a field nobody reads is the
+    # kind of claim that stops the next reader checking. (Scoped to `execution/`
+    # on purpose: a first draft claimed every `default_tier` reader in the tree
+    # was the LLM client's, and review found holodeck readers too.)
     default_tier: int = 1
-    scratch_dir: str = "data/execution"     # ephemeral per-task working folders
+    # Root for scratch working folders, and the root under which `workspace_root`
+    # sits by default. BF-781: the comment here used to read "ephemeral per-task
+    # working folders" flatly. That is true when `persistent_workspaces` is
+    # False -- and it defaults True, under which `CodeRunnerAgent` runs in its
+    # owner's persistent folder instead. NOT dead either way: `CodeExecutionTool`
+    # still roots its runs here regardless of that setting.
+    scratch_dir: str = "data/execution"
     # AD-997: per-agent PERSISTENT working folders. Each owner (crew agent) gets
     # its own folder under workspace_root so work products (scripts, generated
     # files, the installed venv) survive across runs and are visible from the

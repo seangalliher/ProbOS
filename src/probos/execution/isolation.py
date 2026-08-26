@@ -66,9 +66,25 @@ Tiered isolation (the ``IsolationBackend`` abstraction):
 
 Backends are pluggable behind ``IsolationBackend`` (``typing.Protocol``) so the
 heavier tiers slot in without touching callers — the cloud-ready-storage
-abstraction pattern applied to execution. A task is either deemed safe enough for
-Tier 1 or escalates to a higher tier; the escalation policy lives with the caller
-(AD-994 / AD-995).
+abstraction pattern applied to execution.
+
+BF-781: this paragraph used to describe tier escalation in the present tense,
+and name the caller as the owner of an escalation policy. Neither happens.
+Tiers 2 and 3 are unbuilt, and no module under ``execution/`` reads the
+execution tier field at all — it is declaration-only, kept so the shape exists
+when a tier is built. So there is no escalation to have a policy about. Stated
+as the future it is rather than the present it is not.
+
+Scoped to ``execution/`` deliberately. A first draft of this correction said
+every reader of the field in the tree belonged to the LLM client, and review
+disproved it — ``holodeck/scenarios.py`` and ``holodeck/team_simulations.py``
+read one too. Those read a DIFFERENT ``default_tier``; the claim was true of
+the field that matters here and false as written, which is the same defect
+this change exists to remove.
+
+The false sentence is deliberately NOT quoted here. BF-763 learned that a
+guard test banning a phrase cannot tell an assertion from its denial, so
+reproducing the wrong words verbatim would make the ban unenforceable.
 """
 
 from __future__ import annotations
@@ -385,7 +401,27 @@ class IsolationBackend(Protocol):
         ...
 
     async def run(self, request: ExecutionRequest) -> ExecutionResult:
-        """Execute ``request`` under isolation; honest-degrade, never raise."""
+        """Execute ``request`` under isolation.
+
+        Honest-degrades an ordinary failure into an unsuccessful
+        :class:`ExecutionResult` rather than propagating it.
+
+        BF-781: this used to say "never raise", and that was false.
+        Cancellation propagates — measured on the real backend, cancelling the
+        awaiting task raises out of ``run``. ``SubprocessSandbox.run`` catches
+        ``CancelledError`` explicitly, hands the scratch-dir cleanup handshake
+        to the worker (BF-788/BF-840), and re-raises. That is the correct
+        behaviour, and deliberate: never swallow cancellation. Only the
+        description was wrong, and a false "never raises" is exactly what stops
+        the next caller writing a handler.
+
+        A first draft of this correction attributed the propagation to the
+        degrade arm catching ``Exception`` while ``CancelledError`` is a
+        ``BaseException``. True of the language, but not the mechanism here —
+        that arm lives in the sync worker, not on this path. Corrected after a
+        mutant that flipped it to ``BaseException`` changed nothing, which is
+        what exposed the wrong reasoning.
+        """
         ...
 
 
@@ -612,7 +648,7 @@ class SubprocessSandbox:
                 error=("timed out" if timed_out else ""),
                 workdir=str(workdir),
             )
-        except Exception as exc:  # honest-degrade: never raise out of run
+        except Exception as exc:  # honest-degrade; BF-781: cancellation still propagates
             logger.warning(
                 "AD-993: SubprocessSandbox execution failed: %s: %s",
                 type(exc).__name__, exc,
