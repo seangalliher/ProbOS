@@ -112,6 +112,7 @@ from probos.utils import format_duration
 from probos.consensus.escalation import EscalationManager
 from probos.consensus.quorum import QuorumEngine
 from probos.consensus.trust import TrustNetwork
+from probos.consensus.verification import combine_verdicts
 from probos.mesh.capability import CapabilityRegistry
 from probos.mesh.gossip import GossipProtocol
 from probos.mesh.intent import IntentBus
@@ -138,6 +139,7 @@ from probos.types import (
     QuorumPolicy,
     TaskDAG,
     TaskNode,
+    VerificationResult,
 )
 
 from probos.agent_onboarding import AgentOnboardingService
@@ -4005,7 +4007,7 @@ class ProbOSRuntime:
 
         # Step 3: Red team verification (verify a sample of results)
         # Parallelized to avoid serial O(results × agents × timeout) blocking.
-        verification_results = []
+        verification_results: list[VerificationResult] = []
         if results and self.red_team_agents:
             verification_timeout = self.config.consensus.verification_timeout_seconds
 
@@ -4019,47 +4021,12 @@ class ProbOSRuntime:
                     )
                     verification_results.append(vr)
 
-                    # Step 4: Update trust network (AD-224: Shapley-weighted)
-                    shapley_weight = 1.0
-                    if consensus.shapley_values:
-                        shapley_weight = max(
-                            consensus.shapley_values.get(result.agent_id, 0.0),
-                            0.1,
-                        )
-                    _old_trust = self.trust_network.get_score(result.agent_id)  # AD-410
-                    trust_updated = False
-                    try:
-                        self.trust_network.record_outcome(
-                            result.agent_id,
-                            success=vr.verified,
-                            weight=shapley_weight,
-                            intent_type=intent,
-                            episode_id=msg.id,
-                            verifier_id=rt_agent.id,
-                        )
-                        trust_updated = True
-                    except RuntimeError as exc:
-                        if str(exc) != "trust_write_in_progress":
-                            raise
-                        logger.warning(
-                            "AD-1130: Consensus verification trust observation "
-                            "skipped for target=%s verifier=%s because a durable "
-                            "trust write is in progress; verification, Hebbian, "
-                            "and completion recording continue",
-                            result.agent_id,
-                            rt_agent.id,
-                        )
+                    # AD-1272: trust is NOT spent here. One verifier's verdict on
+                    # one result row is not a unit of work — the cross product below
+                    # draws N verdicts per agent per round. They are combined and
+                    # spent exactly once after the gather.
 
-                    # AD-410: Bridge Alert on significant trust drop
-                    if trust_updated and self.bridge_alerts:
-                        _trust_alert = self.bridge_alerts.check_trust_change(
-                            result.agent_id, _old_trust,
-                            self.trust_network.get_score(result.agent_id),
-                        )
-                        if _trust_alert and self.ward_room_router:
-                            asyncio.create_task(self.ward_room_router.deliver_bridge_alert(_trust_alert))
-
-                    # Step 5: Update hebbian (agent-to-agent)
+                    # Step 4: Update hebbian (agent-to-agent)
                     self.hebbian_router.record_verification(
                         verifier_id=rt_agent.id,
                         target_id=result.agent_id,
@@ -4096,6 +4063,121 @@ class ProbOSRuntime:
             ]
             if verify_tasks:
                 await asyncio.gather(*verify_tasks)
+
+            # Step 5: Update trust network, once per unit of work (AD-1272)
+            #
+            # A unit of work is "this agent contributed to this round", not one
+            # result row and not one verifier. Every verdict for an agent is
+            # combined into a single outcome, and that agent's Shapley value —
+            # a conserved quantity summing to the round's attributable total —
+            # is spent exactly once. Weight is the value as computed: an agent
+            # missing from a non-empty attribution is skipped rather than given
+            # a fabricated floor.
+            verdicts_by_target: dict[str, list[VerificationResult]] = {}
+            for vr in verification_results:
+                verdicts_by_target.setdefault(vr.target_agent_id, []).append(vr)
+
+            # The round's own identity, never the verifier's. A verdict names
+            # its target, but that string round-trips through a third-party
+            # verifier -- ``red_team_agents`` is a list the runtime populates
+            # and AD-451's validation framework consumes it too. Trust is
+            # written against the agent the ROUND says produced a successful
+            # result, which is also exactly what ``compute_shapley_values``
+            # keyed on, so the two can never disagree.
+            #
+            # Review measured the alternative: a verifier reporting a wrong
+            # target wrote trust to a non-participant on the empty-Shapley
+            # branch, where the attribution lookup below cannot catch it. Wrong
+            # signal is worse than no signal.
+            contributed = {result.agent_id for result in results if result.success}
+            for stray in sorted(verdicts_by_target.keys() - contributed):
+                logger.warning(
+                    "AD-1272: discarding %d verdict(s) naming target=%s, which "
+                    "produced no successful result this round; trust accrues to "
+                    "the round's participants, not to whoever a verifier names",
+                    len(verdicts_by_target[stray]), stray,
+                )
+
+            verify_policy = consensus.policy
+            for target_agent_id in sorted(verdicts_by_target.keys() & contributed):
+                target_verdicts = verdicts_by_target[target_agent_id]
+                combined_verifier_id = ""
+                try:
+                    # Inside the boundary: ``combine_verdicts`` reads
+                    # producer-supplied confidence, and review measured a single
+                    # malformed verdict aborting the entire round from out here.
+                    combined = combine_verdicts(
+                        target_verdicts,
+                        approval_threshold=verify_policy.approval_threshold,
+                        use_confidence_weights=verify_policy.use_confidence_weights,
+                    )
+                    if combined is None:
+                        continue
+                    verified, verifier_ids = combined
+                    combined_verifier_id = ",".join(verifier_ids)
+
+                    shapley_weight = 1.0
+                    if consensus.shapley_values:
+                        attributed = consensus.shapley_values.get(target_agent_id)
+                        if attributed is None:
+                            logger.warning(
+                                "AD-1272: target=%s is absent from a non-empty "
+                                "Shapley attribution (%d agent(s) attributed) after "
+                                "%d verdict(s) from verifier(s) %s; skipping the "
+                                "trust update rather than fabricating a weight",
+                                target_agent_id,
+                                len(consensus.shapley_values),
+                                len(target_verdicts),
+                                combined_verifier_id,
+                            )
+                            continue
+                        shapley_weight = attributed
+
+                    _old_trust = self.trust_network.get_score(target_agent_id)  # AD-410
+                    trust_updated = False
+                    try:
+                        self.trust_network.record_outcome(
+                            target_agent_id,
+                            success=verified,
+                            weight=shapley_weight,
+                            intent_type=intent,
+                            episode_id=msg.id,
+                            verifier_id=combined_verifier_id,
+                        )
+                        trust_updated = True
+                    except RuntimeError as exc:
+                        if str(exc) != "trust_write_in_progress":
+                            raise
+                        logger.warning(
+                            "AD-1130: Consensus verification trust observation "
+                            "skipped for target=%s verifiers=%s (%d verdict(s) "
+                            "combined) because a durable trust write is in "
+                            "progress; verification, Hebbian, and completion "
+                            "recording continue",
+                            target_agent_id,
+                            combined_verifier_id,
+                            len(target_verdicts),
+                        )
+
+                    # AD-410: Bridge Alert on significant trust drop
+                    if trust_updated and self.bridge_alerts:
+                        _trust_alert = self.bridge_alerts.check_trust_change(
+                            target_agent_id, _old_trust,
+                            self.trust_network.get_score(target_agent_id),
+                        )
+                        if _trust_alert and self.ward_room_router:
+                            asyncio.create_task(self.ward_room_router.deliver_bridge_alert(_trust_alert))
+                except Exception:
+                    # Same boundary as _verify_one: one agent's trust write must
+                    # not abort the round or the other agents' updates.
+                    logger.warning(
+                        "Verification error: trust update failed for target=%s "
+                        "verifiers=%s after combining %d verdict(s)",
+                        target_agent_id[:8],
+                        combined_verifier_id,
+                        len(target_verdicts),
+                        exc_info=True,
+                    )
 
         await self.event_log.log(
             category="mesh",
