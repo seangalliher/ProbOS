@@ -199,12 +199,37 @@ async def test_a_repeated_fault_proposes_one_decision() -> None:
 
 
 async def test_a_recurring_fault_does_not_re_ask() -> None:
-    """One decision per fault, however many times it recurs."""
-    requests = _Requests()
-    d = _dispatcher(requests=requests)
-    for _ in range(5):
-        await d.on_fault_event(_event(occurrences=9))
-    assert len(requests.filed) == 1
+    """One decision per fault, however many times it recurs.
+
+    AD-1267: this asserted ``len(requests.filed) == 1`` against ``_Requests``, a
+    double that never deduplicates — so what it actually pinned was the
+    dispatcher's in-process ``_proposed`` set being THE record of what had
+    already been proposed. That record was wrong twice over: it did not survive
+    a restart, and it was marked AFTER the await, so concurrent recurrences all
+    passed the check before any of them marked it. AD-1267 deletes it and leaves
+    the durable approval store to answer "has this fault already asked?". The
+    guarantee is unchanged — only its owner moved — so this now asserts it
+    against a surface that deduplicates the way the real one does.
+    """
+    from probos.capability_request import CapabilityRequestStore
+
+    # No db_path: cache-only, but `file_action_request` -> `action_dedup_key`
+    # -> `_find_pending_action` is the real code path.
+    requests = CapabilityRequestStore()
+    fault = _Fault(occurrences=2)
+    d = _dispatcher(requests=requests, fault=fault)
+    for occurrence in range(2, 7):
+        # The renderer reads the REPORT, not the event, so the report's own
+        # count has to move or a count-sensitive brief would still produce one
+        # stable key and this would pass against the defect it exists to catch.
+        # Review measured exactly that: the fake pinned occurrences=2 forever.
+        fault.occurrences = occurrence
+        await d.on_fault_event(_event(occurrences=occurrence))
+
+    pending = [r for r in await requests.list_pending() if r.kind == "action"]
+    assert len(pending) == 1
+    assert pending[0].payload is not None
+    assert pending[0].payload["tool_id"] == REPAIR_TOOL_ID
 
 
 async def test_a_resolved_fault_can_be_proposed_again() -> None:

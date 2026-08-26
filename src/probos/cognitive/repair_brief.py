@@ -46,6 +46,12 @@ TARGET_ARCHITECT: str = "architect"
 _TITLE_MAX = 120
 _EVIDENCE_MAX = 4000
 
+# AD-1267: the target list reaches the approval payload, whose canonical JSON is
+# capped at _ACTION_PAYLOAD_MAX_CHARS (4000). resolve_targets was unbounded, so a
+# long or long-named target list made an ordinary fault permanently unproposable.
+_TARGETS_MAX = 8
+_TARGET_NAME_MAX = 64
+
 
 @dataclass(frozen=True)
 class RepairBrief:
@@ -82,13 +88,54 @@ class RepairBrief:
         pasted into a harness that knows nothing about ProbOS. It leads with
         what is broken and how it is known, not with provenance.
         """
+        return self._render(include_occurrences=True, include_trace=True)
+
+    def render_for_payload(self) -> str:
+        """The same brief, projected to what is invariant across recurrences.
+
+        AD-1267: this value travels in an approval request's ``params``, and
+        ``action_dedup_key`` hashes ``params`` WHOLE. So any field that changes
+        between two occurrences of ONE fault makes that fault raise one Captain
+        approval per change. Two families of field do:
+
+        - **the occurrence count**, volatile by definition — occurrence 2 and
+          occurrence 3 of one fault would hash differently;
+        - **every trace-derived field**, because the coalesce branch adopts a
+          ``tool_trace_ref`` (and the ``observed_as`` that belongs to it)
+          absent -> present. A fault whose first occurrence carried no trace and
+          whose third does would otherwise render a different brief for the same
+          fault, and raise a second approval even with the count removed.
+
+        The Captain loses neither. The live count rides in the request's
+        ``rationale``, which is not key material, and ``params["fault_id"]``
+        resolves the full report — and therefore its current ``tool_trace_ref``
+        — in one :meth:`FaultReportStore.get` lookup.
+        """
+        return self._render(include_occurrences=False, include_trace=False)
+
+    def _render(self, *, include_occurrences: bool, include_trace: bool) -> str:
+        """The one renderer both public forms delegate to.
+
+        Shared rather than forked so a field added later cannot reach the
+        portable artifact while silently rejoining the dedup key, or the
+        reverse. A new volatile field is excluded here, in one place.
+        """
+        if include_occurrences:
+            observed = (
+                f"The `{self.tool_id}` tool returned the same error "
+                f"{self.occurrences} time(s):"
+            )
+        else:
+            observed = (
+                f"The `{self.tool_id}` tool returned the same error on more "
+                "than one occasion:"
+            )
         lines: list[str] = [
             f"# Repair brief: {self.tool_id or 'unknown tool'}",
             "",
             "## What is wrong",
             "",
-            f"The `{self.tool_id}` tool returned the same error "
-            f"{self.occurrences} time(s):",
+            observed,
             "",
             "```",
             " ".join(str(self.error_text or "").split())[:_EVIDENCE_MAX],
@@ -97,7 +144,7 @@ class RepairBrief:
         ]
         if self.attempted:
             lines += ["## What was being attempted", "", self.attempted, ""]
-        if self.trace_summary:
+        if include_trace and self.trace_summary:
             lines += [
                 "## Evidence from the run",
                 "",
@@ -121,7 +168,7 @@ class RepairBrief:
             f"- Fault report: `{self.fault_id}`",
             f"- Error signature: `{self.signature[:16]}`",
         ]
-        if self.tool_trace_ref:
+        if include_trace and self.tool_trace_ref:
             lines.append(f"- Tool trace: `{self.tool_trace_ref[:16]}`")
         if self.agent_id:
             lines.append(f"- Reported by: `{self.agent_id}`")
@@ -202,11 +249,30 @@ def resolve_targets(config: Any) -> tuple[str, ...]:
     raw = getattr(config, "targets", None)
     if not isinstance(raw, (list, tuple)) or not raw:
         return (TARGET_ARCHITECT,)
+    # AD-1267: each name is clipped BEFORE the dedup, so two names differing only
+    # past the bound collapse to the one form the payload would carry, and the
+    # list cap then counts distinct targets rather than duplicates.
     seen: list[str] = []
+    clipped = 0
     for item in raw:
-        name = str(item or "").strip()
+        full = str(item or "").strip()
+        name = full[:_TARGET_NAME_MAX]
+        if len(full) > _TARGET_NAME_MAX:
+            clipped += 1
         if name and name not in seen:
             seen.append(name)
+    dropped = max(len(seen) - _TARGETS_MAX, 0)
+    if dropped or clipped:
+        logger.warning(
+            "AD-1267: bounded the repair dispatch targets — dropped %d beyond "
+            "the first %d and clipped %d name(s) to %d chars, because the whole "
+            "list is carried in an approval payload capped at 4000 characters; "
+            "an oversized list would make every fault unproposable. Offering "
+            "%s.",
+            dropped, _TARGETS_MAX, clipped, _TARGET_NAME_MAX,
+            ", ".join(seen[:_TARGETS_MAX]),
+        )
+    seen = seen[:_TARGETS_MAX]
     return tuple(seen) if seen else (TARGET_ARCHITECT,)
 
 

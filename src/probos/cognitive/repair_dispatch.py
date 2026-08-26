@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from probos.capability_request import THREAD_ID_MAX_CHARS
 from probos.cognitive.repair_brief import (
     RepairBrief,
     build_repair_brief,
@@ -54,10 +55,14 @@ class RepairDispatcher:
         self._faults = fault_report_store
         self._requests = capability_request_store
         self._config = config
-        # Signatures already proposed, so a fault that keeps recurring raises
-        # one decision rather than one per occurrence. Cleared when the fault
-        # resolves, so a repair that does not hold can be proposed again.
-        self._proposed: set[str] = set()
+        # AD-1267: fault ids with a filing IN FLIGHT right now. This is
+        # concurrency control, NOT the record of what has been proposed -- the
+        # approval store holds that, durably, keyed on a payload that no longer
+        # varies per occurrence. So it releases unconditionally: if a filing
+        # committed and then raised, the next recurrence dedups onto the
+        # committed row rather than filing again. Bounded by the number of
+        # concurrent listener tasks, so it needs no cap and no trim.
+        self._inflight: set[str] = set()
 
     @property
     def targets(self) -> tuple[str, ...]:
@@ -67,8 +72,15 @@ class RepairDispatcher:
         """Listener for ``FAULT_REPORTED`` / ``FAULT_RESOLVED``.
 
         Runtime listeners receive ``{"type": ..., "data": {...}}`` with the
-        domain fields nested under ``data``. Never raises: this runs inline on
-        the event bus and a fault here must not disturb the emitter.
+        domain fields nested under ``data``.
+
+        AD-1267: this does NOT run inline on the event bus, whatever this
+        docstring used to claim. ``runtime._emit_event_local`` creates an
+        independent task per coroutine listener, so N recurrences of one fault
+        are in flight concurrently -- which is exactly why the in-flight guard
+        is taken BEFORE the await rather than after it. Swallows ``Exception``
+        so a fault here cannot disturb the emitter, but not ``BaseException``,
+        so cancellation still propagates.
         """
         try:
             if not isinstance(event, dict):
@@ -82,7 +94,11 @@ class RepairDispatcher:
                 return
 
             if event_type == "fault_resolved":
-                self._proposed.discard(signature)
+                # AD-1267 / DD-5(1): clears nothing, deliberately. A resolved
+                # fault that recurs takes the create branch and gets a NEW fault
+                # id, hence a new dedup key, hence a clean proposal. A pending
+                # approval for the old one stays pending because the Captain has
+                # not answered it -- withdrawing it is a different act.
                 return
             if event_type != "fault_reported":
                 return
@@ -94,10 +110,40 @@ class RepairDispatcher:
             )
             if int(data.get("occurrences") or 0) < threshold:
                 return
-            if signature in self._proposed:
+
+            # Checked before the guard is taken, so a run that provably cannot
+            # file anything never marks a fault as in flight.
+            store = self._requests
+            if store is None or not hasattr(store, "file_action_request"):
+                logger.info(
+                    "AD-1172: no approval surface for the repair of fault %s; "
+                    "the fault stays reported and nothing is dispatched",
+                    signature[:16],
+                )
                 return
 
-            await self.propose(signature)
+            report = (
+                self._faults.get(signature) if self._faults is not None else None
+            )
+            if report is None:
+                return
+            # The id is the identity the approval payload carries. A report
+            # missing one is malformed rather than absent, so fall back to the
+            # signature -- which is what coalesced it -- instead of skipping the
+            # guard entirely and letting every recurrence race.
+            fault_id = str(getattr(report, "id", "") or "") or signature
+
+            # No await between the check and the add: that atomicity with
+            # respect to the event loop is what closes the storm without a lock.
+            if fault_id in self._inflight:
+                return
+            self._inflight.add(fault_id)
+            try:
+                await self.propose(signature)
+            finally:
+                # Synchronous -- no I/O, no await -- so cancellation can neither
+                # skip it nor stall the loop.
+                self._inflight.discard(fault_id)
         except Exception:
             logger.warning(
                 "AD-1172: fault event handling raised; no repair was proposed "
@@ -105,7 +151,13 @@ class RepairDispatcher:
             )
 
     async def propose(self, signature: str) -> Any | None:
-        """Build the brief and file the dispatch decision. Returns the request."""
+        """Build the brief and file the dispatch decision. Returns the request.
+
+        AD-1267: does NOT take the in-flight guard -- ``on_fault_event`` owns
+        that. So a direct operator call is deliberate and still safe: the
+        approval store deduplicates it onto any pending request for the same
+        fault, because the payload no longer varies per occurrence.
+        """
         fault = self._faults.get(signature) if self._faults is not None else None
         if fault is None:
             return None
@@ -113,7 +165,6 @@ class RepairDispatcher:
         brief = await self.build_brief(fault)
         request = await self._file_dispatch_request(brief)
         if request is not None:
-            self._proposed.add(signature)
             logger.info(
                 "AD-1172: proposed a repair for fault %s against tool %r; "
                 "awaiting the Captain's choice of target from %s",
@@ -156,15 +207,31 @@ class RepairDispatcher:
                 payload={
                     "tool_id": REPAIR_TOOL_ID,
                     "action": REPAIR_ACTION,
+                    # AD-1267: every value here is hashed into
+                    # ``action_dedup_key``, which canonicalises ``params`` WHOLE.
+                    # So nothing that varies between recurrences of ONE fault may
+                    # appear -- and the coalesce branch mutates FOUR fields:
+                    # ``occurrences``, ``last_seen_at``, ``tool_trace_ref`` and
+                    # ``observed_as``. That is why the brief is rendered by
+                    # ``render_for_payload()`` and no trace field is carried; the
+                    # live trace is one ``FaultReportStore.get(params["fault_id"])``
+                    # away, so restoring it here would buy nothing and cost the
+                    # store's dedup.
                     "params": {
                         "fault_id": brief.fault_id,
                         "signature": brief.signature,
                         "targets": ",".join(self.targets),
-                        "brief": brief.render_markdown()[:_BRIEF_PREVIEW_MAX],
+                        "brief": brief.render_for_payload()[:_BRIEF_PREVIEW_MAX],
                     },
                     "scope_key": brief.tool_id,
                     "session_id": None,
-                    "thread_id": brief.thread_id,
+                    # AD-1267: fault reports allow a 128-char thread id, the
+                    # action-approval contract allows 64, and forwarding the
+                    # wider value made ``validate_action_payload`` reject an
+                    # ordinary fault outright -- no request, ever. Narrowed
+                    # rather than dropped; the full thread id is one
+                    # ``params["fault_id"]`` lookup away.
+                    "thread_id": (brief.thread_id or "")[:THREAD_ID_MAX_CHARS],
                 },
                 rationale=(
                     f"The {brief.tool_id} tool has failed the same way "

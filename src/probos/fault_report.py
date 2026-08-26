@@ -681,6 +681,10 @@ class FaultReportStore:
                 # None. A trace the reader cannot match is no better than none.
                 existing.observed_as = str(observed_as or "")[:_TOOL_ID_MAX]
             await self._persist_occurrence(existing)
+            # AD-1267: the recurrence IS the signal. Emitting only on the create
+            # branch meant every event carried occurrences=1 while the repair
+            # dispatcher requires >= 2, so no repair could ever be proposed.
+            self._emit_fault("FAULT_REPORTED", existing)
             return existing
 
         report = FaultReport(

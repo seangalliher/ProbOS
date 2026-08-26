@@ -62,6 +62,11 @@ _SCOPE_KEY_MAX = 253
 _SESSION_ID_MAX = 64
 _THREAD_ID_MAX = 64
 
+#: AD-1267: the action-approval contract's own thread_id bound, exported so a
+#: producer with a wider field (fault reports allow 128) narrows to the consumer's
+#: contract instead of forwarding a value that will be rejected outright.
+THREAD_ID_MAX_CHARS: int = _THREAD_ID_MAX
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS capability_requests (
     id TEXT PRIMARY KEY,
