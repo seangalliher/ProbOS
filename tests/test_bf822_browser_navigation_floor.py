@@ -256,6 +256,24 @@ async def _goto(page: Any, url: str, *, timeout: float = 10000) -> None:
         pass
 
 
+async def _origin_of(page: Any) -> str:
+    """``location.origin``, retried once past an in-flight navigation.
+
+    A gate under 16-way load destroyed the execution context between
+    ``wait_for_load_state`` and ``evaluate``. Retrying once after the page
+    settles distinguishes "the document moved under us" from "the origin is
+    wrong", which is the thing the caller is actually asserting.
+    """
+    for attempt in (0, 1):
+        try:
+            return await page.evaluate("location.origin")
+        except Exception:
+            if attempt:
+                raise
+            await page.wait_for_load_state("load", timeout=8000)
+    raise AssertionError("unreachable")
+
+
 @real_browser
 async def test_real_redirect_to_a_private_address_is_never_requested(server) -> None:
     """The seam the issue asks for: 302 -> private, driven through a real goto.
@@ -946,12 +964,17 @@ async def test_real_a_granted_post_307_reaches_its_target_with_the_body_intact(
         origin.hits.clear()
         try:
             await page.click("#go", timeout=8000)
+            # Wait for the DESTINATION, not for a fixed interval. A bare sleep
+            # here raced under a loaded gate: the navigation was still in
+            # flight, so `page.evaluate` ran against an execution context that
+            # was destroyed under it. Waiting on the thing the hop is supposed
+            # to produce is both deterministic and the stronger assertion.
+            await page.wait_for_url(lambda url: "/sink" in url, timeout=8000)
             await page.wait_for_load_state("load", timeout=8000)
         except Exception:
             pass
-        await asyncio.sleep(0.4)
         landed_url = page.url
-        committed_origin = await page.evaluate("location.origin")
+        committed_origin = await _origin_of(page)
         records = session.drain_redirect_escalations()
 
     assert ("/sink", "k=v") in target.posts, (
