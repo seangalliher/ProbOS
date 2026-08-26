@@ -265,6 +265,8 @@ When asked to draft implementation prompts for Claude Code sessions:
 
 Before proposing ANY new AD, read PROGRESS.md and find the actual highest AD number. State it explicitly in your response ("Current highest: AD-NNN"). Then assign sequentially from there. **Never guess. Never assume. Never reuse.** A near-collision was caught during Phase 8 review — this is now a hard rule.
 
+**Do not take the number from `docs/development/open-ads-report.md` or `ad-ledger-snapshot.json`.** Measured 2026-08-25: the committed report was **51 ADs stale** (claiming AD-1218 while the real ceiling was AD-1268), because regenerating it is a separate step that is deliberately not run during feature work. Enumerate instead, and state which source gave the ceiling: `git log --all --format='%s'` subjects, GitHub issue titles in **all** states, and in-flight `prompts/ad-*.md` filenames — an allocated-but-unbuilt AD lives only in the last two.
+
 ## Architect: Strategy
 
 When asked about project direction, evaluate:
@@ -518,8 +520,8 @@ Captain types /design → Architect perceives (7 layers) → LLM generates propo
 
 All changes are tracked by AD number (e.g., AD-229, AD-230). Before proposing ANY new AD:
 1. Read PROGRESS.md
-2. Find the actual highest AD number
-3. State it explicitly ("Current highest: AD-NNN")
+2. Find the actual highest AD number — by enumerating `git log` subjects, GitHub issues in **all** states, and `prompts/ad-*.md`, NOT from `open-ads-report.md` (measured 51 ADs stale on 2026-08-25)
+3. State it explicitly ("Current highest: AD-NNN") and say which source gave it
 4. Assign the next sequential number
 
 **Never guess. Never assume. Never reuse.** Each AD should be a single, testable change.
