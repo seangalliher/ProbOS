@@ -282,7 +282,7 @@ class ToolDefect:
         return _digest(material)
 
 
-def _canonical_tool_id(
+def canonical_tool_id(
     observed: str, resolve_tool_id: Callable[[str], str] | None,
 ) -> str:
     """AD-1269: the registered id behind an observed name, or the name verbatim.
@@ -292,6 +292,11 @@ def _canonical_tool_id(
     (``llm_function_name_claimants`` over ``ToolRegistry.list_ids``) lives under
     ``cognitive/``, and reaching for it here would invert the layering. The
     caller that already holds a registry supplies the callable.
+
+    AD-1279: public because the trace writer
+    (``swe_harness.agentic_loop.build_tool_trace_payload``) must canonicalise
+    the same way this module's detector does. One implementation rather than
+    two, for the reason :func:`_digest` gives: two parallel edits can drift.
 
     Degrades to *observed* for every failure mode -- no resolver, a raising
     resolver, a resolver that answers with something that is not a non-empty
@@ -362,7 +367,7 @@ def detect_tool_defect(
         def _canonical(observed_name: str) -> str:
             cached = canonical_by_observed.get(observed_name)
             if cached is None:
-                cached = _canonical_tool_id(observed_name, resolve_tool_id)
+                cached = canonical_tool_id(observed_name, resolve_tool_id)
                 canonical_by_observed[observed_name] = cached
             return cached
 
@@ -557,13 +562,44 @@ class FaultReportStore:
         self._cache: dict[str, FaultReport] = {}
 
     async def start(self) -> None:
+        """Open the store, or leave nothing behind.
+
+        AD-1279: everything after ``connect`` is guarded. Without this, a schema
+        or cache step that raised left the aiosqlite connection open and its
+        worker thread alive -- measured as pytest hanging indefinitely rather
+        than failing, which turns a diagnosable error into a stalled run.
+
+        PROPAGATE tier, not log-and-degrade. A store that came up with an empty
+        cache would silently re-file every recurring fault as new, so AD-1169's
+        coalescing -- the reason this store exists -- would break while looking
+        healthy.
+        """
         if not self.db_path:
             return
         self._db = await self._connection_factory.connect(self.db_path)
-        await self._db.executescript(_SCHEMA)
-        await self._db.commit()
-        await self._migrate_observed_as_column()
-        await self._load_cache()
+        try:
+            await self._db.executescript(_SCHEMA)
+            await self._db.commit()
+            await self._migrate_observed_as_column()
+            await self._load_cache()
+        except Exception:
+            logger.error(
+                "AD-1279: opening the fault report store at %s failed after "
+                "connecting; closing the connection and re-raising, because a "
+                "store with an empty cache would re-file every recurring fault "
+                "as new", self.db_path, exc_info=True,
+            )
+            db, self._db = self._db, None
+            try:
+                await db.close()
+            except Exception:
+                # Guarded so a failing close cannot mask the original cause.
+                logger.warning(
+                    "AD-1279: closing the fault report store connection after a "
+                    "failed start also failed; the original error is re-raised",
+                    exc_info=True,
+                )
+            raise
 
     async def _migrate_observed_as_column(self) -> None:
         """AD-1269: add ``observed_as`` to a pre-AD-1269 15-column table.

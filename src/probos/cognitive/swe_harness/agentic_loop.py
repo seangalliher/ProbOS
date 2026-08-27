@@ -20,6 +20,7 @@ from probos.cognitive.swe_harness.tool_call import (
     ToolResultBlock,
     ToolUseBlock,
 )
+from probos.fault_report import canonical_tool_id, error_signature
 from probos.types import LLMRequest
 
 if TYPE_CHECKING:
@@ -263,6 +264,7 @@ def build_tool_trace_payload(
     *,
     output_max_chars: int,
     blob_max_bytes: int,
+    resolve_tool_id: Callable[[str], str] | None = None,
 ) -> tuple[list[dict[str, Any]], bytes]:
     """AD-1151: render the durable tool trace — call requests AND their outputs.
 
@@ -315,6 +317,23 @@ def build_tool_trace_payload(
     are separable. Absent when they are the same, which keeps every
     string-output blob byte-identical; readers version by key presence.
 
+    **AD-1279 — ``error_signature``.** An error entry carries the fault's own
+    identity, computed over the output BEFORE the truncation above. AD-1269
+    keys a durable fault row on the untruncated error, so a reader that
+    recomputed the digest from the persisted output got a different answer
+    whenever the collapse rules in ``normalise_error`` shortened the retained
+    head below its own bound -- and the fault could then never be matched back
+    to the trace that would let it be retried (BF-855). Written only when
+    ``is_error`` is True, so every non-error blob stays byte-identical, and
+    readers version by key presence exactly as they do for ``source_chars``.
+    The entry gains no second NAME: ``name`` remains what the model used, and
+    the fault row still owns the canonical id.
+
+    ``resolve_tool_id`` maps that observed name to its registered id, with the
+    same shape and the same degradation contract as ``detect_tool_defect``'s.
+    ``None`` signs against the observed name, which is what the detector does
+    when there is no registry to ask.
+
     What this does NOT fix: a ``tool_trace_output_max_chars`` larger than
     ``tool_result_max_chars`` still cannot retain more than the context render,
     because only the LENGTH survives to here and not the value. Keeping the
@@ -339,6 +358,7 @@ def build_tool_trace_payload(
             results_by_id.setdefault(tcr.id, tcr)
 
     entries: list[dict[str, Any]] = []
+    canonical_by_observed: dict[str, str] = {}
     for call in tool_calls:
         entry: dict[str, Any] = asdict(call)
         tcr = results_by_id.get(call.id)
@@ -376,6 +396,29 @@ def build_tool_trace_payload(
             # the same reason -- this key is a count or it is absent.
             if type(source_chars) is int and source_chars >= 0 and source_chars != len(original):
                 entry["source_chars"] = source_chars
+            if tcr.is_error is True:
+                # AD-1279: the DETECTOR's coercion, deliberately not
+                # ``original``. ``detect_tool_defect`` renders a non-string
+                # output as ``str(raw)`` unconditionally, so a ``None`` output
+                # signs as "None" there and would sign as "" here -- the two
+                # would then disagree on exactly the malformed-result case the
+                # comment above says is reachable. ``original`` is left alone:
+                # it feeds ``output_chars`` and the persisted output.
+                signed_text = raw if type(raw) is str else str(raw)
+                # Coerced for the same reason ``original`` is: a hand-built
+                # request can carry an unhashable name, and the cache lookup
+                # below would raise where the pre-AD-1279 writer did not --
+                # which "requests are never dropped" forbids.
+                observed = call.name if type(call.name) is str else str(call.name)
+                canonical = canonical_by_observed.get(observed)
+                if canonical is None:
+                    # Once per distinct name, so a 200-step trace does not
+                    # resolve the same alias 200 times.
+                    canonical = canonical_tool_id(observed, resolve_tool_id)
+                    canonical_by_observed[observed] = canonical
+                entry["error_signature"] = error_signature(
+                    tool_id=canonical, error_text=signed_text,
+                )
         entries.append(entry)
 
     blob = _encode_tool_trace(entries)

@@ -1441,7 +1441,16 @@ def _tool_id_resolver(registry: Any) -> Callable[[str], str] | None:
 
     Uses ``llm_function_name_claimants`` against ``registry.list_ids()`` -- the
     same helper against the same authority ``ToolExecutor._resolve_tool_id``
-    uses, so the detector and the executor cannot disagree about which tool ran.
+    uses, so the detector and the executor agree about which tool ran at the
+    moment they ask.
+
+    AD-1279: each resolver MEMOISES its answers, because "same helper, same
+    authority" is not the same as "same answer later". ``list_ids()`` is live,
+    and the trace writer and the fault detector are separated by an await, so
+    a tool registered or dropped in between made one run's identity depend on
+    when each caller asked. One resolver object now means one answer per name
+    for the life of that object; sharing the object is what makes the carried
+    trace signature and the filed fault the same identity.
     Deliberately NOT the names offered on this run: a name ambiguous over the
     whole registry can be unambiguous over one offer, and a fault filed against
     a tool that never executed is worse than one filed under an alias.
@@ -1462,9 +1471,23 @@ def _tool_id_resolver(registry: Any) -> Callable[[str], str] | None:
         )
         return None
 
+    _memo: dict[str, str] = {}
+
     def _resolve(observed: str) -> str:
+        # AD-1279: memoised per resolver object, so every consumer of ONE
+        # resolver sees one answer for one name. Review measured the seam this
+        # closes: the writer stamps the trace and the detector files the fault
+        # across an await, and `list_ids()` is live -- a tool registered or
+        # dropped in between made the two disagree, which is exactly the
+        # writer/detector skew this AD exists to remove. Freezing the first
+        # answer makes the identity a property of the RUN rather than of
+        # whenever each caller happened to ask.
+        cached = _memo.get(observed)
+        if cached is not None:
+            return cached
         claimants = llm_function_name_claimants(observed, registry.list_ids())
         if len(claimants) == 1:
+            _memo[observed] = claimants[0]
             return claimants[0]
         if claimants:
             # BF-757's rule, applied to filing rather than invoking: which of
@@ -1477,6 +1500,7 @@ def _tool_id_resolver(registry: Any) -> Callable[[str], str] | None:
                 "than guessing which one the model was offered",
                 observed, len(claimants), claimants,
             )
+        _memo[observed] = observed
         return observed
 
     return _resolve
@@ -2293,8 +2317,17 @@ class WorkItemAgenticExecutor:
             context=_context,
         )
 
+        # AD-1279: built ONCE and handed to both the trace writer below and
+        # the detector at the end of this method. Two calls would close over
+        # the same registry and answer identically today, but one object makes
+        # "the writer and the detector cannot disagree" structural rather than
+        # incidental -- and the whole point of signing the trace is that a
+        # reader can trust the digest it finds there.
+        _fault_tool_id_resolver = _tool_id_resolver(registry)
+
         tool_trace_ref = await self._persist_tool_trace(
-            agentic_result, runtime, agent_id
+            agentic_result, runtime, agent_id,
+            resolve_tool_id=_fault_tool_id_resolver,
         )
         artifact_refs, ignored_artifact_entries = _extract_artifact_refs(
             observed_tool_results,
@@ -2364,7 +2397,7 @@ class WorkItemAgenticExecutor:
             # often a tool had failed. Pure data: ``run()`` serves five callers
             # and none of them is forced to act on this.
             tool_defect=detect_tool_defect(
-                agentic_result, resolve_tool_id=_tool_id_resolver(registry),
+                agentic_result, resolve_tool_id=_fault_tool_id_resolver,
             ),
             # AD-1269: says "the pairs were read here", which is the only thing
             # that distinguishes a verdict of None from a field nobody set.
@@ -2376,6 +2409,8 @@ class WorkItemAgenticExecutor:
         agentic_result: Any,
         runtime: Any,
         agent_id: str,
+        *,
+        resolve_tool_id: Callable[[str], str] | None = None,
     ) -> str | None:
         """Persist the loop's tool calls AND their outputs; return the SHA ref.
 
@@ -2390,6 +2425,12 @@ class WorkItemAgenticExecutor:
         rendering happens before the result reaches the loop. The entry carries
         ``source_chars`` so the loss is visible; retaining the value itself is
         AD-1240 (#1239).
+
+        AD-1279: ``resolve_tool_id`` is the SAME object the detector is given,
+        so the identity written onto an error entry and the identity the fault
+        row is keyed on cannot disagree. It stays inside the existing
+        ``except``: ``canonical_tool_id`` degrades to the observed name, so a
+        raising resolver must still produce a full trace.
 
         Honest-degrade to ``None`` (log a warning) when the store is unwired or
         the write fails — the trace ref is provenance, not correctness, so a
@@ -2425,6 +2466,7 @@ class WorkItemAgenticExecutor:
             _entries, blob = build_tool_trace_payload(
                 getattr(agentic_result, "tool_calls", []),
                 getattr(agentic_result, "tool_results", []),
+                resolve_tool_id=resolve_tool_id,
                 **bounds,
             )
             blob_max_bytes = bounds["blob_max_bytes"]

@@ -82,12 +82,26 @@ def find_failing_arguments(
     carries the alias when there is one and is empty otherwise, which is why
     the match falls back to ``tool_id``. The SIGNATURE is still computed over
     the canonical id, because that is what the row was keyed on.
+
+    AD-1279: an error entry now CARRIES that identity, computed by the writer
+    over the untruncated output, so the match reads it rather than deriving it.
+    Recomputation is the LEGACY path -- kept, not replaced, and taken on a
+    missing key *and* on a mismatch. Reading the field alone would make it
+    authoritative even when the writer and the detector had been handed
+    different resolvers; recomputing cannot produce a false positive against a
+    specific 256-bit target except by collision, so keeping it is strictly more
+    permissive and costs nothing. It is what made BF-855 possible: the writer
+    bounds each output before persisting it, and ``normalise_error`` collapses
+    before it truncates, so a long error whose head collapses to less than that
+    bound derived a different digest from its own trace and could never be
+    matched back to it.
     """
     if not isinstance(entries, list):
         return None
     traced_name = observed_as or tool_id
     named = 0
     signed = 0
+    mismatches = 0
     found: dict | None = None
     for entry in entries:
         if not isinstance(entry, dict) or entry.get("is_error") is not True:
@@ -95,10 +109,28 @@ def find_failing_arguments(
         if str(entry.get("name") or entry.get("tool") or "") != traced_name:
             continue
         named += 1
-        raw = entry.get("output", "")
-        raw_text = raw if isinstance(raw, str) else str(raw)
-        if error_signature(tool_id=tool_id, error_text=raw_text) != signature:
-            continue
+        carried = entry.get("error_signature")
+        if not (isinstance(carried, str) and carried == signature):
+            # Absent, or written by a writer that canonicalised differently.
+            # Either way the pre-AD-1279 derivation still decides.
+            raw = entry.get("output", "")
+            raw_text = raw if isinstance(raw, str) else str(raw)
+            if error_signature(tool_id=tool_id, error_text=raw_text) != signature:
+                continue
+            if isinstance(carried, str):
+                # AD-1279: recomputation rescued a match the carried identity
+                # disagreed with. That is the writer/detector skew this AD set
+                # out to remove, and the fallback would otherwise hide it
+                # perfectly -- recovery succeeds and nothing says the trace's
+                # own identity was wrong. Not an error: the repair proceeds.
+                mismatches += 1
+                logger.warning(
+                    "AD-1279: trace entry for %r carries error signature %s "
+                    "but recomputation matched %s; recovery proceeded on the "
+                    "recomputed value. The writer and the detector "
+                    "canonicalised this tool differently",
+                    traced_name, carried[:12], signature[:12],
+                )
         signed += 1
         args = entry.get("arguments")
         if isinstance(args, dict):
@@ -117,13 +149,16 @@ def find_failing_arguments(
             signed, traced_name, signature[:12],
         )
     elif found is None and named:
-        # The one place the AD-1269 truncation asymmetry becomes observable:
-        # the detector signs the UNTRUNCATED error while the persisted trace
-        # output is bounded by ``tool_trace_output_max_chars``, so an error
-        # longer than that bound cannot be matched back to its own trace.
+        # Before AD-1279 this was the one place the AD-1269 truncation
+        # asymmetry became observable, and it was unavoidable. Now that an
+        # error entry carries the identity the detector derived, reaching here
+        # means either a trace written before that key existed whose bounded
+        # output no longer derives the same digest, or a genuinely different
+        # failure of the same tool.
         logger.debug(
             "AD-1173: %d trace entries name %r but none carries error "
-            "signature %s; verification will report 'inconclusive'",
+            "signature %s -- a pre-AD-1279 trace, or a different failure of "
+            "the same tool; verification will report 'inconclusive'",
             named, traced_name, signature[:12],
         )
     return found
