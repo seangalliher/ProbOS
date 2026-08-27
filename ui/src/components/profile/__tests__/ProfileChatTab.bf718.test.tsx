@@ -36,9 +36,24 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({
+// BF-764: the speech-event mock keeps a real listener SET and fans an event
+// out to every live listener, because that is what `voice.ts::_fire` does. The
+// previous mock returned a no-op unsubscribe, so tests had to reach for "the
+// last listener registered" and fire that one alone. That is an incidental
+// fact about registration order, not a property of the system, and it broke
+// the moment a second component-level subscriber existed.
+const mocks = vi.hoisted(() => {
+  const speechListeners = new Set<(e: { type: string; agent_id?: string; utterance_id?: number }) => void>();
+  return {
+  speechListeners,
+  fireSpeech: (e: { type: string; agent_id?: string; utterance_id?: number }): void => {
+    for (const fn of [...speechListeners]) fn(e);
+  },
   speakResponse: vi.fn(),
-  onSpeechEvent: vi.fn(() => () => {}),
+  onSpeechEvent: vi.fn((fn: (e: { type: string; agent_id?: string; utterance_id?: number }) => void) => {
+    speechListeners.add(fn);
+    return () => { speechListeners.delete(fn); };
+  }),
   startListening: vi.fn(),
   stopListening: vi.fn(),
   armConversationMode: vi.fn(() => () => {}),
@@ -47,7 +62,8 @@ const mocks = vi.hoisted(() => ({
   speakMeetingReplies: vi.fn(),
   startCameraStream: vi.fn(async () => undefined),
   stopCameraStream: vi.fn(async () => undefined),
-}));
+  };
+});
 
 vi.mock('../../../audio/voice', () => ({
   getServerPiperVoices: vi.fn(async () => null),
@@ -271,6 +287,10 @@ function sendTyped(text = 'Captain message'): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The listener set outlives `clearAllMocks` (which clears calls, not the
+  // implementation holding it). `cleanup()` unmounts and the real unsubscribes
+  // drain it, but clear explicitly so no test can inherit a stale subscriber.
+  mocks.speechListeners.clear();
   localStorage.clear();
   serverMessages = [];
   releaseChat = null;
@@ -488,11 +508,7 @@ describe('BF-718 — an ordinary reply is spoken exactly once', () => {
 
     // Said once and finished long ago.
     await serverPushes('Acknowledged.');
-    act(() => {
-      const [[listener]] = (mocks.onSpeechEvent.mock.calls as unknown as
-        Array<[(e: { type: string; agent_id?: string }) => void]>).slice(-1);
-      listener({ type: 'end', agent_id: AGENT_ID });
-    });
+    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID }); });
 
     mocks.markAgentReplyComplete.mockClear();
     act(() => { opts.onAgentReply('Acknowledged.'); });

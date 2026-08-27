@@ -232,6 +232,17 @@ const CALL_OPEN_TRIGGER =
 // re-armed on every fresh 'start' is the minimal robust choice.
 const PTT_TTS_WATCHDOG_MS = 45000;
 
+// BF-764: ceiling on how long the arrival queue waits for one utterance's
+// terminal 'end' before moving on. Deliberately the same reasoning as
+// PTT_TTS_WATCHDOG_MS above and deliberately its own constant: this bounds a
+// QUEUE, and borrowing that name would tie two unrelated timings together.
+//
+// It must never fire on a legitimate utterance -- doing so would reintroduce
+// the overlap this fixes -- so it is generous. Its job is only to stop a lost
+// 'end' from wedging every later message, because a silent queue is a worse
+// defect than the clipped audio being fixed.
+const SPEECH_JOIN_TIMEOUT_MS = 45000;
+
 export function ProfileChatTab({ agentId, threadId }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
   const [input, setInput] = useState('');
@@ -1226,6 +1237,99 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // The group bail-out still CLAIMS first, so a room's backlog is not read
   // aloud the moment it stops being a group.
   const defersToMeetingSequencer = meetingParticipantIds.length >= 2;
+
+  // BF-764: a refresh that admits two or more arrivals used to speak them in
+  // one synchronous pass, and `speakResponse` CANCELS in-flight audio before it
+  // starts (voice.ts ~L246). So the earlier utterances began and were
+  // immediately truncated. The failure is backend-dependent, which is why it
+  // survived: browser TTS produced three clipped calls, while Piper could run
+  // two concurrently, because `_speakGeneration` gates sentence pipelining
+  // rather than whole utterances. The Captain heard a clipped burst or two
+  // voices at once.
+  //
+  // Not lost data -- each arrival's claim is consumed either way and the text is
+  // always in the transcript -- so this is an audio-quality fix, and the queue
+  // must never be allowed to cost a message. Two guards follow from that.
+  const speechQueueRef = useRef<Array<{ text: string; author: string; emotion?: string }>>([]);
+  const speechDrainingRef = useRef(false);
+  // Serialising speech means the queue outlives the render that filled it, so
+  // it now needs an explicit end-of-life: an unmounted tab must not keep
+  // speaking its backlog at a Captain who has already navigated away. The old
+  // synchronous loop could not do that, because it finished before unmount.
+  // Emptying the queue is sufficient and is the whole mechanism -- the drain
+  // reads it on every iteration, so the next one ends the loop. A separate
+  // "is mounted" flag was tried and removed: nothing can enqueue after unmount
+  // (only the arrivals effect does, and it no longer runs), so the flag was
+  // unreachable belt-and-braces that no test could distinguish.
+  useEffect(() => () => { speechQueueRef.current.length = 0; }, []);
+
+  const drainSpeechQueue = useCallback(async (): Promise<void> => {
+    if (speechDrainingRef.current) return;
+    speechDrainingRef.current = true;
+    try {
+      for (;;) {
+        const next = speechQueueRef.current.shift();
+        if (next === undefined) return;
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          // Declared BEFORE the listener, deliberately. `speakResponse`
+          // cancels whatever is already playing on its very first lines
+          // (voice.ts ~L246) and the terminal 'end' that emits is delivered
+          // SYNCHRONOUSLY, while this listener is already armed and before the
+          // call has returned. A listener that read a `const` assigned from the
+          // return value would touch it in its temporal dead zone; voice.ts's
+          // event dispatch swallows listener exceptions, so the throw would be
+          // invisible and this utterance would silently wait out the full join
+          // timeout instead of advancing when it actually finished.
+          let utteranceId: number | undefined;
+          let started = false;
+          // An 'end' seen before the call returns cannot be judged yet: it is
+          // either the utterance we just superseded (ignore) or our own
+          // (resolve). Hold it and reconcile once we know our id.
+          const earlyEnds: Array<number | undefined> = [];
+          const done = (): void => {
+            if (settled) return;
+            settled = true;
+            if (timer !== undefined) clearTimeout(timer);
+            try { unsub(); } catch { /* Tier-2 */ }
+            resolve();
+          };
+          // Subscribe BEFORE speaking: the browser path can fire its terminal
+          // 'end' synchronously, and a listener armed afterwards would miss it
+          // and wait out the timeout. BF-767 measured that exact ordering.
+          const unsub = onSpeechEvent((event) => {
+            if (event.type !== 'end') return;
+            if (!started) { earlyEnds.push(event.utterance_id); return; }
+            // Correlate on the id BF-767 publishes. Matching on agent alone
+            // would let an unrelated utterance elsewhere advance this queue.
+            if (utteranceId !== undefined && event.utterance_id !== utteranceId) return;
+            done();
+          });
+          utteranceId = speakResponse(
+            next.text, voiceProfile ?? undefined, next.author, next.emotion,
+          );
+          started = true;
+          // GUARD 1: no TTS engine at all -- nothing will ever emit an 'end'
+          // (the BF-290 shape). Without this the queue wedges on message one.
+          if (utteranceId === undefined) { done(); return; }
+          // Our own 'end' may already have fired while we were still starting.
+          if (earlyEnds.includes(utteranceId)) { done(); return; }
+          // GUARD 2: a lost 'end' must not strand every later message. A
+          // wedged queue would turn an audio-quality defect into a silence
+          // defect, which is strictly worse than the bug being fixed.
+          timer = setTimeout(done, SPEECH_JOIN_TIMEOUT_MS);
+        });
+      }
+    } finally {
+      speechDrainingRef.current = false;
+      // No re-kick here on purpose. An arrival landing mid-drain is picked up
+      // by the loop's next iteration, and the window between the loop reading
+      // an empty queue and this line contains no await -- so nothing can be
+      // enqueued into it. A re-kick was tried and removed as unreachable: no
+      // mutation of it could be made to fail a test.
+    }
+  }, [voiceProfile]);
   useEffect(() => {
     const scopeKey = speechScopeKey(activeThreadId, agentId);
     const firstSight = markScopeSeen(speechLedgerRef.current, scopeKey);
@@ -1241,14 +1345,19 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       speechInFlightRef.current.add(speechKeyFor(msg, agentId));
       // BF-766: `msg.emotion` is undefined for rows persisted before the
       // server carried it, which speakResponse omits exactly as before.
-      speakResponse(
-        stripMarkdownForSpeech(msg.text), voiceProfile ?? undefined, author,
-        msg.emotion,
-      );
+      // BF-764: enqueued rather than spoken here, so the second arrival in a
+      // refresh does not cancel the first. The claim is still consumed above,
+      // at admission, so queueing cannot cause a message to be re-spoken later.
+      speechQueueRef.current.push({
+        text: stripMarkdownForSpeech(msg.text),
+        author,
+        emotion: msg.emotion,
+      });
     }
+    if (speechQueueRef.current.length > 0) void drainSpeechQueue();
   }, [
     messages, activeThreadId, agentId, defersToMeetingSequencer,
-    isOutputAudioEnabledNow, voiceProfile,
+    isOutputAudioEnabledNow, voiceProfile, drainSpeechQueue,
   ]);
 
   // AD-795: Hydrate the input from a pending chat draft (set by the
