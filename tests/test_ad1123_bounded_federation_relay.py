@@ -295,9 +295,15 @@ class _CountingIntentBus(IntentBus):
         timeout: float | None = None,
         *,
         federated: bool = True,
+        raise_on_denial: bool = False,
     ) -> list[IntentResult]:
         self.broadcast_calls += 1
-        return await super().broadcast(intent, timeout=timeout, federated=federated)
+        return await super().broadcast(
+            intent,
+            timeout=timeout,
+            federated=federated,
+            raise_on_denial=raise_on_denial,
+        )
 
     async def send(self, intent: IntentMessage) -> IntentResult | None:
         self.send_calls += 1
@@ -1810,8 +1816,17 @@ _FROZEN_METHOD_HASHES = {
     # Previous hash: 8189296e1b8902126031f0f9e35050c48eebce5f2e03ea142ecc968285595cb4
     ("src/probos/federation/bridge.py", "FederationBridge", "forward_direct_message"):
         "3d5920d7631f6d306d27315c7191133d362662a329158fb6eb76d1a5dc0b6de7",
+    # AD-1276 (BF-789, #1253): rewritten deliberately, not as a side effect.
+    # The local fan-out now opts into `raise_on_denial=True` so an AD-698
+    # policy refusal is distinguishable from "no agent answered" -- both were
+    # an empty `results` list, so the peer could not tell which it had -- and
+    # any other exception becomes a reported failure in the response instead of
+    # escaping to the transport and leaving the peer to time out. The envelope
+    # is ADDITIVE: `results` is still carried unchanged, so a peer that
+    # predates the `denied`/`error` keys behaves exactly as it did.
+    # Previous hash: e9f950e1c291249f86a6181c1198284da4e783945540c486b148a21978a47348
     ("src/probos/federation/bridge.py", "FederationBridge", "_handle_intent_request"):
-        "e9f950e1c291249f86a6181c1198284da4e783945540c486b148a21978a47348",
+        "b47b8d1ca55923c744f1de056d7b921f8adc1856c56bbbc9a5115e87c86641de",
     ("src/probos/federation/bridge.py", "FederationBridge", "_send_directed_response"):
         "ba1ce85fdd6fb6c3f7e821795c92cc97d8d0f3eb39980145491649c46e8f35f2",
     ("src/probos/federation/bridge.py", "FederationBridge", "_handle_direct_message_request"):

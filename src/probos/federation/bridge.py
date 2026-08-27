@@ -26,6 +26,7 @@ from probos.federation.relay import (
     is_valid_relay_timestamp,
 )
 from probos.federation.router import FederationRouter
+from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
 from probos.types import FederationMessage, IntentMessage, IntentResult, NodeSelfModel
 
 if TYPE_CHECKING:
@@ -1627,8 +1628,46 @@ class FederationBridge:
                     exc_info=True,
                 )
 
-        # Broadcast locally with federated=False to prevent loop
-        local_results = await self._intent_bus.broadcast(intent, federated=False)
+        # Broadcast locally with federated=False to prevent loop.
+        #
+        # AD-1276: opts into the raising shape so a POLICY REFUSAL is
+        # distinguishable. The default denial shape is ``[]``, so until now a
+        # refusal presented to the peer as "no agent answered" -- honest about
+        # the outcome, silent about the cause, and identical to the ordinary
+        # empty case. The peer could not tell which it had.
+        denied_reason: str | None = None
+        denied_entry_point = ""
+        failure_error: str | None = None
+        try:
+            local_results = await self._intent_bus.broadcast(
+                intent, federated=False, raise_on_denial=True
+            )
+        except IntentAuthorizationDenied as denial:
+            local_results = []
+            denied_reason = denial.reason
+            denied_entry_point = denial.entry_point
+            logger.info(
+                "AD-1276: inbound federated intent %s from %s denied by "
+                "pre-auth hook '%s'; replying with a denial rather than an "
+                "empty result set",
+                intent.intent, message.source_node, denial.reason,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # AD-1276: the peer is owed an answer even when the local fan-out
+            # fails. Without this the exception escaped to the transport, no
+            # intent_response was ever sent, and the peer waited out its
+            # timeout -- a local fault presenting to the peer as a dead node.
+            local_results = []
+            failure_error = type(exc).__name__
+            logger.error(
+                "AD-1276: local broadcast of inbound federated intent %s from "
+                "%s raised %s; replying with a failure so the peer does not "
+                "time out",
+                intent.intent, message.source_node, failure_error,
+                exc_info=True,
+            )
 
         # Build response
         serialized_results = []
@@ -1642,11 +1681,26 @@ class FederationBridge:
                 "confidence": r.confidence,
             })
 
+        # AD-1276: the same envelope Section 1 puts on the NATS reply -- one
+        # shape, two transports. ``results`` is still carried so a peer that
+        # predates the `denied`/`error` keys behaves exactly as it did: the
+        # reader for this path is ``forward_intent``, which does
+        # ``response.payload.get("results", [])``. The DIRECTED path is a
+        # different reader with an EXACT key set (``_DIRECTED_RESPONSE_KEYS``),
+        # which is one more reason these keys are added here and never there.
+        response_payload: dict[str, Any] = {"results": serialized_results}
+        if denied_reason is not None:
+            response_payload["denied"] = True
+            response_payload["reason"] = denied_reason
+            response_payload["entry_point"] = denied_entry_point
+        elif failure_error is not None:
+            response_payload["error"] = failure_error
+
         response = FederationMessage(
             type="intent_response",
             source_node=self._node_id,
             message_id=message.message_id,
-            payload={"results": serialized_results},
+            payload=response_payload,
             timestamp=time.monotonic(),
         )
         await self._transport.send_to_peer(message.source_node, response)

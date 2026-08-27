@@ -1367,6 +1367,39 @@ class NATSBus:
 # ---------------------------------------------------------------------------
 
 
+class _MockDeliveredMsg:
+    """Records which JetStream disposition a consumer chose (AD-1276).
+
+    ``MockNATSBus.publish`` used to build ``NATSMessage`` with no ``_msg``, and
+    every disposition method on that wrapper no-ops when ``_msg`` is None. So a
+    consumer that ``term()``ed a message and one that ``ack()``ed it produced
+    identical observable state, and no test could tell them apart.
+    """
+
+    __slots__ = ("subject", "_acks", "_naks", "_terms")
+
+    def __init__(
+        self,
+        subject: str,
+        acks: list[str],
+        naks: list[tuple[str, float | None]],
+        terms: list[str],
+    ) -> None:
+        self.subject = subject
+        self._acks = acks
+        self._naks = naks
+        self._terms = terms
+
+    async def ack(self) -> None:
+        self._acks.append(self.subject)
+
+    async def nak(self, delay: float | None = None) -> None:
+        self._naks.append((self.subject, delay))
+
+    async def term(self) -> None:
+        self._terms.append(self.subject)
+
+
 class MockNATSBus:
     """In-memory mock for testing without a NATS server.
 
@@ -1382,6 +1415,13 @@ class MockNATSBus:
         self._queue_subs: dict[str, dict[str, list[MessageCallback]]] = {}
         self._streams: dict[str, dict[str, Any]] = {}
         self.published: list[tuple[str, dict[str, Any]]] = []  # Test inspection
+        # AD-1276: delivered-message dispositions, for tests that must tell a
+        # refusal from an acceptance. Not cleared by ``stop()``, matching
+        # ``published`` -- these are the record of what happened, and a test
+        # that stops the bus before asserting still needs them.
+        self.acks: list[str] = []
+        self.naks: list[tuple[str, float | None]] = []
+        self.terms: list[str] = []
         self._active_subs: list[dict[str, Any]] = []
         self._removed_subscription_subjects: set[str] = set()
         self._subscription_mutation_lock = asyncio.Lock()
@@ -1533,7 +1573,14 @@ class MockNATSBus:
         full = self._full_subject(subject)
         self.published.append((full, data))
 
-        msg = NATSMessage(subject=full, data=data, headers=headers or {})
+        # AD-1276: a raw message stands behind the wrapper so ack/nak/term are
+        # observable. Without it every disposition silently no-ops.
+        msg = NATSMessage(
+            subject=full,
+            data=data,
+            headers=headers or {},
+            _msg=_MockDeliveredMsg(full, self.acks, self.naks, self.terms),
+        )
         for pattern, cbs in self._subs.items():
             if self._match_subject(pattern, full):
                 for cb in cbs:
@@ -1588,7 +1635,18 @@ class MockNATSBus:
         subject: str,
         data: dict[str, Any],
         timeout: float = 5.0,
+        *,
+        headers: dict[str, str] | None = None,
     ) -> NATSMessage | None:
+        """Deliver a request to one subscriber and capture its reply.
+
+        AD-1276: ``headers`` models a PEER's header block, not a ProbOS caller
+        -- neither ``NATSBus.request`` nor any caller in this repo sends
+        headers. It exists because ``Msg.respond`` echoes the request's headers
+        onto the reply and the server charges them against the reply's size
+        limit, which is the whole subject of BF-805/BF-827. Keyword-only and
+        defaulted, so every existing call site is unaffected.
+        """
         if not self._connected:
             return None
 
@@ -1597,8 +1655,20 @@ class MockNATSBus:
 
         # Find subscriber and invoke, capture respond() call
         reply_data: dict[str, Any] = {}
+        # The RAW value, deliberately not coerced to ``{}``: nats-py leaves
+        # ``Msg.headers`` as ``None`` when a request carried none, and
+        # ``encoded_header_size`` charges 0 for ``None`` against 12 for an
+        # empty HPUB block. Coercing taxed every existing reply site 12 bytes.
+        _raw_headers = headers
 
         class _MockReplyMsg:
+            # AD-1276: ``Msg.respond`` echoes the REQUEST's headers and the
+            # server charges them against the reply's limit, so
+            # ``reply_body_budget`` reads them off the RAW message. Without
+            # this attribute it fell back to the wrapper's own copy and no
+            # test could exercise a real echo cost.
+            headers = _raw_headers
+
             async def respond(self, payload: bytes) -> None:
                 reply_data.update(json.loads(payload))
 
@@ -1606,6 +1676,7 @@ class MockNATSBus:
             subject=full,
             data=data,
             reply=f"_INBOX.mock.{id(data)}",
+            headers=headers,
             _msg=_MockReplyMsg(),
         )
 
@@ -1623,8 +1694,16 @@ class MockNATSBus:
         subject: str,
         data: dict[str, Any],
         headers: dict[str, str] | None = None,
-    ) -> None:
+    ) -> str:
+        """Deliver like the real bus and report the route it took (AD-1276).
+
+        This returned ``None``, which no real transport ever reports.
+        ``dispatch_async`` branches on ``outcome != "dropped"``, so the mock
+        yielded ``DispatchAdmission(True, route=None)`` -- an admission shape
+        production cannot produce.
+        """
         await self.publish(subject, data, headers=headers)
+        return "jetstream"
 
     async def js_subscribe(
         self,

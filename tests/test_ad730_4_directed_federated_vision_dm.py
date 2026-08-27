@@ -265,10 +265,14 @@ class _CountingBus(IntentBus):
         timeout: float | None = None,
         *,
         federated: bool = True,
+        raise_on_denial: bool = False,
     ) -> list[IntentResult]:
         self.broadcast_calls += 1
         return await super().broadcast(
-            intent, timeout=timeout, federated=federated
+            intent,
+            timeout=timeout,
+            federated=federated,
+            raise_on_denial=raise_on_denial,
         )
 
     async def send(self, intent: IntentMessage) -> IntentResult | None:

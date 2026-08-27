@@ -26,6 +26,19 @@ class _MonotonicClock:
 
 
 def _install_clock(monkeypatch, *ticks: float) -> _MonotonicClock:
+    """Pin an exact sequence of ``time.monotonic()`` reads.
+
+    AD-1276 note: for a while every caller here carried one extra leading
+    ``0.0``, because an authorization-suppression ledger took a clock read when
+    it recorded an ALLOW. That ledger was removed before the change shipped --
+    three review rounds each reproduced a different way for a suppression
+    record to be spent by a delivery it was not minted for -- so the extra tick
+    came back out. The budgets these tests exist to pin never changed.
+
+    The clock raises when exhausted rather than repeating its last value, so a
+    miscount here fails loudly instead of quietly asserting against a stale
+    reading.
+    """
     clock = _MonotonicClock(list(ticks))
     monkeypatch.setattr(
         intent_module,

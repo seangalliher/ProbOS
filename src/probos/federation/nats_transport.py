@@ -258,7 +258,25 @@ class NATSFederationTransport:
             # Route to pending request's response queue
             await self.deliver_response(message.source_node, message)
         elif self._inbound_handler:
-            await self._inbound_handler(message)
+            # AD-1276: bounded. Anything raising out of
+            # ``FederationBridge.handle_inbound`` used to escape into the NATS
+            # subscription wrapper, no ``intent_response`` was ever sent, and
+            # the peer waited out its own timeout with no local record of why.
+            # A handler that fails is reported here as a failure; whether a
+            # reply is owed is the bridge's question, not the transport's, and
+            # the bridge answers it on the paths that have one.
+            try:
+                await self._inbound_handler(message)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error(
+                    "Federation inbound handler failed for %s from %s "
+                    "(message_id=%s); the peer will not receive a response to "
+                    "this message and will time out",
+                    message.type, message.source_node, message.message_id,
+                    exc_info=True,
+                )
 
     async def _on_gossip_message(self, nats_msg: Any) -> None:
         """Handle inbound gossip messages. Filters self-gossip."""

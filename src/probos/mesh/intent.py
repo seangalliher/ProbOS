@@ -282,6 +282,7 @@ class IntentBus:
         self._last_seen_eviction: float = time.monotonic()
         self._duplicate_suppressed_count: int = 0
 
+        # AD-1276: intent ids THIS PROCESS already charged the AD-698 hook for.
         # BF-234: Injected event emitter for duplicate-suppressed telemetry.
         # Wired from finalize.py via set_emit_event().
         self._emit_event_fn: Callable[[str, dict[str, Any]], None] | None = None
@@ -527,10 +528,56 @@ class IntentBus:
         """Subscribe an agent to their NATS intent subject for send() delivery."""
         subject = f"intent.{agent_id}"
 
+        async def _respond_denied(msg: Any, reason: str) -> None:
+            """Reply to a denied request with a distinguishable envelope.
+
+            Silence is not an option here. ``request()`` returns ``None`` when
+            nothing responds and ``_nats_send`` maps both ``None`` and
+            ``{"declined": true}`` to ``None``, so a denial that sent nothing
+            would be indistinguishable from a decline, and one that raised out
+            of this callback would be indistinguishable from a timeout.
+
+            BF-827 parity: budgeted like the other three reply sites on this
+            callback. An un-budgeted reply is submitted, refused by the server
+            asynchronously, and presents to the caller as a timeout -- exactly
+            the failure this envelope exists to avoid.
+            """
+            budget = self._reply_budget(msg)
+            payload = IntentBus._denial_bytes(reason, "nats_inbound", budget)
+            if payload is None:
+                logger.warning(
+                    "AD-1276: cannot send the denial for an intent on agent "
+                    "%s -- the request's echoed headers leave %d bytes, less "
+                    "than the smallest denial this can encode; the caller "
+                    "will time out",
+                    agent_id[:12], budget,
+                )
+                return
+            await msg.respond_encoded(payload)
+
         async def _on_nats_intent(msg: Any) -> None:
             """NATS message adapter: deserialize → handler → serialize reply."""
             try:
                 intent = self._deserialize_intent(msg.data)
+
+                # AD-1276: this node's policy applies to work crossing THIS
+                # node, and an intent off the wire has not passed the producer
+                # gate. A loopback send() already charged the hook, so the
+                # ledger pop makes the second look free.
+                allowed, deny_reason = self._authorize_inbound(
+                    intent, entry_point="nats_inbound", agent_id=agent_id
+                )
+                if not allowed:
+                    logger.warning(
+                        "AD-1276: inbound intent %s for agent %s denied by "
+                        "pre-auth hook '%s'; the handler will not run and the "
+                        "caller receives a denial envelope",
+                        intent.intent, agent_id[:12], deny_reason,
+                    )
+                    if msg.reply:
+                        await _respond_denied(msg, deny_reason)
+                    return
+
                 result = await handler(intent)
                 if msg.reply:
                     if result is not None:
@@ -690,6 +737,25 @@ class IntentBus:
                     self._record_seen_intent(intent_msg.id)
                     self._maybe_evict_seen_intents()  # periodic sweep — after gate, not before
 
+                # AD-1276: after the BF-234 gate, which returns having already
+                # acked, so a suppressed duplicate needs no charge. BEFORE
+                # _record_response below, which is ward-room state a denied
+                # intent must not mutate -- and before both the enqueue and the
+                # direct handler, so one check covers every way this callback
+                # can reach an agent.
+                allowed, deny_reason = self._authorize_inbound(
+                    intent_msg, entry_point="jetstream_inbound", agent_id=agent_id
+                )
+                if not allowed:
+                    logger.warning(
+                        "AD-1276: inbound dispatch %s for agent %s denied by "
+                        "pre-auth hook '%s'; terminating rather than acking so "
+                        "it is neither run nor redelivered",
+                        intent_msg.intent, agent_id[:12], deny_reason,
+                    )
+                    await msg.term()  # never ack(): an ack reports denied work as done
+                    return
+
                 # AD-654a/BF-198: Record response BEFORE handler runs to close
                 # the proactive-loop race window.
                 # Uses injected callback instead of handler.__self__ reach-through.
@@ -698,7 +764,16 @@ class IntentBus:
                     if _thread_id:
                         self._record_response(intent_msg.target_agent_id, _thread_id)
 
-                # AD-654b: Enqueue with priority classification
+                # AD-654b: Enqueue with priority classification.
+                #
+                # AD-1276: the queue itself deliberately does NOT authorize.
+                # Every path that enqueues to AgentCognitiveQueue passes a
+                # check first -- this callback above, the dispatch_async local
+                # fallback, and the AD-654c Dispatcher -- so a check inside
+                # `cognitive/queue.py` would double-charge all three. The queue
+                # is in-memory, so no restart resurrects an unauthorized item,
+                # and a JetStream redelivery re-enters this callback and is
+                # judged again. Do not "close the gap" at the dequeue site.
                 queue = self._get_agent_queue(agent_id)
                 if queue:
                     priority = Priority.classify(
@@ -927,14 +1002,19 @@ class IntentBus:
         that records success after a refused dispatch needs the opt-in. Known
         outstanding cases are tracked as BF-790 (#1254).
 
-        SCOPE, stated plainly because an earlier version of this comment
-        overclaimed: this covers the PRODUCER side only -- a caller on this
-        node reaching the bus. It does NOT cover intents arriving over the
-        wire: the NATS request/reply callback, the JetStream callback, the
-        AD-654b cognitive queue and the AD-654c ``Dispatcher`` all reach a
-        handler without passing here. That is BF-789 (#1253), and it is a
-        different problem -- checking at both transport ends would
-        double-charge a stateful hook such as a rate limiter.
+        SCOPE. This is the PRODUCER side -- a caller on this node reaching the
+        bus. Intents arriving over the wire are checked by
+        ``_authorize_inbound`` at the NATS request/reply callback and at the
+        JetStream callback (AD-1276), which also covers the AD-654b cognitive
+        queue because every path that enqueues passes a check first. The
+        AD-654c ``Dispatcher`` authorizes for itself. Checking at both
+        transport ends would double-charge a stateful hook such as a rate
+        limiter, so an ALLOW on a path that loops back over the wire records
+        ``(target_agent_id, intent.id)`` in the process-local ledger and the
+        consumer side pops it rather than evaluating again. That ledger is
+        in-process memory only; see ``_authorize_inbound`` for why neither half
+        of the key may come off the wire, and for the bounded case where a hook
+        is nonetheless charged twice.
         """
         # BF-789: the evaluation itself lives in `mesh.pre_intent_auth`, because
         # the AD-654c Dispatcher reaches handlers without touching this class and
@@ -991,7 +1071,9 @@ class IntentBus:
             return None
 
         if not self._authorize(
-            intent, entry_point="send", raise_on_denial=raise_on_denial
+            intent,
+            entry_point="send",
+            raise_on_denial=raise_on_denial,
         ):
             return None
 
@@ -999,7 +1081,7 @@ class IntentBus:
         try:
             # NATS path when connected
             if self._nats_bus and self._nats_bus.connected:
-                return await self._nats_send(intent)
+                return await self._nats_send(intent, raise_on_denial=raise_on_denial)
 
             # Direct-call fallback when NATS disconnected
             handler = self._subscribers.get(intent.target_agent_id)
@@ -1020,8 +1102,20 @@ class IntentBus:
             _elapsed_ms = (time.monotonic() - _send_start) * 1000
             self._metrics.record_send(intent.intent, _elapsed_ms)
 
-    async def _nats_send(self, intent: IntentMessage) -> IntentResult | None:
-        """Send intent via NATS request/reply to target agent."""
+    async def _nats_send(
+        self,
+        intent: IntentMessage,
+        *,
+        raise_on_denial: bool = False,
+    ) -> IntentResult | None:
+        """Send intent via NATS request/reply to target agent.
+
+        AD-1276: ``raise_on_denial`` is threaded from ``send`` so a REMOTE
+        policy denial surfaces the same way a local one does. The default shape
+        stays ``None``, so none of the 14 ``send`` seams sees a type it did not
+        already handle -- only a caller that already opted in gets the
+        exception.
+        """
         subject = f"intent.{intent.target_agent_id}"
         try:
             reply = await asyncio.wait_for(
@@ -1044,6 +1138,20 @@ class IntentBus:
         if reply is None:
             return None
         data = reply.data if hasattr(reply, 'data') else reply
+        # AD-1276: BEFORE the decline check. A denial carries its own key
+        # precisely so it is not collapsed into the decline's silent None --
+        # checking `declined` first would work only while the two keys never
+        # co-occur, and would report a policy refusal as an agent's own choice.
+        if isinstance(data, dict) and data.get("denied"):
+            reason = data.get("reason", "")
+            entry_point = data.get("entry_point", "nats_inbound")
+            logger.info(
+                "AD-1276: %s to %s was denied remotely by pre-auth hook '%s'",
+                intent.intent, (intent.target_agent_id or "")[:12], reason,
+            )
+            if raise_on_denial:
+                raise IntentAuthorizationDenied(intent.intent, reason, entry_point)
+            return None
         if isinstance(data, dict) and data.get("declined"):
             return None
         return self._deserialize_result(data)
@@ -1304,7 +1412,9 @@ class IntentBus:
             return DispatchAdmission(False, reason="bus_closed")
 
         if not self._authorize(
-            intent, entry_point="dispatch_async", raise_on_denial=raise_on_denial
+            intent,
+            entry_point="dispatch_async",
+            raise_on_denial=raise_on_denial,
         ):
             return DispatchAdmission(False, reason="denied")
 
@@ -1629,6 +1739,58 @@ class IntentBus:
         """BF-234: Return total number of transport-layer duplicates suppressed."""
         return self._duplicate_suppressed_count
 
+    # ------------------------------------------------------------------
+    # AD-1276: process-local authorization ledger
+    # ------------------------------------------------------------------
+
+    def _authorize_inbound(
+        self,
+        intent: IntentMessage,
+        *,
+        entry_point: str,
+        agent_id: str,
+    ) -> tuple[bool, str]:
+        """AD-698 for an intent arriving over a transport (BF-789, #1253).
+
+        Returns ``(allowed, reason)``. The prompt sketched this as ``-> bool``;
+        the denial envelope this feeds carries the hook's reason to the peer,
+        and stashing that reason on ``self`` between the check and the reply
+        would race between concurrent callbacks on the same bus. The tuple is
+        also the shape ``authorize_intent`` itself already reports.
+
+        ALWAYS evaluates. There is deliberately no "already authorized" ledger.
+
+        An earlier revision of this change carried one, so that a loopback --
+        a locally-subscribed agent also subscribes to its own NATS and
+        JetStream subjects, so ``send``/``dispatch_async`` re-enter this same
+        process -- would not charge a stateful hook such as a rate limiter
+        twice. Three consecutive adversarial reviews each reproduced a
+        DIFFERENT way for a charge to be spent by a delivery it was not minted
+        for: keyed by the peer-controlled ``intent.id``; minted before route
+        selection so a transport-less send left a spendable orphan; and minted
+        for one channel but spendable from another, because a request/reply
+        consumer and a dispatch consumer pop the same key.
+
+        Each fix was sound and the next round found the invariant broken
+        somewhere else, which is the signature of a shape that is wrong rather
+        than a bug that is unfixed. Suppression is an OPTIMIZATION; enforcement
+        is the fix. So enforcement ships and suppression does not.
+
+        The accepted cost, stated rather than hidden: a genuine loopback now
+        charges the hook twice. That is harmless for a stateless RBAC hook and
+        wrong-but-bounded for a stateful one, and it errs toward over-charging
+        -- never toward letting an unauthorized intent through. Restoring
+        suppression needs a delivery identity the peer cannot influence and
+        that names the channel; see the follow-up issue before adding one back.
+
+        ``agent_id`` is the SUBSCRIPTION this message arrived on. It is not
+        used for a waiver decision any more, but it stays in the signature
+        because the callers' log lines and denial envelopes identify the
+        delivery by it, and deriving it from ``intent.target_agent_id`` would
+        be reading a peer-controlled field.
+        """
+        return authorize_intent(intent, entry_point=entry_point)
+
     def set_emit_event(self, fn: Callable[[str, dict[str, Any]], None]) -> None:
         """BF-234: Inject event emitter for duplicate-suppressed telemetry."""
         self._emit_event_fn = fn
@@ -1715,6 +1877,35 @@ class IntentBus:
         for payload in (
             b'{"declined": true}',  # the historical encoding, byte-for-byte
             b'{"declined":true}',   # the same object, JSON whitespace dropped
+        ):
+            if len(payload) <= limit:
+                return payload
+        return None
+
+    @staticmethod
+    def _denial_bytes(reason: str, entry_point: str, limit: int) -> bytes | None:
+        """The most informative denial that fits, or ``None`` if none does.
+
+        AD-1276. The key is ``denied``, deliberately not ``declined``: a
+        decline means the agent chose not to answer, a denial means policy
+        refused to let it be asked. ``_nats_send`` maps a decline to ``None``,
+        so reusing that key would make a policy refusal silently
+        indistinguishable from an agent's own choice.
+
+        Degrades like ``_decline_bytes`` rather than failing: the entry point
+        is dropped first, then the reason, and the fact of the denial last of
+        all -- a peer told only "denied" is still strictly better informed than
+        one that times out. ``None`` means not even fifteen bytes are
+        available; the caller says so in the log.
+        """
+        for payload in (
+            json.dumps(
+                {"denied": True, "reason": reason, "entry_point": entry_point}
+            ).encode(),
+            json.dumps(
+                {"denied": True, "reason": reason}, separators=(",", ":")
+            ).encode(),
+            b'{"denied":true}',
         ):
             if len(payload) <= limit:
                 return payload

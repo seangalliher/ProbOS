@@ -845,8 +845,18 @@ def test_the_jetstream_dispatch_path_has_no_reply_to_lose() -> None:
     # keeping it would have required the one un-budgeted path to stay
     # un-budgeted. Updated rather than deleted, so the change is recorded where
     # the old shape was.
-    assert len(calls) == 3, [ast.dump(c) for c in calls]
-    assert [c.func.attr for c in calls] == ["respond_encoded"] * 3, (
+    #
+    # AD-1276 (BF-789, #1253) adds a FOURTH: the policy-denial envelope on
+    # ``_on_nats_intent``. This asserted ``== 3``, which was the count before
+    # a denial had anywhere to go -- a denial that sent nothing was
+    # indistinguishable from a decline, and one that raised was
+    # indistinguishable from a timeout. The count is what changed; the
+    # CONTRACT this test exists to hold did not, and is the line below it:
+    # every reply site sends pre-encoded, budgeted bytes. The new site goes
+    # through ``_denial_bytes`` and ``_reply_budget`` exactly as the other
+    # three do.
+    assert len(calls) == 4, [ast.dump(c) for c in calls]
+    assert [c.func.attr for c in calls] == ["respond_encoded"] * 4, (
         [ast.dump(c) for c in calls]
     )
     assert not [c for c in calls if c.args and isinstance(c.args[0], ast.Dict)], (

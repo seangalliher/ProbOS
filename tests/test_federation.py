@@ -244,7 +244,7 @@ def _make_mock_intent_bus(results: list[IntentResult] | None = None):
             self._results = results or []
             self._federation_fn = None
 
-        async def broadcast(self, intent, *, timeout=None, federated=True):
+        async def broadcast(self, intent, *, timeout=None, federated=True, raise_on_denial=False):
             self.broadcast_calls.append({
                 "intent": intent,
                 "timeout": timeout,

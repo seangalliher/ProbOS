@@ -485,6 +485,32 @@ class YeomanAgent(CognitiveAgent):
         )
         self._pending_dispatch_tasks.add(task)
         task.add_done_callback(self._pending_dispatch_tasks.discard)
+        task.add_done_callback(self._report_digest_task_failure)
+
+    def _report_digest_task_failure(self, task: asyncio.Task) -> None:
+        """AD-1276: retrieve the digest broadcast's exception rather than lose it.
+
+        ``discard`` was the only done-callback, so nothing ever called
+        ``task.exception()`` and ANY failure of this broadcast vanished --
+        surfacing at best as an "exception was never retrieved" warning at
+        garbage-collection time, detached from the code that caused it.
+
+        Not the cause #1253 states. A policy denial is NOT one of these
+        exceptions: ``broadcast``'s default denial shape is ``[]``, and this
+        call does not opt into ``raise_on_denial``. The real defect is broader
+        and simpler -- every exception from this task was silent.
+        """
+        if task.cancelled():
+            return  # cancellation is lifecycle control, not a fault
+        exc = task.exception()
+        if exc is None:
+            return
+        logger.error(
+            "AD-1276: the Yeoman digest broadcast failed with %s; the Captain "
+            "will not receive this digest",
+            type(exc).__name__,
+            exc_info=exc,
+        )
 
 
 # ---------------------------------------------------------------------------

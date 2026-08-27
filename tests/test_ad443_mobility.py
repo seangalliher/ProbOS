@@ -544,7 +544,7 @@ def _make_bridge(node_id: str, bus: MockTransportBus, registry, intent_bus_stub)
 
 
 class _StubIntentBus:
-    async def broadcast(self, intent, federated=False):
+    async def broadcast(self, intent, federated=False, *, raise_on_denial=False):
         return []
 
 
