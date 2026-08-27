@@ -4486,6 +4486,25 @@ class CognitiveAgent(BaseAgent):
                     deadline_seconds=_coerce_promotion_budget(
                         getattr(cfg, "promoted_run_deadline_seconds", 0.0)
                     ),
+                    # BF-825: the same coercion again, for the same reason, on
+                    # the two values that bound a run which refused its
+                    # cancellation. The lease's interval is DERIVED from the
+                    # reconciler's own strand threshold rather than configured
+                    # separately, so an operator who lowers that threshold
+                    # cannot silently outrun the heartbeat that keeps their
+                    # promoted rows out of the sweep.
+                    unconfirmed_grace_seconds=_coerce_promotion_budget(
+                        getattr(cfg, "promoted_run_unconfirmed_grace_seconds", 0.0)
+                    ),
+                    strand_timeout_seconds=_coerce_promotion_budget(
+                        getattr(
+                            getattr(
+                                getattr(runtime, "config", None),
+                                "work_board_reconciler", None,
+                            ),
+                            "strand_timeout_seconds", 0.0,
+                        )
+                    ),
                 )
             return text.strip() or None
         except Exception:

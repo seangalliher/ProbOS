@@ -190,6 +190,51 @@ _REPORT_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (0.25, 0.75)
 # store that just failed, so it is normally uncontended at exactly this moment.
 _REPORT_CANCEL_QUEUE_SECONDS: float = 2.0
 
+# BF-825: the ownership lease.
+#
+# ``updated_at`` on a promoted row means "last board mutation", and a promoted
+# turn writes its row exactly twice, both at promotion. The reconciler's
+# staleness test reads that value as "last sign of life" and is right about
+# every other kind of item, so a reporter that waits without writing looks
+# identical to a row nobody owns. The lease supplies the missing primitive: the
+# reporter refreshes the row while it is genuinely waiting, which makes
+# ``updated_at`` mean what ``quartermaster.py`` already assumes it means. The
+# classifier is not told about ownership and does not change.
+#
+# The interval is DERIVED from the reconciler's own strand threshold rather
+# than configured, so an operator who lowers that threshold cannot silently
+# outrun the heartbeat. Every beat emits ``WORK_ITEM_UPDATED`` and refreshes
+# the snapshot cache, so the cost is real; a quarter of the window bounds it at
+# four writes per strand period.
+#
+# AD-1277 review: there is deliberately NO anti-chatter floor. One was tried
+# (``max(60.0, strand / 4)``) and it inverted the guarantee for every strand
+# threshold under four minutes, which the config permits -- the lease then beat
+# more slowly than the sweep stranded. A floor that silently disables the
+# mechanism it bounds is worse than frequent writes.
+_LEASE_INTERVAL_DIVISOR: float = 4.0
+
+# How many CONSECUTIVE transient refusals end the lease. A CAS conflict is
+# terminal on the first one -- the row is no longer ours -- but a busy store is
+# not, and treating it as terminal killed the lease while the run was still
+# alive, which is the defect this lease exists to prevent.
+_LEASE_MAX_TRANSIENT_FAILURES: int = 3
+
+# The beat carries a STRICTLY INCREASING marker, not a constant and not a bare
+# clock. ``merge_work_item_metadata`` short-circuits a patch that changes
+# nothing -- ``workforce.py``: ``if merged == current and not status_changed
+# and actual_tokens_delta == 0: return item`` -- so a fixed marker would commit
+# once and then silently stop refreshing ``updated_at``, and two beats landing
+# on the same coarse clock tick would do the same. The beat counter makes the
+# value differ even when the clock does not.
+_LEASE_KEY: str = "promoted_run_lease_at"
+
+# BF-825: recorded on the row the reporter ends itself. Shares the key shape
+# the sweep uses for ``strand_terminal`` (``quartermaster.py``) so the board
+# reads consistently, and carries a distinct value so an operator can tell
+# which component wrote the ending.
+_UNCONFIRMED_EXPIRED_REASON: str = "unconfirmed_grace_expired"
+
 
 @dataclass(frozen=True)
 class ReportDelivery:
@@ -413,7 +458,8 @@ class _PromotedRunSupervisor:
                 "BF-733: promoted run for work item %s did not unwind within "
                 "%.1fs of being cancelled; it may still hold LLM capacity and "
                 "open sockets. The report says so rather than claiming the run "
-                "was stopped, and the reporter keeps waiting for it",
+                "was stopped, and the reporter keeps waiting for it within the "
+                "BF-825 grace",
                 self._work_item_id, grace,
             )
             _retrieve_late_run_failure(self._work_item_id, self._task)
@@ -485,6 +531,205 @@ class _PromotedRunSupervisor:
             raise self._abandoned
         return self._task.result()
 
+
+class _OwnershipLease:
+    """BF-825: say the row is still owned, for as long as it genuinely is.
+
+    ``arm``/``close`` rather than a context manager, matching
+    ``_PromotedRunSupervisor`` beside it: the reporter's two waits live in one
+    ``try`` statement whose ``finally`` already covers success, failure,
+    expiry and cancellation, and wrapping that block would have re-indented it
+    to buy a guarantee it already has.
+
+    Degrades to a no-op when the store cannot compare-and-set. Every promoted
+    run in the suite (and any embedding that supplies its own store) reaches
+    this path, and a store without ``merge_work_item_metadata`` simply has no
+    heartbeat -- which is exactly the behaviour that shipped before this BF.
+    Module rule 3: every failure degrades to today's behaviour, never past it.
+
+    The CAS is the load-bearing part, not the write. ``expected_status`` pins
+    the row at ``in_progress``, so a beat that races the sweep cannot refresh a
+    row already stranded and cannot resurrect a terminal one. The real store
+    raises ``work_item_state_conflict`` in that case; the lease stops beating
+    rather than arguing with a decision another component already made.
+    """
+
+    def __init__(
+        self,
+        *,
+        store: Any,
+        work_item_id: str,
+        agent_id: str,
+        strand_timeout_seconds: float,
+    ) -> None:
+        self._merge = getattr(store, "merge_work_item_metadata", None)
+        self._work_item_id = work_item_id
+        self._agent_id = agent_id
+        # AD-1277 review: the beat interval is `strand / DIVISOR`, full stop.
+        # It used to be `max(FLOOR, strand / DIVISOR)`, and that floor is not
+        # reconcilable with the guarantee: whenever `strand / DIVISOR` falls
+        # below it -- which the config permits, `strand_timeout_seconds` has no
+        # lower bound -- the floor wins and the lease beats MORE SLOWLY than
+        # the sweep strands. Measured by review: strand=30s produced a 60s
+        # interval, so the lease claimed a protection it could not provide.
+        # An anti-chatter floor that silently disables the mechanism is worse
+        # than frequent writes, so the guarantee wins and the floor is gone.
+        # A tiny strand timeout is an operator's explicit choice; the clamp
+        # only stops a zero from producing a hot loop.
+        self._interval = max(
+            float(strand_timeout_seconds) / _LEASE_INTERVAL_DIVISOR, 0.01,
+        )
+        self._armed = callable(self._merge) and strand_timeout_seconds > 0.0
+        self._task: "asyncio.Task[None] | None" = None
+        self._beats = 0
+
+    def arm(self) -> None:
+        if self._armed and self._task is None:
+            self._task = asyncio.create_task(
+                self._beat(), name=f"bf825-lease-{self._work_item_id[:8]}",
+            )
+
+    def close(self) -> None:
+        task = self._task
+        self._task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _beat(self) -> None:
+        transient = 0
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                self._beats += 1
+                await self._merge(
+                    self._work_item_id,
+                    # AD-1277 review: a STRICTLY INCREASING marker, not a bare
+                    # clock. `merge_work_item_metadata` short-circuits a no-op
+                    # patch, so two beats landing on the same coarse clock tick
+                    # write nothing and stop refreshing `updated_at` -- exactly
+                    # the failure the lease exists to prevent, and measured on
+                    # a 1-second-resolution clock.
+                    {_LEASE_KEY: f"{time.time():.6f}/{self._beats}"},
+                    expected_status="in_progress",
+                    source=self._agent_id,
+                )
+                transient = 0
+            except asyncio.CancelledError:
+                raise
+            except ValueError:
+                # The row moved out from under the lease. Terminal: it is not
+                # `in_progress` any more, so this reporter no longer owns its
+                # ending and must stop claiming it does.
+                logger.info(
+                    "BF-825: the ownership lease for work item %s was refused "
+                    "as a state conflict; the row is no longer in_progress, so "
+                    "the reconciler owns its ending now",
+                    self._work_item_id, exc_info=True,
+                )
+                return
+            except Exception:
+                # AD-1277 review: NOT terminal. This arm used to return, so a
+                # single transient refusal -- a busy database, a moment of lock
+                # contention -- killed the lease permanently while the run was
+                # still alive, and the sweep then stranded it on a stale
+                # `updated_at`. That is the defect this AD exists to close,
+                # reintroduced through its own protection. Measured by review:
+                # one failure, one call, dead task.
+                transient += 1
+                if transient >= _LEASE_MAX_TRANSIENT_FAILURES:
+                    logger.warning(
+                        "BF-825: the ownership lease for work item %s failed "
+                        "%d times in a row; giving up, so the reconciler owns "
+                        "its ending now",
+                        self._work_item_id, transient, exc_info=True,
+                    )
+                    return
+                logger.info(
+                    "BF-825: the ownership lease for work item %s could not be "
+                    "renewed this beat (%d/%d); the run is still alive, so the "
+                    "lease keeps trying",
+                    self._work_item_id, transient,
+                    _LEASE_MAX_TRANSIENT_FAILURES, exc_info=True,
+                )
+
+
+async def _close_expired_unconfirmed_turn(
+    *,
+    runtime: Any,
+    agent_id: str,
+    thread_id: str,
+    work_item_id: str,
+    request_text: str,
+    grace_seconds: float,
+) -> None:
+    """BF-825: the reporter writes the ending itself, and discards the answer.
+
+    Not left for the sweep. The sweep runs on a 300s interval, which leaves a
+    window in which the run can land and hit the terminal-transition rejection
+    again -- the same defect, moved later and made rarer, which is the worst of
+    both.
+
+    No second report is posted: the interim notice already told the Captain the
+    run had not answered, and a second message saying so again is noise. The
+    EPISODE is still stored, and stored as a failure, because the transcript,
+    the board and the recall layer have to agree about this run -- disagreement
+    between exactly those three sinks is the defect being closed.
+    """
+    logger.warning(
+        "BF-825: the promoted run for work item %s did not land within %.1fs "
+        "of its unconfirmed notice; the reporter is ending the row failed and "
+        "discarding any late result. The Captain already holds the interim "
+        "notice, and leaving the row open is what let the reconciler strand it "
+        "while a transcript and an episode said it had succeeded",
+        work_item_id, grace_seconds,
+    )
+    await _store_promoted_episode(
+        runtime=runtime,
+        agent_id=agent_id,
+        thread_id=thread_id,
+        work_item_id=work_item_id,
+        request_text=request_text,
+        # What the Captain actually holds for this run, so the episode records
+        # the report that was delivered rather than one that never existed.
+        body=_REPORT_ABANDON_UNCONFIRMED,
+        complete=False,
+        failed=True,
+    )
+    store = getattr(runtime, "work_item_store", None)
+    if store is None:
+        return
+    merge = getattr(store, "merge_work_item_metadata", None)
+    if callable(merge):
+        try:
+            # CAS-guarded so this cannot overwrite an ending the sweep already
+            # wrote. A row it already stranded carries the sweep's own reason,
+            # and claiming it here would misattribute the decision.
+            await merge(
+                work_item_id,
+                {
+                    "stranded_reason": _UNCONFIRMED_EXPIRED_REASON,
+                    "stranded_at": time.time(),
+                },
+                expected_status="in_progress",
+                source=agent_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.info(
+                "BF-825: could not record why work item %s ended; it is closed "
+                "failed either way and only the recorded reason is lost",
+                work_item_id, exc_info=True,
+            )
+    try:
+        await store.transition_work_item(work_item_id, "failed", source=agent_id)
+    except Exception:
+        logger.warning(
+            "BF-825: could not close work item %s after its grace expired; the "
+            "row keeps whatever status it already had, and the reconciler's "
+            "strand remains the backstop",
+            work_item_id, exc_info=True,
+        )
 
 
 def _shorten(text: str, limit: int) -> str:
@@ -1126,6 +1371,8 @@ async def _finish_promoted_turn(
     completed_probe: Callable[[], bool] | None = None,
     failures_probe: Callable[[], Any] | None = None,
     supervisor: "_PromotedRunSupervisor | None" = None,
+    unconfirmed_grace_seconds: float = 0.0,
+    strand_timeout_seconds: float = 0.0,
 ) -> None:
     """Await a promoted run, report it into the thread, close the work item.
 
@@ -1134,10 +1381,27 @@ async def _finish_promoted_turn(
 
     ``supervisor`` (BF-733) bounds the wait. Without one the wait is the
     unbounded ``await task`` this function shipped with.
+
+    ``unconfirmed_grace_seconds`` (BF-825) bounds the SECOND wait -- the one
+    entered after a run refuses its cancellation. ``0`` restores the unbounded
+    wait. ``strand_timeout_seconds`` is the reconciler's own threshold, from
+    which the ownership lease derives its refresh interval; ``0`` leaves the
+    lease disarmed.
     """
     text = ""
     failed = False
     abandoned = False
+    expired = False
+    # BF-825: armed across BOTH waits. The second one -- entered when a run
+    # refuses its cancellation -- is the path that strands, so a lease released
+    # before it would be released exactly where it is needed.
+    lease = _OwnershipLease(
+        store=getattr(runtime, "work_item_store", None),
+        work_item_id=work_item_id,
+        agent_id=agent_id,
+        strand_timeout_seconds=strand_timeout_seconds,
+    )
+    lease.arm()
     try:
         text = await (supervisor.result() if supervisor is not None else task)
     except _RunAbandoned as exc:
@@ -1157,20 +1421,56 @@ async def _finish_promoted_turn(
             # run that does land still delivers its result instead of having it
             # discarded.
             #
-            # If it never lands, this reporter never returns -- which is the
-            # honest representation: the run is still holding whatever it holds,
-            # the row is still open, and its slot stays accounted. What the
-            # Captain has by then is a report, which is the thing that was
-            # missing.
+            # BF-825: bounded, where it used to be a bare ``await task``. The
+            # unbounded wait left the row ``in_progress`` with ``updated_at``
+            # frozen at promotion, so the reconciler read a live, owned row as
+            # a stall and stranded it ``failed`` (BF-730) -- and a run that
+            # then landed posted a SUCCESS report and stored a successful
+            # episode against a board row that said the opposite, silently,
+            # because ``transition_work_item`` returns None for a rejected
+            # transition. Past the bound the answer IS discarded: the Captain
+            # holds the interim notice, the run has had two full budgets, and
+            # ``_close_expired_unconfirmed_turn`` writes the ending.
+            #
+            # ``0`` keeps the unbounded wait, matching the convention
+            # ``promoted_run_deadline_seconds`` already sets.
             logger.warning(
                 "BF-733: work item %s reported as unconfirmed and stays open; "
-                "the reporter keeps waiting so a late result is still "
-                "delivered rather than discarded",
+                "the reporter waits %s for it, so a result landing inside that "
+                "window is still delivered and one landing after it is not",
                 work_item_id,
+                (
+                    f"{unconfirmed_grace_seconds:.1f}s"
+                    if unconfirmed_grace_seconds > 0.0
+                    else "without bound (BF-825 grace disabled)"
+                ),
             )
             try:
-                text = await task
+                if unconfirmed_grace_seconds > 0.0:
+                    # ``wait`` rather than ``wait_for``: on timeout ``wait_for``
+                    # cancels the inner task and then awaits it unbounded, and
+                    # this is precisely a task that has already refused one
+                    # cancellation. ``wait`` reports without cancelling.
+                    done, _pending = await asyncio.wait(
+                        {task}, timeout=unconfirmed_grace_seconds,
+                    )
+                    if task not in done:
+                        # ``_retrieve_late_run_failure`` is already registered
+                        # on this exact path by the watchdog, so giving up the
+                        # await raises no unretrieved-task warning.
+                        expired = True
+                    else:
+                        text = task.result()
+                else:
+                    text = await task
             except asyncio.CancelledError:
+                # ``await task`` propagated the awaiter's cancellation into the
+                # run; ``asyncio.wait`` does not. Restore it here rather than
+                # relying on ``_report_holding_slot``'s guard alone, for the
+                # reason ``_PromotedRunSupervisor.result`` states: this is the
+                # primitive, and anything awaiting the run must get the
+                # semantics of awaiting the run.
+                task.cancel()
                 logger.info(
                     "AD-1165: promoted turn for work item %s was cancelled "
                     "after its unconfirmed notice; it stays in_progress",
@@ -1201,6 +1501,21 @@ async def _finish_promoted_turn(
             "AD-1165: promoted turn for work item %s failed",
             work_item_id, exc_info=True,
         )
+    finally:
+        # BF-825: every exit from both waits passes through here -- success,
+        # failure, expiry, and the two paths that re-raise cancellation.
+        lease.close()
+
+    if expired:
+        await _close_expired_unconfirmed_turn(
+            runtime=runtime,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            work_item_id=work_item_id,
+            request_text=request_text,
+            grace_seconds=unconfirmed_grace_seconds,
+        )
+        return
 
     if abandoned:
         body = _REPORT_ABANDONED
@@ -1298,7 +1613,7 @@ async def _finish_promoted_turn(
         )
         return
     try:
-        await store.transition_work_item(
+        closed = await store.transition_work_item(
             work_item_id,
             "failed" if (failed or abandoned) else "done",
             source=agent_id,
@@ -1306,11 +1621,27 @@ async def _finish_promoted_turn(
     except Exception:
         logger.warning(
             "AD-1165: could not close work item %s; the report was posted and "
-            "the row keeps whatever status it already had — which is not "
-            "necessarily in_progress, since BF-730's reconciler strands a "
-            "long-stalled promoted row terminal on its own (BF-825, #1289)",
+            "the row keeps whatever status it already had",
             work_item_id, exc_info=True,
         )
+    else:
+        # BF-825: a REJECTED transition does not come through the branch above.
+        # ``transition_work_item`` returns None for one and does not raise --
+        # the only trace is a generic store-level "Invalid transition" warning
+        # naming no owner and no BF. That is how a promoted run could post a
+        # success report, store a successful episode, and leave the board
+        # saying ``failed``, silently, once the reconciler had stranded the row
+        # (BF-730). The bound above makes this unreachable on shipped config;
+        # it is logged rather than assumed away because the bound is disarmable.
+        if closed is None:
+            logger.error(
+                "BF-825: work item %s refused its closing transition to %s and "
+                "the store returned None rather than raising. The Captain's "
+                "transcript and the stored episode describe this run "
+                "differently from the board, which is the disagreement BF-825 "
+                "exists to prevent",
+                work_item_id, "failed" if (failed or abandoned) else "done",
+            )
 
 
 async def _report_holding_slot(
@@ -1325,6 +1656,8 @@ async def _report_holding_slot(
     failures_probe: Callable[[], Any] | None = None,
     background_slot: Callable[[], Any] | None = None,
     deadline_seconds: float = 0.0,
+    unconfirmed_grace_seconds: float = 0.0,
+    strand_timeout_seconds: float = 0.0,
 ) -> None:
     """BF-732: hold a concurrency slot for as long as the promoted run lives.
 
@@ -1372,6 +1705,8 @@ async def _report_holding_slot(
             completed_probe=completed_probe,
             failures_probe=failures_probe,
             background_slot=background_slot,
+            unconfirmed_grace_seconds=unconfirmed_grace_seconds,
+            strand_timeout_seconds=strand_timeout_seconds,
         )
     except asyncio.CancelledError:
         # The reporter can be cancelled while QUEUED for a slot, i.e. before
@@ -1468,6 +1803,8 @@ async def _report_with_supervisor(
     completed_probe: Callable[[], bool] | None,
     failures_probe: Callable[[], Any] | None,
     background_slot: Callable[[], Any] | None,
+    unconfirmed_grace_seconds: float = 0.0,
+    strand_timeout_seconds: float = 0.0,
 ) -> None:
     """Acquire the BF-732 slot if there is one, then report under it."""
     slot = None
@@ -1505,6 +1842,8 @@ async def _report_with_supervisor(
             completed_probe=completed_probe,
             failures_probe=failures_probe,
             supervisor=supervisor,
+            unconfirmed_grace_seconds=unconfirmed_grace_seconds,
+            strand_timeout_seconds=strand_timeout_seconds,
         )
     finally:
         if held:
@@ -1535,6 +1874,8 @@ async def run_with_promotion(
     on_promoted: Callable[[str], None] | None = None,
     background_slot: Callable[[], Any] | None = None,
     deadline_seconds: float = 0.0,
+    unconfirmed_grace_seconds: float = 0.0,
+    strand_timeout_seconds: float = 0.0,
 ) -> str:
     """Run ``work``; promote it to a background task if it outlives the budget.
 
@@ -1606,6 +1947,23 @@ async def run_with_promotion(
     ``0`` keeps the unbounded wait this function shipped with -- the wait that
     left work item ``ccabc4818bd1`` ``in_progress`` and unreported indefinitely
     after an LLM endpoint outage suspended its run.
+
+    ``unconfirmed_grace_seconds`` (BF-825) bounds the SECOND wait, the one a
+    run reaches by refusing its cancellation. Unbounded, that wait froze the
+    row's ``updated_at`` at promotion while a reporter was genuinely still
+    waiting, so the reconciler read it as a stall and stranded it ``failed``
+    (BF-730) -- and a run that then landed left the transcript, the stored
+    episode and the board disagreeing, silently. Past the bound the reporter
+    ends the row itself and the late result is discarded. ``0`` restores the
+    unbounded wait.
+
+    ``strand_timeout_seconds`` (BF-825) is the reconciler's own strand
+    threshold, from which the ownership lease derives its refresh interval so
+    that lowering the threshold cannot silently outrun the heartbeat. The lease
+    is what makes the guarantee structural rather than a coincidence of two
+    numeric defaults: with the watchdog disarmed there is no interim notice and
+    no second wait to bound, and only a lease keyed on "a reporter is waiting"
+    still holds. ``0`` leaves it disarmed.
     """
     if promote_after_seconds <= 0.0:
         return await work()
@@ -1676,6 +2034,8 @@ async def run_with_promotion(
             failures_probe=failures_probe,
             background_slot=background_slot,
             deadline_seconds=deadline_seconds,
+            unconfirmed_grace_seconds=unconfirmed_grace_seconds,
+            strand_timeout_seconds=strand_timeout_seconds,
         ),
         name=f"ad1165-report-{work_item.id[:8]}",
     )

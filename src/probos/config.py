@@ -6349,6 +6349,38 @@ class DmAgenticConfig(BaseModel):  # AD-1065
             "still be executing. 0 restores the unbounded wait."
         ),
     )
+    promoted_run_unconfirmed_grace_seconds: float = Field(
+        default=1800.0,
+        ge=0.0,
+        le=86400.0,
+        description=(
+            "BF-825: seconds the reporter keeps waiting for a promoted run "
+            "that REFUSED its cancellation, measured from the unconfirmed "
+            "notice. Only that path reaches this bound \u2014 a run which "
+            "answers the stop is already terminal. Before it existed the wait "
+            "was unbounded, so the work item's updated_at stayed frozen at "
+            "promotion while the reporter waited, and the work_board_reconciler "
+            "read that frozen value as a stall and stranded the row 'failed' "
+            "(BF-730). If the run then landed, the reporter posted a SUCCESS "
+            "report into the thread and stored a successful episode, while "
+            "transition_work_item refused the terminal-to-terminal move and "
+            "returned None without raising \u2014 so the transcript, the recall "
+            "layer and the board disagreed and nothing said so. "
+            "Past this bound the reporter ends the row itself, 'failed', with "
+            "the reason recorded in metadata, and the LATE RESULT IS "
+            "DISCARDED. That is deliberate: the Captain already holds the "
+            "interim notice, the run has had two full budgets, and the "
+            "alternative is the pre-BF-730 condition that measured work items "
+            "idle between 23.5h and 182h. No second report is posted, because "
+            "the interim notice already said the run had not answered. "
+            "The default is one more promoted_run_deadline_seconds budget "
+            "rather than an independent number \u2014 a run that refused its "
+            "cancellation gets exactly one more budget's worth to land, then "
+            "it is over \u2014 so the maximum life of a promoted row on shipped "
+            "config is about an hour, comfortably inside the reconciler's 4h "
+            "strand_timeout_seconds. 0 restores the unbounded wait."
+        ),
+    )
     hold_degraded_turns: bool = Field(
         default=False,
         description=(
