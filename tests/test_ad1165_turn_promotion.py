@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -89,6 +91,19 @@ class _FakeThreadStore:
         self.error: Exception | None = None
 
     def append_message(self, thread_id, *, author_id, role, body, metadata=None):
+        return self.append_message_once(
+            thread_id, message_id=uuid.uuid4().hex, author_id=author_id,
+            role=role, body=body, created_at=time.time(), metadata=metadata,
+        )
+
+    # AD-1274: the promoted path calls this one, with a caller-minted id.
+    # Returns a message-like object on success, mirroring the real store --
+    # ``None`` there means "the thread does not exist", which the reporter now
+    # treats as an undeliverable report rather than as a quiet success.
+    def append_message_once(
+        self, thread_id, *, message_id, author_id, role, body,
+        created_at, metadata=None,
+    ):
         if self.error is not None:
             raise self.error
         self.appended.append({
@@ -98,7 +113,7 @@ class _FakeThreadStore:
             "body": body,
             "metadata": metadata,
         })
-        return None
+        return SimpleNamespace(id=message_id, thread_id=thread_id, body=body)
 
 
 def _runtime(*, work_items=None, threads=None):

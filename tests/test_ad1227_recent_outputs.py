@@ -112,6 +112,17 @@ class _FakeThreadStore:
     def __init__(self) -> None:
         self.appended: list[dict] = []
 
+    # AD-1274: the promoted-report path posts through
+    # ``append_message_once``. A double offering only the older method is LESS
+    # capable than production, so the report silently stops reaching the
+    # thread while this test still reads as clean.
+    def append_message_once(
+        self, thread_id: str, *, message_id: str, author_id: str, role: str,
+        body: str, created_at: float | None = None, metadata: dict | None = None,
+    ) -> object:
+        self.appended.append({"thread_id": thread_id, "body": body})
+        return SimpleNamespace(id=message_id)
+
     def append_message(
         self, thread_id: str, *, author_id: str, role: str, body: str,
         metadata: dict | None = None,

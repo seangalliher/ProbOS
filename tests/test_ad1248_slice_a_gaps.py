@@ -8,6 +8,8 @@ long one that burned through its tools.
 
 from __future__ import annotations
 
+import time
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -35,21 +37,40 @@ class _RecordingStore:
         self.appended: list[dict] = []
 
     def append_message(self, thread_id, *, author_id, role, body, metadata=None):
+        return self.append_message_once(
+            thread_id, message_id=uuid.uuid4().hex, author_id=author_id,
+            role=role, body=body, created_at=time.time(), metadata=metadata,
+        )
+
+    # AD-1274: the promoted path calls this one, with a caller-minted id -- that
+    # fixed id is what makes a retry exactly-once. Both methods are mirrored so
+    # the stub keeps the real store's shape, where ``append_message`` delegates.
+    def append_message_once(
+        self, thread_id, *, message_id, author_id, role, body,
+        created_at, metadata=None,
+    ):
         # Mirrors the real store's exact-type validation, which a str subclass
         # fails -- the trap that silently lost a reply in the first landing.
         if type(body) is not str:
             raise ValueError("chat_thread_message_invalid")
-        self.appended.append({"thread_id": thread_id, "body": body, "role": role})
+        self.appended.append({
+            "thread_id": thread_id,
+            "message_id": message_id,
+            "body": body,
+            "role": role,
+        })
+        return SimpleNamespace(id=message_id, thread_id=thread_id, body=body)
 
 
 # ── sinks 22-23: promoted completion ────────────────────────────────────────
 
 
-def test_a_promoted_report_discloses_a_failed_tool() -> None:
+@pytest.mark.asyncio
+async def test_a_promoted_report_discloses_a_failed_tool() -> None:
     from probos.cognitive.turn_promotion import _post_report
 
     store = _RecordingStore()
-    _post_report(
+    await _post_report(
         runtime=SimpleNamespace(chat_thread_store=store),
         agent_id="ezri",
         thread_id="t-1",
@@ -60,11 +81,12 @@ def test_a_promoted_report_discloses_a_failed_tool() -> None:
     assert "web_search" in store.appended[0]["body"]
 
 
-def test_a_promoted_report_without_failures_is_byte_identical() -> None:
+@pytest.mark.asyncio
+async def test_a_promoted_report_without_failures_is_byte_identical() -> None:
     from probos.cognitive.turn_promotion import _post_report
 
     store = _RecordingStore()
-    _post_report(
+    await _post_report(
         runtime=SimpleNamespace(chat_thread_store=store),
         agent_id="ezri", thread_id="t-1", work_item_id="w-1",
         body="All clear, Captain.",
@@ -72,13 +94,14 @@ def test_a_promoted_report_without_failures_is_byte_identical() -> None:
     assert store.appended[0]["body"] == "All clear, Captain."
 
 
-def test_the_promoted_report_body_is_a_plain_str() -> None:
+@pytest.mark.asyncio
+async def test_the_promoted_report_body_is_a_plain_str() -> None:
     """The render token is a str SUBCLASS and the store validates with
     ``type(body) is not str``. _RecordingStore reproduces that check."""
     from probos.cognitive.turn_promotion import _post_report
 
     store = _RecordingStore()
-    _post_report(
+    await _post_report(
         runtime=SimpleNamespace(chat_thread_store=store),
         agent_id="ezri", thread_id="t-1", work_item_id="w-1",
         body="done", tool_failures=_failures(),
@@ -273,45 +296,71 @@ async def test_a_malformed_probe_return_still_delivers_the_report(caplog) -> Non
     ), "the log must name the wrong shape, not just report a generic failure"
 
 
-def test_the_artifact_and_the_transcript_tell_the_same_story() -> None:
+@pytest.mark.asyncio
+async def test_the_artifact_and_the_transcript_tell_the_same_story() -> None:
     """Sink 23. ``_post_report`` composes; the outcome artifact previously got
     the RAW body, so a promoted run's stored evidence disagreed with its own
     transcript about whether a tool failed. Render once per route, reuse."""
     from probos.cognitive.turn_promotion import _post_report
 
     store = _RecordingStore()
-    reported = _post_report(
+    report = await _post_report(
         runtime=SimpleNamespace(chat_thread_store=store),
         agent_id="ezri", thread_id="t-1", work_item_id="w-1",
         body="I finished the research.",
         tool_failures=_failures(),
     )
-    assert reported == store.appended[0]["body"]
-    assert "web_search" in reported
-    assert type(reported) is str
+    # AD-1274: ``reported`` became a ReportDelivery whose ``body`` field is the
+    # composed text. The property this test guards is unchanged -- what the
+    # caller reuses must be byte-identical to what reached the transcript.
+    assert report.body == store.appended[0]["body"]
+    assert "web_search" in report.body
+    assert type(report.body) is str
+    assert report.delivered is True
 
 
 def test_the_finisher_feeds_the_composed_text_to_the_episode() -> None:
+    """AD-1274: the structural half of this test used to read
+
+        assert "reported = _post_report(" in source
+
+    which pinned the SYNCHRONOUS call shape as contract. A ``getsource`` scan
+    cannot tell "this line is required" from "this line is what shipped", and
+    that line was the latter: the post now runs off the event loop and is
+    awaited. Updated rather than deleted, so the record of what it used to
+    assert survives, and paired below with the behavioural claim it actually
+    stands in for.
+    """
     import inspect
 
     from probos.cognitive import turn_promotion
 
     source = inspect.getsource(turn_promotion._finish_promoted_turn)
-    assert "reported = _post_report(" in source
+    assert "report = await _post_report(" in source, (
+        "the post must be awaited; a synchronous call here puts a SQLite write "
+        "back on the event loop, which is the 7.9s stall AD-1274 removed"
+    )
     assert "body=reported," in source, (
         "the episode/artifact must receive the COMPOSED text, not the raw body"
     )
+    # The opposite over-correction: threading the outcome OBJECT into the
+    # episode would make the stored evidence a repr rather than the report.
+    assert "body=report," not in source, (
+        "the episode must receive the composed TEXT, not the delivery outcome"
+    )
 
 
-def test_a_report_with_no_store_still_returns_the_composed_text() -> None:
+@pytest.mark.asyncio
+async def test_a_report_with_no_store_still_returns_the_composed_text() -> None:
     from probos.cognitive.turn_promotion import _post_report
 
-    reported = _post_report(
+    report = await _post_report(
         runtime=SimpleNamespace(chat_thread_store=None),
         agent_id="ezri", thread_id="t-1", work_item_id="w-1",
         body="body", tool_failures=_failures(),
     )
-    assert "web_search" in reported
+    assert "web_search" in report.body
+    assert report.delivered is False
 
 
 # ── empty bodies: the disclosure is the only truthful content ───────────────

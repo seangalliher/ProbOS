@@ -49,7 +49,9 @@ async def _reporter(task: Any, cm: ConcurrencyManager | None, wid: str = "wi-1")
         task,
         runtime=_Runtime(),
         agent_id="counselor_0",
-        thread_id="",          # no thread -> _post_report is a no-op
+        thread_id="",          # AD-1274: rejected by the store's id validation,
+                               # so _post_report returns not-delivered and the
+                               # slot accounting under test is unaffected
         work_item_id=wid,
         request_text="do the thing",
         completed_probe=None,

@@ -200,6 +200,16 @@ async def test_the_promotion_report_reaches_the_thread_clean(
     posted: list[dict[str, object]] = []
 
     class _Store:
+        # AD-1274: the report path posts through ``append_message_once`` so a
+        # retry replays one id instead of inserting a second copy. Mirrored
+        # here rather than left behind: a double that only offers the older
+        # method is LESS capable than production, and the promotion silently
+        # stops reaching the thread while this test still reads as a clean
+        # egress check.
+        def append_message_once(self, thread_id: str, **kwargs: object) -> object:
+            posted.append(kwargs)
+            return SimpleNamespace(id=kwargs.get("message_id"))
+
         def append_message(self, thread_id: str, **kwargs: object) -> None:
             posted.append(kwargs)
 

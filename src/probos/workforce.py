@@ -1126,6 +1126,18 @@ CREATE TABLE IF NOT EXISTS crew_delivery_outbox (
     UNIQUE (session_id, session_revision, outcome)
 );
 
+CREATE TABLE IF NOT EXISTS promoted_report_outbox (
+    message_id   TEXT PRIMARY KEY,
+    work_item_id TEXT NOT NULL,
+    thread_id    TEXT NOT NULL,
+    agent_id     TEXT NOT NULL,
+    body         TEXT NOT NULL,
+    created_at   REAL NOT NULL,
+    delivered    INTEGER NOT NULL DEFAULT 0,
+    queued_at    REAL NOT NULL,
+    delivered_at REAL
+);
+
 CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status);
 CREATE INDEX IF NOT EXISTS idx_work_items_assigned_to ON work_items(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_work_items_work_type ON work_items(work_type);
@@ -1138,6 +1150,8 @@ CREATE INDEX IF NOT EXISTS idx_crew_trust_outbox_pending
     ON crew_trust_outbox(delivered, created_at, outcome_id);
 CREATE INDEX IF NOT EXISTS idx_crew_delivery_outbox_pending
     ON crew_delivery_outbox(delivered, created_at, delivery_id);
+CREATE INDEX IF NOT EXISTS idx_promoted_report_outbox_pending
+    ON promoted_report_outbox(delivered, queued_at, message_id);
 CREATE INDEX IF NOT EXISTS idx_work_items_crew_session_metrics
     ON work_items(work_type, created_at DESC, id DESC);
 """
@@ -1166,6 +1180,12 @@ _MAX_CREW_TRUST_EFFECTS = (_MAX_WORK_ITEM_DIRECT_CHILDREN * 10) + 2
 _MAX_CREW_TRUST_EFFECT_BYTES = 8_192
 _MAX_CREW_DELIVERY_RECORD_BYTES = 8_192
 _MAX_CREW_DELIVERY_PENDING_ROWS = 1_001
+# AD-1274: a promoted run's report is a Captain-facing narrative, not a compact
+# outcome record, so it needs far more room than the 8 KiB crew delivery
+# payload. 64 KiB is generous for prose and still refuses a runaway body rather
+# than letting one row fill workforce.db.
+_MAX_PROMOTED_REPORT_PENDING_ROWS = 1_001
+_MAX_PROMOTED_REPORT_BODY_BYTES = 65_536
 _MAX_CREW_SESSION_METRIC_ROWS = 10_001
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_DEPTH = 64
 _MAX_WORK_ITEM_CHILD_SNAPSHOT_NODES = 65_536
@@ -1550,6 +1570,63 @@ def _crew_delivery_entry_from_row(row: Any) -> CrewSessionDeliveryOutboxEntry:
         record=record,
         delivered=bool(row[6]),
         created_at=row[7],
+        delivered_at=row[8],
+    )
+
+
+@dataclass(frozen=True)
+class PromotedReportOutboxEntry:
+    """AD-1274: one durably pending promoted-run report.
+
+    ``message_id`` is the id the reporter minted for
+    ``ChatThreadStore.append_message_once``, and ``created_at`` is the timestamp
+    it minted alongside. Both are replayed VERBATIM on redelivery: the store's
+    exact-match check compares every field, so a drifted timestamp would raise
+    ``chat_thread_message_conflict`` rather than recognising the message it
+    already holds.
+    """
+
+    message_id: str
+    work_item_id: str
+    thread_id: str
+    agent_id: str
+    body: str
+    created_at: float
+    delivered: bool
+    queued_at: float
+    delivered_at: float | None
+
+
+def _promoted_report_entry_from_row(row: Any) -> PromotedReportOutboxEntry:
+    if (
+        type(row[0]) is not str
+        or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(row[0]) is None
+        or type(row[1]) is not str
+        or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(row[1]) is None
+        or type(row[2]) is not str
+        or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(row[2]) is None
+        or type(row[3]) is not str
+        or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(row[3]) is None
+        or type(row[4]) is not str
+        or len(row[4].encode("utf-8")) > _MAX_PROMOTED_REPORT_BODY_BYTES
+        or type(row[5]) is not float
+        or not math.isfinite(row[5])
+        or not 0.0 <= row[5] <= _MAX_WORK_ITEM_TIMESTAMP
+        or type(row[6]) is not int
+        or row[6] not in (0, 1)
+        or type(row[7]) is not float
+        or (row[8] is not None and type(row[8]) is not float)
+    ):
+        raise ValueError("promoted_report_outbox_corrupt")
+    return PromotedReportOutboxEntry(
+        message_id=row[0],
+        work_item_id=row[1],
+        thread_id=row[2],
+        agent_id=row[3],
+        body=row[4],
+        created_at=row[5],
+        delivered=bool(row[6]),
+        queued_at=row[7],
         delivered_at=row[8],
     )
 
@@ -4200,6 +4277,203 @@ class WorkItemStore(EventEmitterMixin):
                         session_revision,
                         outcome,
                     ),
+                )
+                changed = cursor.rowcount == 1
+                if changed:
+                    await self._db.commit()
+                else:
+                    await self._db.execute("ROLLBACK")
+                return changed
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+
+    # --- AD-1274: promoted-report outbox -------------------------------------
+    #
+    # A sibling of ``crew_delivery_outbox``, deliberately NOT a reuse of it.
+    # That table is session-shaped -- ``UNIQUE (session_id, session_revision,
+    # outcome)``, and its drainer validates ``thread.task_id ==
+    # record.session_id``. A promoted report has a work item, not a session
+    # revision, and forcing it in would corrupt uniqueness semantics that crew
+    # sessions depend on elsewhere.
+    #
+    # It lives in ``workforce.db`` because the resource it is a fallback for is
+    # ``chat_threads.db``. An error path must not fail the way the thing it
+    # reports on failed: different file, different lock.
+    #
+    # ``message_id`` is the primary key AND the id the reporter already minted
+    # for ``ChatThreadStore.append_message_once``. That one identity makes an
+    # at-least-once drain an exactly-once delivery, with no distributed
+    # transaction: a redelivery of a row whose write actually committed finds
+    # the existing message and returns it without inserting.
+
+    async def enqueue_promoted_report(
+        self,
+        *,
+        message_id: str,
+        work_item_id: str,
+        thread_id: str,
+        agent_id: str,
+        body: str,
+        created_at: float,
+    ) -> bool:
+        """Record one undeliverable promoted report as durably pending.
+
+        Idempotent on ``message_id``: re-queueing the same report leaves the
+        original row, including its ``queued_at`` ordering, untouched.
+        """
+        if (
+            type(message_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(message_id) is None
+            or type(work_item_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(work_item_id) is None
+            or type(thread_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(thread_id) is None
+            or type(agent_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(agent_id) is None
+            or type(body) is not str
+            or len(body.encode("utf-8")) > _MAX_PROMOTED_REPORT_BODY_BYTES
+            or type(created_at) not in {int, float}
+            or not math.isfinite(float(created_at))
+            or not 0.0 <= float(created_at) <= _MAX_WORK_ITEM_TIMESTAMP
+        ):
+            raise ValueError("promoted_report_outbox_invalid")
+        if not self._db:
+            return False
+        async with self._work_item_row_write_lock:
+            cursor = await self._db.execute(
+                "INSERT OR IGNORE INTO promoted_report_outbox "
+                "(message_id, work_item_id, thread_id, agent_id, body, "
+                "created_at, delivered, queued_at, delivered_at) "
+                "VALUES (?,?,?,?,?,?,0,?,NULL)",
+                (
+                    message_id,
+                    work_item_id,
+                    thread_id,
+                    agent_id,
+                    body,
+                    float(created_at),
+                    time.time(),
+                ),
+            )
+            await self._db.commit()
+        return cursor.rowcount == 1
+
+    async def list_pending_promoted_reports(
+        self,
+        *,
+        limit: int,
+    ) -> tuple[PromotedReportOutboxEntry, ...]:
+        """Return a bounded deterministic batch of validated pending rows."""
+        if (
+            type(limit) is not int
+            or not 1 <= limit <= _MAX_PROMOTED_REPORT_PENDING_ROWS
+        ):
+            raise ValueError("promoted_report_outbox_limit_invalid")
+        if not self._db:
+            return ()
+        async with self._work_item_row_write_lock:
+            cursor = await self._db.execute(
+                "SELECT message_id, work_item_id, thread_id, agent_id, body, "
+                "created_at, delivered, queued_at, delivered_at "
+                "FROM promoted_report_outbox WHERE delivered = 0 "
+                "ORDER BY queued_at ASC, message_id ASC LIMIT ?",
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+        return tuple(_promoted_report_entry_from_row(row) for row in rows)
+
+    async def mark_promoted_report_delivered(self, message_id: str) -> bool:
+        """Mark one pending report acknowledged. Already-marked returns True."""
+        if (
+            type(message_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(message_id) is None
+        ):
+            raise ValueError("promoted_report_outbox_invalid")
+        if not self._db:
+            return False
+        async with self._work_item_row_write_lock:
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                cursor = await self._db.execute(
+                    "SELECT delivered FROM promoted_report_outbox "
+                    "WHERE message_id = ?",
+                    (message_id,),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    await self._db.execute("ROLLBACK")
+                    return False
+                if row[0] == 1:
+                    await self._db.execute("ROLLBACK")
+                    return True
+                cursor = await self._db.execute(
+                    "UPDATE promoted_report_outbox SET delivered = 1, "
+                    "delivered_at = ? WHERE message_id = ? AND delivered = 0",
+                    (time.time(), message_id),
+                )
+                changed = cursor.rowcount == 1
+                if changed:
+                    await self._db.commit()
+                else:
+                    await self._db.execute("ROLLBACK")
+                return changed
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+
+    async def mark_promoted_report_undeliverable(self, message_id: str) -> bool:
+        """Retire one pending report that can never be delivered (AD-1274).
+
+        ``delivered = 2`` is a THIRD state, deliberately not ``1``. Two of the
+        drainer's failures are permanent -- a thread that no longer exists, and
+        a message the store rejects -- and asking again cannot change either
+        answer. Left pending they sat at the head of an oldest-first, bounded
+        queue and consumed the whole batch on every pass, so a handful of them
+        starved every newer report behind them. Review measured exactly that:
+        three poison rows ahead of one deliverable report, three drains, zero
+        delivered.
+
+        Recording them as ``delivered`` would have unblocked the queue too, and
+        would have been a lie -- the Captain never received them, and the
+        pending count is the only signal an operator has that a report is owed.
+        So the row leaves the pending set while still saying, truthfully, that
+        it was never delivered.
+        """
+        if (
+            type(message_id) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(message_id) is None
+        ):
+            raise ValueError("promoted_report_outbox_invalid")
+        if not self._db:
+            return False
+        async with self._work_item_row_write_lock:
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                cursor = await self._db.execute(
+                    "SELECT delivered FROM promoted_report_outbox "
+                    "WHERE message_id = ?",
+                    (message_id,),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    await self._db.execute("ROLLBACK")
+                    return False
+                if row[0] != 0:
+                    # Already terminal. A row that genuinely reached the Captain
+                    # must NEVER be rewritten as undeliverable.
+                    await self._db.execute("ROLLBACK")
+                    return row[0] == 2
+                cursor = await self._db.execute(
+                    "UPDATE promoted_report_outbox SET delivered = 2, "
+                    "delivered_at = ? WHERE message_id = ? AND delivered = 0",
+                    (time.time(), message_id),
                 )
                 changed = cursor.rowcount == 1
                 if changed:

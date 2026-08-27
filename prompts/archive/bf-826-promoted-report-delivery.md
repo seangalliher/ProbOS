@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-08-26) by `prompts/ad-1274-bf-826-a-report-that-says-whether-it-landed.md`** — its line anchors went stale, it left all three design questions open, and it predates the 2026-08-22 measurements showing the obvious fix breaks the HXI.
+
 # BF-826: a promoted report must run off the loop and say whether it landed
 
 **Issue:** #1290 (already filed, OPEN) · **Repo:** OSS `d:\ProbOS`, branch `main`

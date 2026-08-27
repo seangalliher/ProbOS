@@ -2232,6 +2232,47 @@ async def _drain_crew_session_outboxes(runtime: Any) -> None:
         raise errors[0]
 
 
+async def _wire_promoted_report_delivery(runtime: Any) -> None:
+    """AD-1274: attach the promoted-report drainer and drain what is pending.
+
+    ``turn_promotion._post_report`` writes a report it could not post into
+    ``promoted_report_outbox`` in ``workforce.db`` -- a different file behind a
+    different lock from the ``chat_threads.db`` that refused it. Without this
+    wiring that row is a durable grave: preserved, never retried.
+
+    Never raises. A vessel must boot even if no report can be redelivered.
+    """
+    from probos.cognitive.promoted_report_delivery import (
+        PromotedReportDeliveryService,
+    )
+
+    work_items = getattr(runtime, "work_item_store", None)
+    threads = getattr(runtime, "chat_thread_store", None)
+    if work_items is None or threads is None:
+        return
+    if not callable(getattr(work_items, "list_pending_promoted_reports", None)):
+        return
+    service = PromotedReportDeliveryService(outbox=work_items, threads=threads)
+    runtime.promoted_report_delivery_service = service
+    try:
+        delivered = await service.drain_pending()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning(
+            "AD-1274: the startup drain of pending promoted reports failed; "
+            "the rows stay pending and a later successful post will retry them",
+            exc_info=True,
+        )
+        return
+    if delivered:
+        logger.info(
+            "AD-1274: redelivered %d promoted report(s) that had been left "
+            "durably pending",
+            delivered,
+        )
+
+
 def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-482 v1: wire the self-improvement pipeline.
 
@@ -5349,6 +5390,10 @@ async def finalize_startup(
     if crew_start is not None and asyncio.iscoroutinefunction(crew_start):
         await _drain_crew_session_outboxes(runtime)
         await crew_start()
+
+    # AD-1274: not gated on the crew orchestrator -- a promoted report can be
+    # left pending on any vessel, crew sessions or not.
+    await _wire_promoted_report_delivery(runtime)
 
     runtime._started = True
 

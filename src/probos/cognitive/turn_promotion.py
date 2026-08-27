@@ -58,6 +58,8 @@ import asyncio
 import hashlib
 import logging
 import time
+import uuid
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from probos.cognitive.dm.bypass_egress import compose_bypass_reply
@@ -147,11 +149,17 @@ _REPORT_ABANDONED: str = (
 # was asked to stop and did not answer within the grace, so it may still be
 # executing and may still produce side effects. The item deliberately stays
 # open in this case, for the same reason BF-704 leaves a partial run open.
+#
+# AD-1274: scoped to the moment of observation. Delivery can now lag it — by up
+# to the retry bound, and by an unbounded outbox wait if the thread store was
+# down — so an unscoped "it has yet to answer" would be a present-tense claim
+# about a past reading, which the Captain may be reading long afterwards.
 _REPORT_ABANDON_UNCONFIRMED: str = (
     "That background task ran past its time limit. I signalled it to stop and "
-    "it has yet to answer, so rather than leave you waiting I'm reporting "
-    "where things stand: the task stays open on the board and the details are "
-    "in the ship's log."
+    "it had not answered by the time I checked, so rather than leave you "
+    "waiting I'm reporting where things stood at that point: the task stays "
+    "open on the board and the details are in the ship's log. It may have "
+    "landed since."
 )
 
 # BF-733: how long the reporter waits for a cancelled run to unwind before it
@@ -160,6 +168,55 @@ _REPORT_ABANDON_UNCONFIRMED: str = (
 # Captain's report must not be held hostage by that. Short, because the only
 # work happening in this window is teardown.
 _ABANDON_GRACE_SECONDS: float = 10.0
+
+# AD-1274: how many times a report post is attempted against a busy thread
+# store, and how long it waits between attempts. Each attempt carries SQLite's
+# own 5s busy timeout, so the bound is 3 attempts and roughly 16s of wall clock
+# — 3 x 5s of lock waiting plus 1.0s of backoff. That is a long time to hold a
+# report, and it is affordable only because the wait now happens off the event
+# loop; on the loop the same wait was a 7.9s stall, measured.
+#
+# Read at call time, not bound as defaults: the suite has to be able to shorten
+# them, exactly as ``_ABANDON_GRACE_SECONDS`` above.
+_REPORT_DELIVERY_ATTEMPTS: int = 3
+_REPORT_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (0.25, 0.75)
+
+# AD-1274: how long a CANCELLED turn may spend queueing its undelivered report
+# before giving up and leaving it in the log. Short on purpose. This runs while
+# the caller is already unwinding -- during shutdown that is time the whole
+# vessel is waiting on -- so it buys durability for the common case (an outbox
+# that is simply idle) without letting a wedged store convert a cancellation
+# into a hang. The outbox is a different file behind a different lock from the
+# store that just failed, so it is normally uncontended at exactly this moment.
+_REPORT_CANCEL_QUEUE_SECONDS: float = 2.0
+
+
+@dataclass(frozen=True)
+class ReportDelivery:
+    """AD-1274: what happened to a promoted run's report.
+
+    ``-> str`` could not express this. The old ``_post_report`` returned the
+    body identically whether the append committed or raised, so a caller — and
+    the Captain — had no way to tell a delivered report from a lost one.
+    Measured 2026-08-26 against the real ``ChatThreadStore``: with the write
+    lock held past the busy timeout the call took 7.39s, returned its body, and
+    the database held only the warm-up row.
+
+    Not an exception. Both call sites sit inside ``try``/``except`` regions
+    whose contract is "never raises apart from cancellation", so a caller that
+    legitimately absorbs a failure must still be able to inspect it.
+
+    ``body`` is the COMPOSED disclosure text and is populated on every path,
+    delivered or not: AD-1248 renders once per route and reuses that text for
+    the episode and the outcome artifact, which must not change because the
+    thread post failed.
+    """
+
+    body: str
+    delivered: bool
+    message_id: str = ""
+    reason: str | None = None
+    queued: bool = False
 
 # BF-704: ``AgenticResult.stopped_reason`` values that mean the run STOPPED
 # rather than finished. A turn that exhausted its step budget produced partial
@@ -279,7 +336,7 @@ class _PromotedRunSupervisor:
         *,
         deadline_seconds: float,
         work_item_id: str,
-        on_unconfirmed: Callable[[], None] | None = None,
+        on_unconfirmed: Callable[[], Awaitable[Any]] | None = None,
     ) -> None:
         self._task = task
         self._deadline = float(deadline_seconds)
@@ -360,10 +417,10 @@ class _PromotedRunSupervisor:
                 self._work_item_id, grace,
             )
             _retrieve_late_run_failure(self._work_item_id, self._task)
-            self._notify_unconfirmed()
+            await self._notify_unconfirmed()
         self._abandoned = _RunAbandoned(elapsed=elapsed, stopped=stopped)
 
-    def _notify_unconfirmed(self) -> None:
+    async def _notify_unconfirmed(self) -> None:
         """Discharge the Captain's promise the moment the grace expires.
 
         Posted from HERE rather than from the reporter because the reporter may
@@ -371,22 +428,40 @@ class _PromotedRunSupervisor:
         waits on somebody else's capacity is the defect this BF exists to close.
 
         The ``done()`` recheck is belt-and-braces: the only caller reaches this
-        line with no intervening await, having just observed the task NOT in the
-        done set, so the race it guards is closed by construction rather than by
-        this test. It is kept because "it has yet to answer" is a claim, and a
-        future caller from a different context must not be able to make it about
-        a run that has answered.
+        line without the loop having run in between — ``await`` on a coroutine
+        enters its body directly, and the caller had just observed the task NOT
+        in the done set — so the race it guards is closed by construction rather
+        than by this test. It is kept because the notice asserts the run had not
+        answered, and a future caller from a different context must not be able
+        to make that claim about a run that has answered.
+
+        AD-1274: async, because the notice is now posted off the event loop and
+        the only caller was already a coroutine. For a run that refuses its
+        cancellation this notice is the ONLY report the Captain will ever get —
+        the reporter is still waiting on the run — so its delivery outcome is
+        logged rather than discarded.
         """
         if self._on_unconfirmed is None or self._task.done():
             return
         try:
-            self._on_unconfirmed()
+            outcome = await self._on_unconfirmed()
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.warning(
                 "BF-733: could not post the unconfirmed notice for work item "
                 "%s; the reporter still waits for the run and will report "
                 "whatever it produces",
                 self._work_item_id, exc_info=True,
+            )
+            return
+        if isinstance(outcome, ReportDelivery) and not outcome.delivered:
+            logger.error(
+                "AD-1274: the unconfirmed notice for work item %s was not "
+                "delivered (%s). This was the only report the Captain would "
+                "have received for this run, because the reporter is still "
+                "waiting on a run that refused to stop",
+                self._work_item_id, getattr(outcome, "reason", None),
             )
 
     async def result(self) -> str:
@@ -567,7 +642,7 @@ async def _create_promoted_work_item(
     return item
 
 
-def _post_report(
+async def _post_report(
     *,
     runtime: Any,
     agent_id: str,
@@ -575,18 +650,36 @@ def _post_report(
     work_item_id: str,
     body: str,
     tool_failures: Any = None,
-) -> str:
+) -> ReportDelivery:
     """Append a promoted run's report into the thread it came from.
 
-    Synchronous on purpose — ``ChatThreadStore`` is a synchronous SQLite store,
-    and its commit callback is what emits ``CHAT_THREAD_MESSAGE_APPENDED``, the
-    event the HXI already consumes to live-refresh an open transcript (AD-1133).
-    So the Captain sees the report arrive without any new UI wiring.
+    ``ChatThreadStore`` is a synchronous SQLite store, so the write runs in a
+    worker thread (AD-1274). It used to run on the event loop, where a held
+    write lock stalled everything: measured 7.9s with the loop unable to run a
+    50ms heartbeat. The store's commit callback still emits
+    ``CHAT_THREAD_MESSAGE_APPENDED``, the event the HXI consumes to live-refresh
+    an open transcript (AD-1133) — ``ProbOSRuntime._emit_from_any_thread`` is
+    what keeps that reaching coroutine listeners from off the loop, and this
+    call site is the reason it exists.
 
-    AD-1248: composes the disclosure and RETURNS the composed text, because this
-    route has two Captain-visible sinks -- this thread post and the outcome
-    artifact -- and composing twice is how one of them ends up with a different
-    story. Render once per route, reuse.
+    Delivery is **exactly-once** across the first attempt, every retry and any
+    later outbox redelivery, because the ``message_id`` and ``created_at`` are
+    minted ONCE here and every attempt goes through ``append_message_once``. A
+    retry layered over a write that committed but whose acknowledgement was lost
+    would otherwise post the Captain the same report twice.
+
+    Retries are bounded by ``_REPORT_DELIVERY_ATTEMPTS`` attempts and
+    ``_REPORT_RETRY_BACKOFF_SECONDS`` of backoff between them — 3 attempts and
+    roughly 16s of wall clock, since each attempt also carries SQLite's own 5s
+    busy timeout. A *rejection* is not a transient failure and is not retried:
+    ``append_message_once`` raises ``ValueError`` for an invalid message and
+    returns ``None`` for a thread that does not exist, and neither improves by
+    being asked again.
+
+    AD-1248: composes the disclosure and returns the composed text on the
+    ``body`` field of every outcome, because this route has two Captain-visible
+    sinks -- this thread post and the outcome artifact -- and composing twice is
+    how one of them ends up with a different story. Render once per route, reuse.
     """
     from probos.dm_reply import DmReply, ToolFailures
 
@@ -618,22 +711,265 @@ def _post_report(
             "nowhere to land; it is recorded here instead: %s",
             work_item_id, _shorten(body, 400),
         )
-        return body
-    try:
-        store.append_message(
-            thread_id,
-            author_id=agent_id,
-            role="agent",
-            body=body,
-            metadata={"work_item_id": work_item_id, "source": PROMOTION_SOURCE},
+        return ReportDelivery(body=body, delivered=False, reason="no_store")
+
+    # Minted ONCE, reused by every attempt and by any outbox redelivery. This
+    # is what makes an at-least-once retry an exactly-once delivery.
+    message_id = uuid.uuid4().hex
+    created_at = time.time()
+    attempts = max(1, int(_REPORT_DELIVERY_ATTEMPTS))
+    backoff = tuple(_REPORT_RETRY_BACKOFF_SECONDS)
+    last_error: BaseException | None = None
+
+    async def _queue_on_cancel() -> None:
+        """AD-1274: a cancelled turn must not SILENTLY drop the report.
+
+        Both awaits in the loop below can be cancelled -- the write and the
+        retry backoff -- and the cancellation arms used to re-raise at once,
+        so a shutdown or recycle landing between two attempts lost the report
+        entirely. Review measured zero pending rows, and it landed in the
+        BACKOFF, which is why this is called from both arms rather than being
+        attached to the write alone.
+
+        Safe to await here: cancellation is delivered once, so this runs
+        normally inside the handler. Bounded anyway, because it executes while
+        the caller is already unwinding -- during shutdown that is time the
+        whole vessel waits on -- and a wedged outbox must not turn a
+        cancellation into a hang. Losing the report to the log is worse than
+        pending and better than never shutting down; the log says which.
+        """
+        try:
+            await asyncio.wait_for(
+                _queue_pending_report(
+                    runtime=runtime,
+                    message_id=message_id,
+                    work_item_id=work_item_id,
+                    thread_id=thread_id,
+                    agent_id=agent_id,
+                    body=body,
+                    created_at=created_at,
+                ),
+                timeout=_REPORT_CANCEL_QUEUE_SECONDS,
+            )
+        except (Exception, asyncio.CancelledError):
+            logger.error(
+                "AD-1274: the turn posting the report for work item %s was "
+                "cancelled and the report could not be durably queued; it "
+                "survives only in this log: %s",
+                work_item_id, _shorten(body, 400), exc_info=True,
+            )
+
+    for attempt in range(1, attempts + 1):
+        try:
+            message = await asyncio.to_thread(
+                _append_report_message,
+                store,
+                thread_id=thread_id,
+                message_id=message_id,
+                agent_id=agent_id,
+                body=body,
+                created_at=created_at,
+                work_item_id=work_item_id,
+            )
+        except asyncio.CancelledError:
+            await _queue_on_cancel()
+            raise
+        except ValueError:
+            # A REJECTION, not contention. ``append_message_once`` validates its
+            # inputs and raises this for a message it will never accept; asking
+            # again cannot change the answer, so retrying would only delay the
+            # report and burn the whole bound on a certainty.
+            logger.error(
+                "AD-1274: the report for work item %s was rejected by thread "
+                "%s and will not be retried; it is recorded here instead: %s",
+                work_item_id, thread_id, _shorten(body, 400), exc_info=True,
+            )
+            return ReportDelivery(
+                body=body,
+                delivered=False,
+                message_id=message_id,
+                reason="rejected",
+            )
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts:
+                delay = backoff[min(attempt - 1, len(backoff) - 1)] if backoff else 0.0
+                logger.warning(
+                    "AD-1274: attempt %d/%d to post the report for work item "
+                    "%s into thread %s failed; retrying in %.2fs",
+                    attempt, attempts, work_item_id, thread_id, delay,
+                    exc_info=True,
+                )
+                if delay > 0.0:
+                    # The cancellation review actually measured lands HERE, in
+                    # the wait between attempts, not in the write above.
+                    try:
+                        await asyncio.sleep(delay)
+                    except asyncio.CancelledError:
+                        await _queue_on_cancel()
+                        raise
+                continue
+        else:
+            if message is None:
+                # The thread is gone. Not transient either — a missing thread
+                # does not reappear, and the report has nowhere to land.
+                logger.error(
+                    "AD-1274: thread %s does not exist, so the report for work "
+                    "item %s has nowhere to land; it is recorded here instead: "
+                    "%s",
+                    thread_id, work_item_id, _shorten(body, 400),
+                )
+                return ReportDelivery(
+                    body=body,
+                    delivered=False,
+                    message_id=message_id,
+                    reason="thread_missing",
+                )
+            # The store is demonstrably free right now, which makes this the
+            # cheapest honest moment to retry anything an earlier post had to
+            # leave durably pending. Bounded, and never raises.
+            await _drain_pending_reports(runtime)
+            return ReportDelivery(
+                body=body, delivered=True, message_id=message_id,
+            )
+
+    # ERROR, not WARNING: the Captain is holding an acknowledgement for a report
+    # that never arrived, and for the BF-733 watchdog's interim notice this was
+    # the only report the run will ever produce.
+    logger.error(
+        "AD-1274: all %d attempts to post the report for work item %s into "
+        "thread %s failed; it is recorded here instead: %s",
+        attempts, work_item_id, thread_id, _shorten(body, 400),
+        exc_info=last_error,
+    )
+    queued = await _queue_pending_report(
+        runtime=runtime,
+        message_id=message_id,
+        work_item_id=work_item_id,
+        thread_id=thread_id,
+        agent_id=agent_id,
+        body=body,
+        created_at=created_at,
+    )
+    return ReportDelivery(
+        body=body,
+        delivered=False,
+        message_id=message_id,
+        reason="exhausted",
+        queued=queued,
+    )
+
+
+async def _queue_pending_report(
+    *,
+    runtime: Any,
+    message_id: str,
+    work_item_id: str,
+    thread_id: str,
+    agent_id: str,
+    body: str,
+    created_at: float,
+) -> bool:
+    """AD-1274: hand an undeliverable report to ``workforce.db``.
+
+    Deliberately a DIFFERENT store from the one that just failed. The AD-857
+    Captain-DM notifier writes back into ``chat_threads.db`` and is therefore
+    not a fallback at all -- same file, same lock. ``WorkItemStore`` is a
+    different file behind a different lock, and that asymmetry is the whole
+    reason durable pending is possible here.
+
+    Carries the already-minted ``message_id`` and ``created_at`` so redelivery
+    replays the identical message and the drain is exactly-once.
+
+    Never raises: this is the failure path of a failure path.
+    """
+    store = getattr(runtime, "work_item_store", None)
+    enqueue = getattr(store, "enqueue_promoted_report", None)
+    if not callable(enqueue):
+        logger.error(
+            "AD-1274: no promoted-report outbox available, so the undelivered "
+            "report for work item %s is not durably pending and will not be "
+            "retried; it survives only in this log",
+            work_item_id,
         )
+        return False
+    try:
+        await enqueue(
+            message_id=message_id,
+            work_item_id=work_item_id,
+            thread_id=thread_id,
+            agent_id=agent_id,
+            body=body,
+            created_at=created_at,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.error(
+            "AD-1274: could not durably queue the undelivered report for work "
+            "item %s; it survives only in this log",
+            work_item_id, exc_info=True,
+        )
+        return False
+    logger.warning(
+        "AD-1274: the report for work item %s is durably pending in the work "
+        "store and will be redelivered by the next bounded drain",
+        work_item_id,
+    )
+    return True
+
+
+async def _drain_pending_reports(runtime: Any) -> None:
+    """AD-1274: opportunistically redeliver anything left durably pending.
+
+    Called only after a post SUCCEEDS, which is the evidence that the thread
+    store is reachable again. Startup drains too; without this trigger a report
+    queued mid-flight would wait for the next boot, which satisfies "preserved"
+    and not "retried".
+
+    Never raises. This is housekeeping attached to somebody else's report, and
+    it must not cost them theirs.
+    """
+    service = getattr(runtime, "promoted_report_delivery_service", None)
+    drain = getattr(service, "drain_pending", None)
+    if not callable(drain):
+        return
+    try:
+        await drain()
+    except asyncio.CancelledError:
+        raise
     except Exception:
         logger.warning(
-            "AD-1165: failed to post the report for work item %s into thread "
-            "%s; it is recorded here instead: %s",
-            work_item_id, thread_id, _shorten(body, 400), exc_info=True,
+            "AD-1274: opportunistic redelivery of pending reports failed; the "
+            "rows stay pending and startup will drain them",
+            exc_info=True,
         )
-    return body
+
+
+def _append_report_message(
+    store: Any,
+    *,
+    thread_id: str,
+    message_id: str,
+    agent_id: str,
+    body: str,
+    created_at: float,
+    work_item_id: str,
+) -> Any:
+    """The synchronous half, run in a worker thread by ``_post_report``.
+
+    Separate so the executor call has one plain function to hand off rather
+    than a keyword-heavy partial, and so the thread does exactly one thing.
+    """
+    return store.append_message_once(
+        thread_id,
+        message_id=message_id,
+        author_id=agent_id,
+        role="agent",
+        body=body,
+        created_at=created_at,
+        metadata={"work_item_id": work_item_id, "source": PROMOTION_SOURCE},
+    )
 
 
 async def _store_promoted_episode(
@@ -898,7 +1234,12 @@ async def _finish_promoted_turn(
     # Captain-visible sinks -- the thread post and the outcome artifact -- and
     # the artifact previously received the raw body, so a promoted run's stored
     # evidence disagreed with its transcript about whether a tool failed.
-    reported = _post_report(
+    #
+    # AD-1274: ``reported`` stays the composed TEXT, populated whether or not
+    # the thread post landed. The episode and the artifact record what the run
+    # produced; a failed delivery is a fact about the transcript, not about the
+    # work, and must not silently rewrite the evidence.
+    report = await _post_report(
         runtime=runtime,
         agent_id=agent_id,
         thread_id=thread_id,
@@ -906,6 +1247,7 @@ async def _finish_promoted_turn(
         body=body,
         tool_failures=_failures,
     )
+    reported = report.body
 
     # BF-704: did the run finish, or did it stop? ``completed_probe`` is the
     # caller's view of the LAST pass's ``stopped_reason`` -- the awaited task

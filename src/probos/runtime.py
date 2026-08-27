@@ -1232,6 +1232,10 @@ class ProbOSRuntime:
         # mid-flight (mirrors _nats_publish_tasks). NOT _background_tasks (that set
         # is the AD-824 shutdown-cancel registry for long-lived loops).
         self._event_listener_tasks: set[asyncio.Task] = set()
+        # AD-1274: the loop that owns event dispatch, captured in ``start()``.
+        # Not here — the constructor is synchronous and may run with no loop at
+        # all. See ``_emit_from_any_thread``.
+        self._dispatch_loop: asyncio.AbstractEventLoop | None = None
 
         def _emit_chat_thread_message_appended(
             message: ChatThreadMessage,
@@ -1254,7 +1258,11 @@ class ProbOSRuntime:
                     "projection; live clients will repair on reconnect",
                 )
                 return
-            self.emit_event(
+            # AD-1274: this callback can now fire on a worker thread, because
+            # the promoted-report path appends through an executor. From there
+            # ``emit_event`` loses every coroutine listener — including the HXI
+            # live-refresh token. Hop back to the dispatch loop.
+            self._emit_from_any_thread(
                 EventType.CHAT_THREAD_MESSAGE_APPENDED,
                 {
                     "thread_id": message.thread_id,
@@ -1786,6 +1794,53 @@ class ProbOSRuntime:
             self._emit_event(event)
         else:
             self._emit_event(event, data or {})
+
+    def _emit_from_any_thread(
+        self,
+        event: BaseEvent | str | EventType,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        """AD-1274: emit from a thread that may not own the event loop.
+
+        ``_emit_event_local`` schedules coroutine listeners and awaitable live
+        tokens with ``asyncio.create_task``, which requires a running loop in
+        the CALLING thread. Measured 2026-08-26: emitting from a worker thread
+        runs a *sync* listener but loses a *coroutine* listener to a swallowed
+        ``RuntimeError: no running event loop`` — and the HXI live-refresh
+        listener is an awaitable-returning token, so it is in the lost set.
+
+        Never raises. A store write must not fail because a *notification*
+        could not be scheduled.
+
+        With no captured loop this falls through to a direct ``emit_event``
+        rather than dropping the event: that is exactly what every caller did
+        before this method existed, so a synchronous listener on a loopless
+        thread keeps working. The warning says the coroutine half is at risk.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            self.emit_event(event, data)
+            return
+
+        loop = self._dispatch_loop
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(self.emit_event, event, data)
+                return
+            except RuntimeError:
+                # The loop closed between ``is_closed()`` and the call.
+                pass
+        logger.warning(
+            "AD-1274: event %r emitted from a non-loop thread with no live "
+            "dispatch loop; dispatching inline, so synchronous listeners run "
+            "but any coroutine listener is dropped and live clients repair on "
+            "reconnect",
+            getattr(event, "value", event),
+        )
+        self.emit_event(event, data)
 
     # --- AD-471: Autonomous operations helpers ---
 
@@ -2429,6 +2484,10 @@ class ProbOSRuntime:
         if self._started:
             return
 
+        # AD-1274: the loop store callbacks hop back onto when they fire from a
+        # worker thread. Captured here rather than in ``__init__`` because the
+        # constructor is synchronous and may run with no loop at all.
+        self._dispatch_loop = asyncio.get_running_loop()
 
         logger.info("=" * 60)
         logger.info("ProbOS %s starting...", self.config.system.version)
