@@ -22,7 +22,6 @@ import ast
 import asyncio
 import hashlib
 import importlib.util
-import json
 import logging
 import shutil
 import sys
@@ -31,6 +30,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from probos.execution.audit import (
+    LAUNCH_RESOLVE_SECONDS,
+    ExecutionAuditor,
+)
 from probos.execution.fetch_broker import (
     SANDBOX_HELPER_FILENAME,
     SANDBOX_HELPER_SOURCE,
@@ -76,32 +79,17 @@ _SKIP_DIR_PARTS = {".venv", "venv", "__pycache__", ".git", "node_modules", ".pyt
 # Per-file cap so a runaway script can't push a huge blob into the store.
 _MAX_ARTIFACT_BYTES = 25 * 1024 * 1024  # 25 MiB
 
-# AD-1247: the exact keys an execution audit record may carry. The submitted
-# source is represented by a DIGEST and never by its text: code an agent runs
-# can contain credentials it was legitimately given, and an audit trail is the
-# wrong place to copy them to.
-_AUDIT_DETAIL_ALLOWLIST: frozenset[str] = frozenset({
-    "execution_id",
-    "agent_id",
-    "launch_state",
-    "code_sha256",
-    "code_chars",
-    "success",
-    "exit_code",
-    "timed_out",
-    "timeout_seconds",
-    "duration_ms",
-    "artifact_count",
-    "fetch_broker",
-    "error_type",
-})
-
-# AD-1247: how long the abnormal path waits for the executor thread to answer
-# the launch question. Cancelling the awaiting task does not cancel that thread,
-# so without this a script that is about to spawn is recorded as never having
-# run. Bounded because it briefly blocks the loop, and only reached when a run
-# is torn down before `sandbox.run` returned.
-_LAUNCH_RESOLVE_SECONDS = 2.0
+# AD-1280: the allowlist and the launch bound moved to `execution/audit.py`
+# when BF-787 gave the mesh path the same record.
+#
+# ONLY the bound is re-exported, because `invoke`'s teardown reads it from this
+# module's globals -- so narrowing it here does change what production does.
+# The allowlist is deliberately NOT re-exported: the filtering happens inside
+# `ExecutionAuditor.record`, so a name bound here would be assigned and never
+# read, and a future test patching it would pass while proving nothing about
+# the filter that actually runs. Import `AUDIT_DETAIL_ALLOWLIST` from
+# `probos.execution.audit` instead -- that is the one production consults.
+_LAUNCH_RESOLVE_SECONDS = LAUNCH_RESOLVE_SECONDS
 
 # BF-726: what the tool may ADVERTISE, checked against what the sandbox can
 # actually import rather than hand-listed in the description.
@@ -321,9 +309,9 @@ class CodeExecutionTool:
 
     def __init__(self, *, runtime: Any) -> None:
         self._runtime = runtime
-        # AD-1247: warn once per instance that execution is running untrailed,
-        # rather than on every run.
-        self._audit_absence_warned = False
+        # AD-1280: per-instance, so the warn-once behaviour stays this tool's
+        # own and does not depend on whether a mesh agent already warned.
+        self._auditor = ExecutionAuditor(runtime)
 
     # ── Tool protocol ─────────────────────────────────────────────
     @property
@@ -548,96 +536,24 @@ class CodeExecutionTool:
         fetch_broker: bool = False,
         error_type: str | None = None,
     ) -> None:
-        """Record an execution attempt against the accountability trail (AD-1247).
+        """AD-1280: delegate to the shared builder; see ``ExecutionAuditor.record``.
 
-        BF-763 established that the agentic ``run_python`` path has no quorum
-        gate and, by the Captain's decision, should not acquire one -- a
-        foreground coding agent does not vote before each command. What a
-        foreground agent pays for that freedom is a human watching it. This
-        record is what an unattended agent pays instead, so it is not
-        decoration: it is the control that makes the capability defensible
-        (Design Principle #13).
-
-        ``launch_state`` must come from the sandbox's launch outcome, never
-        from the caller's intent. ``"launched"`` means a child was confirmed to
-        exist; ``"unknown"`` means the run was torn down before the sandbox
-        could answer and a script MAY have run; anything else writes nothing. A
-        record for a run that never started corrupts the trail in the opposite
-        direction to a missing one, so the uncertain case is labelled rather
-        than guessed either way.
-
-        Swallows ``Exception`` from the sink -- an audit write that could fail
-        an execution would turn the accountability trail into a new way to lose
-        work. It does NOT swallow ``BaseException``: a cancellation arriving
-        mid-append belongs to the turn, not to this record, and the caller sets
-        its attempted-flag BEFORE calling so such an unwind cannot produce a
-        duplicate.
+        The body moved to ``execution/audit.py`` when BF-787 gave the mesh
+        ``CodeRunnerAgent`` path the same record. Kept as a method with an
+        unchanged signature so every call site in ``invoke`` is untouched.
         """
-        if launch_state not in ("launched", "unknown"):
-            return
-        audit = getattr(self._runtime, "audit_log", None)
-        if audit is None:
-            # AD-1247 acceptance 6: the sink is gated by
-            # `security_infra.audit_enabled`, so a deployment can run code with
-            # no trail. That is allowed -- requiring a sink would make auditing
-            # a new way for execution to fail -- but it must not be SILENT, and
-            # no docstring may claim a record this can switch off. Warned once
-            # per tool instance so a long-running vessel does not spam.
-            if not self._audit_absence_warned:
-                self._audit_absence_warned = True
-                logger.warning(
-                    "AD-1247: code executed with no audit sink "
-                    "(security_infra.audit_enabled is off), so this run and "
-                    "any that follow leave no accountability record. Execution "
-                    "is unaffected; enable audit to restore the trail.",
-                )
-            return
-        detail: dict[str, Any] = {
-            "execution_id": execution_id,
-            "agent_id": agent_id or "unknown",
-            "launch_state": launch_state,
-            "code_sha256": hashlib.sha256(code.encode("utf-8", "replace")).hexdigest(),
-            "code_chars": len(code),
-            "timeout_seconds": float(timeout_seconds),
-            "duration_ms": round(float(duration_ms), 1),
-            "fetch_broker": bool(fetch_broker),
-        }
-        # AD-1247: OMITTED rather than defaulted to 0. A run torn down partway
-        # through artifact capture had already persisted one artifact while the
-        # record said zero -- an acknowledged absence beats a false count, which
-        # is this AD's whole premise.
-        if artifact_count is not None:
-            detail["artifact_count"] = int(artifact_count)
-        if result is not None:
-            detail["success"] = bool(getattr(result, "success", False))
-            detail["exit_code"] = getattr(result, "exit_code", None)
-            detail["timed_out"] = bool(getattr(result, "timed_out", False))
-        if error_type:
-            detail["error_type"] = str(error_type)[:80]
-        # The browser tool (AD-706) filters at runtime and deviating to save
-        # three lines was not worth it. A test asserting the emitted record is
-        # release-time detection; this is a production boundary. Note it bounds
-        # KEYS only -- a leak inside an allowed VALUE is a separate problem,
-        # which is why `error_type` is a class name and never `str(exc)`: an
-        # exception message can carry script source, a path, or a credential,
-        # and 80 characters of it is a size bound rather than sanitisation.
-        for key in list(detail):
-            if key not in _AUDIT_DETAIL_ALLOWLIST:
-                detail.pop(key, None)
-        try:
-            audit.append(
-                category="code_execution",
-                detail=json.dumps(detail, sort_keys=True, default=str),
-            )
-        except Exception:
-            logger.warning(
-                "AD-1247: audit append did not complete for agent=%s "
-                "(execution %s); the execution itself is unaffected, but "
-                "whether this run reached the accountability trail is "
-                "UNCONFIRMED -- the sink may have stored the entry before "
-                "raising",
-                agent_id, execution_id, exc_info=True,
-            )
+        self._auditor.record(
+            execution_id=execution_id,
+            agent_id=agent_id,
+            code=code,
+            timeout_seconds=timeout_seconds,
+            duration_ms=duration_ms,
+            launch_state=launch_state,
+            result=result,
+            artifact_count=artifact_count,
+            fetch_broker=fetch_broker,
+            error_type=error_type,
+        )
 
     def _governed_fetcher(self) -> Any:
         """The registered agent that can perform a governed HTTP fetch, if any.

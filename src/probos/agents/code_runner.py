@@ -13,16 +13,23 @@ but are not limited to:
   similarly MCP invocation and device actuation. This agent has no commit phase.
   ``run_command`` does not either, so the "exactly like ``run_command``" this
   line used to claim was accidentally true. See BF-779.
-* **No dedicated execution audit on THIS path.** The agentic
-  ``CodeExecutionTool`` ATTEMPTS a per-execution ``code_execution`` record when
-  ``security_infra.audit_enabled`` is on (AD-1247). This mesh path attempts
-  nothing. What it writes is generic event-log rows via ``runtime`` --
-  ``intent_broadcast`` and ``intent_resolved`` on the decomposed-plan route,
-  ``quorum_evaluated`` only when the plan's model-chosen ``use_consensus`` was
-  true (it defaults false, BF-779), and nothing at all on the federation MCP
-  route, which broadcasts straight to the bus. None of those rows carries the
-  submitted source or its execution output. BF-787 tracks giving this path the
-  same record.
+* **A per-execution audit record -- ATTEMPTED, not guaranteed.** AD-1280 gave
+  this mesh path the same ``code_execution`` record AD-1247 built for the
+  agentic ``CodeExecutionTool``, from one shared builder
+  (``execution/audit.py``). It is attempted once per ``run_python`` turn that
+  reached the sandbox, when ``security_infra.audit_enabled`` is on; with the
+  sink off there is no record and a warning says so, and if the append raises,
+  whether the entry landed is UNCONFIRMED. Best effort under stated conditions,
+  never an unconditional guarantee -- an audit write that could fail an
+  execution would be a new way to lose work. Only the SCRIPT run is recorded:
+  ``install_package`` runs no submitted source at all, and venv creation and
+  ``pip install`` execute argv this codebase wrote rather than code the agent
+  authored, so neither produces one. Alongside it the runtime still writes
+  generic event-log rows -- ``intent_broadcast`` and ``intent_resolved`` on the
+  decomposed-plan route, ``quorum_evaluated`` only when the plan's model-chosen
+  ``use_consensus`` was true (it defaults false, BF-779), and nothing at all on
+  the federation MCP route, which broadcasts straight to the bus. None of those
+  rows carries the submitted source or its execution output.
 * **Default OFF.** Inert unless ``config.execution.enabled`` is set by the
   operator. Package install is separately gated (``allow_package_install``).
 * **Isolated (Tier 1).** Runs through the AD-993 ``SubprocessSandbox``:
@@ -54,14 +61,18 @@ Two intents:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+from probos.execution.audit import LAUNCH_RESOLVE_SECONDS, ExecutionAuditor
 from probos.execution.isolation import (
     ExecutionRequest,
+    LaunchOutcome,
     SubprocessSandbox,
     remove_workdir_off_loop,
 )
@@ -133,6 +144,12 @@ class CodeRunnerAgent(BaseAgent):
     ]
 
     _handled_intents = {"run_python", "install_package"}
+
+    def __init__(self, pool: str = "default", **kwargs: Any) -> None:
+        super().__init__(pool, **kwargs)
+        # AD-1280: per-instance, so the warn-once absence notice belongs to
+        # this agent rather than to whichever call site warned first.
+        self._auditor = ExecutionAuditor(self._runtime)
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         observation = await self.perceive(intent.__dict__)
@@ -211,6 +228,20 @@ class CodeRunnerAgent(BaseAgent):
         packages = plan["packages"]
         timeout = self._resolve_timeout(plan.get("timeout"), cfg.timeout_seconds)
         py_exe: str | None = None
+        # AD-1280: `launch` answers "did a child exist", and only the executor
+        # thread can answer it -- cancelling this coroutine does not stop that
+        # thread, so a flag read here reports False for a script that is about
+        # to run. `audit_attempted` is set BEFORE each append, because
+        # `AuditLog.append` stores the entry and THEN emits an event: a listener
+        # raising BaseException would otherwise leave the flag false and let
+        # `finally` write a duplicate. `res` is held out here so the abnormal
+        # path reports what was actually known instead of the record's defaults.
+        t0 = time.monotonic()
+        execution_id = uuid.uuid4().hex
+        launch = LaunchOutcome()
+        sandbox_submitted = False
+        audit_attempted = False
+        res: Any = None
         try:
             workdir.mkdir(parents=True, exist_ok=True)
             if packages:
@@ -224,6 +255,13 @@ class CodeRunnerAgent(BaseAgent):
                     return prep
                 py_exe = prep["python"]
 
+            # AD-1280: from here a worker may exist, so the launch question is
+            # real. Nothing was submitted before it -- the venv and pip runs
+            # carry no launch outcome by decision, not by omission (see
+            # execution/audit.py on what counts as an execution) -- and waiting
+            # on the outcome there would stall the bus for the whole bound to
+            # record an "unknown" that is not uncertain at all, it is a no.
+            sandbox_submitted = True
             res = await sandbox.run(ExecutionRequest(
                 code=plan["code"],
                 workdir=workdir,
@@ -232,7 +270,19 @@ class CodeRunnerAgent(BaseAgent):
                 max_memory_mb=cfg.max_memory_mb,
                 allow_network=False,
                 python_executable=py_exe,
+                launch_outcome=launch,
             ))
+            audit_attempted = True
+            self._auditor.record(
+                execution_id=execution_id,
+                agent_id=owner,
+                code=plan["code"],
+                timeout_seconds=timeout,
+                duration_ms=(time.monotonic() - t0) * 1000.0,
+                result=res,
+                error_type=("sandbox_error" if res.error else None),
+                launch_state=("launched" if launch.launched else "not_launched"),
+            )
             return {
                 "success": res.success,
                 "data": {
@@ -250,8 +300,64 @@ class CodeRunnerAgent(BaseAgent):
                 "error": res.error or None,
             }
         finally:
-            if not persistent:
-                await self._reap(workdir)
+            # AD-1280: audit first, in its OWN try/finally, so a sink that
+            # raises cannot skip the reap below. A leaked workdir is how an
+            # audit write turns into a second defect.
+            try:
+                # A BaseException -- cancellation being the one that happens --
+                # misses the record above, and by then the script may already
+                # have run. `handle_intent` is awaited from the bus, so a
+                # cancelled turn unwinds straight through the `await` above
+                # while the executor thread keeps going: wait briefly for its
+                # answer rather than recording nothing for a child that is
+                # about to exist. Bounded, and only reached abnormally.
+                if (
+                    sandbox_submitted
+                    and not audit_attempted
+                    and not launch.resolved.is_set()
+                ):
+                    launch.resolved.wait(timeout=LAUNCH_RESOLVE_SECONDS)
+                if not audit_attempted and sandbox_submitted and (
+                    launch.launched or not launch.resolved.is_set()
+                ):
+                    audit_attempted = True
+                    # If the bound expired the answer is still UNKNOWN, and a
+                    # worker that has not reached Popen yet may still spawn.
+                    # Recording nothing would silently drop a real execution;
+                    # recording it as launched would assert something
+                    # unverified. So the record is written and SAYS so.
+                    resolved = launch.resolved.is_set()
+                    # Unlike the tool's `invoke` this method catches nothing, so
+                    # an ordinary Exception escaping `sandbox.run` reaches here
+                    # too and must name itself rather than be mislabelled as a
+                    # cancelled turn.
+                    exc = sys.exc_info()[1]
+                    self._auditor.record(
+                        execution_id=execution_id,
+                        agent_id=owner,
+                        code=plan["code"],
+                        timeout_seconds=timeout,
+                        duration_ms=(time.monotonic() - t0) * 1000.0,
+                        result=res,
+                        error_type=(
+                            "cancelled"
+                            if isinstance(exc, asyncio.CancelledError)
+                            else type(exc).__name__ if exc is not None
+                            else "interrupted"
+                        ),
+                        launch_state=("launched" if resolved else "unknown"),
+                    )
+                    if not resolved:
+                        logger.warning(
+                            "AD-1280: execution %s was torn down before the "
+                            "sandbox could confirm whether a child started; "
+                            "recorded with launch_state=unknown rather than "
+                            "guessing. A script MAY have run.",
+                            execution_id,
+                        )
+            finally:
+                if not persistent:
+                    await self._reap(workdir)
 
     async def _install_package(self, packages: list[str], owner: str) -> dict[str, Any]:
         cfg = self._execution_config()

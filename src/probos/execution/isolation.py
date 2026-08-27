@@ -55,9 +55,10 @@ Tiered isolation (the ``IsolationBackend`` abstraction):
   controls the calling paths did not have; that framing produced a false claim
   three revisions running, because a module cannot honestly summarise what its
   callers do. So it no longer tries. For what actually governs each caller see
-  BF-779 (what consensus does and does not gate) and AD-1247 (the agentic path
-  attempts a per-execution audit record when the sink is enabled; the mesh
-  path's absence is BF-787). Do not restate their conclusions here -- link them.
+  BF-779 (what consensus does and does not gate) and AD-1247 / AD-1280 (both
+  paths attempt a per-execution audit record when the sink is enabled, from one
+  shared builder in ``execution/audit.py``). Do not restate their conclusions
+  here -- link them.
 * **Tier 2 — OS-native sandbox (AD-995, future).** Policy-driven, kernel-enforced
   isolation: bubblewrap (Linux), seatbelt (macOS), AppContainer (Windows), or
   ``microsoft/mxc`` once it matures — behind THIS SAME protocol.

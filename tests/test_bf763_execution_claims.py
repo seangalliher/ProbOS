@@ -98,7 +98,15 @@ def test_isolation_does_not_claim_a_consensus_gate() -> None:
     # itself now stale. What must stay is that the module does not restate its
     # callers' conclusions -- it links them.
     assert "scope across the two paths is not yet settled there" not in source
-    assert "the mesh path's absence is BF-787" in source
+    # AD-1280 built the MESH record too, so this line used to pin
+    # "the mesh path's absence is BF-787" -- a claim that became false the
+    # moment the behaviour landed. The link is what was load-bearing, not the
+    # absence, so the link is what is pinned now; the retired claim is banned
+    # outright because a correction and its contradiction could otherwise sit
+    # side by side, which is how every earlier guard in this file was walked
+    # through.
+    assert "the mesh path's absence" not in source
+    assert "AD-1247 / AD-1280" in source
     # And the tool is permission-resolved -- "ungoverned" would be the opposite
     # overclaim to the one being fixed.
     assert "NEITHER is quorum-approved" in source
@@ -153,15 +161,39 @@ def test_code_runner_does_not_claim_a_gate_it_lacks() -> None:
     # persist a generic tool trace. What is missing is a mandatory dedicated
     # record, so the claim has to be narrowed rather than reversed.
     assert "**Not audited.**" not in source
-    assert "No dedicated execution audit" in source
+    # AD-1280 gave THIS path the dedicated record, so "No dedicated execution
+    # audit" -- which this line used to require -- is now false, and the ban
+    # replaces the requirement. The distinction that stays load-bearing is the
+    # one this file exists for: the record is ATTEMPTED under stated
+    # conditions and must never be written up as a guarantee, which is the
+    # original BF-763 defect wearing the opposite sign.
+    assert "No dedicated execution audit" not in source
     # AD-1247: the agentic path now has a MANDATORY per-execution record, so
     # "can persist a generic tool trace, optionally" understates it. What this
     # file exists to prevent is THIS path claiming a control it lacks, so the
     # assertion moves to the distinction that is still load-bearing: the mesh
     # path has no execution-specific record and must not imply one.
+    #
+    # AD-1280: it has one now, so the two assertions here -- "No dedicated
+    # execution audit on THIS path" and "BF-787 tracks" -- pinned an absence
+    # the code no longer has. They are replaced by the conditional claim, which
+    # is the only true one, plus bans on the unconditional forms.
     assert "can persist a generic tool trace, optionally" not in source
-    assert "No dedicated execution audit on THIS path" in source
-    assert "BF-787 tracks" in source
+    assert "BF-787 tracks" not in source
+    assert "A per-execution audit record -- ATTEMPTED, not guaranteed" in source
+    assert "never an unconditional guarantee" in source
+    assert "security_infra.audit_enabled" in source
+    assert "UNCONFIRMED" in source
+    # Presence of the hedge does not exclude its contradiction -- mutations that
+    # ADD a guarantee beside it survived twice elsewhere in this file.
+    assert "every execution is recorded" not in source
+    assert "always writes a record" not in source
+    # Decision 2: the record covers the SCRIPT only. Claiming it covers the
+    # install would put an execution entry in the trail for something that ran
+    # no submitted source -- the same corruption as a record for a run that
+    # never started, in the opposite direction.
+    assert "Only the SCRIPT run is recorded" in source
+    assert "install_package`` runs no submitted source" in source
     assert "always persists" not in source
     # The reason it is optional must survive too, or "optionally" degrades into
     # a word with no stated cause.
@@ -255,7 +287,14 @@ def test_execution_config_does_not_claim_authorization() -> None:
     assert "UNCONFIRMED" in source
     # ...and the mesh path is not empty either; saying so was the over-correction.
     assert "the mesh path has nothing" not in source
-    assert "no execution-specific record at all (BF-787)" in source
+    # AD-1280 built the mesh record, so this line's former requirement --
+    # "no execution-specific record at all (BF-787)" -- pinned an absence the
+    # code no longer has. The mesh half is now pinned on the same conditional
+    # terms as the agentic half above it, and the retired absence claim is
+    # banned so the stanza cannot say both things at once.
+    assert "no execution-specific record" not in source
+    assert "AD-1280 gave the MESH path the same record" in source
+    assert "Only the script run is recorded" in source
     assert "quorum row only when the plan's model-chosen" in source
     assert "No ingress records the source or its" not in source
     assert "none of those rows\n    carries the source".replace("\n    ", " ") in source

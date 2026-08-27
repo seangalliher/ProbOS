@@ -48,7 +48,8 @@ from probos.execution.isolation import (
     LaunchOutcome,
     SubprocessSandbox,
 )
-from probos.tools.code_execution_tool import _AUDIT_DETAIL_ALLOWLIST, CodeExecutionTool
+from probos.execution.audit import AUDIT_DETAIL_ALLOWLIST
+from probos.tools.code_execution_tool import CodeExecutionTool
 
 
 class _Audit:
@@ -723,7 +724,7 @@ async def test_the_record_carries_only_allowlisted_keys(tmp_path):
 
     await _invoke(tool, "print('hello')")
 
-    assert set(audit.records[0]) <= _AUDIT_DETAIL_ALLOWLIST
+    assert set(audit.records[0]) <= AUDIT_DETAIL_ALLOWLIST
 
 
 @pytest.mark.asyncio
@@ -734,11 +735,16 @@ async def test_the_allowlist_actually_filters(tmp_path, monkeypatch):
     changes no current output and a mutation removing it survives. The filter
     exists for the key a future edit adds without updating the allowlist -- so
     the test has to create that situation rather than wait for it.
+    The filter now lives in the shared builder (AD-1280), so the patch has to
+    reach `probos.execution.audit` -- patching the re-export on the tool module
+    would no longer touch the production read, and the test would pass while
+    proving nothing. The assertions are unchanged: softening them would pin the
+    removal of a security filter as contract.
     """
-    import probos.tools.code_execution_tool as mod
+    import probos.execution.audit as mod
 
-    narrowed = frozenset(_AUDIT_DETAIL_ALLOWLIST - {"code_sha256"})
-    monkeypatch.setattr(mod, "_AUDIT_DETAIL_ALLOWLIST", narrowed)
+    narrowed = frozenset(AUDIT_DETAIL_ALLOWLIST - {"code_sha256"})
+    monkeypatch.setattr(mod, "AUDIT_DETAIL_ALLOWLIST", narrowed)
 
     audit = _Audit()
     tool = CodeExecutionTool(runtime=_runtime(tmp_path, audit=audit))

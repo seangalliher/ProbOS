@@ -3283,12 +3283,18 @@ class ExecutionConfig(BaseModel):
     store and then fail. It is a best effort under stated conditions, never an
     unconditional guarantee, because an audit write that could fail an execution
     would be a new way to lose work.
-    The MESH path has no execution-specific record at all (BF-787); what it
-    writes varies BY INGRESS -- the decomposed-plan route writes generic intent
-    rows (plus a quorum row only when the plan's model-chosen ``use_consensus``
-    was true), the federation MCP route writes none, and none of those rows
-    carries the source or its output. Separately, the DAG checkpoint and a
-    caller-preserved workdir's ``script.py`` can hold source.
+    AD-1280 gave the MESH path the same record, on the same terms and from the
+    same shared builder (``execution/audit.py``): attempted once per
+    ``run_python`` turn that reached the sandbox, carrying the same
+    ``launch_state`` and with the same UNCONFIRMED case when the append raises.
+    Only the script run is recorded -- ``install_package`` and venv preparation
+    execute argv this codebase wrote, not source an agent authored. What ELSE
+    the mesh path writes still varies BY INGRESS -- the decomposed-plan route
+    writes generic intent rows (plus a quorum row only when the plan's
+    model-chosen ``use_consensus`` was true), the federation MCP route writes
+    none, and none of those rows carries the source or its output. Separately,
+    the DAG checkpoint and a caller-preserved workdir's ``script.py`` can hold
+    source.
 
     Do not read authorization into any of it.
     """
