@@ -765,12 +765,55 @@ class IntentBus:
             f"for agent {agent_id}"
         )
 
-    def _unsubscribe_local(self, agent_id: str) -> None:
-        """Synchronously remove one agent from all in-process indexes."""
+    def _unsubscribe_local(self, agent_id: str) -> Any | None:
+        """Synchronously remove one agent from all in-process indexes.
+
+        Returns the removed cognitive queue, if any, for the caller to shut down.
+        """
         self._subscribers.pop(agent_id, None)
         self._subscriber_latency_classes.pop(agent_id, None)
-        self.unregister_queue(agent_id)  # AD-654b: clean up cognitive queue
+        queue = self.unregister_queue(agent_id)  # AD-654b: clean up cognitive queue
         self._remove_intent_index_memberships(agent_id)
+        return queue
+
+    async def _shutdown_queue(self, agent_id: str, queue: Any) -> None:
+        """Stop a removed agent's queue processor (AD-1273)."""
+        shutdown = getattr(queue, "shutdown", None)
+        if shutdown is None:
+            return
+        try:
+            await shutdown()
+        except Exception:
+            # Tier-2: teardown must complete even if the drain fails, or a
+            # recycle rollback inherits a half-unwired agent.
+            logger.error(
+                "AD-1273: cognitive queue shutdown failed for %s — its processor "
+                "task may outlive the agent",
+                agent_id,
+                exc_info=True,
+            )
+
+    def _schedule_queue_shutdown(self, agent_id: str, queue: Any) -> None:
+        """Shut down a removed queue from a sync caller (AD-1273).
+
+        ``unsubscribe`` has no await point, so the drain is owned as a tracked
+        pending task rather than fire-and-forget. Callers that must not race the
+        replacement use ``unsubscribe_and_wait``.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.error(
+                "AD-1273: no running loop to shut down %s's cognitive queue — "
+                "its processor task will outlive the agent",
+                agent_id,
+            )
+            return
+        task = loop.create_task(
+            self._shutdown_queue(agent_id, queue),
+            name=f"queue-shutdown-{agent_id[:12]}",
+        )
+        self._track_pending_task(task)
 
     async def _unsubscribe_remote(self, agent_id: str) -> None:
         """Remove tracked NATS recipes before deleting the durable consumer."""
@@ -807,11 +850,18 @@ class IntentBus:
     async def unsubscribe_and_wait(self, agent_id: str) -> None:
         """Remove one agent locally and await complete transport teardown."""
         await self._unsubscribe_remote(agent_id)
-        self._unsubscribe_local(agent_id)
+        queue = self._unsubscribe_local(agent_id)
+        # AD-1273: awaited, not deferred to a task — on the recycle path the
+        # replacement subscribes next, and a background drain would race its
+        # first dispatch.
+        if queue is not None:
+            await self._shutdown_queue(agent_id, queue)
 
     def unsubscribe(self, agent_id: str) -> None:
         """Remove an agent locally and schedule transport cleanup."""
-        self._unsubscribe_local(agent_id)
+        queue = self._unsubscribe_local(agent_id)
+        if queue is not None:
+            self._schedule_queue_shutdown(agent_id, queue)
         if self._nats_bus and not self._pending_task_registration_closed:
             try:
                 loop = asyncio.get_running_loop()
@@ -1359,9 +1409,14 @@ class IntentBus:
         """Register an agent's cognitive queue (AD-654b)."""
         self._agent_queues[agent_id] = queue
 
-    def unregister_queue(self, agent_id: str) -> None:
-        """Remove an agent's cognitive queue (AD-654b)."""
-        self._agent_queues.pop(agent_id, None)
+    def unregister_queue(self, agent_id: str) -> Any | None:
+        """Remove an agent's cognitive queue (AD-654b).
+
+        Returns the removed queue so an async caller can await its shutdown
+        (AD-1273). Popping alone leaves the processor loop running against the
+        stopped agent for the life of the process.
+        """
+        return self._agent_queues.pop(agent_id, None)
 
     def _get_agent_queue(self, agent_id: str) -> Any | None:
         """Get the cognitive queue for an agent (AD-654b)."""

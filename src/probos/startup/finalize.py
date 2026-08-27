@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -3239,6 +3240,88 @@ def _sync_ontology_callsigns(runtime: Any) -> None:
             )
 
 
+def make_cognitive_queue_rehydrator(
+    runtime: Any,
+    intent_bus: Any,
+) -> "Callable[[Any], Awaitable[None]]":
+    """Build the rehydrator that gives one crew agent its cognitive queue.
+
+    AD-1273: the queue is per-instance state, so it is applied by a rehydrator
+    on every birth rather than by a one-time pass over the registry. Recycling
+    swaps the agent object; without this the replacement is subscribed but
+    queueless, and its priority, backpressure and dequeue-time circuit breaker
+    are silently bypassed.
+
+    Module level rather than a closure inside ``finalize_startup`` so the
+    recycle seam this closes can be driven directly by a test.
+    """
+    from probos.cognitive.circuit_breaker import BreakerState
+    from probos.cognitive.queue import AgentCognitiveQueue
+
+    def _make_should_process(agent_ref: Any) -> Callable:
+        """Create dequeue-time guard for an agent.
+
+        Returns (allow, transient) tuple:
+        - (True, _) → process the item
+        - (False, True) → transient rejection, nak(delay=60) for redelivery
+        - (False, False) → permanent rejection, term()
+
+        Uses lazy lookup: runtime.proactive_loop resolved at dequeue time,
+        not at queue construction time. Safe against wiring-order changes.
+        """
+        def _guard(item: Any, js_msg: Any) -> tuple[bool, bool]:
+            # Lazy lookup — resolved at dequeue time, not construction time
+            _pl = getattr(runtime, 'proactive_loop', None)
+            if _pl:
+                breaker = _pl.circuit_breaker
+                status = breaker.get_status(agent_ref.id)
+                if status.get("state") == BreakerState.OPEN.value:
+                    return (False, True)  # Transient — nak for redelivery
+            return (True, False)
+        return _guard
+
+    async def _rehydrate_cognitive_queue(agent: Any) -> None:
+        """Give one crew agent its cognitive queue (AD-654b / AD-1273).
+
+        Idempotent: a registered queue is a live one, because
+        ``_unsubscribe_local`` pops and shuts it down in the same step. The
+        lazy ``proactive_loop`` lookup above is what makes running this at
+        birth — long before the proactive loop exists — safe.
+        """
+        if not is_crew_agent(agent, runtime.ontology):
+            return
+        if intent_bus._get_agent_queue(agent.id) is not None:
+            return
+        queue = AgentCognitiveQueue(
+            agent_id=agent.id,
+            handler=agent.handle_intent,
+            should_process=_make_should_process(agent),
+            emit_event=runtime.emit_event,
+        )
+        intent_bus.register_queue(agent.id, queue)
+        try:
+            await queue.start()
+        except BaseException:
+            # AD-1273: a registered-but-unstarted queue is a blackhole. The
+            # guard above treats "registered" as "live", so leaving it behind
+            # would make every later rewire skip -- the agent stays subscribed
+            # to a queue nothing drains, which is worse than having no queue at
+            # all. Unregister so the next birth can retry cleanly. Measured by
+            # review: without this the failed queue persisted and the retry was
+            # refused by its own idempotence guard.
+            try:
+                intent_bus.unregister_queue(agent.id)
+            except Exception:
+                logger.warning(
+                    "AD-1273: could not unregister the cognitive queue for %s "
+                    "after a failed start; the next rewire will skip it",
+                    agent.id, exc_info=True,
+                )
+            raise
+
+    return _rehydrate_cognitive_queue
+
+
 async def finalize_startup(
     *,
     runtime: Any,  # ProbOSRuntime — passed as Any to avoid circular import
@@ -4707,9 +4790,6 @@ async def finalize_startup(
             logger.info("AD-637c: WARDROOM JetStream stream + consumer wired")
 
         # ── AD-654b: Agent Cognitive Queues ──────────────────────────────
-        from probos.cognitive.queue import AgentCognitiveQueue
-        from probos.cognitive.circuit_breaker import BreakerState
-
         _intent_bus = runtime.intent_bus
 
         if _intent_bus is None:
@@ -4720,46 +4800,42 @@ async def finalize_startup(
             _intent_bus.set_record_response(_wr_router.record_agent_response)
             _intent_bus.set_emit_event(runtime.emit_event)  # BF-234: dedup telemetry
 
-        # Create per-agent cognitive queues for crew agents.
-        def _make_should_process(agent_ref: Any) -> Callable:
-            """Create dequeue-time guard for an agent.
-
-            Returns (allow, transient) tuple:
-            - (True, _) → process the item
-            - (False, True) → transient rejection, nak(delay=60) for redelivery
-            - (False, False) → permanent rejection, term()
-
-            Uses lazy lookup: runtime.proactive_loop resolved at dequeue time,
-            not at queue construction time. Safe against wiring-order changes.
-            """
-            def _guard(item: Any, js_msg: Any) -> tuple[bool, bool]:
-                # Lazy lookup — resolved at dequeue time, not construction time
-                _pl = getattr(runtime, 'proactive_loop', None)
-                if _pl:
-                    breaker = _pl.circuit_breaker
-                    status = breaker.get_status(agent_ref.id)
-                    if status.get("state") == BreakerState.OPEN.value:
-                        return (False, True)  # Transient — nak for redelivery
-                return (True, False)
-            return _guard
-
         if _intent_bus is not None:
-            _queue_count = 0
+            # AD-1273: registered under "*" rather than per agent_type because
+            # eligibility is the is_crew_agent predicate over the instance, not a
+            # fixed type list — enumerating crew types here would reintroduce the
+            # one-time snapshot this replaces.
+            _rehydrate_cognitive_queue = make_cognitive_queue_rehydrator(
+                runtime, _intent_bus,
+            )
+            runtime.onboarding.register_rehydrator(
+                "*", "ad654b_cognitive_queue", _rehydrate_cognitive_queue,
+            )
+
+            # Agents born before finalize were already wired, so catch them up.
+            _crew_count = 0
             for agent in runtime.registry.all():
-                if not is_crew_agent(agent, runtime.ontology):
-                    continue
+                await _rehydrate_cognitive_queue(agent)
+                if is_crew_agent(agent, runtime.ontology):
+                    _crew_count += 1
+            _queue_count = sum(
+                1
+                for agent in runtime.registry.all()
+                if _intent_bus._get_agent_queue(agent.id) is not None
+            )
 
-                queue = AgentCognitiveQueue(
-                    agent_id=agent.id,
-                    handler=agent.handle_intent,
-                    should_process=_make_should_process(agent),
-                    emit_event=runtime.emit_event,
+            logger.info(
+                "Startup [finalize]: AD-654b cognitive queues live for %d of %d "
+                "crew agents (%d rehydrators registered)",
+                _queue_count, _crew_count, runtime.onboarding.rehydrator_count(),
+            )
+            if _crew_count and not _queue_count:
+                logger.error(
+                    "AD-1273: %d crew agents but zero cognitive queues — the queue "
+                    "rehydrator did not run; priority, backpressure and the "
+                    "dequeue-time circuit breaker are bypassed for every agent",
+                    _crew_count,
                 )
-                _intent_bus.register_queue(agent.id, queue)
-                await queue.start()
-                _queue_count += 1
-
-            logger.info("Startup [finalize]: AD-654b cognitive queues created for %d agents", _queue_count)
 
             # AD-654c: Create Dispatcher
             from probos.activation.dispatcher import Dispatcher

@@ -9,7 +9,7 @@ import asyncio
 import dataclasses
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from probos.config import format_trust
@@ -83,10 +83,64 @@ class AgentOnboardingService:
         self._mentor_announcer: Callable[[str, str], Any] | None = None
         # AD-486: Birth Chamber (late-bound by finalize._wire_birth_chamber)
         self._birth_chamber: Any = None
+        # AD-1273: post-construction state, keyed by (agent_type, name).
+        # Insertion-ordered; replacing a key keeps its original position.
+        self._rehydrators: dict[tuple[str, str], Callable[[Any], Awaitable[None]]] = {}
 
     def set_birth_chamber(self, chamber: Any) -> None:
         """AD-486: Set the Birth Chamber (public setter for LoD)."""
         self._birth_chamber = chamber
+
+    def register_rehydrator(
+        self,
+        agent_type: str,
+        name: str,
+        fn: Callable[[Any], Awaitable[None]],
+    ) -> None:
+        """Register per-instance state to (re)apply on every birth (AD-1273).
+
+        An agent is not finished when its constructor returns. State wired onto
+        it afterwards is lost when ``AgentSpawner.recycle`` swaps the object for
+        a fresh one, so it must be reapplied by ``wire_agent`` — the one point
+        that initial startup, recycle and dynamic scale-up all already pass
+        through.
+
+        Args:
+            agent_type: the ``agent.agent_type`` to match, or ``"*"`` for every
+                agent. Use ``"*"`` when eligibility is a predicate over the
+                instance rather than a fixed list of types.
+            name: identifies the rehydrator within ``agent_type``. Re-registering
+                the same ``(agent_type, name)`` replaces it in place, so a
+                repeated startup pass cannot double-register or reorder.
+            fn: awaited with the agent. Must be idempotent — it runs again on
+                every rewire, so a double-wire has to be harmless.
+        """
+        self._rehydrators[(agent_type, name)] = fn
+
+    def rehydrator_count(self) -> int:
+        """Number of registered rehydrators (AD-1273 boot-time visibility)."""
+        return len(self._rehydrators)
+
+    async def _run_rehydrators(self, agent: Any) -> None:
+        """Apply every rehydrator matching this agent, in registration order."""
+        agent_type = getattr(agent, "agent_type", "")
+        for (target_type, name), fn in list(self._rehydrators.items()):
+            if target_type != "*" and target_type != agent_type:
+                continue
+            try:
+                await fn(agent)
+            except Exception:
+                # Tier-2: one bad rehydrator must not strand the rest, nor abort
+                # onboarding and trip the pool's rollback path. ERROR because a
+                # silently skipped rehydrator is the defect AD-1273 exists to close.
+                logger.error(
+                    "AD-1273: rehydrator %r failed for agent %s (%s) — that state is "
+                    "MISSING on this instance; remaining rehydrators still run",
+                    name,
+                    getattr(agent, "id", "?"),
+                    agent_type,
+                    exc_info=True,
+                )
 
     def register_mentor_announcer(
         self,
@@ -539,6 +593,10 @@ class AgentOnboardingService:
         # AD-596b: Wire cognitive skill catalog for on-demand skill loading
         if self._cognitive_skill_catalog:
             agent._cognitive_skill_catalog = self._cognitive_skill_catalog
+
+        # AD-1273: reapply post-construction state last, so a rehydrator sees a
+        # fully onboarded agent — the intent-bus subscription above in particular.
+        await self._run_rehydrators(agent)
 
     async def unwire_agent(self, agent_id: str) -> None:
         """Remove an agent from mesh indexes before registry unregistration."""

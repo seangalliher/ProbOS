@@ -64,6 +64,15 @@ _SHED_LOG_LEVEL: dict[Priority, int] = {
 # Default capacity. Generous — JetStream already rate-limits via max_ack_pending.
 _DEFAULT_MAX_QUEUE_SIZE = 50
 
+# AD-1273: how long `shutdown` waits for a CANCELLED processor to actually
+# stop. A handler that suppresses CancelledError would otherwise be awaited
+# forever, which is not "force cancel" and not the 10s the docstring promises.
+_CANCEL_GRACE_SECONDS = 5.0
+
+# Named so the bound the docstring promises can be asserted, and shortened, by
+# a test rather than only described.
+_INFLIGHT_GRACE_SECONDS = 10.0
+
 
 class AgentCognitiveQueue:
     """Priority-ordered cognitive work queue for a single agent.
@@ -236,15 +245,27 @@ class AgentCognitiveQueue:
         self._notify.set()  # Wake up if sleeping
 
         if self._task and not self._task.done():
-            # Give in-flight handler up to 10s to complete, then force cancel
-            try:
-                await asyncio.wait_for(self._task, timeout=10.0)
-            except asyncio.TimeoutError:
+            # AD-1273: `asyncio.wait`, NOT `wait_for`. On timeout `wait_for`
+            # cancels the task and then awaits it to finish cancelling, and
+            # that await is unbounded -- so a handler suppressing
+            # CancelledError hung shutdown forever rather than for the 10s the
+            # docstring promises. Measured by review, and measured again when
+            # a first fix placed the bound AFTER the `wait_for` and never ran.
+            # `wait` neither cancels nor raises; it just reports.
+            await asyncio.wait({self._task}, timeout=_INFLIGHT_GRACE_SECONDS)
+            if not self._task.done():
                 self._task.cancel()
-                try:
-                    await self._task
-                except asyncio.CancelledError:
-                    pass
+                await asyncio.wait({self._task}, timeout=_CANCEL_GRACE_SECONDS)
+                if not self._task.done():
+                    # Abandoned loudly. A task that ignores cancellation cannot
+                    # be stopped from here, and blocking the vessel's shutdown
+                    # on it is worse than leaving it running and saying so.
+                    logger.error(
+                        "AD-1273: cognitive queue processor for %s ignored "
+                        "cancellation and is being abandoned after %.1fs; "
+                        "shutdown continues and that task may still be running",
+                        self._agent_id[:12], _CANCEL_GRACE_SECONDS,
+                    )
             self._task = None
 
         # Wait for cleanup tasks (term() calls from shedding) with timeout

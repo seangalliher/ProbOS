@@ -440,6 +440,9 @@ class TestOnboardingWiring:
 
         catalog = _make_catalog_mock(entries=[])
         svc = AgentOnboardingService.__new__(AgentOnboardingService)
+        # AD-1273: __new__ bypasses __init__, so the rehydrator registry
+        # wire_agent now runs has to be set explicitly, as above at L164.
+        svc._rehydrators = {}
         svc._cognitive_skill_catalog = catalog
         svc._callsign_registry = MagicMock()
         svc._callsign_registry.get_callsign.return_value = "TestBot"
@@ -492,6 +495,9 @@ class TestOnboardingWiring:
         catalog = _make_catalog_mock(entries=[entry])
 
         svc = AgentOnboardingService.__new__(AgentOnboardingService)
+        # AD-1273: __new__ bypasses __init__, so the rehydrator registry
+        # wire_agent now runs has to be set explicitly, as above at L164.
+        svc._rehydrators = {}
         svc._cognitive_skill_catalog = catalog
         svc._callsign_registry = MagicMock()
         svc._callsign_registry.get_callsign.return_value = "TestBot"
@@ -552,6 +558,9 @@ class TestOnboardingWiring:
         from probos.agent_onboarding import AgentOnboardingService
 
         svc = AgentOnboardingService.__new__(AgentOnboardingService)
+        # AD-1273: __new__ bypasses __init__, so the rehydrator registry
+        # wire_agent now runs has to be set explicitly, as above at L164.
+        svc._rehydrators = {}
         svc._cognitive_skill_catalog = None
         svc._callsign_registry = MagicMock()
         svc._callsign_registry.get_callsign.return_value = "TestBot"
