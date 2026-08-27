@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-07T20:06:19+00:00",
-    "head": "aff79cae",
-    "subject_count": 2252,
+    "captured_at": "2026-08-27T16:17:27+00:00",
+    "head": "9c7874eb",
+    "subject_count": 2401,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -364,11 +364,101 @@
       "AD-1201": [
         "git AD-1201"
       ],
+      "AD-1203": [
+        "git AD-1203"
+      ],
       "AD-1204": [
         "git AD-1204"
       ],
+      "AD-1209": [
+        "git AD-1209"
+      ],
       "AD-1211": [
         "git AD-1211"
+      ],
+      "AD-1217": [
+        "git AD-1217"
+      ],
+      "AD-1218": [
+        "git AD-1218"
+      ],
+      "AD-1219": [
+        "git AD-1219"
+      ],
+      "AD-1220": [
+        "git AD-1220"
+      ],
+      "AD-1221": [
+        "git AD-1221"
+      ],
+      "AD-1222": [
+        "git AD-1222"
+      ],
+      "AD-1226": [
+        "git AD-1226"
+      ],
+      "AD-1227": [
+        "git AD-1227"
+      ],
+      "AD-1230": [
+        "git AD-1230"
+      ],
+      "AD-1231": [
+        "git AD-1231"
+      ],
+      "AD-1232": [
+        "git AD-1232"
+      ],
+      "AD-1233": [
+        "git AD-1233"
+      ],
+      "AD-1234": [
+        "git AD-1234"
+      ],
+      "AD-1235": [
+        "git AD-1235"
+      ],
+      "AD-1239": [
+        "git AD-1239"
+      ],
+      "AD-1248": [
+        "git AD-1248"
+      ],
+      "AD-1257": [
+        "git AD-1257"
+      ],
+      "AD-1267": [
+        "git AD-1267"
+      ],
+      "AD-1269": [
+        "git AD-1269"
+      ],
+      "AD-1271": [
+        "git AD-1271"
+      ],
+      "AD-1273": [
+        "git AD-1273"
+      ],
+      "AD-1274": [
+        "git AD-1274"
+      ],
+      "AD-1275": [
+        "git AD-1275"
+      ],
+      "AD-1276": [
+        "git AD-1276"
+      ],
+      "AD-1277": [
+        "git AD-1277"
+      ],
+      "AD-1278": [
+        "git AD-1278"
+      ],
+      "AD-1279": [
+        "git AD-1279"
+      ],
+      "AD-1280": [
+        "git AD-1280"
       ],
       "AD-142": [
         "git AD-142"
@@ -2578,6 +2668,9 @@
       "BF-690": [
         "git BF-690"
       ],
+      "BF-691": [
+        "git BF-691"
+      ],
       "BF-692": [
         "git BF-692"
       ],
@@ -2635,6 +2728,18 @@
       "BF-710": [
         "git BF-710"
       ],
+      "BF-711": [
+        "git BF-711"
+      ],
+      "BF-712": [
+        "git BF-712"
+      ],
+      "BF-713": [
+        "git BF-713"
+      ],
+      "BF-714": [
+        "git BF-714"
+      ],
       "BF-715": [
         "git BF-715"
       ],
@@ -2643,6 +2748,9 @@
       ],
       "BF-717": [
         "git BF-717"
+      ],
+      "BF-718": [
+        "git BF-718"
       ],
       "BF-719": [
         "git BF-719"
@@ -2668,26 +2776,291 @@
       "BF-726": [
         "git BF-726"
       ],
+      "BF-727": [
+        "git BF-727"
+      ],
+      "BF-728": [
+        "git BF-728"
+      ],
+      "BF-729": [
+        "git BF-729"
+      ],
+      "BF-730": [
+        "git BF-730"
+      ],
+      "BF-731": [
+        "git BF-731"
+      ],
+      "BF-732": [
+        "git BF-732"
+      ],
+      "BF-733": [
+        "git BF-733"
+      ],
+      "BF-734": [
+        "git BF-734"
+      ],
+      "BF-735": [
+        "git BF-735"
+      ],
+      "BF-737": [
+        "git BF-737"
+      ],
+      "BF-740": [
+        "git BF-740"
+      ],
+      "BF-742": [
+        "git BF-742"
+      ],
+      "BF-743": [
+        "git BF-743"
+      ],
+      "BF-744": [
+        "git BF-744"
+      ],
+      "BF-746": [
+        "git BF-746"
+      ],
+      "BF-747": [
+        "git BF-747"
+      ],
+      "BF-748": [
+        "git BF-748"
+      ],
+      "BF-749": [
+        "git BF-749"
+      ],
+      "BF-750": [
+        "git BF-750"
+      ],
+      "BF-751": [
+        "git BF-751"
+      ],
+      "BF-752": [
+        "git BF-752"
+      ],
+      "BF-753": [
+        "git BF-753"
+      ],
+      "BF-754": [
+        "git BF-754"
+      ],
+      "BF-757": [
+        "git BF-757"
+      ],
+      "BF-758": [
+        "git BF-758"
+      ],
+      "BF-759": [
+        "git BF-759"
+      ],
       "BF-76": [
         "git BF-076"
+      ],
+      "BF-760": [
+        "git BF-760"
+      ],
+      "BF-761": [
+        "git BF-761"
+      ],
+      "BF-762": [
+        "git BF-762"
+      ],
+      "BF-764": [
+        "git BF-764"
+      ],
+      "BF-765": [
+        "git BF-765"
+      ],
+      "BF-766": [
+        "git BF-766"
+      ],
+      "BF-768": [
+        "git BF-768"
+      ],
+      "BF-769": [
+        "git BF-769"
+      ],
+      "BF-770": [
+        "git BF-770"
+      ],
+      "BF-771": [
+        "git BF-771"
+      ],
+      "BF-772": [
+        "git BF-772"
+      ],
+      "BF-773": [
+        "git BF-773"
+      ],
+      "BF-774": [
+        "git BF-774"
+      ],
+      "BF-775": [
+        "git BF-775"
+      ],
+      "BF-776": [
+        "git BF-776"
       ],
       "BF-78": [
         "git BF-078"
       ],
+      "BF-781": [
+        "git BF-781"
+      ],
+      "BF-783": [
+        "git BF-783"
+      ],
+      "BF-784": [
+        "git BF-784"
+      ],
+      "BF-785": [
+        "git BF-785"
+      ],
+      "BF-786": [
+        "git BF-786"
+      ],
+      "BF-787": [
+        "git BF-787"
+      ],
+      "BF-788": [
+        "git BF-788"
+      ],
+      "BF-789": [
+        "git BF-789"
+      ],
       "BF-79": [
         "git BF-079"
+      ],
+      "BF-790": [
+        "git BF-790",
+        "git BF-790a"
+      ],
+      "BF-792": [
+        "git BF-792"
+      ],
+      "BF-796": [
+        "git BF-796"
+      ],
+      "BF-798": [
+        "git BF-798"
+      ],
+      "BF-799": [
+        "git BF-799"
+      ],
+      "BF-801": [
+        "git BF-801"
+      ],
+      "BF-805": [
+        "git BF-805"
+      ],
+      "BF-807": [
+        "git BF-807"
+      ],
+      "BF-808": [
+        "git BF-808"
+      ],
+      "BF-810": [
+        "git BF-810"
+      ],
+      "BF-812": [
+        "git BF-812"
+      ],
+      "BF-815": [
+        "git BF-815"
+      ],
+      "BF-816": [
+        "git BF-816"
+      ],
+      "BF-819": [
+        "git BF-819"
       ],
       "BF-82": [
         "git BF-082"
       ],
+      "BF-820": [
+        "git BF-820"
+      ],
+      "BF-822": [
+        "git BF-822"
+      ],
+      "BF-823": [
+        "git BF-823"
+      ],
+      "BF-824": [
+        "git BF-824"
+      ],
+      "BF-826": [
+        "git BF-826"
+      ],
+      "BF-827": [
+        "git BF-827"
+      ],
+      "BF-828": [
+        "git BF-828"
+      ],
+      "BF-829": [
+        "git BF-829"
+      ],
       "BF-83": [
         "git BF-083"
+      ],
+      "BF-830": [
+        "git BF-830"
+      ],
+      "BF-831": [
+        "git BF-831"
+      ],
+      "BF-832": [
+        "git BF-832"
+      ],
+      "BF-833": [
+        "git BF-833"
+      ],
+      "BF-834": [
+        "git BF-834"
+      ],
+      "BF-835": [
+        "git BF-835"
+      ],
+      "BF-836": [
+        "git BF-836"
       ],
       "BF-84": [
         "git BF-084"
       ],
+      "BF-840": [
+        "git BF-840"
+      ],
+      "BF-842": [
+        "git BF-842"
+      ],
+      "BF-847": [
+        "git BF-847"
+      ],
+      "BF-848": [
+        "git BF-848"
+      ],
       "BF-85": [
         "git BF-085"
+      ],
+      "BF-850": [
+        "git BF-850"
+      ],
+      "BF-852": [
+        "git BF-852"
+      ],
+      "BF-853": [
+        "git BF-853"
+      ],
+      "BF-854": [
+        "git BF-854"
+      ],
+      "BF-856": [
+        "git BF-856"
+      ],
+      "BF-857": [
+        "git BF-857"
       ],
       "BF-86": [
         "git BF-086"
@@ -2695,8 +3068,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-07T20:06:19+00:00",
-    "issue_count": 1178,
+    "captured_at": "2026-08-26T00:37:20+00:00",
+    "issue_count": 1324,
     "issues": {
       "AD-1000": [
         {
@@ -3747,8 +4120,8 @@
         {
           "claims": [],
           "number": 1095,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: self-diagnosis and repair loop (AD-1166..AD-1173)"
         },
         {
@@ -3759,6 +4132,15 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "AD-1166: a promoted turn's real outcome must reach episodic memory"
+        },
+        {
+          "claims": [
+            "AD-1166"
+          ],
+          "number": 1197,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-738: AD-1166 writes the promoted outcome to episodic memory and nothing ever reads it back"
         }
       ],
       "AD-1167": [
@@ -3803,6 +4185,15 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "AD-1170: `blocked by a defect` as a second verdict for a stalled turn"
+        },
+        {
+          "claims": [
+            "AD-1170"
+          ],
+          "number": 1257,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-793: AD-1170 detect_tool_defect is dead on the conversational DM path"
         }
       ],
       "AD-1171": [
@@ -3831,8 +4222,8 @@
         {
           "claims": [],
           "number": 1095,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: self-diagnosis and repair loop (AD-1166..AD-1173)"
         },
         {
@@ -3873,8 +4264,8 @@
             "AD-1176"
           ],
           "number": 1107,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1176: WorkItem.project_id + standing and chartered projects"
         }
       ],
@@ -3928,8 +4319,8 @@
             "AD-1181"
           ],
           "number": 1116,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1181: Decide the boundary between agent-native coordination and CrewOrchestrator"
         }
       ],
@@ -3939,8 +4330,8 @@
             "AD-1182"
           ],
           "number": 1117,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1182: Make Captain Card configuration a real contract or remove it"
         }
       ],
@@ -4026,8 +4417,8 @@
             "AD-1188"
           ],
           "number": 1125,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "NOT_PLANNED",
+          "state": "CLOSED",
           "title": "AD-1188: orchestration-mode ablation rig"
         },
         {
@@ -4219,8 +4610,8 @@
             "AD-1203"
           ],
           "number": 1147,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1203: per-turn tool-use provenance -- an agent's claims are not traceable to the calls behind them"
         },
         {
@@ -4320,8 +4711,8 @@
             "AD-1209"
           ],
           "number": 1160,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1209: an agent cannot read task state, so asking 'is it done?' re-runs the task"
         }
       ],
@@ -4388,7 +4779,7 @@
           "number": 1172,
           "reason": "",
           "state": "OPEN",
-          "title": "AD-1215: extension_registry is never assigned, so the install rung has never fired"
+          "title": "AD-1215: decide whether ProbOS needs its own extension model or should use plugins"
         }
       ],
       "AD-1216": [
@@ -4408,8 +4799,8 @@
             "AD-1217"
           ],
           "number": 1177,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1217: \"NO NETWORK ACCESS\" is a proxy hint described as a guarantee"
         }
       ],
@@ -4419,9 +4810,358 @@
             "AD-1218"
           ],
           "number": 1178,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1218: surface the remaining sandbox limits instead of letting agents find them by failing"
+        }
+      ],
+      "AD-1219": [
+        {
+          "claims": [
+            "AD-1219"
+          ],
+          "number": 1180,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1219: the sandbox's advertised artifact libraries must ship as default dependencies"
+        }
+      ],
+      "AD-1220": [
+        {
+          "claims": [
+            "AD-1220"
+          ],
+          "number": 1181,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1220: enable the approval-gated library install path (built, wired, never switched on)"
+        }
+      ],
+      "AD-1221": [
+        {
+          "claims": [
+            "AD-1221"
+          ],
+          "number": 1183,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1221: give the sandbox governed network so an agent can fetch and compute in one process"
+        },
+        {
+          "claims": [],
+          "number": 1192,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-734: 'import ship' is reported as a missing package, blocking every run that follows AD-1221's advice"
+        }
+      ],
+      "AD-1222": [
+        {
+          "claims": [
+            "AD-1222"
+          ],
+          "number": 1185,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1222: the install auto-approve tier is borrowed from the self-mod allowlist"
+        }
+      ],
+      "AD-1223": [
+        {
+          "claims": [
+            "AD-1223"
+          ],
+          "number": 1186,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1223: decide the sandbox network posture - soft proxy hint, OS-level egress block, or Tier 2 containers"
+        }
+      ],
+      "AD-1224": [
+        {
+          "claims": [
+            "AD-1224"
+          ],
+          "number": 1190,
           "reason": "",
           "state": "OPEN",
-          "title": "AD-1218: surface the remaining sandbox limits instead of letting agents find them by failing"
+          "title": "AD-1224: persist tool-start events so a hung run is diagnosable before it returns"
+        }
+      ],
+      "AD-1225": [
+        {
+          "claims": [
+            "AD-1225"
+          ],
+          "number": 1193,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1225: an agent pays a full ~18K-token prompt to decide to say nothing"
+        }
+      ],
+      "AD-1226": [
+        {
+          "claims": [
+            "AD-1226"
+          ],
+          "number": 1198,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-739: AD-1226's artifact ref is written correctly and never reaches the prompt"
+        }
+      ],
+      "AD-1228": [
+        {
+          "claims": [
+            "AD-1228"
+          ],
+          "number": 1201,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1228: a standing interest - an agent is told when ship state changes, instead of polling for it"
+        }
+      ],
+      "AD-1229": [
+        {
+          "claims": [
+            "AD-1229"
+          ],
+          "number": 1202,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1229: did the action land - closing the loop between an agent's action and its effect"
+        }
+      ],
+      "AD-1230": [
+        {
+          "claims": [
+            "AD-1230"
+          ],
+          "number": 1203,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1230: a turn the model could not answer waits for the model, instead of dying"
+        },
+        {
+          "claims": [
+            "AD-1230"
+          ],
+          "number": 1256,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-792: AD-1230 deferred replay still leaks the <intent emotion=...> self-tag"
+        }
+      ],
+      "AD-1236": [
+        {
+          "claims": [
+            "AD-1236"
+          ],
+          "number": 1205,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1236: the install rung means enable a registered MCP server (implements #1172 decision B)"
+        }
+      ],
+      "AD-1239": [
+        {
+          "claims": [
+            "AD-1239"
+          ],
+          "number": 1207,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1239: MCP before the browser - the agent chose Chromium because that is what the descriptions told it to do"
+        }
+      ],
+      "AD-1240": [
+        {
+          "claims": [
+            "AD-1240"
+          ],
+          "number": 1239,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1240: offload large tool results to the workspace instead of destroying them"
+        }
+      ],
+      "AD-1241": [
+        {
+          "claims": [
+            "AD-1241"
+          ],
+          "number": 1216,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1241: a mid-turn refreshed tool offer has no bound and rescans every warm adapter"
+        }
+      ],
+      "AD-1242": [
+        {
+          "claims": [
+            "AD-1242"
+          ],
+          "number": 1234,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1242: the verifier is asked whether claims are supported, and shown no evidence"
+        }
+      ],
+      "AD-1243": [
+        {
+          "claims": [
+            "AD-1243"
+          ],
+          "number": 1236,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1243: show the Captain what a reply actually consulted"
+        }
+      ],
+      "AD-1244": [
+        {
+          "claims": [
+            "AD-1244"
+          ],
+          "number": 1237,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1244: a refusal must say what is missing, and a verdict must not contradict itself"
+        }
+      ],
+      "AD-1245": [
+        {
+          "claims": [
+            "AD-1245"
+          ],
+          "number": 1238,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1245: a verdict must distinguish judged-and-refused from could-not-judge"
+        }
+      ],
+      "AD-1246": [
+        {
+          "claims": [
+            "AD-1246"
+          ],
+          "number": 1241,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1246: a long execution should promote, not be capped at 30 seconds"
+        }
+      ],
+      "AD-1247": [
+        {
+          "claims": [
+            "AD-1247"
+          ],
+          "number": 1244,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1247: a per-execution audit record that can be trusted"
+        }
+      ],
+      "AD-1248": [
+        {
+          "claims": [],
+          "number": 1262,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-798: decision cache replayed a stale _tool_trace_ref before AD-1248"
+        },
+        {
+          "claims": [],
+          "number": 1266,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-802: channel adapters cannot carry the AD-1248 disclosure yet - three measured obstacles"
+        }
+      ],
+      "AD-1250": [
+        {
+          "claims": [
+            "AD-1250"
+          ],
+          "number": 1294,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1250: a joint allowance/ration search retains 32 rows where the ordered search retains 13"
+        }
+      ],
+      "AD-1256": [
+        {
+          "claims": [
+            "AD-1256"
+          ],
+          "number": 1302,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1256: a store registry and shared storage layer \u2014 59 databases, 34 bespoke connects, no declared criticality or retention"
+        }
+      ],
+      "AD-1258": [
+        {
+          "claims": [
+            "AD-1258"
+          ],
+          "number": 1308,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1258: the telemetry snapshot renders every domain it collects, and the agent can ask for it"
+        }
+      ],
+      "AD-1259": [
+        {
+          "claims": [
+            "AD-1259"
+          ],
+          "number": 1309,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1259: one source of truth for agent self-knowledge \u2014 two paths report the same trust score to different precision"
+        }
+      ],
+      "AD-1260": [
+        {
+          "claims": [
+            "AD-1260"
+          ],
+          "number": 1310,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1260: the wellness domain, and the line between first person and third \u2014 the Counselor cannot read her own assessment"
+        }
+      ],
+      "AD-1261": [
+        {
+          "claims": [
+            "AD-1261"
+          ],
+          "number": 1311,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1261: the authority domain \u2014 an agent cannot see its own ceiling, so it can only refuse, never escalate"
+        }
+      ],
+      "AD-1270": [
+        {
+          "claims": [
+            "AD-1270"
+          ],
+          "number": 1324,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1270: platform maturity \u2014 exercised capabilities, robust seams, modular owners, fast gates, truthful docs"
+        }
+      ],
+      "AD-272": [
+        {
+          "claims": [],
+          "number": 1273,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-809: the AD-272 decision cache keys on a per-cycle correlation_id, so it may never hit"
         }
       ],
       "AD-423": [
@@ -6066,8 +6806,8 @@
             "AD-580"
           ],
           "number": 1143,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-712: AD-580 resolve-refire test has a 10ms timing margin and flakes under the parallel gate"
         }
       ],
@@ -9335,6 +10075,15 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "AD-724-5: DM sanity gate for WR/chain paths"
+        },
+        {
+          "claims": [
+            "AD-724"
+          ],
+          "number": 1264,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-800: AD-724-1 sanity retry both over-discloses and conceals tool failures"
         }
       ],
       "AD-725": [
@@ -9715,6 +10464,13 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "AD-738e-2: Orphan sub-AD commits should carry Refs-trailer for audit-trail traceability"
+        },
+        {
+          "claims": [],
+          "number": 1224,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-766: a WebSocket-first reply is spoken without its AD-738e-1 emotion"
         }
       ],
       "AD-739": [
@@ -10991,6 +11747,15 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "AD-861: CrewSynthesizer - fold typed sub-results into a final answer with Shapley attribution"
+        },
+        {
+          "claims": [
+            "AD-861"
+          ],
+          "number": 1247,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-783: AD-861 still pays a verifier for accepting, through crew_synth"
         }
       ],
       "AD-862": [
@@ -12079,8 +12844,8 @@
             "AD-995"
           ],
           "number": 939,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "NOT_PLANNED",
+          "state": "CLOSED",
           "title": "AD-995 (STUB): Tier-2 OS-native sandbox \u2014 waiting for MXC to mature"
         }
       ],
@@ -14372,8 +15137,8 @@
             "BF-691"
           ],
           "number": 1093,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-691: test_resolve_refires_after_clean_period is load-dependent (passes alone, fails under -n 16)"
         }
       ],
@@ -14455,6 +15220,15 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-707: _CAPABILITY_GAP_RE matches 'lack' inside words -- 'black' and 'Slack' register as capability gaps"
+        },
+        {
+          "claims": [
+            "BF-707"
+          ],
+          "number": 1312,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-842: BF-707 fixed the capability-gap regex and left 16 comments across 10 files asserting the pre-fix behaviour"
         }
       ],
       "BF-708": [
@@ -14496,8 +15270,8 @@
             "BF-711"
           ],
           "number": 1122,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-711: judge and infrastructure failure score as competence failure"
         },
         {
@@ -14514,8 +15288,8 @@
             "BF-712"
           ],
           "number": 1143,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-712: AD-580 resolve-refire test has a 10ms timing margin and flakes under the parallel gate"
         }
       ],
@@ -14525,8 +15299,8 @@
             "BF-713"
           ],
           "number": 1144,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-713: doctor UX test depends on a live LLM proxy and flakes when it returns an empty 200"
         }
       ],
@@ -14536,8 +15310,8 @@
             "BF-714"
           ],
           "number": 1145,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-714: the DM degrade message discards the diagnosis the runtime already made"
         }
       ],
@@ -14580,8 +15354,8 @@
             "BF-718"
           ],
           "number": 1157,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-718: agent messages that arrive asynchronously are never spoken"
         }
       ],
@@ -14673,6 +15447,733 @@
           "title": "BF-726: the sandbox advertised two libraries it cannot import"
         }
       ],
+      "BF-727": [
+        {
+          "claims": [
+            "BF-727"
+          ],
+          "number": 1179,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-727: the agentic disposition advertises artifact formats the sandbox cannot produce"
+        }
+      ],
+      "BF-728": [
+        {
+          "claims": [
+            "BF-728"
+          ],
+          "number": 1182,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-728: a 3 MB JSON fetch is truncated past the field the agent needs, so it silently falls back to training data"
+        }
+      ],
+      "BF-729": [
+        {
+          "claims": [
+            "BF-729"
+          ],
+          "number": 1184,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-729: an over-large fetch is truncated silently, so the agent cannot tell a whole document from a prefix"
+        }
+      ],
+      "BF-730": [
+        {
+          "claims": [
+            "BF-730"
+          ],
+          "number": 1187,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-730: the reconciler can never reach the only work items that strand"
+        }
+      ],
+      "BF-731": [
+        {
+          "claims": [
+            "BF-731"
+          ],
+          "number": 1188,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-731: dm_agentic drops the Captain out of the reserved interactive LLM lane"
+        }
+      ],
+      "BF-732": [
+        {
+          "claims": [
+            "BF-732"
+          ],
+          "number": 1189,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-732: a promoted turn escapes per-agent concurrency accounting"
+        }
+      ],
+      "BF-733": [
+        {
+          "claims": [
+            "BF-733"
+          ],
+          "number": 1191,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-733: a run in flight during an LLM outage never resumes, never reports, never terminates"
+        }
+      ],
+      "BF-734": [
+        {
+          "claims": [
+            "BF-734"
+          ],
+          "number": 1192,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-734: 'import ship' is reported as a missing package, blocking every run that follows AD-1221's advice"
+        }
+      ],
+      "BF-735": [
+        {
+          "claims": [
+            "BF-735"
+          ],
+          "number": 1194,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-735: 36 permanent 'Room workspace' rows are UI scaffolding wearing a work item's clothes"
+        }
+      ],
+      "BF-736": [
+        {
+          "claims": [
+            "BF-736"
+          ],
+          "number": 1195,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-736: the perception.vision_aggregator JetStream consumer fails at every boot and nobody has asked if it matters"
+        }
+      ],
+      "BF-737": [
+        {
+          "claims": [
+            "BF-737"
+          ],
+          "number": 1196,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-737: every DM arrives without a thread_id and the producer is still unidentified"
+        }
+      ],
+      "BF-738": [
+        {
+          "claims": [
+            "BF-738"
+          ],
+          "number": 1197,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-738: AD-1166 writes the promoted outcome to episodic memory and nothing ever reads it back"
+        }
+      ],
+      "BF-739": [
+        {
+          "claims": [
+            "BF-739"
+          ],
+          "number": 1198,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-739: AD-1226's artifact ref is written correctly and never reaches the prompt"
+        }
+      ],
+      "BF-740": [
+        {
+          "claims": [
+            "BF-740"
+          ],
+          "number": 1199,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-740: Episode.correlation_id is set by producers and never persisted"
+        }
+      ],
+      "BF-741": [
+        {
+          "claims": [
+            "BF-741"
+          ],
+          "number": 1200,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-741: an agent's own false claim is the top recall hit for the question that produced it"
+        }
+      ],
+      "BF-745": [
+        {
+          "claims": [
+            "BF-745"
+          ],
+          "number": 1204,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-745: an authenticated MCP server loses its credentials on restart"
+        }
+      ],
+      "BF-749": [
+        {
+          "claims": [
+            "BF-749"
+          ],
+          "number": 1206,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-749: one question, four Chromium instances - an omitted session_id means a new browser"
+        }
+      ],
+      "BF-750": [
+        {
+          "claims": [
+            "BF-750"
+          ],
+          "number": 1208,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-750: a config-declared MCP server never reaches the store every agent path reads"
+        }
+      ],
+      "BF-751": [
+        {
+          "claims": [
+            "BF-751"
+          ],
+          "number": 1209,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-751: the egress allowlist has no operator surface, so MCP can never reach any server"
+        }
+      ],
+      "BF-752": [
+        {
+          "claims": [
+            "BF-752"
+          ],
+          "number": 1210,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-752: a resumed work item that dies in an LLM outage is never retried"
+        }
+      ],
+      "BF-753": [
+        {
+          "claims": [
+            "BF-753"
+          ],
+          "number": 1211,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-753: the browser wiring discards the MCP workbench on every boot"
+        }
+      ],
+      "BF-755": [
+        {
+          "claims": [
+            "BF-755"
+          ],
+          "number": 1212,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-755: a tool found by find_mcp_tool cannot be called in the turn that found it"
+        }
+      ],
+      "BF-756": [
+        {
+          "claims": [
+            "BF-756"
+          ],
+          "number": 1213,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-756: agent_tools_enabled without management_enabled is documented as supported and is inert"
+        }
+      ],
+      "BF-758": [
+        {
+          "claims": [
+            "BF-758"
+          ],
+          "number": 1215,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-758: a crew agent can read any file on the host in one DM turn"
+        }
+      ],
+      "BF-759": [
+        {
+          "claims": [
+            "BF-759"
+          ],
+          "number": 1217,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-759: every MCP content tool delivers a skeleton, not content"
+        },
+        {
+          "claims": [
+            "BF-759"
+          ],
+          "number": 1219,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-761: BF-759's growth render is defeated by escape expansion, delivering 3% of the budget"
+        }
+      ],
+      "BF-760": [
+        {
+          "claims": [
+            "BF-760"
+          ],
+          "number": 1218,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-760: the durable tool trace records the rendered value and calls it the original"
+        }
+      ],
+      "BF-761": [
+        {
+          "claims": [
+            "BF-761"
+          ],
+          "number": 1219,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-761: BF-759's growth render is defeated by escape expansion, delivering 3% of the budget"
+        }
+      ],
+      "BF-762": [
+        {
+          "claims": [
+            "BF-762"
+          ],
+          "number": 1220,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-762: the container ration, not the allowance, is what starves a JSON array"
+        }
+      ],
+      "BF-763": [
+        {
+          "claims": [
+            "BF-763"
+          ],
+          "number": 1221,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-763: the Tier-1 rationale names a consensus gate the agentic run_python path does not have"
+        }
+      ],
+      "BF-764": [
+        {
+          "claims": [
+            "BF-764"
+          ],
+          "number": 1222,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-764: a burst of transcript arrivals talks over itself"
+        }
+      ],
+      "BF-765": [
+        {
+          "claims": [
+            "BF-765"
+          ],
+          "number": 1223,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-765: the speech claim ledger does not survive a remount, so both speakers can win"
+        }
+      ],
+      "BF-766": [
+        {
+          "claims": [
+            "BF-766"
+          ],
+          "number": 1224,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-766: a WebSocket-first reply is spoken without its AD-738e-1 emotion"
+        }
+      ],
+      "BF-767": [
+        {
+          "claims": [
+            "BF-767"
+          ],
+          "number": 1225,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-767: conversation-mode completion correlates on agent id, so a cancelled utterance can end the wrong turn"
+        }
+      ],
+      "BF-768": [
+        {
+          "claims": [
+            "BF-768"
+          ],
+          "number": 1226,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-768: the speech ledger bounds keys per scope but never the number of scopes"
+        }
+      ],
+      "BF-770": [
+        {
+          "claims": [
+            "BF-770"
+          ],
+          "number": 1227,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-770: one Captain search costs six DuckDuckGo requests -- the rate limit is self-inflicted"
+        }
+      ],
+      "BF-771": [
+        {
+          "claims": [
+            "BF-771"
+          ],
+          "number": 1228,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-771: pre-intent authorization is skipped by targeted dispatch, send() and dispatch_async()"
+        }
+      ],
+      "BF-772": [
+        {
+          "claims": [
+            "BF-772"
+          ],
+          "number": 1229,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-772: PageReader, Weather and News still read an HTTP error body as content"
+        }
+      ],
+      "BF-773": [
+        {
+          "claims": [
+            "BF-773"
+          ],
+          "number": 1230,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-773: the agentic final answer can conceal a failed tool call"
+        }
+      ],
+      "BF-774": [
+        {
+          "claims": [
+            "BF-774"
+          ],
+          "number": 1231,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-774: a correct tool call aimed at the wrong repository was reported as verified"
+        }
+      ],
+      "BF-775": [
+        {
+          "claims": [
+            "BF-775"
+          ],
+          "number": 1232,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-775: a lone surrogate in a persisted trace makes GET /api/traces/{ref} return 500"
+        }
+      ],
+      "BF-776": [
+        {
+          "claims": [
+            "BF-776"
+          ],
+          "number": 1233,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-776: repair briefs interpolate a raw tool id into Captain-facing prose, and truncate away the evidence"
+        }
+      ],
+      "BF-777": [
+        {
+          "claims": [
+            "BF-777"
+          ],
+          "number": 1235,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-777: a judge that refuses a result in string form is recorded as accepting it"
+        }
+      ],
+      "BF-778": [
+        {
+          "claims": [
+            "BF-778"
+          ],
+          "number": 1240,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-778: a verifier that refuses bad work loses trust; one that rubber-stamps gains it"
+        }
+      ],
+      "BF-779": [
+        {
+          "claims": [
+            "BF-779"
+          ],
+          "number": 1242,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-779: write_file is the only intent consensus actually gates; the rest execute first and vote after"
+        }
+      ],
+      "BF-780": [
+        {
+          "claims": [
+            "BF-780"
+          ],
+          "number": 1243,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-780: the audit record that replaces the consensus gate is best-effort and can be lost"
+        }
+      ],
+      "BF-781": [
+        {
+          "claims": [
+            "BF-781"
+          ],
+          "number": 1245,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-781: the execution subsystem describes controls it does not have"
+        }
+      ],
+      "BF-782": [
+        {
+          "claims": [
+            "BF-782"
+          ],
+          "number": 1246,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-782: design a verification outcome signal that is not farmable"
+        }
+      ],
+      "BF-783": [
+        {
+          "claims": [
+            "BF-783"
+          ],
+          "number": 1247,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-783: AD-861 still pays a verifier for accepting, through crew_synth"
+        }
+      ],
+      "BF-784": [
+        {
+          "claims": [
+            "BF-784"
+          ],
+          "number": 1248,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-784: verification_defect is dropped from provenance and episodic payloads"
+        }
+      ],
+      "BF-785": [
+        {
+          "claims": [
+            "BF-785"
+          ],
+          "number": 1249,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-785: ship.fetch is advertised to the model even when the broker cannot start"
+        }
+      ],
+      "BF-786": [
+        {
+          "claims": [
+            "BF-786"
+          ],
+          "number": 1250,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-786: the run_python description misstates the output cap and the artifact rule"
+        }
+      ],
+      "BF-787": [
+        {
+          "claims": [
+            "BF-787"
+          ],
+          "number": 1251,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-787: the mesh CodeRunnerAgent path still has no execution audit record"
+        }
+      ],
+      "BF-788": [
+        {
+          "claims": [
+            "BF-788"
+          ],
+          "number": 1252,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-788: a cancelled run leaves an empty workdir when the Windows child still holds it"
+        },
+        {
+          "claims": [],
+          "number": 1306,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-840: code_runner and skill_forge still leak sandbox scratch dirs (BF-788 reach gap)"
+        }
+      ],
+      "BF-789": [
+        {
+          "claims": [
+            "BF-789"
+          ],
+          "number": 1253,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-789: pre-intent authorization is still bypassed on the four consumer-side paths"
+        }
+      ],
+      "BF-790": [
+        {
+          "claims": [
+            "BF-790"
+          ],
+          "number": 1254,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-790: three consumers treat a pre-intent denial as success"
+        },
+        {
+          "claims": [],
+          "number": 1277,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-813: three consumers must be fixed before the remaining BF-790 opt-ins can land"
+        }
+      ],
+      "BF-791": [
+        {
+          "claims": [
+            "BF-791"
+          ],
+          "number": 1255,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-791: A2UI markers leak raw to the Captain on the promotion and deferred bypasses"
+        }
+      ],
+      "BF-792": [
+        {
+          "claims": [
+            "BF-792"
+          ],
+          "number": 1256,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-792: AD-1230 deferred replay still leaks the <intent emotion=...> self-tag"
+        }
+      ],
+      "BF-793": [
+        {
+          "claims": [
+            "BF-793"
+          ],
+          "number": 1257,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-793: AD-1170 detect_tool_defect is dead on the conversational DM path"
+        }
+      ],
+      "BF-794": [
+        {
+          "claims": [
+            "BF-794"
+          ],
+          "number": 1258,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-794: Telegram adapter chunking can split a reply mid-disclosure"
+        }
+      ],
+      "BF-795": [
+        {
+          "claims": [
+            "BF-795"
+          ],
+          "number": 1259,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-795: episodic memory stores the pre-disclosure reply text"
+        }
+      ],
+      "BF-796": [
+        {
+          "claims": [
+            "BF-796"
+          ],
+          "number": 1260,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-796: _full_steps() docstring claims 18 steps, tuple returns 20"
+        }
+      ],
+      "BF-797": [
+        {
+          "claims": [
+            "BF-797"
+          ],
+          "number": 1261,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-797: ToolFailures._bounded does not bound success tombstones"
+        }
+      ],
+      "BF-798": [
+        {
+          "claims": [
+            "BF-798"
+          ],
+          "number": 1262,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-798: decision cache replayed a stale _tool_trace_ref before AD-1248"
+        }
+      ],
+      "BF-799": [
+        {
+          "claims": [
+            "BF-799"
+          ],
+          "number": 1263,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-799: directed federation drops dm_reply metadata across the hop"
+        }
+      ],
       "BF-80": [
         {
           "claims": [
@@ -14684,6 +16185,226 @@
           "title": "BF-080: DM channels listed but not clickable in HXI"
         }
       ],
+      "BF-800": [
+        {
+          "claims": [
+            "BF-800"
+          ],
+          "number": 1264,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-800: AD-724-1 sanity retry both over-discloses and conceals tool failures"
+        }
+      ],
+      "BF-801": [
+        {
+          "claims": [
+            "BF-801"
+          ],
+          "number": 1265,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-801: DmReply belongs at foundation, not in cognitive/"
+        }
+      ],
+      "BF-802": [
+        {
+          "claims": [
+            "BF-802"
+          ],
+          "number": 1266,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-802: channel adapters cannot carry the AD-1248 disclosure yet - three measured obstacles"
+        }
+      ],
+      "BF-803": [
+        {
+          "claims": [
+            "BF-803"
+          ],
+          "number": 1267,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-803: Gmail marks messages Seen before processing, so a failure is at-most-once\r"
+        }
+      ],
+      "BF-804": [
+        {
+          "claims": [
+            "BF-804"
+          ],
+          "number": 1268,
+          "reason": "NOT_PLANNED",
+          "state": "CLOSED",
+          "title": "BF-804: a long tool-failure disclosure can be split across two Discord messages\r"
+        }
+      ],
+      "BF-805": [
+        {
+          "claims": [
+            "BF-805"
+          ],
+          "number": 1269,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-805: a non-serializable metadata value on the NATS reply path destroys the whole answer\r"
+        }
+      ],
+      "BF-806": [
+        {
+          "claims": [
+            "BF-806"
+          ],
+          "number": 1270,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-806: seven model-authored thread writers still bypass the reply egress"
+        }
+      ],
+      "BF-807": [
+        {
+          "claims": [
+            "BF-807"
+          ],
+          "number": 1271,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-807: truncation metadata is dropped between HttpFetchAgent and its readers"
+        }
+      ],
+      "BF-808": [
+        {
+          "claims": [
+            "BF-808"
+          ],
+          "number": 1272,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-808: a health-recycled agent respawns without runtime or llm_client"
+        }
+      ],
+      "BF-809": [
+        {
+          "claims": [
+            "BF-809"
+          ],
+          "number": 1273,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-809: the AD-272 decision cache keys on a per-cycle correlation_id, so it may never hit"
+        }
+      ],
+      "BF-810": [
+        {
+          "claims": [
+            "BF-810"
+          ],
+          "number": 1274,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-810: seven Dispatcher consumers record a refused dispatch as work that went out"
+        }
+      ],
+      "BF-811": [
+        {
+          "claims": [
+            "BF-811"
+          ],
+          "number": 1275,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-811: the Dispatcher's delegating arm trusts an unenforced prerequisite"
+        }
+      ],
+      "BF-812": [
+        {
+          "claims": [
+            "BF-812"
+          ],
+          "number": 1276,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-812: no UI caller accepts a 403 policy denial, and one reroutes it through a different intent"
+        }
+      ],
+      "BF-813": [
+        {
+          "claims": [
+            "BF-813"
+          ],
+          "number": 1277,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-813: three consumers must be fixed before the remaining BF-790 opt-ins can land"
+        }
+      ],
+      "BF-814": [
+        {
+          "claims": [
+            "BF-814"
+          ],
+          "number": 1278,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-814: an authorized watch order with no subscriber is still consumed"
+        }
+      ],
+      "BF-815": [
+        {
+          "claims": [
+            "BF-815"
+          ],
+          "number": 1279,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-815: dispatch_async has no admission signal, so DispatchResult.accepted is not evidence of delivery"
+        }
+      ],
+      "BF-816": [
+        {
+          "claims": [
+            "BF-816"
+          ],
+          "number": 1280,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-816: test_auto_commit_after_debounce races a real git subprocess and fails under parallel load"
+        }
+      ],
+      "BF-817": [
+        {
+          "claims": [
+            "BF-817"
+          ],
+          "number": 1281,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-817: checkpoint resume discards the restored DAG and re-decomposes from source text"
+        }
+      ],
+      "BF-818": [
+        {
+          "claims": [
+            "BF-818"
+          ],
+          "number": 1282,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-818: the watch dispatch loop is started, repaired, and has no producer"
+        }
+      ],
+      "BF-819": [
+        {
+          "claims": [
+            "BF-819"
+          ],
+          "number": 1283,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-819: a redirect walks straight past the SSRF guard"
+        }
+      ],
       "BF-82": [
         {
           "claims": [],
@@ -14691,6 +16412,394 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-156: Agents don't read unread DMs despite BF-082 notification"
+        }
+      ],
+      "BF-820": [
+        {
+          "claims": [
+            "BF-820"
+          ],
+          "number": 1284,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-820: the per-domain rate limiter lets concurrent distinct URLs burst"
+        }
+      ],
+      "BF-821": [
+        {
+          "claims": [
+            "BF-821"
+          ],
+          "number": 1285,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-821: the SSRF guard resolves the host, then httpx resolves it again (DNS rebinding)"
+        }
+      ],
+      "BF-822": [
+        {
+          "claims": [
+            "BF-822"
+          ],
+          "number": 1286,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-822: browser navigation past the first URL is unvalidated (redirects, clicks, back/forward)"
+        }
+      ],
+      "BF-823": [
+        {
+          "claims": [
+            "BF-823"
+          ],
+          "number": 1287,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-823: a recycled agent loses everything wired onto it after construction"
+        }
+      ],
+      "BF-824": [
+        {
+          "claims": [
+            "BF-824"
+          ],
+          "number": 1288,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-824: one member's recycle failure permanently kills a pool's health loop"
+        },
+        {
+          "claims": [],
+          "number": 1316,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-846: check_health's raise-contract blocks per-member recycle containment (BF-824 second half)"
+        }
+      ],
+      "BF-825": [
+        {
+          "claims": [
+            "BF-825"
+          ],
+          "number": 1289,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-825: a live promoted run cannot tell the board reconciler it is still working"
+        }
+      ],
+      "BF-826": [
+        {
+          "claims": [
+            "BF-826"
+          ],
+          "number": 1290,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-826: promoted reports are posted synchronously on the event loop and cannot report their own failure"
+        }
+      ],
+      "BF-827": [
+        {
+          "claims": [
+            "BF-827"
+          ],
+          "number": 1291,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-827: the 'agent declined' NATS reply is the one reply path with no byte budget"
+        }
+      ],
+      "BF-828": [
+        {
+          "claims": [
+            "BF-828"
+          ],
+          "number": 1292,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-828: an egress-policy test resolves example.com against live DNS and reds the gate when it fails"
+        }
+      ],
+      "BF-829": [
+        {
+          "claims": [
+            "BF-829"
+          ],
+          "number": 1293,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-829: a cancelled nested broadcast strands its children and leaks its pending results"
+        }
+      ],
+      "BF-830": [
+        {
+          "claims": [
+            "BF-830"
+          ],
+          "number": 1295,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-830: a REJECTED consensus vote runs the shell command three times"
+        }
+      ],
+      "BF-831": [
+        {
+          "claims": [
+            "BF-831"
+          ],
+          "number": 1296,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-831: the Captain is not told which escalation tier was skipped, and is told the current one was already tried"
+        }
+      ],
+      "BF-832": [
+        {
+          "claims": [
+            "BF-832"
+          ],
+          "number": 1297,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-832: two SSRF-floor assertions cannot fail \u2014 one is disjoined with True, one is satisfied by a DNS failure"
+        }
+      ],
+      "BF-833": [
+        {
+          "claims": [
+            "BF-833"
+          ],
+          "number": 1298,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-833: a straggler can append its result into a LATER broadcast that reused the intent ID"
+        }
+      ],
+      "BF-834": [
+        {
+          "claims": [
+            "BF-834"
+          ],
+          "number": 1299,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-834: SignalManager tracks by intent ID, so one of two concurrent same-ID broadcasts untracks the other"
+        }
+      ],
+      "BF-835": [
+        {
+          "claims": [
+            "BF-835"
+          ],
+          "number": 1300,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-835: test_a_run_that_refuses_to_stop_stays_accounted_for is timing-dependent and flakes under the parallel gate"
+        }
+      ],
+      "BF-836": [
+        {
+          "claims": [
+            "BF-836"
+          ],
+          "number": 1301,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-836: the crew-tasks API projection drops verification_defect, so the HXI renders a defect as rejected"
+        }
+      ],
+      "BF-837": [
+        {
+          "claims": [
+            "BF-837"
+          ],
+          "number": 1303,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-837: compute_shapley_values overwrites a duplicate agent id, so a dual-role agent's producer vote is discarded"
+        }
+      ],
+      "BF-838": [
+        {
+          "claims": [
+            "BF-838"
+          ],
+          "number": 1304,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-838: 22 of 49 declared databases are outside backup coverage, including schema_versions and four grant stores"
+        }
+      ],
+      "BF-839": [
+        {
+          "claims": [
+            "BF-839"
+          ],
+          "number": 1305,
+          "reason": "REOPENED",
+          "state": "OPEN",
+          "title": "BF-839: sandbox scratch cleanup ownership needs a state machine, not flags"
+        }
+      ],
+      "BF-840": [
+        {
+          "claims": [
+            "BF-840"
+          ],
+          "number": 1306,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-840: code_runner and skill_forge still leak sandbox scratch dirs (BF-788 reach gap)"
+        },
+        {
+          "claims": [],
+          "number": 1314,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-844: the visiting-builder temp tree has the same one-shot silent-cleanup shape as BF-840"
+        }
+      ],
+      "BF-841": [
+        {
+          "claims": [
+            "BF-841"
+          ],
+          "number": 1307,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-841: FAULT_REPORTED only fires on new reports, so occurrences is always 1 and no repair is ever proposed"
+        }
+      ],
+      "BF-842": [
+        {
+          "claims": [
+            "BF-842"
+          ],
+          "number": 1312,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-842: BF-707 fixed the capability-gap regex and left 16 comments across 10 files asserting the pre-fix behaviour"
+        }
+      ],
+      "BF-843": [
+        {
+          "claims": [
+            "BF-843"
+          ],
+          "number": 1313,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-843: BackupService is wired but never invoked \u2014 zero SQLite snapshots have ever been taken"
+        }
+      ],
+      "BF-844": [
+        {
+          "claims": [
+            "BF-844"
+          ],
+          "number": 1314,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-844: the visiting-builder temp tree has the same one-shot silent-cleanup shape as BF-840"
+        }
+      ],
+      "BF-845": [
+        {
+          "claims": [
+            "BF-845"
+          ],
+          "number": 1315,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-845: repair-proposal dedup is in-process only, so a recurring fault re-proposes across a restart"
+        }
+      ],
+      "BF-846": [
+        {
+          "claims": [
+            "BF-846"
+          ],
+          "number": 1316,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-846: check_health's raise-contract blocks per-member recycle containment (BF-824 second half)"
+        }
+      ],
+      "BF-847": [
+        {
+          "claims": [
+            "BF-847"
+          ],
+          "number": 1317,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-847: a test fixture reads the clock at import, so a slow gate strands its own fixture"
+        }
+      ],
+      "BF-848": [
+        {
+          "claims": [
+            "BF-848"
+          ],
+          "number": 1318,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-848: the crew-executor concurrency test proves parallelism by wall-clock overlap, so a loaded gate reads a peak of 1"
+        }
+      ],
+      "BF-850": [
+        {
+          "claims": [
+            "BF-850"
+          ],
+          "number": 1320,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-850: MAX_EXACT_SHAPLEY = 10 costs 34.65s on the synchronous destructive-op path"
+        }
+      ],
+      "BF-851": [
+        {
+          "claims": [
+            "BF-851"
+          ],
+          "number": 1319,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-851: the runtime spends Shapley attribution once per (result x agent), so 2.00 is spent against 1.00 available"
+        }
+      ],
+      "BF-852": [
+        {
+          "claims": [
+            "BF-852"
+          ],
+          "number": 1321,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-852: two parallel-dispatch tests assert elapsed-time budgets; one is blind to serialization and the other is fragile under load"
+        }
+      ],
+      "BF-853": [
+        {
+          "claims": [
+            "BF-853"
+          ],
+          "number": 1322,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-853: the private-emit_event guard is a text scan, so it fails against a docstring that merely explains the API"
+        }
+      ],
+      "BF-854": [
+        {
+          "claims": [
+            "BF-854"
+          ],
+          "number": 1323,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-854: validate_action_payload accepts a lone surrogate that action_dedup_key cannot hash, poisoning every filing"
         }
       ],
       "BF-99": [
