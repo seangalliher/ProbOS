@@ -1,49 +1,108 @@
 # AD-1278 / BF-780: the record that replaces the gate must outlive the process
 
 **Issue:** #1243 (OPEN) · **Repo:** OSS `d:\ProbOS`, branch `main`
-**AD:** AD-1278 — newly minted. Ceiling was **AD-1277**, enumerated from `git log --all --format='%s'`
-(highest `AD-1277`, commit `be86e683`) and `prompts/ad-*.md` filenames (highest
-`ad-1277-bf-825-a-run-someone-is-waiting-on.md`). GitHub issue titles in all states top out lower, at
-`AD-1270`. **Not** taken from `open-ads-report.md` or `ad-ledger-snapshot.json`.
+**AD:** AD-1278 — **already allocated to this issue; do NOT mint a new number.** See "Numbering" below.
 **BF:** BF-780 — already allocated on the issue. Do not mint a new one.
-**Depends on:** nothing in flight. Touches `security/audit.py`, which no other open prompt edits.
-**Status:** ready to build · **Estimated tests:** 22–28 across two slices
-**Slices:** Slice A is independently shippable and **does not close #1243**. See "Slicing" below.
+**Depends on:** nothing in flight.
+**Status:** ready to build · **Estimated tests:** 24–30 across two slices
+**Revision:** 2 (2026-08-28). Revision 1 (`27f76ea9`) was written at HEAD `5d70da85`, **before AD-1280,
+AD-1281 and AD-1282 landed.** Its anchors have drifted and one of its scope statements is now false.
+Every anchor below was re-verified at HEAD `7edf309e`. **Do not build from revision 1.**
 
 ---
 
-## Corrections to the issue text — read before anything else
+## Numbering — why this is not AD-1283
 
-The issue is accurate on all four gaps (each re-verified below). One framing claim in the surrounding
-discussion is **wrong at HEAD**, and it changes what this build must do.
+Enumerated at HEAD `7edf309e`, per the hard rule. Not taken from `open-ads-report.md` or
+`ad-ledger-snapshot.json`.
 
-| Claim | Reality at HEAD `5d70da85` |
+| Source | Highest AD |
 |---|---|
-| "BF-763 ships with a docstring stating the record is **currently best-effort**, which keeps the claim honest until this lands." | **No such hedge exists.** `rg -n -i "best.effort\|may be lost\|not durable\|process exit" src/probos/tools/code_execution_tool.py` returns three hits, all about `RLIMIT` and a detached descendant — **none** about the audit record. |
+| `git log --all --format='%s'` subjects | **1282** (`7edf309e`, AD-1282 / BF-782) |
+| `prompts/ad-*.md` filenames | **1282** |
+| GitHub issue titles, **all** states (1330 scanned) | 1276 |
 
-What `_audit`'s docstring actually says (`code_execution_tool.py:558-561`) is the opposite:
+**Ceiling = AD-1282. Next free = AD-1283.** It stays free.
 
-> This record is what an unattended agent pays instead, so it is not decoration: it is **the control
-> that makes the capability defensible** (Design Principle #13).
-
-That is an unhedged claim of a *control* for a list that is in-memory by default, never drained at
-shutdown, and unbounded. **The false claim is already in the tree** — this is not a claim we are about
-to gain, it is one we already have. It is the BF-781 defect class verbatim.
-
-A second one, same class, in the module this AD rewrites (`security/audit.py:1-6`):
-
-> v1 in-memory only. […] **Persistence to SQLite deferred to AD-456d.**
-
-AD-456d shipped. `AuditLogPersistence` is 130 lines below that sentence.
-
-**Both wordings are corrected in the same commit as the behaviour they describe.** Not before — a
-docstring that promises durability the code has not got yet is the same defect pointing the other way.
+AD-1278 is already allocated to **this issue** (#1243 / BF-780) and is **unbuilt**: `27f76ea9` is a
+prompt-only commit, and `grep "AD-1278" src/probos/security/audit.py src/probos/startup/shutdown.py`
+returns nothing. Minting AD-1283 for the same issue would leave AD-1278 permanently dangling in the
+ledger — allocated, prompted, never built, never explained. The "never reuse" rule forbids giving one
+number to two *different* changes; this is the *same* change, revised. **Keep AD-1278.**
 
 ---
 
-## The four gaps, verified at HEAD (2026-08-26)
+## What revision 1 got wrong — read this before anything else
 
-None of the four is fixed. Each was checked by enumeration, not recall.
+### Material scope error: the mesh path IS audited now
+
+Revision 1's "What this does NOT change" said:
+
+> No change to the mesh `CodeRunnerAgent` path, **which is not audited and says so** (BF-787).
+
+**False at HEAD.** AD-1280 / BF-787 (`2f19e458`, 2026-08-26) gave it the same record. There are now
+**two** `ExecutionAuditor` instances, each with its own `_absence_warned` flag:
+
+```
+src/probos/tools/code_execution_tool.py:314:        self._auditor = ExecutionAuditor(runtime)
+src/probos/agents/code_runner.py:152:        self._auditor = ExecutionAuditor(self._runtime)
+```
+
+This is not a line-number nit. **Decision 1(b) below — labelling the run, not just the log — must now
+cover both paths**, and they return different types (`ToolResult` vs `IntentResult`). Building
+revision 1 as written would label one path and silently leave the other unlabelled, which is exactly
+the defect shape this AD exists to close.
+
+### The audit body moved files
+
+AD-1280 moved `_audit`'s body out of the tool into a shared builder. `code_execution_tool.py:525` is
+now a thin delegate with an unchanged signature. **All docstring-correction work targets
+`execution/audit.py`, not `code_execution_tool.py`.**
+
+### Anchor drift table
+
+| Anchor | Revision 1 | **Current (HEAD `7edf309e`)** | |
+|---|---|---|---|
+| `entries: list[AuditEntry]` | `audit.py:54` | `audit.py:54` | stable |
+| `GENESIS_HASH` | `audit.py:65` | `audit.py:65` | stable |
+| `append` | `audit.py:67` | `audit.py:67` | stable |
+| `verify_chain` | `audit.py:120` | `audit.py:120` | stable |
+| `_hash` | `audit.py:147` | `audit.py:147` | stable |
+| `_pending_writes` | `audit.py:50,63,116,117` | `audit.py:50,63,116,117` | stable |
+| `AuditLogPersistence` | `audit.py:174` | `audit.py:174` | stable |
+| `stop()` "NOT wired" | `audit.py:211-213` | `audit.py:183`, `audit.py:211-213` | stable |
+| `audit_persistence_enabled` | `config.py:4344` | **`config.py:4350`** | **+6** |
+| `audit_persistence_filename` | — | `config.py:4351` | |
+| `audit_retention_days` | `config.py:4346` | **`config.py:4352`** | **+6** |
+| `audit_persistence_enabled` (YAML) | `system.yaml:1271` | `system.yaml:1271` | stable |
+| `runtime.audit_log = AuditLog(...)` | `finalize.py:3764` | **`finalize.py:3896`** | **+132** |
+| `audit_enabled` gate | — | `finalize.py:3894`; model at `config.py:4305` | |
+| persistence construction | `finalize.py:3770,3772` | **`finalize.py:3904,3910,3912`** | **moved** |
+| `load_entries()` | — | **`finalize.py:3920`** | |
+| `entries.extend(loaded)` | `finalize.py:3790` | **`finalize.py:3922`** | **+132** |
+| `verify_chain()` at boot | `finalize.py:3791` | **`finalize.py:3923`** | **+132** |
+| `attach_persistence` | `finalize.py:3798` | **`finalize.py:3929`** | **moved** |
+| `audit_log_persistence = persistence` | `finalize.py:3809` | **`finalize.py:3930`, `:3941`** | **moved** |
+| "the control that makes…" docstring | `code_execution_tool.py:558-561` | **`execution/audit.py:120`** | **file moved** |
+| sink `getattr(..., "audit_log", None)` | `code_execution_tool.py:578` | **`execution/audit.py:140`** | **file moved** |
+| swallow-`Exception` rationale | `code_execution_tool.py:568-570` | **`execution/audit.py:131`** | **file moved** |
+| once-per-instance warning | `code_execution_tool.py:586-587` | **`execution/audit.py:149`** | **file moved** |
+| `def _audit` (tool) | `code_execution_tool.py:558` | **`code_execution_tool.py:525`** (delegate) | **−33** |
+| browser `_audit_log.append` | `browser/tool.py:1187` | `browser/tool.py:1187` (`def` at `:1158`) | stable |
+| approval-gate appends | `approval_gate.py:120,152` | `approval_gate.py:120,152` | stable |
+| `shutdown.py` "5s timeout" comment | `:251` | `:251` | stable |
+| `__main__.py` outer stop budget | `:653`, `:938` | `:653`, `:938` (`timeout=10`) | stable |
+| `drain_pending_tasks` | `mesh/intent.py:321-347` | `mesh/intent.py:322` | stable |
+| store-teardown insertion block | `shutdown.py:912,917,922` | `shutdown.py:912,917,922` | stable |
+
+`security/audit.py` did **not** move at all. Everything that moved is in `config.py`, `finalize.py`,
+and the AD-1280 file split.
+
+---
+
+## The four gaps, re-verified at HEAD `7edf309e`
+
+None is fixed.
 
 ### Gap 1 — in-memory first
 
@@ -57,104 +116,166 @@ living in the process.
 ### Gap 2 — persistence is default-off
 
 ```
-src/probos/config.py:4344:    audit_persistence_enabled: bool = False
+src/probos/config.py:4350:    audit_persistence_enabled: bool = False
 config/system.yaml:1271:  audit_persistence_enabled: false
 ```
 
-The config comment above it (`config.py:4339-4343`) already contains this build's forcing function:
+The comment above it (`config.py:4345-4349`) already contains this build's forcing function:
 
 > AD-456d-4 will flip default to True once **AD-456d-1 (shutdown-flush hook)** lands.
 
 AD-1278 **is** AD-456d-1 and AD-456d-4. Both halves land here or neither does.
 
+Note the contrast that makes this a live defect rather than a stylistic one: `system.yaml:2119` ships
+`audit_persistence_enabled: true` for **clinical telemetry**. The security audit chain — the one
+holding the accountability record for arbitrary code execution — is the one shipped off.
+
 ### Gap 3 — no shutdown drain
 
-Absence verified, not recalled:
+**Absence verified by enumeration, reaching where the drain would live:**
 
 ```
 CLAIM: nothing drains _pending_writes and nothing stops AuditLogPersistence at shutdown
-RUN:   rg -n "audit" src/probos/startup/shutdown.py
-FOUND: 552,553,554,555,556 — all EvictionAuditLog (cognitive/eviction_audit.py), a different class
-RUN:   rg -n "audit_log_persistence" src/
-FOUND: finalize.py:3770, 3772, 3798, 3809 — construction only. Zero hits in shutdown.py.
-RUN:   rg -n "_pending_writes" src/
-FOUND: security/audit.py:50, 63, 116, 117 — the definition and its own two writes. No consumer.
-HOLDS: yes
+
+RUN:   grep "audit_log_persistence|AuditLogPersistence" src/
+FOUND: security/audit.py:46,58,137,138,174,209             (definition only)
+       startup/finalize.py:3902,3904,3910,3912,3930,3941   (construction only)
+       ZERO hits in startup/shutdown.py
+
+RUN:   grep "audit_log_persistence|audit_log" src/probos/startup/**
+FOUND: finalize.py only — 12 hits. shutdown.py: none.
+
+RUN:   read src/probos/startup/shutdown.py:139-162   (_stop_runtime_sqlite_sidecars)
+       — EXACTLY where such a drain would live: "runtime-owned SQLite services
+         without another lifecycle owner". Its tuple is:
+           capability_request_store, fault_report_store, knowledge_edges,
+           personal_ontology_prober, rejection_cache
+       audit_log_persistence is NOT in it.
+
+RUN:   grep "_pending_writes" src/
+FOUND: security/audit.py:50,63,116,117 — the definition and its own two writes.
+       NO consumer anywhere in src/.
+
+HOLDS: YES. No drain exists, and the one natural home for it does not contain it.
 ```
 
-`AuditLogPersistence.stop()` even documents its own orphaning (`audit.py:211-213`): *"NOT wired into
-runtime shutdown in v1 […] Tests call directly."*
+`AuditLogPersistence` documents its own orphaning twice, at `audit.py:183` and `audit.py:211-213`:
+*"NOT wired into runtime shutdown in v1 […] Tests call `stop()` directly."*
 
 ### Gap 4 — unbounded growth and task fan-out
 
 `entries` has no cap. `append` (`:67`) schedules one `loop.create_task` per call (`:115-117`) with no
 queue and no ceiling. The issue's measurements (10,000 rows ≈ 5.93 MB / 342 ms; 1,000 appends → 1,000
-pending tasks under a blocked sink) are consistent with this code; do not re-derive them.
+pending tasks under a blocked sink) are consistent with this code. **Do not re-derive them.**
 
 ---
 
 ## Two classes named `AuditLog` — do not confuse them
 
-This is the single most likely way to break this build.
+Still the single most likely way to break this build.
 
 | | AD-456 chain log | assistant log |
 |---|---|---|
 | Module | `src/probos/security/audit.py:39` | `src/probos/security/audit_log.py:25` |
 | Shape | frozen `AuditEntry`, SHA-256 chain, in-memory list | SQLite table `assistant_audit_log` |
-| Reached by | `runtime.audit_log` (`finalize.py:3764`) | `routers/security.py:55`, `knowledge/erasure.py` |
-| Retention | **none today** | `security_infra.audit_retention_days` (`routers/security.py:50`) |
+| Reached by | `runtime.audit_log` (`finalize.py:3896`) | `routers/security.py:46` |
+| Retention | **none today** | `audit_retention_days` (`routers/security.py:50`) |
 
-`CodeExecutionTool._audit` reads `getattr(self._runtime, "audit_log", None)`
-(`code_execution_tool.py:578`) — that is the **AD-456 chain log**. Everything in this AD is about that
-one. `SecurityInfraConfig.audit_retention_days` is **already consumed by the other class**; do not
-overload it, and do not add eviction to `audit_log.py`.
+`ExecutionAuditor` reads `getattr(self._runtime, "audit_log", None)` (`execution/audit.py:140`) — the
+**AD-456 chain log**. Everything in this AD is about that one. `audit_retention_days` is **already
+consumed by the other class**; do not overload it, and do not add eviction to `audit_log.py`.
 
 ---
 
 ## Decision 1 — durability posture: **durable-preferred with honest degradation**
 
-Recorded here with its cost, per Design Principle 13(a).
+Recorded here with its cost, per Design Principle 13(a). This confirms revision 1's conclusion but
+**replaces its reasoning**, which leaned on a principle that does not apply.
 
-### Why not durable-required
+### The counter-argument, taken seriously first
 
-Durable-required (no sink, no launch) is the stronger reading of "audit is the control", and the issue
-is right that it is the consistent one. It is rejected on three grounds:
+The case for **durable-required** is real and must not be waved away. BF-763 removed a quorum gate on
+the explicit argument that the audit record *is* the substitute control. If the record can be absent,
+the substitution failed and the gate was removed for nothing. And DP 13(a) — a capability ceiling must
+be a decision, not an inheritance — **cuts both ways here**: durable-required, chosen deliberately and
+shipped with the default already flipped on, would be a *decision*, not an inheritance. So 13(a) does
+**not** by itself rule it out. Any argument claiming it does is too quick.
 
-1. **It would be a ceiling by inheritance, not a decision.** `audit_persistence_enabled` defaults to
-   `False` today. Shipping durable-required without also flipping that default would take `run_python`
-   away from **every existing deployment** on upgrade — a capability ceiling nobody chose, arriving as
-   a side effect of a config default. That is precisely what DP 13(a) forbids.
-2. **DP 13(b): prefer a governed path over a removed one.** Durable-required buys accountability by
-   deleting the capability. The governed path — execute, label the run ungoverned, say so in the
-   result — reaches the same accountability without the deletion.
-3. **The failure mode is disproportionate.** A locked SQLite file, a full disk, or a wedged writer
-   would stop the ship executing code. An audit sink that can halt work is a new way to lose work,
-   which is the exact reasoning `_audit` already applies to swallowing sink exceptions
-   (`code_execution_tool.py:568-570`). Making the sink fatal at launch contradicts it.
+### Where the appeal to 13(c) fails
 
-### What durable-preferred must therefore deliver
+13(c) — *"Authority routes capability; it does not ration it… a refusal that ends the work is a
+capability ceiling wearing a governance costume"* — reads like it settles this. It does not.
+
+13(c) is about the **chain of command**: an agent whose rank or department cannot authorise something
+**escalates to one that can**, rather than refusing. Its remedy is *routing*. A locked SQLite file has
+nobody to escalate to; there is no authority anywhere on the ship that can authorise a full disk into
+working. **13(c) is off-point and must not be cited as the reason.** Revision 1 leaned on it, and that
+was the weakest link in its argument.
+
+### What actually decides it
+
+Two arguments, in order of force.
+
+**1. Durable-required does not deliver what it promises.** A sink check happens at **launch**. The four
+gaps are about a record being lost *after* a successful `append` — an undrained tail at shutdown, an
+eviction, a queue overflow, a crash. A launch-time check proves the sink existed at t=0 and proves
+**nothing** about whether *this* record survives. Durable-required would buy the *appearance* of
+guaranteed accountability at a real availability cost, while leaving gaps 3 and 4 exactly where they
+are. It is the more rigorous-sounding option and the less rigorous one.
+
+**2. DP 13(b): prefer a governed path over a removed one.** Durable-required buys accountability by
+deleting the capability. The governed path — execute, label the run ungoverned in its own result, say
+so in the record — reaches the same accountability without the deletion. It would also reverse a
+decision already shipped and reasoned about in this very file: `execution/audit.py:131` swallows sink
+exceptions precisely because *"an audit write that could fail an execution would turn the
+accountability trail into a new way to lose work."* Making the sink fatal at launch contradicts that
+without re-arguing it.
+
+### The answer to "then the gate was removed for nothing"
+
+It was not removed for nothing — it was removed **in exchange for a record**. The way to honour that
+exchange is to make the record **actually survive**: gaps 2, 3 and 4. That is what this AD builds.
+
+After it lands, the ungoverned configuration is one an operator must *choose* (set
+`audit_enabled: false`); out of the box the trail is durable; and every run that misses the sink is
+self-labelled in its own result. **That is a decision, not an inheritance — 13(a) satisfied** —
+without the availability coupling.
+
+### What "preferred" therefore obliges
 
 "Preferred" is only honest if the good path is the **default** and degradation is **visible**. Today
 neither holds: persistence is off out of the box, and the degradation notice is a `logger.warning`
-fired **once per tool instance** (`code_execution_tool.py:586-587`) into a log nobody reads. So:
+fired once per auditor instance (`execution/audit.py:149`) into a log nobody reads. So:
 
-- **(a) Flip the default.** `audit_persistence_enabled: bool = True` in `SecurityInfraConfig`, and
-  `true` in `config/system.yaml:1271`. Out of the box the record is durable. Gap 2 closes by making the
-  good path the default, not by making the bad path fatal.
-- **(b) Label the run, not just the log.** When the entry did not reach a durable sink, the execution's
-  own `ToolResult` output carries `audit: "in-memory-only"` (or `"absent"`), and the record's `detail`
-  carries `durable: false`. The agent sees it in the turn; the Captain sees it in the record.
-- **(c) Keep the once-per-instance warning** — it is right for log volume — but it is no longer the
-  only channel.
+- **(a) Flip the default.** `audit_persistence_enabled: bool = True` in `SecurityInfraConfig`
+  (`config.py:4350`) and `true` in `config/system.yaml:1271`. Gap 2 closes by making the good path the
+  default, **not** by making the bad path fatal.
+- **(b) Label the run, not just the log — on BOTH execution paths.** When the entry did not reach a
+  durable sink, the execution's own result carries `audit: "in-memory-only"` (or `"absent"`), and the
+  record's `detail` carries `durable: false`. **`ExecutionAuditor.record` must return the durability
+  outcome to its caller** so both `code_execution_tool.py` (`ToolResult`) and `agents/code_runner.py`
+  (`IntentResult`) can surface it. Do **not** solve this by having the auditor reach into either
+  caller's result type — return the fact, let each caller shape it.
+- **(c) Keep the once-per-instance warning.** It is right for log volume, and AD-1280's comment at
+  `execution/audit.py:105-117` explains why it is deliberately per-auditor rather than per-process.
+  **Do not collapse the two auditors onto a shared sentinel** — that comment is a standing decision,
+  and two untrailed paths is two facts.
+
+### Sequencing constraint — the flip is not free-standing
+
+**The default flip must not land before the drain and the cap exist.** Flipping it first turns on
+SQLite writes fleet-wide while the tail can still be lost and the list can still grow without bound.
+It belongs in Slice B. This is why the slicing below is not merely a convenience.
 
 ### The cost, stated plainly
 
 An operator who sets `audit_enabled: false`, or whose sink fails mid-run, **still gets code
 execution**. There remains a configuration in which ProbOS runs Python with no durable accountability
 trail. We accept that, and in exchange every such run is self-labelled as ungoverned in its own result
-and in its own record, so the capability is never *silently* ungoverned. The residual risk is an
-operator who reads neither. The alternative — a runtime that refuses to execute code because a SQLite
-file is locked — costs more than it buys.
+and in its own record, on **both** execution paths, so the capability is never *silently* ungoverned.
+The residual risk is an operator who reads neither. The alternative — a runtime that refuses to
+execute code because a SQLite file is locked — costs more than it buys, and would not have saved the
+record anyway.
 
 ---
 
@@ -164,12 +285,14 @@ file is locked — costs more than it buys.
 
 `verify_chain()` (`audit.py:120-134`) starts its walk at `GENESIS_HASH` and fails on
 `entry.prior_hash != prior`. **Evict `entries[0]` and it returns `False`.** A bounded log would report
-itself as tampered on every boot, and `finalize.py:3791` would log "tamper or corruption suspected"
-for a log that is merely full. Getting the cap without this is worse than not getting the cap.
+itself as tampered on every boot, and `finalize.py:3923-3928` would log *"tamper or corruption
+suspected"* for a log that is merely full. **Getting the cap without this is worse than not getting
+the cap** — it would make the control lie in the most damaging direction, crying tamper until nobody
+believes it.
 
 ### The mechanism: an anchored genesis (the truncation watermark)
 
-Add one field:
+Add one field to `AuditLog`:
 
 ```python
 # The (sequence, entry_hash) of the last entry evicted from `entries`.
@@ -178,7 +301,7 @@ _truncated_at: tuple[int, str] | None = None
 ```
 
 `verify_chain()` anchors its walk at `self._truncated_at[1]` when a watermark is present, and at
-`GENESIS_HASH` when it is not. The watermark **is** the substitute genesis. Consequences:
+`GENESIS_HASH` when it is not. The watermark **is** the substitute genesis.
 
 | Log state | `verify_chain()` | `chain_state()` |
 |---|---|---|
@@ -187,18 +310,18 @@ _truncated_at: tuple[int, str] | None = None
 | any hash mismatch or discontinuity | `False` | `("broken", first_seq, evicted_count)` |
 
 **Truncation is not tampering, so `verify_chain()` returns `True` for a correctly truncated chain.**
-That is the whole point, and it is why the richer answer needs a second accessor rather than a changed
-return type — see "Do not change the signature" below.
+That is the whole point of acceptance criterion 4, and it is why the richer answer needs a second
+accessor rather than a changed return type.
 
-Three properties the watermark must have, all testable:
+Three properties the watermark must have, all separately testable:
 
 1. **Write-once-forward.** `_truncated_at` may be advanced only by the eviction path and only to a
-   higher sequence. A watermark settable to an arbitrary value would let tampering masquerade as
-   truncation — the anchor would simply move to wherever the break is. Enforce monotonicity in the
-   setter and test the rejection.
+   **higher** sequence. A freely-settable watermark would let tampering masquerade as truncation — the
+   anchor would simply move to wherever the break is, and `verify_chain()` would return `True` for a
+   mutated chain. Enforce monotonicity and test the rejection.
 2. **`chain_state()` never reports `"intact"` once a watermark exists.** A verifier must be able to
-   tell a bounded log from a complete one. Silent truncation reported as `intact` is the same lie in a
-   different direction.
+   tell a bounded log from a complete one. Silent truncation reported as `intact` is the same lie in
+   the other direction.
 3. **Captured before removal.** The watermark comes from the entry being dropped, read while it is
    still in the list.
 
@@ -206,27 +329,28 @@ Three properties the watermark must have, all testable:
 
 **FIFO from the head, and only for entries the sink has confirmed.**
 
-- FIFO because the chain is ordered: only head-eviction leaves a contiguous, verifiable suffix.
+- **FIFO** because the chain is ordered: only head-eviction leaves a contiguous, verifiable suffix.
 - **Durability-gated**: an entry may be evicted only once persistence has confirmed its row. If
   persistence is off, or the writer is behind, `entries` grows past the soft cap and logs pressure
-  rather than destroying the only copy that exists. This is the coupling between Decisions 1 and 2 —
-  under durable-preferred, a hard cap that evicted unpersisted entries would silently delete the
-  accountability trail the AD exists to protect. The cap is a memory bound, never a data-destruction
-  policy.
+  rather than destroying the only copy that exists. **This is the coupling between Decisions 1 and 2**
+  — under durable-preferred, a hard cap that evicted unpersisted entries would silently delete the
+  accountability trail this AD exists to protect. The cap is a memory bound, **never** a
+  data-destruction policy.
 - New field `SecurityInfraConfig.audit_max_entries: int = 10_000` (≈6 MB by the issue's measurement).
-  Note `ClinicalTelemetryConfig` already has a field of the same name (`config.py:~2034`) — different
-  model, no collision, and the precedent is why this name.
+  `ClinicalTelemetryConfig` already has a field of the same name (YAML at `system.yaml:2118`) —
+  different model, no collision, and that precedent is why this name.
 
 ### The boot interaction — do not skip this
 
-`finalize.py:3790` does `runtime.audit_log.entries.extend(loaded)` against an **empty** list. If the DB
-holds more rows than the cap, this rebuilds the unbounded list the cap exists to prevent, and then
-`finalize.py:3791` calls `verify_chain()` on a load that legitimately does not start at genesis.
+`finalize.py:3922` does `runtime.audit_log.entries.extend(loaded)` against an **empty** list, and
+`finalize.py:3923` then calls `verify_chain()`. If the DB holds more rows than the cap, this rebuilds
+the unbounded list the cap exists to prevent, *and* verifies a load that legitimately does not start
+at genesis.
 
 So `load_entries()` must gain a bound: load the newest `audit_max_entries` rows **in ascending
-sequence order**, and return the watermark for the newest row **not** loaded so the caller can set it
-before verifying. Wire it so `_truncated_at` is set **before** `verify_chain()` runs at
-`finalize.py:3791`.
+sequence order**, and return (or otherwise expose) the watermark for the newest row **not** loaded, so
+the caller can set it **before** verifying. Wire the watermark set **between** `finalize.py:3922` and
+`:3923`.
 
 ---
 
@@ -235,13 +359,16 @@ before verifying. Wire it so `_truncated_at` is set **before** `verify_chain()` 
 Replace per-append `create_task` (`audit.py:115-117`) with a single `asyncio.Queue(maxsize=...)` and
 one long-lived writer task that batches commits.
 
-- `append` stays **synchronous** and must never raise or block. It does `put_nowait`; on `QueueFull`
-  it does **not** wait — it increments a dropped counter, marks the entry non-durable, and returns.
-- The writer commits in batches. One `commit()` per batch, not per row.
-- `_pending_writes` is retired as a mechanism. **The six assertions that read it in
-  `tests/test_ad456d_audit_log_persistence.py` (`:58, :81, :193, :197, :202, :221`) must be
-  UPDATED to the new synchronisation point, not deleted.** They are the only tests proving a row
-  actually lands. Record inline why each changed.
+- `append` stays **synchronous** and must never raise or block. It does `put_nowait`; on `QueueFull` it
+  does **not** wait — it increments a dropped counter, marks the entry non-durable, and returns.
+- The writer commits in **batches**. One `commit()` per batch, not per row (`persist_entry` currently
+  commits per row).
+- Preserve the existing no-running-loop behaviour (`audit.py:105-112`): sync test paths must remain a
+  debug-logged no-op, not an error.
+- `_pending_writes` is retired as a mechanism. **The nine assertions that read it in
+  `tests/test_ad456d_audit_log_persistence.py` (`:58, :81, :193, :197, :202, :221, :234, :331, :369`)
+  must be UPDATED to the new synchronisation point, not deleted.** They are the only tests proving a
+  row actually lands. Record inline why each changed.
 
 ---
 
@@ -259,154 +386,193 @@ src/probos/__main__.py:938:  await asyncio.wait_for(runtime.stop(), timeout=10)
 
 The **entire** teardown shares 10 seconds. Two consequences the builder must not get wrong:
 
-1. **Do not reuse `shutdown_drain_timeout_s`.** It defaults to `30.0`
-   (`config/system.yaml:140`, `config.py:1070`) — already larger than the outer `wait_for`. Borrowing
-   it would guarantee the audit drain is cancelled from outside rather than completing.
-2. **New field `SecurityInfraConfig.audit_drain_timeout_s: float = 2.0.**
+1. **Do not reuse `shutdown_drain_timeout_s`.** It defaults to `30.0` — already larger than the outer
+   `wait_for`. Borrowing it would guarantee the audit drain is cancelled from outside rather than
+   completing.
+2. **New field `SecurityInfraConfig.audit_drain_timeout_s: float = 2.0`.**
 
-Behaviour on expiry — specify all three:
+Behaviour — specify all three:
 
-- Stop accepting new entries into the queue first (registration closed), so the drain has a fixed
-  target rather than a moving one. `IntentBus.drain_pending_tasks` (`mesh/intent.py:321-347`) is the
-  sibling pattern: close registration, deadline via `loop.time()`, `asyncio.wait(timeout=remaining)`,
-  cancel the stragglers, never `gather` unbounded.
-- On expiry: **cancel the writer, log at `ERROR`** naming the count of unflushed entries and the
+- **Close registration first.** Stop accepting new entries into the queue before draining, so the
+  drain has a fixed target rather than a moving one. `IntentBus.drain_pending_tasks`
+  (`mesh/intent.py:322`) is the sibling pattern: close registration, deadline via `loop.time()`,
+  `asyncio.wait(timeout=remaining)`, cancel stragglers, never `gather` unbounded.
+- **On expiry:** cancel the writer, **log at `ERROR`** naming the count of unflushed entries and the
   sequence range lost, then proceed to `stop()`. The tail loss becomes a stated fact, not a silence.
-- On `asyncio.CancelledError` (the outer 10 s firing mid-drain): cancel the writer and **re-raise**.
+- **On `asyncio.CancelledError`** (the outer 10 s firing mid-drain): cancel the writer and **re-raise**.
   Cancellation belongs to the shutdown, not to this drain.
 
-Insertion point: `src/probos/startup/shutdown.py`, in the store-teardown block alongside the other
+> **Async trap — do NOT use `asyncio.wait_for` to bound the writer.** On timeout `wait_for` cancels the
+> inner task and then **awaits it unbounded**. A writer that catches `CancelledError` to finish its
+> final commit would hang shutdown forever, and a bounded wait placed *after* the `wait_for` is never
+> reached. Use `asyncio.wait({task}, timeout=...)`, which neither cancels nor raises; then cancel
+> explicitly, `wait` again with a second bound, and abandon loudly if still not done.
+
+**Insertion point:** `src/probos/startup/shutdown.py`, in the store-teardown block alongside the other
 `.stop()` calls (`:912` `clearance_grant_store`, `:917` `clinical_notes_store`, `:922`
 `tool_permission_store`). Place it **after** the stores that may still append audit rows.
 
-**Also fix, in the same commit:** `shutdown.py:251` says *"__main__.py enforces a 5s timeout on
-stop()"*. It is 10 s (`__main__.py:653`, `:938`); the 5 s at `__main__.py:928` is `adapter.stop()`, a
-different call. Same false-claim class as the two docstrings above, in the file this AD edits.
+**Also fix in the same commit:** `shutdown.py:251` says *"__main__.py enforces a 5s timeout on
+stop()"*. It is **10 s** (`__main__.py:653`, `:938`); the 5 s at `__main__.py:928` is
+`adapter.stop()`, a different call.
+
+---
+
+## The false claims, corrected in the same commit as the behaviour
+
+Three unhedged claims are **already in the tree** — this is not a claim we are about to gain.
+
+1. **`execution/audit.py:120`** — *"it is the control that makes the capability defensible (Design
+   Principle #13)."* Verified unhedged: `grep "best.effort|may be lost|not durable|process exit|
+   in-memory" src/probos/execution/audit.py` returns **zero hits**. The AD-1247 warning at `:146-155`
+   is honest about the sink being **absent**, but says nothing about a present sink being
+   **non-durable**.
+2. **`security/audit.py:1-6`** — *"v1 in-memory only. […] Persistence to SQLite deferred to AD-456d."*
+   AD-456d shipped; `AuditLogPersistence` is 130 lines below that sentence.
+3. **`shutdown.py:251`** — the 5 s/10 s error above.
+
+**Correct all three in the same commit as the behaviour they describe.** Not before — a docstring
+promising durability the code has not got yet is the same defect pointing the other way.
 
 ---
 
 ## Do not change the `verify_chain` signature
 
-`verify_chain() -> bool` has exactly one production consumer and six test assertions:
+`verify_chain() -> bool` has one production consumer and six test assertions:
 
 ```
-src/probos/startup/finalize.py:3791
+src/probos/startup/finalize.py:3923
 tests/test_ad456_security_infrastructure.py:203, 209, 222, 229
 tests/test_ad456d_audit_log_persistence.py:347, 389
 ```
 
 Keep it `-> bool`. Add `chain_state() -> tuple[str, int, int]` for the richer answer. Changing the
-return type to AD-490's `tuple[bool, int | None]` shape would churn seven call sites for no gain and is
-explicitly out of scope.
+return type would churn seven call sites for no gain and is **out of scope**.
 
-`AuditLog` is a `@dataclass`; every construction site is keyword-or-empty
-(`finalize.py:3764`, plus 14 test sites), so appending fields is safe — but append them, do not
-reorder, and keep defaults on all new fields.
+`AuditLog` is a `@dataclass`; every construction site is keyword-or-empty (`finalize.py:3896` plus
+test sites), so appending fields is safe — but **append them, do not reorder**, and keep defaults on
+all new fields.
 
 ---
 
 ## Slicing
 
 **Slice A — the losses that need no policy (does NOT close #1243).**
-Shutdown drain + bounded queue/writer + honest-degradation labelling + the three false-claim fixes
-(`_audit` docstring, `audit.py` module docstring, `shutdown.py:251` comment). Closes gaps 3 and 4's
-fan-out half. Ships alone, safely, with the default still `False`.
+Shutdown drain + bounded queue/single writer + honest-degradation labelling **on both execution paths**
++ the three false-claim corrections. Closes gap 3 and gap 4's fan-out half. Ships alone, safely, with
+the default still `False`.
 
 **Slice B — the policy half (closes #1243).**
 `audit_max_entries` + FIFO durability-gated eviction + `_truncated_at` + anchored `verify_chain` +
-`chain_state()` + bounded `load_entries` + the default flip to `True`.
+`chain_state()` + bounded `load_entries` + **the default flip to `True`**.
 
-The default flip belongs in Slice B, not A: flipping it before the drain and the cap exist would turn
-persistence on for every deployment while the tail can still be lost and the list can still grow
-without bound.
+The flip belongs in B per the sequencing constraint in Decision 1.
 
 ---
 
 ## Tests
 
-Name the file `tests/test_ad1278_audit_durability.py`. Add to the existing BF-781 guard file where the
-claim is a source claim.
+New file: `tests/test_ad1278_audit_durability.py`. Source-claim guards go in the existing BF-781 guard
+files.
 
 ### Slice A
 
-1. `test_shutdown_drain_flushes_the_last_append` — append, then run the shutdown path; assert the
-   **final** entry is present in SQLite. This is the acceptance criterion; it must cross the seam
-   (append → drain → row on disk), not assert the drain was called.
+1. `test_shutdown_drain_flushes_the_last_append` — append, then run the **real shutdown path**; assert
+   the **final** entry is present in SQLite. **This must cross the seam** (append → drain → row on
+   disk). Asserting the drain was *called* does not count.
 2. `test_drain_is_bounded_when_the_sink_is_wedged` — sink that never returns; assert the drain returns
-   within the budget and does not hang.
+   within budget and does not hang. Bound the test itself so a regression fails rather than hangs CI.
 3. `test_wedged_drain_logs_the_loss_at_error` — assert the ERROR record names an unflushed count.
-4. `test_drain_reraises_cancellation` — cancel mid-drain; assert `CancelledError` propagates and the
-   writer is cancelled.
-5. `test_queue_full_does_not_raise_from_append` — fill the queue; assert `append` returns an entry.
-6. `test_n_appends_do_not_create_n_tasks` — the direct regression for gap 4's fan-out. Assert the task
-   count stays at one writer across N appends. Pick N ≥ 100.
-7. `test_append_remains_sync_with_no_running_loop` — the existing no-loop path (`audit.py:105-112`)
-   must still be a no-op, not an error.
-8. `test_result_labels_a_run_with_no_sink` — `ToolResult` output carries the ungoverned label.
-9. `test_result_labels_a_run_whose_entry_was_dropped` — queue full → `durable: false`.
-10. Source guards, in `tests/test_bf781_isolation_claims.py` style: `_audit`'s docstring no longer
-    claims an unqualified control; `audit.py`'s module docstring no longer says persistence is
-    deferred; `shutdown.py` no longer says 5 s. Each must assert the **corrected** wording is present,
-    not merely that the old string is absent — an empty docstring would pass an absence-only check.
+4. `test_drain_reraises_cancellation` — cancel mid-drain; assert `CancelledError` propagates **and**
+   the writer task is cancelled.
+5. `test_queue_full_does_not_raise_from_append` — fill the queue; assert `append` still returns an
+   `AuditEntry`.
+6. `test_n_appends_do_not_create_n_tasks` — the direct regression for gap 4. Assert the task count
+   stays at one writer across N appends. N ≥ 100.
+7. `test_append_remains_sync_with_no_running_loop` — the no-loop path (`audit.py:105-112`) stays a
+   no-op.
+8. `test_tool_result_labels_a_run_with_no_sink` — `ToolResult` carries the ungoverned label.
+9. `test_intent_result_labels_a_run_with_no_sink` — **the `CodeRunnerAgent` mesh path**
+   (`agents/code_runner.py:152`). This is the test revision 1 would have omitted.
+10. `test_both_auditors_warn_independently` — locks AD-1280's per-auditor sentinel; a shared
+    process-wide flag must fail this.
+11. `test_result_labels_a_run_whose_entry_was_dropped` — queue full → `durable: false`.
+12. Source guards (BF-781 style, in `tests/test_bf781_execution_tool_claims.py` /
+    `tests/test_bf781_isolation_claims.py`): each must assert the **corrected wording is present**, not
+    merely that the old string is absent — an empty docstring would pass an absence-only check.
 
 ### Slice B
 
-11. `test_entries_are_capped_at_audit_max_entries`.
-12. `test_eviction_is_fifo_from_the_head`.
-13. `test_unpersisted_entries_are_not_evicted` — persistence off; assert the list exceeds the cap
+13. `test_entries_are_capped_at_audit_max_entries`
+14. `test_eviction_is_fifo_from_the_head`
+15. `test_unpersisted_entries_are_not_evicted` — persistence off; assert the list exceeds the cap
     rather than dropping the only copy.
-14. `test_truncated_chain_verifies_as_intact` — **the central test.** Evict, then
+16. `test_truncated_chain_verifies_as_intact` — **the central test.** Evict, then
     `verify_chain() is True`.
-15. `test_truncated_chain_reports_truncated_not_intact` — `chain_state()[0] == "truncated"`.
-16. `test_tampered_truncated_chain_reports_broken` — mutate an entry after truncation; assert
-    `verify_chain() is False` and `chain_state()[0] == "broken"`. This is the pair that proves the two
-    conditions are distinguishable; neither test alone does.
-17. `test_watermark_is_monotonic` — a backwards write is rejected.
-18. `test_watermark_only_moves_via_eviction`.
-19. `test_load_entries_respects_the_cap`.
-20. `test_boot_sets_the_watermark_before_verifying` — the ordering bug: assert a legitimately-capped
-    rehydrate does **not** log tamper at `finalize.py:3791`.
-21. `test_persistence_default_is_true` — `SecurityInfraConfig().audit_persistence_enabled is True`,
-    and `config/system.yaml` agrees. Two assertions; the YAML has drifted from the model before.
+17. `test_truncated_chain_reports_truncated_not_intact` — `chain_state()[0] == "truncated"`.
+18. `test_tampered_truncated_chain_reports_broken` — mutate an entry **after** truncation; assert
+    `verify_chain() is False` **and** `chain_state()[0] == "broken"`. **Tests 16 and 18 are a pair** —
+    they prove the two conditions are distinguishable, and neither alone does. This is acceptance
+    criterion 4.
+19. `test_watermark_is_monotonic` — a backwards write is rejected.
+20. `test_watermark_only_moves_via_eviction`.
+21. `test_load_entries_respects_the_cap`.
+22. `test_boot_sets_the_watermark_before_verifying` — the ordering bug: a legitimately-capped rehydrate
+    must **not** log tamper at `finalize.py:3923`.
+23. `test_persistence_default_is_true` — `SecurityInfraConfig().audit_persistence_enabled is True`
+    **and** `config/system.yaml:1271` agrees. Two assertions; the YAML has drifted from the model
+    before.
 
 ### Gates
 
-- Focused: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1278_audit_durability.py tests/test_ad456_security_infrastructure.py tests/test_ad456d_audit_log_persistence.py tests/test_ad1247_execution_audit.py tests/test_bf763_execution_claims.py tests/test_bf781_isolation_claims.py -q -p no:randomly`
-- **Signature-change sweep before the broad gate.** `append`'s internals and `load_entries`'
-  signature both move. Run `grep "getsource\|src\.index("` over `tests/` and execute every file that
-  scans `security/audit.py`, `startup/shutdown.py`, or `tools/code_execution_tool.py`. Two 17-minute
-  gates have been spent this month discovering one such guard each.
-- Broad gate: full suite once, after the slice is frozen. A source or test edit after the gate
-  invalidates it.
-- Adversarial review on the staged diff before commit, with a different model than the author.
+- **Focused:**
+  `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1278_audit_durability.py tests/test_ad456_security_infrastructure.py tests/test_ad456d_audit_log_persistence.py tests/test_ad1247_execution_audit.py tests/test_ad1280_mesh_execution_audit.py tests/test_bf763_execution_claims.py tests/test_bf781_execution_tool_claims.py tests/test_bf781_isolation_claims.py -q -p no:randomly`
+- **Signature-change sweep before the broad gate.** `append`'s internals and `load_entries`' signature
+  both move. Run `grep "getsource|src\.index\(|\?raw"` over `tests/` and execute every file that scans
+  `security/audit.py`, `startup/shutdown.py`, `execution/audit.py`, or `tools/code_execution_tool.py`.
+  A `?raw` guard that pins the *current* wording will fail on the corrected wording — that is the test
+  doing its job; update it and record why inline. **Never delete such a test.**
+- **Broad gate:** full suite **once**, after the slice is frozen. Any source or test edit after the
+  gate invalidates it. Expect ~15–19 min; it sits at `[ 99%]` for several of those. Run it
+  synchronously; do not poll.
+- **Adversarial review** on the staged diff before commit, with a **different model than the author**.
 
 ---
 
-## What this does NOT change
+## What this does NOT change — "Do not build"
 
-- **No second audit path for execution.** `AuditLog` is shared — the browser tool (AD-706,
-  `tools/browser/tool.py:1187`) and the self-improvement approval gate
-  (`self_improvement/approval_gate.py:120,152`) write to it and gain equally from every fix here.
-  Forking a private execution log is explicitly forbidden by the issue.
-- **No consensus gate on `run_python`.** BF-763 settled that; this AD is the other half of that
-  bargain, not a reversal of it.
-- **No change to `AuditEntry`.** It is frozen and its six fields are the `_hash` payload — adding one
+- **Do NOT fork a second audit path for execution.** `AuditLog` is shared and every consumer gains
+  from the fixes here. Verified consumers of the AD-456 chain log:
+  `execution/audit.py:190` (both execution paths), `tools/browser/tool.py:1187` (AD-706),
+  `cognitive/self_improvement/approval_gate.py:120,152`. Explicitly forbidden by the issue.
+- **Do NOT add a consensus gate to `run_python`.** BF-763 settled that; this AD is the other half of
+  that bargain, not a reversal.
+- **Do NOT change `AuditEntry`.** It is frozen and its six fields are the `_hash` payload — adding one
   invalidates every existing entry's hash and every persisted row.
-- **No change to `security/audit_log.py`** (the assistant log) or to `audit_retention_days`.
-- **No retention/TTL policy on the SQLite rows.** The cap here bounds memory only; disk retention is
-  a separate question and stays open.
-- **No `EventType.AUDIT_TAMPER_DETECTED` / Captain-alert path.** Still deferred (AD-456d-3).
-- **No HXI surface** for the chain. Deferred (AD-456d-7).
-- **No change to the mesh `CodeRunnerAgent` path**, which is not audited and says so (BF-787).
+- **Do NOT change `verify_chain()`'s signature.** Add `chain_state()` instead.
+- **Do NOT touch `security/audit_log.py`** (the assistant log) or `audit_retention_days`, which that
+  other class already consumes (`routers/security.py:50`).
+- **Do NOT add retention/TTL on the SQLite rows.** The cap bounds **memory** only. Disk retention is a
+  separate question and stays open.
+- **Do NOT collapse the two `ExecutionAuditor` sentinels** onto a shared process-wide flag. AD-1280
+  decided this deliberately (`execution/audit.py:105-117`).
+- **Do NOT add `EventType.AUDIT_TAMPER_DETECTED` or a Captain-alert path.** Deferred (AD-456d-3).
+- **Do NOT build an HXI surface** for the chain. Deferred (AD-456d-7).
+- **Do NOT reuse `shutdown_drain_timeout_s`** for the audit drain.
+- **Do NOT refactor `finalize.py`'s audit block** beyond inserting the watermark set and bounding the
+  load. It is ~50 lines inside a broad `try/except`; leave its shape alone.
+- **Do NOT modify** `README.md`, `docs/architecture/federation.md`, or any part of
+  `docs/development/roadmap.md` other than its Bug Tracker table — they carry another session's
+  uncommitted edits.
 
 ---
 
 ## Tracking
 
-- `PROGRESS.md` — one CLOSED line per slice, with the durability decision named.
-- `DECISIONS.md` — AD-1278: the durable-preferred decision, its cost, and the anchored-genesis
-  mechanism. This is a governance posture, so it is recorded, not just built.
-- `docs/development/roadmap.md` Bug Tracker — BF-780 row.
+- `PROGRESS.md` — one CLOSED line per slice, naming the durability decision.
+- `DECISIONS.md` — AD-1278: the durable-preferred decision, **its cost**, why 13(c) does not apply,
+  and the anchored-genesis mechanism. This is a governance posture, so it is recorded, not just built.
+- `docs/development/roadmap.md` **Bug Tracker table only** — BF-780 row.
 - `docs/development/config-reference.md` — three new fields plus the changed default.
 
 ---
@@ -415,89 +581,129 @@ claim is a source claim.
 
 1. The durability decision is **recorded with its cost** in `DECISIONS.md`, and the code's wording
    matches the decision.
-2. Shutdown drains the writer, with a test proving the **last** append reaches disk.
-3. The drain is bounded by `audit_drain_timeout_s`, never hangs, and reports what it lost.
-4. `entries` is bounded, eviction is FIFO and durability-gated, and the policy is stated in the class
+2. Shutdown drains the writer, with a test proving the **last** append reaches disk (seam-crossing).
+3. `entries` is bounded; eviction is FIFO and durability-gated; the policy is stated in the class
    docstring.
-5. A truncated chain reports as **truncated, not tampered** — `verify_chain() is True`,
-   `chain_state()[0] == "truncated"` — and a tampered one still reports broken.
-6. N appends produce one writer task, not N tasks.
-7. An execution that ran without reaching the sink is visible as such **in its own result**, not only
-   in a log line.
-8. `audit_persistence_enabled` defaults to `True` in both the model and `config/system.yaml`.
-9. The three false claims (`_audit` docstring, `audit.py` module docstring, `shutdown.py:251`) are
-   corrected **in the same commit** as the behaviour, with guard tests asserting the corrected wording.
+4. A truncated chain reports as **truncated, not tampered** — `verify_chain() is True`,
+   `chain_state()[0] == "truncated"` — **and** a tampered-after-truncation chain still reports broken.
+5. The drain is bounded by `audit_drain_timeout_s`, never hangs, and reports what it lost.
+6. N appends produce **one** writer task, not N.
+7. An execution that ran without reaching the sink is visible as such **in its own result**, on
+   **both** the tool path and the mesh `CodeRunnerAgent` path — not only in a log line.
+8. `audit_persistence_enabled` defaults to `True` in **both** the model and `config/system.yaml`, and
+   lands **no earlier than** the drain and the cap.
+9. The three false claims (`execution/audit.py:120`, `security/audit.py:1-6`, `shutdown.py:251`) are
+   corrected **in the same commit** as the behaviour, with guards asserting the **corrected** wording.
 10. No second audit path exists for execution.
 11. **Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.**
 
 ---
 
-## Verified Against Codebase (2026-08-26, HEAD `5d70da85`)
+## Verified Against Codebase (2026-08-28, HEAD `7edf309e`)
 
 ```
-rg -n "    entries: list|    GENESIS_HASH|    def append|    def verify_chain" src/probos/security/audit.py
-  54:    entries: list[AuditEntry] = field(default_factory=list)
-  65:    GENESIS_HASH: str = "0" * 64
-  67:    def append(self, *, category: str, detail: str) -> AuditEntry:
-  120:    def verify_chain(self) -> bool:
+grep "entries: list\[AuditEntry\]|def append|def verify_chain|def _hash|class AuditLog|NOT wired into" src/probos/security/audit.py
+  39:  class AuditLog:
+  54:      entries: list[AuditEntry] = field(default_factory=list)
+  67:      def append(self, *, category: str, detail: str) -> AuditEntry:
+  120:     def verify_chain(self) -> bool:
+  147:     def _hash(self, payload: dict[str, Any]) -> str:
+  174: class AuditLogPersistence:
+  183:     ``stop()`` method is defined but NOT wired into runtime shutdown in
+  201:     async def start(self) -> None:
+  211:     async def stop(self) -> None:
+  212:     """Close the connection. NOT wired into runtime shutdown in v1
 
-rg -n "_pending_writes" src/
-  security/audit.py:50, 63, 116, 117          # definition + its own two writes; no consumer
+grep "_pending_writes" src/
+  security/audit.py:50, 63, 116, 117      # definition + its own two writes; NO consumer
 
-rg -n "audit_log_persistence" src/
-  startup/finalize.py:3770, 3772, 3798, 3809  # construction only; zero hits in shutdown.py
+grep "audit_log_persistence|AuditLogPersistence" src/
+  security/audit.py:46,58,137,138,174,209
+  startup/finalize.py:3902,3904,3910,3912,3930,3941    # construction only
+  ZERO hits in startup/shutdown.py                      # <-- gap 3
 
-rg -n "audit_persistence_enabled|audit_retention_days" src/probos/config.py
-  4344:    audit_persistence_enabled: bool = False
-  4346:    audit_retention_days: int = 90
+read src/probos/startup/shutdown.py:139-162   # _stop_runtime_sqlite_sidecars
+  tuple = capability_request_store, fault_report_store, knowledge_edges,
+          personal_ontology_prober, rejection_cache
+  audit_log_persistence ABSENT from the one place it would belong
 
-rg -n "audit_persistence_enabled" config/system.yaml
-  1271:  audit_persistence_enabled: false
+config.py 4340-4352 (printed verbatim):
+  4343:     credential_tier_enforcement: bool = False
+  4350:     audit_persistence_enabled: bool = False
+  4351:     audit_persistence_filename: str = "audit_log.db"
+  4352:     audit_retention_days: int = 90
+  4305:     audit_enabled: bool = True
 
-rg -n "audit_retention_days" src/
-  config.py:4346
-  routers/security.py:50   # consumed by the OTHER AuditLog (security/audit_log.py)
+config/system.yaml 1265-1273 (printed verbatim):
+  1265:   audit_enabled: true
+  1271:   audit_persistence_enabled: false
+  1272:   audit_persistence_filename: audit_log.db
+  1273:   audit_retention_days: 90
+  2118:   audit_max_entries: 1000                # clinical_telemetry — a DIFFERENT model
+  2119:   audit_persistence_enabled: true        # clinical_telemetry — a DIFFERENT model
 
-rg -n "^class AuditLog" src/probos/security/audit.py src/probos/security/audit_log.py
-  audit_log.py:25:class AuditLog:      # assistant log, SQLite
-  audit.py:39:class AuditLog:          # AD-456 chain log  <-- this AD
+grep "audit_enabled|AuditLog\(|tamper|load_entries|attach_persistence" src/probos/startup/finalize.py
+  3894: if config.security_infra.audit_enabled:
+  3896:     runtime.audit_log = AuditLog(emit_event=runtime.emit_event)
+  3920:     loaded = await persistence.load_entries()
+  3922:     runtime.audit_log.entries.extend(loaded)
+  3923:     if not runtime.audit_log.verify_chain():
+  3926:         "rehydrate (tamper or corruption suspected; "
+  3929:     runtime.audit_log.attach_persistence(persistence)
 
-rg -n "runtime.audit_log = " src/
-  startup/finalize.py:3764:        runtime.audit_log = AuditLog(emit_event=runtime.emit_event)
+grep "ExecutionAuditor\(|class CodeRunnerAgent" src/probos/
+  agents/code_runner.py:98:      class CodeRunnerAgent(BaseAgent):
+  agents/code_runner.py:152:         self._auditor = ExecutionAuditor(self._runtime)
+  tools/code_execution_tool.py:314:  self._auditor = ExecutionAuditor(runtime)
+  -> TWO auditors. Revision 1's "mesh path is not audited" is FALSE at HEAD.
 
-rg -n "audit_log" src/probos/tools/code_execution_tool.py
-  578:        audit = getattr(self._runtime, "audit_log", None)
+grep "control that makes|Swallows ``Exception``|class ExecutionAuditor|_absence_warned = True" src/probos/execution/audit.py
+  76:   class ExecutionAuditor:
+  120:      decoration: it is the control that makes the capability defensible
+  131:      Swallows ``Exception`` from the sink -- an audit write that could fail
+  140:      audit = getattr(self._runtime, "audit_log", None)
+  149:          self._absence_warned = True
+  190:      audit.append(
 
-rg -n "wait_for\(.*stop" src/probos/__main__.py
-  653:            await asyncio.wait_for(runtime.stop(reason=...), timeout=10)
-  938:            await asyncio.wait_for(runtime.stop(), timeout=10)
+grep "best.effort|may be lost|not durable|process exit|in-memory" src/probos/execution/audit.py
+  (zero hits)   # the control claim at :120 is UNHEDGED
 
-rg -n "shutdown_drain_timeout_s" config/system.yaml src/probos/config.py
-  config/system.yaml:140:  shutdown_drain_timeout_s: 30.0
-  config.py:1070:    shutdown_drain_timeout_s: float = Field(
+grep "audit_log\.append|audit\.append\(" src/probos/     # shared-log consumers
+  execution/audit.py:190                      # BOTH execution paths
+  tools/browser/tool.py:1187                  # AD-706 browser tool
+  cognitive/self_improvement/approval_gate.py:120, 152
+  (counselor.py:411,485 and clinical_telemetry.py:391 are the OTHER log / other rings)
 
-rg -n "async def drain_pending_tasks" src/probos/mesh/intent.py
-  321:    async def drain_pending_tasks(self, timeout_seconds: float = 5.0) -> None:
-
-rg -n "\.verify_chain\(\)" src/ tests/     # AD-456 consumers only
-  src/probos/startup/finalize.py:3791
-  tests/test_ad456_security_infrastructure.py:203, 209, 222, 229
-  tests/test_ad456d_audit_log_persistence.py:347, 389
-
-rg -n "_pending_writes" tests/test_ad456d_audit_log_persistence.py
-  58, 81, 193, 197, 202, 221                  # six assertions to UPDATE, not delete
+grep "5s timeout on stop|timeout=10|def drain_pending_tasks|clearance_grant_store.stop" src/probos/
+  __main__.py:653:  await asyncio.wait_for(runtime.stop(reason=...), timeout=10)
+  __main__.py:938:  await asyncio.wait_for(runtime.stop(), timeout=10)
+  mesh/intent.py:322:  async def drain_pending_tasks(self, timeout_seconds: float = 5.0)
+  shutdown.py:251:  # __main__.py enforces a 5s timeout on stop().   <-- FALSE, it is 10s
+  shutdown.py:912:  await runtime.clearance_grant_store.stop()
 ```
 
-### Absence Verified (2026-08-26)
+### Absence Verified (2026-08-28)
 
 ```
-CLAIM: nothing drains _pending_writes or stops AuditLogPersistence at shutdown
-RUN:   rg -n "audit" src/probos/startup/shutdown.py ; rg -n "audit_log_persistence" src/
-FOUND: only EvictionAuditLog (a different class) in shutdown.py; persistence appears only in finalize
-HOLDS: yes
+CLAIM: nothing drains _pending_writes and nothing stops AuditLogPersistence at shutdown
+RUN:   grep "audit_log_persistence|audit_log" src/probos/startup/**
+       grep "audit_log_persistence|AuditLogPersistence" src/
+       grep "_pending_writes" src/
+       read src/probos/startup/shutdown.py:139-162   (_stop_runtime_sqlite_sidecars)
+FOUND: persistence appears ONLY in finalize.py (construction). Zero hits in shutdown.py.
+       _pending_writes has no consumer in src/. The sidecar-teardown tuple — the one
+       place such a drain belongs — does not list it.
+HOLDS: YES
 
-CLAIM: no docstring in code_execution_tool.py hedges the audit record as best-effort
-RUN:   rg -n -i "best.effort|may be lost|not durable|process exit|survive" src/probos/tools/code_execution_tool.py
-FOUND: 12 (RLIMIT), 397 (RLIMIT), 993 (detached descendant) — none about the audit record
-HOLDS: yes — the issue's framing claim is stale; the unhedged control claim is live at :558-561
+CLAIM: no docstring hedges the audit record as best-effort at HEAD
+RUN:   grep "best.effort|may be lost|not durable|process exit|in-memory" src/probos/execution/audit.py
+FOUND: zero hits
+HOLDS: YES — the issue's framing ("BF-763 ships with the docstring stating the record is
+       currently best-effort") is STALE. The unhedged control claim is live at
+       execution/audit.py:120, having moved there from code_execution_tool.py in AD-1280.
+
+CLAIM: AD-1278 is allocated to this issue and unbuilt
+RUN:   git log --all --format='%h %s' | grep 'AD-1278'   -> 27f76ea9 "build prompt for BF-780"
+       grep "AD-1278" src/probos/security/audit.py src/probos/startup/shutdown.py -> zero hits
+HOLDS: YES — prompt-only commit, no build. Number retained rather than re-minted.
 ```
