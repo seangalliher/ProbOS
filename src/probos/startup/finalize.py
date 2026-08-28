@@ -2274,7 +2274,7 @@ async def _wire_promoted_report_delivery(runtime: Any) -> None:
         )
 
 
-def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
+async def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-482 v1: wire the self-improvement pipeline.
 
     Constructs and attaches:
@@ -2366,7 +2366,15 @@ def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> bool:
     if spawner is not None:
         for _ in range(cfg.qa_pool_size):
             try:
-                agent = spawner.spawn("system_qa")
+                # BF-859 (#1329): `AgentSpawner.spawn` is a coroutine function.
+                # Unawaited it returned a coroutine that was appended verbatim,
+                # so the spawner body never ran, the QA pool held coroutines
+                # instead of agents, and -- because a list of coroutines is
+                # truthy -- the `if not qa_agents` fallback below was skipped
+                # too. Measured: spawn invocations 0, every pool entry a
+                # coroutine. This function is async solely so this can be
+                # awaited; `finalize_startup` was already async.
+                agent = await spawner.spawn("system_qa")
                 qa_agents.append(agent)
             except Exception:
                 logger.warning(
@@ -5160,7 +5168,7 @@ async def finalize_startup(
     # AD-482: Wire SelfImprovementPipeline after PredictiveBranching. Default-False;
     # operator opt-in. Tier-2 log-and-degrade.
     try:
-        _wire_self_improvement(runtime=runtime, config=config)
+        await _wire_self_improvement(runtime=runtime, config=config)
     except Exception:
         logger.warning(
             "AD-482: _wire_self_improvement raised; self_improvement disabled",

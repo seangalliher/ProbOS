@@ -430,7 +430,8 @@ class TestEvolutionStore:
 
 
 class TestBF662EvolutionTransitions:
-    def test_runtime_wiring_uses_public_data_dir_not_phantom_client(
+    @pytest.mark.asyncio
+    async def test_runtime_wiring_uses_public_data_dir_not_phantom_client(
         self, tmp_path: Path
     ) -> None:
         from probos.config import SystemConfig
@@ -450,7 +451,7 @@ class TestBF662EvolutionTransitions:
         ) as evolution_type:
             evolution = evolution_type.return_value
             evolution.record_lesson = MagicMock(return_value="lesson")
-            assert _wire_self_improvement(runtime=runtime, config=config) is True
+            assert await _wire_self_improvement(runtime=runtime, config=config) is True
         kwargs = evolution_type.call_args.kwargs
         assert kwargs["chroma_path"] == tmp_path
         assert "chroma_client" not in kwargs
@@ -1565,7 +1566,8 @@ class TestConfigAndWiring:
         assert cfg.iteration_cap == 5
         assert cfg.evolution_collection_name == "self_improvement_lessons"
 
-    def test_wirer_skips_when_disabled(self) -> None:
+    @pytest.mark.asyncio
+    async def test_wirer_skips_when_disabled(self) -> None:
         from probos.config import SystemConfig
         from probos.startup.finalize import _wire_self_improvement
 
@@ -1582,7 +1584,7 @@ class TestConfigAndWiring:
             shadow_deployment_policy=None,
         )
         config = SystemConfig()
-        wired = _wire_self_improvement(runtime=runtime, config=config)
+        wired = await _wire_self_improvement(runtime=runtime, config=config)
         assert wired is False
         assert runtime.proposal_store is None
 

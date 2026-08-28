@@ -68,6 +68,17 @@ class QAAgentPool:
     def size(self) -> int:
         return len(self._qa_agents)
 
+    @property
+    def qa_agents(self) -> tuple[Any, ...]:
+        """The pool's QA agents, read-only.
+
+        BF-859 (#1329) needed to assert the pool holds real agents rather than
+        unawaited coroutines, and the only way to see that was to reach into
+        ``_qa_agents``. A tuple, so a caller cannot mutate the roster through
+        the accessor.
+        """
+        return tuple(self._qa_agents)
+
     async def evaluate_proposal(
         self,
         *,
