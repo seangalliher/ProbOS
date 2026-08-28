@@ -4342,14 +4342,40 @@ class SecurityInfraConfig(BaseModel):
     # has landed in all production credential-using agent paths.).
     credential_tier_enforcement: bool = False
 
-    # AD-456d: AuditLog SQLite persistence (v1 default False — preserves
-    # AD-456 in-memory-only audit chain on existing deployments; flip to
-    # True at upgrade time after rehearsing rehydrate-on-boot against a
-    # production-shaped audit trail. AD-456d-4 will flip default to True
-    # once AD-456d-1 (shutdown-flush hook) lands.).
-    audit_persistence_enabled: bool = False
+    # AD-456d: AuditLog SQLite persistence.
+    #
+    # AD-1278 (BF-780) flipped this ON, landing the AD-456d-1 shutdown flush it
+    # was waiting for in the same change. BF-763 removed the quorum gate on
+    # `run_python` in exchange for a per-execution audit record; a record that
+    # dies with the process is not the thing that was traded for. The posture is
+    # durable-PREFERRED, not durable-required: a sink that fails degrades the
+    # run to an in-memory record which labels itself, rather than refusing to
+    # execute -- see `security/audit.py`.
+    audit_persistence_enabled: bool = True
     audit_persistence_filename: str = "audit_log.db"
     audit_retention_days: int = 90
+    # AD-1278: memory bound on the in-process chain -- NOT a retention policy,
+    # and not a disk bound. Only entries the sink has confirmed are evicted, so
+    # with persistence off the list grows past this and logs pressure rather
+    # than destroying the only copy of an accountability record. <= 0 disables.
+    # ~10,000 rows is ~6 MB by the #1243 measurement.
+    audit_max_entries: int = 10_000
+    # AD-1278: how long shutdown waits for the audit writer to flush. Small on
+    # purpose -- `__main__.py` gives the WHOLE teardown 10s, so a drain that
+    # hangs shutdown is a worse defect than the tail it saves. Deliberately NOT
+    # `shutdown_drain_timeout_s` (30.0), which is larger than the outer budget.
+    audit_drain_timeout_s: float = 2.0
+    # AD-1278: bound on entries awaiting the sink, replacing one task per
+    # append. A full queue holds the entry in an overflow buffer and says so; it
+    # never blocks the caller, never fails an append, and never DROPS -- a
+    # dropped sequence would leave the next persisted row chained to a row that
+    # is not there.
+    audit_write_queue_maxsize: int = 1000
+    # AD-1278: consecutive failures tolerated on ONE batch before the durable
+    # stream is ended rather than continued past the gap. Terminating is
+    # deliberate: a persisted chain with a hole reports itself broken at every
+    # future boot, while one that stops says plainly where it ended.
+    audit_write_max_retries: int = 3
 
 
 class PermissionsConfig(BaseModel):

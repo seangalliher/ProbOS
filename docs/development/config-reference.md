@@ -1397,9 +1397,13 @@ Security infrastructure configuration (AD-456 + AD-456b).
 | `sandbox_default_memory_peak_mb` | `float` | `256.0` | — |  |
 | `egress_active_enforcement` | `bool` | `False` | — |  |
 | `credential_tier_enforcement` | `bool` | `False` | — |  |
-| `audit_persistence_enabled` | `bool` | `False` | — |  |
+| `audit_persistence_enabled` | `bool` | `True` | — |  |
 | `audit_persistence_filename` | `str` | `'audit_log.db'` | — |  |
 | `audit_retention_days` | `int` | `90` | — |  |
+| `audit_max_entries` | `int` | `10000` | — |  |
+| `audit_drain_timeout_s` | `float` | `2.0` | — |  |
+| `audit_write_queue_maxsize` | `int` | `1000` | — |  |
+| `audit_write_max_retries` | `int` | `3` | — |  |
 
 ## `ground_truth`
 

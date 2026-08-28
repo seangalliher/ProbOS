@@ -59,6 +59,99 @@ def _memory_field(runtime: Any, name: str, default: float) -> float:
     return float(getattr(cfg, name, default))
 
 
+def _security_field(runtime: Any, name: str, default: float) -> float:
+    """AD-1278: the ``_memory_field`` shape for ``SecurityInfraConfig``.
+
+    Same reason as BF-291: a process that started before a field existed is
+    shutting down against newer ``shutdown.py`` code on disk, and direct
+    attribute access on a Pydantic v2 model raises for the absent field.
+    """
+    cfg = getattr(getattr(runtime, "config", None), "security_infra", None)
+    if cfg is None:
+        return default
+    return float(getattr(cfg, name, default))
+
+
+async def _flush_audit_log(runtime: Any) -> None:
+    """AD-1278 (BF-780) phase 1: get the bulk of the trail onto disk, EARLY.
+
+    Registration deliberately stays open. ``AuditLog.drain`` closes it, and
+    everything that runs after this point -- the pool scaler, the pools and
+    intent bus, the knowledge store, the mesh services, the semantic layer --
+    can still produce an audit-worthy event. Closing registration here would
+    make the most failure-prone stretch of the run the one stretch with no
+    durable record, which is where a durability control is least allowed to be
+    absent.
+
+    Budget: HALF of ``security_infra.audit_drain_timeout_s``, because phase 2
+    gets the full value afterwards and ``__main__.py`` gives the whole teardown
+    ten seconds. On expiry ``flush`` logs and returns; phase 2 tries again.
+    """
+    audit_log = getattr(runtime, "audit_log", None)
+    if audit_log is None or not callable(getattr(audit_log, "flush", None)):
+        return
+    try:
+        await audit_log.flush(
+            timeout_seconds=_security_field(
+                runtime, "audit_drain_timeout_s", 2.0,
+            ) / 2.0,
+        )
+    except Exception:
+        logger.warning(
+            "AD-1278: the early audit flush failed; the shutdown drain still "
+            "gets a full attempt at the same entries.",
+            exc_info=True,
+        )
+
+
+async def _drain_audit_log(runtime: Any) -> None:
+    """AD-1278 (BF-780) phase 2: flush the audit chain, then close its SQLite handle.
+
+    BF-763 removed the quorum gate on ``run_python`` in exchange for a
+    per-execution audit record. Until now nothing drained the writer, so the
+    tail of that record died with the process -- the trail was best-effort in
+    exactly the moment it was most likely to matter.
+
+    Placed after ``_semantic_layer.stop()`` and before ``runtime._started =
+    False``, which is the last point at which anything can append; this is the
+    call that closes registration, so nothing that could still append may run
+    after it.
+
+    Bounded by ``security_infra.audit_drain_timeout_s`` and log-and-degrade
+    throughout: ``__main__.py`` gives the whole teardown ten seconds, and a
+    drain that hangs shutdown is a worse defect than the tail it saves.
+    ``CancelledError`` is deliberately not caught -- it belongs to the shutdown.
+    """
+    audit_log = getattr(runtime, "audit_log", None)
+    if audit_log is not None and callable(getattr(audit_log, "drain", None)):
+        try:
+            await audit_log.drain(
+                timeout_seconds=_security_field(
+                    runtime, "audit_drain_timeout_s", 2.0,
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "AD-1278: the audit drain failed; entries that had not reached "
+                "SQLite are lost at exit. The persistence handle is still "
+                "closed below.",
+                exc_info=True,
+            )
+    persistence = getattr(runtime, "audit_log_persistence", None)
+    if persistence is None:
+        return
+    try:
+        await persistence.stop()
+    except Exception:
+        logger.warning(
+            "AD-456d: AuditLogPersistence failed to close during shutdown; the "
+            "SQLite handle is released at process exit",
+            exc_info=True,
+        )
+    finally:
+        runtime.audit_log_persistence = None
+
+
 async def _cancel_confab_probe_tasks(runtime: Any) -> None:
     """BF-663: cancel and reap every one-shot probe before LLM shutdown.
 
@@ -248,9 +341,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
 
     # BF-135: Persist session record FIRST — synchronous file write, microseconds.
     # Must happen before any async operations (Ward Room, event log) because
-    # __main__.py enforces a 5s timeout on stop(). If Ward Room create_thread()
-    # or event log writes are slow, the timeout cancels stop() and the session
-    # record is never written — causing stale stasis duration on next boot.
+    # __main__.py enforces a 10s timeout on stop() (`__main__.py:653`, `:938`;
+    # the 5s at `:928` bounds `adapter.stop()`, a different call). If Ward Room
+    # create_thread() or event log writes are slow, the timeout cancels stop()
+    # and the session record is never written — causing stale stasis duration on
+    # next boot.
     # BF-137: Write session record even on partial boots (before _started guard)
     # so that failed startups don't leave a stale timestamp that inflates
     # stasis duration on the next successful boot.
@@ -922,6 +1017,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.tool_permission_store.stop()
         runtime.tool_permission_store = None
 
+    # AD-1278 phase 1: get the bulk of the audit trail onto disk while the
+    # system is still fully alive. Registration stays OPEN -- pools, the intent
+    # bus and the mesh services all tear down below and can still append.
+    await _flush_audit_log(runtime)
+
     # AD-983b: Skill grant store (per-agent cognitive-skill grants)
     if getattr(runtime, 'skill_grant_store', None):
         await runtime.skill_grant_store.stop()
@@ -1142,10 +1242,22 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.task_scheduler.stop()
         runtime.task_scheduler = None
 
-    # Stop semantic knowledge layer (AD-243)
-    if runtime._semantic_layer:
-        await runtime._semantic_layer.stop()
-        runtime._semantic_layer = None
+    try:
+        # Stop semantic knowledge layer (AD-243)
+        if runtime._semantic_layer:
+            await runtime._semantic_layer.stop()
+            runtime._semantic_layer = None
+    finally:
+        # AD-1278 phase 2: the authoritative drain. Here rather than with the
+        # other stores because `drain()` closes registration, and this is the
+        # last point at which anything can append -- only a log line and the
+        # return follow. Above the deferred-cancellation re-raise below, so a
+        # cancellation carried over from pool teardown cannot skip it.
+        #
+        # In a `finally` because review reproduced the skip: a raising
+        # `_semantic_layer.stop()` gave `drain_called=False`, losing the tail on
+        # exactly the failure path an investigator most wants the record for.
+        await _drain_audit_log(runtime)
 
     runtime._started = False
     logger.info("ProbOS shutdown complete. Final agent count: %d", runtime.registry.count)

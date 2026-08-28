@@ -3893,7 +3893,12 @@ async def finalize_startup(
 
     if config.security_infra.audit_enabled:
         from probos.security.audit import AuditLog
-        runtime.audit_log = AuditLog(emit_event=runtime.emit_event)
+        runtime.audit_log = AuditLog(
+            emit_event=runtime.emit_event,
+            max_entries=config.security_infra.audit_max_entries,
+            write_queue_maxsize=config.security_infra.audit_write_queue_maxsize,
+            write_max_retries=config.security_infra.audit_write_max_retries,
+        )
         logger.info("AD-456: AuditLog wired (in-memory hash chain)")
     else:
         runtime.audit_log = None
@@ -3917,9 +3922,20 @@ async def finalize_startup(
                 emit_event=runtime.emit_event,
             )
             await persistence.start()
-            loaded = await persistence.load_entries()
+            # AD-1278: bounded, or the rehydrate rebuilds the unbounded list the
+            # cap exists to prevent.
+            loaded = await persistence.load_entries(
+                limit=config.security_infra.audit_max_entries,
+            )
             if loaded:
+                # AD-1278: anchor BEFORE verifying. A bounded load legitimately
+                # does not start at genesis, and an unanchored walk would report
+                # a merely-full log as tampered on every boot.
+                watermark = await persistence.watermark_before(loaded[0].sequence)
+                if watermark is not None:
+                    runtime.audit_log.mark_truncated(*watermark)
                 runtime.audit_log.entries.extend(loaded)
+                runtime.audit_log.mark_persisted_through(loaded[-1].sequence)
                 if not runtime.audit_log.verify_chain():
                     logger.warning(
                         "AD-456d: AuditLog chain verification FAILED on "

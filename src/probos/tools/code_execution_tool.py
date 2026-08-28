@@ -535,14 +535,17 @@ class CodeExecutionTool:
         artifact_count: int | None = None,
         fetch_broker: bool = False,
         error_type: str | None = None,
-    ) -> None:
+    ) -> str:
         """AD-1280: delegate to the shared builder; see ``ExecutionAuditor.record``.
 
         The body moved to ``execution/audit.py`` when BF-787 gave the mesh
         ``CodeRunnerAgent`` path the same record. Kept as a method with an
         unchanged signature so every call site in ``invoke`` is untouched.
+
+        AD-1278: returns the record's durability so ``invoke`` can label a run
+        whose trail will not survive the process.
         """
-        self._auditor.record(
+        return self._auditor.record(
             execution_id=execution_id,
             agent_id=agent_id,
             code=code,
@@ -740,7 +743,7 @@ class CodeExecutionTool:
             )
             artifact_count = len(produced)
             audit_attempted = True
-            self._audit(
+            audit_outcome = self._audit(
                 execution_id=execution_id,
                 agent_id=requesting_agent,
                 code=code,
@@ -761,6 +764,13 @@ class CodeExecutionTool:
                 "artifacts": [a["name"] for a in produced],
                 "artifact_details": produced,
             }
+            # AD-1278: BF-763 removed the quorum gate in exchange for a record.
+            # When that record will not outlive the process, the run says so in
+            # its own result -- a log line is not where anyone looks. "queued"
+            # is the healthy path; the mesh path at `agents/code_runner.py`
+            # carries the identical comparison and the two change together.
+            if audit_outcome and audit_outcome != "queued":
+                output["audit"] = audit_outcome
             if dep_summary is not None:
                 output["dependencies"] = dep_summary
             else:

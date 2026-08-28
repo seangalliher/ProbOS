@@ -111,6 +111,16 @@ memory:
   access_policy: permissive
   relevance_threshold: 0.7
   agent_recall_threshold: 0.25
+  attention:
+    # AD-1031: salience-gated visual bid. An unchanged scene becomes a quiet
+    # one-line "live camera" summary instead of the full block dominating every
+    # turn; novelty / an explicit visual reference / a visual task surface it
+    # prominently. (Captain live-test of the perception-injection tuning.)
+    camera_scene_bid_enabled: true
+    # AD-1060: adaptive injection FREQUENCY. Once the decayed (EMA) novelty
+    # falls below this, a stable-scene frame is suppressed entirely (the feed
+    # fades to background) rather than injecting even a recessive one-liner.
+    camera_recessive_suppress_threshold: 0.15
   fts_keyword_semantic_floor: 0.2
   embedding_model: multi-qa-MiniLM-L6-cos-v1
   query_reformulation_enabled: true
@@ -121,6 +131,7 @@ memory:
   group_episode_enrichment_enabled: true  # AD-986a: label the group-chat trigger speaker + set AnchorFrame.trigger_agent + index more of the agent's own reply (who-said-what + payload fidelity)
   group_reflection_max_chars: 600    # AD-986a: index up to this many chars of the agent's own group reply (was hard-capped at 240)
   episode_visual_binding_enabled: true  # AD-987: bind the frame the agent saw into the conversation episode at capture, and index its description for integrated recall
+  recall_outcome_refs_enabled: true  # AD-1226: a promoted run's full report goes to the content-addressable store and the episode carries a ref; recall says what was produced and the recall_artifact tool reads it back in pages
   similarity_threshold: 0.6
   verify_content_hash: true
   eviction_audit_enabled: true
@@ -417,6 +428,285 @@ execution:
   workspace_root: data/execution/workspaces
   persistent_workspaces: true
   allow_package_install: true
+  # AD-1074d: stage the thread's current documents into the sandbox so an agent
+  # can read + edit an existing file (the Cowork round-trip). Only changed/new
+  # files are re-versioned.
+  stage_thread_artifacts: true
+  # AD-1221: let sandboxed code fetch a URL through the ship's governed HTTP
+  # path — `import ship; r = ship.fetch(url)`. This is NOT general network
+  # access: the sandbox gets a loopback socket to a relay that exists only for
+  # that one run, and every request still passes SSRF validation, per-domain
+  # rate limiting and audit. It exists so an agent can fetch a large document
+  # and extract the answer IN ONE PROCESS, instead of carrying every byte
+  # through its context window (Design Principle 13).
+  fetch_broker_enabled: true
+# AD-1220: ask-before-install for the sandbox. When a script imports a library
+# the environment does not have, the agent files an `install` capability
+# request and it appears in the Bridge approval queue; approving it installs
+# into the environment the sandbox shares, so the next run can import it.
+# `prompt_unlisted` is the load-bearing choice: allowlisted imports
+# (self_mod.allowed_imports, stdlib) auto-approve, everything else asks the
+# Captain. `whitelist` would silently ignore every unlisted request, which is
+# the dead behaviour AD-1220 was written to end.
+dependency:
+  dynamic_install_enabled: true
+  dynamic_install_policy: prompt_unlisted
+  dynamic_install_deny: []
+# AD-1065: conversational agentic loop. When enabled, a 1:1 DM runs the
+# tool-calling loop so an agent can use run_python (AD-1066) to create REAL
+# documents (.docx via python-docx, .xlsx, .pdf) mid-chat instead of the
+# AD-1064 <artifact> markdown fallback. Requires execution.enabled (above).
+dm_agentic:
+  enabled: true
+  # BF-692/BF-697 (2026-07-29): raised 5 -> 10. At 5 the observed trace for
+  # "type into the document I have open" was state, screenshot, click, click,
+  # click -- the budget was exhausted before key_type was reached. Even with
+  # BF-692's real element discovery, the natural sequence (state -> click ->
+  # key_type -> screenshot -> verify) is exactly 5 with no room for a retry or a
+  # misstep. AD-1164 (below) is the structural fix; 10 stays because a wider
+  # first pass is still the cheapest way to finish inside one turn.
+  #
+  # BF-700 (2026-07-31): raised 10 -> 20, then PUT BACK to 10 the same night.
+  # The 20 was a misdiagnosis, and the trace says so plainly. The turn really
+  # did end on "I can see the document content area at index 90/91, let me
+  # click on it", which reads like a budget problem -- but the persisted tool
+  # trace showed the agent had ALREADY clicked the surface successfully on
+  # step 2 and then been told "unknown browser action: 'key_type'" for the one
+  # verb that types into a focused element. Steps 3-20 were flailing at a
+  # missing primitive, not work. BF-701 restored the verb.
+  #
+  # Doubling the budget more than doubled the cost (219k -> 475k tokens) and
+  # made the outcome WORSE: the AgenticLoop re-flattens the whole message
+  # history into one prompt every iteration, and no compactor is wired into
+  # the conversational path, so each extra step re-pays for every step before
+  # it. At 475k the early state() result -- the one that found the document --
+  # was buried, and the agent talked itself back into "canvas-based, use
+  # coordinates". More room to flail is not more capability.
+  #
+  # 10 stands until compaction is wired into this path. Raise it then, on
+  # evidence, not before.
+  #
+  # 2026-08-04: the condition above is MET. AD-1167 wired compaction into this
+  # exact path — cognitive_agent.py:3879 gates on compaction_enabled and :3898
+  # passes the compactor into the loop — and compaction_enabled is true below.
+  # The quadratic re-flattening that made 20 worse than 10 is what compaction
+  # removes, so the reason for the cap no longer holds.
+  #
+  # Raised 10 -> 25 to make multi-step work completable. Measured motivation: a
+  # 15-item fetch task could not finish in 10 iterations, exhausted its passes,
+  # filed a continue request, and stranded (AD-1204). 25 is chosen to clear that
+  # class of task with headroom, not as a ceiling on principle.
+  #
+  # This is still "on evidence, not before" — the evidence being that the
+  # prerequisite shipped. Re-measure token cost on the same task and record it
+  # here; if cost grows superlinearly again, compaction is not engaging and the
+  # number goes back to 10 until it does.
+  #
+  # VERIFIED LIVE 2026-08-07 (#1163). Temporarily dropped to 5 to force the
+  # exhaustion the AD-1204 resume needs, since at 25 the tasks that used to
+  # strand now finish. The chain fired end to end for the first time:
+  #   12:19:05  AD-1204  work item d4eb065557e7 parked blocked on 70fff82e
+  #   12:19:29  AD-1211  approved continue request fulfilled
+  #   12:19:29  AD-855   work item resumed and re-dispatched
+  # Restored to 25 immediately afterwards. Note what 5 cost: the agent could
+  # not make 15 http_fetch calls in 5 iterations, so it answered from training
+  # data and said so. A step budget below the task's tool-call count does not
+  # slow the work down, it changes what the work IS.
+  max_iterations: 25
+  tier: standard
+  # AD-1167 (2026-07-31): compaction ON for this instance. The measurement that
+  # motivated it was taken here: 218,957 -> 474,736 tokens when max_iterations
+  # went 10 -> 20, with a WORSE answer at the higher budget. Compaction is the
+  # prerequisite for ever raising that cap again.
+  compaction_enabled: true
+  compaction_threshold_tokens: 60000
+  # AD-1164 (2026-07-29): the step limit becomes a checkpoint that asks instead
+  # of a cliff that truncates. On exhausting max_iterations the turn either
+  # re-invokes (only while a live AD-1154 standing rule for
+  # dm_agentic.continue -- nothing issues one yet, so today this branch is
+  # dormant) or files a kind="continue" request into the approval inbox and
+  # returns the partial work saying plainly that it stopped mid-task.
+  # Worst case here: 2 passes x 10 iterations x 3 parallel tool calls = 60 tool
+  # invocations for one chat turn -- and the second pass needs a standing rule
+  # the Captain has not issued, so the real ceiling today is 30.
+  continue_or_ask_enabled: true
+  continue_or_ask_max_passes: 2
+  # AD-1165 (2026-07-30): a turn that outgrows a reply becomes a background
+  # task instead of being cancelled by the 60s chat TTL. Past this budget the
+  # run is NOT cancelled -- the same in-flight loop keeps going, a work item is
+  # opened for it, the turn returns an acknowledgement inside the TTL, and the
+  # result is posted back into this thread when it lands.
+  # 35 is chosen against the numbers above: ~9s/iteration x max_iterations 10
+  # is ~90s, which never fit in 60. At 35s roughly four iterations have run and
+  # 25s of TTL remain for the promotion itself. A conversational turn with one
+  # or two tool calls finishes well inside 35s and is untouched.
+  # CORRECTION 2026-07-31: an earlier comment here blamed a 30s NATS deadline.
+  # That was wrong. NatsConfig has no request_timeout_seconds -- that field is
+  # on MCPConfig -- and IntentBus uses timeout=intent.ttl_seconds on BOTH the
+  # NATS and local branches, so the deadline is 60s either way.
+  #
+  # The real problem is that this budget and the TTL are measured from
+  # DIFFERENT origins. The TTL starts when the DM is dispatched; this budget
+  # starts when run_with_promotion is reached, far inside the handler. The
+  # preamble between them -- perceive, sensorium, episodic recall, session
+  # binding, and contention with background cognition -- is unbudgeted.
+  # Observed 2026-07-31: dispatch 21:39:00, agentic turn started 21:39:29 (a
+  # 29s preamble, concurrent with a dream cycle), ack at 21:40:04 against a
+  # TTL that expired at 21:40:00. The governing invariant is
+  #   preamble + promote_to_task_after_seconds < ttl_seconds.
+  #
+  # 20 only shrinks the window; a slow enough preamble still overruns it.
+  # BF-705 is the real fix: IntentMessage already carries ttl_seconds and
+  # created_at, so propagate them into the observation and promote at
+  # min(configured, remaining - margin) instead of a fixed budget.
+  #
+  # 2026-08-08: BF-705 SHIPPED, so the clamp now protects the TTL and this
+  # value no longer has to be defensive -- it was left at the emergency 20 and
+  # is now the thing doing harm. Measured on this vessel today: EVERY promotion
+  # logs "after 20.0s measured (budget 20.0s)", i.e. nothing ran long, the
+  # guillotine simply fell. One loop iteration costs ~6s under current ward-room
+  # load (11:55:47 dispatch -> 11:55:53 iteration 1), so 20s buys 2-3 of the 25
+  # iterations max_iterations allows. The Captain asked "Any update?" -- a
+  # one-iteration question -- and it was promoted to a background task, because
+  # iteration 2 was still in flight when the budget expired.
+  #
+  # 40 lets a simple turn finish inline (~2 extra iterations) while staying
+  # inside the 60s DM TTL via the BF-705 clamp min(configured, remaining-margin).
+  # It deliberately does NOT try to fit the genuinely long work: the top-15-PyPI
+  # task measured 301,838 tokens over ~130s on 2026-08-07, which no budget
+  # inside a 60s TTL can hold. That one SHOULD promote -- the open defect is
+  # that the promoted run then never reports back, which is not this knob.
+  promote_to_task_after_seconds: 40
+
+  # AD-1230 (2026-08-10): hold a Captain DM the LLM was too degraded to answer
+  # and reply in the same thread once the model recovers. Turned on here because
+  # the condition it covers is routine and short -- the live reference case
+  # showed all five tiers cooling with 5s remaining, and BF-674 clocked a 48.8s
+  # proxy window. Before this, that turn was spent: BF-714 told the Captain
+  # honestly to send it again, which is correct behaviour for a promise the
+  # runtime could not keep, and unnecessary work for one it can.
+  #
+  # Only turns whose degrade the runtime could actually diagnose are held. An
+  # unreadable health status keeps the BF-714 resend wording, because a promise
+  # to retry needs evidence that a retry would land differently.
+  hold_degraded_turns: true
+# AD-1072: conversational-loop discovery + delegation tools. search_capabilities
+# lets an agent find what tools / skills / mesh-intents exist before using them
+# (read-only). delegate_task hands a bounded subtask to another crew agent BY
+# CALLSIGN and returns its result, routed through the same governed
+# WorkItemAgenticExecutor (depth-guarded against runaway fan-out). Both run
+# inside the AD-1065 loop above (require dm_agentic.enabled, set above).
+# AD-1172 (2026-07-31): a reported fault can reach a repair harness. Enabled on
+# this instance at the Captain's direction. The dispatcher only ever PROPOSES:
+# when a fault has recurred twice it files ONE approval carrying a
+# harness-neutral repair brief, and nothing is spent or written until the
+# Captain approves it and picks a target. Expect these in the approval inbox.
+#
+# `targets` is the list of harnesses offered. `architect` is the internal crew
+# (ArchitectAgent then BuilderAgent). Any other name is an external harness --
+# GitHub Copilot, Claude Code, a person -- reached by rendering the brief for
+# the Captain to carry across; external targets need no code, because the brief
+# IS the interface.
+repair:
+  enabled: true
+  targets:
+    - architect
+    - copilot
+  propose_after_occurrences: 2
+
+agentic_tools:
+  tool_search_enabled: true
+  delegation_enabled: true
+  delegation_max_depth: 1
+  delegation_max_iterations: 5
+  delegation_tier: standard
+  # --- Sigma epic (#1057), enabled 2026-07-26. All ship default-OFF. ---
+  # AD-1139: agents can READ the shared commons mid-task via the oracle_query
+  # tool. Sigma tiers only, never the sovereign episodic shard. Framing is
+  # carried inline so results arrive explained rather than just appearing.
+  oracle_query_enabled: true
+  # AD-1140: agents can WRITE findings back. There is no consensus gate on this
+  # path -- the bounds below ARE the control. Publish is additive and
+  # git-reversible, so the risk is volume, not irreversibility.
+  publish_finding_enabled: true
+  publish_finding_max_per_hour: 12          # per author
+  publish_finding_max_per_hour_ship: 40     # ship-wide; bounds RATE, not the
+                                            # 72h dedup-window population
+  publish_finding_max_content_chars: 4000   # == _RECORD_DOC_CHARS, so what you
+                                            # publish is what is discoverable
+  # AD-1141: the crew loop consults the commons before working and is nudged to
+  # publish after. A consult that finds nothing above min_score injects ZERO
+  # characters -- no header, no "commons was silent" note.
+  crew_sigma_context_enabled: true
+  crew_sigma_max_chars: 2000                # total injected per child
+  crew_sigma_max_entries: 4
+  crew_sigma_min_score: 0.35                # NOTE: a volume control, not a
+                                            # principled relevance threshold --
+                                            # Oracle tier scores are not
+                                            # normalised against each other
+  # --- AD-1153 (epic #1068), enabled 2026-07-26. Ships default-OFF. ---
+  # Offers the browser tool inside the agentic loop. Before this, BrowserTool
+  # was registered in the ToolRegistry but no agent could reach it -- there was
+  # no browser block in the offered tool_ids, so agents fell back to http_fetch
+  # or confabulated a verb.
+  #
+  # READ-ONLY: goto, state, extract_text, back, forward, wait. click/type/scroll
+  # are deliberately excluded and wait on the approval inbox below. The reason
+  # is specific: classify_action returns tier 2 for goto UNCONDITIONALLY before
+  # any URL inspection, destructive_url_patterns has zero readers on the tool
+  # path, and the tier-3 confirmation returns a SUCCESS-SHAPED no-op that a
+  # model reads as success and retries. The six offered actions never reach
+  # tier 3, so that broken gate is never consulted.
+  browser_enabled: true
+
+  # --- AD-1180, enabled 2026-08-01. Ships default-OFF. ---
+  # Composes the shared agentic disposition into the system prompt inside
+  # WorkItemAgenticExecutor.run, so it reaches EVERY path that hands an agent a
+  # tool array -- not just the Captain's 1:1 DM turn.
+  #
+  # AD-1177 authored that disposition (be resourceful, run_python is the
+  # general-purpose instrument, the tool array is authoritative, act inside your
+  # orders) and it reached exactly ONE of five callers. The other four -- the
+  # AD-856 task path, crew children, the AD-860 convergence re-run and AD-1072
+  # delegation -- pass the agent's STATIC instructions attribute straight
+  # through while receiving the same eleven-group tool array. They held every
+  # tool and were told nothing about using them.
+  #
+  # Turning this ON is a REAL behaviour change for crew children, verifier
+  # convergence and delegated sub-agents, by design: roughly 1,500 characters of
+  # disposition now precede their task. That is the point -- emergence and
+  # collaboration live in those paths, and they were the ones running blind.
+  #
+  # Budget note: crew_token_budget (AD-1142) is a HARD STOP that fails a child
+  # and blocks its dependents. It is unset here, so there is no ceiling for
+  # these characters to push a child over. If you ever set one, re-check this.
+  disposition_enabled: true
+
+approval_inbox:
+  # --- AD-1154 (epic #1068), enabled 2026-07-26. Ships default-OFF. ---
+  # Parks an unattended agent's consequential asks as a durable
+  # CapabilityRequest (kind="action") instead of acting or silently no-opping.
+  # Lands in the existing AD-853/855/857 surface -- the HXI capability-request
+  # panel and the Captain-DM notifier -- so it is somewhere with existing eyes
+  # rather than a new inbox nobody reads.
+  #
+  # IMPORTANT: approval is a DECISION, not a replay. The browser session is
+  # capped at 1800s against human latency, and replaying a page-relative
+  # selector against a changed page is a different act from the one approved.
+  # So approving a parked ask does NOT execute it. What it buys is a durable
+  # audit trail, a trust signal, and a standing rule that unblocks the NEXT run.
+  enabled: true
+
+  # The "don't ask again" lever, kept on a SEPARATE flag so the audit trail can
+  # be taken without the durable privilege. A standing rule converts "approved
+  # once" into "may do this shape of thing, in this scope, unattended" -- the
+  # TTL is enforced in the schema (NOT NULL) and there is no wildcard scope.
+  standing_rules_enabled: true
+  standing_rule_default_ttl_hours: 24
+  standing_rule_max_ttl_hours: 168
+  max_pending_per_agent: 20
+  pending_ask_ttl_hours: 72
+
 qa:
   enabled: true
   smoke_test_count: 5
@@ -441,6 +731,13 @@ records:
   auto_commit: true
   commit_debounce_seconds: 5.0
   max_episodes_per_hour: 20
+  # AD-1138 (Sigma epic #1057), enabled 2026-07-26. Ships default-OFF.
+  # Puts Ship's Records into the ChromaDB semantic index so the commons is
+  # discoverable by meaning rather than keyword overlap. Classification is
+  # enforced at QUERY time via a where-clause, so semantic search cannot become
+  # a bypass around records_store scope enforcement; records fail closed unless
+  # a scope is supplied. Keyword search remains as fallback.
+  semantic_index_enabled: true
   notebook_dedup_enabled: true
   notebook_similarity_threshold: 0.8
   notebook_staleness_hours: 72.0
@@ -926,20 +1223,66 @@ infrastructure:
   enabled: true
   backup_enabled: true
   backup_subdir: backups
+  # AD-1262: AD-466 wired BackupService but nothing ever called it. These
+  # drive the scheduler. Cadence x retention is a capacity decision: a full
+  # snapshot of this vessel is ~1.5 GB, so backup_max_total_bytes is the
+  # binding bound, not backup_retain_days.
+  backup_interval_seconds: 21600.0
+  backup_warmup_seconds: 120.0
+  backup_retain_days: 7
+  backup_max_total_bytes: 8589934592
+  backup_bulk_every_n: 4
+  backup_include_archive_root: true
 security_infra:
   secrets_persistence_enabled: true
   secrets_store_filename: secrets.json
   egress_enabled: true
   egress_deny_by_default: true
+  # BF-751 (2026-08-11): the allowlist had no operator surface, so the MCP
+  # bridge -- which consults this policy unconditionally -- could never reach
+  # any external server. Every host an MCP server is registered on must appear
+  # here or its tools are invisible to the whole crew.
+  egress_allowlist:
+    - 127.0.0.1
+    - localhost
+    - ::1
+    - learn.microsoft.com   # the Microsoft Learn MCP server
+    # 2026-08-14: the hosts of the four MCP servers added below to end the
+    # single-source monoculture. Each is a read-only documentation or code
+    # search surface, reached unauthenticated, and is here because we chose to
+    # register it -- not because the list was widened for convenience.
+    # Unauthenticated is NOT the same as leak-proof: tool ARGUMENTS still leave
+    # the vessel, so what a crew agent asks these servers is visible to them.
+    # Accepted deliberately for public documentation lookups.
+    - mcp.deepwiki.com      # deepwiki: GitHub repo docs + Q&A
+    - mcp.context7.com      # context7: version-pinned library docs
+    - mcp.grep.app          # grep-app: code search across public GitHub
+    # The web_search backends. Inert while egress_active_enforcement is false,
+    # but without them turning that flag on would silently kill search --
+    # exactly the BF-751 failure recorded above, one surface over.
+    - html.duckduckgo.com   # primary search backend
+    - api.marginalia.nu     # fallback search backend (BF-769)
   audit_enabled: true
   sandbox_enabled: true
   sandbox_default_wall_timeout_seconds: 30.0
   sandbox_default_memory_peak_mb: 256.0
   egress_active_enforcement: false
   credential_tier_enforcement: false
-  audit_persistence_enabled: false
+  # AD-1278 (BF-780): the per-execution audit record replaced a consensus gate,
+  # so it has to outlive the process. Durable-preferred, not durable-required --
+  # a sink that fails degrades the run to an in-memory record that labels
+  # itself, rather than refusing to execute.
+  audit_persistence_enabled: true
   audit_persistence_filename: audit_log.db
   audit_retention_days: 90
+  # AD-1278: memory bound on the in-process chain, not a retention policy. Only
+  # sink-confirmed entries are evicted, so with persistence off the list grows
+  # past this and logs pressure rather than destroying the only copy.
+  audit_max_entries: 10000
+  # AD-1278: shutdown's flush budget. Small on purpose -- the whole teardown
+  # gets 10s, and a drain that hangs shutdown is the worse defect.
+  audit_drain_timeout_s: 2.0
+  audit_write_queue_maxsize: 1000
 ground_truth:
   enabled: true
   threshold: 0.75
@@ -993,9 +1336,65 @@ mcp:
   management_enabled: true   # AD-1015+: runtime MCP server CRUD + AD-1019 per-agent access surface
   agent_tools_enabled: true  # AD-1019c: MCP tools agent-callable (tier-gated invoke)
   request_timeout_seconds: 30.0
-  servers: []
+  # 2026-08-11: first real MCP server. Chosen to exercise the bridge with the
+  # least possible risk -- streamable HTTP, publicly documented, and NO
+  # AUTHENTICATION, so BF-745 (auth lost on restart) cannot apply to it.
+  # CORRECTION 2026-08-14: this comment used to add "so nothing can leak".
+  # That is false. No credential is held, but the ARGUMENTS of every tool call
+  # still leave the ship -- what a crew agent asks is visible to the operator.
+  # Registered here rather than through the CRUD API because config servers
+  # register FIRST at boot and survive a fresh DB.
+  #
+  # Tools it exposes: doc search, fetch a full article, code-sample search.
+  # If this works end to end, the MCP path is proven and AD-1236's install
+  # rung has something real to reason about.
+  servers:
+    - type: http
+      url: https://learn.microsoft.com/api/mcp
+      # BF-750: names the store row, and so the id its grants are keyed by
+      # (mcp:microsoft-learn). Set BEFORE first seed -- changing it later
+      # creates a second row and orphans every grant issued against the first.
+      name: microsoft-learn
+    # 2026-08-14: microsoft-learn alone was a SOURCE MONOCULTURE. Asked to
+    # research LangChain Deep Agents, Ezri opened with microsoft_docs_search
+    # (twice, before any web search) and steered the queries toward Azure to
+    # fit the only reliable tool she had -- then cited Microsoft docs for a
+    # question about a non-Microsoft project. The fix is more surfaces, not a
+    # prompt telling her to prefer better ones she does not have.
+    #
+    # All three are streamable HTTP, unauthenticated, and verified through the
+    # PRODUCTION call path -- `MCPClient.list_tools()` with no preceding
+    # `initialize()`, which is what `MCPWorkbench._enumerate_tools` does.
+    # That distinction is load-bearing: huggingface.co answers a handshake-first
+    # probe with 4 tools and the production path with HTTP 400, so it is NOT
+    # registered here. Registering it would have added a server that contributes
+    # nothing and logs a degrade warning on every enumeration.
+    #
+    # MEASURED COST, corrected 2026-08-14: an earlier version of this comment
+    # claimed the offered tool block does not grow because only pulled adapters
+    # join it. That was wrong -- `agentic_dispatch` calls
+    # `preload_open_tools(limit=24)` every turn and auto-pulls every authorized
+    # OPEN tool. With these grants that is ~10 dispatch ids and a ~13.4k-char
+    # tool block per agentic turn, plus ~0.9s of sequential tools/list warmup.
+    # Accepted deliberately: the Captain asked for more sources, and a tool the
+    # agent cannot see is not a source.
+    - type: http
+      url: https://mcp.deepwiki.com/mcp
+      # Indexed docs + Q&A for any public GitHub repo. The tool that would
+      # have answered the question above from langchain-ai/deepagents itself.
+      name: deepwiki
+    - type: http
+      url: https://mcp.context7.com/mcp
+      # Version-pinned library/framework documentation.
+      name: context7
+    - type: http
+      url: https://mcp.grep.app
+      # Code search across public GitHub: how an API is actually called.
+      name: grep-app
 workstations:
   enabled: true   # AD-1022: HXI workstation-type registry (tiered OSS baseline / commercial overlay)
+os_activity:
+  enabled: true   # AD-1054: consent gate for the desktop OS-activity sensor (Airlock tier); metadata-only, local-only
 mcp_app_host:
   enabled: false
   serve_internal_games: true
@@ -1006,11 +1405,77 @@ mcp_app_host:
   bundles_dir: ''
 browser_tool:
   enabled: true
-  headless: true
+  # AD-1052a/c Stage 1: the Captain WATCHES and DRIVES the agent's browser
+  # through the HXI Browser Workstation. headless must be false so a real
+  # viewport exists for the MJPEG stream and for normalized-coord input mapping.
+  # streaming_enabled / input_forwarding_enabled are set at their canonical
+  # positions further down this block — duplicate keys here would be silently
+  # overridden by those (YAML last-key-wins).
+  headless: false
   default_timeout_ms: 30000
   session_max_duration_seconds: 1800
   session_reaper_interval_seconds: 60
-  domain_allowlist: null
+  # AD-1235 (2026-08-10): a bounded egress policy for the crew's browser.
+  #
+  # This was `null` — allow-all — and the AD-1153 warning said so at every
+  # boot. BF-743 then closed the floor beneath it (loopback, private ranges,
+  # file://, metadata hosts are refused whatever this says), but the floor
+  # cannot stop a NAME that resolves to a private address, and it has no
+  # opinion about the open internet. This list does.
+  #
+  # The rule used to choose entries: a site an agent needs to do the work the
+  # Captain asks for, weighted toward authored content over user-submitted.
+  # Prompt injection travels through page text, so every page an agent reads
+  # is a page that can address it — which is the real reason to keep this
+  # short rather than convenient. Suffix matching applies, so `github.com`
+  # covers `docs.github.com`.
+  #
+  # When something is refused, the reason appears in the log as "not in
+  # allowlist" with the host. Add it here rather than widening to null.
+  domain_allowlist:
+    # Source hosting and package registries
+    - github.com
+    - githubusercontent.com
+    - gitlab.com
+    - pypi.org
+    - pythonhosted.org
+    - npmjs.com
+    - crates.io
+    - nuget.org
+    - rubygems.org
+    - packagist.org
+    # First-party language and platform documentation
+    - python.org
+    - docs.rs
+    - readthedocs.io
+    - readthedocs.org
+    - developer.mozilla.org
+    # learn.microsoft.com, not microsoft.com — the parent domain is mostly
+    # marketing and sign-in pages, which is not what an agent needs.
+    - learn.microsoft.com
+    - go.dev            # covers pkg.go.dev by suffix
+    - rust-lang.org
+    - nodejs.org
+    - typescriptlang.org
+    - kubernetes.io
+    - docker.com
+    - postgresql.org
+    - sqlite.org
+    - nginx.org
+    - w3.org
+    - json-schema.org
+    - iana.org
+    # Agent and model ecosystem
+    - modelcontextprotocol.io
+    - docs.anthropic.com
+    - platform.openai.com
+    - huggingface.co
+    # Reference — higher injection surface, kept because refusing them costs
+    # the Captain real answers
+    - wikipedia.org
+    - arxiv.org
+    - stackoverflow.com
+    - stackexchange.com
   domain_denylist: []
   screenshot_max_width: 1024
   screenshot_max_height: 768
@@ -1031,10 +1496,11 @@ browser_tool:
   llm_classifier_cache_ttl_seconds: 300
   compute_use_max_consecutive_autonomous_actions: 5
   compute_use_max_per_session: 50
-  streaming_enabled: false
+  streaming_enabled: true          # AD-1052a Stage 1: MJPEG watch stream
   streaming_fps: 4
   streaming_jpeg_quality: 60
   streaming_max_concurrent_viewers: 4
+  input_forwarding_enabled: true   # AD-1052c Stage 1: the Captain drives the live page
   recording_enabled: false
   recording_dir: data/browser-sessions
   recording_retention_days: 7
@@ -1374,6 +1840,16 @@ communications:
   recreation_min_rank: ensign
   recall_interpretation_enabled: true   # AD-980a: agents can interpret recalled memories
   dream_interpretation_enabled: true    # AD-980c: agents can interpret their own dream
+  # AD-1081: agents drive the room Todo checklist (the AD-1080 senior-validation
+  # loop) via [TODOS] / [TODO_DONE n] / [TODO_CONFIRM n] / [TODO_REJECT n] tags.
+  room_todos_enabled: true
+  # Let the room facilitator (Lieutenant+, e.g. Ezri) confirm/complete todos —
+  # not just Commander+. Seeding stays open (room_todos_seed_min_rank=ensign).
+  room_todos_min_rank: lieutenant
+  # BF-647: python-docx (default) is markdown-aware (#headings, -bullets, **bold**)
+  # and needs no install. Set office_backend: libreoffice only if soffice is installed.
+  office_backend: python-docx
+  libreoffice_path: "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
 workforce:
   enabled: true
   tick_interval_seconds: 10.0
@@ -1541,7 +2017,33 @@ llm_rate:
   max_wait_seconds: 30.0
   cache_max_entries: 500
   per_agent_hourly_token_cap: 0
-  max_concurrent_calls: 6
+  # 2026-08-08: raised 6 -> 20 as immediate relief for a measured priority
+  # inversion. AD-637f classifies a Captain message as Priority.CRITICAL so it
+  # gets the reserved interactive slots -- but that classification lives on the
+  # NON-agentic path (cognitive_agent.py:3728). With dm_agentic.enabled the
+  # Captain's DM runs through AgenticLoop, which has NO priority concept at all
+  # (agentic_loop.py:875 calls complete(req) with no priority), so it defaults
+  # to NORMAL and lands in the shared background lane of
+  # max_concurrent_calls - interactive_reserved_slots = 4.
+  #
+  # Measured today: 80 agents generating 20-32 proactive/ward-room cognition
+  # events per minute all share those 4 slots. For "Are you still there?" the
+  # timeline was 12:12:38 agentic dispatch -> 12:12:49 iteration 1 returned a
+  # non-empty completion -> 12:12:58 promoted at the 20s budget. So the turn DID
+  # get a slot; it waited ~11s for one (a direct probe of the same proxy answers
+  # in ~1s), which left under 9s for the tool call iteration 1 requested and no
+  # room for iteration 2. An earlier version of this comment claimed the turn
+  # was promoted "before making a single LLM call" -- that was wrong, and the
+  # 12:12:49 line disproves it. The congestion is real; the mechanism is a slow
+  # first slot, not a missing one. The one run that completed (2026-08-07
+  # 20:46) started 38s after a cold boot, when the lane was empty.
+  #
+  # 20 leaves 18 background slots. This is relief, NOT the fix: BF-654's
+  # per-endpoint cap (max_inflight_per_endpoint, below) still bounds real
+  # transport concurrency, so this only shortens the queue -- it does not give
+  # the Captain priority. The fix is to thread priority through AgenticLoop so
+  # a Captain turn reaches the interactive lane it was already classified for.
+  max_concurrent_calls: 20
   interactive_reserved_slots: 2
 sub_task:
   enabled: true
@@ -1867,62 +2369,76 @@ agentic_dispatch:
   max_parallel_subtasks: 3
   max_convergence_rounds: 2
   orchestrator_enabled: true
-
-  # --- AD-1142: crew-child context compaction (all values are the defaults) ---
-  # Crew children previously had no compaction at all. max_iterations bounds
-  # TURNS, not BYTES, so with tool_result_max_chars at 0 a single turn is
-  # unbounded and ~24 of them will exhaust any context window.
-  # Compaction is best-effort: it warns once if still over and never raises.
-  crew_compaction_enabled: false
+  # AD-1142, enabled 2026-07-26. Ships default-OFF.
+  # Crew children previously had NO compaction at all -- max_iterations bounds
+  # TURNS, not BYTES, so with unbounded tool results one turn can blow the
+  # window. Compaction is best-effort: it warns once if still over budget and
+  # never raises. Note AD-1142 also fixed a defect where the trigger compared
+  # CUMULATIVE SPEND and latched on permanently, firing an extra fast-tier LLM
+  # call every remaining iteration; it now reads working-context occupancy.
+  crew_compaction_enabled: true
   crew_compaction_threshold_tokens: 60000
+  # --- AD-1155 (epic #1068), enabled 2026-07-26. Ships default-OFF. ---
+  # Re-invokes a crew child that stopped before finishing. The loop is the
+  # OUTERMOST decorator, so each iteration is a complete, independently
+  # governed run -- which is why it needs no checkpointing and no suspension.
+  #
+  # Only max_iterations is re-invokable. token_budget stays terminal (it is a
+  # spend ceiling, and overriding it would reverse AD-1142's deliberate mapping
+  # to failed) and so does error (usually window exhaustion, where the
+  # continuation makes task_text LONGER and re-running is counterproductive).
+  #
+  # WORST CASE with 2 iterations: 2 x 25 inner x 3 parallel tools = 150 tool
+  # invocations per child, before max_parallel_subtasks and convergence rounds.
+  # The cap is le=5; raising it multiplies all three.
+  crew_loop_until_done_enabled: true
+  crew_loop_until_done_max_iterations: 2
+  crew_loop_until_done_predicate: stopped_reason
+  # The open_todos predicate is deliberately NOT selected: the crew fan-out
+  # never writes a checklist (zero .steps references), and _all_steps_done([])
+  # returns False -- so a naive todo predicate would re-invoke EVERY child to
+  # the cap.
+  crew_loop_until_done_completion_marker: TASK COMPLETE
   # crew_token_budget: null
-  #   A HARD stop, and a different mechanism from the threshold above. Crossing
-  #   the threshold shrinks history; crossing the BUDGET fails the child and
-  #   leaves its dependents blocked. Unset by default.
+  #   Deliberately left unset. This is a HARD stop -- crossing it FAILS the
+  #   child and leaves its dependents blocked, which is different from the
+  #   threshold above (that only shrinks history). It was also inert until
+  #   BF-680, because the proxy reports zero tokens and the counter never grew;
+  #   it now works off a client-side estimate, so setting it would take real
+  #   effect for the first time. Choosing a spend ceiling is a policy call.
 
-# ---------------------------------------------------------------------------
-# Agentic-loop conversation mechanics (epic #1068).
-#
-# Every value below is the SHIPPED DEFAULT -- this block changes nothing. It
-# exists because these knobs were previously discoverable only by reading
-# src/probos/config.py, and one of them (tool_result_max_chars) carries real
-# exposure at its default. Edit to opt in.
-#
-# Full generated reference: docs/development/config-reference.md
-# ---------------------------------------------------------------------------
+# Agentic-loop conversation mechanics (epic #1068), enabled 2026-07-26.
+# This whole section was absent, so every knob below was at its default.
 agentic_loop:
   # AD-1146: send the provider a REAL multi-turn message array --
   # assistant.tool_calls followed by role:"tool" entries keyed by tool_call_id.
-  # OFF re-flattens the whole transcript into one user prompt every iteration
-  # and returns tool results as untagged user text.
-  structured_tool_messages: false
+  # With this off the loop re-flattens the entire transcript into one user
+  # prompt every iteration and returns tool results as untagged user text.
+  structured_tool_messages: true
 
   # AD-1147: run the read-only allowlisted tool calls of one response
   # concurrently. Mutating and unrecognised tools stay sequential -- an unknown
-  # tool is assumed unsafe. Results return in REQUEST order regardless of
+  # tool is assumed unsafe. Results are returned in REQUEST order regardless of
   # completion order, so the assistant turn stays aligned with its replies.
-  parallel_tool_calls_enabled: false
+  parallel_tool_calls_enabled: true
   max_parallel_tool_calls: 3
 
   # AD-1148: bound each tool result before it enters the message history.
-  #
-  # NOTE: 0 means UNBOUNDED. Combined with the turn-not-byte bound above, one
-  # large tool result can exhaust the context window. Setting this to 6000 caps
-  # the worst case at roughly 24 x 3 x 6000 = 108K tokens -- inside a 200K
-  # window, with no compaction LLM calls required. Head AND tail are preserved
-  # (many tools print their header first and their summary last), with a marker
-  # reporting how many characters were elided.
-  tool_result_max_chars: 0
+  # THIS IS THE ONE WITH REAL EXPOSURE AT ITS DEFAULT. Shipping 0 means
+  # unbounded, and max_iterations bounds turns rather than bytes -- so ~24 turns
+  # of large tool output blows any context window. 6000 caps the worst case at
+  # roughly 24 x 3 x 6000 = 108K tokens, comfortably inside a 200K window, with
+  # no compaction LLM calls needed. Head AND tail are preserved (many tools
+  # print their header first and their summary last) with a marker reporting
+  # how many characters were elided.
+  tool_result_max_chars: 6000
   tool_result_head_chars: 4000
   tool_result_tail_chars: 2000
 
-  # AD-1151: durable tool-output trace. DEFAULT-ON -- a documented carve-out
-  # from the default-OFF convention, because an audit trail that is off by
-  # default does not audit. 0 disables output persistence and yields a blob
-  # byte-identical to the pre-AD-1151 trace.
-  #
-  # This is clamped upward to at least tool_result_max_chars at resolve time,
-  # so the durable record can never hold less than the model already saw.
+  # AD-1151: durable tool-output trace. Already default-ON; pinned here for
+  # visibility. Must stay >= tool_result_max_chars or the audit record would
+  # hold less than the model already saw -- the resolver clamps upward to
+  # guarantee that, so 8192 wins over the 6000 above.
   tool_trace_output_max_chars: 8192
   tool_trace_max_bytes: 262144
 
@@ -1967,6 +2483,10 @@ group_chat:
   # zero-config boot keeps the AD-918 quiet-create behavior); this enables it
   # for the live system so an agent-started room actually starts talking.
   agent_initiated_kickoff_enabled: true
+  # AD-1079: when a Ward Room thread becomes a sustained multi-crew exchange,
+  # hint a Commander+ participant to convene a dedicated room (the "social
+  # spark"). Pydantic default False; enabled here for the live system.
+  escalation_suggestion_enabled: true
   # AD-963a: broadcast turn-mode terminator. A Captain turn that is a plural ask
   # to the whole room ("what do you all think?", "everyone, weigh in") lets EACH
   # crew participant answer once (round-robin, relevance-ordered, each seeing
@@ -1999,3 +2519,9 @@ desktop:
   quiet_hours_end: 08:00
   lock_file: ~/.probos/yeo.lock
   autostart_enabled: false
+grounding:
+  # AD-1119/1120/1121 cascade-confabulation prevention — enabled by the Captain 2026-07-09.
+  # The two behavioral flags below have no effect unless referent_gate_enabled is also true.
+  referent_gate_enabled: true               # AD-1119: resolve room-seed referents against ship ground truth (git / agent / ward-room) and log unresolved ones
+  ground_before_collaborate_enabled: true   # AD-1120: inject the honest-absence cue for an unresolved central referent so the crew closes it as "structurally unresolvable"
+  confab_probe_enabled: true                # AD-1121: context-free divergence probe on an unresolved central referent -> flag CASCADE_CONFAB + notify the Captain (best-effort, never auto-acts)

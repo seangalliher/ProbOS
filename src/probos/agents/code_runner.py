@@ -273,7 +273,7 @@ class CodeRunnerAgent(BaseAgent):
                 launch_outcome=launch,
             ))
             audit_attempted = True
-            self._auditor.record(
+            audit_outcome = self._auditor.record(
                 execution_id=execution_id,
                 agent_id=owner,
                 code=plan["code"],
@@ -283,20 +283,28 @@ class CodeRunnerAgent(BaseAgent):
                 error_type=("sandbox_error" if res.error else None),
                 launch_state=("launched" if launch.launched else "not_launched"),
             )
+            data: dict[str, Any] = {
+                "stdout": res.stdout,
+                "stderr": res.stderr,
+                "exit_code": res.exit_code,
+                "timed_out": res.timed_out,
+                "duration_ms": res.duration_ms,
+                "tier": res.tier,
+                "installed": packages,
+                "workspace": str(workdir),
+                "owner": owner,
+                "persistent": persistent,
+            }
+            # AD-1278: the same label the agentic path carries. Two execution
+            # paths with one record between them means two places that have to
+            # admit when the record will not survive the process. "queued" is
+            # the healthy path and is suppressed; changing only one of the two
+            # comparisons would label every healthy run on the other.
+            if audit_outcome and audit_outcome != "queued":
+                data["audit"] = audit_outcome
             return {
                 "success": res.success,
-                "data": {
-                    "stdout": res.stdout,
-                    "stderr": res.stderr,
-                    "exit_code": res.exit_code,
-                    "timed_out": res.timed_out,
-                    "duration_ms": res.duration_ms,
-                    "tier": res.tier,
-                    "installed": packages,
-                    "workspace": str(workdir),
-                    "owner": owner,
-                    "persistent": persistent,
-                },
+                "data": data,
                 "error": res.error or None,
             }
         finally:

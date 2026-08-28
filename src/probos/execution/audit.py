@@ -63,6 +63,12 @@ AUDIT_DETAIL_ALLOWLIST: frozenset[str] = frozenset({
     "artifact_count",
     "fetch_broker",
     "error_type",
+    # AD-1278: whether this record was ADMITTED to the durable stream --
+    # "queued" or "memory-only". Deliberately not "durable": a record cannot
+    # attest its own durability, because it is written before the writer
+    # commits. What attests durability is the presence of its row in SQLite,
+    # and that evidence lives in the DB rather than in the record.
+    "stream",
 })
 
 # AD-1247: how long the abnormal path waits for the executor thread to answer
@@ -109,7 +115,7 @@ class ExecutionAuditor:
         artifact_count: int | None = None,
         fetch_broker: bool = False,
         error_type: str | None = None,
-    ) -> None:
+    ) -> str:
         """Record an execution attempt against the accountability trail (AD-1247).
 
         BF-763 established that the agentic ``run_python`` path has no quorum
@@ -119,6 +125,37 @@ class ExecutionAuditor:
         record is what an unattended agent pays instead, so it is not
         decoration: it is the control that makes the capability defensible
         (Design Principle #13).
+
+        AD-1278 states that control's limit rather than leaving it implied: it
+        is durable-PREFERRED, not durable-required. With the sink absent, its
+        durable stream ended, or shutdown torn down before the writer flushed,
+        the run still happens and the record is best-effort -- in memory only,
+        and gone at process exit. Requiring a durable sink would not fix that
+        (the losses happen AFTER a successful append) and would buy the
+        appearance of a guarantee at real availability cost.
+
+        So this method returns what it can actually OBSERVE -- admission to the
+        durable stream -- and never durability, which is decided later by a
+        writer this synchronous call does not wait for:
+
+        * ``"queued"`` -- accepted into an open durable stream. The healthy
+          path; callers suppress it.
+        * ``"in-memory-only"`` -- there is no durable stream: persistence off,
+          the stream ended after repeated sink failures, or the writer closed.
+          This record dies at process exit.
+        * ``"absent"`` -- there is no audit sink at all.
+        * ``"unconfirmed"`` -- the append raised; the sink may or may not hold it.
+        * ``""`` -- ``launch_state`` says nothing ran, so no record was written.
+
+        Waiting for the commit was considered and rejected: it would couple
+        every execution's latency to a disk write and contradict the swallow
+        below. Amending the label afterwards is impossible -- the result has
+        already been returned. What covers a run that was queued and then died
+        in an abandoned batch is that the stream ENDS rather than skipping, and
+        the ERROR names the sequence.
+
+        A run with no durable trail has to say so where a reader looks, not only
+        in a log line nobody reads.
 
         ``launch_state`` must come from the sandbox's launch outcome, never
         from the caller's intent. ``"launched"`` means a child was confirmed to
@@ -136,7 +173,7 @@ class ExecutionAuditor:
         duplicate.
         """
         if launch_state not in ("launched", "unknown"):
-            return
+            return ""
         audit = getattr(self._runtime, "audit_log", None)
         if audit is None:
             # AD-1247 acceptance 6: the sink is gated by
@@ -153,11 +190,19 @@ class ExecutionAuditor:
                     "any that follow leave no accountability record. Execution "
                     "is unaffected; enable audit to restore the trail.",
                 )
-            return
+            return "absent"
+        # Read BEFORE the append and from the sink itself: the answer has to be
+        # inside the record as well as returned to the caller, and a sink that
+        # predates AD-1278 (or a double) answers no. It reports ADMISSION, not
+        # commitment -- claiming disk from a call that returns before the writer
+        # touches it is the failure this whole AD exists to stop.
+        predicate = getattr(audit, "durable_stream_open", None)
+        stream_open = bool(predicate()) if callable(predicate) else False
         detail: dict[str, Any] = {
             "execution_id": execution_id,
             "agent_id": agent_id or "unknown",
             "launch_state": launch_state,
+            "stream": "queued" if stream_open else "memory-only",
             "code_sha256": hashlib.sha256(code.encode("utf-8", "replace")).hexdigest(),
             "code_chars": len(code),
             "timeout_seconds": float(timeout_seconds),
@@ -200,3 +245,5 @@ class ExecutionAuditor:
                 "raising",
                 agent_id, execution_id, exc_info=True,
             )
+            return "unconfirmed"
+        return "queued" if stream_open else "in-memory-only"

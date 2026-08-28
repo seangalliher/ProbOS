@@ -207,3 +207,159 @@ class TestScratchDirIsNotDescribedAsTheNormalCase:
         from probos.config import ExecutionConfig
 
         assert ExecutionConfig().persistent_workspaces is True
+
+
+# ===========================================================================
+# AD-1278 / BF-780 -- three more of the same class, found by #1243
+# ===========================================================================
+#
+# Same defect and same remedy as everything above: prose asserting a property
+# the code does not provide. Each was verified unhedged at HEAD 7edf309e before
+# being touched, and each is corrected in the SAME change as the behaviour it
+# describes -- a docstring promising durability the code has not got yet is the
+# identical defect pointing the other way.
+
+EXECUTION_AUDIT = "src/probos/execution/audit.py"
+SECURITY_AUDIT = "src/probos/security/audit.py"
+SHUTDOWN = "src/probos/startup/shutdown.py"
+
+
+def test_the_premise_that_the_ad1278_files_are_readable() -> None:
+    """The assertions below are vacuous against an empty string."""
+    assert len(_text(EXECUTION_AUDIT)) > 3000
+    assert len(_text(SECURITY_AUDIT)) > 3000
+    assert len(_text(SHUTDOWN)) > 5000
+
+
+class TestTheExecutionRecordDoesNotClaimMoreThanBestEffort:
+    """``record``'s docstring called itself "the control that makes the
+    capability defensible" with nothing anywhere in the module hedging it.
+
+    Verified at the time: a grep for ``best.effort|may be lost|not durable|
+    process exit|in-memory`` across the module returned ZERO hits. The AD-1247
+    warning is honest about the sink being ABSENT and says nothing about a
+    PRESENT sink being non-durable, which is the case #1243 measured.
+    """
+
+    def test_the_control_claim_is_still_made(self) -> None:
+        """The claim is CORRECT and load-bearing -- BF-763 traded a quorum gate
+        for it. Deleting it would be the wrong fix, so the guard pins that it
+        survives rather than that it is gone."""
+        source = _text(EXECUTION_AUDIT)
+
+        assert "it is the control that makes the capability defensible" in source
+
+    def test_the_limit_is_now_stated_beside_it(self) -> None:
+        source = _text(EXECUTION_AUDIT)
+
+        assert "durable-PREFERRED, not durable-required" in source
+        assert "best-effort" in source
+
+    def test_the_module_no_longer_has_zero_hedges(self) -> None:
+        """The exact enumeration #1243 ran, inverted.
+
+        A phrase-presence check alone could pass on a module that still claims
+        durability everywhere else; this reproduces the measurement that found
+        the defect.
+        """
+        import re
+
+        hedge = re.compile(
+            r"best.effort|may be lost|not durable|process exit|in memory only",
+            re.IGNORECASE,
+        )
+        assert hedge.search(_text(EXECUTION_AUDIT)) is not None
+
+
+class TestTheAuditModuleDoesNotStillSayPersistenceIsDeferred:
+    """``security/audit.py``'s module docstring said "v1 in-memory only ...
+    Persistence to SQLite deferred to AD-456d" while ``AuditLogPersistence``
+    sat 130 lines below it."""
+
+    def test_the_false_claim_is_gone(self) -> None:
+        source = _text(SECURITY_AUDIT)
+
+        assert "v1 in-memory only" not in source
+        assert "Persistence to SQLite deferred to AD-456d" not in source
+        # AD-456d's own docstring said its stop() was unwired. AD-1278 wired it.
+        assert "NOT wired into runtime shutdown in v1" not in source
+
+    def test_the_correction_is_present(self) -> None:
+        source = _text(SECURITY_AUDIT)
+
+        assert "Durability is preferred, not required" in source
+        assert "Truncation is not tampering" in source
+
+    def test_the_wiring_the_correction_depends_on(self) -> None:
+        """The corrected prose says shutdown flushes the writer. If that call
+        disappears the prose is wrong again, and this is what says so."""
+        source = _text(SHUTDOWN)
+
+        assert "await _drain_audit_log(runtime)" in source
+
+
+class TestTheSchemaCommentDoesNotClaimLenBasedSequencing:
+    """The ``audit_log`` schema comment said ``sequence`` was "already
+    monotonic per ``len(self.entries)``-based assignment in ``AuditLog.append``".
+
+    False from the moment AD-1278 introduced ``_next_sequence``, whose own
+    comment 130 lines above says the opposite: eviction breaks that identity,
+    and a rewound sequence would collide with a persisted row. Two comments in
+    one file contradicting each other is worse than either alone, because a
+    reader cannot tell which one the code follows.
+    """
+
+    def test_the_false_claim_is_gone(self) -> None:
+        assert "``len(self.entries)``-based assignment" not in _text(SECURITY_AUDIT)
+
+    def test_the_correction_is_present(self) -> None:
+        """Presence, not absence -- an emptied comment would pass a
+        deletion-only check while telling a reader nothing."""
+        source = _text(SECURITY_AUDIT)
+
+        assert "assigns it monotonically and never" in source
+        assert "deliberately NOT from ``len(self.entries)``" in source
+
+    def test_the_code_the_correction_describes(self) -> None:
+        """Read from the implementation rather than restated, so a change to
+        the sequencing fails here instead of leaving a second false claim."""
+        from probos.security.audit import AuditLog
+
+        log = AuditLog(max_entries=2)
+        for i in range(6):
+            log.append(category="evt", detail=f"e-{i}")
+
+        assert len(log.entries) == 2
+        assert log.append(category="evt", detail="next").sequence == 6
+
+
+class TestShutdownReportsTheRealOuterTimeout:
+    """``shutdown.py`` said "__main__.py enforces a 5s timeout on stop()".
+
+    It is 10s (``__main__.py:653`` and ``:938``); the 5s at ``:928`` bounds
+    ``adapter.stop()``, a different call. The number matters because the whole
+    teardown budget is what bounds the AD-1278 audit drain.
+    """
+
+    def test_the_false_claim_is_gone(self) -> None:
+        assert "enforces a 5s timeout on stop()" not in _text(SHUTDOWN)
+
+    def test_the_correction_is_present(self) -> None:
+        assert "enforces a 10s timeout on stop()" in _text(SHUTDOWN)
+
+    def test_the_number_the_correction_depends_on(self) -> None:
+        """Read from ``__main__.py`` rather than restated, so a change to the
+        real budget fails here instead of leaving a second false claim."""
+        import re
+
+        source = _text("src/probos/__main__.py")
+
+        stops = re.findall(
+            r"asyncio\.wait_for\(runtime\.stop\(.{0,80}?\), timeout=(\d+)",
+            source,
+        )
+        assert stops == ["10", "10"], stops
+        # The 5s in the same file bounds `adapter.stop()`, which is what the
+        # old comment had confused it with.
+        assert "asyncio.wait_for(adapter.stop(), timeout=5)" in source
+

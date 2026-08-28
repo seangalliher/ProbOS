@@ -55,7 +55,12 @@ def test_auditlog_constructs_without_persistence_unchanged() -> None:
     """
     log, emit = _make_log(with_emit=True)
     assert log._persistence is None
-    assert log._pending_writes == set()
+    # AD-1278 retired the `_pending_writes` task set (one task per append) for a
+    # single bounded queue. Repointed rather than deleted: what this pins is
+    # "nothing is scheduled without persistence attached", which the queue
+    # staying unbuilt says just as exactly.
+    assert log._queue is None
+    assert log._writer_task is None
 
     e = log.append(category="auth", detail="login user=alice")
 
@@ -76,9 +81,10 @@ def test_attach_persistence_sets_field_no_other_side_effects() -> None:
     log.attach_persistence(fake_persistence)
 
     assert log._persistence is fake_persistence
-    # No other side effects — entries unchanged, pending_writes still empty.
+    # No other side effects — entries unchanged, no writer stood up.
     assert log.entries == []
-    assert log._pending_writes == set()
+    assert log._queue is None
+    assert log._writer_task is None
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +185,12 @@ async def test_load_entries_returns_rows_in_sequence_order(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_append_with_persistence_attached_persists_via_task(tmp_path: Path) -> None:
-    """AuditLog.append schedules a fire-and-forget persist task when a
-    running loop is present; awaiting _pending_writes synchronises.
+    """AuditLog.append enqueues for the single writer when a running loop is
+    present; ``flush()`` synchronises.
+
+    AD-1278 repointed this from ``_pending_writes``: the append no longer mints
+    a task per entry, so "exactly one task was scheduled" became "exactly one
+    entry is queued and exactly one writer exists".
     """
     persistence, _ = _make_persistence(tmp_path)
     await persistence.start()
@@ -189,17 +199,14 @@ async def test_append_with_persistence_attached_persists_via_task(tmp_path: Path
         log.attach_persistence(persistence)
 
         log.append(category="auth", detail="login user=carol")
-        # Must have scheduled exactly one task.
-        assert len(log._pending_writes) == 1
+        assert log._queue is not None
+        assert log._queue.qsize() == 1
+        assert log._writer_task is not None
 
-        # Synchronise — gather drains the set as tasks complete (via
-        # add_done_callback). Snapshot first so iteration is stable.
-        pending = list(log._pending_writes)
-        await asyncio.gather(*pending)
+        await log.flush()
 
         assert await persistence.count() == 1
-        # done_callback drained the set.
-        assert log._pending_writes == set()
+        assert log._queue.qsize() == 0
     finally:
         await persistence.stop()
 
@@ -218,7 +225,7 @@ def test_append_without_running_loop_is_silent_noop_with_debug_log(
     e = log.append(category="auth", detail="login user=dave")
 
     assert isinstance(e, AuditEntry)
-    assert log._pending_writes == set()
+    assert log._queue is None
     fake_persistence.persist_entry.assert_not_called()
     assert any(
         "without running loop" in rec.message
@@ -227,11 +234,12 @@ def test_append_without_running_loop_is_silent_noop_with_debug_log(
 
 
 def test_append_without_persistence_is_unchanged_sync_noop() -> None:
-    """No persistence attached → no task scheduling, no warning, _pending_writes empty."""
+    """No persistence attached → no writer stood up, no queue, no warning."""
     log, _ = _make_log(with_emit=False)
     e = log.append(category="auth", detail="login user=eve")
     assert isinstance(e, AuditEntry)
-    assert log._pending_writes == set()
+    assert log._queue is None
+    assert log._writer_task is None
     assert log._persistence is None
 
 
@@ -328,7 +336,7 @@ async def test_rehydrate_extend_then_verify_chain_intact(tmp_path: Path) -> None
     log_1.attach_persistence(persistence_1)
     for i in range(3):
         log_1.append(category="evt", detail=f"item-{i}")
-    await asyncio.gather(*list(log_1._pending_writes))
+    await log_1.flush()
     assert await persistence_1.count() == 3
     await persistence_1.stop()
 
@@ -366,7 +374,7 @@ async def test_rehydrate_after_db_tamper_verify_chain_false(tmp_path: Path) -> N
     log_1.attach_persistence(persistence_1)
     for i in range(3):
         log_1.append(category="evt", detail=f"item-{i}")
-    await asyncio.gather(*list(log_1._pending_writes))
+    await log_1.flush()
     # Tamper the middle row's detail without recomputing hash.
     await persistence_1._db.execute(
         "UPDATE audit_log SET detail = ? WHERE sequence = 1",
