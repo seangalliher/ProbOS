@@ -35,7 +35,7 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-28T22:34:55+00:00 at `10017e33` | 2412 subjects, 955 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-28T23:37:15+00:00 at `49574ea8` | 2414 subjects, 956 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-08-26T00:37:20+00:00 | 1324 issues, 909 numbers |
@@ -46,15 +46,15 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 87 | 29 | assigned, issue open, no shipped code |
+| `allocated-open` | 87 | 28 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 7 | 1 | abandoned, number **not** reusable |
-| `shipped` | 912 | 497 | code in history |
+| `shipped` | 912 | 498 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-116 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+115 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -161,7 +161,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `BF-813` | [#1277](https://github.com/seangalliher/ProbOS/issues/1277) | issue #1277 open, no code | BF-813: three consumers must be fixed before the remaining BF-790 opt-ins can land |
 | `BF-811` | [#1275](https://github.com/seangalliher/ProbOS/issues/1275) | issue #1275 open, no code | BF-811: the Dispatcher's delegating arm trusts an unenforced prerequisite |
 | `BF-809` | [#1273](https://github.com/seangalliher/ProbOS/issues/1273) | issue #1273 open, no code | BF-809: the AD-272 decision cache keys on a per-cycle correlation_id, so it may never hit |
-| `BF-806` | [#1270](https://github.com/seangalliher/ProbOS/issues/1270) | issue #1270 open, no code | BF-806: seven model-authored thread writers still bypass the reply egress |
 | `BF-803` | [#1267](https://github.com/seangalliher/ProbOS/issues/1267) | issue #1267 open, no code | BF-803: Gmail marks messages Seen before processing, so a failure is at-most-once |
 | `BF-795` | [#1259](https://github.com/seangalliher/ProbOS/issues/1259) | issue #1259 open, no code | BF-795: episodic memory stores the pre-disclosure reply text |
 | `BF-794` | [#1258](https://github.com/seangalliher/ProbOS/issues/1258) | issue #1258 open, no code | BF-794: Telegram adapter chunking can split a reply mid-disclosure |
@@ -202,7 +201,7 @@ _(none)_
 
 **AD** (912): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180-1182, 1184, 1201, 1203-1204, 1209-1211, 1217-1223, 1226-1227, 1230-1235, 1239, 1247-1248, 1257, 1267, 1269, 1271, 1273-1282
 
-**BF** (497): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-686, 688, 690-740, 742-755, 757-766, 768-778, 780-792, 796-802, 805, 807-808, 810, 812, 815-816, 819-820, 822-836, 840, 842, 847-848, 850, 852-857, 859-860
+**BF** (498): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-686, 688, 690-740, 742-755, 757-766, 768-778, 780-792, 796-802, 805-808, 810, 812, 815-816, 819-820, 822-836, 840, 842, 847-848, 850, 852-857, 859-860
 
 ## Unaccounted — silent, **not** free
 
@@ -355,6 +354,7 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `BF-787` — code is in history but [#1251](https://github.com/seangalliher/ProbOS/issues/1251) is still open.
 - `BF-789` — code is in history but [#1253](https://github.com/seangalliher/ProbOS/issues/1253) is still open.
 - `BF-790` — code is in history but [#1254](https://github.com/seangalliher/ProbOS/issues/1254), [#1277](https://github.com/seangalliher/ProbOS/issues/1277) is still open.
+- `BF-806` — code is in history but [#1270](https://github.com/seangalliher/ProbOS/issues/1270) is still open.
 - `BF-822` — code is in history but [#1286](https://github.com/seangalliher/ProbOS/issues/1286) is still open.
 - `BF-823` — code is in history but [#1287](https://github.com/seangalliher/ProbOS/issues/1287) is still open.
 - `BF-824` — code is in history but [#1316](https://github.com/seangalliher/ProbOS/issues/1316) is still open.
@@ -367,8 +367,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1005 head-shaped line yielded no AD/BF token
-PROGRESS.md:1011 head-shaped line yielded no AD/BF token
+PROGRESS.md:1007 head-shaped line yielded no AD/BF token
+PROGRESS.md:1013 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token

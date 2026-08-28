@@ -14,14 +14,24 @@ So the transformations live here, in one function, rather than being repeated at
 each bypass. A new bypass path gets them by calling one thing, and a fourth
 marker is added in one place.
 
-**This module does not by itself make the transcript marker-free, and must not
-be described as though it does.** Adversarial review enumerated the agent-role
-writers into ``ChatThreadStore.append_message`` and found NINE model-authored
-sinks, not two; it reached the work-item acknowledgement path and got a stored
-body still carrying both markers. Two are wired to this function
-(``turn_promotion``, ``deferred_turns``); the rest are tracked separately.
-``tests/test_bf791_bf792_bypass_egress.py`` pins that list so a new sink has to
-choose rather than inherit the gap.
+AD-1275 (BF-806, #1270) moved the *application* of that function to the sink.
+Adversarial review had enumerated the writers into ``ChatThreadStore`` and found
+NINE model-authored ones, not two; per-path fixing had already failed three
+times, and a hand-maintained list of "which paths owe this" cannot tell a
+correct classification from a lazy one. ``ChatThreadStore.append_message_once``
+now composes every ``role == "agent"`` row, which covers all of them at once and
+covers writers that do not exist yet. The discriminator is sound because ``role``
+is a required, closed-set, sink-validated parameter -- the store reads the role
+and never sniffs the body, so marker-shaped text the Captain actually typed is
+stored byte-identically.
+
+There is exactly ONE producer-side obligation left, and it is measured rather
+than assumed: ``cognitive_agent`` posts a model-reachable body (a work-item
+title/description, which agents author) as ``role="captain"``. The sink cannot
+distinguish that row from a real Captain message, so it composes at the producer.
+``tests/test_bf791_bf792_bypass_egress.py`` pins both halves -- the writer
+enumeration, and that the sink module itself references this function -- so a new
+sink has to choose rather than inherit the gap.
 
 Deliberately store-free and synchronous. The pipeline's A2UI step persists each
 spec as an artifact and leaves a stub the HXI renders as an interactive widget;
@@ -53,6 +63,15 @@ logger = logging.getLogger(__name__)
 UNRENDERABLE_NOTE = (
     "(An interactive prompt could not be displayed here. "
     "Ask me to restate it.)"
+)
+
+#: AD-1275: stored when a non-empty ``role="agent"`` body was nothing but
+#: markers. The sink must not insert a blank bubble, and must not return
+#: ``None`` -- ``crew_executor`` reads that as a missing thread and reports a
+#: false error. Producers with their own empty-reply wording still win, because
+#: they compose before they reach the store; this only covers those that do not.
+EMPTY_AFTER_COMPOSITION_NOTE = (
+    "(This reply carried only protocol markers and no readable content.)"
 )
 
 _MARKER_PROBE = re.compile(r"\[A2UI\]|<intent\s+emotion", re.IGNORECASE)

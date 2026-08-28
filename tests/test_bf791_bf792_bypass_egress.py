@@ -5,6 +5,14 @@ promotion report and the AD-1230 deferred replay. The matrix below is the point
 of the file: BOTH markers are checked on BOTH paths, because the defect being
 closed is that BF-702 fixed one marker on one path and the other three cells
 stayed open for three releases.
+
+AD-1275 (BF-806, #1270) retired that per-path framing for everything except one
+measured exemption: ``ChatThreadStore.append_message_once`` now composes every
+``role == "agent"`` row, so the writers below are covered by the sink rather
+than each owing the call. The classification sets and the enumeration scan stay,
+because a new writer must still be *classified* -- and because "covered by the
+sink" is a claim that needs its own assertion, which is
+``test_the_sink_itself_references_the_composition``.
 """
 
 from __future__ import annotations
@@ -293,31 +301,44 @@ def test_both_bypass_modules_share_one_composition() -> None:
     assert deferred_turns.compose_bypass_reply is compose_bypass_reply
 
 
-# ── the sinks this does NOT cover, enumerated so they cannot be forgotten ────
+# ── who owes the composition, and who the sink covers ───────────────────────
 
-#: Direct writers wired to ``compose_bypass_reply``.
+#: AD-1275 (BF-806): modules that must compose at the PRODUCER, because their
+#: row is model-authored but does not wear ``role="agent"`` and the sink
+#: therefore cannot see it.
 #:
-#: ``deferred_turns`` is composed too but is NOT here: it posts through an
-#: injected callable rather than touching the store, so it does not appear in a
-#: scan for the call. ``test_both_bypass_modules_share_one_composition`` is what
-#: covers it. That asymmetry is worth stating -- a scan for the sink call is not
-#: a scan for the paths that reach it.
+#: There is exactly one, and it is measured rather than assumed:
+#: ``cognitive_agent`` posts a work-item title/description -- which agents
+#: author -- as ``role="captain"``. That row is indistinguishable at the store
+#: from a message the Captain typed, so no sink rule can clean it without also
+#: rewriting genuine Captain text, which is the corruption we refuse.
+#:
+#: ``turn_promotion`` is deliberately NOT here any more. It writes
+#: ``role="agent"``, so the sink covers it; its own call is now a producer-side
+#: choice about empty-reply wording, and
+#: ``test_both_bypass_modules_share_one_composition`` is what pins that it still
+#: reaches the same function. ``deferred_turns`` was never here -- it posts
+#: through an injected callable rather than touching the store, so it does not
+#: appear in a scan for the call at all. That asymmetry is worth stating: a scan
+#: for the sink call is not a scan for the paths that reach it.
 _COMPOSED_SINKS = {
-    "probos/cognitive/turn_promotion.py",
+    "probos/cognitive/cognitive_agent.py",
 }
 
 #: Every other module that appends into a chat thread, measured rather than
-#: recalled. Mixed on purpose: some are Captain/system/API rows where marker-
-#: looking text may be intentional user content and composing would be wrong;
-#: others are model-authored replies with the same gap this module closes for
-#: two paths. Review reached the ``cognitive_agent`` work-item acknowledgement
-#: and got a stored body carrying BOTH markers.
+#: recalled. Mixed on purpose, and the classification is now cheap to justify:
+#: their ``role="agent"`` rows are composed by
+#: ``ChatThreadStore.append_message_once``, and their ``captain``/``system`` rows
+#: are stored byte-identically because marker-shaped text there may be
+#: intentional user content.
 #:
-#: The point of listing them is that the gap is counted, not that every entry
-#: should be composed.
+#: Membership still has to be earned -- being here means "the sink covers this,
+#: or it is exempt because its rows are not model-authored", not "nobody
+#: checked". The assertion below that the sink module itself references the
+#: composition is what turns that sentence into a checked claim.
 _OTHER_SINKS = {
-    "probos/cognitive/cognitive_agent.py",
     "probos/cognitive/crew_executor.py",
+    "probos/cognitive/turn_promotion.py",
     "probos/proactive.py",
     "probos/routers/agents.py",
     "probos/routers/chat.py",
@@ -327,6 +348,10 @@ _OTHER_SINKS = {
     "probos/threads/__init__.py",
     "probos/threads/agent_group_chat.py",
 }
+
+#: The sink itself. Named separately because the whole "``_OTHER_SINKS`` is
+#: covered" claim rests on it.
+_THE_SINK = "probos/threads/__init__.py"
 
 
 def test_the_set_of_thread_writers_is_the_one_that_was_enumerated() -> None:
@@ -373,3 +398,27 @@ def test_the_composed_sinks_actually_import_the_composition() -> None:
             f"{rel} is listed as a composed sink but does not reference "
             "compose_bypass_reply"
         )
+
+
+def test_the_sink_itself_references_the_composition() -> None:
+    """AD-1275: without this, the whole file passes with the fix deleted.
+
+    ``_OTHER_SINKS`` claims its members are covered *by the sink*. That claim is
+    only worth anything while the sink actually applies the composition -- and
+    the two tests above cannot see it, because one scans for ``append_message``
+    call sites (which survive) and the other only walks ``_COMPOSED_SINKS``
+    (which does not contain the store). Delete the ``append_message_once`` edit
+    and this is the assertion that goes red instead of the file going quietly
+    green over a claim that stopped being true.
+    """
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "src"
+    text = (src / _THE_SINK).read_text(encoding="utf-8")
+    assert "compose_bypass_reply" in text, (
+        f"{_THE_SINK} no longer references compose_bypass_reply, so the "
+        "'covered by the sink' classification of _OTHER_SINKS is false"
+    )
+    assert _THE_SINK in _OTHER_SINKS, (
+        "the sink must stay classified alongside the writers it covers"
+    )

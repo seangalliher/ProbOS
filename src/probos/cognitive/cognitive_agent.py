@@ -1974,6 +1974,26 @@ class CognitiveAgent(BaseAgent):
         thread = None
         thread_store = getattr(runtime, "chat_thread_store", None) if runtime else None
         if thread_store is not None:
+            # AD-1275 (BF-806): the only model-reachable body in the tree that
+            # wears a non-agent role. `title`/`description` come from the work
+            # item, and agents create work items -- but this row is stored as
+            # `role="captain"`, so the sink's agent-role rule cannot see it.
+            #
+            # SCOPE, stated because review measured it and the first version of
+            # this comment overclaimed: the Captain can also create work items
+            # (`routers/workforce.py` -> `work_item_router`), so a Captain who
+            # types marker-shaped text into a title or description WILL have it
+            # composed here. What is protected byte-identically is Captain CHAT
+            # input, which the sink never touches. Distinguishing the two needs
+            # provenance on the work item that does not exist yet; until it
+            # does, this errs toward stripping a marker the Captain typed into
+            # a work item rather than rendering an agent's marker at them.
+            #
+            # Composed outside the try below so a broken import fails loudly
+            # instead of degrading to the leak it exists to fix.
+            from probos.cognitive.dm.bypass_egress import compose_bypass_reply
+
+            task_body = compose_bypass_reply(task_text)
             try:
                 _title = getattr(self, "callsign", "") or self.agent_type
                 thread = thread_store.get_or_create_default_for_agent(self.id, _title)
@@ -1981,7 +2001,7 @@ class CognitiveAgent(BaseAgent):
                     thread.id,
                     author_id="captain",
                     role="captain",
-                    body=task_text,
+                    body=task_body,
                     metadata={
                         "work_item_id": work_item_id,
                         "source": "work_item_dispatch",

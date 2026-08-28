@@ -1306,6 +1306,40 @@ class ChatThreadStore:
         ):
             raise ValueError("chat_thread_message_invalid")
         timestamp = float(created_at)
+
+        # AD-1275 (BF-806): the model-authored egress contract is enforced here
+        # because this is the only INSERT into chat_thread_messages, and `role`
+        # is a required, closed-set, validated argument -- so the store reads the
+        # author's role rather than inferring provenance from the body. A
+        # `captain` or `system` row is stored byte-identically even when it looks
+        # like protocol framing; sniffing the body is what would corrupt text the
+        # Captain actually typed. Per-producer composition is the option that
+        # already failed three times (BF-702, BF-791, BF-792).
+        #
+        # Function-scope import on purpose: this module's declared dependencies
+        # are stdlib-only, and a module-scope edge would make persistence import
+        # cognitive and pull `a2ui` into every process that opens a thread store.
+        # Same idiom as `suggest_title` above. No try/except -- a failure here is
+        # a programming error, and degrading to "store it raw" would reinstate
+        # the defect while every producer's own `except Exception` hid it.
+        if role == "agent" and body:
+            from probos.cognitive.dm.bypass_egress import (
+                EMPTY_AFTER_COMPOSITION_NOTE,
+                compose_bypass_reply,
+            )
+
+            composed = compose_bypass_reply(body)
+            if not composed:
+                logger.warning(
+                    "AD-1275: agent %s posted a body to thread %s that was "
+                    "nothing but protocol markers; storing the placeholder note "
+                    "rather than a blank message",
+                    author_id,
+                    thread_id,
+                )
+                composed = EMPTY_AFTER_COMPOSITION_NOTE
+            body = composed
+
         message_metadata = dict(metadata or {})
         try:
             metadata_json = json.dumps(
