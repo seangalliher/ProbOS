@@ -196,7 +196,7 @@ _MIN_CREW_TOKEN_BUDGET = 1024
 # ── AD-1155: loop-until-done — an outer completion evaluator ────────────────
 #
 # READ THIS BEFORE ADDING A THIRD OUTER LOOP. **One already exists.**
-# ``SubtaskVerifier.converge_for_session`` (``crew_verifier.py:1301``) is a
+# ``SubtaskVerifier.converge_for_session`` (``crew_verifier.py:1374``) is a
 # complete, governed, bounded outer loop over ``WorkItemAgenticExecutor.run``,
 # called from ``crew_finalizer.py`` on the LIVE crew-session path. It re-invokes
 # with an LLM-judge critique for up to ``min(max_convergence_rounds, 8)`` rounds.

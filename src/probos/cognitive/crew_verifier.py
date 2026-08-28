@@ -25,14 +25,21 @@ compute Shapley values. This module does NOT call ``compute_shapley_values``
 (that is AD-861) and does NOT add a ``done -> in_progress`` duty transition
 (re-run via the AD-859a executor is state-machine-independent).
 
-BF-778: no path in this module writes verifier trust today. ``verify()`` used to
-record each verdict against the :class:`TrustNetwork` at judgement time with
-``success=verdict.accepted`` -- which paid a verifier to accept and penalised
-every refusal, inverting the point of an adversarial layer. Whether a judgement
-was CORRECT is not knowable when it is made, and no proxy available here
-establishes it later, so the ledger stays neutral. ``record_verification_outcome``
-is the seam a future adjudicator will call and is the only thing here that CAN
-write; nothing calls it. See BF-782 (#1246) and BF-783 (#1247).
+BF-778: no path in this module writes verifier trust, and none should. ``verify()``
+used to record each verdict against the :class:`TrustNetwork` at judgement time with
+``success=verdict.accepted`` -- which paid a verifier to accept and penalised every
+refusal, inverting the point of an adversarial layer. Whether a judgement was CORRECT
+is not knowable when it is made; it becomes knowable only once a correction either
+closes the gap the refusal named or fails to.
+
+AD-1282 (BF-782, #1246): that resolution is observed and attributed OUTSIDE this
+module, on the session path, because that is the only path that retains the round
+history needed to see it. ``converge_for_session`` accumulates the rounds;
+``crew_trust.derive_completed_crew_trust_effects`` credits a refusal that a later
+round resolved; delivery is durable and idempotent through the crew trust outbox.
+This module supplies the judgements and nothing else -- deliberately, so that a
+verdict cannot be paid for at the moment it is made. See BF-783 (#1247) for the
+remaining acceptance-incentive question.
 """
 
 from __future__ import annotations
@@ -1141,64 +1148,12 @@ class SubtaskVerifier:
         # refusal -- exactly inverting what an adversarial layer is for. The
         # correctness of a judgement is not knowable at the moment it is made;
         # it becomes knowable when a correction either closes the gap the
-        # refusal named or contradicts it. `record_verification_outcome` is
-        # called from the convergence path once that resolves, and
-        # `verify_for_session` has always had this shape.
+        # refusal named or contradicts it. AD-1282: that resolution is attributed
+        # on the session path, which is the only path that keeps the round
+        # history -- `crew_trust.derive_completed_crew_trust_effects` credits a
+        # refusal followed by a later round. `verify_for_session` has always had
+        # this shape.
         return verdict
-
-    def record_verification_outcome(
-        self,
-        verifier_agent_id: str,
-        producer_agent_id: str,
-        *,
-        refusal_was_upheld: bool,
-    ) -> None:
-        """Record a RESOLVED verification outcome against the verifier (BF-778).
-
-        ``refusal_was_upheld`` is the judgement's correctness, NOT its
-        direction: an upheld refusal and a sound acceptance are both successes.
-
-        NOTE: nothing calls this yet, deliberately. ``verify()`` used to score
-        the verifier with ``success=verdict.accepted``, which paid it to accept;
-        that write is gone and its removal is the live half of BF-778. The
-        replacement requires knowing whether a judgement was CORRECT, which
-        needs real adjudication -- a grounded acceptance criterion or a
-        downstream outcome. A text-diff proxy was tried and rejected: it is
-        farmable by a whitespace edit and makes refusing weakly dominate
-        accepting, which is BF-778 mirrored rather than fixed.
-
-        This method is the seam that adjudication will call. BF-782 (#1246)
-        owns designing it; BF-783 (#1247) owns the acceptance incentive AD-861
-        still applies through ``crew_synth``.
-        """
-        if type(refusal_was_upheld) is not bool:
-            # Validated BEFORE the empty-id no-op: TrustNetwork branches on
-            # truthiness, so a string "false" would record a SUCCESS, and a
-            # bypass here would make the guard depend on an unrelated argument.
-            raise TypeError(
-                "refusal_was_upheld must be a bool, got "
-                f"{type(refusal_was_upheld).__name__}"
-            )
-        if not verifier_agent_id:
-            return
-        try:
-            self._trust.record_outcome(
-                verifier_agent_id,
-                success=refusal_was_upheld,
-                intent_type="crew_verification",
-                verifier_id=producer_agent_id,
-                source="crew_verification",
-            )
-        except RuntimeError as exc:
-            if str(exc) != "trust_write_in_progress":
-                raise
-            logger.warning(
-                "AD-1130: resolved verifier trust observation skipped for "
-                "verifier=%s target=%s because a durable trust write is in "
-                "progress; the resolved outcome is lost for this cycle",
-                verifier_agent_id,
-                producer_agent_id,
-            )
 
     async def converge(
         self,
@@ -1263,11 +1218,12 @@ class SubtaskVerifier:
                 # refusing pays (chance any later edit is accepted) x credit, so
                 # refusing weakly dominates. That is BF-778 mirrored, not fixed.
                 #
-                # Judging correctness needs real adjudication (a grounded
-                # acceptance criterion, or a downstream outcome), which does not
-                # exist yet. BF-782 (#1246) owns designing it. Until then the
-                # ledger stays neutral, which is the one position that cannot
-                # teach the mesh the wrong lesson.
+                # Judging correctness needs real adjudication. AD-1282 (BF-782,
+                # #1246) resolved where that lives: the SESSION path, which keeps
+                # the round history and attributes through the crew trust outbox.
+                # This legacy path is single-shot by design and has no production
+                # caller, so it stays neutral -- crediting here would be a second
+                # write for a judgement the session path already pays.
                 return ConvergenceOutcome(
                     result=result,
                     verdict=verdict,

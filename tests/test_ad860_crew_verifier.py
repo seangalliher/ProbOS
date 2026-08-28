@@ -175,51 +175,6 @@ async def test_verify_refuted_records_no_immediate_trust():
 
 
 @pytest.mark.asyncio
-async def test_verify_busy_trust_preserves_completed_verdict():
-    """BF-778: retargeted from ``verify()``, which no longer writes trust.
-
-    The behaviour under test is unchanged -- a busy durable trust write must be
-    swallowed, not propagated -- but it now lives at the resolved-outcome site.
-    Left against ``verify()`` this test would have passed vacuously.
-    """
-    trust = TrustNetwork()
-    trust.record_outcome = lambda *args, **kwargs: (_ for _ in ()).throw(
-        RuntimeError("trust_write_in_progress"),
-    )
-    verifier, _llm, _ex, _trust = _make_verifier(
-        responses=[_accept()],
-        trust=trust,
-    )
-
-    verdict = await verifier.verify(_result())
-
-    assert verdict.accepted is True
-    assert verdict.verifier_agent_id == "verifier"
-    # The busy store is swallowed at the site that now owns the write.
-    verifier.record_verification_outcome(
-        "verifier", "producer", refusal_was_upheld=True
-    )
-
-
-@pytest.mark.asyncio
-async def test_verify_other_trust_runtime_error_propagates():
-    """BF-778: retargeted -- a non-busy trust defect must still surface."""
-    trust = TrustNetwork()
-    trust.record_outcome = lambda *args, **kwargs: (_ for _ in ()).throw(
-        RuntimeError("trust store defect"),
-    )
-    verifier, _llm, _ex, _trust = _make_verifier(
-        responses=[_accept()],
-        trust=trust,
-    )
-
-    with pytest.raises(RuntimeError, match="^trust store defect$"):
-        verifier.record_verification_outcome(
-            "verifier", "producer", refusal_was_upheld=True
-        )
-
-
-@pytest.mark.asyncio
 async def test_verify_anchors_prompt_to_expected_output():
     verifier, llm, _ex, _trust = _make_verifier(
         responses=[_accept()],

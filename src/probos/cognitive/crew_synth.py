@@ -533,10 +533,12 @@ class CrewSynthesizer:
         establish -- a judge that waves everything through appears in every
         successful synthesis.
 
-        Verifier trust is therefore left NEUTRAL here, and no other live path
-        moves it: `record_verification_outcome` has no production caller
-        pending BF-782. This is a deliberate absence, not a delegation -- a
-        verifier earns trust only in another role until that lands.
+        Verifier trust is therefore left NEUTRAL here. AD-1282 (BF-782): the live
+        path that DOES move it is the crew session finalizer, which credits a
+        refusal once a later round resolves it
+        (`crew_trust.derive_completed_crew_trust_effects`). Synthesis is the wrong
+        layer for that judgement and must not duplicate it -- a verifier earns
+        trust here only in another role.
 
         Agents that both produced and verified keep their producer credit; the
         exclusion is verifier-ONLY agents. `accepted` is required rather than
