@@ -331,14 +331,14 @@ class IntentDecomposer:
             cached = self.workflow_cache.lookup(text)
             if cached:
                 logger.info("Workflow cache HIT (exact): %s", text[:50])
-                return cached
+                return self._apply_consensus_floor(cached)
 
         # Try fuzzy match with pre-warm intents
         if self.workflow_cache and self._pre_warm_intents:
             cached = self.workflow_cache.lookup_fuzzy(text, self._pre_warm_intents)
             if cached:
                 logger.info("Workflow cache HIT (fuzzy): %s", text[:50])
-                return cached
+                return self._apply_consensus_floor(cached)
 
         # Build prompt
         prompt_parts = []
@@ -510,6 +510,58 @@ class IntentDecomposer:
 
         return response.content.strip()
 
+    def _consensus_for(self, intent_name: str, requested: bool) -> bool:
+        """BF-860 (#1242 finding 3): the registered descriptor sets the FLOOR.
+
+        ``use_consensus`` came straight from the model's JSON with a ``False``
+        default, and nothing reconciled it against the agent's own
+        ``IntentDescriptor.requires_consensus``. A model that simply omitted the
+        field silently downgraded a destructive intent to no consensus --
+        measured, with descriptors registered and the field omitted:
+        ``run_command use_consensus=False``, ``write_file use_consensus=False``.
+        The prompt instructs the model to set it, but an instruction is not a
+        control, and ``requires_consensus`` is this repo's stated marker for a
+        destructive operation.
+
+        A FLOOR, not an override: the model may still RAISE consensus on an
+        intent whose descriptor does not require it -- a judgement it is well
+        placed to make -- and can no longer lower one that does. An intent name
+        that is not registered contributes no floor, so this cannot invent a
+        gate for something nobody declared.
+
+        The raise is logged, because silently correcting a model that keeps
+        omitting the flag would hide the fact that it is doing so.
+        """
+        if requested:
+            return True
+        for d in self._intent_descriptors:
+            if d.name == intent_name and d.requires_consensus:
+                logger.warning(
+                    "BF-860: %s is registered requires_consensus=True but the "
+                    "decomposition omitted use_consensus; raising it. The "
+                    "descriptor decides, not the model.",
+                    intent_name,
+                )
+                return True
+        return False
+
+    def _apply_consensus_floor(self, dag: TaskDAG) -> TaskDAG:
+        """Re-apply the BF-860 floor to a DAG that did not come from ``_build_dag``.
+
+        Review caught this as a High: a workflow cache HIT returns a prebuilt
+        DAG and never reaches ``_build_dag``, so a workflow cached BEFORE the
+        floor existed -- carrying ``use_consensus=False`` for a destructive
+        intent -- replayed straight past it. Reproduced: cache_size 1,
+        returned_use_consensus False, llm_called False.
+
+        Mutates the cached nodes in place, which is correct here: the cache
+        stores a DAG that is about to be executed, and a stored entry that keeps
+        the downgrade would reintroduce it on the next hit as well.
+        """
+        for node in dag.nodes:
+            node.use_consensus = self._consensus_for(node.intent, node.use_consensus)
+        return dag
+
     def _build_dag(self, data: dict, source_text: str, response: str | None = None) -> TaskDAG:
         """Build a TaskDAG from validated decomposition data.
 
@@ -521,12 +573,15 @@ class IntentDecomposer:
         for item in intents:
             if not isinstance(item, dict):
                 continue
+            intent_name = item.get("intent", "")
             node = TaskNode(
                 id=item.get("id", f"t{len(nodes) + 1}"),
-                intent=item.get("intent", ""),
+                intent=intent_name,
                 params=item.get("params", {}),
                 depends_on=item.get("depends_on", []),
-                use_consensus=item.get("use_consensus", False),
+                use_consensus=self._consensus_for(
+                    intent_name, bool(item.get("use_consensus", False))
+                ),
             )
             if node.intent:
                 # Reject http_fetch URLs with fabricated credentials
