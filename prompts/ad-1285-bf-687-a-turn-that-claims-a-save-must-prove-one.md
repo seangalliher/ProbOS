@@ -1,512 +1,467 @@
 # AD-1285 / BF-687 (#1087): a turn that claims a save must be able to prove one
 
-**Status:** Ready to build
+**Status:** Rev 2 — ready to build. Rev 1 was implemented and is **staged,
+uncommitted**. Do not commit the staged tree as-is; apply the deltas below.
 **Dependencies:** none (AD-911/912, AD-797, AD-934, AD-1248 already landed)
-**Estimated tests:** ~28 new
-**Issue:** https://github.com/seangalliher/ProbOS/issues/1087
-**Drafted against:** HEAD `991c6d1c`
+**Estimated tests:** ~19 (rev 1 wrote 537 lines; roughly a third is deleted)
+**Issue:** https://github.com/seangalliher/ProbOS/issues/1087 — **partially**
+closed by this AD. See *What remains open* below.
+**Drafted against:** HEAD `31cdc691` + the staged rev-1 tree
+**AD ceiling at revision time:** **AD-1290** (see *AD numbering* below)
+
+---
+
+## Revision note — the two review findings, answered
+
+Rev 1 shipped two verdict branches. Review found a defect in each. One finding
+holds and one does not, and both answers changed the design.
+
+### Finding 2 — HOLDS. Branch 2 is deleted.
+
+`config/system.yaml:631` sets `publish_finding_enabled: true` and
+`config/system.yaml:460` sets `dm_agentic.enabled: true`. On the live vessel a
+1:1 DM turn therefore runs the AD-1065 tool loop, and `publish_finding` — which
+calls `records_store.write_notebook` (`tools/publish_finding_tool.py:715`) — is
+callable inside it. `publish_finding` is a **tool**, not a `[NOTEBOOK]` marker,
+so it never touches the ledger. A genuine, successful publish would reach
+`step_4m` as `consulted=∅ wrote=∅`, and rev-1's Branch 2 would have appended
+*"treat the save described above as unconfirmed"* to a **truthful** reply.
+
+That violates the issue's own acceptance criterion and is worse than the defect
+it was built for, because it teaches the Captain to discount the warning.
+
+The pipeline also cannot learn that the loop ran. Every candidate signal was
+checked and each fails:
+
+| Candidate | Why it does not discriminate |
+|---|---|
+| `ctx.params` | carries `dm_turn_id` / `thread_id` / `session_id`; no intent, no loop flag |
+| `DmReply.tool_failures` | `ToolFailures.merge_open` defaults `False` (`dm_reply.py:235`) and `from_intent_result` rebuilds from wire, which is merge-closed. False whether or not a loop ran. |
+| `result.metadata["tool_trace_ref"]` | AD-1203. Present ⇒ loop ran, but **absent ⇏ loop did not run** — it is `""` whenever no `AttachmentStore` is wired. Wrong polarity for a safety gate. |
+| Recomputing the gate in `routers/agents.py` | `_conversational_agentic_will_run` (`cognitive_agent.py:4179`) documents itself as the *single source of truth* for "is the loop active for this turn?". A second copy in the router is drift waiting to happen. |
+| Gating Branch 2 on `dm_agentic.enabled is False` | Sound, and **inert**: the live ship sets it `true`, so Branch 2 would abstain on every real turn. A branch that never runs is not a control (`dm_reply.py:288`). |
+
+None of these is acceptable, so **Branch 2 is removed entirely** — with it
+`CLAIM_WITHOUT_WRITE`, `_asserts_completed_save`, all three regexes,
+`_CLAIM_SCAN_MAX_CHARS`, `turn_observed`, and `observed()`.
+
+The module now reads **no reply text at all**. That is not a retreat; it is the
+issue's stated criterion — *"Detection is structural (invocation record), not
+string-matching the reply"* — met exactly, and it deletes the entire
+false-positive class in one move.
+
+### Finding 1 — DOES NOT HOLD. `step_4m` stays where it is.
+
+Finding 1 argued that `step_4m` is unreachable from the path that produced
+#1087, because the defect turn was `intent=proactive_think` and a proactive turn
+never enters `_full_steps()`. The second half of that is true. The first half is
+false, and **rev 1 is the source of the error** — it asserted that the issue's
+quoted log line described the defect turn.
+
+The issue quotes:
+
+```
+22:40:09 INFO probos.cognitive.cognitive_agent
+  AD-643a: Agent surgeon intended_actions=['oracle_query'] (intent=proactive_think)
+```
+
+That is a **different agent**. From the live vessel's `identity.db`:
+
+```
+counselor -> callsign "Ezri"
+surgeon   -> callsign "Meridian"
+```
+
+The issue's narrative names Ezri: *"2026-07-26 22:40, live, **in a 1:1 DM**. The
+Captain asked Ezri to write a finding and publish it."* The quoted line is
+Meridian's concurrent proactive turn, offered to show *where AD-643a runs* — one
+line above in the **log**, not in the same turn. Rev 1 read it as the defect
+turn's own line and built an inference on it; the review inherited that premise.
+
+The defect turn was then located directly in the live store:
+
+```
+chat_threads.db / chat_thread_messages
+  id         b4a3461fb2114475bfed7197d6c09b79
+  thread_id  e879c64b78d24d6382e28555c9fec943   title "Hello Ezri"
+             participants ["counselor_counselor_0_67c601cb"]   <- 1:1
+  author_id  counselor_counselor_0_67c601cb     <- Ezri
+  role       'agent'
+  metadata   {"intent_id":"6f269465c00f45ac8acb0ceff2b86a4a"}
+  created_at 1785127235.96  ->  local 2026-07-26 22:40:35
+  body       "...So here's the honest report: I wrote the finding and it's
+              saved to my notebook under the slug `ward-room-escalation-decision`..."
+```
+
+A `role='agent'` row on a chat thread carrying `metadata.intent_id` has exactly
+one producer: `routers/agents.py:3472`, which appends
+`_build_reply_metadata(intent.id, ...)` **immediately after**
+`await pipeline.run()` on the pipeline built at `routers/agents.py:3425`. That
+is `_full_steps()`.
+
+**The defect turn is on Path A. `step_4m` is on the path that produced #1087.**
+No relocation is required, and none is made.
+
+Rev 1's related claim that "AD-643b never ran on the observed turn" rested on
+the same conflation and is **withdrawn** — it is unproven either way. The
+substantive point survives untouched and does not depend on it: AD-643b reports
+*marker present, intent undeclared*; this defect is *claim present, marker
+absent, call absent*. Different axis.
+
+### What the proactive path is, since it was asked for
+
+Enumerated for the record, and then **left alone**:
+
+- Sink: `proactive.py:1368` `await self._post_to_ward_room(agent, response_text)`.
+- Channels: `_extract_and_execute_actions` (`proactive.py:2868`) dispatches six —
+  endorse, reply, DM, group chat, artifact, status — and returns
+  `(cleaned_text, actions_executed)`. `proactive.py:1340` binds that list as
+  `actions_taken` and **never reads it again** — the same discard that motivated
+  this AD on the DM side.
+- `extract_and_execute_notebooks` is **not** among those six. Its only
+  production caller anywhere is `reply_pipeline.py:945`.
+- No tool loop reaches a proactive turn: `_conversational_agentic_will_run`
+  requires `intent == "direct_message"`, and the only other
+  `WorkItemAgenticExecutor` entry on an agent is `_run_agentic_dispatch`, whose
+  sole caller is `_handle_work_item_dispatch` (`cognitive_agent.py:2014`).
+
+So the proactive path is the one place where the write-channel set is **closed**
+and a claim-versus-ledger verdict would be sound. It is still **out of scope**:
+it is not the path that produced #1087, `proactive.py` is a second file and a
+second sink, and the ward-room post is itself a durable write that the guard
+would run *before*. Record it as a forward marker; do not build it here.
 
 ---
 
 ## Problem
 
-2026-07-26 22:40, live, an agent replied *"I wrote the finding and it's saved to
-my notebook under the slug `ward-room-escalation-decision`"*. No such file
-exists. `publish_finding` never appears in the log. She then reasoned forward
-from the false premise for several turns.
+2026-07-26 22:40, live, in a 1:1 DM, Ezri replied *"I wrote the finding and it's
+saved to my notebook under the slug `ward-room-escalation-decision`"*. No such
+entry exists — verified below. `publish_finding` never appears in the log. She
+then reasoned forward from the false premise for several turns.
 
 The turn was **healthy** — no BF-612 empty content, no BF-674 cooldown, no
 tier-unavailable in the 22:35–22:45 window. A working turn produced a specific,
 plausible, entirely fictional slug.
 
 The read side is guarded (AD-1119/1120 `referent_gate.py`, AD-1121
-`confab_probe.py`). **Nothing guards the write side.** The claim is
-unfalsifiable from inside the conversation, the agent builds on it, and nothing
-marks the turn as suspect.
+`confab_probe.py`). **Nothing guards the write side.**
 
-### The prose that was supposed to prevent this is unenforced
+### The adjacent defect this AD actually closes
 
-`cognitive_agent.py:2960-2961` (`_conversational_notebook_protocol`, AD-911/912):
-
-> "…confirm conversationally that you have saved it. **Only claim a note is
-> saved when you actually emit this tag — never say you saved something without
-> it.**"
-
-Same unenforced promise for artifacts at `cognitive_agent.py:3009`. AD-1157
-settled what guidance without a mechanism is worth: crew were told to classify
-notebooks for months while the tag had no syntax to carry the choice, and
-2,453/2,453 entries took the default. **Do not "fix" this by editing prompt
-text.**
-
-### What already exists, and why none of it closes this
-
-**AD-643b `_detect_undeclared_actions` (`cognitive_agent.py:4635`) is a
-different axis. Do not extend it, do not duplicate it, do not touch it.**
-
-It scans COMPOSE text for **markers** (`[NOTEBOOK\s`, `[ENDORSE\s`, `[DM\s`,
-`[REPLY\s`, `[NOTE\s`, `[PROPOSAL]`) and reports the ones absent from
-`intended_actions`. That is *marker present, intent undeclared* — its purpose is
-to load a missed skill and re-reflect (`cognitive_agent.py:5222-5262`). This
-defect is *claim present, marker absent, call absent*: the inverse, and on the
-other side of the run.
-
-It also could not have fired. It runs only inside
-`if has_comm_action and execute_steps:` where
-`_COMM_ACTIONS = {"ward_room_post", "ward_room_reply", "endorse", "dm"}`
-(`cognitive_agent.py:5158`). The issue's own log line reads
-`intended_actions=['oracle_query'] (intent=proactive_think)` — `oracle_query`
-is not a comm action, so the `else` branch took the single-call path and
-**AD-643b never ran on the observed turn.**
-
----
-
-## Finding: the invocation record exists twice and is discarded both times
-
-The real path is **not** `swe_harness/agentic_loop.py` directly. It is
-`WorkItemAgenticExecutor` in `cognitive/agentic_dispatch.py`, reached from
-`_maybe_run_conversational_agentic` (AD-1065, `cognitive_agent.py:4204`).
-
-**1. The tool loop does not run on the observed turn at all.**
-`_conversational_agentic_will_run` (`cognitive_agent.py:4179`) requires
-`observation["intent"] == "direct_message"`, non-group, non-vision, and
-`config.dm_agentic.enabled`. On `proactive_think` the loop never starts, so
-`publish_finding` is not callable and the only durable write channel is the
-`[NOTEBOOK]` marker.
-
-**2. Where the loop does run, the record dies at the outcome boundary.**
-`AgenticResult` (`agentic_loop.py:763`) carries `tool_calls` + `tool_results`,
-correlated by `ToolCallResult.id`. `WorkItemAgenticOutcome`
-(`agentic_dispatch.py:1486`) carries neither — stated in-repo at
-`cognitive_agent.py:120`:
-
-> "`WorkItemAgenticOutcome`, which carries neither `tool_calls` nor
-> `tool_results` — so (BF-793) it never ran at all."
-
-Three lossy projections survive, and **none can name a success**:
-
-| Survivor | Why it cannot answer "did `publish_finding` succeed?" |
-|---|---|
-| `tool_failures` | `correlate_tool_outcomes` (`dm/reply_value.py:69`) stores the display name when a call failed and `""` when it succeeded. The name of a success is hashed into `call_signature` and unrecoverable; `names()` returns failures only. `to_wire()` then **drops the tombstones**, so the value `DmReply.from_intent_result` rebuilds at `routers/agents.py:3434` is merge-closed — failures only. Permission denials are dropped entirely. |
-| `tool_trace_ref` | A SHA into `AttachmentStore`; `None` whenever no store is wired. Provenance, not an in-process fact. |
-| `tool_defect` / `tool_defect_evaluated` | AD-1257/AD-1269. A defect verdict, not an inventory. |
-
-**3. The marker channel throws its record away too.**
-`step_4i_notebook_parse` (`reply_pipeline.py:895`) calls
+`step_4i_notebook_parse` (`reply_pipeline.py:918`) calls
 `extract_and_execute_notebooks`, receives `(cleaned, actions)`, logs
-`len(actions)` and discards it. Its safety net then strips any surviving
-`[NOTEBOOK …]` block. So a marker whose write **failed** produces a
-Captain-visible reply that reads exactly like a successful one.
+`len(actions)` and discards it. Its trailing safety net then **unwraps** any
+surviving `[NOTEBOOK …]` block (`reply_pipeline.py:1004`), keeping the inner
+text and dropping the markers.
 
-**Conclusion: no name-addressable record of "what actually happened this turn"
-exists anywhere the reply is composed. This AD creates one.**
+So when the write does not happen, the Captain sees the note's content inline,
+followed by whatever the agent said about saving it — a reply
+**indistinguishable from a successful one**. The agent is instructed at
+`cognitive_agent.py:2960-2961` to "confirm conversationally that you have saved
+it", so a success claim is the expected shape.
+
+`extract_and_execute_notebooks` returns `actions=[]` on four reachable paths:
+records store unwired (`proactive.py:4093`), empty block body (`:4102`), the
+write raising (`:4185`), and a marker `_NOTEBOOK_PATTERN` does not match.
+
+This is measured, not hypothetical. Two agent replies in the Captain's own
+transcript carry an **unexecuted** `[NOTEBOOK]` block and an explicit
+completed-save claim, and neither entry exists in the store:
+
+| When | Agent | Reply says | Slug in `ship-records/notebooks/` |
+|---|---|---|---|
+| 2026-06-07 01:12:57 | yeoman | "Done — that's saved to my notebook under `spacex-ipo-trade-setup`." | **absent** |
+| 2026-06-07 12:25:53 | counselor | "I've got it filed." | **absent** |
+
+Both are dated the day AD-911/912 landed, so they may predate `step_4i` on that
+vessel; they are cited as evidence of the **shape**, not of current-code
+frequency. The four `actions=[]` paths above are the current-code proof.
+
+### Do not fix this with prompt text
+
+AD-1157 settled what guidance without a mechanism is worth: crew were told to
+classify notebooks for months while the tag had no syntax to carry the choice,
+and 2,453/2,453 entries took the default. The prose at
+`cognitive_agent.py:2960-2961` and `:3009` is already correct and already
+unenforced. **Do not edit it.**
 
 ---
 
 ## Solution
 
-A per-turn **write ledger**: which durable-write channels were consulted, and
-which actually produced a write. The reply is then checked against the ledger
-before it reaches the Captain.
+A per-turn **write ledger**: which durable-write channels ran this turn, and
+which of them actually produced a write. One verdict, decided entirely from that
+record.
 
-Two verdict branches. **Branch 1 is the structural core and uses no text
-matching at all.**
-
-**Branch 1 — marker ran, nothing was written.** A write marker was present, its
-channel executed, and it produced zero actions. The tag is stripped and the
-agent was instructed to "confirm conversationally that you have saved it", so
-the reply is a success claim by construction. Purely structural; no regex.
-
-**Branch 2 — no marker, nothing was written, and the reply asserts a save.**
-Covers the observed defect. The **verdict** is the ledger; the text is only a
-narrow precondition that can only ever *shrink* the flag set. This is the
-reading of "structural, not string-matching" that makes the acceptance criteria
-mutually satisfiable: string-matching alone would false-positive on every
-genuine save, and the ledger is what prevents that.
+**`MARKER_WROTE_NOTHING` — a write channel ran and produced nothing.** A write
+marker was present, its channel executed, and it wrote zero entries. The marker
+is then stripped or unwrapped, so the reply is a success claim by construction.
+The check is `consulted - wrote`, **per channel**, so a turn that wrote an
+artifact cannot mask a notebook channel that wrote nothing.
 
 **Intervention: correct and mark. Never block.** Design Principle #13(c) — a
 refusal that ends the work is a capability ceiling in a governance costume. The
 reply keeps its substance and gains one honest sentence; the turn is logged with
 a stable marker.
 
-**Abstain by default.** No flag when the ledger was never populated
-(`evaluated is False`), when any write did occur, or when Branch 2's
-precondition is absent. This is the AD-1269 lesson — a verdict of "nothing
-happened" and "nobody looked" must not be the same value.
+**Abstain by default.** No verdict when no channel ran (`evaluated` False) and
+none when every channel that ran also wrote. A turn with no write marker is
+byte-identical.
 
-### Why not the alternatives
-
-- **An LLM probe (AD-1121 `confab_probe.py`)** — that exists because the read
-  side has no ground truth. The write side does. Sampling would be slower,
-  costlier, and capable of false positives against a fact already known.
-- **A new `[SAVED]` tag the agent must emit** — an agent that confabulates a
-  save will confabulate the tag.
-- **Blocking the reply** — see #13(c).
+**No reply text is read, anywhere in this AD.** `assess_write_claim` does not
+take the reply as a parameter. That is the property to preserve under later
+refactoring, and there is a test that asserts the signature.
 
 ---
 
 ## Scope
 
-**Files you may change:**
+**Starting point: the staged rev-1 tree.** Do not `git reset` it; apply the
+deltas below on top and re-stage.
 
 | File | Change |
 |---|---|
-| `src/probos/cognitive/dm/write_ledger.py` | **NEW** — ledger value + verdict |
-| `src/probos/cognitive/dm/reply_pipeline.py` | ledger field, record at 4i/4f, new step 4m |
-| `src/probos/cognitive/dm/__init__.py` | export the new names |
-| `src/probos/config.py` | `WriteClaimGuardConfig` |
-| `tests/test_ad1285_write_claim_guard.py` | **NEW** |
-| `tests/test_ad1248_slice_b.py` | step-count docstring guard (see §7) |
+| `src/probos/cognitive/dm/write_ledger.py` | **§1** — delete the Branch-2 half; per-channel Branch 1 |
+| `src/probos/cognitive/dm/reply_pipeline.py` | **§2** — drop the `observed()` call, log the pending set |
+| `src/probos/cognitive/dm/__init__.py` | unchanged from staged |
+| `src/probos/config.py` | **§3** — add `Field(description=...)` |
+| `docs/development/config-reference.md` | regenerate after §3 |
+| `tests/test_ad1285_write_claim_guard.py` | **§4** — rewrite |
+| `tests/test_ad811a_a2ui_choice.py`, `tests/test_ad934_deliberate.py` | unchanged from staged |
+
+The module stays at `cognitive/dm/write_ledger.py`. Rev 1's placement was right:
+only the DM pipeline consumes it, so it does not move up a level.
 
 **Files you must NOT change — hard stop if you think you need one:**
-
-`cognitive_agent.py`, `agentic_dispatch.py`, `continue_or_ask.py`,
-`repair_verification.py`, `fault_report.py`, `tools/browser/url_route_guard.py`
-are **foreign-modified and unstaged in the working tree**. Editing them will
-collide with work in flight. `cognitive_agent.py` is explicitly off-limits by
-Captain's instruction. The design above is deliberately shaped to need none of
-them.
-
-Also do not touch `README.md`, `docs/architecture/federation.md`,
-`docs/development/roadmap.md`.
+`cognitive_agent.py` (foreign-modified **and** off-limits by Captain's
+instruction), `agentic_dispatch.py`, `continue_or_ask.py`,
+`repair_verification.py`, `fault_report.py`, `tools/browser/url_route_guard.py`,
+`proactive.py`, `routers/agents.py`, `README.md`,
+`docs/architecture/federation.md`, `docs/development/roadmap.md`.
 
 ---
 
 ## Implementation
 
-### Section 1 — `src/probos/cognitive/dm/write_ledger.py` (new)
+### §1 — `src/probos/cognitive/dm/write_ledger.py`
 
-Layer: COGNITIVE. Runtime-free by construction — no runtime import, no LLM
-client, no store. Pure value + pure function, so it is testable without a ship.
+**Delete:**
 
-```python
-"""AD-1285 (#1087 / BF-687): the per-turn record of what was actually written.
+- the `turn_observed` field and the `observed()` method;
+- `ClaimVerdict.CLAIM_WITHOUT_WRITE`;
+- `_asserts_completed_save`, `_COMPLETED_SAVE_RE`,
+  `_NEGATED_OR_HYPOTHETICAL_RE`, `_CLAUSE_SPLIT_RE`, `_CLAIM_SCAN_MAX_CHARS`;
+- the now-unused `import re`, the `CLAIM_WITHOUT_WRITE` entry in
+  `_DISCLOSURES`, and both dropped names from `__all__`.
 
-A reply that claims a durable save must be checkable against something. Before
-this module there was nothing to check against: the agentic loop's
-``tool_calls``/``tool_results`` die at ``WorkItemAgenticOutcome`` (BF-793), the
-``ToolFailures`` projection cannot name a success once ``to_wire`` drops its
-tombstones, and ``step_4i_notebook_parse`` logged its action count and threw it
-away. This is the missing record.
-
-Two states are deliberately distinct, for the AD-1269 reason: a ledger nobody
-populated (``evaluated`` False) must never read as "no write occurred". An
-unpopulated ledger abstains.
-"""
-```
-
-Provide:
-
-- `WRITE_CHANNEL_NOTEBOOK = "notebook"`, `WRITE_CHANNEL_ARTIFACT = "artifact"`
-  — module constants; the ledger is keyed by channel name so a later slice can
-  add `publish_finding` without changing the shape.
-
-- `@dataclass(frozen=True) class WriteLedger` with:
-  - `turn_observed: bool = False` — the guard itself ran this turn. Set once by
-    `step_4m`, never by a channel.
-  - `consulted: frozenset[str] = frozenset()` — channels whose step actually
-    ran its execution path this turn.
-  - `wrote: frozenset[str] = frozenset()` — channels that produced ≥1 write.
-  - `evaluated: bool` — property, `self.turn_observed or bool(self.consulted)`.
-  - `def consulted_with(self, channel: str, *, wrote: bool) -> "WriteLedger"`
-  - `def observed(self) -> "WriteLedger"` — sets `turn_observed`.
-
-  Both return a new value; frozen + copy-on-write so a step cannot retroactively
-  mutate a value another step already read. `frozenset` fields for the same
-  reason `ToolFailures` uses a sorted tuple rather than a `Mapping`
-  (`dm_reply.py:212`): a mutable field on a "frozen" dataclass retains the
-  caller's object.
-
-  **`turn_observed` is why the two branches are independently reachable, and it
-  is load-bearing.** Without it `evaluated` would mean `bool(consulted)`, and
-  Branch 2 — no channel ran, so `consulted` is empty — could never be reached in
-  production. Documented behaviour that never runs is not behaviour
-  (`dm_reply.py:288`). It is also the AD-1269 distinction, in the same shape:
-  "the pipeline looked at this turn" is a different fact from "a channel ran",
-  and both are different from "nothing happened".
-
-- `class ClaimVerdict(enum.Enum)`: `ABSTAIN`, `MARKER_WROTE_NOTHING`,
-  `CLAIM_WITHOUT_WRITE`.
-
-- `def assess_write_claim(reply_text: str, ledger: WriteLedger) -> ClaimVerdict`
-
-  Order matters, and the abstains come first:
-
-  1. `if not ledger.evaluated: return ABSTAIN` — nobody looked.
-  2. `if ledger.wrote: return ABSTAIN` — a real write happened. **This is the
-     line that satisfies "a genuinely successful call is never flagged."**
-  3. `if ledger.consulted: return MARKER_WROTE_NOTHING` — Branch 1. A channel
-     ran and wrote nothing. No text is read.
-  4. `if _asserts_completed_save(reply_text): return CLAIM_WITHOUT_WRITE` —
-     Branch 2. Reached when the guard ran, no channel did, and the reply claims
-     a save. **This is the observed defect.**
-  5. `return ABSTAIN`.
-
-  Step 3 precedes any text read, so Branch 1 is text-independent.
-
-- `def _asserts_completed_save(text: str) -> bool` — the narrow Branch 2
-  precondition. Requirements, all mandatory:
-
-  - **First person, completed, durable-object.** Match only a first-person
-    subject (`I` / `I've` / `I have`) with a completed save verb (`saved`,
-    `wrote`, `stored`, `recorded`, `published`, `filed`) **and** a
-    durable-store object within the same clause (`notebook`, `note`,
-    `record(s)`, `finding`, `file`, `document`, `artifact`, `slug`, `entry`).
-    Requiring the object is what keeps "I saved you some time" out.
-  - **Reject modal / future / interrogative / negated forms.** `I can save`,
-    `I'll save`, `I could write`, `Shall I save`, `Do you want me to save`,
-    `I have not saved`, `I did not write` must all be False. Implement as an
-    explicit negative pre-filter, not as regex cleverness.
-  - **Second/third-person subjects are out.** "Your settings are saved",
-    "the system saved it" → False.
-  - `re.IGNORECASE`. Compile at module scope.
-  - Bounded input: examine at most the first 4000 characters. A long reply must
-    not turn this into a scan cost.
-
-  State the bias in the docstring: **this precondition is deliberately
-  conservative and will miss phrasings. A miss costs one undetected turn; a
-  false positive trains the Captain to ignore the warning, which costs the
-  control itself.**
-
-- `def disclosure_for(verdict: ClaimVerdict) -> str` — the appended sentence.
-
-  **Gap-regex-safe. `_CAPABILITY_GAP_RE` (`decomposer.py:50`) matches `don't
-  have`, `can't`, `cannot`, `unable to`, `no capability|ability|support|way|
-  mechanism|tool`, `not available|supported|possible`, `lack(s|ing)`, `doesn't
-  have|support`, `beyond my capabilities`, `outside my scope`. The disclosure
-  must contain none of them** — a match would misclassify the turn as a
-  capability gap and trigger self-modification.
-
-  Use text of this shape (verify against the regex in a test):
-
-  - `MARKER_WROTE_NOTHING` → `"\n\n[No durable write was recorded for this turn — the save described above did not complete.]"`
-  - `CLAIM_WITHOUT_WRITE` → `"\n\n[No durable write was recorded for this turn — treat the save described above as unconfirmed.]"`
-
-### Section 2 — ledger field on `DmReplyContext`
-
-In `reply_pipeline.py`, after the `generated_attachment_ids` field (~line 129),
-following the AD-791a defaulting convention already documented at line 119 so
-the existing `DmReplyContext(...)` constructions in tests keep working:
+**Change:**
 
 ```python
-    # AD-1285 (#1087): what this turn actually wrote. Populated by the steps
-    # that own a durable-write channel; read by ``step_4m_write_claim_guard``.
-    # Defaulted, so every existing construction site is untouched.
-    write_ledger: WriteLedger = field(default_factory=WriteLedger)
-```
+    @property
+    def evaluated(self) -> bool:
+        """Whether any durable-write channel ran on this turn."""
+        return bool(self.consulted)
 
-Import `WriteLedger` at module top with the other `dm` imports.
+    def consulted_with(self, channel: str, *, wrote: bool) -> "WriteLedger":
+        """Record that ``channel`` ran, and whether it wrote."""
+        return WriteLedger(
+            consulted=self.consulted | {channel},
+            wrote=(self.wrote | {channel}) if wrote else self.wrote,
+        )
 
-### Section 3 — record the notebook channel
+    @property
+    def wrote_nothing(self) -> frozenset[str]:
+        """Channels that ran and produced no write.
 
-In `step_4i_notebook_parse`, the fast-path early return stays exactly as it is —
-**a turn with no marker must not mark the channel consulted.** Record only on
-the branch that actually executed:
-
-```python
-            try:
-                cleaned, actions = await proactive.extract_and_execute_notebooks(
-                    self.ctx.agent, self.ctx.response_text,
-                )
-                self.ctx.response_text = cleaned
-                # AD-1285: the channel ran; ``actions`` is the only in-process
-                # evidence of whether it wrote, and it was previously logged
-                # and dropped.
-                self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
-                    WRITE_CHANNEL_NOTEBOOK, wrote=bool(actions),
-                )
-                if actions:
-                    logger.info(...)   # unchanged
-            except Exception:
-                # AD-1285: the write raised. Consulted, wrote nothing.
-                self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
-                    WRITE_CHANNEL_NOTEBOOK, wrote=False,
-                )
-                logger.warning(...)    # unchanged
-```
-
-Leave the trailing safety-net strip untouched.
-
-**Do not** mark the channel consulted when `proactive` is `None` or lacks
-`extract_and_execute_notebooks` — that is "no channel", not "a channel that
-wrote nothing", and conflating them would flag every turn on a ship with no
-proactive loop wired.
-
-### Section 4 — record the artifact channel
-
-Same treatment in `step_4f_extract_artifacts` (`reply_pipeline.py:1199`). Read
-the method first and mirror whatever its existing success signal is. Mark
-consulted only where extraction actually ran; `wrote=True` only where an
-artifact was persisted. If the method's success signal is ambiguous, **leave
-this section out and say so in your build report** — an ambiguous ledger entry
-is worse than an absent one, because it produces false positives.
-
-### Section 5 — `step_4m_write_claim_guard`
-
-New method on `DmReplyPipeline`, placed with the other step methods:
-
-```python
-    async def step_4m_write_claim_guard(self) -> None:
-        """AD-1285 (#1087 / BF-687): a turn that claims a save must prove one.
-
-        Compares the reply against :class:`WriteLedger` — the record of what
-        this turn actually wrote — and appends one honest sentence when the
-        two disagree. Never blocks and never rewrites the agent's substance
-        (#13(c): a refusal that ends the work is a capability ceiling in a
-        governance costume).
-
-        Abstains whenever the ledger was not populated, so a ship with no
-        write channel wired is byte-identical.
-
-        Tier-2 honest-degrade: never raises.
+        Per channel, deliberately. A turn that persisted an artifact and ran a
+        notebook channel that wrote nothing still confabulates the notebook,
+        and a ledger-wide ``if self.wrote`` would mask it.
         """
+        return self.consulted - self.wrote
 ```
-
-Behaviour:
-
-- Return immediately when `config.write_claim_guard.enabled` is False, or when
-  `ctx.response_text` is empty.
-- `self.ctx.write_ledger = self.ctx.write_ledger.observed()` — **first**, before
-  assessing. This is what makes Branch 2 reachable: the guard ran, so the turn
-  was looked at, whether or not any channel was.
-- `verdict = assess_write_claim(self.ctx.response_text, self.ctx.write_ledger)`.
-- On `ABSTAIN`, return without touching anything.
-- Otherwise `logger.warning(...)` with a stable, greppable marker naming the
-  verdict, the agent id, the chat thread id, and the consulted/wrote channel
-  sets — this is the "turn is marked in the log so this is diagnosable after
-  the fact" criterion. Do not log the reply body.
-- Append `disclosure_for(verdict)` via `self.ctx.response_text = ... + ...`.
-  The property setter preserves attachments (AD-1248).
-
-### Section 6 — register the step
-
-In `_full_steps()`, insert between `step_4j_deliberate_parse` and
-`step_5_episodic_store`:
 
 ```python
-            self.step_4j_deliberate_parse,  # AD-934
-            self.step_4m_write_claim_guard,  # AD-1285 (#1087)
-            self.step_5_episodic_store,
+def assess_write_claim(ledger: WriteLedger) -> ClaimVerdict:
+    """Compare what this turn ran against what it wrote.
+
+    Takes no reply text. The verdict is entirely structural, which is the
+    #1087 criterion -- "detection is structural (invocation record), not
+    string-matching the reply" -- and is what makes a false positive against a
+    truthful reply unreachable rather than merely unlikely.
+
+    Abstains when no channel ran, so a turn with no write marker is
+    byte-identical.
+    """
+    if not ledger.evaluated:
+        return ClaimVerdict.ABSTAIN
+    if ledger.wrote_nothing:
+        return ClaimVerdict.MARKER_WROTE_NOTHING
+    return ClaimVerdict.ABSTAIN
 ```
 
-Both boundaries are load-bearing:
-- **After 4j** — AD-934 re-rolls the reply text at the deep tier. Checking
-  before it would assess a draft the Captain never sees.
-- **Before 5** — the stored episode and the divergence check must carry the
-  corrected text.
+**Rewrite the module docstring's second paragraph.** It currently explains the
+`evaluated` distinction in terms of a Branch 2 that no longer exists. Replace it
+with the fact that still holds, plus the constraint that produced this revision:
 
-**Do not add it to `_escalation_steps()`.** The group fan-out
-(`thread_fanout.py:675`) runs `run_escalation_only`, and the same hazard exists
-there, but its disclosure sink is unverified and `_escalation_steps` documents
-an explicit 1:1/group exclusion rationale. Record it as a forward marker in the
-`_escalation_steps` docstring: *"AD-1285 `step_4m_write_claim_guard` is 1:1-only
-pending group-sink verification (#1087)."*
+> An unpopulated ledger abstains. "No channel ran" and "a channel ran and wrote
+> nothing" are deliberately different values, for the AD-1269 reason — a verdict
+> of *nothing happened* must never be reachable from a field nobody set.
+>
+> This ledger sees the **marker** channels only. The AD-1065 tool loop runs
+> upstream of the pipeline and writes without telling it, so a `wrote` set that
+> is empty means "no marker channel wrote", never "this turn wrote nothing". No
+> verdict here may assume otherwise. Closing that half needs a name-addressable
+> tool-success set carried out of `WorkItemAgenticOutcome`; see #1087.
 
-### Section 7 — the step-count guard
-
-`tests/test_ad1248_slice_b.py:477-487` asserts the `_full_steps` docstring
-number equals `len(_full_steps())`. Adding a step makes the tuple 21.
-
-Update the `_full_steps` docstring: `**20 steps**` → `**21 steps**`, and extend
-the trailing sentence to name the AD-1285 insertion alongside the AD-934 one.
-Do not weaken or delete the guard test — it exists because BF-796 found the
-docstring saying 18 while the tuple returned 20.
-
-Check the other order regressions still pass unmodified:
-`tests/test_ad811a_a2ui_choice.py:308`, `tests/test_ad811c_group_a2ui.py:99`,
-`tests/test_ad934_deliberate.py:232`,
-`tests/test_bf296_dm_outbound_in_reply.py:30`.
-
-### Section 8 — config
-
-In `config.py`, near `DmAgenticConfig` (line 6284):
+**Change the `MARKER_WROTE_NOTHING` disclosure** so it is true even when the
+reply made no prose claim — the verdict does not read the text, so it cannot
+know one was made:
 
 ```python
-class WriteClaimGuardConfig(BaseModel):  # AD-1285 (#1087 / BF-687)
-    """Whether a reply is checked against the turn's write ledger."""
-
-    enabled: bool = True
+    ClaimVerdict.MARKER_WROTE_NOTHING: (
+        "\n\n[A durable write was attempted on this turn and did not "
+        "complete — nothing was saved.]"
+    ),
 ```
 
-Register on the parent model beside `dm_agentic` (line 7542).
+Verify it against `_CAPABILITY_GAP_RE` (`decomposer.py:50`) in a test, as rev 1
+does. The regex's `no` branch requires
+`no (built-in |native )?(capability|ability|support|way|mechanism|tool)`, so
+`nothing was saved` does not match; its `not` branch requires
+`not (available|supported|possible)`, so `did not complete` does not match.
 
-**Default ON, and that is a decision.** Repo convention defaults new
-*capabilities* OFF (AD-1119, `dm_deliberate`, A2UI). This is a *safety control*,
-and Design Principle #13(a) is explicit that a ceiling must be a decision rather
-than an inheritance — a default-OFF control defends nothing, which is the
-AD-1157 failure mode this issue names. Default ON is safe here because
-`assess_write_claim` abstains on an unpopulated ledger, so a ship without the
-notebook channel wired is byte-identical. The flag exists so the behaviour can
-be turned off without a revert.
+### §2 — `step_4m_write_claim_guard`
 
----
+Keep the method, its placement, its config gate, its Tier-2 `except`, and the
+empty-`response_text` early return. Three edits:
 
-## Tests — `tests/test_ad1285_write_claim_guard.py`
+1. **Delete** the `self.ctx.write_ledger = self.ctx.write_ledger.observed()`
+   line and its comment.
+2. `verdict = assess_write_claim(self.ctx.write_ledger)` — one argument.
+3. Log the pending set, which is the actionable fact:
 
-Use `_Fake*` stubs, not mock chains. **Do not use `MagicMock(spec=...)` for the
-pipeline or the ledger** — AD-1284 hit exactly this: a spec'd double
-auto-mocks any new public name, so an assertion passes for the wrong reason.
-Construct real `WriteLedger` values.
+```python
+            logger.warning(
+                "AD-1285: write-claim guard verdict=%s agent=%s thread=%s "
+                "ran_without_writing=%s wrote=%s",
+                verdict.value,
+                self.ctx.agent_id,
+                self.ctx.chat_thread_id,
+                sorted(self.ctx.write_ledger.wrote_nothing),
+                sorted(self.ctx.write_ledger.wrote),
+            )
+```
+
+Update the method docstring: it says it "compares the reply against
+`WriteLedger`". It compares **the ledger against itself**; the reply is only the
+surface the disclosure is appended to.
+
+**Keep the two `consulted_with` calls in `step_4i` exactly as staged**, including
+the rule that the channel is **not** marked when `proactive_loop` is absent or
+lacks the method. That is a genuinely different fact — no channel exists — and
+conflating it with "a channel ran and wrote nothing" is the error the module's
+own docstring warns about. It is also what keeps every `SimpleNamespace()`
+runtime in the suite byte-identical. Record the residual instead: on a ship where
+the notebook capability is advertised in the prompt but `proactive_loop` is
+unwired, every marker is a phantom save and nothing flags it. That is a
+deployment defect and belongs to a startup check, not a per-reply disclosure.
+
+**Keep the artifact channel exactly as staged** — `wrote=True` only, never
+`wrote=False`, with the builder's inline rationale. Under `consulted - wrote` the
+artifact channel can therefore never appear in `wrote_nothing`, which is the
+intended result: `extract_artifacts` lifts unmarked fenced blocks the agent never
+claimed to save, so a `wrote=False` there would flag a reply that described no
+save at all.
+
+### §3 — config
+
+`WriteClaimGuardConfig.enabled` currently has no `Field`, so the generated
+`config-reference.md` row has an empty Description cell. Give it one:
+
+```python
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "AD-1285 (#1087): check a 1:1 reply against the turn's write "
+            "ledger and append one honest sentence when a durable-write "
+            "channel ran and wrote nothing. Reads no reply text. Default ON "
+            "because this is a safety control rather than a capability, and a "
+            "default-OFF control defends nothing (#13(a)) -- which is the "
+            "AD-1157 failure mode #1087 names. Safe on: the verdict abstains "
+            "unless a channel actually ran, so a turn with no write marker is "
+            "byte-identical."
+        ),
+    )
+```
+
+Regenerate `docs/development/config-reference.md` and confirm the row is filled.
+
+### §4 — tests
+
+Rewrite `tests/test_ad1285_write_claim_guard.py`. Delete the Branch-2 negative
+corpus, the Branch-2 positive cases, and every `observed()` / `turn_observed`
+assertion. Keep `_Fake*` stubs and real `WriteLedger` values — **no
+`MagicMock(spec=...)`** for the pipeline or the ledger (AD-1284: a spec'd double
+auto-mocks any new public name, so an assertion passes for the wrong reason).
 
 **Ledger value (6)**
-1. Default `WriteLedger()` → `evaluated is False`, both sets empty.
-2. `consulted_with("notebook", wrote=True)` → both sets contain it.
-3. `consulted_with("notebook", wrote=False)` → consulted only.
+
+1. `WriteLedger()` → `evaluated is False`, both sets empty, `wrote_nothing`
+   empty.
+2. `consulted_with("notebook", wrote=True)` → in both sets; `wrote_nothing`
+   empty.
+3. `consulted_with("notebook", wrote=False)` → `consulted` only;
+   `wrote_nothing == {"notebook"}`.
 4. Copy-on-write: the original value is unchanged after `consulted_with`.
 5. Two channels accumulate independently.
-6. `observed()` alone → `evaluated is True`, `consulted` still empty. *This is
-   the Branch-2 precondition; assert it directly.*
+6. Idempotence: `consulted_with("notebook", wrote=False)` twice leaves both set
+   sizes unchanged.
 
-**Verdict — abstains (5)**
-6. Unpopulated ledger + a reply that plainly claims a save → `ABSTAIN`.
-   *This is the false-positive floor. Name it in the test docstring.*
-7. `wrote={"notebook"}` + a save claim → `ABSTAIN` (**genuine success never
-   flagged** — the acceptance criterion, asserted directly).
-8. `wrote` non-empty but `consulted` also holds a second channel that wrote
-   nothing → `ABSTAIN`. A turn that wrote *something* is not confabulating.
-9. Consulted, wrote nothing, reply is a question (`"Shall I save that?"`) →
-   still `MARKER_WROTE_NOTHING`, because Branch 1 does not read text. Assert
-   this explicitly so a later refactor cannot quietly make Branch 1
-   text-dependent.
-10. Empty reply text + unpopulated ledger → `ABSTAIN`.
+**Verdict (5)**
 
-**Verdict — Branch 1 (2)**
-11. Consulted `notebook`, wrote nothing → `MARKER_WROTE_NOTHING`.
-12. Consulted after the write raised → `MARKER_WROTE_NOTHING`.
+7. Unpopulated ledger → `ABSTAIN`. *The false-positive floor; name it in the
+   test docstring.*
+8. `consulted={"notebook"} wrote={"notebook"}` → `ABSTAIN`. **A genuinely
+   successful write is never flagged** — the acceptance criterion, asserted
+   directly.
+9. `consulted={"notebook"} wrote=∅` → `MARKER_WROTE_NOTHING`.
+10. **Masking regression:** `consulted={"notebook","artifact"}
+    wrote={"artifact"}` → `MARKER_WROTE_NOTHING`, and
+    `wrote_nothing == {"notebook"}`. A ledger-wide `if self.wrote` returns
+    `ABSTAIN` here; this test is what forbids that shape.
+11. **Signature guard:** `inspect.signature(assess_write_claim)` has exactly one
+    parameter, named `ledger`. Assert it, with a docstring saying the verdict
+    must never become text-dependent. This is the property the whole revision
+    turns on.
 
-**Verdict — Branch 2 negative corpus (6)** — one parametrised test, each string
-asserted `ABSTAIN` against `WriteLedger().observed()` (guard ran, no channel
-ran). This is the false-positive corpus and the most important test in the
-file:
+**Disclosure (3)**
 
-`"I can save that to your notebook."` / `"I'll write that up and save it."` /
-`"Shall I save this as a note?"` / `"Do you want me to record that?"` /
-`"I have not saved anything yet."` / `"Your preferences are saved."`
+12. `disclosure_for(MARKER_WROTE_NOTHING)` asserted against the real compiled
+    `decomposer._CAPABILITY_GAP_RE` —
+    `assert not _CAPABILITY_GAP_RE.search(text)`. Import it; do not restate it.
+13. `disclosure_for(ABSTAIN) == ""`.
+14. The disclosure is non-empty and starts with a blank-line separator.
 
-**Verdict — Branch 2 positive (3)**
-`WriteLedger().observed()` + `"I wrote the finding and it's saved to my notebook
-under the slug ward-room-escalation-decision"` → `CLAIM_WITHOUT_WRITE`. **Use
-the verbatim observed string — this is the regression test for #1087.** Plus
-`"I've recorded that in my notebook."` and `"I saved the document for you."`
+**Pipeline integration (4)** — the seam, not the halves
 
-**Disclosure (2)**
-- `disclosure_for` output for **both** verdicts asserted against
-  `decomposer._CAPABILITY_GAP_RE` — `assert not _CAPABILITY_GAP_RE.search(text)`.
-  Import the real compiled regex; do not restate it.
-- Disclosure is non-empty and starts with a blank-line separator.
-
-**Pipeline integration (3)** — the seam, not the halves
-- End-to-end: a `DmReplyContext` whose fake proactive loop returns
-  `(cleaned, [])` for a reply containing `[NOTEBOOK slug]…[/NOTEBOOK]`; run the
-  **full pipeline**; assert the final `ctx.response_text` carries the
-  disclosure. This is the one test that crosses 4i → ledger → 4m.
-- Same fixture with the fake returning one action → **no** disclosure, and the
-  reply body is otherwise unchanged.
-- `config.write_claim_guard.enabled = False` → byte-identical output.
+15. End-to-end: a `DmReplyContext` whose fake proactive loop returns
+    `(cleaned, [])` for a reply containing `[NOTEBOOK slug]…[/NOTEBOOK]`; run the
+    **full pipeline**; assert the final `ctx.response_text` carries the
+    disclosure and no longer carries the marker. This is the one test that
+    crosses 4i → ledger → 4m.
+16. Same fixture, fake returns one action → **no** disclosure, body otherwise
+    unchanged.
+17. Runtime with **no** `proactive_loop`, reply containing a marker → **no**
+    disclosure (the unwired ship stays byte-identical), and the safety net still
+    unwrapped the marker.
+18. `config.write_claim_guard.enabled = False` → byte-identical output.
 
 **Ordering (1)**
-- `step_4m_write_claim_guard` appears in `_full_steps()` strictly after
-  `step_4j_deliberate_parse` and strictly before `step_5_episodic_store`, and
-  is **absent** from `_escalation_steps()`.
+
+19. `step_4m_write_claim_guard` is in `_full_steps()` strictly after
+    `step_4j_deliberate_parse` and strictly before `step_5_episodic_store`, and
+    **absent** from `_escalation_steps()`.
 
 ---
 
@@ -515,33 +470,52 @@ the verbatim observed string — this is the regression test for #1087.** Plus
 - `publish_finding` — verified working 23:46 the same night. Untouched.
 - BF-612 / BF-674 empty-response behaviour — #1086.
 - Read-side confabulation — AD-1119/1120/1121. Untouched.
-- AD-643a/AD-643b — different axis, and both live in an off-limits file.
-- The `[NOTEBOOK]` / artifact protocol prose — the point is to enforce it, not
-  reword it.
-- The group fan-out path — forward marker only.
-- Carrying the ledger through `WorkItemAgenticOutcome` so a `publish_finding`
-  success is name-addressable — **deferred, see below.**
+- AD-643a / AD-643b — different axis, and both in an off-limits file.
+- The `[NOTEBOOK]` / artifact protocol prose — the point is to enforce it.
+- The proactive ward-room path — enumerated above, forward marker only.
+- The group fan-out path — forward marker already in the staged
+  `_escalation_steps` docstring.
+- `routers/agents.py` — rev 1 needed nothing there and rev 2 needs less.
 
-### Deferred: the agentic-loop half (a follow-up AD, not this one)
+## What remains open on #1087 — **the issue does not close**
 
-Closing the loop for tool-based writes needs a name-addressable success set on
-`WorkItemAgenticOutcome`, produced at `agentic_dispatch.py:2343` beside
-`tool_failures` and `tool_defect`, then carried to the reply. That is the right
-design — it is exactly the AD-1248/AD-1257 pattern, and AD-1269's
-`tool_defect_evaluated` is the precedent for the `evaluated` flag. **It is not
-in this AD because it requires `agentic_dispatch.py` and `cognitive_agent.py`,
-both foreign-modified, and `cognitive_agent.py` is off-limits.** File it once
-the tree is clean. When you do: `WorkItemAgenticOutcome` carries neither
-`tool_calls` nor `tool_results` — a detector handed that projection returns
-nothing on every DM turn. That is BF-793, and it is written into the AD-1257
-docstring at `cognitive_agent.py:120` precisely so the next person does not
-repeat it.
+This AD closes the *marker* half: a `[NOTEBOOK]` write that ran and failed can no
+longer reach the Captain looking like a success. It does **not** close the
+observed 22:40 turn, which carried no marker at all — `consulted` is empty there,
+so the guard abstains by design.
+
+Closing the observed turn requires knowing which **tools** succeeded, and that
+record does not exist:
+
+- `AgenticResult` (`swe_harness/agentic_loop.py:763`) holds `tool_calls` +
+  `tool_results`, correlated by `ToolCallResult.id`.
+- `WorkItemAgenticOutcome` (`agentic_dispatch.py:1486`) carries **neither** —
+  stated in-repo at `cognitive_agent.py:120`: *"…which carries neither
+  `tool_calls` nor `tool_results` — so (BF-793) it never ran at all."*
+- The three survivors cannot name a success. `tool_failures` stores `""` as a
+  success tombstone and `to_wire()` drops tombstones (`dm_reply.py:400`);
+  `tool_trace_ref` is `None` on an unwired store; `tool_defect` is a verdict, not
+  an inventory.
+- The only carrier from the loop onto `IntentResult.metadata` is
+  `_build_result_metadata` at **`cognitive_agent.py:193`**.
+
+So the remaining work needs `agentic_dispatch.py:2343` — produce a
+name-addressable success set beside `tool_failures` and `tool_defect`, following
+the AD-1248 / AD-1257 / AD-1269 precedent written inline there — **and**
+`cognitive_agent.py:193` to carry it. Both files are foreign-modified; the second
+is off-limits by instruction. It cannot be built in this wave.
+
+The ledger is keyed by **channel name** precisely so that work adds a key rather
+than reshaping the value. `WriteLedger` is the half that can be built now.
+
+**Report this to the Captain as a partial closure and let them file the
+remainder. Do not close #1087.**
 
 ---
 
 ## Tracking
 
-- `PROGRESS.md` — add the AD-1285 entry.
+- `PROGRESS.md` — AD-1285 entry, stating partial closure of #1087.
 - `docs/development/roadmap.md` Bug Tracker — **do not edit** (off-limits this
   wave). Note the pending row in your build report instead.
 - `DECISIONS.md` — not required.
@@ -550,26 +524,31 @@ repeat it.
 
 ## Acceptance criteria
 
-- [ ] A reply claiming a durable save, on a turn where no write occurred, is
-      detected — with the verdict grounded in the ledger, not in the text.
 - [ ] A turn whose write channel ran and wrote nothing is detected **without
-      reading the reply at all** (Branch 1).
-- [ ] A genuinely successful write is never flagged — asserted directly (test 7).
-- [ ] An unpopulated ledger abstains — asserted directly (test 6).
-- [ ] The Captain receives no unqualified success claim for an action that did
-      not occur.
-- [ ] The turn is logged with a stable, greppable marker.
+      reading the reply at all** — enforced by `assess_write_claim` taking no
+      text parameter, asserted by test 11.
+- [ ] A genuinely successful write is never flagged — asserted directly (test 8).
+- [ ] A channel that wrote nothing is not masked by a sibling channel that did
+      (test 10).
+- [ ] A ledger no channel populated abstains (test 7).
+- [ ] A turn carrying no write marker is byte-identical, including on a runtime
+      with no `proactive_loop` (test 17).
+- [ ] The turn is logged with a stable, greppable marker naming the channels that
+      ran without writing. The reply body is never logged.
 - [ ] The reply is never blocked, refused, or substantively rewritten.
 - [ ] An agent accurately reporting a real failure is unaffected — the guard
-      reads the ledger and appends only on disagreement; it never penalises.
+      reads the ledger only and never penalises.
 - [ ] Disclosure text does not match `_CAPABILITY_GAP_RE`.
 - [ ] `_full_steps` docstring says 21 and the BF-796 guard passes unmodified.
+- [ ] `ClaimVerdict` has exactly two members and `write_ledger.py` imports no
+      `re`.
 - [ ] No change to `cognitive_agent.py`, `agentic_dispatch.py`,
       `continue_or_ask.py`, `repair_verification.py`, `fault_report.py`,
-      `tools/browser/url_route_guard.py`, `README.md`,
-      `docs/architecture/federation.md`, `docs/development/roadmap.md`.
-- [ ] Both verdict branches are independently reachable in production, not only
-      in tests.
+      `tools/browser/url_route_guard.py`, `proactive.py`, `routers/agents.py`,
+      `README.md`, `docs/architecture/federation.md`,
+      `docs/development/roadmap.md`.
+- [ ] The build report states plainly that #1087 is **partially** closed and
+      names what remains.
 - [ ] Verify all changes comply with the Engineering Principles in
       `.github/copilot-instructions.md`.
 
@@ -579,11 +558,10 @@ repeat it.
 
 The working tree carries unrelated uncommitted work that removes
 `RedirectEscalation` while `browser/session.py` still imports it — roughly 423
-tests fail for that reason alone. **Do not stash it.** Gate in a linked
-worktree:
+tests fail for that reason alone. **Do not stash it.** Gate in a linked worktree:
 
 ```
-git worktree add <wt> 991c6d1c
+git worktree add <wt> 31cdc691
 git apply <staged patch>          # your own changes only
 $env:PYTHONPATH = "<wt>/src"      # shadow the editable install
 d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q
@@ -599,109 +577,170 @@ Focused gate:
 d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1285_write_claim_guard.py \
   tests/test_ad1248_slice_b.py tests/test_ad934_deliberate.py \
   tests/test_ad811a_a2ui_choice.py tests/test_ad811c_group_a2ui.py \
-  tests/test_ad933_group_chat_escalation.py \
+  tests/test_ad911_yeoman_notebook.py tests/test_ad912_crew_notebook_generalization.py \
+  tests/test_ad550_notebook_dedup.py tests/test_ad1157_notebook_classification.py \
+  tests/test_ad724_dm_hardening.py tests/test_ad933_group_chat_escalation.py \
   tests/test_bf296_dm_outbound_in_reply.py -q -p no:randomly
 ```
 
+`test_ad911_*`, `test_ad912_*`, `test_ad550_*`, `test_ad1157_*` and
+`test_ad724_*` are in the focused gate because they push `[NOTEBOOK` text through
+this exact step — they are the blast radius of any change to the consulted rule.
+
 Run the adversarial `Diff Reviewer` on the staged diff before committing, with a
-different model than the one that wrote the code. Tell it: the ledger is the
-verdict and the text is only a precondition; the consumer that must accept the
-change is `DmReplyPipeline.run()`; and the highest-risk property is that a
-genuine save is never flagged.
+different model than the one that wrote the code. Tell it: **the verdict is
+structural and no reply text is read anywhere** — a finding that the guard can be
+reached by text is a Critical; the consumer that must accept the change is
+`DmReplyPipeline.run()`; the highest-risk property is that a genuine save is
+never flagged; and the AD-1065 tool loop writes outside this ledger, so any
+reasoning that treats an empty `wrote` set as "this turn wrote nothing" is wrong.
 
 ---
 
-## Verified Against Codebase (2026-08-29, HEAD 991c6d1c)
+## AD numbering
+
+Rev 1 enumerated `git log --all --format='%s'` and `prompts/ad-*.md` and reported
+ceiling AD-1284. It **did not enumerate GitHub issue titles**, which is the third
+required source and the only place an allocated-but-unbuilt AD lives. Epic #1332
+had allocated AD-1284..1288 fifty-five minutes earlier. The Captain resolved it
+by renumbering the unbuilt epic — the shipped side keeps its numbers because
+`DECISIONS.md` is append-only — so **AD-1284 and AD-1285 stand**.
+
+Re-enumerated at revision time, all three sources:
 
 ```
-git log --all --format='%s' | grep -o 'AD-1[0-9]\{3\}' | sort -u | tail -1
-  AD-1284
-ls prompts/ad-*.md | tail -1
-  ad-1284-bf-779-consensus-gate-reachability-and-declaration.md
-  → ceiling AD-1284 from BOTH sources; next free AD-1285
+git log --all --format='%s' | grep -o 'AD-1[0-9]\{3\}' | sort -u | tail
+  ... AD-1283  AD-1284  AD-1285
+ls prompts/ad-1*.md | tail -1
+  ad-1285-bf-687-a-turn-that-claims-a-save-must-prove-one.md
+GitHub issue titles (all states, newest first)
+  #1337 AD-1290: Elastic Scatter/Gather and Team Trials     <- ceiling
+  #1336 AD-1289: Typed Mission Blackboard
+  #1335 AD-1288: Agent-Commissioned Team Lifecycle
+  #1334 AD-1287: Evidence-Bound Skill Qualification
+  #1333 AD-1286: Elastic Team Contract
+```
 
-grep -n "_extract_intended_actions\|_detect_undeclared_actions" src/probos/cognitive/cognitive_agent.py
-  4611: def _extract_intended_actions(chain_results: list) -> list[str]:
-  4635: def _detect_undeclared_actions(
-  5124:     intended_actions = self._extract_intended_actions(triage_results)
-  5222:     undeclared = self._detect_undeclared_actions(compose_text, intended_actions)
+**Ceiling AD-1290; next free AD-1291.** This document is a revision of AD-1285,
+not a new allocation — same issue, same scope, already built.
 
-src/probos/cognitive/cognitive_agent.py:4651
-  "notebook": re.compile(r'\[NOTEBOOK\s', re.IGNORECASE),     # marker, not prose
-src/probos/cognitive/cognitive_agent.py:5158
-  _COMM_ACTIONS = frozenset({"ward_room_post", "ward_room_reply", "endorse", "dm"})
-src/probos/cognitive/cognitive_agent.py:5194
-  if has_comm_action and execute_steps:                       # AD-643b gate
+---
 
-src/probos/cognitive/cognitive_agent.py:2960-2961
-  "confirm conversationally that you have saved it. Only claim a "
-  "note is saved when you actually emit this tag — never say you "
-src/probos/cognitive/cognitive_agent.py:3009
-  "saved when you actually emit this tag."                    # artifact twin
+## Verified Against Codebase (2026-08-29, HEAD `31cdc691` + staged tree)
+
+```
+config/system.yaml:460                 enabled: true            # dm_agentic
+config/system.yaml:631                 publish_finding_enabled: true
+src/probos/config.py:6657              publish_finding_enabled: bool = False  # AD-1140 default
+src/probos/startup/communication.py:705  enabled=config.agentic_tools.publish_finding_enabled
+src/probos/tools/publish_finding_tool.py:715  path = await self._records.write_notebook(
 
 src/probos/cognitive/cognitive_agent.py:4179  _conversational_agentic_will_run
-src/probos/cognitive/cognitive_agent.py:4195  if observation.get("intent") != "direct_message": return False
-src/probos/cognitive/cognitive_agent.py:4204  _maybe_run_conversational_agentic
-src/probos/cognitive/cognitive_agent.py:120
-  "``WorkItemAgenticOutcome``, which carries neither ``tool_calls`` nor
-   ``tool_results`` — so (BF-793) it never ran at all."
+src/probos/cognitive/cognitive_agent.py:4195    if observation.get("intent") != "direct_message": return False
+src/probos/cognitive/cognitive_agent.py:2014  reply_text = await self._run_agentic_dispatch(   # only caller
+src/probos/cognitive/cognitive_agent.py:1944  async def _handle_work_item_dispatch(...)        # its enclosing intent
+src/probos/cognitive/cognitive_agent.py:120   "carries neither ``tool_calls`` nor ``tool_results`` -- BF-793"
+src/probos/cognitive/cognitive_agent.py:193   def _build_result_metadata(...)                  # only metadata carrier
+src/probos/cognitive/cognitive_agent.py:220     metadata["tool_trace_ref"] = source["_tool_trace_ref"]
+src/probos/cognitive/cognitive_agent.py:2960-2961  "never say you saved something without it"
+src/probos/cognitive/agentic_dispatch.py:1486 class WorkItemAgenticOutcome
+src/probos/cognitive/agentic_dispatch.py:2347   tool_trace_ref=tool_trace_ref,   # production site
+src/probos/dm_reply.py:235             merge_open default False
+src/probos/dm_reply.py:400             "Success tombstones are dropped here."   (to_wire)
 
-src/probos/cognitive/swe_harness/agentic_loop.py:763  class AgenticResult
-src/probos/cognitive/swe_harness/agentic_loop.py:767  tool_calls: list[ToolCallRequest]
-src/probos/cognitive/swe_harness/agentic_loop.py:783  tool_results: list[ToolCallResult]
-src/probos/cognitive/agentic_dispatch.py:1486        class WorkItemAgenticOutcome
-src/probos/cognitive/agentic_dispatch.py:2343-2372   construction site
-  2354: tool_failures=correlate_tool_outcomes(...)   # AD-1248 "only scope holding the raw pairs"
-  2365: tool_defect=detect_tool_defect(...)          # AD-1257 "same scope, same reason. BF-793"
-  2371: tool_defect_evaluated=True                   # AD-1269 evaluated-flag precedent
+src/probos/routers/agents.py:3425      pipeline = DmReplyPipeline(DmReplyContext(
+src/probos/routers/agents.py:3443      await pipeline.run()
+src/probos/routers/agents.py:3466      _reply_meta = _build_reply_metadata(intent.id, result, response)
+src/probos/routers/agents.py:3472      _thread_store.append_message(... role="agent", metadata=_reply_meta)
+src/probos/routers/agents.py:2624      def _build_reply_metadata(...) -> meta = {"intent_id": intent_id}
+src/probos/routers/thread_fanout.py:675  second (group) construction site
+src/probos/routers/thread_fanout.py:695  await pipeline.run_escalation_only()
 
-src/probos/cognitive/dm/reply_value.py:69    def correlate_tool_outcomes(
-src/probos/cognitive/dm/reply_value.py:128     state[key] = offered_display_name(...) if failed else ""
-src/probos/dm_reply.py:165   def call_signature(name, arguments)  # name hashed → success unnamed
-src/probos/dm_reply.py:400     "Success tombstones are dropped here."   (to_wire)
-src/probos/routers/agents.py:3434  reply=DmReply.from_intent_result(result)  # merge-closed
+src/probos/cognitive/dm/reply_pipeline.py:173   await self._run_steps(self._full_steps())
+src/probos/cognitive/dm/reply_pipeline.py:918   step_4i docstring
+src/probos/cognitive/dm/reply_pipeline.py:937     if "[NOTEBOOK" not in ...: return   # fast path
+src/probos/cognitive/dm/reply_pipeline.py:945     cleaned, actions = await proactive.extract_and_execute_notebooks(
+src/probos/cognitive/dm/reply_pipeline.py:1004    safety net: re.sub(...) UNWRAPS, keeping inner text
+src/probos/cognitive/dm/reply_pipeline.py:1295    step_4f artifact record (staged)
+src/probos/cognitive/dm/reply_pipeline.py:1696    step_4m_write_claim_guard (staged)
 
-src/probos/cognitive/dm/reply_pipeline.py:82    class DmReplyContext
-src/probos/cognitive/dm/reply_pipeline.py:129   generated_attachment_ids  (last field)
-src/probos/cognitive/dm/reply_pipeline.py:163   def _full_steps  → "**20 steps**"
-src/probos/cognitive/dm/reply_pipeline.py:895   step_4i_notebook_parse
-src/probos/cognitive/dm/reply_pipeline.py:915     if "[NOTEBOOK" not in ...: return   # fast path
-src/probos/cognitive/dm/reply_pipeline.py:919     cleaned, actions = await proactive.extract_and_execute_notebooks(
-src/probos/cognitive/dm/reply_pipeline.py:1199  step_4f_extract_artifacts
-src/probos/routers/agents.py:3425               DmReplyPipeline(DmReplyContext(
-src/probos/routers/thread_fanout.py:675         group path, run_escalation_only
-
-tests/test_ad1248_slice_b.py:483-487
-  actual = len(rp.DmReplyPipeline._full_steps(pipeline))
-  → docstring count guard; must become 21
+src/probos/proactive.py:1340   cleaned_text, actions_taken = await self._extract_and_execute_actions(
+src/probos/proactive.py:1368   await self._post_to_ward_room(agent, response_text)   # proactive sink
+src/probos/proactive.py:2868   async def _extract_and_execute_actions(...)           # six channels
+src/probos/proactive.py:4070   async def extract_and_execute_notebooks(...)
+src/probos/proactive.py:4093     if records_store is None: return text, actions
+src/probos/proactive.py:4102     if not notebook_content: continue
+src/probos/proactive.py:4185     except Exception: ... (no action appended)
 
 src/probos/cognitive/decomposer.py:50  _CAPABILITY_GAP_RE = re.compile(
-src/probos/config.py:6284              class DmAgenticConfig(BaseModel):  # AD-1065
-src/probos/config.py:7542              dm_agentic: DmAgenticConfig = Field(...)
-src/probos/cognitive/dm/__init__.py:8-10  exports DmReplyContext, DmReplyPipeline
+tests/test_ad1248_slice_b.py:483-487   docstring count guard -> 21
+```
 
-git status --porcelain -- src/ tests/
-   M src/probos/cognitive/agentic_dispatch.py     ← foreign, do not edit
-   M src/probos/cognitive/cognitive_agent.py      ← foreign, OFF LIMITS
-   M src/probos/cognitive/continue_or_ask.py
-   M src/probos/cognitive/repair_verification.py
-   M src/probos/fault_report.py
-   M src/probos/tools/browser/url_route_guard.py
-   M tests/test_bf822_browser_navigation_floor.py
-  ?? src/probos/infrastructure/restore.py
+**Live-vessel evidence** (`%LOCALAPPDATA%\ProbOS\data`, resolved from the running
+process, *not* `d:\ProbOS\data`):
+
+```
+identity.db.birth_certificates
+  ('counselor', 'Ezri')      ('surgeon', 'Meridian')
+  -> the issue's quoted 22:40:09 "Agent surgeon ... proactive_think" line is a
+     DIFFERENT agent from the Ezri turn the issue narrates.
+
+chat_threads.db.chat_thread_messages
+  id=b4a3461f... thread=e879c64b... ("Hello Ezri", participants=[counselor] -> 1:1)
+  author=counselor_counselor_0_67c601cb  role='agent'
+  metadata={"intent_id":"6f269465..."}   created_at -> local 2026-07-26 22:40:35
+  body contains "...saved to my notebook under the slug `ward-room-escalation-decision`"
+  -> role='agent' + metadata.intent_id is produced only at routers/agents.py:3472,
+     immediately after pipeline.run(). Path A. _full_steps() DOES run on this turn.
 ```
 
 **Absence verified**
 
 ```
-CLAIM: no allocated-but-unbuilt AD already covers #1087 / BF-687
-RUN:   grep -l 'BF-687\|1087' prompts/ad-*.md
-FOUND: (none)
-HOLDS: yes — AD-1285 is a fresh allocation, not a revision
+CLAIM: only two sites construct DmReplyPipeline
+RUN:   Select-String -Path src\**\*.py -Pattern 'DmReplyPipeline\('
+FOUND: routers/agents.py:3425, routers/thread_fanout.py:675
+HOLDS: yes
 
-CLAIM: nothing today compares narration against an actual invocation record
-RUN:   grep -rn 'correlate_tool_outcomes|detect_tool_defect|_detect_undeclared_actions' src/
-FOUND: reply_value.py:69 (failures, successes unnamed), fault_report.py:298
-       (defect verdict), cognitive_agent.py:4635 (markers vs declared intent)
-HOLDS: yes — all three answer a different question
+CLAIM: extract_and_execute_notebooks has exactly one production caller
+RUN:   Select-String -Path src\**\*.py -Pattern 'extract_and_execute_notebooks'
+FOUND: proactive.py:4070 (def), reply_pipeline.py:945 (call), plus 2 docstrings
+HOLDS: yes -- the proactive path never calls it
+
+CLAIM: proactive.py:1340 binds actions_taken and never reads it
+RUN:   Select-String -Path src\probos\proactive.py -Pattern 'actions_taken'
+FOUND: 1340 only
+HOLDS: yes
+
+CLAIM: no tool loop reaches a proactive_think turn
+RUN:   Select-String -Path src\**\*.py -Pattern 'WorkItemAgenticExecutor\(|AgenticLoop\('
+FOUND: cognitive_agent.py:2142 (_run_agentic_dispatch; sole caller :2014, inside
+       _handle_work_item_dispatch), cognitive_agent.py:4238
+       (_maybe_run_conversational_agentic, gated intent == direct_message),
+       startup/finalize.py:1996, tools/delegate_task_tool.py:183 (in-loop tool),
+       swe_harness/native_builder.py:100, agentic_dispatch.py:2215
+HOLDS: yes -- none is reachable from proactive_think
+
+CLAIM: the three claimed notebook slugs were never written
+RUN:   walked %LOCALAPPDATA%\ProbOS\data\ship-records\notebooks (2,648 files,
+       per-callsign dirs, filenames are "<slug>.md" -- Ezri alone has 272);
+       matched each slug against BOTH filename and file content
+CONTROL: the scan named a file it had actually read
+       (github-validation-methodology.md), so a nil result is a real absence and
+       not an unopened walk
+FOUND: ward-room-escalation-decision  -> absent
+       engineering-morale-watch       -> absent
+       spacex-ipo-trade-setup         -> absent
+HOLDS: yes
+
+CLAIM: three persisted agent replies still carry a "[NOTEBOOK" string
+RUN:   sqlite chat_thread_messages where role='agent' and body like '%[NOTEBOOK%'
+       (1,069 agent messages total)
+FOUND: 2026-07-26 22:45:26 counselor -- FALSE POSITIVE: prose mention of the
+         "[NOTEBOOK] tag", no real block. The LIKE cannot tell them apart; both
+         real instances were confirmed by reading the body.
+       2026-06-07 12:25:53 counselor -- real unexecuted block + "I've got it filed."
+       2026-06-07 01:12:57 yeoman    -- real unexecuted block + "Done -- that's saved"
+NOTE:  AD-911 and AD-912 both landed 2026-06-07, so both real instances may
+       predate step_4i on that vessel. Cited for shape, not for current-code rate.
 ```
