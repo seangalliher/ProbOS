@@ -814,12 +814,14 @@ def test_the_new_bounds_exist_on_the_model() -> None:
     assert "audit_max_entries" in fields
     assert "audit_drain_timeout_s" in fields
     assert "audit_write_queue_maxsize" in fields
+    assert "audit_spill_maxsize" in fields
 
     cfg = SecurityInfraConfig()
     assert cfg.audit_max_entries == 10_000
     assert cfg.audit_drain_timeout_s == 2.0
     assert cfg.audit_write_queue_maxsize == 1000
     assert cfg.audit_write_max_retries == 3
+    assert cfg.audit_spill_maxsize == 10_000
     # Deliberately NOT `shutdown_drain_timeout_s` (30.0), which is larger than
     # the 10s `__main__.py` allows the whole teardown.
     assert cfg.audit_drain_timeout_s < 10.0
@@ -1022,7 +1024,12 @@ async def test_exhausted_retries_terminate_the_stream(
         errors = [
             r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR
         ]
-        assert any("ENDING the durable stream" in m for m in errors), errors
+        # BF-861 reworded this: the message used to hard-code "the audit sink
+        # refused sequence N on M consecutive attempts", which is only one of
+        # the two ways to get here now. The cause moved into a parameter, so
+        # this pins the ending AND that this ending names the refusing sink.
+        assert any("ENDING the durable audit stream" in m for m in errors), errors
+        assert any("refused sequence 1 on 2 consecutive attempts" in m for m in errors), errors
     finally:
         await persistence.stop()
 
@@ -1335,3 +1342,385 @@ async def test_an_append_during_pool_teardown_reaches_disk(tmp_path: Path) -> No
         assert details == ["before-teardown", "stopped-late"]
     finally:
         await reopened.stop()
+
+
+# ===========================================================================
+# Slice E -- BF-861 (#1331): what termination OWNS
+#
+# AD-1278 made the spill unbounded on purpose: dropping an entry that could not
+# enter the queue would put back the chain hole the spill exists to prevent.
+# That is the guarantee, and #1331 is its price -- 5,000 appends against a
+# wedged sink held 5,000 entries at a cap of 3, because nothing above
+# `_persisted_through` is evictable and the watermark never moves again.
+#
+# The fix is not "evict once the writer lets go". Two review rounds tried that
+# and the second reproduced the defect it was fixing, because a bound that
+# waits on the liveness of a wedged component is not a bound. Termination
+# DISOWNS instead: it stops accounting for the in-flight batch, so the eviction
+# predicate is `_stream_broken_at is not None` alone. Safe because eviction
+# cannot reach that batch at all -- `_next_batch` holds it in its own list and
+# `AuditEntry` is frozen, so `del self.entries[:n]` drops slots, not entries.
+# `test_eviction_does_not_take_the_in_flight_batch_off_the_disk` is the proof.
+# ===========================================================================
+
+class _ModalSink:
+    """One sink whose behaviour is switchable while the writer holds a batch.
+
+    Every BF-861 case needs the sink to stop answering while appends pile up
+    and THEN do something specific -- keep hanging, start refusing, or catch
+    up. Three separate sinks would each have to be re-wedged from scratch, and
+    the state that matters (which batch is in flight) does not survive that.
+    """
+
+    def __init__(self, mode: str = "wedge") -> None:
+        self.mode = mode
+        self.entered = asyncio.Event()
+        self.gate = asyncio.Event()
+        self.seen: list[list[int]] = []
+        self.persisted: list[int] = []
+
+    async def persist_entries(self, entries: Any) -> list[int]:
+        rows = list(entries)
+        self.seen.append([e.sequence for e in rows])
+        self.entered.set()
+        if self.mode == "wedge":
+            await self.gate.wait()
+        if self.mode == "refuse":
+            raise RuntimeError("the sink is refusing")
+        self.persisted.extend(e.sequence for e in rows)
+        if self.mode == "partial":
+            # Wrote them all, confirmed only the last. `_advance_persisted`
+            # refuses the resulting jump, so the watermark STOPS while the
+            # writer's batch head keeps climbing -- the only way the two
+            # termination call sites report different sequences.
+            return [rows[-1].sequence]
+        return [e.sequence for e in rows]
+
+
+async def _wedge_the_writer(log: AuditLog, sink: _ModalSink) -> None:
+    """Append one entry and leave the writer blocked inside the sink.
+
+    Every case below needs the writer HOLDING a batch, because that is what
+    makes the queue back up and the spill grow. Without it the appends drain
+    and nothing under test is ever reached.
+    """
+    log.append(category="code_execution", detail="held-by-the-writer")
+    await asyncio.wait_for(sink.entered.wait(), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_the_spill_is_bounded_by_ending_the_stream_not_by_dropping() -> None:
+    """At the ceiling the stream ENDS; nothing is shed from an open one.
+
+    The distinction is the whole design. Shedding would bound memory too, and
+    would restore exactly the hole BF-780 exists to prevent -- the next
+    persisted row chained to a row that is not there, reported as tampering at
+    every future boot. Ending says where the chain stops instead.
+    """
+    sink = _ModalSink()
+    log = AuditLog(max_entries=0, write_queue_maxsize=1, spill_maxsize=5)
+    log.attach_persistence(sink)  # type: ignore[arg-type]
+    await _wedge_the_writer(log, sink)
+
+    for i in range(200):
+        log.append(category="code_execution", detail=f"pressure-{i}")
+
+    # The premise: the queue really did overflow. Without this a build that
+    # never spills would pass every assertion below.
+    assert log._spilled >= 1, "the queue never overflowed; this proves nothing"
+    assert log._stream_broken_at is not None
+    assert len(log._spill) <= 5
+    assert log.durable_stream_open() is False
+    # Ended, not shed: the in-memory chain is still whole and contiguous.
+    assert [e.sequence for e in log.entries] == list(range(201))
+    assert log.verify_chain() is True
+
+    await asyncio.wait_for(log.drain(timeout_seconds=0.05), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_a_terminated_stream_lets_the_cap_apply_again() -> None:
+    """#1331 itself. 5,000 appends at a cap of 3 must leave 3.
+
+    Measured on HEAD: 5000. Nothing above ``_persisted_through`` is evictable
+    and a terminated stream never advances that watermark again, so the cap
+    became decorative at exactly the moment memory started growing without
+    limit.
+    """
+    sink = _ModalSink()
+    log = AuditLog(max_entries=3, write_queue_maxsize=1, spill_maxsize=5)
+    log.attach_persistence(sink)  # type: ignore[arg-type]
+    await _wedge_the_writer(log, sink)
+
+    for i in range(4_999):
+        log.append(category="code_execution", detail=f"n-{i}")
+
+    assert len(log.entries) == 3
+    assert log._stream_broken_at is not None
+    # Bounded AND still verifiable: a cap that made every boot cry tamper
+    # would be worse than no cap.
+    assert log.verify_chain() is True
+    assert log.chain_state()[0] == "truncated"
+
+    await asyncio.wait_for(log.drain(timeout_seconds=0.05), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_eviction_does_not_take_the_in_flight_batch_off_the_disk() -> None:
+    """The crux. An evicted entry still reaches the sink when it recovers.
+
+    Two review rounds asked to gate eviction on writer state to protect this
+    batch. It needs no protecting: ``_next_batch`` copied it into its own list
+    and ``AuditEntry`` is frozen, so ``del self.entries[:n]`` drops list slots
+    and the writer's references are untouched. This is the regression guard
+    against a future "protect the writer" gate, which would trade a real memory
+    bound for a hazard that does not exist.
+    """
+    sink = _ModalSink()
+    log = AuditLog(max_entries=3, write_queue_maxsize=1, spill_maxsize=5)
+    log.attach_persistence(sink)  # type: ignore[arg-type]
+    await _wedge_the_writer(log, sink)
+    held = list(sink.seen[0])
+    assert held == [0], sink.seen
+
+    for i in range(50):
+        log.append(category="code_execution", detail=f"n-{i}")
+
+    writer = log._writer_task
+    assert writer is not None
+    assert log._stream_broken_at is not None
+    assert len(log.entries) == 3
+    # The premise: eviction really did pass the in-flight sequence. If it is
+    # still in `entries` the release below proves nothing.
+    assert held[0] not in [e.sequence for e in log.entries]
+
+    sink.gate.set()
+    await asyncio.wait({writer}, timeout=5.0)
+
+    assert writer.done(), "the writer never finished its disowned batch"
+    assert sink.persisted == held
+    # Contiguous from genesis: the disk chain ends cleanly rather than gaining
+    # the hole the spill exists to prevent.
+    assert sink.persisted == list(range(len(sink.persisted)))
+
+    await asyncio.wait_for(log.drain(timeout_seconds=0.05), timeout=5.0)
+
+
+def test_finalize_passes_the_ceiling_through() -> None:
+    """BF-861: the operator's ceiling has to reach the log.
+
+    A source scan because the two defaults are the SAME number: drop the kwarg
+    and every behavioural test still passes, while an operator who lowered
+    ``audit_spill_maxsize`` is silently ignored. That is the whole failure
+    mode, and it is invisible to anything that runs at defaults.
+    """
+    from probos.startup import finalize as finalize_mod
+
+    source = inspect.getsource(finalize_mod.finalize_startup)
+    assert "spill_maxsize=config.security_infra.audit_spill_maxsize" in source
+    # Both ends of that seam, too: a dataclass default below the config default
+    # would silently un-bound every `AuditLog()` built outside finalize.
+    assert AuditLog().spill_maxsize == SecurityInfraConfig().audit_spill_maxsize
+
+
+@pytest.mark.asyncio
+async def test_a_terminated_log_reports_no_unflushed_tail(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The loss is announced ONCE, by the termination, naming its cause.
+
+    ``drain`` counts what the log still ACCOUNTS FOR, and termination disowned
+    the in-flight batch, so that count is zero and shutdown files no second
+    report for a loss already explained. Without the disown ``drain`` reports a
+    tail it can never resolve, because the writer it is counting is the wedged
+    one -- and reports it with a different cause than the real one.
+
+    This is the disown's only unmasked effect. ``_enforce_cap`` keys on
+    termination alone and ``_await_quiescent`` has its own terminated-stream
+    early return, so both of those stay green with the disown removed.
+    """
+    sink = _ModalSink()
+    log = AuditLog(max_entries=0, write_queue_maxsize=1, spill_maxsize=3)
+    log.attach_persistence(sink)  # type: ignore[arg-type]
+    await _wedge_the_writer(log, sink)
+
+    for i in range(8):
+        log.append(category="code_execution", detail=f"n-{i}")
+
+    assert log._stream_broken_at is not None
+    # The premise: the writer is still inside the sink holding its batch, so a
+    # zero below comes from the disown and not from an idle writer.
+    assert sink.seen == [[0]], sink.seen
+    assert sink.persisted == []
+
+    caplog.set_level(logging.ERROR, logger="probos.security.audit")
+    unflushed = await asyncio.wait_for(
+        log.drain(timeout_seconds=0.2), timeout=10.0,
+    )
+
+    assert unflushed == 0
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not any("audit drain expired" in m for m in errors), errors
+
+
+def test_termination_is_forward_only() -> None:
+    """First termination wins. This number is where the disk chain ends.
+
+    A direct call because the ordinary path cannot discriminate this: once the
+    ceiling reports ``_persisted_through + 1`` the two call sites report the
+    SAME quantity by construction -- ``persist_entries`` is all-or-nothing and
+    ``_advance_persisted`` walks contiguously, so ``batch[0].sequence`` IS
+    ``_persisted_through + 1``. Measured on the fixed build: ceiling 0 then
+    refusal 0 on a cold log, 1 then 1 after one confirmed batch. The
+    divergence that IS reachable is pinned by the test below this one.
+    """
+    log = AuditLog(max_entries=0)
+
+    log._terminate_stream(7, "the spill ceiling")
+    assert log._stream_broken_at == 7
+
+    log._terminate_stream(2, "a refusing sink")
+    assert log._stream_broken_at == 7
+
+    log._terminate_stream(99, "another refusing sink")
+    assert log._stream_broken_at == 7
+
+
+@pytest.mark.asyncio
+async def test_a_later_termination_cannot_overstate_where_the_chain_ended() -> None:
+    """The forward-only guard against the divergence that is actually reachable.
+
+    An under-reporting sink -- one that writes a batch but confirms only part
+    of it -- makes ``_advance_persisted`` refuse the jump, so the watermark
+    stops while the writer's batch head climbs. The ceiling then names the
+    true end while a later refusal would name a much higher sequence, claiming
+    everything between them reached disk. Measured without the guard: ceiling
+    1, refusal 4, final 4.
+    """
+    sink = _ModalSink(mode="serve")
+    log = AuditLog(
+        max_entries=0, write_queue_maxsize=4, spill_maxsize=3,
+        write_max_retries=0,
+    )
+    log.attach_persistence(sink)  # type: ignore[arg-type]
+
+    log.append(category="code_execution", detail="seed")
+    await log.flush(timeout_seconds=5.0)
+    assert log._persisted_through == 0
+
+    sink.mode = "partial"
+    for i in range(3):
+        log.append(category="code_execution", detail=f"p-{i}")
+    await log.flush(timeout_seconds=5.0)
+    # The premise: the watermark really did stall. Without this the batch head
+    # and `_persisted_through + 1` stay equal and the guard is untestable.
+    assert log._persisted_through == 0, "the watermark did not stall"
+
+    sink.mode = "wedge"
+    sink.entered.clear()
+    log.append(category="code_execution", detail="held")
+    await asyncio.wait_for(sink.entered.wait(), timeout=5.0)
+    held = list(sink.seen[-1])
+    assert held[0] > log._persisted_through + 1, (held, log._persisted_through)
+
+    for i in range(12):
+        log.append(category="code_execution", detail=f"n-{i}")
+    ceiling = log._stream_broken_at
+    assert ceiling == log._persisted_through + 1
+
+    writer = log._writer_task
+    assert writer is not None
+    sink.mode = "refuse"
+    sink.gate.set()
+    await asyncio.wait({writer}, timeout=5.0)
+
+    assert log._stream_broken_at == ceiling, (
+        f"a later refusal moved the reported end to {log._stream_broken_at}, "
+        f"claiming sequences {ceiling}-{log._stream_broken_at} reached disk"
+    )
+
+    await asyncio.wait_for(log.drain(timeout_seconds=0.05), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_the_reported_end_never_overstates_the_durable_end() -> None:
+    """``_stream_broken_at`` may understate durability; it may never overstate.
+
+    Terminating also DISCARDS the write queue, whose sequences sit BELOW the
+    spill's. Reporting the spill head would therefore claim those queued
+    sequences reached disk -- overstating the durable end by up to
+    ``write_queue_maxsize``, which defaults to 1000.
+    """
+    sink = _ModalSink()
+    log = AuditLog(max_entries=0, write_queue_maxsize=1, spill_maxsize=3)
+    log.attach_persistence(sink)  # type: ignore[arg-type]
+    await _wedge_the_writer(log, sink)
+
+    for i in range(8):
+        log.append(category="code_execution", detail=f"n-{i}")
+
+    broken_at = log._stream_broken_at
+    assert broken_at is not None
+    writer = log._writer_task
+    assert writer is not None
+
+    sink.gate.set()
+    await asyncio.wait({writer}, timeout=5.0)
+
+    appended = [e.sequence for e in log.entries]
+    missing = sorted(set(appended) - set(sink.persisted))
+    # The premise: something really was lost, or an overstatement is
+    # unobservable and this test is green for the wrong reason.
+    assert missing, f"nothing was lost; persisted={sink.persisted}"
+    assert broken_at <= missing[0], (
+        f"reported the chain ending at {broken_at} while sequence "
+        f"{missing[0]} never reached the sink"
+    )
+
+    await asyncio.wait_for(log.drain(timeout_seconds=0.05), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_a_zero_ceiling_restores_the_unbounded_buffer() -> None:
+    """The documented opt-out. ``<= 0`` is the pre-BF-861 behaviour, verbatim."""
+    sink = _ModalSink()
+    log = AuditLog(max_entries=0, write_queue_maxsize=1, spill_maxsize=0)
+    log.attach_persistence(sink)  # type: ignore[arg-type]
+    await _wedge_the_writer(log, sink)
+
+    for i in range(200):
+        log.append(category="code_execution", detail=f"pressure-{i}")
+
+    assert log._stream_broken_at is None
+    assert len(log._spill) > 100
+    assert log.durable_stream_open() is True
+
+    await asyncio.wait_for(log.drain(timeout_seconds=0.05), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_the_ceiling_does_not_fire_while_the_sink_keeps_up() -> None:
+    """No false termination. It is BACKLOG that ends the stream, never volume.
+
+    Sixty appends past a ceiling of four, spilling on every burst and never
+    more than two behind. A ceiling that counted total overflows rather than
+    the live buffer would end a perfectly healthy stream here.
+    """
+    sink = _ModalSink(mode="serve")
+    log = AuditLog(max_entries=0, write_queue_maxsize=1, spill_maxsize=4)
+    log.attach_persistence(sink)  # type: ignore[arg-type]
+
+    for burst in range(20):
+        for i in range(3):
+            log.append(category="code_execution", detail=f"k-{burst}-{i}")
+        await log.flush(timeout_seconds=5.0)
+
+    # The premise: the spill was exercised on nearly every burst, so this
+    # measures a ceiling that held rather than one that was never approached.
+    assert log._spilled >= 20, log._spilled
+    assert log._stream_broken_at is None
+    assert log.durable_stream_open() is True
+    assert sorted(sink.persisted) == list(range(60))
+    assert log.verify_chain() is True
+
+    await asyncio.wait_for(log.drain(timeout_seconds=0.05), timeout=5.0)

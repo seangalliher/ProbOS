@@ -77,6 +77,13 @@ _WRITE_RETRY_BACKOFF_SECONDS = 0.05
 # of those is non-empty, which is the degraded path.
 _QUIESCE_POLL_SECONDS = 0.005
 
+# BF-861 (#1331): why the stream ended, when it ended at the spill ceiling
+# rather than at a refusing sink. The operator's remedy differs -- a slow sink
+# versus a broken one -- so the two causes are not collapsed into one message.
+_SPILL_CEILING_REASON = (
+    "the overflow spill reached its ceiling, so the sink is not merely slow"
+)
+
 
 @dataclass
 class AuditLog:
@@ -122,6 +129,11 @@ class AuditLog:
     # AD-1278: bound on entries awaiting the sink. A full queue holds the entry
     # in memory and says so; it never blocks and never fails an append.
     write_queue_maxsize: int = 1000
+    # BF-861 (#1331): ceiling on the overflow spill. Reached means the sink has
+    # fallen this far behind, and the stream ENDS rather than sheds -- dropping
+    # would restore the chain hole the spill exists to prevent. ``<= 0``
+    # disables the ceiling and restores the unbounded behaviour.
+    spill_maxsize: int = 10_000
     # AD-1278: ``(sequence, entry_hash)`` of the last entry evicted from
     # ``entries``. None means the list still starts at genesis.
     _truncated_at: tuple[int, str] | None = None
@@ -535,6 +547,22 @@ class AuditLog:
                 "not there. The sink is not keeping up with appends.",
                 queue.maxsize, entry.sequence,
             )
+        ceiling = int(self.spill_maxsize)
+        if ceiling > 0 and len(self._spill) > ceiling:
+            # BF-861 (#1331): spilling instead of dropping is what keeps the
+            # chain hole-free, and it is also what made this buffer unbounded.
+            # At the ceiling the stream ENDS rather than shedding: dropping
+            # here would put back the hole the spill exists to prevent, so the
+            # only bounded option that keeps the guarantee is to stop.
+            #
+            # Reported at `_persisted_through + 1`, NOT at the spill head:
+            # terminating also discards the queue, whose sequences sit BELOW
+            # the spill's. Naming the spill head would claim those queued
+            # sequences reached disk when they were dropped -- overstating the
+            # durable end by up to `write_queue_maxsize`.
+            self._terminate_stream(
+                self._persisted_through + 1, _SPILL_CEILING_REASON,
+            )
 
     def _ensure_writer(self, loop: asyncio.AbstractEventLoop) -> "asyncio.Queue[AuditEntry]":
         if self._queue is None:
@@ -603,12 +631,23 @@ class AuditLog:
                     return confirmed
                 if attempt < attempts:
                     await asyncio.sleep(_WRITE_RETRY_BACKOFF_SECONDS)
-            self._terminate_stream(batch[0].sequence, attempts + 1)
+            # Report the WATERMARK, not the batch head. Those coincide only for
+            # an all-or-nothing sink; one that under-reports leaves the head
+            # climbing while the watermark stalls, and review reproduced
+            # `stream_broken_at 4` against `persisted_through 0` -- the reported
+            # end overstating the durable end, which is the one direction this
+            # number must never move. The head stays in the message for
+            # diagnostics.
+            self._terminate_stream(
+                self._persisted_through + 1,
+                f"the sink refused sequence {batch[0].sequence} on "
+                f"{attempts + 1} consecutive attempts",
+            )
             return ()
         finally:
             self._retry_batch = []
 
-    def _terminate_stream(self, sequence: int, attempts: int) -> None:
+    def _terminate_stream(self, sequence: int, cause: str) -> None:
         """End the durable stream rather than write past a gap.
 
         Deliberately terminal, and the trade is the point: a durable chain with
@@ -617,17 +656,41 @@ class AuditLog:
         ``broken`` -- while the second says plainly where it ended and
         rehydrates cleanly. Recovery needs a restart; every run until then
         labels itself ``in-memory-only``.
+
+        ``cause`` distinguishes the two ways to get here -- a sink that refused
+        a batch, or the BF-861 spill ceiling -- because the operator's remedy
+        differs and a single message would send them after the wrong one.
+
+        FIRST TERMINATION WINS (BF-861). With two call sites the second would
+        overwrite the first, and both directions are wrong: forwards it claims
+        the intervening sequences reached disk, backwards it hides ones that
+        did. This number is what an operator reads to learn where the on-disk
+        chain ends.
         """
+        if self._stream_broken_at is not None:
+            return
         self._stream_broken_at = int(sequence)
         logger.error(
-            "AD-1278: the audit sink refused sequence %d on %d consecutive "
-            "attempts; ENDING the durable stream there. Nothing further is "
-            "written, so the persisted chain stops cleanly instead of gaining "
-            "a hole that would report as tampering forever. Every execution "
-            "from now on is labelled in-memory-only; restart to recover.",
-            sequence, attempts,
+            "AD-1278: ENDING the durable audit stream at sequence %d (%s). "
+            "Nothing further is enqueued, so the persisted chain stops cleanly "
+            "instead of gaining a hole that would report as tampering forever. "
+            "Every execution from now on is labelled in-memory-only; restart "
+            "to recover.",
+            sequence, cause,
         )
         self._spill.clear()
+        # BF-861: DISOWN whatever the writer is still holding. The alternative
+        # -- waiting for it to fall idle -- makes the memory bound depend on
+        # the liveness of the component that is already wedged, which is how
+        # the second attempt at this reintroduced unbounded growth.
+        #
+        # Safe because eviction cannot reach the batch: `_next_batch` holds it
+        # in its own list and `AuditEntry` is frozen, so `del self.entries[:n]`
+        # drops slots, not entries. A disowned batch that goes on to commit
+        # simply ends the disk chain one batch later, still contiguous -- which
+        # is why the log message says ENQUEUED rather than written.
+        self._inflight = 0
+        self._retry_batch = []
         queue = self._queue
         if queue is None:
             return
@@ -680,12 +743,26 @@ class AuditLog:
         excess = len(self.entries) - cap
         if excess <= 0:
             return
-        if self._persistence is None:
+        if self._persistence is None or self._stream_broken_at is not None:
             # Persistence off BY CONFIGURATION: nobody was promised a durable
             # copy, so this is a ring buffer the operator chose and the
             # truncation watermark keeps the remainder verifiable. Refusing
             # here would make `max_entries` decorative in the commonest
             # deployment, which is the memory bound quietly not existing.
+            #
+            # BF-861 (#1331): a TERMINATED stream is the same situation arrived
+            # at by failure rather than by choice. Nothing further is enqueued,
+            # so holding these entries preserves no durable copy that eviction
+            # would destroy -- it only trades the hole AD-1278 prevents for an
+            # unbounded heap. Measured before the fix: 5000 entries at a cap
+            # of 3 against a wedged sink.
+            #
+            # Deliberately NOT guarded on writer state. A guard reading
+            # `_inflight` or `_retry_batch` never opens against a permanently
+            # wedged writer, which is unbounded growth wearing a safety
+            # costume; and it guards nothing, because `_terminate_stream` has
+            # already disowned the batch and eviction could not reach it
+            # anyway.
             self._evict(excess)
             return
         evictable = 0

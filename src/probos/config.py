@@ -4376,6 +4376,14 @@ class SecurityInfraConfig(BaseModel):
     # deliberate: a persisted chain with a hole reports itself broken at every
     # future boot, while one that stops says plainly where it ended.
     audit_write_max_retries: int = 3
+    # BF-861 (#1331): ceiling on the overflow buffer that holds entries the
+    # write queue could not take. Reaching it means the sink is not merely
+    # slow, so the durable stream ENDS rather than shedding entries -- dropping
+    # would restore the chain hole the buffer exists to prevent. The resulting
+    # memory bound is this plus `audit_write_queue_maxsize` unpersisted entries
+    # on top of `audit_max_entries`, because an unpersisted entry is not
+    # evictable. `<= 0` removes the ceiling and restores unbounded growth.
+    audit_spill_maxsize: int = 10_000
 
 
 class PermissionsConfig(BaseModel):

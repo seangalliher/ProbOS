@@ -1404,6 +1404,7 @@ Security infrastructure configuration (AD-456 + AD-456b).
 | `audit_drain_timeout_s` | `float` | `2.0` | — |  |
 | `audit_write_queue_maxsize` | `int` | `1000` | — |  |
 | `audit_write_max_retries` | `int` | `3` | — |  |
+| `audit_spill_maxsize` | `int` | `10000` | — |  |
 
 ## `ground_truth`
 

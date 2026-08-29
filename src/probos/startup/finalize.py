@@ -3898,6 +3898,7 @@ async def finalize_startup(
             max_entries=config.security_infra.audit_max_entries,
             write_queue_maxsize=config.security_infra.audit_write_queue_maxsize,
             write_max_retries=config.security_infra.audit_write_max_retries,
+            spill_maxsize=config.security_infra.audit_spill_maxsize,
         )
         logger.info("AD-456: AuditLog wired (in-memory hash chain)")
     else:
