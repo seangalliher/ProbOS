@@ -28,14 +28,14 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
-| AD | **AD-1285** | **AD-1286** | AD-1285 | _(none)_ |
+| AD | **AD-1291** | **AD-1292** | AD-1291 | _(none)_ |
 | BF | **BF-861** | **BF-862** | BF-861 | _(none)_ |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-29T18:56:24+00:00 at `31cdc691` | 2421 subjects, 963 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-29T20:13:33+00:00 at `ec359ae3` | 2424 subjects, 965 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-08-29T05:45:15+00:00 | 1331 issues, 916 numbers |
@@ -46,15 +46,15 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 87 | 19 | assigned, issue open, no shipped code |
+| `allocated-open` | 87 | 18 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 7 | 1 | abandoned, number **not** reusable |
-| `shipped` | 915 | 509 | code in history |
+| `shipped` | 916 | 510 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-106 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+105 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -145,7 +145,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-277` | — | mentioned by an authority, no code and no closure |  |
 | `AD-276` | — | mentioned by an authority, no code and no closure |  |
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
-| `BF-858` | [#1328](https://github.com/seangalliher/ProbOS/issues/1328) | issue #1328 open, no code | BF-858: four speech producers still cancel one another |
 | `BF-846` | [#1316](https://github.com/seangalliher/ProbOS/issues/1316) | issue #1316 open, no code | BF-846: check_health's raise-contract blocks per-member recycle containment (BF-824 second half) |
 | `BF-844` | [#1314](https://github.com/seangalliher/ProbOS/issues/1314) | issue #1314 open, no code | BF-844: the visiting-builder temp tree has the same one-shot silent-cleanup shape as BF-840 |
 | `BF-843` | [#1313](https://github.com/seangalliher/ProbOS/issues/1313) | issue #1313 open, no code | BF-843: BackupService is wired but never invoked — zero SQLite snapshots have ever been taken |
@@ -190,15 +189,15 @@ _(none)_
 
 ## Shipped
 
-**AD** (915): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180-1182, 1184, 1201, 1203-1204, 1209-1211, 1217-1223, 1226-1227, 1230-1235, 1239, 1247-1248, 1257, 1267, 1269, 1271, 1273-1285
+**AD** (916): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180-1182, 1184, 1201, 1203-1204, 1209-1211, 1217-1223, 1226-1227, 1230-1235, 1239, 1247-1248, 1257, 1267, 1269, 1271, 1273-1285, 1291
 
-**BF** (509): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-793, 796-802, 805-808, 810, 812, 815-816, 819-837, 840-842, 845, 847-848, 850-857, 859-861
+**BF** (510): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-793, 796-802, 805-808, 810, 812, 815-816, 819-837, 840-842, 845, 847-848, 850-861
 
 ## Unaccounted — silent, **not** free
 
 Numbers below the ceiling that no authority mentions. The issue layer is a snapshot and audits allocate before writing code, so silence here is absence of evidence. Confirm against live issues before minting.
 
-**AD** (275): 2-18, 140-141, 154-227, 229-261, 275, 278-280, 285-292, 301, 303, 306-307, 310, 325-336, 356, 374, 420-422, 503-506, 531, 533, 535-537, 542, 544-549, 555, 559, 578, 624, 681, 684, 767-789, 814, 829-831, 844, 848-852, 957, 967-971, 973-974, 1020, 1039, 1056-1064, 1066-1067, 1090, 1096-1118, 1237-1238, 1249, 1251-1255, 1262-1266, 1268, 1272
+**AD** (280): 2-18, 140-141, 154-227, 229-261, 275, 278-280, 285-292, 301, 303, 306-307, 310, 325-336, 356, 374, 420-422, 503-506, 531, 533, 535-537, 542, 544-549, 555, 559, 578, 624, 681, 684, 767-789, 814, 829-831, 844, 848-852, 957, 967-971, 973-974, 1020, 1039, 1056-1064, 1066-1067, 1090, 1096-1118, 1237-1238, 1249, 1251-1255, 1262-1266, 1268, 1272, 1286-1290
 
 **BF** (332): 1-3, 14-22, 26, 28, 38, 42, 45-48, 50-52, 54-56, 61-62, 70, 72-75, 77, 81, 87-98, 105, 107, 117, 119-122, 176, 180-182, 202, 205, 220-221, 327-330, 333-596, 681, 849
 
@@ -340,6 +339,7 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `BF-790` — code is in history but [#1277](https://github.com/seangalliher/ProbOS/issues/1277) is still open.
 - `BF-824` — code is in history but [#1316](https://github.com/seangalliher/ProbOS/issues/1316) is still open.
 - `BF-840` — code is in history but [#1314](https://github.com/seangalliher/ProbOS/issues/1314) is still open.
+- `BF-858` — code is in history but [#1328](https://github.com/seangalliher/ProbOS/issues/1328) is still open.
 - `BF-861` — code is in history but [#1331](https://github.com/seangalliher/ProbOS/issues/1331) is still open.
 
 ## Unparseable lines

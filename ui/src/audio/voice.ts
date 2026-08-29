@@ -5,6 +5,23 @@ import { deriveAgentSignals } from '../components/profile/avatarSignals';
 import { useStore } from '../store/useStore';
 import { injectLipSyncFrames } from './useLipSyncCapture';
 import { splitIntoSentences, runSentenceQueue } from './voiceChunking';
+import {
+  speechQueueState,
+  type SpeechClass,
+  type SpeechQueueEntry,
+  type SpeechQueueState,
+} from './speechQueueStore';
+
+export type { SpeechClass } from './speechQueueStore';
+
+/** AD-1291 (was BF-764's `SPEECH_JOIN_TIMEOUT_MS`, moved here with the queue).
+ *  Ceiling on how long the arbiter waits for one entry's terminal 'end' before
+ *  moving on. It must never fire on a legitimate utterance -- doing so would
+ *  reintroduce the overlap this fixes -- so it is generous. Its only job is to
+ *  stop a lost 'end' from wedging every later entry, because a silent queue is
+ *  a worse defect than the clipped audio being fixed. Exported so the component
+ *  and its tests read ONE constant rather than two that can drift apart. */
+export const SPEECH_JOIN_TIMEOUT_MS = 45000;
 
 let voicesLoaded = false;
 let cachedVoice: SpeechSynthesisVoice | null = null;
@@ -33,12 +50,20 @@ export interface VoiceProfile {
  *  already injected; consumers MUST NOT re-capture or re-upload) from the
  *  browser SpeechSynthesisUtterance fallback path (no server visemes;
  *  consumers MAY capture audio for server-side rhubarb processing). */
-export type SpeechEventType = 'start' | 'end' | 'boundary';
+/** AD-1291: 'dropped' is ADDITIVE. Every existing consumer filters on `type`
+ *  with `===` / `!==`, so the new variant is inert to all nine of them. It is
+ *  deliberately NOT folded into 'end': the BF-764 drain, BF-290 and the AD-921
+ *  meeting sequencer all read 'end' as "audio finished", and a dropped
+ *  utterance never started. */
+export type SpeechEventType = 'start' | 'end' | 'boundary' | 'dropped';
 export type SpeechEventSource = 'server' | 'browser';
 export interface SpeechEvent {
   type: SpeechEventType;
   agent_id?: string;     // present iff caller passed one to speakResponse
   utterance: SpeechSynthesisUtterance;
+  /** AD-1291: why a 'dropped' event fired. Absent on every other type. A drop
+   *  the Captain's tooling cannot observe is the failure this field prevents. */
+  reason?: string;
   /** BF-293: which TTS path produced this event. Defaults to 'browser' for
    *  back-compat with any listener that didn't read this field. */
   source?: SpeechEventSource;
@@ -199,6 +224,7 @@ export function _resetTtsStatusForTests(): void {
   _ttsStatus = null;
   _ttsStatusInflight = null;
   _activeAudio = null;
+  _activeUtteranceId = null;
 }
 
 /** AD-738: track the active <audio> so a second speakResponse cancels the first. */
@@ -213,6 +239,11 @@ let _activeAudio: HTMLAudioElement | null = null;
  *  'end' from the superseded one's. Read-only reuse — the pipelining predicate
  *  is unchanged. */
 let _speakGeneration = 0;
+
+/** AD-1291: the id of the entry that currently OWNS the device, or null when
+ *  nothing is playing. Distinct from `_speakGeneration`, which now advances at
+ *  ENQUEUE and so no longer answers "is this utterance still current". */
+let _activeUtteranceId: number | null = null;
 
 /** BF-283 (2026-05-13): expose the active audio's playback position so the
  *  CrewVRM viseme sampler can anchor to the audio clock instead of wall
@@ -231,19 +262,181 @@ export function getActiveAudioTimeMs(): number | null {
 
 /** BF-767: returns the utterance id this call will stamp on its own
  *  ``SpeechEvent``s, or ``undefined`` when no TTS engine exists at all and
- *  nothing will ever be spoken. */
+ *  nothing will ever be spoken.
+ *
+ *  AD-1291 (BF-858): this is now an ENQUEUE. Seven producers share one audio
+ *  device and used to cancel one another on arrival; because voice.ts emits the
+ *  terminal 'end' carrying the SUPERSEDED id (BF-767) and the BF-764 drain
+ *  correlates on exactly that id, a foreign cancel did not merely truncate the
+ *  current utterance -- it RESOLVED the drain and advanced it, launching the
+ *  next utterance on top of the interloper. A mutual-cancellation cascade, with
+ *  BF-764's own correlation guard as the propagation mechanism.
+ *
+ *  The contract that keeps every existing consumer working:
+ *
+ *      id at enqueue, audio at dispatch, events at audio.
+ *
+ *  The id is still minted and returned SYNCHRONOUSLY, because the BF-764 drain
+ *  and BF-290 both capture it and correlate before awaiting. `'start'`/`'end'`
+ *  still fire only when audio actually plays, because `wakeWord` and the BF-300
+ *  PTT gate use them to gate the MICROPHONE -- emitting 'start' at enqueue time
+ *  would mute the Captain while the room is silent. And `undefined` still means
+ *  only "no engine exists"; a queued utterance returns a real id. */
 export function speakResponse(
   text: string,
   profile?: VoiceProfile,
   agent_id?: string,
   emotion?: string,
+  speechClass: SpeechClass = 'narration',
 ): number | undefined {
   if (!('speechSynthesis' in window) && typeof Audio !== 'function') return undefined;
 
+  const id = ++_speakGeneration;
+  const state = speechQueueState();
+
+  // The ONLY non-FIFO rule, and it reads a caller-DECLARED class rather than
+  // anything about the text: interactive pre-empts narration, FIFO within a
+  // class. A narration is by construction narrating text already on screen, so
+  // dropping it loses the audio rendition and not the content -- and speaking
+  // it AFTER the live turn would narrate stale text as though it were current,
+  // which actively misleads about ordering. An interactive utterance is never
+  // dropped BY PRE-EMPTION, because nothing else carries it. `flushSpeechQueue`
+  // (barge-in, unmount) still clears either class -- that is the Captain or the
+  // UI saying stop, not the arbiter ranking utterances -- and every drop on
+  // every path fires an observable `dropped` event.
+  if (speechClass === 'interactive') {
+    for (let i = state.entries.length - 1; i >= 0; i -= 1) {
+      const queued = state.entries[i];
+      if (queued.speechClass === 'narration' && queued.started === false) {
+        state.entries.splice(i, 1);
+        _fireDropped(queued, 'preempted-by-interactive');
+      }
+    }
+  }
+
+  state.entries.push({ id, text, profile, agent_id, emotion, speechClass, started: false });
+  // Synchronous up to its first real await, so `_playNow` still runs inside
+  // this call on an idle queue -- the pre-AD-738 synchronous side-effect
+  // contract that callers and tests depend on.
+  void _drainSpeechQueue();
+  return id;
+}
+
+/** AD-1291: every drop is observable. A drop the Captain's tooling cannot see
+ *  is the failure mode the `dropped` event exists to prevent. There is no real
+ *  `SpeechSynthesisUtterance` for something that never reached the device, so
+ *  this carries the text and nothing else -- the same shape the BF-767
+ *  no-engine path already emits. */
+function _fireDropped(entry: SpeechQueueEntry, reason: string): void {
+  _fire({
+    type: 'dropped',
+    agent_id: entry.agent_id,
+    utterance: { text: entry.text } as unknown as SpeechSynthesisUtterance,
+    reason,
+    utterance_id: entry.id,
+  });
+}
+
+/** AD-1291: play entries one at a time, awaiting each terminal 'end' before
+ *  dispatching the next. Re-entrant-safe: a second caller sees `draining` and
+ *  returns, because the running loop picks up whatever it enqueued. */
+async function _drainSpeechQueue(): Promise<void> {
+  const state = speechQueueState();
+  if (state.draining) return;
+  state.draining = true;
+  try {
+    for (;;) {
+      if (state.abandoned) return;
+      const entry = state.entries[0];
+      if (entry === undefined) return;
+      entry.started = true;
+      await _awaitEntry(state, entry);
+      // Re-locate rather than shift(): a flush may have spliced entries out
+      // from under us while this one was in flight.
+      const index = state.entries.indexOf(entry);
+      if (index !== -1) state.entries.splice(index, 1);
+    }
+  } finally {
+    state.draining = false;
+  }
+}
+
+/** AD-1291: dispatch ONE entry and resolve when its terminal 'end' arrives.
+ *  Carries both BF-764 guards verbatim in intent -- a wedged queue turns an
+ *  audio-quality defect into a silence defect, which is strictly worse than
+ *  the overlap being fixed. */
+function _awaitEntry(state: SpeechQueueState, entry: SpeechQueueEntry): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = (): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      if (state.settleActive === done) state.settleActive = null;
+      // Deliberately does NOT clear `_activeUtteranceId`. Under AD-1071
+      // pipelining every SENTENCE of one reply fires an 'end' carrying the
+      // reply's shared id (BF-767), so clearing it here made the first
+      // sentence's 'end' fail `runSentenceQueue`'s shouldContinue and silence
+      // the rest of the reply. The token is handed over by the next
+      // `_playNow` and cleared by `stopSpeaking`; a finished entry's id can
+      // never be re-matched because ids are monotonic.
+      try { unsub(); } catch { /* Tier-2 */ }
+      resolve();
+    };
+    // Subscribe BEFORE dispatching: the browser path fires its terminal 'end'
+    // synchronously, and a listener armed afterwards would miss it and wait out
+    // the join timeout. BF-767 measured that exact ordering.
+    const unsub = onSpeechEvent((event) => {
+      if (event.type !== 'end') return;
+      if (event.utterance_id !== entry.id) return;
+      done();
+    });
+    state.settleActive = done;
+    // GUARD 1: no engine on this path, so nothing will ever emit an 'end'.
+    // Without this the queue wedges on entry one (the BF-290 shape).
+    if (!_playNow(entry)) { done(); return; }
+    // GUARD 2: a lost 'end' must not strand every later entry. Skipped when the
+    // dispatch already settled synchronously, so a normal fast path arms no
+    // timer at all.
+    if (!settled) timer = setTimeout(done, SPEECH_JOIN_TIMEOUT_MS);
+  });
+}
+
+/** AD-1291: drop every queued-but-unstarted entry, each with an observable
+ *  reason. The IN-FLIGHT entry is deliberately left alone -- stopping audio is
+ *  `stopSpeaking`'s job, and its consumers must still receive that utterance's
+ *  terminal 'end'.
+ *
+ *  `agentId` scopes the flush to one surface: an unmounting tab must drop its
+ *  OWN backlog without silencing whatever another surface is queueing. */
+export function flushSpeechQueue(reason: string, agentId?: string): void {
+  const state = speechQueueState();
+  for (let i = state.entries.length - 1; i >= 0; i -= 1) {
+    const entry = state.entries[i];
+    if (entry.started) continue;
+    if (agentId !== undefined && entry.agent_id !== agentId) continue;
+    state.entries.splice(i, 1);
+    _fireDropped(entry, reason);
+  }
+}
+
+/** AD-1291: the device work for ONE entry, extracted from the old
+ *  `speakResponse` body unchanged apart from taking its id rather than minting
+ *  one. Returns false when no engine exists on this path, which is GUARD 1's
+ *  signal that no 'end' is ever coming. */
+function _playNow(entry: SpeechQueueEntry): boolean {
+  const { text, profile, agent_id, emotion } = entry;
+  const utterance_id = entry.id;
+  // Re-checked at DISPATCH, not just at enqueue: the queue introduces a gap in
+  // which the engine can disappear, and this is the boundary that must not
+  // assume the enqueue-time check still holds.
+  if (!('speechSynthesis' in window) && typeof Audio !== 'function') return false;
+
   // Cancel any in-flight audio from a prior call (server path or browser path).
-  // BF-767: this runs BEFORE the generation bump below on purpose — the
-  // terminal 'end' these emit belongs to the SUPERSEDED utterance and must
-  // carry its older id, never this call's.
+  // The arbiter has normally already awaited the previous entry's 'end', so
+  // this is a no-op; it still matters when GUARD 2 fired, or when something
+  // outside the arbiter (barge-in) left audio playing.
   if ('speechSynthesis' in window) {
     speechSynthesis.cancel();
   }
@@ -252,23 +445,23 @@ export function speakResponse(
     _activeAudio = null;
   }
 
-  // AD-1071: bump the generation token so any in-flight sentence-pipelining
-  // queue from a prior reply stops before this call proceeds. Every path
-  // below (including the fast browser fallbacks) supersedes the previous reply.
-  const myGen = ++_speakGeneration;
+  // AD-1071 / AD-1291: the pipelining predicate asks "do I still own the
+  // device", not "is my id the newest". Under the arbiter `_speakGeneration`
+  // advances at ENQUEUE, so the old `myGen === _speakGeneration` test would
+  // have let a merely QUEUED reply truncate the sentence queue of the one
+  // actually playing.
+  _activeUtteranceId = utterance_id;
 
   // Fast synchronous path: if fetch is unavailable OR the cached probe
   // already says "not piper", run the browser fallback synchronously.
-  // This preserves the pre-AD-738 synchronous side-effect contract on the
-  // default-config path AND avoids an async hop on every warm-cache call.
   if (typeof (globalThis as any).fetch !== 'function') {
     _ttsStatus = { enabled: false, backend: 'browser', sentence_pipelining_enabled: false };
-    _speakBrowserFallback(text, profile, agent_id, myGen);
-    return myGen;
+    _speakBrowserFallback(text, profile, agent_id, utterance_id);
+    return true;
   }
   if (_ttsStatus !== null && (!_ttsStatus.enabled || _ttsStatus.backend !== 'piper')) {
-    _speakBrowserFallback(text, profile, agent_id, myGen);
-    return myGen;
+    _speakBrowserFallback(text, profile, agent_id, utterance_id);
+    return true;
   }
 
   void (async () => {
@@ -276,30 +469,29 @@ export function speakResponse(
     // probe once, cache, and skip the POST entirely when backend != "piper".
     const status = await _fetchTtsStatus();
     if (status === null || !status.enabled || status.backend !== 'piper') {
-      _speakBrowserFallback(text, profile, agent_id, myGen);
+      _speakBrowserFallback(text, profile, agent_id, utterance_id);
       return;
     }
     // AD-1071: sentence-chunked pipelining (DEFAULT-OFF). When enabled AND the
     // reply has >1 sentence, synthesize + play sentences SEQUENTIALLY so the
     // first audio starts after only the FIRST sentence is synthesized (cutting
     // time-to-first-audio). When OFF (default) OR single-sentence, fall through
-    // to the byte-identical single-call path below. The generation token lets a
-    // newer reply cancel this queue mid-flight.
+    // to the byte-identical single-call path below.
     if (status.sentence_pipelining_enabled) {
       const sentences = splitIntoSentences(text);
       if (sentences.length > 1) {
         await runSentenceQueue(
           sentences,
-          (sentence) => _synthesizeAndPlay(sentence, profile, agent_id, emotion, myGen),
-          () => myGen === _speakGeneration,
+          (sentence) => _synthesizeAndPlay(sentence, profile, agent_id, emotion, utterance_id),
+          () => _activeUtteranceId === utterance_id,
         );
         return;
       }
     }
     // Single-call path (default): one TTS POST for the whole reply.
-    await _synthesizeAndPlay(text, profile, agent_id, emotion, myGen);
+    await _synthesizeAndPlay(text, profile, agent_id, emotion, utterance_id);
   })();
-  return myGen;
+  return true;
 }
 
 /** AD-738 / AD-1071: synthesize ONE utterance via the server Piper backend,
@@ -502,7 +694,26 @@ function _speakBrowserFallback(
   speechSynthesis.speak(utterance);
 }
 
+/** AD-1291: stopping the current utterance must ALSO empty the backlog.
+ *
+ *  This is a regression the arbiter would otherwise introduce, in the seam
+ *  between the new queue and an existing consumer. Before the queue, barge-in
+ *  stopped the utterance and nothing followed it. With a queue, cancelling the
+ *  current one would immediately dispatch the next -- so the Captain gets
+ *  talked over by a backlog at the exact moment they try to speak.
+ *
+ *  Wired here rather than at each caller on purpose: every barge-in path
+ *  already funnels through this function (`conversationController`'s
+ *  `_onVadSpeechStart` calls it via `_stopSpeaking`), so one seam covers them
+ *  all and no future caller can forget it. `wakeWord.ts` needs no change -- its
+ *  speech subscription only sets the `_bargedIn` suppression flag and never
+ *  cancels anything. */
 export function stopSpeaking(): void {
+  flushSpeechQueue('barge-in');
+  // Also ends any AD-1071 sentence queue still feeding the device: without
+  // this, cancelling the current utterance would let its remaining sentences
+  // keep synthesizing over the Captain.
+  _activeUtteranceId = null;
   if ('speechSynthesis' in window) {
     speechSynthesis.cancel();
   }

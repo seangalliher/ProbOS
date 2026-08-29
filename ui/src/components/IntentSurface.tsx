@@ -444,7 +444,12 @@ export function IntentSurface() {
           if (voiceEnabled && replies[0]?.text && !replies[0].text.startsWith('(')) {
             // BF-767: attribute the utterance. Unscoped, its 'end' carried no
             // agent_id and so matched every agent-scoped listener in the app.
-            speakResponse(stripMarkdownForSpeech(replies[0].text), undefined, replies[0].agent_id);
+            // AD-1291: narration -- the reply is already rendered above by
+            // addChatMessage, so this reads out text the Captain can see.
+            speakResponse(
+              stripMarkdownForSpeech(replies[0].text), undefined, replies[0].agent_id,
+              undefined, 'narration',
+            );
           }
           soundEngine.playIntentRouting();
           return;
@@ -472,7 +477,10 @@ export function IntentSurface() {
           // is no agent_id to attribute it to and inventing one would misroute
           // the agent-keyed lip-sync / modulation consumers. Agent-scoped
           // listeners now require a matching agent_id, so a bare 'end' is inert.
-          speakResponse(stripMarkdownForSpeech(response));
+          // AD-1291: narration, and the reason this component matters -- it is
+          // mounted for the whole session beside ProfileChatTab, so a queue
+          // living inside the chat component could never arbitrate against it.
+          speakResponse(stripMarkdownForSpeech(response), undefined, undefined, undefined, 'narration');
         }
         soundEngine.playIntentRouting();
       })

@@ -105,8 +105,23 @@ describe('AD-738 speakResponse — default-config (browser) zero-HTTP guarantee'
     const ttsPosts = urls.filter((u) => u === '/api/avatars/tts');
     expect(probeCalls.length).toBe(1);
     expect(ttsPosts.length).toBe(0);
-    // SpeechSynthesis fired 3 times.
+    // AD-1291: this line used to read `expect(speakCalls.length).toBe(3)`
+    // immediately after the three calls, which pinned the very defect BF-858
+    // fixes -- three producers all reaching the one audio device at once, each
+    // cancelling the last. `speakResponse` now enqueues, so only the head is
+    // dispatched until it ends. The count of 3 is still asserted below; it is
+    // now reached by ENDING each utterance, which also proves the arbiter
+    // serialises rather than drops.
+    expect(speakCalls.length).toBe(1);
+    for (let i = 0; i < 3 && createdUtterances[i]; i += 1) {
+      createdUtterances[i].onend?.();
+      await _flush();
+    }
     expect(speakCalls.length).toBe(3);
+    // Draining the queue must not have re-probed or started POSTing.
+    const urlsAfter = fetchMock.mock.calls.map((c) => c[0] as string);
+    expect(urlsAfter.filter((u) => u.includes('/api/avatars/tts/status')).length).toBe(1);
+    expect(urlsAfter.filter((u) => u === '/api/avatars/tts').length).toBe(0);
   });
 });
 
@@ -223,6 +238,16 @@ describe('AD-738 speakResponse — piper path', () => {
   });
 
   it('second speakResponse cancels in-flight <audio> from first', async () => {
+    // AD-1291: this test used to call `speakResponse` twice back to back and
+    // assert the second had ALREADY paused the first -- i.e. it pinned the
+    // BF-858 defect as the contract. Two producers no longer race for the
+    // device: the second QUEUES. The pause mechanism it guards is still real
+    // and still needed, but it is now reached only when the arbiter hands the
+    // device over -- either after a terminal 'end' or, as here, after GUARD 2
+    // gives up on an utterance whose 'end' never arrived and whose <audio> is
+    // therefore still playing. That is the only path on which one utterance's
+    // audio can still be live when the next one starts.
+    vi.useFakeTimers();
     const sha1 = 'c'.repeat(64);
     const sha2 = 'd'.repeat(64);
     let nth = 0;
@@ -253,10 +278,19 @@ describe('AD-738 speakResponse — piper path', () => {
     const first = createdAudios[0];
     expect(first.play).toHaveBeenCalled();
 
+    // Queued, NOT dispatched: the first still owns the device.
     voiceMod.speakResponse('second');
     await _flush();
+    expect(createdAudios.length).toBe(1);
+    expect(first.pause).not.toHaveBeenCalled();
+
+    // The first utterance's 'end' never comes; GUARD 2 releases the queue.
+    await vi.advanceTimersByTimeAsync(voiceMod.SPEECH_JOIN_TIMEOUT_MS + 1);
+    await _flush();
+
     expect(createdAudios.length).toBe(2);
     // The first audio was paused before the second's play was issued.
     expect(first.pause).toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

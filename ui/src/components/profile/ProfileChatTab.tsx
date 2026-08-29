@@ -241,6 +241,13 @@ const PTT_TTS_WATCHDOG_MS = 45000;
 // the overlap this fixes -- so it is generous. Its job is only to stop a lost
 // 'end' from wedging every later message, because a silent queue is a worse
 // defect than the clipped audio being fixed.
+//
+// AD-1291 keeps this LOCAL rather than importing the arbiter's identical bound
+// from voice.ts. They are two bounds on two different queues that happen to
+// agree, and importing it put a constant behind a module ~20 test files
+// replace with a `vi.mock` factory: the factory does not define it, Vitest's
+// proxy THROWS on access, and the throw landed inside this drain's promise
+// executor -- killing the loop after one utterance and silencing the rest.
 const SPEECH_JOIN_TIMEOUT_MS = 45000;
 
 export function ProfileChatTab({ agentId, threadId }: Props) {
@@ -762,6 +769,17 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const meetingActive = useStore((s) =>
     !!(activeThreadId && (s.chatThreads.get(activeThreadId)?.metadata as Record<string, unknown> | undefined)?.meeting_active),
   );
+  // AD-1291: the live-call signal, extracted so the send path's speech CLASS
+  // and the output-audio policy cannot drift apart. The same reply is a
+  // conversational turn during a live call and narration of already-rendered
+  // text outside one, and only the caller can tell the difference.
+  const isCallLiveNow = useCallback((resolvedThreadId: string | undefined): boolean => {
+    const state = useStore.getState();
+    return !!(
+      resolvedThreadId
+      && (state.chatThreads.get(resolvedThreadId)?.metadata as Record<string, unknown> | undefined)?.meeting_active
+    );
+  }, []);
   // BF-671: one live output policy for every 1:1 speech producer. Agent and
   // thread identify the output being decided, not whichever profile happens
   // to be mounted after an async boundary. Only the mounted agent may use the
@@ -782,15 +800,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           )
         : state.threadIdByAgent.get(targetAgentId)
     );
-    const liveMeetingActive = !!(
-      resolvedThreadId
-      && (state.chatThreads.get(resolvedThreadId)?.metadata as Record<string, unknown> | undefined)?.meeting_active
-    );
+    const liveMeetingActive = isCallLiveNow(resolvedThreadId);
     if (liveMeetingActive) return state.callAudioEnabled;
     if (targetAgentId === mountedAgentId) return ttsEnabledRef.current;
     const stored = localStorage.getItem(`hxi_chat_tts_${targetAgentId}`);
     return stored === null ? state.voiceEnabled : stored === '1';
-  }, []);
+  }, [isCallLiveNow]);
   const outputAudioEnabled = meetingActive ? callAudioEnabled : ttsEnabled;
   const toggleOutputAudio = useCallback((): void => {
     if (meetingActive) {
@@ -981,7 +996,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         && isOutputAudioEnabledNow(requestAgentId, tid)
       ) {
         speechInFlightRef.current.add(speechKeyFor(greetingMsg, requestAgentId));
-        speakResponse(stripMarkdownForSpeech(reply), voiceProfile ?? undefined, requestAgentId);
+        // AD-1291: a call greeting is a live conversational turn, so it
+        // pre-empts queued narration rather than waiting behind it.
+        speakResponse(
+          stripMarkdownForSpeech(reply), voiceProfile ?? undefined, requestAgentId,
+          undefined, 'interactive',
+        );
       }
     } catch {
       // Honest-degrade: a failed greeting just means the call opens quietly.
@@ -1307,7 +1327,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             done();
           });
           utteranceId = speakResponse(
-            next.text, voiceProfile ?? undefined, next.author, next.emotion,
+            next.text, voiceProfile ?? undefined, next.author, next.emotion, 'narration',
           );
           started = true;
           // GUARD 1: no TTS engine at all -- nothing will ever emit an 'end'
@@ -1729,11 +1749,15 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           ? data.emotion
           : undefined;
         speechInFlightRef.current.add(speechKeyFor(replyRow, requestAgentId));
+        // AD-1291: during a live call this reply is a conversational turn and
+        // pre-empts queued narration; in ordinary chat the same text is already
+        // on screen, so it takes its turn behind whatever is speaking.
         speakResponse(
           stripMarkdownForSpeech(reply),
           voiceProfile ?? undefined,
           requestAgentId,
           _emotion,
+          isCallLiveNow(responseThreadId) ? 'interactive' : 'narration',
         );
       }
     } catch {
@@ -1741,7 +1765,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     } finally {
       setSending(false);
     }
-  }, [agentId, threadId, sending, seedMemories, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId, isOutputAudioEnabledNow]);
+  }, [agentId, threadId, sending, seedMemories, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId, isOutputAudioEnabledNow, isCallLiveNow]);
 
   // AD-985: keep the send ref current so the meeting open-mic's
   // ``submitTranscript`` routes through the live group-fan-out path.
@@ -1914,6 +1938,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         speechInFlightRef.current.add(speechKey);
         ourUtteranceId = speakResponse(
           stripMarkdownForSpeech(replyText), voiceProfile ?? undefined, armAgentId,
+          undefined, 'interactive',
         );
         // No TTS engine at all — nothing will ever emit an 'end' (BF-290).
         if (ourUtteranceId === undefined) complete();

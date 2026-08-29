@@ -178,6 +178,17 @@ describe('BF-655 producer — server path fires balanced end', () => {
     // audio; the OLDER utterance must emit its terminal 'end' (same agent_id)
     // BEFORE the newer utterance's 'start', so the latch clears. Pre-fix: no
     // such 'end' -> icon/head/PTT stranded forever.
+    //
+    // AD-1291: the trigger changed, the invariant did not. This used to call
+    // `speakResponse` twice back to back and assert the second had already
+    // superseded the first SYNCHRONOUSLY -- which pinned the BF-858 defect
+    // (two producers on one device) as the contract. The second call now
+    // queues, so supersession is only reachable when the arbiter hands the
+    // device over with the previous <audio> still live: the GUARD 2 path,
+    // where an utterance's 'end' never arrived. The assertion below is
+    // unchanged -- ['start', 'end', 'start'], the older 'end' strictly before
+    // the newer 'start' -- because that ordering is the actual BF-655 rule.
+    vi.useFakeTimers();
     (globalThis as any).fetch = _makePiperFetch();
     const voiceMod = await import('../voice');
     voiceMod._resetTtsStatusForTests();
@@ -187,16 +198,20 @@ describe('BF-655 producer — server path fires balanced end', () => {
     await _flush();
     expect(events.map((e) => e.type)).toEqual(['start']); // first start
 
-    // The second call pauses the first audio synchronously (before its own
-    // async synth) -> the first utterance's 'end' fires now.
+    // Queued behind 'first', which still owns the device: nothing yet.
     voiceMod.speakResponse('second', undefined, 'ezri');
-    // end must already be captured, before the second start (which is async).
-    expect(events.map((e) => e.type)).toEqual(['start', 'end']);
-    expect(events[1]).toMatchObject({ type: 'end', agent_id: 'ezri', source: 'server' });
-
     await _flush();
-    // Second utterance's start follows the first's terminal end.
+    expect(events.map((e) => e.type)).toEqual(['start']);
+
+    // 'first' never reports that it ended. GUARD 2 releases the queue, and
+    // dispatching 'second' pauses the still-playing first audio -> its
+    // terminal 'end' fires, and must land BEFORE the second's 'start'.
+    await vi.advanceTimersByTimeAsync(voiceMod.SPEECH_JOIN_TIMEOUT_MS + 1);
+    await _flush();
+
     expect(events.map((e) => e.type)).toEqual(['start', 'end', 'start']);
+    expect(events[1]).toMatchObject({ type: 'end', agent_id: 'ezri', source: 'server' });
+    vi.useRealTimers();
   });
 
   it('no_double_end_when_ended_then_pause', async () => {
