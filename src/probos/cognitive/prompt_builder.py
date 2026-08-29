@@ -209,7 +209,11 @@ class PromptBuilder:
             f"This instance has {len(unique)} registered capabilities: "
             f"{len(core_intents)} core, {len(utility_intents)} utility, "
             f"{len(domain_intents)} domain. "
-            f"{len(consensus_intents)} require consensus approval.\n"
+            # BF-779 (#1242): "require consensus approval" told the model a
+            # vote authorizes the act. It does for write_file, mcp_invoke and
+            # device_actuate; every other such intent executes first and is
+            # voted on after. Report the marker, not a gate.
+            f"{len(consensus_intents)} marked as requiring consensus.\n"
             "If a user asks about a capability not listed here, it is not installed.\n"
         )
         parts.append("")

@@ -804,7 +804,11 @@ class TestShipsComputerIdentity:
         assert "1 core" in system_prompt
         assert "1 utility" in system_prompt
         assert "1 domain" in system_prompt
-        assert "1 require consensus" in system_prompt
+        # BF-779 (#1242): was "1 require consensus". That told the model a vote
+        # authorizes the act, which is true only for write_file, mcp_invoke and
+        # device_actuate; everything else executes first and votes after. The
+        # marker is reported now, not a gate.
+        assert "1 marked as requiring consensus" in system_prompt
 
     @pytest.mark.asyncio
     async def test_runtime_summary_in_user_prompt(self, decomposer, llm):

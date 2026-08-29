@@ -3,9 +3,17 @@
 The intent counterpart to ``ToolPermissionStore`` (AD-423b) and
 ``SkillGrantStore`` (AD-983b). It is the **authorization substrate** for the
 settled per-agent write-intent gating design (AD-1004 discussion): a crew agent
-that *originates* a consensus-gated WRITE intent (e.g. ``run_python``) must be
-granted that intent — per-agent authorization, checked at origination, layered
-with (never replacing) the per-call consensus gate.
+that *originates* a destructive WRITE intent must be granted that intent —
+per-agent authorization, checked at origination.
+
+BF-779 (#1242) correction: this used to call ``run_python`` a "consensus-gated"
+intent layered with "the per-call consensus gate". There is no such gate on that
+intent — ``code_runner.py`` says so in its own module docstring, and the two
+statements contradicted each other across modules. Only ``write_file``,
+``mcp_invoke`` and ``device_actuate`` propose-then-commit; every other
+``requires_consensus=True`` intent broadcasts, EXECUTES, and is voted on
+afterwards with no rollback. So these grants layer with whatever gating an
+intent actually has, which for most intents is none.
 
 **Mechanism only — default OFF.** This store is NOT wired into any enforcement
 path yet (mirrors the AD-1004 hook-bus discipline: build the substrate, wire it
