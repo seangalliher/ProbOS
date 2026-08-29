@@ -324,6 +324,10 @@ def test_full_steps_order_regression() -> None:
         "step_4g_create_task_parse",
         "step_4l_extract_todos",
         "step_4j_deliberate_parse",
+        # AD-1285 (#1087): the write-claim guard reads the text the Captain
+        # will actually see, so it must land AFTER the 4j deep-tier re-roll
+        # and BEFORE the episodic store carries the corrected text.
+        "step_4m_write_claim_guard",
         "step_5_episodic_store",
         "step_6_working_memory_record",
         "step_7_divergence_check",

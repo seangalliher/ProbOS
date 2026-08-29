@@ -336,6 +336,18 @@ def _filename_hint(first_line: str) -> str | None:
     return m.group("py") or m.group("js") or m.group("html")
 
 
+def has_explicit_artifact_marker(response_text: str) -> bool:
+    """Whether the reply carries an explicit ``<artifact>`` tag (pass 1).
+
+    AD-1285 (#1087): separates a save the agent deliberately asked for from the
+    pass-2 lift of any long fenced block, which it never claimed to save. Only
+    the former may be reported as a write that was attempted and failed --
+    treating a passive lift the same way would let the text-blind write-claim
+    guard append a save disclosure to a reply describing no save.
+    """
+    return bool(_ARTIFACT_TAG_RE.search(response_text or ""))
+
+
 def extract_artifacts(
     response_text: str,
     *,

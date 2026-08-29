@@ -25,10 +25,25 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from probos.cognitive.dm.write_ledger import (  # AD-1285 (#1087)
+    WRITE_CHANNEL_ARTIFACT,
+    WRITE_CHANNEL_NOTEBOOK,
+    ClaimVerdict,
+    WriteLedger,
+    assess_write_claim,
+    disclosure_for,
+)
 from probos.dm_reply import DmReply  # AD-1248
 from probos.hooks.bus import HookEvent
 
 logger = logging.getLogger(__name__)
+
+
+#: AD-1285 (#1087): notebook action types that mean the entry is durably
+#: present. ``notebook_write`` is an actual write; ``notebook_suppressed`` is
+#: AD-550/AD-911 dedup against an existing highly-similar entry, so the note is
+#: there and a save claim about it is true. Anything else counts as no write.
+_NOTEBOOK_PRESENT_ACTIONS = frozenset({"notebook_write", "notebook_suppressed"})
 
 
 # AD-869: read-only mesh intents that Yeo may resolve inline in a single
@@ -128,6 +143,11 @@ class DmReplyContext:
     # reply. Surfaced on the response payload as ``attachment_ids``.
     # AD-731 invariant: refs only — bytes live in AttachmentStore.
     generated_attachment_ids: list[str] = field(default_factory=list)
+    # AD-1285 (#1087): what this turn actually wrote. Populated by the steps
+    # that own a durable-write channel; read by ``step_4m_write_claim_guard``.
+    # Defaulted per the AD-791a convention above, so every existing
+    # ``DmReplyContext(...)`` construction site is untouched.
+    write_ledger: WriteLedger = field(default_factory=WriteLedger)
     # NOTE: ``sanity_result`` is intentionally NOT a ctx field — it is
     # produced and consumed entirely within step_1_sanity_gate_retry.
 
@@ -161,17 +181,22 @@ class DmReplyPipeline:
 
     def _full_steps(self) -> tuple[Callable, ...]:
         """AD-933: the full DM one-shot chain in load-bearing order, the single
-        source of truth executed by :meth:`run`. **20 steps** (BF-796: this said
+        source of truth executed by :meth:`run`. **21 steps** (BF-796: this said
         18 while the tuple returned 20 -- a reader trusts this line when judging
         whether an insertion is in scope, so it is now guarded by a test rather
         than maintained by hand) after AD-934 inserted
         ``step_4j_deliberate_parse`` between ``step_4g_create_task_parse`` and
         ``step_5_episodic_store`` (so the deep-tier re-rolled reply is what gets
-        stored / divergence-checked / emitted). Ordering is invariant (sanity
-        gate before challenge/move parsers, self-check before episodic store,
-        deliberate re-roll before episodic store, divergence before
-        ``mark_reply_emitted``, emotion after divergence) and MUST stay
-        byte-identical apart from the AD-934 4j insertion."""
+        stored / divergence-checked / emitted), and AD-1285 inserted
+        ``step_4m_write_claim_guard`` between ``step_4j_deliberate_parse`` and
+        ``step_5_episodic_store`` (after 4j so the guard reads the text the
+        Captain will actually see, before 5 so the stored episode and the
+        divergence check carry the corrected text). Ordering is invariant
+        (sanity gate before challenge/move parsers, self-check before episodic
+        store, deliberate re-roll before episodic store, write-claim guard after
+        the re-roll, divergence before ``mark_reply_emitted``, emotion after
+        divergence) and MUST stay byte-identical apart from those two
+        insertions."""
         return (
             self.step_1_sanity_gate_retry,
             self.step_2_challenge_parse,
@@ -188,6 +213,7 @@ class DmReplyPipeline:
             self.step_4g_create_task_parse,  # AD-845
             self.step_4l_extract_todos,  # AD-1081 room-Todo validation loop
             self.step_4j_deliberate_parse,  # AD-934
+            self.step_4m_write_claim_guard,  # AD-1285 (#1087)
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
             self.step_7_divergence_check,
@@ -223,7 +249,10 @@ class DmReplyPipeline:
         (6 — records ``"Captain DM"``), divergence (7), mark-emitted/avatar
         (8), emotion (9). Forward marker: AD-933b-2 (``step_4d_follow_up``,
         whose ``conversation_pacing_scheduler`` re-injects a synthesized
-        user-turn — an ambiguous target in a multi-agent room)."""
+        user-turn — an ambiguous target in a multi-agent room). Forward marker:
+        AD-1285 ``step_4m_write_claim_guard`` is 1:1-only pending group-sink
+        verification (#1087) — the same write-claim hazard exists on the group
+        fan-out, but its disclosure sink is unverified."""
         return (
             self.step_4c_image_gen_parse,  # AD-933b (AD-730-3 [GEN_IMAGE])
             self.step_4e_action_dispatch,
@@ -919,11 +948,38 @@ class DmReplyPipeline:
         if proactive is not None and hasattr(
             proactive, "extract_and_execute_notebooks"
         ):
+            # AD-1285 residual: no channel exists here, which is a different
+            # fact from "a channel ran and wrote nothing", so the ledger stays
+            # untouched on the else. On a ship advertising notebooks with
+            # ``proactive_loop`` unwired every marker is a phantom save and
+            # nothing flags it -- a deployment defect for a startup check, not
+            # a per-reply disclosure.
             try:
                 cleaned, actions = await proactive.extract_and_execute_notebooks(
                     self.ctx.agent, self.ctx.response_text,
                 )
                 self.ctx.response_text = cleaned
+                # AD-1285 (#1087): the channel ran, and ``actions`` is the only
+                # in-process evidence of whether it wrote. It was previously
+                # logged and dropped, which is why a marker whose write failed
+                # produced a reply indistinguishable from a successful one.
+                #
+                # Match on action TYPE rather than list truthiness. The producer
+                # emits exactly two kinds (``proactive.py`` 3128/4178 write,
+                # 3019/3088/4163 suppress) and BOTH mean the note is durably
+                # present: a suppression is AD-550/AD-911 dedup against an
+                # existing highly-similar entry, so "I saved it" stays true and
+                # flagging it would be a false positive. Truthiness happened to
+                # agree today; it would silently count any future non-write
+                # action as a write.
+                self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
+                    WRITE_CHANNEL_NOTEBOOK,
+                    wrote=any(
+                        isinstance(action, dict)
+                        and action.get("type") in _NOTEBOOK_PRESENT_ACTIONS
+                        for action in actions
+                    ),
+                )
                 if actions:
                     logger.info(
                         "AD-912: persisted %d notebook action(s) from DM "
@@ -931,6 +987,10 @@ class DmReplyPipeline:
                         len(actions), self.ctx.agent_id,
                     )
             except Exception:
+                # AD-1285: the write raised. Consulted, wrote nothing.
+                self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
+                    WRITE_CHANNEL_NOTEBOOK, wrote=False,
+                )
                 logger.warning(
                     "AD-911: notebook extraction failed for agent=%s; will "
                     "unwrap stray markers",
@@ -1241,6 +1301,7 @@ class DmReplyPipeline:
             )
             from probos.cognitive.dm.artifact_extractor import (
                 extract_artifacts,
+                has_explicit_artifact_marker,
                 replace_with_stubs,
             )
             extracted = extract_artifacts(
@@ -1262,10 +1323,37 @@ class DmReplyPipeline:
             )
             self.ctx.response_text = new_text
             if _artifacts:
+                # AD-1285 (#1087): an artifact reached the ArtifactStore, so
+                # this turn DID write. The no-write direction below is gated on
+                # an explicit <artifact> marker, because ``extract_artifacts``
+                # has a second pass that lifts any fenced block of >= 40 lines
+                # with no marker and no save claim from the agent -- recording
+                # THAT as a channel which wrote nothing would let Branch 1,
+                # which reads no text at all, append a save disclosure to a
+                # reply that described no save.
+                self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
+                    WRITE_CHANNEL_ARTIFACT, wrote=True,
+                )
                 logger.info(
                     "AD-797: extracted %d artifact(s) from agent=%s reply "
                     "in thread=%s",
                     len(_artifacts), self.ctx.agent_id, thread_id,
+                )
+            elif has_explicit_artifact_marker(text):
+                # AD-1285 (#1087): an explicit <artifact> tag asked for a save
+                # and nothing persisted -- ``replace_with_stubs`` swallows an
+                # ``add_version`` failure and returns only the rows that landed.
+                # Without this the channel stays unrecorded, 4m abstains, and a
+                # failed artifact write reaches the Captain reading like a
+                # success. Gated on the explicit marker for the reason above:
+                # a pass-2 lift is not a save the agent claimed.
+                self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
+                    WRITE_CHANNEL_ARTIFACT, wrote=False,
+                )
+                logger.warning(
+                    "AD-1285: artifact marker present for agent=%s in "
+                    "thread=%s but no artifact persisted; disclosing",
+                    self.ctx.agent_id, thread_id,
                 )
         except Exception as exc:
             logger.warning(
@@ -1647,6 +1735,56 @@ class DmReplyPipeline:
                 self.ctx.agent_id, exc_info=True,
             )
             self.ctx.response_text = draft
+
+    # --- step 4m: AD-1285 (#1087 / BF-687) write-claim guard ---
+    async def step_4m_write_claim_guard(self) -> None:
+        """AD-1285 (#1087 / BF-687): a turn that claims a save must prove one.
+
+        Compares :class:`WriteLedger` against itself -- which durable-write
+        channels ran this turn versus which of them produced a write -- and
+        appends one honest sentence when a channel ran and wrote nothing. The
+        reply is only the surface the disclosure lands on; no text is read.
+        Never blocks and never rewrites the agent's substance (#13(c): a
+        refusal that ends the work is a capability ceiling in a governance
+        costume).
+
+        Abstains whenever no channel ran, so a ship with no write channel
+        wired is byte-identical.
+
+        Tier-2 honest-degrade: never raises.
+        """
+        try:
+            if not self.ctx.response_text:
+                return
+            config = getattr(self.ctx.runtime, "config", None)
+            guard_cfg = (
+                getattr(config, "write_claim_guard", None) if config else None
+            )
+            if not getattr(guard_cfg, "enabled", True):
+                return  # flag exists so this can be turned off without a revert
+
+            verdict = assess_write_claim(self.ctx.write_ledger)
+            if verdict is ClaimVerdict.ABSTAIN:
+                return
+
+            logger.warning(
+                "AD-1285: write-claim guard verdict=%s agent=%s thread=%s "
+                "ran_without_writing=%s wrote=%s",
+                verdict.value,
+                self.ctx.agent_id,
+                self.ctx.chat_thread_id,
+                sorted(self.ctx.write_ledger.wrote_nothing),
+                sorted(self.ctx.write_ledger.wrote),
+            )
+            self.ctx.response_text = (
+                self.ctx.response_text + disclosure_for(verdict)
+            )
+        except Exception:
+            logger.warning(
+                "AD-1285: write-claim guard raised for agent=%s; shipping "
+                "the reply unmarked",
+                self.ctx.agent_id, exc_info=True,
+            )
 
     # --- step 5: AD-430b HXI 1:1 episodic store ---
     async def step_5_episodic_store(self) -> None:

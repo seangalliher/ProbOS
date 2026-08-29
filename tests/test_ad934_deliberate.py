@@ -234,7 +234,7 @@ def test_full_steps_orders_4j_between_4g_and_5() -> None:
         _make_ctx(runtime=SimpleNamespace(), response_text="x", sanity_gate=None)
     )
     names = [s.__name__ for s in pipeline._full_steps()]
-    assert len(names) == 20  # AD-1081 added step_4l_extract_todos
+    assert len(names) == 21  # AD-1081 4l, then AD-1285 4m write-claim guard
     assert (
         names.index("step_4g_create_task_parse")
         < names.index("step_4j_deliberate_parse")

@@ -1729,6 +1729,14 @@ AD-1065: flag-gated conversational agentic turn. When enabled, a 1:1     ``direc
 | `compaction_enabled` | `bool` | `False` | — | AD-1167: compact the working context of a long conversational turn. The agentic loop re-flattens its entire message history into one prompt every iteration, so without compaction each added step re-pays for every step before it. Measured on a live instance: raising max_iterations from 10 to 20 took one turn from 218,957 to 474,736 tokens — more than double for twice the steps — and produced a WORSE answer, because the early tool result that had located the target was buried under twenty rounds of re-flattened history. Compaction summarises older messages through the fast tier and preserves the most recent ones. The durable tool trace is unaffected: it is persisted after the loop finishes, so transparency is retained. Off by default; when off the loop is constructed exactly as before. Turn this on before raising max_iterations, not after. |
 | `compaction_threshold_tokens` | `int` | `60000` | ≥ 0 | AD-1167: estimated working-context size, in tokens, at which compaction runs. Only consulted when compaction_enabled is true; 0 disables compaction even then. The default leaves generous room below a 200k context window while still engaging well before the runaway growth measured above. |
 
+## `write_claim_guard`
+
+Whether a reply is checked against the turn's write ledger.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `True` | — | AD-1285 (#1087): check a 1:1 reply against the turn's write ledger and append one honest sentence when a durable-write channel ran and wrote nothing. Reads no reply text. Default ON because this is a safety control rather than a capability, and a default-OFF control defends nothing (#13(a)) -- which is the AD-1157 failure mode #1087 names. Safe on: the verdict abstains unless a channel actually ran, so a turn with no write marker is byte-identical. |
+
 ## `agentic_tools`
 
 Tools offered inside the agentic loop, including the Σ commons read/write verbs. The publish path has **no consensus gate** — the rate and size bounds are the control.

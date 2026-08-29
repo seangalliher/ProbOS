@@ -6491,6 +6491,33 @@ class DmAgenticConfig(BaseModel):  # AD-1065
     )
 
 
+class WriteClaimGuardConfig(BaseModel):  # AD-1285 (#1087 / BF-687)
+    """Whether a reply is checked against the turn's write ledger.
+
+    Default ON, and that is a decision rather than an inheritance (#13(a)).
+    Repo convention defaults a new CAPABILITY off; this is a safety control,
+    and a default-OFF control defends nothing -- which is the AD-1157 failure
+    mode #1087 names. It is safe on because ``assess_write_claim`` abstains on
+    an unpopulated ledger, so a ship with no durable-write channel wired is
+    byte-identical. The flag exists so the behaviour can be turned off without
+    a revert.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "AD-1285 (#1087): check a 1:1 reply against the turn's write "
+            "ledger and append one honest sentence when a durable-write "
+            "channel ran and wrote nothing. Reads no reply text. Default ON "
+            "because this is a safety control rather than a capability, and a "
+            "default-OFF control defends nothing (#13(a)) -- which is the "
+            "AD-1157 failure mode #1087 names. Safe on: the verdict abstains "
+            "unless a channel actually ran, so a turn with no write marker is "
+            "byte-identical."
+        ),
+    )
+
+
 class RepairConfig(BaseModel):  # AD-1172
     """Dispatching a reported fault to a harness of the Captain's choosing.
 
@@ -7540,6 +7567,7 @@ class SystemConfig(BaseModel):
     dm_targeted_lookup: DmTargetedLookupConfig = Field(default_factory=DmTargetedLookupConfig)  # AD-725 (Wave 159)
     dm_deliberate: DmDeliberateConfig = Field(default_factory=DmDeliberateConfig)  # AD-934
     dm_agentic: DmAgenticConfig = Field(default_factory=DmAgenticConfig)  # AD-1065
+    write_claim_guard: WriteClaimGuardConfig = Field(default_factory=WriteClaimGuardConfig)  # AD-1285 (#1087)
     agentic_tools: AgenticToolsConfig = Field(default_factory=AgenticToolsConfig)  # AD-1072
     repair: RepairConfig = Field(default_factory=RepairConfig)  # AD-1172
     approval_inbox: ApprovalInboxConfig = Field(default_factory=ApprovalInboxConfig)  # AD-1154
