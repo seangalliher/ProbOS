@@ -33,7 +33,7 @@ class FileWriterAgent(BaseAgent):
     ]
     initial_confidence: float = 0.8
     intent_descriptors = [
-        IntentDescriptor(name="write_file", params={"path": "<absolute_path>", "content": "..."}, description="Write content to a file", requires_consensus=True),
+        IntentDescriptor(name="write_file", params={"path": "<absolute_path>", "content": "..."}, description="Write content to a file", requires_consensus=True, consensus_mode="propose_commit"),
     ]
 
     _handled_intents = {"write_file"}

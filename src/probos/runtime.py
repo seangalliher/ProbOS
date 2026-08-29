@@ -4007,6 +4007,7 @@ class ProbOSRuntime:
             context=context,
             ttl_seconds=timeout or self.config.mesh.signal_ttl_seconds,
         )
+        consensus_mode = self.consensus_mode_for(intent)
 
         consensus_broadcast_row_id = await self.event_log.log(
             category="mesh",
@@ -4254,6 +4255,12 @@ class ProbOSRuntime:
                 "consensus_outcome": consensus.outcome.value,
                 "verification_count": len(verification_results),
                 "agent_ids": [r.agent_id for r in results] if results else [],
+                # BF-779: without this an operator cannot tell, from the row,
+                # whether the recorded quorum AUTHORIZED the act or merely
+                # scored it after the fact. The rows looked identical either
+                # way, which is how "consensus-gated" became folklore about
+                # intents that were never gated.
+                "consensus_mode": consensus_mode,
             },
             parent_event_id=consensus_broadcast_row_id,
         )
@@ -4263,6 +4270,7 @@ class ProbOSRuntime:
             "results": results,
             "consensus": consensus,
             "verifications": verification_results,
+            "consensus_mode": consensus_mode,
         }
 
     async def submit_write_with_consensus(
@@ -4646,6 +4654,110 @@ class ProbOSRuntime:
         result["committed"] = committed
         result["actuate_result"] = actuate_result
         return result
+
+    def gated_commit_for(
+        self, intent: str
+    ) -> Callable[..., Awaitable[dict[str, Any]]] | None:
+        """Return the propose-then-commit runtime path for ``intent``, if one exists.
+
+        BF-779 (#1242 finding 2). Which intents get a real gate used to be
+        knowledge scattered across a by-name ``if`` in the DAG executor, one
+        intent-bus subscriber, and three method docstrings -- and the pieces
+        disagreed: ``mcp_invoke`` had a gated method that no plan could reach, so
+        a decomposed ``mcp_invoke`` proposed and then committed nothing at all.
+
+        One table, enumerable, so "does this intent have a commit phase" has
+        exactly one answer. Absence is meaningful: an intent that is not here
+        executes on broadcast and is voted on afterwards, which is what
+        :attr:`~probos.types.IntentDescriptor.consensus_mode` declares.
+
+        ``device.*`` is deliberately absent. It already commits through the
+        subscriber bridge wired at ``startup/finalize.py``, and it needs a
+        parameter translation (``device_id`` / ``intent_name`` are lifted out of
+        the params) that this table's uniform ``(params)`` shape cannot express.
+        Adding it here would give one commit two dispatch routes.
+        """
+        return {
+            "write_file": self._gated_commit_write,
+            "mcp_invoke": self._gated_commit_mcp_invoke,
+        }.get(intent)
+
+    async def _gated_commit_write(
+        self, params: dict[str, Any], *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        # Passed through UNCOERCED. `str()` here looked like tidying and was a
+        # behaviour change: review measured a dependency-substituted dict
+        # reaching disk as the literal "{k: v}" under a path of "123", where
+        # the ungated `commit_write` had failed loudly on the same input.
+        # A malformed value is an upstream contract violation and must stay
+        # noisy -- silently writing it is worse than not writing it.
+        return await self.submit_write_with_consensus(
+            path=params.get("path", ""),
+            content=params.get("content", ""),
+            timeout=timeout,
+        )
+
+    async def _gated_commit_mcp_invoke(
+        self, params: dict[str, Any], *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        arguments = params.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        return await self.submit_mcp_invoke_with_consensus(
+            server_url=str(params.get("server_url", "")),
+            tool=str(params.get("tool", "")),
+            arguments=arguments,
+            timeout=timeout,
+        )
+
+    def consensus_mode_for(self, intent: str) -> str:
+        """What a consensus round on ``intent`` actually buys (BF-779).
+
+        Reads the declared :attr:`~probos.types.IntentDescriptor.consensus_mode`.
+        An intent no registered agent declares reports ``"unknown"`` rather than
+        a guessed mode -- the whole point of the field is that the answer is
+        declared, so inventing one here would reintroduce the assumption it
+        exists to remove.
+        """
+        for desc in self._collect_intent_descriptors():
+            if desc.name == intent:
+                return str(getattr(desc, "consensus_mode", "") or "execute_then_vote")
+        return "unknown"
+
+    def log_consensus_gap_register(self) -> None:
+        """Name, once at startup, every consensus intent that has no real gate.
+
+        BF-779 (#1242 finding 1). ``requires_consensus=True`` on an intent whose
+        agent acts on broadcast buys a score, not an authorization: the act has
+        already happened when the votes are counted, and there is nothing to roll
+        back. That was true and invisible. This makes it true and stated.
+
+        A warning because the gap is real; not an error because for the agents
+        that cannot observe without acting (``run_command`` runs a subprocess to
+        learn its output) the gap is irreducible. The runtime records it and
+        lets the work proceed -- per Design Principle #13(c), refusing here
+        would remove a capability while defending nothing.
+        """
+        ungated: set[str] = set()
+        gated: set[str] = set()
+        for desc in self._collect_intent_descriptors():
+            if not desc.requires_consensus:
+                continue
+            if getattr(desc, "consensus_mode", "execute_then_vote") == "execute_then_vote":
+                ungated.add(desc.name)
+            else:
+                gated.add(desc.name)
+        if not ungated:
+            return
+        logger.warning(
+            "BF-779: %d consensus intent(s) execute on broadcast and are voted "
+            "on afterwards -- the vote scores the outcome, it does not authorize "
+            "the act, and there is no rollback: %s. Intents with a real commit "
+            "gate: %s.",
+            len(ungated),
+            ", ".join(sorted(ungated)),
+            ", ".join(sorted(gated)) or "none",
+        )
 
     async def _store_device_consensus_episode(
         self,

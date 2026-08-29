@@ -943,12 +943,13 @@ class DAGExecutor:
         )
 
         try:
-            if node.intent == "write_file" and node.use_consensus:
-                result = await self.runtime.submit_write_with_consensus(
-                    path=params.get("path", ""),
-                    content=params.get("content", ""),
-                    timeout=10.0,
-                )
+            # BF-779: table, not a name. A by-name check gated exactly one intent
+            # and left mcp_invoke -- which HAS a gated runtime path -- proposing
+            # into a void, committing nothing.
+            _lookup = getattr(self.runtime, "gated_commit_for", None)
+            gated = _lookup(node.intent) if (_lookup and node.use_consensus) else None
+            if gated is not None:
+                result = await gated(params, timeout=10.0)
                 node.result = result
                 results[node.id] = result
                 # Check consensus outcome
@@ -964,6 +965,23 @@ class DAGExecutor:
                 else:
                     node.status = "completed"
             elif node.use_consensus:
+                # BF-779: an intent that DECLARES propose_commit but has no
+                # gated path must not quietly take the execute-then-vote route.
+                # That is the inert-gate defect generalised -- review reproduced
+                # a `device_actuate` node reporting completed with the gate
+                # consulted, no commit performed, and nothing said. Fail it
+                # instead, so a missing registration surfaces as a broken node
+                # rather than as a green one that never committed.
+                _mode_of = getattr(self.runtime, "consensus_mode_for", None)
+                if _mode_of and _mode_of(node.intent) == "propose_commit":
+                    await self._handle_rejection(
+                        node, dag, results,
+                        f"{node.intent} declares propose_commit but has no "
+                        f"gated commit path registered; refusing to fall back "
+                        f"to execute-then-vote",
+                        on_event=on_event,
+                    )
+                    return
                 result = await self.runtime.submit_intent_with_consensus(
                     intent=node.intent,
                     params=params,

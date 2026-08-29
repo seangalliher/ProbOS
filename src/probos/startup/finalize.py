@@ -5496,6 +5496,10 @@ async def finalize_startup(
     # left pending on any vessel, crew sessions or not.
     await _wire_promoted_report_delivery(runtime)
 
+    # BF-779: name the consensus intents that have no commit gate, now that
+    # every template is registered.
+    runtime.log_consensus_gap_register()
+
     runtime._started = True
 
     await runtime.event_log.log(category="system", event="started")

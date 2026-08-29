@@ -68,6 +68,7 @@ class DeviceConsensusProposer(BaseAgent):
             },
             description="Actuate a sensitive intent on a paired device (consensus-gated)",
             requires_consensus=True,
+            consensus_mode="propose_commit",
         ),
     ]
 

@@ -63,6 +63,7 @@ class McpConsensusProposer(BaseAgent):
             },
             description="Invoke a tool on a registered MCP server (consensus-gated)",
             requires_consensus=True,
+            consensus_mode="propose_commit",
         ),
     ]
 

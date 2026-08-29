@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-08-29T05:37:26+00:00",
-    "head": "f0b893b9",
-    "subject_count": 2416,
+    "captured_at": "2026-08-29T07:44:20+00:00",
+    "head": "04bb04c6",
+    "subject_count": 2419,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -468,6 +468,9 @@
       ],
       "AD-1283": [
         "git AD-1283"
+      ],
+      "AD-1284": [
+        "git AD-1284"
       ],
       "AD-142": [
         "git AD-142"
@@ -2911,6 +2914,9 @@
       "BF-776": [
         "git BF-776"
       ],
+      "BF-779": [
+        "git BF-779"
+      ],
       "BF-78": [
         "git BF-078"
       ],
@@ -3101,8 +3107,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-26T00:37:20+00:00",
-    "issue_count": 1324,
+    "captured_at": "2026-08-29T05:45:15+00:00",
+    "issue_count": 1331,
     "issues": {
       "AD-1000": [
         {
@@ -4224,8 +4230,8 @@
             "AD-1170"
           ],
           "number": 1257,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-793: AD-1170 detect_tool_defect is dead on the conversational DM path"
         }
       ],
@@ -5186,6 +5192,17 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1270: platform maturity \u2014 exercised capabilities, robust seams, modular owners, fast gates, truthful docs"
+        }
+      ],
+      "AD-1276": [
+        {
+          "claims": [
+            "AD-1276"
+          ],
+          "number": 1330,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1276 follow-up: a loopback charges the pre-intent-auth hook twice \u2014 decide whether to suppress, and how"
         }
       ],
       "AD-272": [
@@ -15574,8 +15591,8 @@
             "BF-735"
           ],
           "number": 1194,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-735: 36 permanent 'Room workspace' rows are UI scaffolding wearing a work item's clothes"
         }
       ],
@@ -15728,8 +15745,8 @@
             "BF-756"
           ],
           "number": 1213,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-756: agent_tools_enabled without management_enabled is documented as supported and is inert"
         }
       ],
@@ -15814,8 +15831,8 @@
             "BF-764"
           ],
           "number": 1222,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-764: a burst of transcript arrivals talks over itself"
         }
       ],
@@ -15847,8 +15864,8 @@
             "BF-767"
           ],
           "number": 1225,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-767: conversation-mode completion correlates on agent id, so a cancelled utterance can end the wrong turn"
         }
       ],
@@ -15902,8 +15919,8 @@
             "BF-773"
           ],
           "number": 1230,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-773: the agentic final answer can conceal a failed tool call"
         }
       ],
@@ -15935,9 +15952,16 @@
             "BF-776"
           ],
           "number": 1233,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-776: repair briefs interpolate a raw tool id into Captain-facing prose, and truncate away the evidence"
+        },
+        {
+          "claims": [],
+          "number": 1326,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-856: malformed tool output kills the turn, and three residuals from the BF-776 prose-boundary waves"
         }
       ],
       "BF-777": [
@@ -15979,8 +16003,8 @@
             "BF-780"
           ],
           "number": 1243,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-780: the audit record that replaces the consensus gate is best-effort and can be lost"
         }
       ],
@@ -15990,8 +16014,8 @@
             "BF-781"
           ],
           "number": 1245,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-781: the execution subsystem describes controls it does not have"
         }
       ],
@@ -16001,8 +16025,8 @@
             "BF-782"
           ],
           "number": 1246,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-782: design a verification outcome signal that is not farmable"
         }
       ],
@@ -16056,8 +16080,8 @@
             "BF-787"
           ],
           "number": 1251,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-787: the mesh CodeRunnerAgent path still has no execution audit record"
         }
       ],
@@ -16085,8 +16109,8 @@
             "BF-789"
           ],
           "number": 1253,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-789: pre-intent authorization is still bypassed on the four consumer-side paths"
         }
       ],
@@ -16096,8 +16120,8 @@
             "BF-790"
           ],
           "number": 1254,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-790: three consumers treat a pre-intent denial as success"
         },
         {
@@ -16136,8 +16160,8 @@
             "BF-793"
           ],
           "number": 1257,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-793: AD-1170 detect_tool_defect is dead on the conversational DM path"
         }
       ],
@@ -16290,8 +16314,8 @@
             "BF-806"
           ],
           "number": 1270,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-806: seven model-authored thread writers still bypass the reply egress"
         }
       ],
@@ -16464,8 +16488,8 @@
             "BF-821"
           ],
           "number": 1285,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-821: the SSRF guard resolves the host, then httpx resolves it again (DNS rebinding)"
         }
       ],
@@ -16475,8 +16499,8 @@
             "BF-822"
           ],
           "number": 1286,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-822: browser navigation past the first URL is unvalidated (redirects, clicks, back/forward)"
         }
       ],
@@ -16486,8 +16510,8 @@
             "BF-823"
           ],
           "number": 1287,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-823: a recycled agent loses everything wired onto it after construction"
         }
       ],
@@ -16515,8 +16539,8 @@
             "BF-825"
           ],
           "number": 1289,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-825: a live promoted run cannot tell the board reconciler it is still working"
         }
       ],
@@ -16526,8 +16550,8 @@
             "BF-826"
           ],
           "number": 1290,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-826: promoted reports are posted synchronously on the event loop and cannot report their own failure"
         }
       ],
@@ -16647,8 +16671,8 @@
             "BF-837"
           ],
           "number": 1303,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-837: compute_shapley_values overwrites a duplicate agent id, so a dual-role agent's producer vote is discarded"
         }
       ],
@@ -16698,8 +16722,8 @@
             "BF-841"
           ],
           "number": 1307,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-841: FAULT_REPORTED only fires on new reports, so occurrences is always 1 and no repair is ever proposed"
         }
       ],
@@ -16742,8 +16766,8 @@
             "BF-845"
           ],
           "number": 1315,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-845: repair-proposal dedup is in-process only, so a recurring fault re-proposes across a restart"
         }
       ],
@@ -16797,8 +16821,8 @@
             "BF-851"
           ],
           "number": 1319,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-851: the runtime spends Shapley attribution once per (result x agent), so 2.00 is spent against 1.00 available"
         }
       ],
@@ -16833,6 +16857,72 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-854: validate_action_payload accepts a lone surrogate that action_dedup_key cannot hash, poisoning every filing"
+        }
+      ],
+      "BF-855": [
+        {
+          "claims": [
+            "BF-855"
+          ],
+          "number": 1325,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-855: a fault signed over the untruncated error cannot be matched against its bounded trace"
+        }
+      ],
+      "BF-856": [
+        {
+          "claims": [
+            "BF-856"
+          ],
+          "number": 1326,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-856: malformed tool output kills the turn, and three residuals from the BF-776 prose-boundary waves"
+        }
+      ],
+      "BF-857": [
+        {
+          "claims": [
+            "BF-857"
+          ],
+          "number": 1327,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-857: WorkspaceSuggestionStore says it never raises, and two of its four methods do"
+        }
+      ],
+      "BF-858": [
+        {
+          "claims": [
+            "BF-858"
+          ],
+          "number": 1328,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-858: four speech producers still cancel one another"
+        }
+      ],
+      "BF-859": [
+        {
+          "claims": [
+            "BF-859"
+          ],
+          "number": 1329,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-859: the QA agent pool is built from un-awaited coroutines, and their truthiness skips the fallback"
+        }
+      ],
+      "BF-861": [
+        {
+          "claims": [
+            "BF-861"
+          ],
+          "number": 1331,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-861: the audit spill is unbounded, and the entries cap stops applying once the durable stream terminates"
         }
       ],
       "BF-99": [

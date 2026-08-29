@@ -868,6 +868,19 @@ class IntentDescriptor:
     params: dict[str, str] = field(default_factory=dict)  # param name → description
     description: str = ""  # e.g. "Read file contents"
     requires_consensus: bool = False
+    # BF-779 / #1242 finding 1: what ``requires_consensus`` actually BUYS on this
+    # intent. The flag says a vote happens; this says whether the vote authorizes
+    # the act. Declared, never inferred -- the point is that a missing gate is
+    # visible rather than assumed.
+    #   "propose_commit"     the agent proposes and does NOT act; a gated runtime
+    #                        path performs the commit only on APPROVED.
+    #   "execute_then_vote"  the agent ACTS on broadcast; the vote scores the
+    #                        outcome and drives trust, and authorizes nothing.
+    #                        There is no rollback. The DEFAULT, because it is
+    #                        what most consensus intents actually do today.
+    #   "external_gate"      the agent acts, but an authority outside the mesh
+    #                        (a human approval) gates the effect landing.
+    consensus_mode: str = "execute_then_vote"
     requires_reflect: bool = False
     tier: str = "domain"  # "core", "utility", or "domain"
     # AD-983a: optional AGENT-FACING invocation manual. ``description`` serves

@@ -1723,6 +1723,8 @@ class SoftwareEngineerAgent(CognitiveAgent):
                 "presents results for Captain approval."
             ),
             requires_consensus=True,
+            # Captain approval on the merge is the control, not the mesh vote.
+            consensus_mode="external_gate",
             requires_reflect=False,
             tier="domain",
         ),

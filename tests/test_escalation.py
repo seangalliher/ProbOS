@@ -56,6 +56,19 @@ def _make_mock_runtime(
     runtime.submit_write_with_consensus = AsyncMock(
         side_effect=submit_write_with_consensus_side_effect
     )
+    return _ungated(runtime)
+
+
+def _ungated(runtime):
+    """Make a spec'd runtime tell the truth about AD-1284's gated-commit table.
+
+    ``MagicMock(spec=ProbOSRuntime)`` auto-mocks ``gated_commit_for`` into a
+    truthy Mock, so the DAG executor would route a consensus node down the
+    propose-then-commit path. The real method returns ``None`` for every intent
+    used in this file (``read_file``, ``run_command``), which is the generic
+    execute-then-vote path these tests are actually about.
+    """
+    runtime.gated_commit_for = MagicMock(return_value=None)
     return runtime
 
 
@@ -497,7 +510,7 @@ class TestDAGExecutorEscalation:
             "consensus": MagicMock(outcome=ConsensusOutcome.REJECTED),
             "results": [],
         }
-        runtime = MagicMock(spec=ProbOSRuntime)
+        runtime = _ungated(MagicMock(spec=ProbOSRuntime))
         runtime.submit_intent_with_consensus = AsyncMock(
             return_value=rejected_result,
         )
@@ -544,7 +557,7 @@ class TestDAGExecutorEscalation:
             "consensus": MagicMock(outcome=ConsensusOutcome.REJECTED),
             "results": [],
         }
-        runtime = MagicMock(spec=ProbOSRuntime)
+        runtime = _ungated(MagicMock(spec=ProbOSRuntime))
         runtime.submit_intent_with_consensus = AsyncMock(
             return_value=rejected_result,
         )
@@ -777,7 +790,7 @@ class TestEscalationReflectEndToEnd:
                 ),
             ],
         }
-        runtime = MagicMock(spec=ProbOSRuntime)
+        runtime = _ungated(MagicMock(spec=ProbOSRuntime))
         runtime.submit_intent_with_consensus = AsyncMock(
             return_value=rejected_result,
         )
@@ -911,7 +924,7 @@ class TestEscalationReflectEndToEnd:
                 ),
             ],
         }
-        runtime = MagicMock(spec=ProbOSRuntime)
+        runtime = _ungated(MagicMock(spec=ProbOSRuntime))
         runtime.submit_intent_with_consensus = AsyncMock(
             return_value=rejected_result,
         )
@@ -964,7 +977,7 @@ class TestEscalationReflectEndToEnd:
             "consensus": MagicMock(outcome=ConsensusOutcome.REJECTED),
             "results": [original_ir],
         }
-        runtime = MagicMock(spec=ProbOSRuntime)
+        runtime = _ungated(MagicMock(spec=ProbOSRuntime))
         runtime.submit_intent_with_consensus = AsyncMock(
             return_value=rejected_result,
         )

@@ -61,6 +61,7 @@ DEVICE_INTENT_DESCRIPTORS: list[IntentDescriptor] = [
         description="Read the current location of a paired device",
         tier="domain",
         requires_consensus=True,
+        consensus_mode="propose_commit",
     ),
     IntentDescriptor(
         name="device.camera",
@@ -68,6 +69,7 @@ DEVICE_INTENT_DESCRIPTORS: list[IntentDescriptor] = [
         description="Capture an image from a paired device camera",
         tier="domain",
         requires_consensus=True,
+        consensus_mode="propose_commit",
     ),
     IntentDescriptor(
         name="device.screen",
@@ -75,6 +77,7 @@ DEVICE_INTENT_DESCRIPTORS: list[IntentDescriptor] = [
         description="Capture the screen of a paired device",
         tier="domain",
         requires_consensus=True,
+        consensus_mode="propose_commit",
     ),
 ]
 
