@@ -282,7 +282,6 @@ class IntentBus:
         self._last_seen_eviction: float = time.monotonic()
         self._duplicate_suppressed_count: int = 0
 
-        # AD-1276: intent ids THIS PROCESS already charged the AD-698 hook for.
         # BF-234: Injected event emitter for duplicate-suppressed telemetry.
         # Wired from finalize.py via set_emit_event().
         self._emit_event_fn: Callable[[str, dict[str, Any]], None] | None = None
@@ -562,8 +561,9 @@ class IntentBus:
 
                 # AD-1276: this node's policy applies to work crossing THIS
                 # node, and an intent off the wire has not passed the producer
-                # gate. A loopback send() already charged the hook, so the
-                # ledger pop makes the second look free.
+                # gate. AD-1292: a local `send` no longer publishes here, so
+                # what reaches this callback is a genuine peer message rather
+                # than this node's own loopback.
                 allowed, deny_reason = self._authorize_inbound(
                     intent, entry_point="nats_inbound", agent_id=agent_id
                 )
@@ -1007,14 +1007,15 @@ class IntentBus:
         ``_authorize_inbound`` at the NATS request/reply callback and at the
         JetStream callback (AD-1276), which also covers the AD-654b cognitive
         queue because every path that enqueues passes a check first. The
-        AD-654c ``Dispatcher`` authorizes for itself. Checking at both
-        transport ends would double-charge a stateful hook such as a rate
-        limiter, so an ALLOW on a path that loops back over the wire records
-        ``(target_agent_id, intent.id)`` in the process-local ledger and the
-        consumer side pops it rather than evaluating again. That ledger is
-        in-process memory only; see ``_authorize_inbound`` for why neither half
-        of the key may come off the wire, and for the bounded case where a hook
-        is nonetheless charged twice.
+        AD-654c ``Dispatcher`` authorizes for itself.
+
+        AD-1292: checking at both transport ends would double-charge a stateful
+        hook such as a rate limiter, so ``send`` no longer publishes to the wire
+        when the target is subscribed on this node -- the duplicate DELIVERY is
+        removed rather than the duplicate evaluation. There is deliberately no
+        "already authorized" ledger; see ``_authorize_inbound``. ``dispatch_async``
+        still loops back and still charges twice, because its publish is durable
+        crash-recovery rather than a transport hop.
         """
         # BF-789: the evaluation itself lives in `mesh.pre_intent_auth`, because
         # the AD-654c Dispatcher reaches handlers without touching this class and
@@ -1079,28 +1080,69 @@ class IntentBus:
 
         _send_start = time.monotonic()  # AD-470: timing
         try:
-            # NATS path when connected
-            if self._nats_bus and self._nats_bus.connected:
+            # AD-1292: read ONCE and deliver to this object. Re-reading after
+            # the check would let a concurrent unsubscribe strand a message the
+            # wire would have delivered -- `_on_nats_intent` closes over its
+            # handler and keeps delivering after the dict entry is gone, so
+            # holding the reference is parity, not a leak.
+            handler = self._subscribers.get(intent.target_agent_id)
+
+            # AD-1292: suppress the loopback. A locally-subscribed agent also
+            # subscribes to its own `intent.{id}` subject, so publishing to a
+            # LOCAL target re-enters this process and `_authorize_inbound`
+            # charges the AD-698 hook a second time for one logical delivery.
+            # Suppression is an ATTEMPT: with no local handler the wire path
+            # runs exactly as before, so this can never turn into a drop.
+            if handler is None and self._nats_bus and self._nats_bus.connected:
                 return await self._nats_send(intent, raise_on_denial=raise_on_denial)
 
-            # Direct-call fallback when NATS disconnected
-            handler = self._subscribers.get(intent.target_agent_id)
             if handler is None:
                 return None
-            try:
-                result = await asyncio.wait_for(handler(intent), timeout=intent.ttl_seconds)
-                return result
-            except asyncio.TimeoutError:
-                return IntentResult(
-                    intent_id=intent.id,
-                    agent_id=intent.target_agent_id,
-                    success=False,
-                    error="Agent did not respond in time.",
-                    confidence=0.0,
-                )
+
+            return await self._deliver_to_local_handler(intent, handler)
         finally:
             _elapsed_ms = (time.monotonic() - _send_start) * 1000
             self._metrics.record_send(intent.intent, _elapsed_ms)
+
+    async def _deliver_to_local_handler(
+        self,
+        intent: IntentMessage,
+        handler: IntentHandler,
+    ) -> IntentResult | None:
+        """Invoke a local handler. A handler exception PROPAGATES (AD-1292).
+
+        The first cut of AD-1292 wrapped a handler exception into the wire
+        path's ``IntentResult(success=False, error=str(exc))`` so a caller could
+        not tell which route ran. That is a **security defect**, not a
+        harmonization: ``federation/bridge.py`` catches this exception
+        precisely so an exception MESSAGE never crosses the federation boundary,
+        substituting the generic ``federation_target_delivery_failed`` and
+        logging the type alone. With the wrap in place that ``except`` never
+        fired and ``str(exc)`` was sent to a peer node -- caught by
+        ``test_ad730_4_directed_federated_vision_dm.py``.
+
+        So local delivery raises, exactly as it did before AD-1292. Every
+        ``send`` caller was already written against that contract, because the
+        disconnected path has always raised. Converting a raise into a return
+        value here has a blast radius of every ``except`` that depended on the
+        old shape; ``bridge.py``'s is a security control wearing the costume of
+        error handling.
+
+        The timeout envelope predates AD-1292 and is unchanged.
+        ``asyncio.CancelledError`` derives from ``BaseException`` and is not
+        caught by ``asyncio.wait_for``'s re-raise path here, so shutdown still
+        propagates.
+        """
+        try:
+            return await asyncio.wait_for(handler(intent), timeout=intent.ttl_seconds)
+        except asyncio.TimeoutError:
+            return IntentResult(
+                intent_id=intent.id,
+                agent_id=intent.target_agent_id or "",
+                success=False,
+                error="Agent did not respond in time.",
+                confidence=0.0,
+            )
 
     async def _nats_send(
         self,
@@ -1776,12 +1818,17 @@ class IntentBus:
         than a bug that is unfixed. Suppression is an OPTIMIZATION; enforcement
         is the fix. So enforcement ships and suppression does not.
 
-        The accepted cost, stated rather than hidden: a genuine loopback now
-        charges the hook twice. That is harmless for a stateless RBAC hook and
-        wrong-but-bounded for a stateful one, and it errs toward over-charging
-        -- never toward letting an unauthorized intent through. Restoring
-        suppression needs a delivery identity the peer cannot influence and
-        that names the channel; see the follow-up issue before adding one back.
+        The accepted cost, stated rather than hidden: a `dispatch_async`
+        loopback still charges the hook twice. AD-1292 removed the `send`
+        half by not publishing to the wire when the target is subscribed
+        here, but the dispatch publish is deliberately kept -- it is a
+        DURABLE JetStream delivery (`durable=`, `manual_ack=True`,
+        `max_deliver=10`, 5-minute retention), so suppressing it would trade
+        crash-recovery redelivery for an in-memory task. Over-charging a rate
+        limiter is a smaller harm than losing work on restart, and neither
+        ever lets an unauthorized intent through. Restoring suppression there
+        needs a delivery identity the peer cannot influence and that names the
+        channel; see #1330 before adding one back.
 
         ``agent_id`` is the SUBSCRIPTION this message arrived on. It is not
         used for a waiver decision any more, but it stays in the signature

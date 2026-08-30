@@ -227,8 +227,13 @@ class TestADeniedIntentNeverReachesAHandler:
 
 class TestALoopbackIsEvaluatedOnBothSides:
     """A locally-subscribed agent also subscribes to its own NATS and JetStream
-    subjects, so ``send``/``dispatch_async`` re-enter this same process and the
-    hook is consulted twice for one logical delivery.
+    subjects, so a loopback can re-enter this same process. AD-1292 removed the
+    ``send`` half of that -- it no longer publishes to the wire when the target
+    is subscribed here -- but ``dispatch_async`` still publishes and is still
+    evaluated twice, deliberately: its publish is a DURABLE JetStream delivery
+    (``durable=``, ``manual_ack=True``, ``max_deliver=10``, 5-minute
+    retention), so suppressing it would trade crash-recovery redelivery for an
+    in-memory task -- message loss, bought to fix a rate limiter's accounting.
 
     That is deliberate, and these tests pin it so nobody "fixes" it by adding a
     suppression ledger back without reading why the last one was removed. Three
@@ -236,11 +241,13 @@ class TestALoopbackIsEvaluatedOnBothSides:
     record to be spent by a delivery it was not minted for. Suppression is an
     optimization; enforcement is the fix.
 
-    The cost is real but bounded: a stateless RBAC hook does not care, and a
-    stateful one over-counts. It never under-authorizes.
+    The remaining cost is real but bounded: a stateless RBAC hook does not care,
+    and a stateful one over-counts. It never under-authorizes.
     """
 
-    async def test_a_loopback_send_charges_the_hook_on_both_sides(self, mock_bus):
+    async def test_a_loopback_send_is_charged_once_now_that_it_does_not_publish(
+        self, mock_bus
+    ):
         handler = _Handler()
         bus = await _connected_bus(mock_bus, handler)
         hook = _CountingHook(allow=True)
@@ -248,12 +255,18 @@ class TestALoopbackIsEvaluatedOnBothSides:
 
         result = await bus.send(_intent("loop-send"))
 
-        # PREMISE: the round trip actually completed, or the count proves nothing.
-        assert result is not None, "the round trip did not complete"
+        # PREMISE: the delivery actually completed, or the count proves nothing.
+        assert result is not None, "the send did not deliver"
         assert handler.calls == ["loop-send"]
-        assert hook.calls == 2, (
-            "expected producer + consumer evaluation; a count of 1 means a "
-            "suppression ledger is back -- read TestThereIsNoSuppressionLedger"
+        # Was ``== 2``: it pinned the producer + consumer double charge that
+        # AD-1292 removed. Edited rather than deleted so the cost that used to
+        # be accepted here stays on the record.
+        assert hook.calls == 1, (
+            "AD-1292: `send` no longer publishes to the wire when the target "
+            "is subscribed on this node, so one logical delivery is one "
+            "evaluation. A count of 2 means the loopback is back; a count of "
+            "0 means a suppression LEDGER is back -- read "
+            "TestThereIsNoSuppressionLedger before changing this"
         )
 
     async def test_a_loopback_dispatch_charges_the_hook_on_both_sides(self, mock_bus):

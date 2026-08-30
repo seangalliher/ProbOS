@@ -397,7 +397,12 @@ def test_intent_no_ensure_future():
 
 @pytest.mark.asyncio
 async def test_send_uses_nats_when_connected(mock_bus, signal_manager):
-    """send() uses NATS request/reply when NATS is connected."""
+    """send() uses NATS request/reply when connected and the target is remote.
+
+    AD-1292 narrowed this: a target subscribed on THIS node is delivered
+    in-process, because publishing to it re-entered the same process and
+    charged the AD-698 hook twice for one logical delivery.
+    """
     intent_bus = IntentBus(signal_manager)
     intent_bus.set_nats_bus(mock_bus)
 
@@ -428,9 +433,27 @@ async def test_send_uses_nats_when_connected(mock_bus, signal_manager):
 
     assert result is not None
     assert result.success
-    # Verify the NATS path was used (message appears in mock_bus.published)
-    assert any("intent.agent-1" in subj for subj, _ in mock_bus.published), (
-        "send() should use NATS request/reply when connected"
+    # This used to assert the opposite -- that a send to the LOCALLY
+    # subscribed "agent-1" appeared on `intent.agent-1` in mock_bus.published.
+    # It pinned the AD-1292 loopback: the publish came straight back to this
+    # node's own subscription, so the producer authorized, the message crossed
+    # the wire, and the consumer authorized again. Edited rather than deleted
+    # so the behaviour that used to be required stays on the record.
+    assert not any("intent.agent-1" in subj for subj, _ in mock_bus.published), (
+        "send() published to a target subscribed on this node; that loopback "
+        "charges the AD-698 hook twice for one delivery (AD-1292)"
+    )
+
+    # BF-221's actual property -- request/reply is live -- still under test,
+    # on the branch that genuinely needs the wire.
+    assert not intent_bus.has_subscriber("agent-remote")
+    await intent_bus.send(
+        IntentMessage(intent="test", params={}, target_agent_id="agent-remote")
+    )
+
+    assert any("intent.agent-remote" in subj for subj, _ in mock_bus.published), (
+        "send() should use NATS request/reply when connected and the target "
+        "is not subscribed on this node"
     )
 
 
