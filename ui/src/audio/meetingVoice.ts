@@ -7,9 +7,10 @@
  *  to drive viseme lip-sync (AD-721b). This module builds NO TTS and NO
  *  lip-sync engine -- it is purely a sequencer over existing primitives.
  *
- *  ``speakResponse`` is fire-and-forget (returns void) and fires a matching
+ *  ``speakResponse`` dispatches without blocking and fires a matching
  *  ``'end'`` ``onSpeechEvent`` when the utterance finishes. We await that
- *  event per utterance (the BF-290 subscribe-before-speak one-shot pattern).
+ *  event per utterance (the BF-290 subscribe-before-speak one-shot pattern),
+ *  correlated on the BF-767 ``utterance_id`` that ``speakResponse`` returns.
  *  When TTS is unavailable ``speakResponse`` no-ops and never fires ``'end'``;
  *  a per-utterance safety timeout resolves so the queue always drains (the
  *  meeting still shows avatars + transcript). */
@@ -25,8 +26,12 @@ export interface PerAgentReply {
 
 /** Dependency-injected so the sequencer is unit-testable without WebAudio. */
 export interface MeetingVoiceDeps {
-  /** = ``speakResponse``: (text, profile, agent_id). Fire-and-forget. */
-  speak: (text: string, profile: VoiceProfile | undefined, agentId: string) => void;
+  /** = ``speakResponse``: (text, profile, agent_id). Returns the BF-767
+   *  ``utterance_id`` stamped on that call's own ``SpeechEvent``s, or
+   *  ``undefined`` when no engine exists. ``void`` stays in the union so a
+   *  stand-in that does not model ids degrades to agent attribution instead of
+   *  failing to typecheck. */
+  speak: (text: string, profile: VoiceProfile | undefined, agentId: string) => number | void;
   /** = ``onSpeechEvent``: subscribe to TTS lifecycle; returns an unsubscribe fn. */
   subscribe: (fn: (e: SpeechEvent) => void) => () => void;
   /** Resolve an agent's per-agent VoiceProfile (AD-718). ``undefined`` => the
@@ -111,18 +116,35 @@ function _speakAndWait(
       if (timer !== null) clearTimeout(timer);
       resolve();
     };
+    // BF-862: filled in by the `deps.speak` below, which mints it synchronously.
+    let utteranceId: number | undefined;
     const off = deps.subscribe((e: SpeechEvent) => {
-      if (e.type !== 'end') return;
-      // A bare 'end' with no agent_id (legacy) matches; an 'end' for a
-      // DIFFERENT agent_id must NOT advance this utterance.
-      if (e.agent_id && e.agent_id !== reply.agent_id) return;
+      // AD-1291 'dropped' is terminal for THIS wait without being folded into
+      // 'end': the utterance never reached the device, so no 'end' is coming.
+      // Without it a barge-in that flushes a queued meeting utterance strands
+      // the sequencer on its multi-second safety timeout.
+      if (e.type !== 'end' && e.type !== 'dropped') return;
+      // BF-862: a terminal event must be ATTRIBUTED to advance us. A bare 'end'
+      // carrying no agent_id used to match as a wildcard, so the Ship's
+      // Computer's unattributed utterance (IntentSurface) satisfied the wait
+      // for a crew utterance and started the next speaker over the top of the
+      // current one. `utterance_id` is the correct key: it is per-`speak`-call
+      // unique, whereas a superseded utterance's terminal 'end' carries the
+      // SAME agent_id as the reply that replaced it (BF-767). It is undefined
+      // only for a terminal event fired synchronously inside `deps.speak`
+      // (before it returned) or when no engine minted one; agent attribution
+      // covers that, and is REQUIRED rather than assumed.
+      if (utteranceId !== undefined
+        ? e.utterance_id !== utteranceId
+        : e.agent_id !== reply.agent_id) return;
       finish();
     });
     const timeoutMs = deps.utteranceTimeoutMs ?? computeUtteranceTimeout(reply.text);
     if (timeoutMs > 0) timer = setTimeout(finish, timeoutMs);
     const text = deps.strip ? deps.strip(reply.text) : reply.text;
     try {
-      deps.speak(text, profile, reply.agent_id);
+      const spoken = deps.speak(text, profile, reply.agent_id);
+      if (typeof spoken === 'number') utteranceId = spoken;
     } catch {
       // Tier-2: a throwing speak must not deadlock the queue.
       finish();

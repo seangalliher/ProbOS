@@ -12,7 +12,7 @@ import {
   type MeetingVoiceDeps,
   type PerAgentReply,
 } from '../meetingVoice';
-import type { VoiceProfile, SpeechEvent } from '../voice';
+import type { VoiceProfile, SpeechEvent, SpeechEventType } from '../voice';
 // Vite ``?raw`` reads the source body for the HXI no-emoji guard without
 // pulling in Node fs/path types.
 import meetingVoiceSource from '../meetingVoice?raw';
@@ -21,12 +21,17 @@ interface FakeOpts {
   resolveProfile?: (id: string) => Promise<VoiceProfile | undefined>;
   strip?: (s: string) => string;
   utteranceTimeoutMs?: number;
+  /** BF-862: mint a BF-767 ``utterance_id`` per speak call and return it, as
+   *  the real ``speakResponse`` does. Off by default so the pre-BF-862 tests
+   *  keep exercising the id-less stand-in path. */
+  mintIds?: boolean;
 }
 
 interface SpeakCall {
   text: string;
   profile: VoiceProfile | undefined;
   agentId: string;
+  utteranceId?: number;
 }
 
 function makeFake(opts: FakeOpts = {}) {
@@ -35,8 +40,17 @@ function makeFake(opts: FakeOpts = {}) {
   const speakingChanges: Array<string | null> = [];
   const utteranceStarts: string[] = [];
   const utteranceEnds: string[] = [];
+  let nextUtteranceId = 0;
   const deps: MeetingVoiceDeps = {
-    speak: (text, profile, agentId) => { speakCalls.push({ text, profile, agentId }); },
+    speak: (text, profile, agentId) => {
+      if (!opts.mintIds) {
+        speakCalls.push({ text, profile, agentId });
+        return;
+      }
+      const utteranceId = ++nextUtteranceId;
+      speakCalls.push({ text, profile, agentId, utteranceId });
+      return utteranceId;
+    },
     subscribe: (fn) => {
       listeners.push(fn);
       return () => {
@@ -61,7 +75,17 @@ function makeFake(opts: FakeOpts = {}) {
     };
     for (const fn of [...listeners]) fn(e);
   };
-  return { deps, speakCalls, speakingChanges, utteranceStarts, utteranceEnds, fireEnd };
+  /** BF-862: emit an arbitrary SpeechEvent shape (type / agent_id /
+   *  utterance_id), so a test can reproduce an event the sequencer's utterance
+   *  was NOT minted for. */
+  const fire = (e: { type: SpeechEventType; agent_id?: string; utterance_id?: number; reason?: string }): void => {
+    const full: SpeechEvent = {
+      ...e,
+      utterance: {} as unknown as SpeechSynthesisUtterance,
+    };
+    for (const fn of [...listeners]) fn(full);
+  };
+  return { deps, speakCalls, speakingChanges, utteranceStarts, utteranceEnds, fireEnd, fire };
 }
 
 function r(agentId: string): PerAgentReply {
@@ -257,6 +281,146 @@ describe('speakRepliesSequentially', () => {
     await p;
     // 'a' spoke + revealed; 'b'/'c' superseded — no end hook for them.
     expect(fake.utteranceEnds).toEqual(['a']);
+  });
+});
+
+/** BF-862: a terminal event must be ATTRIBUTED to this utterance to advance the
+ *  sequencer. The defect: a bare 'end' carrying no agent_id matched as a
+ *  wildcard, and IntentSurface emits exactly that for the Ship's Computer
+ *  (``speakResponse(text, undefined, undefined, ...)``) -- so a narration could
+ *  satisfy the wait for a crew utterance and start the next speaker over the
+ *  top of the one still talking. Same family as BF-767. */
+describe('BF-862 terminal-event correlation', () => {
+  it('test_bf862_bare_end_does_not_advance_while_crew_utterance_is_speaking', async () => {
+    const fake = makeFake({ mintIds: true });
+    const p = speakRepliesSequentially([r('alpha'), r('bravo')], fake.deps);
+    await tick();
+    // alpha is SPEAKING: dispatched, holding the speaking slot, no 'end' yet.
+    expect(fake.speakCalls.map((c) => c.agentId)).toEqual(['alpha']);
+    expect(fake.speakingChanges).toEqual(['alpha']);
+
+    // The Ship's Computer finishes: no agent_id, and an utterance_id this
+    // sequencer never minted.
+    fake.fire({ type: 'end', utterance_id: 9999 });
+    await tick();
+    await tick();
+
+    // NON-ADVANCEMENT WHILE SPEAKING -- not merely final ordering. A test that
+    // only checked the closing order would pass against the unfixed code,
+    // because the defect and the fix produce the same final sequence.
+    expect(fake.speakCalls.map((c) => c.agentId)).toEqual(['alpha']);
+    expect(fake.speakingChanges).toEqual(['alpha']); // never cleared -> still speaking
+    expect(fake.utteranceEnds).toEqual([]);
+
+    // alpha's OWN terminal event still advances the queue.
+    fake.fire({ type: 'end', agent_id: 'alpha', utterance_id: fake.speakCalls[0].utteranceId });
+    await tick();
+    expect(fake.speakCalls.map((c) => c.agentId)).toEqual(['alpha', 'bravo']);
+    fake.fire({ type: 'end', agent_id: 'bravo', utterance_id: fake.speakCalls[1].utteranceId });
+    await p;
+    expect(fake.utteranceEnds).toEqual(['alpha', 'bravo']);
+  });
+
+  it('test_bf862_end_for_same_agent_but_foreign_utterance_id_does_not_advance', async () => {
+    // BF-767: superseding an utterance emits a terminal 'end' carrying the SAME
+    // agent_id as the reply that replaced it, so agent_id alone cannot answer
+    // "is this end mine". The id branch must be strict.
+    const fake = makeFake({ mintIds: true });
+    const p = speakRepliesSequentially([r('a'), r('b')], fake.deps);
+    await tick();
+    expect(fake.speakCalls).toHaveLength(1);
+    fake.fire({ type: 'end', agent_id: 'a', utterance_id: 4242 });
+    await tick();
+    await tick();
+    expect(fake.speakCalls).toHaveLength(1);
+    expect(fake.speakingChanges).toEqual(['a']);
+    fake.fire({ type: 'end', agent_id: 'a', utterance_id: fake.speakCalls[0].utteranceId });
+    await tick();
+    expect(fake.speakCalls).toHaveLength(2);
+    fake.fire({ type: 'end', agent_id: 'b', utterance_id: fake.speakCalls[1].utteranceId });
+    await p;
+  });
+
+  it('test_bf862_bare_end_does_not_advance_when_no_utterance_id_was_minted', async () => {
+    // The no-id fallback (no engine, or a stand-in that does not model ids)
+    // must still REQUIRE agent attribution rather than treating absence as a
+    // wildcard.
+    const fake = makeFake();
+    const p = speakRepliesSequentially([r('a'), r('b')], fake.deps);
+    await tick();
+    expect(fake.speakCalls).toHaveLength(1);
+    fake.fire({ type: 'end' });
+    await tick();
+    await tick();
+    expect(fake.speakCalls).toHaveLength(1);
+    expect(fake.speakingChanges).toEqual(['a']);
+    fake.fireEnd('a'); await tick();
+    expect(fake.speakCalls).toHaveLength(2);
+    fake.fireEnd('b');
+    await p;
+  });
+
+  it('test_bf862_dropped_advances_promptly_without_waiting_the_safety_timeout', async () => {
+    // AD-1291 barge-in: flushSpeechQueue drops a queued-but-unstarted meeting
+    // utterance and fires 'dropped', never 'end'. Waiting out the multi-second
+    // safety timeout there is correct but slow.
+    vi.useFakeTimers();
+    const fake = makeFake({ mintIds: true, utteranceTimeoutMs: 60000 });
+    const p = speakRepliesSequentially([r('a'), r('b')], fake.deps);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.speakCalls).toHaveLength(1);
+
+    fake.fire({
+      type: 'dropped', agent_id: 'a',
+      utterance_id: fake.speakCalls[0].utteranceId, reason: 'barge-in',
+    });
+    // Flush microtasks WITHOUT advancing the clock: promptness is the point.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.speakCalls).toHaveLength(2);
+
+    fake.fire({
+      type: 'dropped', agent_id: 'b',
+      utterance_id: fake.speakCalls[1].utteranceId, reason: 'barge-in',
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await p;
+    expect(fake.speakCalls.map((c) => c.agentId)).toEqual(['a', 'b']);
+  });
+
+  it('test_bf862_dropped_for_a_foreign_utterance_does_not_advance', async () => {
+    const fake = makeFake({ mintIds: true });
+    const p = speakRepliesSequentially([r('a'), r('b')], fake.deps);
+    await tick();
+    expect(fake.speakCalls).toHaveLength(1);
+    // Another surface's queued utterance was flushed -- not ours.
+    fake.fire({ type: 'dropped', agent_id: 'someone-else', utterance_id: 777, reason: 'barge-in' });
+    await tick();
+    await tick();
+    expect(fake.speakCalls).toHaveLength(1);
+    expect(fake.speakingChanges).toEqual(['a']);
+    fake.fire({ type: 'end', agent_id: 'a', utterance_id: fake.speakCalls[0].utteranceId });
+    await tick();
+    expect(fake.speakCalls).toHaveLength(2);
+    fake.fire({ type: 'end', agent_id: 'b', utterance_id: fake.speakCalls[1].utteranceId });
+    await p;
+  });
+
+  it('test_bf862_non_terminal_events_never_advance', async () => {
+    const fake = makeFake({ mintIds: true });
+    const p = speakRepliesSequentially([r('a'), r('b')], fake.deps);
+    await tick();
+    const id = fake.speakCalls[0].utteranceId;
+    // Correctly correlated, but neither type is terminal.
+    fake.fire({ type: 'start', agent_id: 'a', utterance_id: id });
+    fake.fire({ type: 'boundary', agent_id: 'a', utterance_id: id });
+    await tick();
+    await tick();
+    expect(fake.speakCalls).toHaveLength(1);
+    fake.fire({ type: 'end', agent_id: 'a', utterance_id: id });
+    await tick();
+    expect(fake.speakCalls).toHaveLength(2);
+    fake.fire({ type: 'end', agent_id: 'b', utterance_id: fake.speakCalls[1].utteranceId });
+    await p;
   });
 });
 
