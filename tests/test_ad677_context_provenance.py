@@ -19,14 +19,14 @@ def test_provenance_tag_creation() -> None:
     tag = ProvenanceTag(
         source_tier="episodic",
         retrieval_timestamp=123.0,
-        confidence=0.82,
+        relevance=0.82,
         content_hash="abcdef12",
         metadata={"episode_id": "ep-1"},
     )
 
     assert tag.source_tier == "episodic"
     assert tag.retrieval_timestamp == 123.0
-    assert tag.confidence == 0.82
+    assert tag.relevance == 0.82
     assert tag.content_hash == "abcdef12"
     assert tag.metadata == {"episode_id": "ep-1"}
 
@@ -35,7 +35,7 @@ def test_provenance_tag_age() -> None:
     tag = ProvenanceTag(
         source_tier="records",
         retrieval_timestamp=time.time() - 1,
-        confidence=0.7,
+        relevance=0.7,
         content_hash="abcdef12",
     )
 
@@ -46,7 +46,7 @@ def test_provenance_tag_staleness() -> None:
     tag = ProvenanceTag(
         source_tier="operational",
         retrieval_timestamp=time.time() - 600,
-        confidence=0.7,
+        relevance=0.7,
         content_hash="abcdef12",
     )
 
@@ -57,13 +57,13 @@ def test_provenance_tag_format_inline() -> None:
     tag = ProvenanceTag(
         source_tier="episodic",
         retrieval_timestamp=time.time(),
-        confidence=0.82,
+        relevance=0.82,
         content_hash="abcdef12",
     )
 
     marker = tag.format_inline()
 
-    assert marker.startswith("[source:episodic confidence:0.82 age:")
+    assert marker.startswith("[source:episodic relevance:0.82 age:")
     assert marker.endswith("s]")
 
 
@@ -71,7 +71,7 @@ def test_provenance_tag_stale_marker() -> None:
     tag = ProvenanceTag(
         source_tier="episodic",
         retrieval_timestamp=time.time() - 600,
-        confidence=0.82,
+        relevance=0.82,
         content_hash="abcdef12",
     )
 
@@ -97,14 +97,14 @@ def test_provenance_envelope_render() -> None:
         tag=ProvenanceTag(
             source_tier="records",
             retrieval_timestamp=time.time(),
-            confidence=0.91,
+            relevance=0.91,
             content_hash="abcdef12",
         ),
     )
 
     rendered = envelope.render()
 
-    assert rendered.startswith("[source:records confidence:0.91 age:")
+    assert rendered.startswith("[source:records relevance:0.91 age:")
     assert rendered.endswith("\nretrieved fact")
 
 
@@ -120,7 +120,7 @@ def test_provenance_envelope_from_oracle_result() -> None:
 
     assert envelope.content == "episode summary"
     assert envelope.tag.source_tier == "episodic"
-    assert envelope.tag.confidence == 0.76
+    assert envelope.tag.relevance == 0.76
     assert envelope.tag.metadata == {"episode_id": "ep-1"}
 
 
@@ -156,7 +156,7 @@ async def test_query_with_provenance() -> None:
     assert len(envelopes) == 1
     assert isinstance(envelopes[0], ProvenanceEnvelope)
     assert envelopes[0].tag.source_tier == "episodic"
-    assert envelopes[0].tag.confidence == 0.84
+    assert envelopes[0].tag.relevance == 0.84
 
 
 @dataclass

@@ -170,9 +170,16 @@ class _FakeProcedureStore:
 class _FakeEpisodicMemoryReturning:
     def __init__(self, episodes: list[Episode]) -> None:
         self._episodes = episodes
+        self.last_for_evidence: bool | None = None
         # proactive.py also exercises recall_weighted/recall_for_agent — we need stubs.
 
-    async def get_by_ids(self, episode_ids: list[str]) -> list[Episode]:
+    async def get_by_ids(
+        self, episode_ids: list[str], *, for_evidence: bool = False,
+    ) -> list[Episode]:
+        # AD-1293 (#1200): ``proactive`` passes ``for_evidence=True`` here --
+        # the exemplars land in the agent's prompt. Recorded so a caller that
+        # drops the flag is visible to the assertion below.
+        self.last_for_evidence = for_evidence
         wanted = set(episode_ids)
         return [ep for ep in self._episodes if ep.id in wanted]
 
@@ -230,6 +237,9 @@ async def test_gather_context_surfaces_exemplars_when_procedure_matches() -> Non
     payload = context.get("recalled_procedure_exemplars")
     assert payload is not None
     assert payload["procedure_name"] == "HandleReview"
+    # AD-1293 (#1200): this payload becomes prompt context, so proactive must
+    # rehydrate as EVIDENCE. A bare call here leaks a self-contradicted episode.
+    assert em.last_for_evidence is True
     assert payload["procedure_id"] == "proc-A"
     assert len(payload["exemplars"]) == 2
     # 300-char truncation marker present on the long one

@@ -644,6 +644,15 @@ class Episode:
     confidence: float = 1.0    # store-time belief strength (0.0–1.0); derived from source_type when graded, else caller-authoritative
     verification_count: int = 0  # how many independent corroborations have been observed
     contradicted_by: list[str] = field(default_factory=list)  # episode ids that contradict this record
+    # AD-1293 (#1200): channels whose durable write this turn CLAIMED-adjacent
+    # activity for and which produced nothing, recorded at encode time from the
+    # turn's own WriteLedger. Distinct from ``contradicted_by`` (episode ids):
+    # this is contradiction by the turn's own act-record, known before the
+    # episode is ever stored, so no retraction transport exists to go stale.
+    # Empty = "no write channel ran, or every channel that ran also wrote" —
+    # never "unassessed", which is why the ledger's ABSTAIN maps to empty here
+    # only after ``evaluated`` is checked (AD-1269).
+    self_contradicted_channels: list[str] = field(default_factory=list)
     # AD-873: Ebbinghaus memory decay — strength decays over time, stability slows decay.
     strength: float = 1.0  # current retention strength S(t) in [0,1]; 1.0 = freshly encoded
     stability: float = EBBINGHAUS_DEFAULT_STABILITY_SECONDS  # decay time-constant (s); grows on reinforced recall/replay
@@ -712,6 +721,19 @@ def mark_contradicted(episode: Episode, contradicting_id: str) -> Episode:
     return replace(
         episode, contradicted_by=[*episode.contradicted_by, contradicting_id]
     )
+
+
+def episode_is_self_contradicted(episode: Episode) -> bool:
+    """AD-1293: whether this episode's own act-record contradicts it.
+
+    One shared predicate so recall surfaces cannot drift apart — the failure
+    mode that reverted the first #1200 attempt at ``a16c6c53``.
+
+    Total by construction: it runs on every EVIDENCE recall, so a record that
+    predates the field (or a narrower stand-in for one) must read as "not
+    contradicted" rather than take recall down with an ``AttributeError``.
+    """
+    return bool(getattr(episode, "self_contradicted_channels", None))
 
 
 # ------------------------------------------------------------------

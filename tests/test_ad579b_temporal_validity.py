@@ -86,7 +86,10 @@ async def test_recall_weighted_valid_at_filters(tmp_path) -> None:
     valid_episode = _episode("current trust status", valid_until=150.0)
     expired_episode = _episode("old trust status", valid_until=90.0)
 
-    async def fake_scored(agent_id: str, query: str, k: int) -> list[tuple[Episode, float]]:
+    async def fake_scored(
+        agent_id: str, query: str, k: int,
+        include_self_contradicted: bool = False,  # AD-1293 (#1200)
+    ) -> list[tuple[Episode, float]]:
         return [(valid_episode, 0.9), (expired_episode, 0.9)]
 
     async def fake_keyword(query: str, k: int) -> list[tuple[str, float]]:
@@ -115,7 +118,10 @@ async def test_mixed_valid_invalid_episodes(tmp_path) -> None:
     expired = _episode("expired fact", valid_until=90.0)
     future = _episode("future fact", valid_from=150.0)
 
-    async def fake_scored(agent_id: str, query: str, k: int) -> list[tuple[Episode, float]]:
+    async def fake_scored(
+        agent_id: str, query: str, k: int,
+        include_self_contradicted: bool = False,  # AD-1293 (#1200)
+    ) -> list[tuple[Episode, float]]:
         return [
             (valid_forever, 0.9),
             (valid_window, 0.9),

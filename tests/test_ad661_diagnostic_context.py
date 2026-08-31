@@ -118,7 +118,11 @@ async def test_procedure_exemplar_resolution() -> None:
     assert len(bundle.procedures) == 1
     assert bundle.procedures[0]["id"] == "p1"
     assert len(bundle.procedures[0]["exemplar_episodes"]) == 2
-    episodic.get_by_ids.assert_awaited_once_with(["ep_a", "ep_b"])
+    # AD-1293 (#1200): this asserted the bare ``(["ep_a", "ep_b"])`` call shape.
+    # These exemplars are rendered into a bundle an agent reads, so the
+    # rehydration is EVIDENCE and must opt in to the self-contradiction filter;
+    # the bare shape was the leak. Pinned explicitly so a silent revert fails.
+    episodic.get_by_ids.assert_awaited_once_with(["ep_a", "ep_b"], for_evidence=True)
     # Episodes flat list deduped — both exemplars appear once.
     ep_ids = [e["id"] for e in bundle.episodes]
     assert sorted(ep_ids) == ["ep_a", "ep_b"]
@@ -179,7 +183,11 @@ async def test_episode_dedup_across_procedures() -> None:
             timestamp=3.0, importance=0.4, intent_type=""),
     }
     episodic = MagicMock()
-    episodic.get_by_ids = AsyncMock(side_effect=lambda ids: [eps[i] for i in ids if i in eps])
+    # AD-1293 (#1200): signature was ``lambda ids``; the production call now
+    # passes ``for_evidence=True`` (these exemplars reach a prompt).
+    episodic.get_by_ids = AsyncMock(
+        side_effect=lambda ids, *, for_evidence=False: [eps[i] for i in ids if i in eps]
+    )
 
     runtime = SimpleNamespace(
         cognitive_journal=None, procedure_store=store, episodic_memory=episodic,

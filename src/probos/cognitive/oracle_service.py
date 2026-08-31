@@ -719,6 +719,16 @@ class OracleService:
             meta_parts = []
             if "timestamp" in r.metadata:
                 meta_parts.append(_format_age(r.metadata["timestamp"]))
+            # AD-1294 (#1090): the author was attached by _query_records_semantic
+            # and dropped here, leaving the agent to infer a byline from a path
+            # like ``notebooks/Anvil/x.md`` -- a guess it is not obliged to get
+            # right. isinstance is required: tiers that do not set the key at
+            # all, and the archive path, put a non-dict here.
+            fm = r.metadata.get("frontmatter")
+            if isinstance(fm, dict):
+                author = str(fm.get("author") or "").strip()
+                if author:
+                    meta_parts.append(f"by {author}")
             if "path" in r.metadata and r.metadata["path"]:
                 meta_parts.append(r.metadata["path"])
             meta_str = ", ".join(meta_parts)

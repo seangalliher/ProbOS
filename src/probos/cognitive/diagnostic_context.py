@@ -305,7 +305,12 @@ class DiagnosticContextService:
             exemplar_dicts: list[dict[str, Any]] = []
             if episodic is not None and getattr(full, "trace_exemplars", None):
                 try:
-                    eps = await episodic.get_by_ids(list(full.trace_exemplars))
+                    # AD-1293 (#1200): these exemplars are rendered into the
+                    # diagnostic bundle an agent reads, so this rehydration is
+                    # EVIDENCE, not history.
+                    eps = await episodic.get_by_ids(
+                        list(full.trace_exemplars), for_evidence=True,
+                    )
                 except Exception:
                     logger.debug("AD-661: get_by_ids failed", exc_info=True)
                     eps = []

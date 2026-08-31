@@ -113,9 +113,11 @@ _COMMONS_DISPOSITION: str = (
     "(These entries come from the ship's shared knowledge stores — work other "
     "crew recorded in earlier sessions. Treat them as reference material "
     "rather than as something you lived through. Each entry carries its source "
-    "tier, a confidence score and an age, so weigh a low-confidence or STALE "
-    "entry lightly. Build on an entry and cite it; otherwise do not narrate "
-    "this consultation.)"
+    "tier, a retrieval relevance score, an author where one was recorded, and "
+    "an age, so weigh a weakly-matching or STALE entry lightly. Relevance is "
+    "how closely the entry matched this subtask — it is a retrieval score, "
+    "never a measure of how strongly its author holds the claim. Build on an "
+    "entry and cite it; otherwise do not narrate this consultation.)"
 )
 
 _EXPECTED_OUTPUT_HEADER = "## What this subtask will be judged against"
@@ -675,10 +677,20 @@ def _format_consult_age(timestamp: Any) -> str:
 def _render_commons_entry(result: Any) -> str:
     """Render one ``OracleResult`` with its AD-1139-shaped provenance marker.
 
-    Marker carries source tier, confidence and age, so a low-confidence or
-    aged entry is visibly weightable. Bounded at ``_MAX_ENTRY_CHARS`` with the
-    marker preserved — the marker is what makes the entry weightable, so it is
-    never the part that gets cut.
+    Marker carries source tier, retrieval RELEVANCE, author and age, so an
+    off-topic or aged entry is visibly weightable. AD-1294 (#1090): this said
+    "confidence" while emitting ``OracleResult.score``. Relevance is how well
+    the entry matched the query; confidence is how strongly its author holds
+    the claim. They are different quantities, and an agent that repeated the
+    label was repeating the system's error.
+
+    The author comes from ``metadata["frontmatter"]["author"]``, which this
+    path already held and dropped -- leaving an agent summarising a commons
+    entry with no attribution data at all, so any byline it offered was
+    invention. Absent author renders nothing: a placeholder is the defect.
+
+    Bounded at ``_MAX_ENTRY_CHARS`` with the marker preserved -- the marker is
+    what makes the entry weightable, so it is never the part that gets cut.
     """
     provenance = getattr(result, "provenance", "") or ""
     if type(provenance) is not str or not provenance:
@@ -689,9 +701,15 @@ def _render_commons_entry(result: Any) -> str:
         score = 0.0
     metadata = getattr(result, "metadata", None)
     age = ""
+    author = ""
     if type(metadata) is dict:
         age = _format_consult_age(metadata.get("timestamp"))
-    marker = f"{provenance} (confidence {score:.2f}"
+        fm = metadata.get("frontmatter")
+        if type(fm) is dict:
+            author = str(fm.get("author") or "").strip()
+    marker = f"{provenance} (relevance {score:.2f}"
+    if author:
+        marker += f", by {author}"
     if age:
         marker += f", {age}"
     marker += ")"

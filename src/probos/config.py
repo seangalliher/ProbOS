@@ -6518,6 +6518,32 @@ class WriteClaimGuardConfig(BaseModel):  # AD-1285 (#1087 / BF-687)
     )
 
 
+class SelfContradictionRecallConfig(BaseModel):  # AD-1293 (#1200)
+    """Whether an episode contradicted by its own act-record is offered as evidence.
+
+    Default ON for the reason ``WriteClaimGuardConfig`` above already records:
+    this is a safety control, not a capability, and a default-OFF control
+    defends nothing (#13(a), the AD-1157 failure mode). Safe on because the
+    marker is empty unless a durable-write channel actually ran and wrote
+    nothing, so a ship with no such channel wired recalls byte-identically.
+
+    The episode is never deleted or rewritten -- it stays reachable by id
+    through ``get_by_ids`` and every HISTORY surface. This repo supersedes.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "AD-1293 (#1200): exclude episodes whose own write ledger "
+            "contradicted them from EVIDENCE recall (anything whose result can "
+            "reach an LLM prompt), while keeping them retrievable as history. "
+            "Reads no reply text -- the marker is structural, stamped at encode "
+            "time from the turn's WriteLedger. Turning this off restores "
+            "pre-AD-1293 recall exactly."
+        ),
+    )
+
+
 class RepairConfig(BaseModel):  # AD-1172
     """Dispatching a reported fault to a harness of the Captain's choosing.
 
@@ -7568,6 +7594,7 @@ class SystemConfig(BaseModel):
     dm_deliberate: DmDeliberateConfig = Field(default_factory=DmDeliberateConfig)  # AD-934
     dm_agentic: DmAgenticConfig = Field(default_factory=DmAgenticConfig)  # AD-1065
     write_claim_guard: WriteClaimGuardConfig = Field(default_factory=WriteClaimGuardConfig)  # AD-1285 (#1087)
+    self_contradiction_recall: SelfContradictionRecallConfig = Field(default_factory=SelfContradictionRecallConfig)  # AD-1293 (#1200)
     agentic_tools: AgenticToolsConfig = Field(default_factory=AgenticToolsConfig)  # AD-1072
     repair: RepairConfig = Field(default_factory=RepairConfig)  # AD-1172
     approval_inbox: ApprovalInboxConfig = Field(default_factory=ApprovalInboxConfig)  # AD-1154

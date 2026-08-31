@@ -31,6 +31,7 @@ from probos.types import (
     EpisodeStoreOutcome,
     MemorySource,
     RecallScore,
+    episode_is_self_contradicted,
     resolve_provenance,
 )
 from probos.types import EBBINGHAUS_DEFAULT_STABILITY_SECONDS
@@ -1205,6 +1206,7 @@ class EpisodicMemory:
         remember_know_typing_enabled: bool = False,
         reconsolidation_enabled: bool = False,
         affect_capture_enabled: bool = False,
+        self_contradiction_recall_enabled: bool = True,
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
@@ -1235,6 +1237,10 @@ class EpisodicMemory:
         # (byte-identical).
         self._reconsolidation_enabled = bool(reconsolidation_enabled)
         self._affect_capture_enabled = bool(affect_capture_enabled)  # AD-1037: store-time affect capture
+        # AD-1293 (#1200): exclude self-contradicted episodes from EVIDENCE
+        # recall. Default ON -- a safety control, not a capability (#13(a)).
+        # Off restores pre-AD-1293 recall exactly.
+        self._self_contradiction_recall_enabled = bool(self_contradiction_recall_enabled)
         self._verify_on_recall = verify_content_hash
         self._eviction_audit = eviction_audit
         self._agent_recall_threshold = agent_recall_threshold  # BF-134
@@ -1978,11 +1984,25 @@ class EpisodicMemory:
                 continue
         return out
 
-    async def get_by_ids(self, episode_ids: list[str]) -> list[Episode]:
+    async def get_by_ids(
+        self,
+        episode_ids: list[str],
+        *,
+        for_evidence: bool = False,
+    ) -> list[Episode]:
         """AD-657: Fetch full Episode objects by ID, preserving input order.
 
         Missing IDs (e.g., evicted by AD-593 activation pruning) are silently
         omitted — caller treats absence as graceful degradation, not error.
+
+        AD-1293 (#1200): id rehydration is HISTORY by default and stays
+        unfiltered — erasure resolves an episode through this method, so
+        filtering by default would make a marked episode un-erasable.
+        But the CALL SITE decides, not the method: a caller that feeds the
+        result into an LLM prompt is an evidence producer and passes
+        ``for_evidence=True``. Named for the caller's role rather than
+        mirroring the recall surfaces' ``include_self_contradicted``, so that
+        the bare call reads as what it is — unfiltered.
         """
         if not self._collection or not episode_ids:
             return []
@@ -2011,7 +2031,10 @@ class EpisodicMemory:
                     "AD-657: failed to reconstruct episode %s", doc_id, exc_info=True,
                 )
                 continue
-        return [by_id[eid] for eid in episode_ids if eid in by_id]
+        ordered = [by_id[eid] for eid in episode_ids if eid in by_id]
+        if not for_evidence:
+            return ordered
+        return self._drop_self_contradicted(ordered, False)  # AD-1293 (#1200)
 
     async def update_episode_metadata(
         self,
@@ -2549,7 +2572,46 @@ class EpisodicMemory:
             score *= _clamp01(episode.affect_salience) ** w_a
         return score
 
-    async def recall(self, query: str, k: int = 5) -> list[Episode]:
+    def _drop_self_contradicted(
+        self,
+        episodes: list[Episode],
+        include_self_contradicted: bool,
+    ) -> list[Episode]:
+        """AD-1293 (#1200): remove episodes their own act-record contradicts.
+
+        The single shared exclusion used by every EVIDENCE surface, so they
+        cannot drift apart -- filtering some paths and not others is what
+        reverted the first #1200 attempt at ``a16c6c53``.
+
+        Applied at the END of a surface, after every fusion/merge, because a
+        fusion step re-hydrates ids via ``get_by_ids`` (unfiltered by default,
+        so history stays reachable) and would otherwise reinstate an episode
+        an earlier filter had removed.
+
+        Classification is by CALL SITE, not by method. HISTORY callers
+        (erasure, backfill, decay/hash sweeps) never reach here: a suppressed
+        record must stay auditable and erasable. An evidence caller that
+        rehydrates by id opts in with ``get_by_ids(..., for_evidence=True)``.
+        This repo supersedes; it does not rewrite.
+
+        ``getattr`` rather than a direct read: 27 test modules build an
+        ``EpisodicMemory`` via ``__new__`` to bypass ``__init__``, and recall
+        must not raise on a partially-constructed store. Defaults to ON, the
+        safe direction for a safety control (#13(a)).
+        """
+        if include_self_contradicted or not getattr(
+            self, "_self_contradiction_recall_enabled", True
+        ):
+            return episodes
+        return [ep for ep in episodes if not episode_is_self_contradicted(ep)]
+
+    async def recall(
+        self,
+        query: str,
+        k: int = 5,
+        *,
+        include_self_contradicted: bool = False,
+    ) -> list[Episode]:
         """Semantic search — return top-k episodes by embedding similarity.
 
         AD-873: when composite reranking is enabled the full candidate pool is
@@ -2561,11 +2623,17 @@ class EpisodicMemory:
         want the Feeling-of-Knowing signal call ``recall_with_confidence``
         directly; ``recall`` stays a drop-in returning just the episodes.
         """
-        episodes, _confidence = await self.recall_with_confidence(query, k)
+        episodes, _confidence = await self.recall_with_confidence(
+            query, k, include_self_contradicted=include_self_contradicted
+        )
         return episodes
 
     async def recall_with_confidence(
-        self, query: str, k: int = 5
+        self,
+        query: str,
+        k: int = 5,
+        *,
+        include_self_contradicted: bool = False,
     ) -> tuple[list[Episode], RecallConfidence]:
         """AD-979a: semantic recall PLUS a Feeling-of-Knowing confidence signal.
 
@@ -2677,6 +2745,19 @@ class EpisodicMemory:
         if self._hybrid_recall_enabled and self._fts_db is not None:
             dense_episodes = await self._fuse_dense_sparse(query, dense_episodes, k)
 
+        # AD-1293 (#1200): exclude self-contradicted episodes from evidence.
+        # AFTER fusion -- ``_fuse_dense_sparse`` hydrates sparse-only ids via the
+        # deliberately-unfiltered ``get_by_ids``, so filtering earlier would be
+        # undone here (the a16c6c53 failure). The band is recomputed only when
+        # exclusion actually empties a non-empty result, so an emptied recall
+        # cannot still report ``strong`` and suppress cross-agent recovery.
+        _pre_exclusion = dense_episodes
+        dense_episodes = self._drop_self_contradicted(
+            dense_episodes, include_self_contradicted
+        )
+        if _pre_exclusion and not dense_episodes:
+            confidence = dataclasses.replace(confidence, band="none")
+
         # AD-979f: classify the recall's remember/know type (off by default ->
         # recall_type stays "" -> byte-identical). Uses the final top episode.
         if self._remember_know_typing:
@@ -2729,6 +2810,7 @@ class EpisodicMemory:
 
     async def recall_with_control(
         self, query: str, k: int = 5, *, max_expansions: int = 1,
+        include_self_contradicted: bool = False,
     ) -> tuple[list[Episode], RecallConfidence, list[str]]:
         """AD-979b: recall with a bounded metacognitive control loop.
 
@@ -2750,14 +2832,18 @@ class EpisodicMemory:
         band means "I looked, expanded, and remain uncertain" — never a
         fabricated answer. The returned confidence is the BEST one found.
         """
-        episodes, confidence = await self.recall_with_confidence(query, k)
+        episodes, confidence = await self.recall_with_confidence(
+            query, k, include_self_contradicted=include_self_contradicted
+        )
         action = decide_recall_control(confidence.band)
         actions: list[str] = [action]
         if action != "expand" or max_expansions <= 0:
             return episodes, confidence, actions
 
         for variant in recall_expansion_variants(query, max_n=max_expansions):
-            v_eps, v_conf = await self.recall_with_confidence(variant, k)
+            v_eps, v_conf = await self.recall_with_confidence(
+                variant, k, include_self_contradicted=include_self_contradicted
+            )
             actions.append(f"requery:{v_conf.band}")
             if v_conf.best_similarity > confidence.best_similarity:
                 episodes, confidence = v_eps, v_conf
@@ -2766,7 +2852,7 @@ class EpisodicMemory:
         return episodes, confidence, actions
 
     async def retrieve_contrastive_episodes(
-        self, query: str, k: int = 2,
+        self, query: str, k: int = 2, *, include_self_contradicted: bool = False,
     ) -> list[Episode]:
         """AD-655: return mid-band-similarity episodes (NOT top-k).
 
@@ -2810,6 +2896,12 @@ class EpisodicMemory:
             if len(contrastive) >= k:
                 break
 
+        # AD-1293 (#1200): contrastive hits feed decision-making, so they are
+        # EVIDENCE and are excluded on the same predicate as every other.
+        contrastive = self._drop_self_contradicted(
+            contrastive, include_self_contradicted
+        )
+
         # AD-655: emit CONTRASTIVE_RECALL when an emit hook is wired
         emit = getattr(self, "_emit_event", None)
         if emit is not None and contrastive:
@@ -2848,6 +2940,7 @@ class EpisodicMemory:
         temporal_match_weight: float = 0.10,
         temporal_mismatch_penalty: float = 0.15,
         anchor_bonus: float = 0.08,
+        include_self_contradicted: bool = False,  # AD-1293 (#1200)
     ) -> list[RecallScore]:
         """AD-603: Anchor recall with full composite scoring."""
         raw_episodes = await self.recall_by_anchor(
@@ -2861,6 +2954,7 @@ class EpisodicMemory:
             time_range=time_range,
             semantic_query=semantic_query,
             limit=limit,
+            include_self_contradicted=include_self_contradicted,
         )
 
         if not raw_episodes:
@@ -2971,7 +3065,10 @@ class EpisodicMemory:
         results.sort(key=lambda result: result.composite_score, reverse=True)
         return results
 
-    async def recall_for_agent(self, agent_id: str, query: str, k: int = 5) -> list[Episode]:
+    async def recall_for_agent(
+        self, agent_id: str, query: str, k: int = 5,
+        *, include_self_contradicted: bool = False,
+    ) -> list[Episode]:
         """Recall episodes scoped to a specific agent. Sovereign memory — only this agent's experiences (AD-397).
 
         AD-981a: a thin byte-identical shim over
@@ -2981,12 +3078,13 @@ class EpisodicMemory:
         episodes, so every existing caller is unchanged.
         """
         episodes, _confidence = await self.recall_for_agent_with_confidence(
-            agent_id, query, k
+            agent_id, query, k, include_self_contradicted=include_self_contradicted
         )
         return episodes
 
     async def recall_for_agent_with_confidence(
-        self, agent_id: str, query: str, k: int = 5
+        self, agent_id: str, query: str, k: int = 5,
+        *, include_self_contradicted: bool = False,
     ) -> tuple[list[Episode], RecallConfidence]:
         """AD-981a: sovereign agent recall PLUS the AD-979a agent-scoped
         Feeling-of-Knowing signal.
@@ -3124,6 +3222,13 @@ class EpisodicMemory:
                 agent_id, query, episodes, k
             )
 
+        # AD-1293 (#1200): exclude after sovereign fusion, for the same reason
+        # as the global path -- the fusion tail re-hydrates ids via get_by_ids.
+        _pre_exclusion = episodes
+        episodes = self._drop_self_contradicted(episodes, include_self_contradicted)
+        if _pre_exclusion and not episodes:
+            confidence = dataclasses.replace(confidence, band="none")
+
         # AD-979f: classify the sovereign recall's remember/know type (off by
         # default -> recall_type stays "" -> byte-identical). Uses the final top.
         if self._remember_know_typing:
@@ -3194,7 +3299,9 @@ class EpisodicMemory:
             )
             return dense_episodes
 
-    async def recent_for_agent(self, agent_id: str, k: int = 5) -> list[Episode]:
+    async def recent_for_agent(
+        self, agent_id: str, k: int = 5, *, include_self_contradicted: bool = False,
+    ) -> list[Episode]:
         """BF-027: Return the k most recent episodes for a specific agent.
 
         Timestamp-based fallback when semantic recall returns nothing.
@@ -3237,9 +3344,15 @@ class EpisodicMemory:
                 stored_hash = metadata.get("content_hash", "")
                 _verify_episode_hash(ep, stored_hash, metadata, self._collection)
             episodes.append(ep)
-        return episodes
+        # AD-1293 (#1200): after the k-cap, so an excluded episode shortens the
+        # result rather than promoting an older one -- the safe direction, and
+        # it keeps the single-pass scan this fallback exists to be.
+        return self._drop_self_contradicted(episodes, include_self_contradicted)
 
-    async def recall_by_intent(self, intent_type: str, k: int = 5) -> list[Episode]:
+    async def recall_by_intent(
+        self, intent_type: str, k: int = 5,
+        *, include_self_contradicted: bool = False,
+    ) -> list[Episode]:
         """Filter by intent type, then rank by recency."""
         if not self._collection:
             return []
@@ -3277,9 +3390,11 @@ class EpisodicMemory:
             if len(episodes) >= k:
                 break
 
-        return episodes
+        return self._drop_self_contradicted(episodes, include_self_contradicted)  # AD-1293
 
-    async def recent(self, k: int = 10) -> list[Episode]:
+    async def recent(
+        self, k: int = 10, *, include_self_contradicted: bool = False,
+    ) -> list[Episode]:
         """Return the k most recent episodes."""
         if not self._collection:
             return []
@@ -3299,10 +3414,13 @@ class EpisodicMemory:
         paired = list(zip(result["ids"], result["metadatas"], result["documents"]))
         paired.sort(key=lambda x: x[1].get("timestamp", 0), reverse=True)
 
-        return [
-            self._metadata_to_episode(doc_id, document, metadata)
-            for doc_id, metadata, document in paired[:k]
-        ]
+        return self._drop_self_contradicted(  # AD-1293 (#1200)
+            [
+                self._metadata_to_episode(doc_id, document, metadata)
+                for doc_id, metadata, document in paired[:k]
+            ],
+            include_self_contradicted,
+        )
 
     async def get_embeddings(self, episode_ids: list[str]) -> dict[str, list[float]]:
         """Retrieve stored embeddings for the given episode IDs.
@@ -3454,6 +3572,10 @@ class EpisodicMemory:
             "confidence": float(_confidence),
             "verification_count": int(ep.verification_count),
             "contradicted_by_json": json.dumps(ep.contradicted_by or []),
+            # AD-1293 (#1200): the turn's own act-record verdict, stamped at
+            # encode time. Scalar-only metadata, so a JSON string matches the
+            # contradicted_by_json convention directly above.
+            "self_contradicted_json": json.dumps(ep.self_contradicted_channels or []),
             # AD-873: Ebbinghaus memory decay (strength derived from age+stability)
             "strength": float(ep.strength),
             "stability": float(ep.stability),
@@ -3584,6 +3706,16 @@ class EpisodicMemory:
                 contradicted_by = []
         except (json.JSONDecodeError, TypeError):
             contradicted_by = []
+        # AD-1293 (#1200): pre-AD-1293 episodes lack the key -> [] (never marked).
+        self_contradicted_raw = metadata.get("self_contradicted_json", "")
+        try:
+            self_contradicted = (
+                json.loads(self_contradicted_raw) if self_contradicted_raw else []
+            )
+            if not isinstance(self_contradicted, list):
+                self_contradicted = []
+        except (json.JSONDecodeError, TypeError):
+            self_contradicted = []
         # AD-873: Ebbinghaus decay fields (pre-AD-873 episodes default cleanly).
         try:
             strength = float(metadata.get("strength", 1.0))
@@ -3621,6 +3753,7 @@ class EpisodicMemory:
             confidence=confidence,
             verification_count=verification_count,
             contradicted_by=contradicted_by,
+            self_contradicted_channels=self_contradicted,  # AD-1293 (#1200)
             # AD-873: Ebbinghaus memory decay
             strength=strength,
             stability=stability,
@@ -3665,6 +3798,7 @@ class EpisodicMemory:
 
     async def recall_for_agent_scored(
         self, agent_id: str, query: str, k: int = 5,
+        *, include_self_contradicted: bool = False,
     ) -> list[tuple[Episode, float]]:
         """Like recall_for_agent but returns (episode, similarity) tuples.
 
@@ -3738,6 +3872,17 @@ class EpisodicMemory:
                 )
             except Exception:
                 logger.debug("AD-567d: Activation tracking failed", exc_info=True)
+
+        # AD-1293 (#1200): same predicate, applied to the tuple surface. Kept
+        # here rather than in ``recall_weighted`` alone because that caller
+        # merges a SECOND, keyword-only channel that this filter cannot see.
+        if not include_self_contradicted and getattr(
+            self, "_self_contradiction_recall_enabled", True
+        ):
+            scored = [
+                (ep, sim) for ep, sim in scored
+                if not episode_is_self_contradicted(ep)
+            ]
 
         return scored
 
@@ -3851,6 +3996,7 @@ class EpisodicMemory:
         temporal_match_weight: float = 0.10,     # BF-147: bonus when temporal cue matches
         temporal_mismatch_penalty: float = 0.15,  # BF-155: penalty for temporal contradiction
         valid_at: float = 0.0,  # AD-579b: when non-zero, exclude expired episodes
+        include_self_contradicted: bool = False,  # AD-1293 (#1200)
     ) -> list[RecallScore]:
         """Salience-weighted recall combining semantic + keyword + trust + Hebbian + recency + anchor (AD-567b/c).
 
@@ -3865,7 +4011,10 @@ class EpisodicMemory:
         max_recall_episodes hard cap. 0 = disabled (backward compatible).
         """
         # 1. Semantic retrieval — over-fetch for re-ranking headroom
-        scored_eps = await self.recall_for_agent_scored(agent_id, query, k=k * 3)
+        scored_eps = await self.recall_for_agent_scored(
+            agent_id, query, k=k * 3,
+            include_self_contradicted=include_self_contradicted,
+        )
         ep_map: dict[str, tuple[Episode, float]] = {
             ep.id: (ep, sim) for ep, sim in scored_eps
         }
@@ -3908,6 +4057,19 @@ class EpisodicMemory:
                             ep_map[ep_id] = (ep, self._fts_keyword_floor)  # BF-134: keyword presence implies baseline relevance
                 except Exception:
                     pass
+
+        # AD-1293 (#1200): the keyword merge above hydrates episodes the
+        # semantic filter never saw, so the exclusion is re-applied over the
+        # MERGED pool. Filtering only the delegate at step 1 would let a
+        # keyword-only hit through -- the fusion-reinstatement failure of
+        # a16c6c53, in a second shape.
+        if not include_self_contradicted and getattr(
+            self, "_self_contradiction_recall_enabled", True
+        ):
+            ep_map = {
+                ep_id: pair for ep_id, pair in ep_map.items()
+                if not episode_is_self_contradicted(pair[0])
+            }
 
         # 3. Score each candidate
         now = time.time()
@@ -4082,6 +4244,7 @@ class EpisodicMemory:
         time_range: tuple[float, float] | None = None,
         semantic_query: str = "",
         limit: int = 50,
+        include_self_contradicted: bool = False,  # AD-1293 (#1200)
     ) -> list[Episode]:
         """AD-570: Structured anchor-field recall with optional semantic re-ranking.
 
@@ -4239,6 +4402,11 @@ class EpisodicMemory:
                 episodes.append(ep)
                 if len(episodes) >= limit:
                     break
+
+        # AD-1293 (#1200): one filter for BOTH branches above (enumeration
+        # mode and semantic-rerank mode) -- they converge on this list, so a
+        # per-branch filter would be two places to drift.
+        episodes = self._drop_self_contradicted(episodes, include_self_contradicted)
 
         # AD-567d: Record deliberate recall access for activation tracking
         if episodes and self._activation_tracker:

@@ -48,8 +48,11 @@ _ALL_DEPARTMENTS = (
     "operations",
     "bridge",
 )
+# AD-1294 (#1090): this said ``confidence`` until the score it renders was shown
+# to be a RETRIEVAL score -- how well the entry matched the query, not how firmly
+# anyone holds it. The old label taught agents to repeat the system's own error.
 _PROVENANCE_MARKER_RE = re.compile(
-    r"^\[source:(\w+) confidence:\d\.\d{2} age:\d+[smh]( STALE)?\]$",
+    r"^\[source:(\w+) relevance:\d\.\d{2} age:\d+[smh]( STALE)?\]$",
     re.MULTILINE,
 )
 _OMISSION_NOTE_RE = re.compile(
@@ -377,14 +380,19 @@ async def test_output_carries_the_disposition_preamble_and_per_item_provenance()
     # The four things the framing must state.
     assert "shared knowledge stores" in output      # where it came from
     assert "not from your own memory" in output     # it is not the agent's memory
-    assert "confidence" in output and "weigh" in output   # how much to trust it
+    # AD-1294 (#1090): asserted the literal "confidence" until that word was the
+    # defect. The property under test is unchanged -- the framing must say how to
+    # weigh an entry -- so it now also pins the disambiguation that replaced it.
+    assert "relevance" in output and "weigh" in output   # how much to trust it
+    assert "not how strongly its author holds it" in output
+    assert "confidence" not in output
     assert "Cite an entry" in output                # citing expected
     assert "do not narrate this lookup" in output   # narrating is not
     markers = _PROVENANCE_MARKER_RE.findall(output)
     assert len(markers) == 2
     assert {tier for tier, _stale in markers} == {"records", "graph"}
-    assert "[source:records confidence:0.82 age:0s]" in output
-    assert "[source:graph confidence:0.70 age:0s]" in output
+    assert "[source:records relevance:0.82 age:0s]" in output
+    assert "[source:graph relevance:0.70 age:0s]" in output
 
 
 @pytest.mark.asyncio

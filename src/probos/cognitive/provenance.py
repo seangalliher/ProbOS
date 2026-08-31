@@ -1,7 +1,7 @@
 """Context Provenance Metadata (AD-677).
 
 Tags every piece of context injected into agent prompts with
-source tier, retrieval timestamp, confidence score, and
+source tier, retrieval timestamp, retrieval relevance, and
 staleness indicator.
 """
 
@@ -22,7 +22,10 @@ class ProvenanceTag:
 
     source_tier: str
     retrieval_timestamp: float
-    confidence: float
+    #: AD-1294 (#1090): how well the entry MATCHED THE QUERY, not how strongly
+    #: its author holds it. Named ``confidence`` until it was found rendering
+    #: ``OracleResult.score`` under that label straight into agent context.
+    relevance: float
     content_hash: str
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -39,7 +42,7 @@ class ProvenanceTag:
     def format_inline(self) -> str:
         """Format as an inline provenance marker for prompt injection.
 
-        Example: [source:episodic confidence:0.82 age:3m]
+        Example: [source:episodic relevance:0.82 age:3m]
         """
         age = self.age_seconds
         if age < 60:
@@ -51,7 +54,7 @@ class ProvenanceTag:
 
         stale_marker = " STALE" if self.is_stale else ""
         return (
-            f"[source:{self.source_tier} confidence:{self.confidence:.2f} "
+            f"[source:{self.source_tier} relevance:{self.relevance:.2f} "
             f"age:{age_str}{stale_marker}]"
         )
 
@@ -84,7 +87,7 @@ class ProvenanceEnvelope:
             tag=ProvenanceTag(
                 source_tier=result.source_tier,
                 retrieval_timestamp=time.time(),
-                confidence=result.score,
+                relevance=result.score,
                 content_hash=compute_content_hash(result.content),
                 metadata=result.metadata,
             ),

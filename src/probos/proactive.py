@@ -1900,8 +1900,12 @@ class ProactiveCognitiveLoop:
                     proc_id = matches[0]["id"]
                     procedure = await store.get(proc_id)
                     if procedure and procedure.trace_exemplars:
+                        # AD-1293 (#1200): these exemplars become
+                        # ``recalled_procedure_exemplars`` in the agent's prompt,
+                        # so this rehydration is EVIDENCE, not history.
                         exemplar_eps = await em_for_exemplars.get_by_ids(
                             procedure.trace_exemplars[:3],
+                            for_evidence=True,
                         )
                         if exemplar_eps:
                             now = time.time()

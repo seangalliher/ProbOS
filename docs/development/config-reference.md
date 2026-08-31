@@ -1737,6 +1737,14 @@ Whether a reply is checked against the turn's write ledger.
 |---|---|---|---|---|
 | `enabled` | `bool` | `True` | — | AD-1285 (#1087): check a 1:1 reply against the turn's write ledger and append one honest sentence when a durable-write channel ran and wrote nothing. Reads no reply text. Default ON because this is a safety control rather than a capability, and a default-OFF control defends nothing (#13(a)) -- which is the AD-1157 failure mode #1087 names. Safe on: the verdict abstains unless a channel actually ran, so a turn with no write marker is byte-identical. |
 
+## `self_contradiction_recall`
+
+Whether an episode contradicted by its own act-record is offered as evidence.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `True` | — | AD-1293 (#1200): exclude episodes whose own write ledger contradicted them from EVIDENCE recall (anything whose result can reach an LLM prompt), while keeping them retrievable as history. Reads no reply text -- the marker is structural, stamped at encode time from the turn's WriteLedger. Turning this off restores pre-AD-1293 recall exactly. |
+
 ## `agentic_tools`
 
 Tools offered inside the agentic loop, including the Σ commons read/write verbs. The publish path has **no consensus gate** — the rate and size bounds are the control.

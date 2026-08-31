@@ -24,7 +24,7 @@ from. Live testing showed agents find unframed Oracle content jarring — it jus
 appears. So the framing travels *with* the payload: a disposition preamble
 modelled on ``_VISUAL_DISPOSITION`` (AD-1059) plus per-entry
 ``ProvenanceEnvelope.render()`` markers (AD-677) carrying source tier,
-confidence and age.
+relevance and age.
 
 **DD-3 — gap-regex safe.** Every string this module authors is checked against
 ``probos.cognitive.decomposer._CAPABILITY_GAP_RE`` in the tests. A tool result
@@ -89,8 +89,10 @@ _HEADER = "## Cross-Tier Knowledge (Ship's Records)"
 _ORACLE_DISPOSITION: str = (
     "(These entries come from the ship's shared knowledge stores, not from your "
     "own memory — treat them as reference material rather than as something you "
-    "lived through. Each entry is prefixed with its source tier, a confidence "
-    "score and an age, so weigh a low-confidence or STALE entry lightly. Cite an "
+    "lived through. Each entry is prefixed with its source tier, a retrieval "
+    "relevance score and an age, so weigh a weakly-matching or STALE entry "
+    "lightly. Relevance is how well the entry matched your query, not how "
+    "strongly its author holds it. Cite an "
     "entry when you actually rely on it; otherwise do not narrate this lookup.)"
 )
 
@@ -119,7 +121,7 @@ def _cap_entry(rendered: str) -> str:
 
     The marker is the first ~50 characters of ``render()`` and the cap is far
     larger, so trimming the tail only ever removes content — the source tier,
-    confidence and age an agent needs to weigh the entry always survive.
+    relevance and age an agent needs to weigh the entry always survive.
     """
     if len(rendered) <= _MAX_ENTRY_CHARS:
         return rendered
@@ -190,7 +192,7 @@ class OracleQueryTool:
             "to the task you are working: ship's records, the semantic index, "
             "the knowledge graph, the archive, operational state and health "
             "telemetry. Read-only. Every entry comes back tagged with its "
-            "source tier, a confidence score and an age. Each agent's personal "
+            "source tier, a retrieval relevance score and an age. Each agent's personal "
             "episodic memory is sovereign and private, so this tool reads only "
             "the shared commons. Pass 'kind' to narrow to one tier."
         )

@@ -1796,12 +1796,29 @@ class DmReplyPipeline:
                 from probos.cognitive.episodic import resolve_sovereign_id
                 from probos.types import AnchorFrame, Episode
                 sovereign_id = resolve_sovereign_id(self.ctx.agent)
+                ledger = self.ctx.write_ledger
+                # AD-1293 (#1200): the AD-1285 verdict is computed one step
+                # earlier (step_4m) and was previously discarded here. An
+                # unevaluated ledger yields [] — "no channel ran" and "a channel
+                # ran and wrote nothing" stay distinct (AD-1269).
+                self_contradicted = (
+                    sorted(ledger.wrote_nothing) if ledger.evaluated else []
+                )
                 episode = Episode(
                     user_input=f"[1:1 with {self.ctx.callsign or self.ctx.agent_id}] Captain: {self.ctx.req_message}",
                     timestamp=_time.time(),
                     agent_ids=[sovereign_id],
+                    self_contradicted_channels=self_contradicted,  # AD-1293 (#1200)
                     outcomes=[{
                         "intent": "direct_message",
+                        # Stays the literal ``True``: five consumers
+                        # (decomposer, retrieval_practice, contradiction_detector,
+                        # dreaming trust, importance_scorer) read this as
+                        # task-execution truth. A turn that answered the Captain
+                        # but whose write channel produced nothing DID execute;
+                        # only a claimed side-effect is missing, and
+                        # ``self_contradicted_channels`` carries that without
+                        # overloading a boolean five subsystems read differently.
                         "success": True,
                         "response": self.ctx.response_text[:500],
                         "session_type": "1:1",

@@ -613,9 +613,14 @@ async def test_relevant_record_reaches_task_text_framed_and_provenance_marked(
     assert _COMMONS_HEADER in task_text
     assert _COMMONS_DISPOSITION in task_text
     assert "Coolant resonance peaks at 4.2 kHz." in task_text
-    # Provenance marker: source tier and confidence.
+    # Provenance marker: source tier and retrieval relevance.
     assert "[ship's records]" in task_text
-    assert "confidence 0.90" in task_text
+    # AD-1294 (#1090): this pinned ``"confidence 0.90"``. The value is
+    # ``OracleResult.score`` -- a retrieval relevance, not the author's belief
+    # -- so the assertion was holding the mislabel in place as contract. The
+    # number is unchanged; only the word it is rendered under is corrected.
+    assert "relevance 0.90" in task_text
+    assert "confidence 0.90" not in task_text
     row = await store.get_work_item(child.id)
     assert row.description == child.description
 
