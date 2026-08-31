@@ -67,6 +67,7 @@ import time
 from collections import deque
 from typing import Any
 
+from probos.knowledge.records_store import _CLASSIFICATION_LEVELS
 from probos.tools.protocol import ToolResult, ToolType
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,14 @@ _ALLOWED_KEYS = frozenset(
 # DD-4: the classification vocabulary, mirroring
 # ``records_store._CLASSIFICATION_LEVELS``. Imported rather than re-typed at
 # validation time so the two cannot drift.
+#
+# AD-1179: that claim was true of the validator and FALSE of the schema thirty
+# lines below it, which re-typed the same four labels as a literal. Both now
+# read ``_CLASSIFICATIONS``, which is the imported authority in its own
+# insertion order (``private, department, ship, fleet``) -- an ordered tuple,
+# never a set, because per-process string-hash randomisation would reorder a
+# set-derived enum on every boot.
+_CLASSIFICATIONS: tuple[str, ...] = tuple(_CLASSIFICATION_LEVELS)
 _DEFAULT_CLASSIFICATION = "ship"
 _FLEET_CLASSIFICATION = "fleet"
 # DD-4: what a ``fleet`` request is actually written as, so Tier 2 can reach it.
@@ -370,7 +379,7 @@ class PublishFindingTool:
                 },
                 "classification": {
                     "type": "string",
-                    "enum": ["private", "department", "ship", "fleet"],
+                    "enum": list(_CLASSIFICATIONS),
                     "default": _DEFAULT_CLASSIFICATION,
                     "description": _CLASSIFICATION_GUIDANCE,
                 },
@@ -491,9 +500,7 @@ class PublishFindingTool:
         classification = raw.get("classification", _DEFAULT_CLASSIFICATION)
         if type(classification) is not str:
             return "classification"
-        from probos.knowledge.records_store import _CLASSIFICATION_LEVELS
-
-        if classification not in _CLASSIFICATION_LEVELS:
+        if classification not in _CLASSIFICATIONS:
             return "classification"
 
         raw_tags = raw.get("tags", [])

@@ -101,6 +101,14 @@ def test_key_combo_carries_its_arguments() -> None:
         ("x", "mouse_move"),
         ("y", "mouse_move"),
         ("button", "mouse_button"),
+        # BF-867: this row was missing, and its absence is the whole defect.
+        # The table carried the ONE parameter that worked and never asked
+        # whether the handler required a second -- so the guard written for
+        # exactly this failure ("offering a verb without the parameters it
+        # requires is the same defect one layer down") verified `button` and
+        # missed that `mouse_button` also demanded a sub-verb the schema never
+        # declared. The verb was refused on every call for its whole life.
+        ("press", "mouse_button"),
     ],
 )
 def test_every_new_verb_has_its_parameters(param: str, verb: str) -> None:

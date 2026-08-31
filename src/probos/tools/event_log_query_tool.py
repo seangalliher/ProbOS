@@ -51,6 +51,17 @@ _FILTER_FIELDS = (
     ("correlation_id", 256),
     ("agent_id", 256),
 )
+# AD-1179: the ``order`` and ``aggregate`` vocabularies, declared ONCE.
+#
+# ``order`` was restated twice (input schema, output schema) and ``aggregate``
+# three times (input schema, ``_parse_query``'s gate, ``_raw_audit_details``'s
+# gate). Every restatement beside an executable gate is a place the two can
+# drift, which is the BF-701 defect class this AD exists to close.
+#
+# Ordered tuples, never sets: per-process string-hash randomisation would
+# reorder a set-derived enum on every boot.
+_ORDERS: tuple[str, ...] = ("newest_first", "oldest_first")
+_AGGREGATIONS: tuple[str, ...] = ("none", "cooperation_signature")
 _RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
     r"(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
@@ -136,13 +147,10 @@ def _parse_query(params: object) -> _ParsedQuery:
     if type(limit) is not int or not 1 <= limit <= 200:
         raise _InvalidRequest("limit")
     order = params.get("order", "newest_first")
-    if type(order) is not str or order not in ("newest_first", "oldest_first"):
+    if type(order) is not str or order not in _ORDERS:
         raise _InvalidRequest("order")
     aggregate = params.get("aggregate", "none")
-    if type(aggregate) is not str or aggregate not in (
-        "none",
-        "cooperation_signature",
-    ):
+    if type(aggregate) is not str or aggregate not in _AGGREGATIONS:
         raise _InvalidRequest("aggregate")
     if aggregate == "cooperation_signature" and (
         filters["category"] != "emergent"
@@ -174,10 +182,7 @@ def _raw_audit_details(
     aggregate: EventLogAggregateKind = "none"
     if type(params) is dict:
         raw_aggregate = params.get("aggregate")
-        if type(raw_aggregate) is str and raw_aggregate in (
-            "none",
-            "cooperation_signature",
-        ):
+        if type(raw_aggregate) is str and raw_aggregate in _AGGREGATIONS:
             aggregate = raw_aggregate
         try:
             start_time = _parse_rfc3339(params.get("start_time"), "start_time")
@@ -387,12 +392,12 @@ class EventLogQueryTool:
                 },
                 "order": {
                     "type": "string",
-                    "enum": ["newest_first", "oldest_first"],
+                    "enum": list(_ORDERS),
                     "default": "newest_first",
                 },
                 "aggregate": {
                     "type": "string",
-                    "enum": ["none", "cooperation_signature"],
+                    "enum": list(_AGGREGATIONS),
                     "default": "none",
                 },
             },
@@ -492,7 +497,7 @@ class EventLogQueryTool:
                 },
                 "order": {
                     "type": "string",
-                    "enum": ["newest_first", "oldest_first"],
+                    "enum": list(_ORDERS),
                 },
                 "matched_count": {"type": "integer"},
                 "returned_count": {"type": "integer"},

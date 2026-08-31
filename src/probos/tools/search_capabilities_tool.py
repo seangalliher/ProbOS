@@ -40,7 +40,17 @@ _AXES: tuple[tuple[str, str], ...] = (
     ("skills", "skill"),
     ("mesh_intents", "intent"),
 )
-_SPECIFIC_KINDS = {"tool", "skill", "intent"}
+# AD-1179: the ``kind`` vocabulary, declared ONCE and derived from the ordered
+# axis table above, so the schema enum and the narrowing gate cannot disagree.
+#
+# Derived from ``_AXES`` rather than from ``_SPECIFIC_KINDS`` deliberately:
+# ``_SPECIFIC_KINDS`` used to be a set literal, and Python string hashing is
+# randomised per process, so ``list(a_set)`` would emit a different enum order
+# on every boot and the wire bytes an LLM receives would vary run to run. The
+# ordered tuple is the schema's source; the frozenset below is membership only
+# -- exactly the ``_AGENT_ACTIONS`` / ``_AGENT_ACTION_SET`` pattern.
+_KINDS: tuple[str, ...] = tuple(label for _, label in _AXES) + ("all",)
+_SPECIFIC_KINDS: frozenset[str] = frozenset(_KINDS) - {"all"}
 
 
 def _tokens(text: str) -> set[str]:
@@ -94,7 +104,7 @@ class SearchCapabilitiesTool:
                 },
                 "kind": {
                     "type": "string",
-                    "enum": ["tool", "skill", "intent", "all"],
+                    "enum": list(_KINDS),
                     "description": "Which axis to search (default 'all').",
                 },
             },

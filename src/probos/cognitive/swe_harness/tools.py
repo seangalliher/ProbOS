@@ -345,17 +345,34 @@ class CodebaseReadSourceTool:
             return ToolResult(error=f"codebase_read_source failed: {exc}")
 
 
+# AD-1179: the standing-orders scope vocabulary, declared ONCE.
+#
+# It was written out four times -- the schema enum, the description prose, the
+# ``invoke()`` gate, and the refusal string -- which is the BF-701 shape one tool
+# over: a vocabulary restated beside its own executable gate, where the two can
+# silently disagree and the agent is the one who finds out.
+#
+# Ordered tuple, never a set: Python string hashing is randomised per process,
+# so a set-derived enum would reorder the wire bytes an LLM receives on every
+# boot.
+_STANDING_ORDERS_SCOPES: tuple[str, ...] = ("ship", "department", "agent")
+
+
 class StandingOrdersLookupTool:
     """AD-544: Read a standing-orders manual file."""
 
     tool_id: str = "standing_orders_lookup"
     name: str = "Standing Orders Lookup"
     tool_type: ToolType = ToolType.DETERMINISTIC_FUNCTION
-    description: str = "Read the standing-orders manual for ship/department/agent scope."
+    description: str = (
+        "Read the standing-orders manual for "
+        + "/".join(_STANDING_ORDERS_SCOPES)
+        + " scope."
+    )
     input_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "scope": {"type": "string", "enum": ["ship", "department", "agent"]},
+            "scope": {"type": "string", "enum": list(_STANDING_ORDERS_SCOPES)},
             "department": {"type": "string"},
         },
         "required": ["scope"],
@@ -372,8 +389,10 @@ class StandingOrdersLookupTool:
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
         scope = params.get("scope")
-        if scope not in ("ship", "department", "agent"):
-            return ToolResult(error="scope must be one of ship|department|agent")
+        if scope not in _STANDING_ORDERS_SCOPES:
+            return ToolResult(
+                error="scope must be one of " + "|".join(_STANDING_ORDERS_SCOPES)
+            )
         base = _PROJECT_ROOT / "config" / "standing_orders"
         try:
             if scope == "ship":

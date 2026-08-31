@@ -145,18 +145,23 @@ async def test_mouse_move_invalid_coord_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_mouse_button_happy_path_down() -> None:
+    # BF-867: was ``{"action": "down"}``. The handler's sub-verb is now
+    # ``press`` because ``action`` is the dispatch key -- ``tool.py`` forwards it
+    # in the same dict, so the handler always read "mouse_button" and refused
+    # every dispatched call. This test passed against that because it calls the
+    # handler directly with a dict the dispatcher can never produce.
     page = _FakePage()
     sess = _make_session(page=page)
-    result = await _action_mouse_button(sess, {"button": "right", "action": "down"})
+    result = await _action_mouse_button(sess, {"button": "right", "press": "down"})
     assert page.mouse.downs == ["right"]
-    assert result == {"session_id": "s-e-1", "button": "right", "action": "down"}
+    assert result == {"session_id": "s-e-1", "button": "right", "press": "down"}
 
 
 @pytest.mark.asyncio
-async def test_mouse_button_invalid_action_raises() -> None:
+async def test_mouse_button_invalid_press_raises() -> None:
     sess = _make_session()
-    with pytest.raises(ValueError, match="mouse_button 'action'"):
-        await _action_mouse_button(sess, {"button": "left", "action": "tap"})
+    with pytest.raises(ValueError, match="mouse_button 'press'"):
+        await _action_mouse_button(sess, {"button": "left", "press": "tap"})
 
 
 @pytest.mark.asyncio

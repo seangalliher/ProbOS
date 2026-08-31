@@ -29,13 +29,13 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
 | AD | **AD-1295** | **AD-1296** | AD-1295 | _(none)_ |
-| BF | **BF-864** | **BF-865** | BF-861 | 864 |
+| BF | **BF-867** | **BF-868** | BF-866 | 867 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-08-31T05:42:39+00:00 at `a9c18531` | 2430 subjects, 969 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-08-31T21:48:02+00:00 at `adfb46d3` | 2437 subjects, 976 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-08-29T05:45:15+00:00 | 1331 issues, 916 numbers |
@@ -46,19 +46,18 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 87 | 19 | assigned, issue open, no shipped code |
+| `allocated-open` | 85 | 19 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 7 | 1 | abandoned, number **not** reusable |
-| `shipped` | 920 | 510 | code in history |
+| `shipped` | 922 | 515 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-106 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+104 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
-| `AD-1270` | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | issue #1324 open, no code | AD-1270: platform maturity — exercised capabilities, robust seams, modular owners, fast gates, truthful docs |
 | `AD-1261` | [#1311](https://github.com/seangalliher/ProbOS/issues/1311) | issue #1311 open, no code | AD-1261: the authority domain — an agent cannot see its own ceiling, so it can only refuse, never escalate |
 | `AD-1260` | [#1310](https://github.com/seangalliher/ProbOS/issues/1310) | issue #1310 open, no code | AD-1260: the wellness domain, and the line between first person and third — the Counselor cannot read her own assessment |
 | `AD-1259` | [#1309](https://github.com/seangalliher/ProbOS/issues/1309) | issue #1309 open, no code | AD-1259: one source of truth for agent self-knowledge — two paths report the same trust score to different precision |
@@ -103,7 +102,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-1186` | [#1123](https://github.com/seangalliher/ProbOS/issues/1123), [#1138](https://github.com/seangalliher/ProbOS/issues/1138) | issue #1123, #1138 open, no code | AD-1186: Ship Trials -- a release catalog and policy over the existing evaluators |
 | `AD-1185` | [#1121](https://github.com/seangalliher/ProbOS/issues/1121), [#1138](https://github.com/seangalliher/ProbOS/issues/1138) | issue #1121, #1138 open, no code | AD-1185: a supported SystemConfig contract, parsed and booted in CI |
 | `AD-1183` | [#1118](https://github.com/seangalliher/ProbOS/issues/1118) | issue #1118 open, no code | AD-1183: Replace time-sensitive competitive claims in OSS with dated evidence or neutral contracts |
-| `AD-1179` | [#1111](https://github.com/seangalliher/ProbOS/issues/1111) | issue #1111 open, no code | AD-1179: derive tool schemas from the tool (kill the BF-701/BF-706 drift class) |
 | `AD-1174` | [#1105](https://github.com/seangalliher/ProbOS/issues/1105) | issue #1105 open, no code | AD-1174: live tool-call progress in the HXI |
 | `AD-1156` | [#1083](https://github.com/seangalliher/ProbOS/issues/1083) | issue #1083 open, no code | AD-1156: Plan/execute mode provider (MAF framing; supersedes the AD-1150 approach) |
 | `AD-1152` | [#1079](https://github.com/seangalliher/ProbOS/issues/1079) | issue #1079 open, no code | AD-1152: Agentic-loop span correlation (OpenTelemetry prerequisite) |
@@ -145,7 +143,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-277` | — | mentioned by an authority, no code and no closure |  |
 | `AD-276` | — | mentioned by an authority, no code and no closure |  |
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
-| `BF-864` | — | mentioned by an authority, no code and no closure |  |
+| `BF-867` | — | mentioned by an authority, no code and no closure |  |
 | `BF-846` | [#1316](https://github.com/seangalliher/ProbOS/issues/1316) | issue #1316 open, no code | BF-846: check_health's raise-contract blocks per-member recycle containment (BF-824 second half) |
 | `BF-844` | [#1314](https://github.com/seangalliher/ProbOS/issues/1314) | issue #1314 open, no code | BF-844: the visiting-builder temp tree has the same one-shot silent-cleanup shape as BF-840 |
 | `BF-843` | [#1313](https://github.com/seangalliher/ProbOS/issues/1313) | issue #1313 open, no code | BF-843: BackupService is wired but never invoked — zero SQLite snapshots have ever been taken |
@@ -190,9 +188,9 @@ _(none)_
 
 ## Shipped
 
-**AD** (920): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1178, 1180-1182, 1184, 1201, 1203-1204, 1209-1211, 1217-1223, 1226-1227, 1230-1235, 1239, 1247-1248, 1257, 1267, 1269, 1271, 1273-1285, 1291-1295
+**AD** (922): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1182, 1184, 1201, 1203-1204, 1209-1211, 1217-1223, 1226-1227, 1230-1235, 1239, 1247-1248, 1257, 1267, 1269-1271, 1273-1285, 1291-1295
 
-**BF** (510): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-793, 796-802, 805-808, 810, 812, 815-816, 819-837, 840-842, 845, 847-848, 850-861
+**BF** (515): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-793, 796-802, 805-808, 810, 812, 815-816, 819-837, 840-842, 845, 847-848, 850-866
 
 ## Unaccounted — silent, **not** free
 
@@ -200,7 +198,7 @@ Numbers below the ceiling that no authority mentions. The issue layer is a snaps
 
 **AD** (280): 2-18, 140-141, 154-227, 229-261, 275, 278-280, 285-292, 301, 303, 306-307, 310, 325-336, 356, 374, 420-422, 503-506, 531, 533, 535-537, 542, 544-549, 555, 559, 578, 624, 681, 684, 767-789, 814, 829-831, 844, 848-852, 957, 967-971, 973-974, 1020, 1039, 1056-1064, 1066-1067, 1090, 1096-1118, 1237-1238, 1249, 1251-1255, 1262-1266, 1268, 1272, 1286-1290
 
-**BF** (334): 1-3, 14-22, 26, 28, 38, 42, 45-48, 50-52, 54-56, 61-62, 70, 72-75, 77, 81, 87-98, 105, 107, 117, 119-122, 176, 180-182, 202, 205, 220-221, 327-330, 333-596, 681, 849, 862-863
+**BF** (332): 1-3, 14-22, 26, 28, 38, 42, 45-48, 50-52, 54-56, 61-62, 70, 72-75, 77, 81, 87-98, 105, 107, 117, 119-122, 176, 180-182, 202, 205, 220-221, 327-330, 333-596, 681, 849
 
 ## Inconsistencies — reported, deliberately not fixed
 
@@ -308,9 +306,12 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `AD-1146` — code is in history but [#1068](https://github.com/seangalliher/ProbOS/issues/1068) is still open.
 - `AD-1166` — collision: 2 issues each lead with this number: [#1097](https://github.com/seangalliher/ProbOS/issues/1097), [#1197](https://github.com/seangalliher/ProbOS/issues/1197).
 - `AD-1170` — collision: 2 issues each lead with this number: [#1101](https://github.com/seangalliher/ProbOS/issues/1101), [#1257](https://github.com/seangalliher/ProbOS/issues/1257).
+- `AD-1179` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
+- `AD-1179` — code is in history but [#1111](https://github.com/seangalliher/ProbOS/issues/1111) is still open.
 - `AD-1203` — code is in history but [#1153](https://github.com/seangalliher/ProbOS/issues/1153) is still open.
 - `AD-1204` — code is in history but [#1163](https://github.com/seangalliher/ProbOS/issues/1163) is still open.
 - `AD-1230` — collision: 2 issues each lead with this number: [#1203](https://github.com/seangalliher/ProbOS/issues/1203), [#1256](https://github.com/seangalliher/ProbOS/issues/1256).
+- `AD-1270` — code is in history but [#1324](https://github.com/seangalliher/ProbOS/issues/1324) is still open.
 - `AD-1276` — code is in history but [#1330](https://github.com/seangalliher/ProbOS/issues/1330) is still open.
 - `BF-063` — collision: 2 issues each lead with this number: [#3](https://github.com/seangalliher/ProbOS/issues/3), [#135](https://github.com/seangalliher/ProbOS/issues/135).
 - `BF-125` — collision: 2 issues each lead with this number: [#28](https://github.com/seangalliher/ProbOS/issues/28), [#29](https://github.com/seangalliher/ProbOS/issues/29).
@@ -348,8 +349,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1017 head-shaped line yielded no AD/BF token
-PROGRESS.md:1023 head-shaped line yielded no AD/BF token
+PROGRESS.md:1021 head-shaped line yielded no AD/BF token
+PROGRESS.md:1027 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token

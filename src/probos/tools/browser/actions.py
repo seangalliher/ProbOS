@@ -42,6 +42,20 @@ _EVAL_JS_MAX_SCRIPT_LEN: int = 4096
 # not a slow-typing preference.
 _KEY_TYPE_MAX_DELAY_MS: int = 250
 
+# AD-1179 / BF-867: the mouse and scroll vocabularies, declared ONCE.
+#
+# ``tool.py``'s schema enums and the handler gates below both read these, so the
+# agent cannot be offered a value the handler then refuses -- the BF-701 shape,
+# generalised from the top-level action verb to a handler's own parameters.
+#
+# Ordered tuples, never sets: Python string hashing is randomised per process,
+# so ``list(some_set)`` would emit a different enum order on every boot and the
+# wire bytes an LLM receives would vary run to run. Membership tests use the
+# tuple directly -- these are three and four elements long.
+_MOUSE_BUTTONS: tuple[str, ...] = ("left", "right", "middle")
+_MOUSE_PRESSES: tuple[str, ...] = ("down", "up", "click")
+_SCROLL_DIRECTIONS: tuple[str, ...] = ("up", "down", "left", "right")
+
 # BF-692: bounds on ``state``'s element discovery.
 #
 # ``_STATE_MAX_ELEMENTS`` and ``_STATE_ELEMENTS_ELISION`` mirror
@@ -635,7 +649,7 @@ async def _action_type(session: BrowserSession, params: dict[str, Any]) -> dict[
 
 async def _action_scroll(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:
     direction = (params.get("direction") or "down").lower()
-    if direction not in {"up", "down", "left", "right"}:
+    if direction not in _SCROLL_DIRECTIONS:
         raise ValueError(f"invalid scroll direction: {direction}")
     raw_amount = params.get("amount", 500)
     try:
@@ -947,17 +961,27 @@ async def _action_mouse_button(session: BrowserSession, params: dict[str, Any]) 
     if page is None:
         raise RuntimeError("browser session is not started")
     button = params.get("button", "left")
-    if button not in ("left", "right", "middle"):
-        raise ValueError("mouse_button 'button' must be one of: left, right, middle")
-    action = params.get("action", "click")
-    if action not in ("down", "up", "click"):
-        raise ValueError("mouse_button 'action' must be one of: down, up, click")
+    if button not in _MOUSE_BUTTONS:
+        raise ValueError(
+            "mouse_button 'button' must be one of: " + ", ".join(_MOUSE_BUTTONS)
+        )
+    # BF-867: read 'press', not 'action'. 'action' is the DISPATCH key --
+    # ``tool.py`` reads it out of ``params`` without removing it and forwards the
+    # same dict, so it is always "mouse_button" here. This branch therefore
+    # raised on every call and the "click" default was unreachable: the verb was
+    # offered and refused for its whole life. There is deliberately no ``action``
+    # fallback -- a lenient alias would re-create the collision.
+    press = params.get("press", "click")
+    if press not in _MOUSE_PRESSES:
+        raise ValueError(
+            "mouse_button 'press' must be one of: " + ", ".join(_MOUSE_PRESSES)
+        )
     mouse = getattr(page, "mouse", None)
     if mouse is None:
         raise RuntimeError("page has no mouse handle")
-    if action == "down":
+    if press == "down":
         await mouse.down(button=button)
-    elif action == "up":
+    elif press == "up":
         await mouse.up(button=button)
     else:
         # BF-693: this used to be ``mouse.click(0, 0, ...)`` behind a
@@ -968,7 +992,7 @@ async def _action_mouse_button(session: BrowserSession, params: dict[str, Any]) 
         # down+up is the correct coordinate-free idiom and needs no state.
         await mouse.down(button=button)
         await mouse.up(button=button)
-    return {"session_id": session.session_id, "button": button, "action": action}
+    return {"session_id": session.session_id, "button": button, "press": press}
 
 
 async def _action_upload_file(session: BrowserSession, params: dict[str, Any]) -> dict[str, Any]:

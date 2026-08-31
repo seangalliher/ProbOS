@@ -32,7 +32,14 @@ from urllib.parse import urlparse
 
 from probos.events import EventType
 from probos.security.url_guard import check_url_shape
-from probos.tools.browser.actions import action_verify, classify_action, dispatch_action
+from probos.tools.browser.actions import (
+    _MOUSE_BUTTONS,
+    _MOUSE_PRESSES,
+    _SCROLL_DIRECTIONS,
+    action_verify,
+    classify_action,
+    dispatch_action,
+)
 from probos.tools.browser.loop_host import shutdown_playwright_host
 from probos.tools.browser.session import BrowserSession
 from probos.tools.browser.url_route_guard import file_redirect_escalations
@@ -219,8 +226,9 @@ class BrowserTool:
                 "to_selector": {"type": "string", "description": "BF-706: 'drag' action — destination selector."},
                 "x": {"type": "integer", "description": "BF-706: 'mouse_move' action — viewport x coordinate."},
                 "y": {"type": "integer", "description": "BF-706: 'mouse_move' action — viewport y coordinate."},
-                "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "BF-706: 'mouse_button' action — which button. Defaults to left."},
-                "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+                "button": {"type": "string", "enum": list(_MOUSE_BUTTONS), "description": "BF-706: 'mouse_button' action — which button. Defaults to left."},
+                "press": {"type": "string", "enum": list(_MOUSE_PRESSES), "description": "BF-706/BF-867: 'mouse_button' action — whether to press ('down'), release ('up'), or press-and-release ('click'). Defaults to click."},
+                "direction": {"type": "string", "enum": list(_SCROLL_DIRECTIONS)},
                 "amount": {"type": "integer"},
                 "milliseconds": {"type": "integer"},
                 "seconds": {"type": "number"},

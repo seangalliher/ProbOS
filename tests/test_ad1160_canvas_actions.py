@@ -33,6 +33,7 @@ from probos.config import BrowserToolConfig
 from probos.tools.browser.actions import (
     _HANDLERS,
     _KEY_TYPE_MAX_DELAY_MS,
+    _MOUSE_BUTTONS,
     _action_key_type,
     _action_mouse_button,
     _action_mouse_move,
@@ -116,6 +117,14 @@ def _make_session(
 
 
 # -- BF-693: mouse_button(click) hits the current position ----------------
+#
+# BF-867: every call below used to pass ``{"action": "click"}``. That parameter
+# is now ``press``. The rename is not cosmetic: ``action`` is the DISPATCH key,
+# which ``tool.py`` reads out of ``params`` without removing before forwarding
+# the same dict, so the handler always saw ``"mouse_button"`` and refused every
+# call. These tests passed only because they call the handler directly with a
+# dict they build themselves -- a state the dispatcher cannot produce. The
+# crossing test lives in ``tests/test_bf867_mouse_button_dispatch.py``.
 
 
 @pytest.mark.asyncio
@@ -123,11 +132,11 @@ async def test_mouse_button_click_presses_and_releases_without_coordinates() -> 
     page = _CanvasPage()
     session = _make_session(page=page)
 
-    result = await _action_mouse_button(session, {"button": "left", "action": "click"})
+    result = await _action_mouse_button(session, {"button": "left", "press": "click"})
 
     assert page.mouse.downs == ["left"]
     assert page.mouse.ups == ["left"]
-    assert result == {"session_id": "s-1160", "button": "left", "action": "click"}
+    assert result == {"session_id": "s-1160", "button": "left", "press": "click"}
 
 
 @pytest.mark.asyncio
@@ -139,7 +148,7 @@ async def test_mouse_button_click_never_calls_click_at_the_origin() -> None:
     page = _CanvasPage()
     session = _make_session(page=page)
 
-    await _action_mouse_button(session, {"button": "left", "action": "click"})
+    await _action_mouse_button(session, {"button": "left", "press": "click"})
 
     assert page.mouse.clicks == []
 
@@ -152,7 +161,7 @@ async def test_mouse_move_then_click_acts_at_the_moved_position() -> None:
     session = _make_session(page=page)
 
     await _action_mouse_move(session, {"x": 640, "y": 400})
-    await _action_mouse_button(session, {"action": "click"})
+    await _action_mouse_button(session, {"press": "click"})
 
     assert page.mouse.moves == [(640, 400)]
     assert page.mouse.downs == ["left"] and page.mouse.ups == ["left"]
@@ -179,12 +188,12 @@ def test_no_handler_references_the_nonexistent_click_button_method() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("button", ["left", "right", "middle"])
+@pytest.mark.parametrize("button", list(_MOUSE_BUTTONS))
 async def test_mouse_button_click_honours_every_valid_button(button: str) -> None:
     page = _CanvasPage()
     session = _make_session(page=page)
 
-    await _action_mouse_button(session, {"button": button, "action": "click"})
+    await _action_mouse_button(session, {"button": button, "press": "click"})
 
     assert page.mouse.downs == [button]
     assert page.mouse.ups == [button]
@@ -195,8 +204,8 @@ async def test_mouse_button_down_and_up_are_unchanged_by_the_fix() -> None:
     page = _CanvasPage()
     session = _make_session(page=page)
 
-    await _action_mouse_button(session, {"button": "right", "action": "down"})
-    await _action_mouse_button(session, {"button": "right", "action": "up"})
+    await _action_mouse_button(session, {"button": "right", "press": "down"})
+    await _action_mouse_button(session, {"button": "right", "press": "up"})
 
     assert page.mouse.downs == ["right"]
     assert page.mouse.ups == ["right"]
@@ -210,7 +219,7 @@ async def test_mouse_button_without_a_mouse_handle_raises() -> None:
 
     session = _make_session(page=_Handleless())
     with pytest.raises(RuntimeError, match="no mouse handle"):
-        await _action_mouse_button(session, {"action": "click"})
+        await _action_mouse_button(session, {"press": "click"})
 
 
 # -- AD-1160: key_type happy paths ----------------------------------------

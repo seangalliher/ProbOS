@@ -734,8 +734,38 @@ class _FindMcpToolTool:
         context: dict[str, Any] | None = None,
     ) -> ToolResult:
         agent_id = str((context or {}).get("agent_id", ""))
-        concept = str((params or {}).get("query") or (params or {}).get("concept") or "")
-        matches = await self._workbench.find_mcp_tool(agent_id, concept)
+        # AD-1179: ``query`` only. This used to accept an undeclared ``concept``
+        # alias beside it -- a key the schema never named, so no caller could
+        # know it existed and no drift guard could see it. An undocumented
+        # accepted key is the same defect as an undeclared required one, one
+        # direction over. Enumerated before removal: nothing in ``src/`` sends
+        # ``concept`` to this tool (``codebase_query`` declares its own).
+        supplied = params or {}
+        query = str(supplied.get("query") or "")
+        # Refuse an unknown key by name rather than ignoring it and searching
+        # with whatever ``query`` happened to hold. Stated generally rather
+        # than naming the retired ``concept`` alias, because reading a key in
+        # order to reject it is still reading a key the schema never declared
+        # -- G3 flags that, correctly, and a rule that only knows one retired
+        # name would not catch the next one.
+        unknown = sorted(k for k in supplied if k != "query")
+        if unknown:
+            return ToolResult(
+                output=None,
+                error=(
+                    f"find_mcp_tool: unknown parameter(s) {', '.join(unknown)}; "
+                    "pass the search text as 'query'."
+                ),
+            )
+        if not query:
+            # Never search for "" and return an empty match list inside a
+            # success envelope -- that is indistinguishable from "the mesh has
+            # no such tool", so a caller reads a wrong answer as a true one.
+            return ToolResult(
+                output=None,
+                error="find_mcp_tool requires a non-empty 'query'.",
+            )
+        matches = await self._workbench.find_mcp_tool(agent_id, query)
         for match in matches:
             await self._workbench.pull_tool(agent_id, match["server"], match["tool"])
         return ToolResult(output={"matches": matches})
