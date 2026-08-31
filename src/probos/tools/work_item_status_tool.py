@@ -30,7 +30,7 @@ import logging
 import time
 from typing import Any
 
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,11 @@ class WorkItemStatusTool:
         self, params: dict[str, Any], context: dict[str, Any] | None = None,
     ) -> ToolResult:
         t0 = time.monotonic()
+        # AD-1179: an unknown key must not degrade into ``found: False`` -- the
+        # agent would read that as "the task does not exist" and act on it.
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         ctx = context or {}
         agent_id = str(ctx.get("agent_id") or "")
         wanted = str((params or {}).get("work_item_id") or "").strip()

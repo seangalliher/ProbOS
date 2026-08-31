@@ -28,7 +28,7 @@ import logging
 import time
 from typing import Any
 
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +112,13 @@ class DelegateTaskTool:
     ) -> ToolResult:
         t0 = time.monotonic()
         ctx = context or {}
+
+        # AD-1179: ahead of the depth guard. This constructs nothing, so it
+        # cannot weaken the recursion bound, and a malformed call named as
+        # "depth reached" would send the caller to fix the wrong thing.
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
 
         # 1. Depth guard FIRST — refuse before constructing any nested executor
         #    so A→B→A recursion / fan-out can't blow up. The nested run carries

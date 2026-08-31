@@ -31,7 +31,7 @@ from probos.cognitive.agentic_dispatch import _coerce_risk, _McpTool
 from probos.cognitive.episodic import fts_or_query, reciprocal_rank_fusion
 from probos.integrations.mcp_bridge.access import resolve_mcp_access
 from probos.integrations.mcp_bridge.risk import McpToolRisk, resolve_tool_risk
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 
 if TYPE_CHECKING:
     from probos.integrations.mcp_bridge.store import McpServerRecord
@@ -740,23 +740,20 @@ class _FindMcpToolTool:
         # accepted key is the same defect as an undeclared required one, one
         # direction over. Enumerated before removal: nothing in ``src/`` sends
         # ``concept`` to this tool (``codebase_query`` declares its own).
-        supplied = params or {}
-        query = str(supplied.get("query") or "")
+        #
         # Refuse an unknown key by name rather than ignoring it and searching
-        # with whatever ``query`` happened to hold. Stated generally rather
-        # than naming the retired ``concept`` alias, because reading a key in
-        # order to reject it is still reading a key the schema never declared
-        # -- G3 flags that, correctly, and a rule that only knows one retired
-        # name would not catch the next one.
-        unknown = sorted(k for k in supplied if k != "query")
-        if unknown:
-            return ToolResult(
-                output=None,
-                error=(
-                    f"find_mcp_tool: unknown parameter(s) {', '.join(unknown)}; "
-                    "pass the search text as 'query'."
-                ),
-            )
+        # with whatever ``query`` happened to hold. The accepted set is read
+        # from ``input_schema`` itself (slice 2) rather than restated here: a
+        # hand-written copy beside the schema is the drift shape this AD exists
+        # to remove. It is also stated generally rather than naming the retired
+        # ``concept`` alias, because reading a key in order to reject it is
+        # still reading a key the schema never declared -- G3 flags that,
+        # correctly, and a rule that only knows one retired name would not
+        # catch the next one.
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
+        query = str((params or {}).get("query") or "")
         if not query:
             # Never search for "" and return an empty match list inside a
             # success envelope -- that is indistinguishable from "the mesh has

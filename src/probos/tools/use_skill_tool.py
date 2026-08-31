@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,12 @@ class UseSkillTool:
         self, params: dict[str, Any], context: dict[str, Any] | None = None,
     ) -> ToolResult:
         t0 = time.monotonic()
+        # AD-1179: ahead of the catalog probe. A misnamed key would otherwise
+        # fall through to the discovery branch and be answered as "no such
+        # skill", which is the wrong correction to hand back.
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         catalog = getattr(self._runtime, "cognitive_skill_catalog", None)
         if catalog is None:
             return ToolResult(error="Skills are not available (no skill catalog).")

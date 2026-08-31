@@ -172,12 +172,24 @@ def params_keys_read(source: str, param: str = "params") -> set[str]:
                 isinstance(v, ast.Name) and v.id in aliases for v in value.values
             ):
                 aliases.add(target.id)
+            elif isinstance(value, ast.IfExp) and any(
+                isinstance(v, ast.Name) and v.id in aliases
+                for v in (value.body, value.orelse)
+            ):
+                # ``raw = params if type(params) is dict else {}`` is a real
+                # shape in this tree. Without this branch the scanner reports
+                # an EMPTY key set for such a tool, which reads exactly like
+                # "declares nothing undeclared" -- a guard that passes because
+                # it is blind is worse than no guard.
+                aliases.add(target.id)
 
     def rooted_in_params(node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
             return node.id in aliases
         if isinstance(node, ast.BoolOp):
             return any(rooted_in_params(v) for v in node.values)
+        if isinstance(node, ast.IfExp):
+            return rooted_in_params(node.body) or rooted_in_params(node.orelse)
         return False
 
     keys: set[str] = set()
@@ -362,10 +374,15 @@ async def _action_ok(session, params):
 # scanner cannot see, so including them would make the guard pass vacuously on
 # an empty read set. Named here rather than filtered silently: a guard whose
 # coverage set is implicit is a guard that quietly shrinks.
+#
+# ``oracle_query`` and ``publish_finding`` USED to sit here. They did not
+# belong: both read their keys inline off ``raw = params if ... else {}``, and
+# the scanner simply could not follow a ternary, so they reported an empty set
+# and looked like delegators. Teaching the scanner ``ast.IfExp`` (slice 2
+# review) revealed real reads -- ``kind``, ``query`` -- every one of them
+# declared. They are now covered by G3 proper.
 G3_DELEGATED_ADMISSION: frozenset[str] = frozenset({
-    "event_log_query",   # -> _parse_query, gated by _ALLOWED_KEYS
-    "oracle_query",      # -> _validate/_ALLOWED_KEYS
-    "publish_finding",   # -> _validate_input, gated by _ALLOWED_KEYS
+    "event_log_query",   # -> _parse_query, a MODULE function with no instance
 })
 # ``browser`` reads the dispatch key and the session id inline and hands the rest
 # to sixteen action handlers; those are covered by G2 above, not here.
@@ -438,6 +455,29 @@ async def invoke(self, params, context=None):
     return params.get("path"), agent
 '''
     assert params_keys_read(other) == {"path"}
+
+
+def test_g3_follows_a_ternary_alias() -> None:
+    """``raw = params if type(params) is dict else {}`` is a real shape in this
+    tree (oracle_query, publish_finding). Before this branch the scanner
+    returned an EMPTY set for such a tool, which is indistinguishable from
+    "reads nothing undeclared" -- so those two passed G3 because the scanner
+    was blind, not because they delegate. Found by review of slice 2."""
+    ternary = '''
+async def invoke(self, params, context=None):
+    raw = params if type(params) is dict else {}
+    return raw.get("kind"), raw.get("undeclared_thing")
+'''
+    assert params_keys_read(ternary) == {"kind", "undeclared_thing"}
+
+
+def test_g3_follows_a_ternary_used_inline_without_an_alias() -> None:
+    """The same shape read directly, never bound to a name."""
+    inline = '''
+async def invoke(self, params, context=None):
+    return (params if isinstance(params, dict) else {}).get("path")
+'''
+    assert params_keys_read(inline) == {"path"}
 
 
 # ---------------------------------------------------------------------------

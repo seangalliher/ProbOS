@@ -14,7 +14,12 @@ import logging
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from probos.tools.protocol import Tool, ToolResult, ToolType
+from probos.tools.protocol import (
+    Tool,
+    ToolResult,
+    ToolType,
+    refuse_undeclared_params,
+)
 
 if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
@@ -74,6 +79,9 @@ class ReadFileTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         path = params.get("path")
         if not path:
             return ToolResult(error="path is required")
@@ -132,6 +140,9 @@ class ListFilesTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         pattern = params.get("pattern")
         if not pattern:
             return ToolResult(error="pattern is required")
@@ -173,6 +184,9 @@ class CodebaseQueryTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         concept = params.get("concept")
         if not concept:
             return ToolResult(error="concept is required")
@@ -212,6 +226,9 @@ class CodebaseFindCallersTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         name = params.get("method_name")
         if not name:
             return ToolResult(error="method_name is required")
@@ -251,6 +268,9 @@ class CodebaseFindTestsTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         path = params.get("file_path")
         if not path:
             return ToolResult(error="file_path is required")
@@ -286,6 +306,9 @@ class CodebaseGetImportsTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         path = params.get("file_path")
         if not path:
             return ToolResult(error="file_path is required")
@@ -325,6 +348,9 @@ class CodebaseReadSourceTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         path = params.get("file_path")
         if not path:
             return ToolResult(error="file_path is required")
@@ -388,6 +414,9 @@ class StandingOrdersLookupTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         scope = params.get("scope")
         if scope not in _STANDING_ORDERS_SCOPES:
             return ToolResult(
@@ -426,6 +455,9 @@ class SystemSelfModelTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         try:
             ssm = getattr(self._runtime, "system_self_model", None)
             if ssm is not None and hasattr(ssm, "snapshot"):
@@ -479,6 +511,9 @@ class WriteFileTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         path = params.get("path")
         content = params.get("content")
         if not path:
@@ -525,6 +560,9 @@ class EditFileTool:
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         path = params.get("path")
         old = params.get("old_text")
         new = params.get("new_text")
@@ -595,6 +633,9 @@ class RunCommandTool:
         import shlex
         import sys
 
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         command = params.get("command", "")
         if not command or not str(command).strip():
             return ToolResult(error="command is required")

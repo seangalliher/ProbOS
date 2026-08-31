@@ -32,7 +32,7 @@ import logging
 import time
 from typing import Any
 
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +158,12 @@ class RecallArtifactTool:
         self, params: dict[str, Any], context: dict[str, Any] | None = None,
     ) -> ToolResult:
         t0 = time.monotonic()
+        # AD-1179: an unknown key must not degrade into ``found: False`` -- that
+        # reads as "the artifact is not there", which is a wrong answer wearing
+        # the shape of a true one. It is the caller's spelling that is wrong.
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         ctx = context or {}
         agent_id = str(ctx.get("agent_id") or "")
         thread_id = str(ctx.get("thread_id") or "")

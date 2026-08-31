@@ -136,6 +136,57 @@ class Tool(Protocol):
         ...
 
 
+# --------------------------------------------------------------------------
+# AD-1179 (slice 2): the parameter-vocabulary gate
+# --------------------------------------------------------------------------
+
+
+def declared_params(tool: Any) -> tuple[str, ...]:
+    """The parameter names ``tool.input_schema`` declares, in schema order.
+
+    Read from the schema the agent was actually shown rather than restated as a
+    second list beside it -- a hand-written copy is the BF-701 drift shape, and
+    AD-1179 exists to remove it, not to add another one.
+    """
+    schema = getattr(tool, "input_schema", None)
+    if not isinstance(schema, dict):
+        return ()
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return ()
+    return tuple(str(name) for name in properties)
+
+
+def refuse_undeclared_params(tool: Any, params: Any) -> ToolResult | None:
+    """Refuse a call carrying a key the tool never declared. ``None`` when clean.
+
+    Silently ignoring an unrecognised key hands the caller a confident wrong
+    answer: AD-1179 measured ``find_mcp_tool`` answering a misnamed ``concept``
+    call by searching for ``""`` and returning an EMPTY match list inside a
+    SUCCESS envelope -- indistinguishable from "the mesh has no such tool". An
+    error is correctable; a wrong answer that looks right is not.
+
+    Stated generally on purpose. Naming a specific retired key here would mean
+    reading a key the schema does not declare in order to reject it, which is
+    the same defect one move over, and a rule that knows one retired name would
+    not catch the next one.
+    """
+    declared = declared_params(tool)
+    supplied = params if isinstance(params, dict) else {}
+    unknown = sorted(str(key) for key in supplied if key not in declared)
+    if not unknown:
+        return None
+    tool_id = str(getattr(tool, "tool_id", "") or "tool")
+    accepted = ", ".join(declared) if declared else "(this tool takes no parameters)"
+    return ToolResult(
+        output=None,
+        error=(
+            f"{tool_id}: unknown parameter(s) {', '.join(unknown)}. "
+            f"Accepted: {accepted}."
+        ),
+    )
+
+
 @runtime_checkable
 class ToolDenialAuditor(Protocol):
     """Optional hook for content-free governance audits of denied calls."""

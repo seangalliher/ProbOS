@@ -25,7 +25,7 @@ import re
 import time
 from typing import Any
 
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,9 @@ class SearchCapabilitiesTool:
         self, params: dict[str, Any], context: dict[str, Any] | None = None,
     ) -> ToolResult:
         t0 = time.monotonic()
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         query = str((params or {}).get("query") or "").strip()
         if not query:
             return ToolResult(

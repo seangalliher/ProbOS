@@ -47,7 +47,7 @@ from probos.execution.isolation import (
     _remove_workdir,
     _still_present,
 )
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 
 logger = logging.getLogger(__name__)
 
@@ -635,6 +635,12 @@ class CodeExecutionTool:
         self, params: dict[str, Any], context: dict[str, Any] | None = None,
     ) -> ToolResult:
         t0 = time.monotonic()
+        # AD-1179: before anything else, including the enabled check -- reporting
+        # "code execution is disabled" for a misnamed parameter would hide the
+        # malformation behind a configuration answer the caller cannot act on.
+        refusal = refuse_undeclared_params(self, params)
+        if refusal is not None:
+            return refusal
         cfg = self._cfg()
         if cfg is None or not getattr(cfg, "enabled", False):
             return ToolResult(
