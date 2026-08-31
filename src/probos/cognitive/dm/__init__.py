@@ -8,6 +8,7 @@ The pre-LLM ``DmContextPrep`` (AD-726a) and prompt-side ``DmPromptAssembler``
 from probos.cognitive.dm.reply_pipeline import DmReplyContext, DmReplyPipeline
 from probos.cognitive.dm.write_ledger import (  # AD-1285 (#1087)
     WRITE_CHANNEL_ARTIFACT,
+    WRITE_CHANNEL_FINDING,
     WRITE_CHANNEL_NOTEBOOK,
     ClaimVerdict,
     WriteLedger,
@@ -19,6 +20,7 @@ __all__ = [
     "DmReplyContext",
     "DmReplyPipeline",
     "WRITE_CHANNEL_ARTIFACT",
+    "WRITE_CHANNEL_FINDING",
     "WRITE_CHANNEL_NOTEBOOK",
     "ClaimVerdict",
     "WriteLedger",

@@ -27,13 +27,14 @@ from typing import Any
 
 from probos.cognitive.dm.write_ledger import (  # AD-1285 (#1087)
     WRITE_CHANNEL_ARTIFACT,
+    WRITE_CHANNEL_FINDING,
     WRITE_CHANNEL_NOTEBOOK,
     ClaimVerdict,
     WriteLedger,
     assess_write_claim,
     disclosure_for,
 )
-from probos.dm_reply import DmReply  # AD-1248
+from probos.dm_reply import DmReply, ToolInvocations  # AD-1248 / AD-1295
 from probos.hooks.bus import HookEvent
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,16 @@ logger = logging.getLogger(__name__)
 #: AD-550/AD-911 dedup against an existing highly-similar entry, so the note is
 #: there and a save claim about it is true. Anything else counts as no write.
 _NOTEBOOK_PRESENT_ACTIONS = frozenset({"notebook_write", "notebook_suppressed"})
+
+#: AD-1295 (#1087): tools whose SUCCESS constitutes a durable write, and whose
+#: ATTEMPT admits the tool loop to the write ledger as a channel.
+#:
+#: ``publish_finding`` only, deliberately. Adding a name here changes what the
+#: guard asserts about every turn that calls it, so each addition needs its own
+#: evidence that the tool's success means a durable record exists -- and its own
+#: evidence that its FAILURE means one does not, which is the half that
+#: produces a Captain-visible sentence.
+_DURABLE_WRITE_TOOLS: frozenset[str] = frozenset({"publish_finding"})
 
 
 # AD-869: read-only mesh intents that Yeo may resolve inline in a single
@@ -148,6 +159,16 @@ class DmReplyContext:
     # Defaulted per the AD-791a convention above, so every existing
     # ``DmReplyContext(...)`` construction site is untouched.
     write_ledger: WriteLedger = field(default_factory=WriteLedger)
+    # AD-1295 (#1087): the agentic loop's own record of which tools it called
+    # and which of them succeeded, reconstructed from ``IntentResult.metadata``
+    # by the route that built this context.
+    #
+    # ``None`` means the tool loop did not run on this turn, and is deliberately
+    # NOT the same as an empty record (AD-1269): a turn that ran the loop and
+    # succeeded at nothing is evidence, a turn that never ran it is not. The
+    # default is ``None`` because every construction site that does not set it
+    # is, by definition, one where the loop's record is unknown.
+    tool_invocations: ToolInvocations | None = None
     # NOTE: ``sanity_result`` is intentionally NOT a ctx field — it is
     # produced and consumed entirely within step_1_sanity_gate_retry.
 
@@ -181,22 +202,24 @@ class DmReplyPipeline:
 
     def _full_steps(self) -> tuple[Callable, ...]:
         """AD-933: the full DM one-shot chain in load-bearing order, the single
-        source of truth executed by :meth:`run`. **21 steps** (BF-796: this said
+        source of truth executed by :meth:`run`. **22 steps** (BF-796: this said
         18 while the tuple returned 20 -- a reader trusts this line when judging
         whether an insertion is in scope, so it is now guarded by a test rather
         than maintained by hand) after AD-934 inserted
         ``step_4j_deliberate_parse`` between ``step_4g_create_task_parse`` and
         ``step_5_episodic_store`` (so the deep-tier re-rolled reply is what gets
-        stored / divergence-checked / emitted), and AD-1285 inserted
+        stored / divergence-checked / emitted), AD-1285 inserted
         ``step_4m_write_claim_guard`` between ``step_4j_deliberate_parse`` and
         ``step_5_episodic_store`` (after 4j so the guard reads the text the
         Captain will actually see, before 5 so the stored episode and the
-        divergence check carry the corrected text). Ordering is invariant
-        (sanity gate before challenge/move parsers, self-check before episodic
-        store, deliberate re-roll before episodic store, write-claim guard after
-        the re-roll, divergence before ``mark_reply_emitted``, emotion after
-        divergence) and MUST stay byte-identical apart from those two
-        insertions."""
+        divergence check carry the corrected text), and AD-1295 inserted
+        ``step_4n_tool_write_ledger`` immediately BEFORE that guard (it is a
+        ledger PRODUCER, so it must run before the only consumer). Ordering is
+        invariant (sanity gate before challenge/move parsers, self-check before
+        episodic store, deliberate re-roll before episodic store, write-claim
+        guard after the re-roll, tool-ledger before the guard, divergence before
+        ``mark_reply_emitted``, emotion after divergence) and MUST stay
+        byte-identical apart from those three insertions."""
         return (
             self.step_1_sanity_gate_retry,
             self.step_2_challenge_parse,
@@ -213,6 +236,7 @@ class DmReplyPipeline:
             self.step_4g_create_task_parse,  # AD-845
             self.step_4l_extract_todos,  # AD-1081 room-Todo validation loop
             self.step_4j_deliberate_parse,  # AD-934
+            self.step_4n_tool_write_ledger,  # AD-1295 (#1087)
             self.step_4m_write_claim_guard,  # AD-1285 (#1087)
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
@@ -1735,6 +1759,67 @@ class DmReplyPipeline:
                 self.ctx.agent_id, exc_info=True,
             )
             self.ctx.response_text = draft
+
+    # --- step 4n: AD-1295 (#1087 / BF-687) tool-loop write channel ---
+    async def step_4n_tool_write_ledger(self) -> None:
+        """AD-1295 (#1087 / BF-687): the AD-1065 tool loop declares itself.
+
+        The tool loop runs upstream of this pipeline and used to write without
+        telling it, so an empty ``wrote`` set meant "no MARKER channel wrote"
+        and never "this turn wrote nothing" (``write_ledger.py`` module
+        docstring). This is the missing declaration.
+
+        The admission condition is the whole step. The channel is recorded as
+        CONSULTED only when a durable-write tool was ATTEMPTED, which is
+        narrower than "the tool loop ran" in the direction that matters:
+        consulting on every tool-loop turn would make every read-only turn
+        report ``wrote_nothing={finding}`` and append a disclosure to a
+        **truthful** reply. AD-1285 deleted a text-reading branch to avoid
+        exactly that false-positive class, and reintroducing it here through a
+        loose admission would cost the same control.
+
+        Consulting only on SUCCESS would be the opposite defect: the ledger
+        could then never record a failed write, which is its entire purpose.
+
+        A separate step rather than a preamble to ``step_4m``, because the
+        guard early-returns on an empty reply and on ``write_claim_guard``
+        being disabled -- and AD-1293's episode marker reads the same ledger in
+        ``step_5``. Producing the record inside the consumer would silently
+        disable the episode marker along with the guard.
+
+        Forward marker: 1:1 only, matching AD-1285. The group fan-out has no
+        verified disclosure sink, and ``federation/bridge.py``'s directed-result
+        serializer forwards only ``DM_REPLY_METADATA_KEY``, so a federated turn
+        arrives with no invocation record and this channel is never consulted.
+        Both degrade to ABSTAIN, never to a false accusation.
+
+        Tier-2 honest-degrade: never raises.
+        """
+        try:
+            invocations = self.ctx.tool_invocations
+            if not isinstance(invocations, ToolInvocations):
+                return  # the tool loop did not run: no channel to declare
+            attempted = set(invocations.attempted) & _DURABLE_WRITE_TOOLS
+            if not attempted:
+                return  # ran, but never reached for a durable write
+            succeeded = set(invocations.succeeded) & _DURABLE_WRITE_TOOLS
+            self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
+                WRITE_CHANNEL_FINDING, wrote=bool(succeeded),
+            )
+            logger.info(
+                "AD-1295: tool write channel consulted for agent=%s thread=%s "
+                "attempted=%s succeeded=%s",
+                self.ctx.agent_id,
+                self.ctx.chat_thread_id,
+                sorted(attempted),
+                sorted(succeeded),
+            )
+        except Exception:
+            logger.warning(
+                "AD-1295: tool write-ledger step raised for agent=%s; the "
+                "channel goes undeclared and the guard abstains for it",
+                self.ctx.agent_id, exc_info=True,
+            )
 
     # --- step 4m: AD-1285 (#1087 / BF-687) write-claim guard ---
     async def step_4m_write_claim_guard(self) -> None:

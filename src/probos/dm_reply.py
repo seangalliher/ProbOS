@@ -44,6 +44,7 @@ __all__ = [
     "RenderedDmText",
     "ToolFailures",
     "ToolFailuresMergeClosed",
+    "ToolInvocations",
     "DmReply",
     "mint_scope",
     "scope_from_source",
@@ -55,6 +56,7 @@ __all__ = [
     "require_rendered",
     "UNKNOWN_TOOL_LABEL",
     "DM_REPLY_METADATA_KEY",
+    "TOOL_INVOCATIONS_METADATA_KEY",
 ]
 
 
@@ -135,10 +137,27 @@ UNKNOWN_TOOL_LABEL = "an unrecognised tool"
 #: stays in ``IntentResult.result`` -- never duplicated (DD-5).
 DM_REPLY_METADATA_KEY = "dm_reply"
 
+#: AD-1295 (#1087): where the turn's tool INVOCATION record rides on
+#: ``IntentResult.metadata``. A SEPARATE key from :data:`DM_REPLY_METADATA_KEY`
+#: because it answers a different question -- "which tools ran, and which of
+#: them succeeded" rather than "which calls failed" -- and because
+#: :meth:`ToolFailures.to_wire` drops its success tombstones, which is exactly
+#: what makes that value unable to answer this one.
+TOOL_INVOCATIONS_METADATA_KEY = "tool_invocations"
+
 _WIRE_VERSION = 1
 _MAX_ENTRIES = 64
 _MAX_NAMES = 32
 _MAX_UNRESOLVED = 10_000
+
+#: AD-1295: bound on EITHER :class:`ToolInvocations` name list. A turn cannot
+#: call more DISTINCT tools than it was offered, and de-duplication by name is
+#: applied first, so this is a backstop against a malformed or hostile payload
+#: rather than an expected path -- BF-797's lesson that an unbounded per-turn
+#: collection accumulates, applied before it can. Overflow truncates the SORTED
+#: list and logs; a dropped name can only turn a verdict into an abstention,
+#: never into a false accusation.
+_MAX_TOOL_INVOCATION_NAMES = 64
 
 
 def mint_scope() -> str:
@@ -512,6 +531,175 @@ class ToolFailures:
                 return cls()
             out.append((key, name))
         return cls(entries=tuple(sorted(out)), merge_open=False)
+
+
+# ── The tool INVOCATION record (AD-1295) ────────────────────────────────────
+
+
+def _bounded_tool_names(names: Iterable[str], which: str) -> tuple[str, ...]:
+    """AD-1295: de-duplicate by NAME, sort, drop off-grammar entries, bound.
+
+    De-duplicating first is what makes the bound cheap: a turn that calls one
+    tool two hundred times contributes one name.
+    """
+    clean = sorted({
+        n for n in names if isinstance(n, str) and _NAME_RE.fullmatch(n)
+    })
+    if len(clean) <= _MAX_TOOL_INVOCATION_NAMES:
+        return tuple(clean)
+    logger.warning(
+        "AD-1295: %d distinct %s tool names exceed the %d bound; keeping the "
+        "first %d in sorted order. A dropped name can only make the write-claim "
+        "guard abstain, never accuse",
+        len(clean), which, _MAX_TOOL_INVOCATION_NAMES, _MAX_TOOL_INVOCATION_NAMES,
+    )
+    return tuple(clean[:_MAX_TOOL_INVOCATION_NAMES])
+
+
+@dataclass(frozen=True)
+class ToolInvocations:
+    """AD-1295 (#1087): which tools a turn CALLED, and which of those succeeded.
+
+    The record :class:`ToolFailures` structurally cannot be. A success there is
+    a ``""`` tombstone under a key that HASHES the tool name in
+    (:func:`call_signature`), and :meth:`ToolFailures.to_wire` drops the
+    tombstones -- so "did ``publish_finding`` succeed on this turn?" has no
+    answer on the far side of the metadata hop. This is that answer.
+
+    NAMES ONLY. No arguments, no results, no payloads: this rides on an
+    ``IntentResult`` and the AD-731 rule (refs on the bus, bytes in the store)
+    applies to it as much as to anything else.
+
+    ``attempted`` is a superset of ``succeeded`` by construction, and both are
+    load-bearing. A turn that CALLED a durable-write tool and failed is the case
+    the write-claim guard exists to disclose; a turn that never called one must
+    not be disclosed at all, or every read-only turn appends a false sentence to
+    a truthful reply.
+
+    The ABSENCE of this value means the tool loop did not run, and is
+    deliberately different from an empty one (AD-1269) -- a verdict of *nothing
+    happened* must never be reachable from a field nobody set. So
+    :meth:`to_wire` emits a payload even when both lists are empty, unlike
+    :meth:`ToolFailures.to_wire`, which returns ``None`` for an empty value
+    because an empty failure set has nothing to disclose.
+
+    This does NOT duplicate the failure record. ``ToolFailures`` owns failure
+    DISCLOSURE -- the Captain-visible name, the per-call signature, the
+    supersession algebra, the wire bound. This owns INVOCATION, which that value
+    discards.
+    """
+
+    attempted: tuple[str, ...] = ()
+    succeeded: tuple[str, ...] = ()
+
+    @classmethod
+    def from_names(
+        cls, attempted: Iterable[str], succeeded: Iterable[str],
+    ) -> "ToolInvocations":
+        """Normalise raw name iterables: de-duplicated, sorted, bounded."""
+        return cls(
+            attempted=_bounded_tool_names(attempted, "attempted"),
+            succeeded=_bounded_tool_names(succeeded, "succeeded"),
+        )
+
+    def merged_with(self, other: "ToolInvocations") -> "ToolInvocations":
+        """Union, for a turn that ran more than one agentic pass.
+
+        Union rather than last-write-wins: an AD-1164 continuation adds calls,
+        and a tool that succeeded on pass 1 still succeeded on this turn.
+        """
+        return ToolInvocations.from_names(
+            tuple(self.attempted) + tuple(other.attempted),
+            tuple(self.succeeded) + tuple(other.succeeded),
+        )
+
+    def to_wire(self) -> dict[str, Any]:
+        """Bounded, JSON-safe payload. Never ``None`` -- see the class docstring."""
+        return {
+            "v": _WIRE_VERSION,
+            "attempted": list(self.attempted),
+            "succeeded": list(self.succeeded),
+        }
+
+    @classmethod
+    def from_wire(cls, payload: Any) -> "ToolInvocations | None":
+        """Reconstruct, or ``None`` when the payload cannot be trusted.
+
+        ``None`` rather than an empty value, deliberately: an empty value
+        ASSERTS that the loop ran and called nothing, which a malformed payload
+        does not establish. Both make the write-claim guard abstain today, but
+        only one of them is true, and the next consumer may not be so forgiving.
+        """
+        try:
+            if not isinstance(payload, dict):
+                return None
+            # ``type(...) is int`` rather than ``isinstance``: ``bool`` is a
+            # subclass of ``int``, so ``{"v": True}`` would otherwise validate.
+            if type(payload.get("v")) is not int or payload["v"] != _WIRE_VERSION:
+                logger.warning(
+                    "AD-1295: tool-invocation metadata version %r is not %d; "
+                    "the write-claim guard abstains for this turn",
+                    payload.get("v"), _WIRE_VERSION,
+                )
+                return None
+            if set(payload) != {"v", "attempted", "succeeded"}:
+                logger.warning(
+                    "AD-1295: tool-invocation metadata field set %r is not the "
+                    "wire shape; treating as malformed rather than reconciling",
+                    sorted(payload),
+                )
+                return None
+            raw_attempted = payload["attempted"]
+            raw_succeeded = payload["succeeded"]
+            if not isinstance(raw_attempted, list) or not isinstance(
+                raw_succeeded, list
+            ):
+                return None
+            for raw in (raw_attempted, raw_succeeded):
+                if len(raw) > _MAX_TOOL_INVOCATION_NAMES:
+                    logger.warning(
+                        "AD-1295: tool-invocation metadata carries %d names, "
+                        "over the %d bound; treating as malformed",
+                        len(raw), _MAX_TOOL_INVOCATION_NAMES,
+                    )
+                    return None
+                if any(
+                    not isinstance(n, str) or not _NAME_RE.fullmatch(n)
+                    for n in raw
+                ):
+                    logger.warning(
+                        "AD-1295: a tool-invocation name failed the provider "
+                        "grammar; treating the record as malformed"
+                    )
+                    return None
+            value = cls.from_names(raw_attempted, raw_succeeded)
+            if not set(value.succeeded) <= set(value.attempted):
+                logger.warning(
+                    "AD-1295: tool-invocation metadata claims a success for a "
+                    "tool it does not claim was attempted (%s); treating as "
+                    "malformed",
+                    sorted(set(value.succeeded) - set(value.attempted)),
+                )
+                return None
+            return value
+        except Exception:
+            logger.warning(
+                "AD-1295: tool-invocation metadata reconstruction raised; the "
+                "write-claim guard abstains for this turn", exc_info=True,
+            )
+            return None
+
+    @classmethod
+    def from_intent_result(cls, result: Any) -> "ToolInvocations | None":
+        """Reconstruct from an ``IntentResult``. The single reconstruction path.
+
+        ``None`` when the tool loop did not run on that turn, when no result
+        came back at all, or when the payload is malformed.
+        """
+        metadata = getattr(result, "metadata", None)
+        if not isinstance(metadata, dict):
+            return None
+        return cls.from_wire(metadata.get(TOOL_INVOCATIONS_METADATA_KEY))
 
 
 # ── The reply ───────────────────────────────────────────────────────────────

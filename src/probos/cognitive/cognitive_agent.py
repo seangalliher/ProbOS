@@ -24,6 +24,7 @@ from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
+from probos.dm_reply import ToolInvocations  # AD-1295 (#1087)
 from probos.substrate.agent import BaseAgent
 from probos.types import (
     AnchorFrame,
@@ -51,7 +52,12 @@ logger = logging.getLogger(__name__)
 
 
 #: AD-1248: facts about THIS run, which a replayed answer cannot honestly claim.
-_PER_RUN_PROVENANCE_KEYS = ("_dm_tool_failures", "_tool_trace_ref")
+#: AD-1295 adds the tool-invocation record for the same reason: replaying a
+#: previous turn's answer alongside this turn's "which tools ran" would let the
+#: write-claim guard judge one run against another run's record.
+_PER_RUN_PROVENANCE_KEYS = (
+    "_dm_tool_failures", "_dm_tool_invocations", "_tool_trace_ref",
+)
 
 
 def _cacheable_decision(decision: dict) -> dict:
@@ -85,6 +91,13 @@ def _attach_run_provenance(decision: dict, observation: dict) -> None:
     failures = observation.get("_dm_tool_failures")
     if failures is not None and not failures.is_empty:
         decision["_dm_tool_failures"] = failures
+    # AD-1295 (#1087): forwarded on ``is not None`` alone, with NO emptiness
+    # test. An empty record says "the loop ran and no tool succeeded", which is
+    # a fact the guard needs; dropping it here would collapse it into "the loop
+    # never ran" and make the AD-1269 distinction unreachable from the far side.
+    invocations = observation.get("_dm_tool_invocations")
+    if invocations is not None:
+        decision["_dm_tool_invocations"] = invocations
 
 
 def _accumulate_pass_failures(observation: dict, outcome: Any) -> None:
@@ -101,6 +114,28 @@ def _accumulate_pass_failures(observation: dict, outcome: Any) -> None:
     prior = observation.get("_dm_tool_failures")
     observation["_dm_tool_failures"] = (
         prior.superseded_by(failures) if prior is not None else failures
+    )
+
+
+def _accumulate_pass_invocations(observation: dict, outcome: Any) -> None:
+    """AD-1295 (#1087): fold one agentic pass's tool NAMES into the turn's set.
+
+    Union, not supersession. An AD-1164 continuation ADDS calls to the turn, and
+    a tool that succeeded on the first pass still succeeded on this turn -- the
+    last-write-wins algebra ``ToolFailures`` needs exists to let a retry clear a
+    failure, and there is no analogous "un-succeed".
+
+    A pass whose outcome carries no record leaves the observation untouched, so
+    one unreadable pass cannot erase a sibling's evidence.
+    """
+    invocations = getattr(outcome, "tool_invocations", None)
+    if not isinstance(invocations, ToolInvocations):
+        return
+    prior = observation.get("_dm_tool_invocations")
+    observation["_dm_tool_invocations"] = (
+        prior.merged_with(invocations)
+        if isinstance(prior, ToolInvocations)
+        else invocations
     )
 
 
@@ -228,6 +263,21 @@ def _build_result_metadata(
             from probos.dm_reply import DM_REPLY_METADATA_KEY
 
             metadata[DM_REPLY_METADATA_KEY] = payload
+        break
+    # AD-1295 (#1087): the tool-invocation record, emitted ONLY when the agentic
+    # loop ran. An absent key and a present-but-empty one are different facts
+    # (AD-1269): the first says nothing was evaluated, the second says the loop
+    # ran and no tool succeeded, and only the second may reach a verdict. So
+    # ``to_wire`` is emitted unconditionally once a record exists -- it never
+    # returns ``None`` -- rather than being skipped for an empty value the way
+    # the failure payload above is.
+    for source in sources:
+        invocations = source.get("_dm_tool_invocations")
+        if invocations is None:
+            continue
+        from probos.dm_reply import TOOL_INVOCATIONS_METADATA_KEY
+
+        metadata[TOOL_INVOCATIONS_METADATA_KEY] = invocations.to_wire()
         break
     return metadata
 
@@ -4393,6 +4443,12 @@ class CognitiveAgent(BaseAgent):
                 if _ref:
                     observation["_tool_trace_ref"] = _ref
                 _accumulate_pass_failures(observation, outcome)
+                # AD-1295 (#1087): the same fold point, for the record that says
+                # which tools ran. Here rather than after the turn because a
+                # promoted run (AD-1165) keeps adding passes after the
+                # acknowledgement returns, and the observation is the object
+                # those passes fold into.
+                _accumulate_pass_invocations(observation, outcome)
                 # AD-1257: the fold point for this pass's failure evidence is
                 # also where a repeated failure gets reported. No stop-reason
                 # condition — that is the entire point.
@@ -5382,6 +5438,13 @@ class CognitiveAgent(BaseAgent):
         _failures = decision.get("_dm_tool_failures")
         if _failures is not None and not _failures.is_empty:
             _out["_dm_tool_failures"] = _failures
+        # AD-1295 (#1087): and the invocation record, forwarded on presence
+        # alone. An empty record is the assertion "the loop ran and no tool
+        # succeeded", which is precisely what the write-claim guard needs to
+        # tell a failed save from a turn that never attempted one.
+        _invocations = decision.get("_dm_tool_invocations")
+        if _invocations is not None:
+            _out["_dm_tool_invocations"] = _invocations
         return _out
 
     async def report(self, result: dict) -> dict:

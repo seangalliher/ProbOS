@@ -324,6 +324,9 @@ def test_full_steps_order_regression() -> None:
         "step_4g_create_task_parse",
         "step_4l_extract_todos",
         "step_4j_deliberate_parse",
+        # AD-1295 (#1087): the tool-loop write channel is a ledger PRODUCER, so
+        # it must run before the guard that is its only consumer.
+        "step_4n_tool_write_ledger",
         # AD-1285 (#1087): the write-claim guard reads the text the Captain
         # will actually see, so it must land AFTER the 4j deep-tier re-roll
         # and BEFORE the episodic store carries the corrected text.

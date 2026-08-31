@@ -3421,7 +3421,7 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # see the same instance via ``self.ctx.sanity_gate``.
     sanity_gate = getattr(runtime, "dm_sanity_gate", None)
     from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
-    from probos.dm_reply import DmReply, require_rendered  # AD-1248
+    from probos.dm_reply import DmReply, ToolInvocations, require_rendered  # AD-1248
     pipeline = DmReplyPipeline(DmReplyContext(
         runtime=runtime,
         agent=agent,
@@ -3440,6 +3440,13 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
         sampling_state=_sampling_state,
         avatar_event_bus=_avatar_event_bus,
         chat_thread_id=thread.id if thread is not None else "",  # AD-791a
+        # AD-1295 (#1087): the tool loop's own record of which tools ran and
+        # which succeeded. The pipeline has no other access to it -- the loop
+        # sits upstream of the agent boundary and its record reaches here only
+        # on ``IntentResult.metadata``. ``None`` on a held turn, a non-agentic
+        # turn, or a turn that returned no result, all of which are "the loop
+        # did not run" and must not be confused with "it ran and wrote nothing".
+        tool_invocations=ToolInvocations.from_intent_result(result),
     ))
     await pipeline.run()
     response = pipeline.build_response()

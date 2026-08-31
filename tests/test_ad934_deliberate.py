@@ -234,7 +234,9 @@ def test_full_steps_orders_4j_between_4g_and_5() -> None:
         _make_ctx(runtime=SimpleNamespace(), response_text="x", sanity_gate=None)
     )
     names = [s.__name__ for s in pipeline._full_steps()]
-    assert len(names) == 21  # AD-1081 4l, then AD-1285 4m write-claim guard
+    # AD-1081 4l, then AD-1295 4n (the tool-loop write channel), then AD-1285
+    # 4m write-claim guard. 4n is the PRODUCER, so it precedes its consumer.
+    assert len(names) == 22
     assert (
         names.index("step_4g_create_task_parse")
         < names.index("step_4j_deliberate_parse")

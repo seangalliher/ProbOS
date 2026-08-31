@@ -17,6 +17,12 @@ is empty means "no marker channel wrote", never "this turn wrote nothing". No
 verdict here may assume otherwise. Closing that half needs a name-addressable
 tool-success set carried out of ``WorkItemAgenticOutcome``; see #1087.
 
+AD-1295 (#1087) closed that half. The tool loop now declares itself through
+``WRITE_CHANNEL_FINDING``, so an empty ``wrote`` set on a turn where the tool
+channel WAS consulted does mean "this turn wrote nothing" -- for that channel.
+The paragraph above still governs every channel that has not declared itself:
+the verdict is per channel, and silence from one is not evidence about another.
+
 Layer: COGNITIVE, and runtime-free by construction -- no runtime import, no LLM
 client, no store. A pure value plus a pure function, so the verdict is testable
 without a ship.
@@ -30,6 +36,7 @@ from dataclasses import dataclass
 __all__ = [
     "WRITE_CHANNEL_NOTEBOOK",
     "WRITE_CHANNEL_ARTIFACT",
+    "WRITE_CHANNEL_FINDING",
     "WriteLedger",
     "ClaimVerdict",
     "assess_write_claim",
@@ -41,6 +48,11 @@ __all__ = [
 #: changing the value's shape.
 WRITE_CHANNEL_NOTEBOOK = "notebook"
 WRITE_CHANNEL_ARTIFACT = "artifact"
+#: AD-1295 (#1087): the AD-1065 tool-loop durable-write channel -- the "later
+#: slice" the line above anticipated. It cost exactly this constant: no change
+#: to :class:`WriteLedger`, to :func:`assess_write_claim`, or to the
+#: disclosures, which was the whole point of keying by name.
+WRITE_CHANNEL_FINDING = "finding"
 
 
 @dataclass(frozen=True)

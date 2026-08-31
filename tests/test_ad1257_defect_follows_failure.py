@@ -1885,10 +1885,23 @@ def test_a_truthy_non_bool_marker_does_not_arm_the_carried_path(marker) -> None:
 
 
 def test_the_outcome_marks_where_the_pairs_were_read() -> None:
-    """Structural: the marker exists, defaults off, and is appended last."""
+    """Structural: the marker exists, defaults off, and was added additively.
+
+    This line previously read ``names[-1] == "tool_defect_evaluated"``. AD-1295
+    appended ``tool_invocations`` after it, so "last field" is no longer what
+    AD-1269 is protecting -- the same correction ``test_bf680_token_usage_
+    fallback.py`` already made for ``token_source``. What it protects is that
+    the marker was added WITHOUT DISTURBING the fields that preceded it, so
+    assert that directly rather than pinning a position the next additive field
+    breaks.
+    """
     names = [f.name for f in dataclasses.fields(WorkItemAgenticOutcome)]
 
-    assert names[-1] == "tool_defect_evaluated"
+    assert names[:names.index("tool_defect_evaluated")] == [
+        "final_text", "stopped_reason", "denied_tools", "tool_trace_ref",
+        "total_tokens", "artifact_refs", "token_source", "tool_failures",
+        "tool_defect",
+    ]
     assert WorkItemAgenticOutcome().tool_defect_evaluated is False
     assert "tool_defect_evaluated" not in CREW_EXECUTION_KEYS
 

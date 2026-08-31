@@ -28,7 +28,12 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.dm.reply_value import correlate_tool_outcomes  # AD-1248
-from probos.dm_reply import ToolFailures, mint_scope, scope_from_source  # AD-1248
+from probos.dm_reply import (  # AD-1248 / AD-1295
+    ToolFailures,
+    ToolInvocations,
+    mint_scope,
+    scope_from_source,
+)
 from probos.fault_report import ToolDefect, detect_tool_defect  # AD-1257
 from probos.integrations.mcp_bridge.risk import (
     McpToolRisk,
@@ -1506,6 +1511,106 @@ def _tool_id_resolver(registry: Any) -> Callable[[str], str] | None:
     return _resolve
 
 
+def _duplicate_tool_ids(items: Any) -> set[str]:
+    """AD-1295: ids appearing more than once in ``items``, by ``.id``.
+
+    A repeated id makes every call carrying it uncorrelatable: the index in
+    :func:`_project_tool_invocations` is last-write-wins, so one call would be
+    paired with a sibling's outcome.
+    """
+    seen: set[str] = set()
+    dupes: set[str] = set()
+    for item in items:
+        ident = getattr(item, "id", None)
+        if isinstance(ident, str) and ident:
+            (dupes if ident in seen else seen).add(ident)
+    return dupes
+
+
+def _is_correlatable(call_id: Any, ambiguous: set[str]) -> bool:
+    """AD-1295: whether this call's outcome can be looked up at all.
+
+    ``llm_client.py`` takes the provider's id unnormalised
+    (``tc.get("id", uuid4().hex)`` yields ``None`` for ``"id": null``, and
+    ``""`` for ``"id": ""``), so none of these shapes is hypothetical.
+    """
+    return isinstance(call_id, str) and bool(call_id) and call_id not in ambiguous
+
+
+def _project_tool_invocations(result: Any) -> ToolInvocations | None:
+    """AD-1295 (#1087): the turn's tool NAMES, out of the loop's own record.
+
+    ``AgenticResult.tool_calls`` / ``tool_results`` die at
+    :class:`WorkItemAgenticOutcome` -- the BF-793 trap, stated at
+    ``cognitive_agent.py:120`` -- so a downstream consumer cannot ask "did
+    ``publish_finding`` succeed on this turn?". This is the projection that
+    survives, and it is names only: no arguments, no outputs, no payloads.
+
+    ATTEMPTED is every name in ``tool_calls`` **whose outcome is verifiable**.
+    A call the model issued was attempted whether or not a result came back for
+    it, and a permission denial is an attempt that did not write -- excluding
+    those is how a claimed save behind a denied tool would keep sailing past
+    the guard, which is #1087. But a call whose id cannot be correlated at all
+    is different in kind: its success is UNKNOWABLE here, not known-absent.
+
+    THE FAIL-SAFE RULE: a call failing :func:`_is_correlatable` is dropped from
+    BOTH lists rather than recorded as an attempt that did not succeed, because
+    ``attempted`` without ``succeeded`` is what makes ``step_4m`` publicly
+    contradict the reply. A missed detection costs one undetected turn; a false
+    accusation against a landed write costs the control itself, by teaching the
+    Captain to ignore the disclosure.
+
+    SUCCEEDED is correlated by ``ToolCallResult.id`` rather than by request
+    position. ``_execute_tool_uses`` documents that it returns results in
+    request order, but a positional pairing would silently turn any future
+    drift there into a FALSE disclosure against a truthful reply, and this is
+    exactly the failure class the guard must not have.
+
+    Returns ``None`` when the record cannot be read, which abstains rather than
+    asserting the loop called nothing (AD-1269).
+    """
+    try:
+        calls = getattr(result, "tool_calls", None) or []
+        results = getattr(result, "tool_results", None) or []
+        ambiguous = _duplicate_tool_ids(calls) | _duplicate_tool_ids(results)
+        by_id: dict[str, Any] = {}
+        for res in results:
+            res_id = getattr(res, "id", None)
+            if isinstance(res_id, str) and res_id:
+                by_id[res_id] = res
+        attempted: list[str] = []
+        succeeded: list[str] = []
+        dropped: list[str] = []
+        for call in calls:
+            name = getattr(call, "name", None)
+            if not isinstance(name, str) or not name:
+                continue
+            call_id = getattr(call, "id", None)
+            if not _is_correlatable(call_id, ambiguous):
+                dropped.append(name)
+                continue
+            attempted.append(name)
+            res = by_id.get(call_id)
+            if res is not None and getattr(res, "is_error", False) is not True:
+                succeeded.append(name)
+        if dropped:
+            logger.warning(
+                "AD-1295: %d tool call(s) carry an uncorrelatable id (%s); "
+                "their outcome is unverifiable, so they are omitted from the "
+                "invocation record and the write-claim guard abstains for "
+                "them rather than risk contradicting a successful write",
+                len(dropped), sorted(set(dropped)),
+            )
+        return ToolInvocations.from_names(attempted, succeeded)
+    except Exception:
+        logger.warning(
+            "AD-1295: tool-invocation projection raised; this turn carries no "
+            "invocation record and the write-claim guard abstains for it",
+            exc_info=True,
+        )
+        return None
+
+
 @dataclass
 class WorkItemAgenticOutcome:
     """AD-859a: structured result of a single dispatched agentic work-item run.
@@ -1558,6 +1663,20 @@ class WorkItemAgenticOutcome:
     # actually read. Appended last and defaulted, so every existing
     # construction site is untouched.
     tool_defect_evaluated: bool = False
+    # AD-1295 (#1087): which tools this run CALLED and which of them succeeded,
+    # by name. Correlated HERE for the same reason ``tool_failures`` and
+    # ``tool_defect`` are -- this is the only scope holding the raw call/result
+    # pairs, and they do not survive onto this projection (BF-793).
+    #
+    # ``None`` means the pairs were never read, which is a different fact from
+    # "the loop ran and called nothing" (AD-1269) and is why this is Optional
+    # rather than a bare ``ToolInvocations()``. It needs no companion
+    # ``_evaluated`` flag the way ``tool_defect`` does: there, ``None`` already
+    # means "no defect found", so the Optional was ambiguous. Here it is not.
+    #
+    # Appended last and defaulted, so every existing construction site is
+    # untouched.
+    tool_invocations: ToolInvocations | None = None
 
 
 class WorkItemAgenticExecutor:
@@ -2402,6 +2521,11 @@ class WorkItemAgenticExecutor:
             # AD-1269: says "the pairs were read here", which is the only thing
             # that distinguishes a verdict of None from a field nobody set.
             tool_defect_evaluated=True,
+            # AD-1295 (#1087): the same scope, the same pairs, the third fact
+            # they carry -- which tools ran and which of them succeeded. Without
+            # this the DM write-claim guard cannot tell a turn that never tried
+            # to save from a turn whose save failed, and abstains on both.
+            tool_invocations=_project_tool_invocations(agentic_result),
         )
 
     async def _persist_tool_trace(
