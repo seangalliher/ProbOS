@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'resolve-python.ps1')
 
 $script:FailCount = 0
 $script:WarnCount = 0
@@ -210,36 +211,35 @@ function Check-MockParity {
     }
 }
 
-function Check-TestRuntimeBudget {
+function Check-PythonGatePreflight {
     param([string]$Root)
 
-    Write-Section -Title 'Check 3: test-runtime budget'
+    Write-Section -Title 'Check 3: Python gate preflight'
 
-    if ($env:WAVE_CLOSE_FAST -eq '1') {
-        Add-Info 'Skipped runtime budget check because WAVE_CLOSE_FAST=1.'
+    $gateScript = Join-Path $Root 'scripts/run_test_gate.py'
+    if (-not (Test-Path $gateScript)) {
+        Add-Fail "canonical gate wrapper not found: $gateScript"
+        return
+    }
+
+    try {
+        $python = Resolve-ProbOSPython -RepoRoot $Root
+    } catch {
+        Add-Fail "Python resolution failed: $($_.Exception.Message)"
         return
     }
 
     Push-Location $Root
     try {
-        $start = Get-Date
-        & pytest tests/ -q -n 0 --tb=no
+        & $python $gateScript --preflight-only --label wave-close
         $exitCode = $LASTEXITCODE
-        $elapsed = (Get-Date) - $start
 
         if ($exitCode -ne 0) {
-            Add-Fail "pytest runtime-budget command failed with exit code $exitCode"
+            Add-Fail "Python gate preflight failed with exit code $exitCode"
             return
         }
 
-        $minutes = [Math]::Round($elapsed.TotalMinutes, 2)
-        Add-Info "pytest runtime budget measurement: $minutes minute(s)"
-        if ($elapsed.TotalMinutes -gt 22.0) {
-            Add-Warn "Full pytest serial wall-clock exceeds 22 minutes ($minutes)."
-            return
-        }
-
-        Write-Host 'PASS: runtime budget check' -ForegroundColor Green
+        Write-Host 'PASS: Python gate preflight' -ForegroundColor Green
     }
     finally {
         Pop-Location
@@ -320,7 +320,7 @@ function Check-VitestUnhandledErrorGate {
 
 Check-LockFileSync -Root $RepoRoot
 Check-MockParity -Root $RepoRoot
-Check-TestRuntimeBudget -Root $RepoRoot
+Check-PythonGatePreflight -Root $RepoRoot
 Check-LocalTightTimeoutAudit -Root $RepoRoot
 Check-VitestUnhandledErrorGate -Root $RepoRoot
 

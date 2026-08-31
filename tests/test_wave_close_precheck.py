@@ -39,6 +39,7 @@ def _make_repo_tree(tmp_path: Path) -> tuple[Path, Path]:
     (repo / "ui" / "src" / "audio").mkdir(parents=True)
     (repo / "ui" / "src" / "store").mkdir(parents=True)
     (repo / "tests").mkdir(parents=True)
+    (repo / "scripts").mkdir(parents=True)
 
     # Required modules for check 2 static list.
     (repo / "ui" / "src" / "audio" / "voice.ts").write_text(
@@ -97,6 +98,13 @@ def _make_repo_tree(tmp_path: Path) -> tuple[Path, Path]:
         "def test_ok():\n    assert True\n",
         encoding="utf-8",
     )
+    (repo / "scripts" / "run_test_gate.py").write_text(
+        "from pathlib import Path\n"
+        "import os, sys\n"
+        "Path(__file__).with_name('gate-args.txt').write_text(' '.join(sys.argv[1:]))\n"
+        "raise SystemExit(1 if os.getenv('PRECHECK_GATE_MODE') == 'fail' else 0)\n",
+        encoding="utf-8",
+    )
 
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
@@ -130,9 +138,10 @@ def _make_repo_tree(tmp_path: Path) -> tuple[Path, Path]:
 def _run_precheck(repo: Path, fake_bin: Path, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
-    env["WAVE_CLOSE_FAST"] = "1"
+    env["PROBOS_PYTHON"] = sys.executable
     env["PRECHECK_NPM_MODE"] = "ok"
     env["PRECHECK_NPX_MODE"] = "ok"
+    env["PRECHECK_GATE_MODE"] = "ok"
     if extra_env:
         env.update(extra_env)
 
@@ -163,6 +172,9 @@ def test_wave_close_precheck_all_pass_exits_zero(tmp_path: Path) -> None:
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "Summary: FAIL=0" in proc.stdout
+    assert (repo / "scripts" / "gate-args.txt").read_text(encoding="utf-8") == (
+        "--preflight-only --label wave-close"
+    )
 
 
 @pytest.mark.skipif(not SCRIPT.exists(), reason="wave-close precheck script not present")
@@ -226,3 +238,16 @@ def test_wave_close_precheck_fails_when_vitest_exit_nonzero(tmp_path: Path) -> N
     assert proc.returncode == 1
     assert "Check 5: vitest unhandled-error gate" in proc.stdout
     assert "vitest run exited" in proc.stdout
+
+
+@pytest.mark.skipif(not SCRIPT.exists(), reason="wave-close precheck script not present")
+def test_wave_close_precheck_fails_when_python_gate_preflight_fails(
+    tmp_path: Path,
+) -> None:
+    repo, fake_bin = _make_repo_tree(tmp_path)
+
+    proc = _run_precheck(repo, fake_bin, {"PRECHECK_GATE_MODE": "fail"})
+
+    assert proc.returncode == 1
+    assert "Check 3: Python gate preflight" in proc.stdout
+    assert "Python gate preflight failed with exit code 1" in proc.stdout

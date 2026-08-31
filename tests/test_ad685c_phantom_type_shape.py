@@ -13,7 +13,9 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _HELPER_PATH = _REPO_ROOT / "scripts" / "phantom_api_ast_helper.py"
 _PRECHECK_PS1 = _REPO_ROOT / "scripts" / "phantom-api-precheck.ps1"
-_PROMPT_PATH = _REPO_ROOT / "prompts" / "ad-685c-phantom-type-shape-v1.md"
+_PROMPT_PATH = (
+    _REPO_ROOT / "prompts" / "archive" / "ad-685c-phantom-type-shape-v1.md"
+)
 
 
 def _load_helper():

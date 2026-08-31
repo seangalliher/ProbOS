@@ -395,14 +395,23 @@ Begin with **Slice 0 — gate economy foundation**, before impact selection:
 
 - one canonical gate wrapper runs deterministic generated-reference and
     structural preflight checks before pytest;
+- preflight-only may inspect a staged candidate, while a full gate requires a
+    reviewed local commit and refuses an index that differs from `HEAD`;
 - it refuses overlapping gates, unstaged/uncommittable code, mutation backups,
-    a changing tree, and a worktree whose imports resolve to another checkout;
+    hidden collection selectors, a changing tree, and a worktree whose imports
+    or pytest runner resolve to another checkout;
 - it preserves distinct wrapper, preflight, and pytest exit codes;
 - every attempt writes unique log, JUnit, phase-duration, tree-snapshot, and
     manifest artifacts;
-- all agent, wave-orchestrator, and Builder instructions invoke the wrapper;
-    no second executable path may call the local full suite directly;
-- focused and impact tests remain direct pytest invocations at `-n 0`.
+- full success emits a caller-named atomic receipt binding the committed tree
+    to hashed manifest/JUnit evidence, and an external janitor removes the
+    linked worktree even if the wrapper is killed;
+- local release-advancement instructions use the wrapper; the orchestrator
+    validates its receipt through advancement and explicitly pushes and
+    verifies the configured branch ref; direct pytest output cannot authorize
+    local release advancement, push, or issue closure;
+- focused, diagnostic, installation, historical-prompt, and CI tests may remain
+    direct pytest invocations because they are not local release authority.
 
 Slice 0 is complete only after focused wrapper/consumer tests, an isolated
 worktree preflight, adversarial review, and one green canonical full gate. It
@@ -452,9 +461,10 @@ Measurement series use **fixed enrollment** declared before observation:
     phantom-API scan.
 - A failed preflight starts no full pytest process; overlapping and changing
     trees fail closed; wrapper artifacts cannot overwrite a prior attempt.
-- No maintained local workflow invokes `pytest tests/` outside the canonical
-    wrapper. CI may retain its own complete-gate command while runner sharding is
-    evaluated from manifested duration data.
+- No maintained local release workflow advances, pushes, or closes from direct
+    `pytest tests/` output; only a validated canonical receipt is release
+    authority. Focused/diagnostic documentation and CI may retain direct pytest
+    commands while runner sharding is evaluated from manifested duration data.
 - Zero misses over the predeclared historical BF mutation corpus and the first
     20 eligible unique-tree shadow comparisons after the fixed cutoff.
 - Selected leaf-change feedback p95 is under 90 seconds over every run in a

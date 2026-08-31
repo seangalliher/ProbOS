@@ -49,6 +49,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $planPath = Join-Path $repoRoot 'prompts/wave-plan.yaml'
 $statePath = Join-Path $repoRoot 'prompts/wave-orchestrator-state.json'
+. (Join-Path $PSScriptRoot 'resolve-python.ps1')
 
 # ---------- State management ----------
 
@@ -69,6 +70,288 @@ function Set-State {
     $state | ConvertTo-Json -Depth 10 | Set-Content $statePath -Encoding UTF8
 }
 
+  function Get-Sha256Text {
+    param([string]$Value)
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+      return [BitConverter]::ToString(
+        $hasher.ComputeHash($bytes)
+      ).Replace('-', '').ToLowerInvariant()
+    } finally {
+      $hasher.Dispose()
+    }
+  }
+
+  function Get-FileSha256 {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+      throw "Gate artifact is missing: $Path"
+    }
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+  }
+
+function Get-GitTreeIdentity {
+  $head = ((& git -C $repoRoot rev-parse HEAD) | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $head) {
+    throw "Unable to resolve Git HEAD for verification receipt"
+  }
+  $headTree = ((& git -C $repoRoot rev-parse 'HEAD^{tree}') | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $headTree) {
+    throw "Unable to resolve the committed Git tree for verification receipt"
+  }
+  $indexTree = ((& git -C $repoRoot write-tree) | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $indexTree) {
+    throw "Unable to resolve Git index tree for verification receipt"
+  }
+  $statusLines = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=all)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to resolve Git status for verification receipt"
+  }
+  $statusBytes = [Text.Encoding]::UTF8.GetBytes(
+    [string]::Join("`n", [string[]]$statusLines)
+  )
+  $hasher = [Security.Cryptography.SHA256]::Create()
+  try {
+    $statusHash = [BitConverter]::ToString(
+      $hasher.ComputeHash($statusBytes)
+    ).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $hasher.Dispose()
+  }
+  return @{
+    head = $head
+    head_tree = $headTree
+    index_tree = $indexTree
+    status_sha256 = $statusHash
+  }
+}
+
+function Test-GitTreeIdentity {
+  param([hashtable]$Expected, [hashtable]$Actual)
+  return (
+    $Expected.head -eq $Actual.head -and
+    $Expected.head_tree -eq $Actual.head_tree -and
+    $Expected.index_tree -eq $Actual.index_tree -and
+    $Expected.status_sha256 -eq $Actual.status_sha256
+  )
+}
+
+  function Test-CommittedTreeIdentity {
+    param([hashtable]$Identity)
+    if ($Identity.head_tree -ne $Identity.index_tree) {
+      [Console]::Error.WriteLine(
+        "Canonical full gate and push require the Git index to equal the committed HEAD tree."
+      )
+      return $false
+    }
+    return $true
+  }
+
+  function ConvertTo-GateLabel {
+    param([string]$Value)
+    $label = (($Value.Trim().ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
+    if (-not $label) { return 'gate' }
+    if ($label.Length -gt 48) { return $label.Substring(0, 48) }
+    return $label
+  }
+
+  function Resolve-GateArtifactPath {
+    param([string]$RelativePath)
+    if (-not $RelativePath -or [IO.Path]::IsPathRooted($RelativePath)) {
+      throw "Gate receipt contains an invalid artifact path: $RelativePath"
+    }
+    $artifactRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'logs/gates'))
+    $fullPath = [IO.Path]::GetFullPath((Join-Path $repoRoot $RelativePath))
+    $fromRoot = [IO.Path]::GetRelativePath($artifactRoot, $fullPath)
+    if ($fromRoot -eq '..' -or $fromRoot.StartsWith("..$([IO.Path]::DirectorySeparatorChar)")) {
+      throw "Gate receipt artifact escapes logs/gates: $RelativePath"
+    }
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+      throw "Gate receipt artifact is missing: $RelativePath"
+    }
+    return $fullPath
+  }
+
+  function Read-GateSuccessReceipt {
+    param(
+      [string]$Path,
+      [string]$ExpectedLabel,
+      [hashtable]$ExpectedTree
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+      throw "Canonical gate did not create its requested success receipt"
+    }
+    try {
+      $receipt = Get-Content -LiteralPath $Path -Raw |
+        ConvertFrom-Json -AsHashtable -ErrorAction Stop
+    } catch {
+      throw "Canonical gate success receipt is invalid JSON: $($_.Exception.Message)"
+    }
+    if ($receipt.schema_version -ne 1 -or $receipt.label -ne $ExpectedLabel) {
+      throw "Canonical gate success receipt schema or label is invalid"
+    }
+    $status = $receipt.status
+    if (
+      $status.wrapper_exit_code -ne 0 -or
+      $status.preflight_exit_code -ne 0 -or
+      $status.pytest_exit_code -ne 0 -or
+      $status.preflight_only -ne $false -or
+      $status.tree_changed -ne $false
+    ) {
+      throw "Canonical gate success receipt does not describe a clean full-gate success"
+    }
+    foreach ($field in @('head', 'head_tree', 'index_tree', 'status_sha256')) {
+      if ($receipt.tree[$field] -ne $ExpectedTree[$field]) {
+        throw "Canonical gate receipt tree field '$field' does not match the admitted tree"
+      }
+    }
+    $manifestPath = Resolve-GateArtifactPath -RelativePath $receipt.manifest.path
+    $junitPath = Resolve-GateArtifactPath -RelativePath $receipt.junit.path
+    $collectionPath = Resolve-GateArtifactPath -RelativePath $receipt.collection.path
+    if ((Get-FileSha256 -Path $manifestPath) -ne $receipt.manifest.sha256) {
+      throw "Canonical gate manifest hash does not match its success receipt"
+    }
+    if ((Get-FileSha256 -Path $junitPath) -ne $receipt.junit.sha256) {
+      throw "Canonical gate JUnit hash does not match its success receipt"
+    }
+    if ((Get-FileSha256 -Path $collectionPath) -ne $receipt.collection.sha256) {
+      throw "Canonical gate collection hash does not match its success receipt"
+    }
+    try {
+      $manifest = Get-Content -LiteralPath $manifestPath -Raw |
+        ConvertFrom-Json -AsHashtable -ErrorAction Stop
+    } catch {
+      throw "Canonical gate manifest is invalid JSON: $($_.Exception.Message)"
+    }
+    if (
+      $manifest.wrapper_exit_code -ne 0 -or
+      $manifest.preflight_exit_code -ne 0 -or
+      $manifest.pytest_exit_code -ne 0 -or
+      $manifest.preflight_only -ne $false -or
+      $manifest.tree_changed -ne $false
+    ) {
+      throw "Canonical gate manifest does not describe a clean full-gate success"
+    }
+    $totals = $receipt.junit.totals
+    if (
+      $totals.tests -le 0 -or
+      $totals.failures -ne 0 -or
+      $totals.errors -ne 0 -or
+      $manifest.junit_totals.tests -ne $totals.tests -or
+      $manifest.junit_totals.failures -ne $totals.failures -or
+      $manifest.junit_totals.errors -ne $totals.errors -or
+      $manifest.junit_totals.skipped -ne $totals.skipped -or
+      $manifest.junit_totals.extra_reports -ne $totals.extra_reports
+    ) {
+      throw "Canonical gate JUnit totals are absent, red, or inconsistent"
+    }
+    $collectionTotals = $receipt.collection.totals
+    if (
+      $collectionTotals.nodes -le 0 -or
+      $collectionTotals.workers -le 0 -or
+      -not $collectionTotals.sha256 -or
+      $manifest.collection_totals.nodes -ne $collectionTotals.nodes -or
+      $manifest.collection_totals.workers -ne $collectionTotals.workers -or
+      $manifest.collection_totals.sha256 -ne $collectionTotals.sha256 -or
+      $manifest.collection_path.Replace('\', '/') -ne $receipt.collection.path
+    ) {
+      throw "Canonical gate collection totals are absent or inconsistent"
+    }
+    return $receipt
+  }
+
+  function Test-GateReceipt {
+    param([hashtable]$State, [hashtable]$Wave)
+    if (-not $State.ContainsKey('verify_build_receipt')) {
+      [Console]::Error.WriteLine(
+        "No successful canonical gate receipt exists for wave '$($Wave.id)'. Run 'verify'."
+      )
+      return $false
+    }
+    $receipt = $State.verify_build_receipt
+    if ($receipt.wave_id -ne $Wave.id) {
+      [Console]::Error.WriteLine(
+        "Canonical gate receipt belongs to wave '$($receipt.wave_id)', not '$($Wave.id)'."
+      )
+      return $false
+    }
+    try {
+      $currentIdentity = Get-GitTreeIdentity
+      if (
+        -not (Test-CommittedTreeIdentity -Identity $currentIdentity) -or
+        -not (Test-GitTreeIdentity -Expected $receipt.tree -Actual $currentIdentity)
+      ) {
+        [Console]::Error.WriteLine(
+          "Canonical gate receipt is stale because the Git tree changed. Return to review_build and rerun 'verify'."
+        )
+        return $false
+      }
+      $artifactPath = Resolve-GateArtifactPath -RelativePath $receipt.artifact.path
+      if ((Get-FileSha256 -Path $artifactPath) -ne $receipt.artifact.sha256) {
+        throw "Canonical gate receipt artifact hash changed after verification"
+      }
+      $null = Read-GateSuccessReceipt `
+        -Path $artifactPath `
+        -ExpectedLabel $receipt.label `
+        -ExpectedTree $currentIdentity
+    } catch {
+      [Console]::Error.WriteLine("Canonical gate receipt validation failed: $($_.Exception.Message)")
+      return $false
+    }
+    return $true
+  }
+
+  function Get-PushTarget {
+    $branch = ((& git -C $repoRoot symbolic-ref --quiet --short HEAD) | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $branch) {
+      throw "Push stage requires an attached Git branch"
+    }
+    $remote = ((& git -C $repoRoot config --get "branch.$branch.remote") | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $remote) {
+      throw "Branch '$branch' has no configured push remote"
+    }
+    $remoteRef = ((& git -C $repoRoot config --get "branch.$branch.merge") | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $remoteRef -or -not $remoteRef.StartsWith('refs/heads/')) {
+      throw "Branch '$branch' has no valid configured merge ref"
+    }
+    $remoteUrl = if ($remote -eq '.') {
+      '.'
+    } else {
+      ((& git -C $repoRoot remote get-url --push $remote) | Out-String).Trim()
+    }
+    if ($LASTEXITCODE -ne 0 -or -not $remoteUrl) {
+      throw "Unable to resolve push URL for remote '$remote'"
+    }
+    $commit = ((& git -C $repoRoot rev-parse HEAD) | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $commit) {
+      throw "Unable to resolve the local commit after push"
+    }
+    return @{
+      branch = $branch
+      remote = $remote
+      remote_ref = $remoteRef
+      remote_url = $remoteUrl
+      remote_url_sha256 = Get-Sha256Text -Value $remoteUrl
+      commit = $commit
+    }
+  }
+
+  function Get-RemoteRefCommit {
+    param([hashtable]$Target)
+    $lines = @(
+      & git -C $repoRoot ls-remote --exit-code --refs $Target.remote_url $Target.remote_ref
+    )
+    if ($LASTEXITCODE -ne 0 -or $lines.Count -ne 1) {
+      throw "Unable to resolve exactly one remote ref '$($Target.remote_ref)' on '$($Target.remote)'"
+    }
+    $parts = ([string]$lines[0]).Trim() -split '\s+', 2
+    if ($parts.Count -ne 2 -or $parts[1] -ne $Target.remote_ref) {
+      throw "Remote '$($Target.remote)' returned an unexpected ref for '$($Target.remote_ref)'"
+    }
+    return $parts[0]
+  }
+
 function Get-Plan {
     if (-not (Test-Path $planPath)) {
         throw "wave-plan.yaml not found at $planPath"
@@ -77,10 +360,21 @@ function Get-Plan {
     # ConvertFrom-Yaml from powershell-yaml module if installed.
     $raw = Get-Content $planPath -Raw
     # Convert YAML to JSON via Python (always available in repo .venv)
-    $py = Join-Path $repoRoot '.venv/Scripts/python.exe'
-    if (-not (Test-Path $py)) { $py = 'python' }
+    $py = Resolve-ProbOSPython -RepoRoot $repoRoot
     $json = $raw | & $py -c "import sys, yaml, json; print(json.dumps(yaml.safe_load(sys.stdin)))"
-    return ($json | ConvertFrom-Json -AsHashtable)
+    $parseExitCode = $LASTEXITCODE
+    if ($parseExitCode -ne 0 -or -not $json) {
+      throw "wave-plan.yaml parser failed with exit code $parseExitCode"
+    }
+    try {
+      $plan = $json | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+    } catch {
+      throw "wave-plan.yaml parser returned invalid JSON: $($_.Exception.Message)"
+    }
+    if (-not $plan -or -not ($plan.ContainsKey('waves'))) {
+      throw "wave-plan.yaml must define a waves collection"
+    }
+    return $plan
 }
 
 # ---------- Stage definitions ----------
@@ -350,7 +644,11 @@ WAVE $($wave.id) — STAGE: verify_build
 ACTION: Run one consolidated gate on the reviewed, frozen wave stack.
 
 PYTHON:
-  d:/ProbOS/.venv/Scripts/pytest.exe tests/ -q -n 16 --dist=loadfile
+  ./scripts/wave-orchestrator.ps1 verify
+
+The wrapper runs generated-reference and phantom-API preflight checks first,
+preserves pytest's real exit code, and writes unique log/JUnit/manifest timing
+artifacts. Do not replace it with a direct ``pytest tests/`` command.
 
 IF UI CHANGED:
   cd ui
@@ -361,9 +659,9 @@ IF A USER-FACING WORKFLOW CHANGED:
   cd ui
   npx playwright test <affected scenarios>
 
-Expected: 0 failures (environmental flakes acceptable per standing rule —
-read the short summary and re-run the actual failing node at -n 0 to confirm;
-secondary aiosqlite ``Event loop is closed`` annotations are not the root node).
+Expected: wrapper exit 0, a valid JUnit report, and a receipt bound to the
+unchanged Git tree. A serial rerun of a failing node is diagnostic only; it
+cannot replace or override a nonzero canonical wrapper result.
 
 Any shared source/test repair invalidates this gate. Return to review_build,
 review the repair, then rerun the affected consolidated gate.
@@ -426,9 +724,10 @@ WAVE $($wave.id) — STAGE: push
 ACTION: Push commits to origin/main.
 
 COMMAND:
-  git push
+  ./scripts/wave-orchestrator.ps1 verify
 
-When push succeeds, run:
+The orchestrator revalidates the canonical gate receipt, runs ``git push``,
+and records the exact local/upstream commit pair. When it succeeds, run:
   ./scripts/wave-orchestrator.ps1 advance
 "@
 }
@@ -666,6 +965,36 @@ function Cmd-Advance {
         return
     }
 
+    if ($state.current_stage -in @('verify_build', 'gate_2', 'push')) {
+        if (-not (Test-GateReceipt -State $state -Wave $wave)) {
+            exit 2
+        }
+    }
+    if ($state.current_stage -eq 'push') {
+        if (-not $state.ContainsKey('push_receipt')) {
+            [Console]::Error.WriteLine(
+                "No successful orchestrated push receipt exists for wave '$($wave.id)'. Run 'verify'."
+            )
+            exit 2
+        }
+        $pushIdentity = Get-PushTarget
+        $remoteCommit = Get-RemoteRefCommit -Target $pushIdentity
+        $pushReceipt = $state.push_receipt
+        if (
+            $pushReceipt.wave_id -ne $wave.id -or
+            $pushReceipt.commit -ne $pushIdentity.commit -or
+          $pushReceipt.remote -ne $pushIdentity.remote -or
+          $pushReceipt.remote_ref -ne $pushIdentity.remote_ref -or
+          $pushReceipt.remote_url_sha256 -ne $pushIdentity.remote_url_sha256 -or
+          $remoteCommit -ne $pushIdentity.commit
+        ) {
+            [Console]::Error.WriteLine(
+                "Orchestrated push receipt does not match the current local/upstream commit. Run 'verify'."
+            )
+            exit 2
+        }
+    }
+
     # Record history
     $timestamp = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
     if (-not $state.history) { $state.history = @() }
@@ -679,6 +1008,8 @@ function Cmd-Advance {
         Save-Plan $plan
         $state.current_wave = $null
         $state.current_stage = 'idle'
+        $state.Remove('verify_build_receipt')
+        $state.Remove('push_receipt')
         Set-State $state
         Write-Host "Wave $($wave.id) complete." -ForegroundColor Green
         Cmd-Next
@@ -686,6 +1017,10 @@ function Cmd-Advance {
     }
 
     $next = $stages[$currentIdx + 1]
+    if ($next -eq 'verify_build') {
+      $state.Remove('verify_build_receipt')
+      $state.Remove('push_receipt')
+    }
     $state.current_stage = $next
     Set-State $state
     Write-Host "Advanced to stage: $next" -ForegroundColor Cyan
@@ -706,41 +1041,204 @@ function Cmd-Reset {
         return
     }
     $wave.status = 'pending'
+    $state.Remove('verify_build_receipt')
+    $state.Remove('push_receipt')
     Save-Plan $plan
     if ($state.current_wave -eq $Argument -or -not $state.current_wave) {
         $state.current_wave = $Argument
         $state.current_stage = (Get-StagesForWave $wave)[0]
-        Set-State $state
     }
+    Set-State $state
     Write-Host "Wave $Argument reset to pending." -ForegroundColor Yellow
 }
 
 function Cmd-Verify {
     $state = Get-State
-    $plan = Get-Plan
     if (-not $state.current_wave) {
-        Write-Host "No active wave. Run 'next' to begin."
-        return
+    [Console]::Error.WriteLine("No active wave. Run 'next' to begin.")
+    exit 2
     }
+  $plan = Get-Plan
     $wave = $plan.waves | Where-Object { $_.id -eq $state.current_wave } | Select-Object -First 1
+  if (-not $wave) {
+    [Console]::Error.WriteLine(
+      "Active wave '$($state.current_wave)' is absent from wave-plan.yaml."
+    )
+    exit 2
+  }
 
     switch ($state.current_stage) {
         'precheck' {
             $patterns = $wave.prompt_paths
             if (-not $patterns) { $patterns = $wave.expected_outputs | Where-Object { $_ -like 'prompts/*.md' } }
-            $files = $patterns | ForEach-Object { Get-ChildItem -Path (Join-Path $repoRoot $_) -ErrorAction SilentlyContinue }
-            if (-not $files) {
-                Write-Error "No drafted prompts found for patterns: $($patterns -join ', ')"
-                return
+      if (-not $patterns) {
+        [Console]::Error.WriteLine(
+          "Active wave '$($wave.id)' has no prompt paths to precheck."
+        )
+        exit 2
+      }
+            $files = @()
+            foreach ($pattern in @($patterns)) {
+              $promptMatches = @(
+                Get-ChildItem -Path (Join-Path $repoRoot $pattern) -ErrorAction SilentlyContinue
+              )
+              if (-not $promptMatches) {
+                [Console]::Error.WriteLine(
+                  "No drafted prompt found for declared pattern: $pattern"
+                )
+                exit 2
+              }
+              $files += $promptMatches
             }
             $script = Join-Path $repoRoot 'scripts/phantom-api-precheck.ps1'
-            & $script @($files.FullName)
+            & $script @($files.FullName | Sort-Object -Unique)
+            exit $LASTEXITCODE
         }
         'verify_build' {
-            $py = Join-Path $repoRoot '.venv/Scripts/pytest.exe'
-          & $py 'tests/' '-q' '-n' '16' '--dist=loadfile'
+            $state.Remove('verify_build_receipt')
+            $state.Remove('push_receipt')
+            Set-State $state
+            $identityBefore = Get-GitTreeIdentity
+            if (-not (Test-CommittedTreeIdentity -Identity $identityBefore)) {
+                exit 2
+            }
+            $receiptDirectory = Join-Path $repoRoot 'logs/gates'
+            $null = New-Item -ItemType Directory -Path $receiptDirectory -Force
+            $receiptPath = Join-Path $receiptDirectory (
+                "wave-$($wave.id)-$([guid]::NewGuid().ToString('N')).receipt.json"
+            )
+            $expectedLabel = ConvertTo-GateLabel -Value "wave-$($wave.id)"
+            $py = Resolve-ProbOSPython -RepoRoot $repoRoot
+            $gate = Join-Path $repoRoot 'scripts/run_test_gate.py'
+            & $py $gate '--label' "wave-$($wave.id)" '--receipt' $receiptPath
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) {
+                Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+                [Console]::Error.WriteLine(
+                    "Canonical Python gate failed with exit code $exitCode"
+                )
+                exit $exitCode
+            }
+            $identityAfter = Get-GitTreeIdentity
+            if (
+                -not (Test-CommittedTreeIdentity -Identity $identityAfter) -or
+                -not (Test-GitTreeIdentity -Expected $identityBefore -Actual $identityAfter)
+            ) {
+                Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+                [Console]::Error.WriteLine(
+                    "Git tree changed between canonical gate invocation and receipt creation"
+                )
+                exit 3
+            }
+            try {
+                $null = Read-GateSuccessReceipt `
+                    -Path $receiptPath `
+                    -ExpectedLabel $expectedLabel `
+                    -ExpectedTree $identityAfter
+            } catch {
+                Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+                [Console]::Error.WriteLine(
+                    "Canonical gate receipt validation failed: $($_.Exception.Message)"
+                )
+                exit 5
+            }
+            $state = Get-State
+            if (
+                $state.current_wave -ne $wave.id -or
+                $state.current_stage -ne 'verify_build'
+            ) {
+                Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+                [Console]::Error.WriteLine(
+                    "Wave state changed while the canonical gate ran; receipt not recorded"
+                )
+                exit 3
+            }
+            $state.verify_build_receipt = @{
+                wave_id = $wave.id
+                verified_at = (Get-Date).ToUniversalTime().ToString('o')
+                label = $expectedLabel
+                tree = $identityAfter
+                artifact = @{
+                    path = [IO.Path]::GetRelativePath($repoRoot, $receiptPath).Replace('\', '/')
+                    sha256 = Get-FileSha256 -Path $receiptPath
+                }
+            }
+            Set-State $state
+            exit 0
+        }
+        'push' {
+          $state.Remove('push_receipt')
+          Set-State $state
+          if (-not (Test-GateReceipt -State $state -Wave $wave)) {
+            exit 2
+          }
+          $identityBefore = Get-GitTreeIdentity
+          if (-not (Test-CommittedTreeIdentity -Identity $identityBefore)) {
+            exit 2
+          }
+          $pushTarget = Get-PushTarget
+          & git -C $repoRoot push --porcelain $pushTarget.remote_url "$($pushTarget.commit):$($pushTarget.remote_ref)"
+          $pushExitCode = $LASTEXITCODE
+          if ($pushExitCode -ne 0) {
+            [Console]::Error.WriteLine(
+              "Git push failed with exit code $pushExitCode"
+            )
+            exit $pushExitCode
+          }
+          $identityAfter = Get-GitTreeIdentity
+          if (-not (Test-GitTreeIdentity -Expected $identityBefore -Actual $identityAfter)) {
+            [Console]::Error.WriteLine(
+              "Git tree changed while the orchestrated push ran; receipt not recorded"
+            )
+            exit 3
+          }
+          $pushed = Get-PushTarget
+          if (
+            $pushed.remote -ne $pushTarget.remote -or
+            $pushed.remote_ref -ne $pushTarget.remote_ref -or
+            $pushed.remote_url_sha256 -ne $pushTarget.remote_url_sha256
+          ) {
+            [Console]::Error.WriteLine(
+              "Configured push target changed while git push ran; receipt not recorded"
+            )
+            exit 3
+          }
+          $remoteCommit = Get-RemoteRefCommit -Target $pushed
+          if ($remoteCommit -ne $pushed.commit) {
+            [Console]::Error.WriteLine(
+              "Git push returned success but remote ref '$($pushed.remote_ref)' is not at '$($pushed.commit)'"
+            )
+            exit 3
+          }
+          $state = Get-State
+          if ($state.current_wave -ne $wave.id -or $state.current_stage -ne 'push') {
+            [Console]::Error.WriteLine(
+              "Wave state changed while git push ran; receipt not recorded"
+            )
+            exit 3
+          }
+          if (-not (Test-GateReceipt -State $state -Wave $wave)) {
+            exit 3
+          }
+          $state.push_receipt = @{
+            wave_id = $wave.id
+            pushed_at = (Get-Date).ToUniversalTime().ToString('o')
+            branch = $pushed.branch
+            remote = $pushed.remote
+            remote_ref = $pushed.remote_ref
+            remote_url_sha256 = $pushed.remote_url_sha256
+            commit = $pushed.commit
+          }
+          Set-State $state
+          exit 0
         }
         'verify_outputs' {
+          if (-not $wave.expected_outputs) {
+            [Console]::Error.WriteLine(
+              "Active wave '$($wave.id)' has no expected outputs to verify."
+            )
+            exit 2
+          }
             $missing = @()
             foreach ($pattern in $wave.expected_outputs) {
                 $hits = Get-ChildItem -Path (Join-Path $repoRoot $pattern) -ErrorAction SilentlyContinue
@@ -748,13 +1246,18 @@ function Cmd-Verify {
             }
             if ($missing.Count -eq 0) {
                 Write-Host "All expected outputs present." -ForegroundColor Green
+              exit 0
             } else {
                 Write-Host "Missing outputs:" -ForegroundColor Red
                 $missing | ForEach-Object { Write-Host "  - $_" }
+              exit 1
             }
         }
         default {
-            Write-Host "No mechanical verification for stage '$($state.current_stage)'. This is an architect-judgment stage."
+            [Console]::Error.WriteLine(
+              "No mechanical verification for stage '$($state.current_stage)'."
+            )
+            exit 2
         }
     }
 }

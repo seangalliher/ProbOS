@@ -35,9 +35,9 @@ Read these in full **before** writing any code:
 ## Standing Rules (carry forward from prior sweep)
 
 - **Working tree:** if you encounter tracked-file modifications you didn't make, surface them. Do NOT `git stash` / `git reset --hard`. If they are clearly architect-authored prompt/review/doc artifacts, commit them on the architect's behalf with a descriptive message and continue.
-- **Test gate:** the **consolidated wave-close gate** uses `pytest tests/ -q -n 16 --dist=loadfile` (16 workers — the stable ceiling matching the Captain host's physical cores; `-n auto` maps to 32 logical processors and oversubscribes SQLite/Chroma). The **focused per-prompt gate** uses the exact changed nodes/files, with `-n 0` for deterministic diagnosis. Do not run the full gate per prompt. CI uses `-n auto` to match the hosted runner's assigned cores.
-- **Wave-close gate failure interpretation:** failures under the consolidated parallel gate that do NOT reproduce under `-n 0` are environmental (heavy concurrent fixture boots) and accepted — document them and continue. The only blockers are real failures that reproduce serially in files you changed.
-- **Triage step on full-gate red:** rerun the failing files at `-n 0`. If they pass, mark environmental, continue. If they fail, stop.
+- **Test gate:** the **consolidated wave-close gate** uses `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label <wave>` after Architect review and a local commit (the full wrapper refuses an index that differs from `HEAD`; preflight-only may validate the staged candidate). The wrapper owns deterministic preflight, the stable 16-worker ceiling, collection-selector neutralization, unique timing/JUnit/manifest artifacts, isolated committed-tree execution, janitor cleanup, success-receipt issuance, and exit propagation. The **focused per-prompt gate** uses the exact changed nodes/files, with `-n 0` for deterministic diagnosis. Do not run the full gate per prompt. CI uses `-n auto` to match the hosted runner's assigned cores.
+- **Wave-close gate failure interpretation:** any nonzero canonical wrapper exit blocks advancement and push. A failing node that passes under `-n 0` is diagnostic evidence only; it does not replace or override the consolidated gate.
+- **Triage step on full-gate red:** rerun the failing files at `-n 0` to localize the cause, repair the gate or its environment, repeat review for any source/test change, then rerun the canonical wrapper on the unchanged tree. Continue only after that wrapper exits 0 and records a valid receipt.
 - **Quarantine threshold:** if you hit a pre-existing serial failure unrelated to your changes, file a BF, quarantine, and continue. Surface only if more than 3 quarantines accumulate during a single sweep.
 - **Gate/build log location (2026-06-27):** write pytest / vitest / build gate captures to `logs/` (e.g. `logs/adNNN_gate.txt`, `logs/adNNN_vitest.txt`), **not** the repo root. `logs/` is gitignored except `.gitkeep`; the root `/*_gate.txt` etc. patterns in `.gitignore` remain a back-compat safety net. Keeps the repo root clean — the prior root-dump convention accumulated ~110 stray captures.
 - **Pre-build SEARCH/REPLACE:** every prompt is its own delta. Do not assume `events.py`, `governance/`, or any file matches what the prompt asserts will exist *after* its SEARCH/REPLACE. The prompt IS the migration.
@@ -84,7 +84,7 @@ Failure semantics:
 - `FAIL` (script exit `1`): stop, fix the reported issue, and rerun until clean.
  - `WARN` with no `FAIL` (script exit `0`): wave may proceed; record the cleanup as a forward marker. Outside burn-down mode that is a BF for next-wave cleanup; in burn-down mode it is a checklist item on the wave's single follow-up issue.
 - Do not bypass Check 1 (lock-file sync) or Check 5 (vitest exit-code gate).
-- Check 3 (runtime budget) may be skipped temporarily via `WAVE_CLOSE_FAST=1` during iteration, but must run before push.
+- Check 3 is the mandatory canonical Python preflight and cannot be skipped; require it before the broad gate and before push.
 
 ---
 
@@ -225,7 +225,7 @@ Match the existing format in `prompts/build-reports/archive/`.
 
 After the 19 prompts are committed:
 
-1. Freeze prompt/source/test inputs after Architect review, then run the full gate once: `pytest tests/ -q -n 16 --dist=loadfile`. If any file fails under parallel, read the short summary and rerun the actual failing node with `-n 0`; do not mistake secondary aiosqlite `Event loop is closed` annotations for the root failure.
+1. Freeze prompt/source/test inputs after Architect review, run `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --preflight-only --label <wave>` against the staged candidate, and repair every failure. Commit the reviewed tree locally, then run the full gate once through the orchestrator's `verify_build` stage so it can request and retain the wrapper's hashed success receipt. If any file fails under parallel, read the manifest/short summary and rerun the actual failing node with `-n 0` only to diagnose it; repair the cause, repeat review and commit, then obtain a fresh canonical wrapper exit 0 before advancing. Do not mistake secondary aiosqlite `Event loop is closed` annotations for the root failure.
 2. Confirm the test count grew by the documented total.
 3. Move all 19 completed prompts to `prompts/archive/` (matches prior sweep convention).
 4. Move per-prompt review files to `prompts/Reviews/archive/`.
@@ -233,7 +233,7 @@ After the 19 prompts are committed:
 6. **Forward-marker filing (HARD RULE, added 2026-05-08 after Wave 132; bounded 2026-08-24).** Before push, scan every shipped prompt's "Forward markers" / "Out of scope" / "Defer to AD-NNNx" lines and the corresponding build report's deferred section. **Deferred work must still be recorded** — forward markers in prompts alone are not sufficient tracking. Recurring lesson: Wave 132 had 6 unfiled deferrals (AD-706a..f); Captain backfilled them as #516-#521 the same day. Don't repeat.
 
    **A forward marker does NOT automatically become one GitHub issue.** Outside burn-down mode, file each with priority + verify-first anchor citations + cross-references to the parent AD, and add a row to the roadmap's deferred-AD table. **In Backlog Burn-Down Mode** (see `.github/copilot-instructions.md`), non-blocking forward markers are consolidated into **one wave follow-up issue**, each retained as its own checklist item with severity, evidence, reproduction detail and code anchors so it stays independently actionable. Separate issues stay reserved for security, data integrity, independently reachable production failures, and blockers. The roadmap row is still added either way.
-7. Push: `git push`.
+7. At the orchestrator's `push` stage, run `./scripts/wave-orchestrator.ps1 verify`. It revalidates the unchanged canonical-gate receipt, performs `git push`, confirms the upstream commit, and records the push receipt required by `advance`.
 
 ---
 

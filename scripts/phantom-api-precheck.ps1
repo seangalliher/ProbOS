@@ -12,11 +12,11 @@
 #   ./scripts/phantom-api-precheck.ps1 prompts/wave-N/*.md
 #
 # Output: per-prompt findings to stdout; aggregated summary at end.
-# Exit code: 0 = clean; 1 = at least one phantom found.
+# Exit code: 0 = clean; 1 = at least one phantom found; 2 = operational failure.
 #
-# This is a heuristic — false positives happen for:
+# This is a heuristic - false positives happen for:
 #   - Symbols introduced BY the prompt (search the prompt body itself before flagging)
-#   - Stdlib symbols (asyncio.X, json.X, etc.) — filtered via STDLIB_PREFIXES
+#   - Stdlib symbols (asyncio.X, json.X, etc.) - filtered via STDLIB_PREFIXES
 #   - Symbols referenced only in commentary / examples
 # Architect reviews the output; the script prunes the obvious phantoms only.
 
@@ -27,11 +27,31 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$requiredPowerShellMajor = 7
+if ($PSVersionTable.PSVersion.Major -lt $requiredPowerShellMajor) {
+    [Console]::Error.WriteLine(
+        "phantom-api-precheck.ps1 requires PowerShell 7 (pwsh); found $($PSVersionTable.PSVersion)."
+    )
+    exit 2
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $srcRoot = Join-Path $repoRoot 'src/probos'
+. (Join-Path $PSScriptRoot 'resolve-python.ps1')
 
 if (-not (Test-Path $srcRoot)) {
-    Write-Error "src/probos not found at $srcRoot — run from repo root."
+    Write-Error "src/probos not found at $srcRoot - run from repo root."
+    exit 2
+}
+
+$missingPromptPaths = @(
+    $PromptPaths | Where-Object {
+        -not (Test-Path -LiteralPath $_ -PathType Leaf)
+    }
+)
+if ($missingPromptPaths.Count -gt 0) {
+    [Console]::Error.WriteLine(
+        "Prompt path(s) not found: $($missingPromptPaths -join ', ')"
+    )
     exit 2
 }
 
@@ -119,7 +139,7 @@ function Get-FilteredPromptBody {
 
     # 3. Markdown prose-table cells: pipe-delimited cell whose content is a
     # backticked symbol or call expression followed by prose (heuristic to
-    # suppress motivation-table cites of past phantoms — e.g., a Wave 10
+    # suppress motivation-table cites of past phantoms - e.g., a Wave 10
     # row mentioning `WorkItemStore.get_pending` or `event_log.query(...)`).
     $body = [regex]::Replace(
         $body,
@@ -150,7 +170,7 @@ function Get-FilteredPromptBody {
     # tuning per AD-685 Hard-Stop: bullet-list and paragraph cites of past
     # phantoms (e.g., `WorkItemStore.get_pending`, `event_log.query(...)`)
     # would otherwise survive into the symbol check / kwarg check. Real
-    # production code lives in ```python``` blocks (preserved) — backticked
+    # production code lives in ```python``` blocks (preserved) - backticked
     # call-shapes elsewhere are documentation references. Patterns masked:
     #   - `Class.method`     (CamelCase dotted)
     #   - `obj.method(args)` (any dotted call site)
@@ -171,10 +191,6 @@ $totalPhantoms = 0
 $report = [System.Collections.ArrayList]@()
 
 foreach ($promptPath in $PromptPaths) {
-    if (-not (Test-Path $promptPath)) {
-        Write-Warning "Skip (not found): $promptPath"
-        continue
-    }
     Write-Host "`n=== $promptPath ===" -ForegroundColor Cyan
     $body = Get-Content $promptPath -Raw
 
@@ -257,14 +273,30 @@ foreach ($promptPath in $PromptPaths) {
     # output is a JSON object with `phantoms` (kwarg + method-name) and
     # `unresolved` (informational; no exit-code impact).
     $helperPath = Join-Path $PSScriptRoot 'phantom_api_ast_helper.py'
-    $pythonExe = Join-Path $repoRoot '.venv/Scripts/python.exe'
-    if (-not (Test-Path $pythonExe)) { $pythonExe = 'python' }
+    if (-not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
+        [Console]::Error.WriteLine("phantom API helper not found: $helperPath")
+        exit 2
+    }
+    try {
+        $pythonExe = Resolve-ProbOSPython -RepoRoot $repoRoot
+    } catch {
+        [Console]::Error.WriteLine("Python resolution failed: $($_.Exception.Message)")
+        exit 2
+    }
     $unresolvedHere = @()
-    if (Test-Path $helperPath) {
-        try {
-            $helperJson = $filteredBody | & $pythonExe $helperPath --src-root $srcRoot 2>$null
-            if ($LASTEXITCODE -eq 0 -and $helperJson) {
-                $parsed = $helperJson | ConvertFrom-Json
+    try {
+        $helperJson = $filteredBody | & $pythonExe $helperPath --src-root $srcRoot
+        $helperExitCode = $LASTEXITCODE
+        if ($helperExitCode -ne 0) {
+            throw "phantom_api_ast_helper.py exited $helperExitCode"
+        }
+        if (-not $helperJson) {
+            throw 'phantom_api_ast_helper.py returned no JSON'
+        }
+        $parsed = $helperJson | ConvertFrom-Json -ErrorAction Stop
+        if (-not ($parsed.PSObject.Properties.Name -contains 'phantoms')) {
+            throw "phantom_api_ast_helper.py JSON omitted 'phantoms'"
+        }
                 foreach ($p in $parsed.phantoms) {
                     if ($p.category -eq 'method_phantom') {
                         [void]$phantomsHere.Add(@{
@@ -305,14 +337,15 @@ foreach ($promptPath in $PromptPaths) {
                 if ($parsed.PSObject.Properties.Name -contains 'unresolved' -and $parsed.unresolved) {
                     $unresolvedHere = @($parsed.unresolved)
                 }
-            }
-        } catch {
-            Write-Warning "AST helper failed on $promptPath : $_"
-        }
+    } catch {
+        [Console]::Error.WriteLine(
+            "AST helper failed on ${promptPath}: $($_.Exception.Message)"
+        )
+        exit 2
     }
 
     if ($phantomsHere.Count -eq 0) {
-        Write-Host "  Clean — no phantom symbols detected." -ForegroundColor Green
+        Write-Host "  Clean - no phantom symbols detected." -ForegroundColor Green
     } else {
         Write-Host "  $($phantomsHere.Count) phantom symbol(s):" -ForegroundColor Yellow
         foreach ($p in $phantomsHere) {
