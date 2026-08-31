@@ -95,6 +95,19 @@ _FENCE_RE = re.compile(
     re.DOTALL,
 )
 
+# --- BF-866b: non-claim (quoted-markup) span detection ------------------- #
+# A fence line: >=3 backticks or tildes, optionally preceded by <=3 spaces.
+# ``info`` is the language tag; a *closing* fence carries none.
+_FENCE_LINE_RE = re.compile(r"^(?P<marker>`{3,}|~{3,})(?P<info>[^\n]*?)[ \t\r]*$")
+# An indented code line: 4 spaces or one tab, and something after it.
+_INDENTED_LINE_RE = re.compile(r"^(?: {4}|\t)[^\n]*\S")
+# CommonMark inline code span: an opening backtick run closed by a run of the
+# same length. Bounded at a blank line so one stray backtick cannot swallow the
+# rest of the reply.
+_INLINE_CODE_RE = re.compile(
+    r"(?P<ticks>`+)(?P<body>(?:(?!\n[ \t]*\n)(?!(?P=ticks))[\s\S])+?)(?P=ticks)"
+)
+
 
 @dataclass
 class ExtractedArtifact:
@@ -111,6 +124,10 @@ class ExtractedArtifact:
     content: bytes
     line_count: int
     source_span: tuple[int, int]
+    #: BF-866: True for a pass-1 ``<artifact>`` tag the agent wrote deliberately,
+    #: False for a pass-2 fenced lift it never claimed to save. Only the former
+    #: may reach a verdict.
+    explicit: bool = False
 
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -336,6 +353,169 @@ def _filename_hint(first_line: str) -> str | None:
     return m.group("py") or m.group("js") or m.group("html")
 
 
+def _fence_spans(response_text: str) -> list[tuple[int, int]]:
+    """Char spans of ``` and ~~~ fenced blocks.
+
+    An *unterminated* fence runs to end of text. That is deliberate and it is
+    the asymmetry the whole guard turns on: reading the tail as fenced can only
+    MISS a real save (one undetected turn), while reading it as unfenced can
+    ACCUSE a reply that quoted an example -- and a false accusation trains the
+    Captain to ignore the control. Choose the miss.
+    """
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    open_at: int | None = None
+    open_marker = ""
+    for line in response_text.splitlines(keepends=True):
+        start = pos
+        pos += len(line)
+        body = line.rstrip("\n")
+        indent = len(body) - len(body.lstrip(" \t"))
+        if indent > 3:
+            continue
+        m = _FENCE_LINE_RE.match(body[indent:])
+        if not m:
+            continue
+        marker = m.group("marker")
+        if open_at is None:
+            open_at = start
+            open_marker = marker
+        elif marker[0] == open_marker[0] and len(marker) >= len(open_marker) \
+                and not m.group("info").strip():
+            spans.append((open_at, pos))
+            open_at = None
+            open_marker = ""
+    if open_at is not None:
+        spans.append((open_at, len(response_text)))
+    return spans
+
+
+def _complement(spans: list[tuple[int, int]], length: int) -> list[tuple[int, int]]:
+    """The gaps between ``spans`` over ``[0, length)``, merged and ordered."""
+    out: list[tuple[int, int]] = []
+    cursor = 0
+    for s, e in sorted(spans):
+        if s > cursor:
+            out.append((cursor, s))
+        cursor = max(cursor, e)
+    if cursor < length:
+        out.append((cursor, length))
+    return out
+
+
+def _indented_code_spans(
+    response_text: str, blocked: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Char spans of 4-space / tab indented code blocks outside ``blocked``.
+
+    Deliberately coarser than CommonMark: an indented run that is really a list
+    continuation is treated as quoted markup too. Over-including costs a missed
+    save on a tag the agent chose to indent; under-including costs an accusation
+    on an indented example. Same asymmetry, same direction.
+    """
+    spans: list[tuple[int, int]] = []
+    lines: list[tuple[int, int, str]] = []
+    pos = 0
+    for line in response_text.splitlines(keepends=True):
+        lines.append((pos, pos + len(line), line.rstrip("\n")))
+        pos += len(line)
+
+    def _inside_blocked(i: int) -> bool:
+        s, e = lines[i][0], lines[i][1]
+        return any(bs <= s and e <= be for bs, be in blocked)
+
+    i = 0
+    prev_blank = True  # start-of-text counts as the required blank separator
+    while i < len(lines):
+        if _inside_blocked(i) or not _INDENTED_LINE_RE.match(lines[i][2]):
+            prev_blank = not lines[i][2].strip()
+            i += 1
+            continue
+        if not prev_blank:  # an indented line continuing a paragraph is prose
+            prev_blank = False
+            i += 1
+            continue
+        start = lines[i][0]
+        end = lines[i][1]
+        i += 1
+        while i < len(lines) and not _inside_blocked(i):
+            if _INDENTED_LINE_RE.match(lines[i][2]):
+                end = lines[i][1]
+            elif lines[i][2].strip():
+                break
+            i += 1
+        spans.append((start, end))
+        prev_blank = True
+    return spans
+
+
+def _inline_code_spans(
+    response_text: str, blocked: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Char spans of `` `inline code` `` literals outside ``blocked``.
+
+    Scanned per unblocked segment so a fence's own backtick run can never pair
+    with a stray backtick elsewhere in the reply.
+    """
+    spans: list[tuple[int, int]] = []
+    for seg_start, seg_end in _complement(blocked, len(response_text)):
+        segment = response_text[seg_start:seg_end]
+        for m in _INLINE_CODE_RE.finditer(segment):
+            spans.append((seg_start + m.start(), seg_start + m.end()))
+    return spans
+
+
+def _non_claim_spans(response_text: str) -> list[tuple[int, int]]:
+    """Char spans of quoted markup — the regions pass 1 must not read.
+
+    BF-866b: ONE implementation, shared by pass-1 admission and the
+    ``wrote=False`` marker fallback via :func:`iter_explicit_artifact_tags`. If
+    the two ever computed spans differently the selection/fulfilment split that
+    produced the original defect would be back: the extractor would admit a tag
+    the counter refused, or the counter would accuse over a tag the extractor
+    never touched.
+
+    Covers ``` and ~~~ fences (terminated or not), 4-space/tab indented code
+    blocks, and inline-code-delimited literals. An unterminated inline backtick
+    is deliberately NOT a span: CommonMark reads it as literal text, and a lone
+    backtick in ordinary prose is common enough that extending it to end of text
+    would drop real saves out of replies that quoted nothing at all.
+    """
+    fences = _fence_spans(response_text)
+    indented = _indented_code_spans(response_text, fences)
+    blocked = fences + indented
+    return blocked + _inline_code_spans(response_text, blocked)
+
+
+def iter_explicit_artifact_tags(response_text: str):
+    """The ONE explicit-``<artifact>`` scan: tags that are not quoted markup.
+
+    BF-866 (#1338 item 2): pass-1 admission and the write-ledger fallback both
+    go through here, so the set that gets extracted and the set that can be
+    disclosed cannot diverge — divergence between selection and fulfilment is
+    the defect class this exists to remove.
+
+    A tag inside a fence, an indented code block or an inline-code literal is
+    an agent explaining the markup, not asking for a save; extracting it and
+    then disclosing the failed persist accuses a reply that claimed nothing.
+    Containment, deliberately, not overlap: a legitimate ``<artifact>`` whose
+    body contains a code fence or an inline literal encloses it rather than
+    sitting inside it, and must still be extracted.
+    """
+    if not response_text:
+        return
+    spans = _non_claim_spans(response_text)
+    for m in _ARTIFACT_TAG_RE.finditer(response_text):
+        start, end = m.span()
+        if any(fs <= start and end <= fe for fs, fe in spans):
+            logger.debug(
+                "BF-866: <artifact> tag inside a quoted-markup span is an "
+                "example, not a save request; ignoring (span=%s)", m.span(),
+            )
+            continue
+        yield m
+
+
 def has_explicit_artifact_marker(response_text: str) -> bool:
     """Whether the reply carries an explicit ``<artifact>`` tag (pass 1).
 
@@ -345,7 +525,18 @@ def has_explicit_artifact_marker(response_text: str) -> bool:
     treating a passive lift the same way would let the text-blind write-claim
     guard append a save disclosure to a reply describing no save.
     """
-    return bool(_ARTIFACT_TAG_RE.search(response_text or ""))
+    return count_explicit_artifact_markers(response_text) > 0
+
+
+def count_explicit_artifact_markers(response_text: str) -> int:
+    """How many saves the agent explicitly asked for on this turn.
+
+    BF-866 (#1338 items 3, 4): counted off the raw text rather than off what
+    ``extract_artifacts`` admitted, so a tag the extractor *skipped* (missing
+    ``mime``, unsafe name) still counts as a save that was asked for and did
+    not happen. Every skip path is silent otherwise.
+    """
+    return sum(1 for _ in iter_explicit_artifact_tags(response_text))
 
 
 def extract_artifacts(
@@ -358,7 +549,8 @@ def extract_artifacts(
 
     Pass 1 (explicit ``<artifact>`` tags): authoritative. Each tag with a
     valid (sanitizable) name and a mime attribute produces one
-    ``ExtractedArtifact``.
+    ``ExtractedArtifact``. Tags inside a fenced span are not read at all
+    (BF-866); they are examples, and the fence stays eligible for pass 2.
 
     Pass 2 (fenced code blocks): scans the *remaining* body (with tag
     spans masked out) for ``` blocks with ``>= fenced_threshold_lines``
@@ -378,7 +570,7 @@ def extract_artifacts(
     masked_spans: list[tuple[int, int]] = []
 
     # --- Pass 1: explicit <artifact> tags ---
-    for m in _ARTIFACT_TAG_RE.finditer(response_text):
+    for m in iter_explicit_artifact_tags(response_text):
         attrs = _parse_tag_attrs(m.group(1))
         raw_name = attrs.get("name", "")
         mime = attrs.get("mime", "").strip()
@@ -413,6 +605,7 @@ def extract_artifacts(
                 content=blob,
                 line_count=_line_count(blob, mime),
                 source_span=m.span(),
+                explicit=True,
             )
         )
         masked_spans.append(m.span())
@@ -471,6 +664,19 @@ def extract_artifacts(
     return extracted
 
 
+@dataclass(frozen=True)
+class ArtifactPersistCounts:
+    """How many EXPLICITLY-marked artifacts were attempted, and how many landed.
+
+    BF-866 (#1338 item 4): scoped to pass-1 tags on purpose. A pass-2 fenced
+    lift is not a save the agent asked for, so counting its failure would let a
+    partial-failure verdict accuse a reply that claimed nothing — the exact
+    false positive AD-1285 deleted a whole branch to avoid.
+    """
+
+    explicit_attempted: int = 0
+    explicit_persisted: int = 0
+
 async def replace_with_stubs(
     response_text: str,
     extracted: list[ExtractedArtifact],
@@ -481,7 +687,7 @@ async def replace_with_stubs(
     created_by: str,
     office_backend: str = "python-docx",
     libreoffice_path: str = "",
-) -> tuple[str, list[Artifact]]:
+) -> tuple[str, list[Artifact], ArtifactPersistCounts]:
     """Persist each extracted artifact and rewrite ``response_text``.
 
     For each extracted block, in source order:
@@ -494,13 +700,17 @@ async def replace_with_stubs(
     4. Replace the source span with the stub line.
 
     Replacements are applied in reverse order so earlier offsets stay
-    valid as the text shrinks. Returns the rewritten text + the
-    persisted ``Artifact`` rows in source order.
+    valid as the text shrinks. Returns the rewritten text, the persisted
+    ``Artifact`` rows in source order, and the explicit-tag attempt/persist
+    counts — a non-empty row list alone cannot distinguish full success from
+    two artifacts where only one landed (BF-866).
     """
+    explicit_attempted = sum(1 for ex in extracted if ex.explicit)
     if not extracted:
-        return response_text, []
+        return response_text, [], ArtifactPersistCounts()
 
     persisted: list[Artifact] = []
+    explicit_persisted = 0
     # First persist; collect (span, stub) pairs.
     stubs: list[tuple[tuple[int, int], str]] = []
     for ex in extracted:
@@ -538,6 +748,8 @@ async def replace_with_stubs(
             )
             continue
         persisted.append(artifact)
+        if ex.explicit:
+            explicit_persisted += 1
         stub = (
             f"[Artifact: {artifact.name} v{artifact.version} - "
             f"{ex.line_count} lines, {artifact.mime}]"
@@ -550,4 +762,7 @@ async def replace_with_stubs(
     for (start, end), stub in stubs:
         new_text = new_text[:start] + stub + new_text[end:]
 
-    return new_text, persisted
+    return new_text, persisted, ArtifactPersistCounts(
+        explicit_attempted=explicit_attempted,
+        explicit_persisted=explicit_persisted,
+    )

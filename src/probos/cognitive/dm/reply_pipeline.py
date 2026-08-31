@@ -1324,8 +1324,8 @@ class DmReplyPipeline:
                 cognitive_cfg, "artifact_fenced_threshold_lines", 40,
             )
             from probos.cognitive.dm.artifact_extractor import (
+                count_explicit_artifact_markers,
                 extract_artifacts,
-                has_explicit_artifact_marker,
                 replace_with_stubs,
             )
             extracted = extract_artifacts(
@@ -1333,10 +1333,25 @@ class DmReplyPipeline:
                 fenced_threshold_lines=threshold,
                 existing_unnamed_count=unnamed_count,
             )
+            # BF-866 (#1338 item 3): counted off the raw text and BEFORE the
+            # early return. ``extract_artifacts`` deliberately skips a tag with
+            # a missing mime or an unsafe name, so a malformed save request used
+            # to leave the channel unrecorded -- the turn read as unassessed
+            # rather than as a save that was asked for and did not happen.
+            marked = count_explicit_artifact_markers(text)
             if not extracted:
+                if marked:
+                    self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
+                        WRITE_CHANNEL_ARTIFACT, wrote=False,
+                    )
+                    logger.warning(
+                        "BF-866: %d explicit artifact marker(s) for agent=%s in "
+                        "thread=%s but the extractor admitted none; disclosing",
+                        marked, self.ctx.agent_id, thread_id,
+                    )
                 return
             comm_cfg = getattr(self.ctx.runtime.config, "communications", None)
-            new_text, _artifacts = await replace_with_stubs(
+            new_text, _artifacts, counts = await replace_with_stubs(
                 text, extracted,
                 artifact_store=artifact_store,
                 attachment_store=attachment_store,
@@ -1346,38 +1361,43 @@ class DmReplyPipeline:
                 libreoffice_path=getattr(comm_cfg, "libreoffice_path", ""),
             )
             self.ctx.response_text = new_text
-            if _artifacts:
-                # AD-1285 (#1087): an artifact reached the ArtifactStore, so
-                # this turn DID write. The no-write direction below is gated on
-                # an explicit <artifact> marker, because ``extract_artifacts``
-                # has a second pass that lifts any fenced block of >= 40 lines
-                # with no marker and no save claim from the agent -- recording
-                # THAT as a channel which wrote nothing would let Branch 1,
-                # which reads no text at all, append a save disclosure to a
+            if marked:
+                # AD-1285 (#1087): the verdict is reported against what the
+                # agent ASKED to save, never against what got lifted. The
+                # pass-2 branch of ``extract_artifacts`` takes any fenced block
+                # of >= 40 lines with no marker and no save claim; recording
+                # THAT as a channel which wrote nothing would let the guard --
+                # which reads no text at all -- append a save disclosure to a
                 # reply that described no save.
+                #
+                # BF-866 (#1338 item 4): three outcomes, not two. Counting any
+                # non-empty ``_artifacts`` as success made two artifacts where
+                # only one landed indistinguishable from two that both landed,
+                # and left the unsaved block sitting in the Captain-visible
+                # reply. ``explicit_persisted`` cannot exceed ``marked`` -- both
+                # come from the same fence-aware scan -- so the partial verdict
+                # is unreachable when every save the agent asked for landed.
+                persisted = counts.explicit_persisted
+                self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
+                    WRITE_CHANNEL_ARTIFACT,
+                    wrote=persisted > 0,
+                    partial=persisted < marked,
+                )
+                if persisted < marked:
+                    logger.warning(
+                        "AD-1285/BF-866: %d of %d explicit artifact(s) "
+                        "persisted for agent=%s in thread=%s; disclosing",
+                        persisted, marked, self.ctx.agent_id, thread_id,
+                    )
+            elif _artifacts:
                 self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
                     WRITE_CHANNEL_ARTIFACT, wrote=True,
                 )
+            if _artifacts:
                 logger.info(
                     "AD-797: extracted %d artifact(s) from agent=%s reply "
                     "in thread=%s",
                     len(_artifacts), self.ctx.agent_id, thread_id,
-                )
-            elif has_explicit_artifact_marker(text):
-                # AD-1285 (#1087): an explicit <artifact> tag asked for a save
-                # and nothing persisted -- ``replace_with_stubs`` swallows an
-                # ``add_version`` failure and returns only the rows that landed.
-                # Without this the channel stays unrecorded, 4m abstains, and a
-                # failed artifact write reaches the Captain reading like a
-                # success. Gated on the explicit marker for the reason above:
-                # a pass-2 lift is not a save the agent claimed.
-                self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
-                    WRITE_CHANNEL_ARTIFACT, wrote=False,
-                )
-                logger.warning(
-                    "AD-1285: artifact marker present for agent=%s in "
-                    "thread=%s but no artifact persisted; disclosing",
-                    self.ctx.agent_id, thread_id,
                 )
         except Exception as exc:
             logger.warning(
@@ -1827,8 +1847,10 @@ class DmReplyPipeline:
 
         Compares :class:`WriteLedger` against itself -- which durable-write
         channels ran this turn versus which of them produced a write -- and
-        appends one honest sentence when a channel ran and wrote nothing. The
-        reply is only the surface the disclosure lands on; no text is read.
+        appends one honest sentence when a channel ran and wrote nothing
+        (``MARKER_WROTE_NOTHING``) or wrote only some of what was asked for
+        (``MARKER_WROTE_PARTIALLY``, BF-866 #1338 item 4). The reply is only
+        the surface the disclosure lands on; no text is read.
         Never blocks and never rewrites the agent's substance (#13(c): a
         refusal that ends the work is a capability ceiling in a governance
         costume).
@@ -1854,11 +1876,12 @@ class DmReplyPipeline:
 
             logger.warning(
                 "AD-1285: write-claim guard verdict=%s agent=%s thread=%s "
-                "ran_without_writing=%s wrote=%s",
+                "ran_without_writing=%s wrote_partially=%s wrote=%s",
                 verdict.value,
                 self.ctx.agent_id,
                 self.ctx.chat_thread_id,
                 sorted(self.ctx.write_ledger.wrote_nothing),
+                sorted(self.ctx.write_ledger.wrote_partially),
                 sorted(self.ctx.write_ledger.wrote),
             )
             self.ctx.response_text = (

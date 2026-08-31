@@ -70,17 +70,35 @@ class WriteLedger:
     consulted: frozenset[str] = frozenset()
     #: Channels that produced at least one write.
     wrote: frozenset[str] = frozenset()
+    #: BF-866 (#1338 item 4): channels that wrote SOME of what was asked for and
+    #: not all of it. Disjoint from :attr:`wrote_nothing` by construction, and a
+    #: strict subset of :attr:`wrote` -- "some landed" is a different fact from
+    #: "none landed", and collapsing them would either mute the partial case or
+    #: overstate it as a total failure.
+    wrote_partially: frozenset[str] = frozenset()
 
     @property
     def evaluated(self) -> bool:
         """Whether any durable-write channel ran on this turn."""
         return bool(self.consulted)
 
-    def consulted_with(self, channel: str, *, wrote: bool) -> "WriteLedger":
-        """Record that ``channel`` ran, and whether it wrote."""
+    def consulted_with(
+        self, channel: str, *, wrote: bool, partial: bool = False,
+    ) -> "WriteLedger":
+        """Record that ``channel`` ran, whether it wrote, and whether it wrote
+        only part of what was asked for.
+
+        ``partial`` is ignored unless ``wrote`` is also True: a channel that
+        persisted nothing is a total failure, and the stronger, truer verdict
+        must not be downgraded by a caller passing the pair inconsistently.
+        """
         return WriteLedger(
             consulted=self.consulted | {channel},
             wrote=(self.wrote | {channel}) if wrote else self.wrote,
+            wrote_partially=(
+                (self.wrote_partially | {channel})
+                if (wrote and partial) else self.wrote_partially
+            ),
         )
 
     @property
@@ -101,6 +119,9 @@ class ClaimVerdict(enum.Enum):
     ABSTAIN = "abstain"
     #: A write channel ran and produced nothing. Structural; no text is read.
     MARKER_WROTE_NOTHING = "marker_wrote_nothing"
+    #: BF-866: a write channel produced some of what was asked for, not all.
+    #: Structural too -- the count comes from the channel's own attempt record.
+    MARKER_WROTE_PARTIALLY = "marker_wrote_partially"
 
 
 def assess_write_claim(ledger: WriteLedger) -> ClaimVerdict:
@@ -113,11 +134,17 @@ def assess_write_claim(ledger: WriteLedger) -> ClaimVerdict:
 
     Abstains when no channel ran, so a turn with no write marker is
     byte-identical.
+
+    A channel that wrote nothing outranks a channel that wrote partially: both
+    disclosures are true of that turn, and the stronger one is the one the
+    Captain needs.
     """
     if not ledger.evaluated:
         return ClaimVerdict.ABSTAIN
     if ledger.wrote_nothing:
         return ClaimVerdict.MARKER_WROTE_NOTHING
+    if ledger.wrote_partially:
+        return ClaimVerdict.MARKER_WROTE_PARTIALLY
     return ClaimVerdict.ABSTAIN
 
 
@@ -131,6 +158,10 @@ _DISCLOSURES: dict[ClaimVerdict, str] = {
     ClaimVerdict.MARKER_WROTE_NOTHING: (
         "\n\n[A durable write was attempted on this turn and did not "
         "complete — nothing was saved.]"
+    ),
+    ClaimVerdict.MARKER_WROTE_PARTIALLY: (
+        "\n\n[More than one durable write was attempted on this turn and at "
+        "least one did not complete — part of the above was not saved.]"
     ),
 }
 
