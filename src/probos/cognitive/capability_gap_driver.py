@@ -87,7 +87,7 @@ class CapabilityGapDriver:
                 work_item_id=work_item_id,
                 tool_registry=getattr(self._runtime, "tool_registry", None),
                 permission_store=getattr(self._runtime, "tool_permission_store", None),
-                extension_registry=getattr(self._runtime, "extension_registry", None),
+                mcp_server_store=getattr(self._runtime, "mcp_server_store", None),
                 ontology=getattr(self._runtime, "ontology", None),
                 trust_network=getattr(self._runtime, "trust_network", None),
                 self_mod_pipeline=getattr(self._runtime, "self_mod_pipeline", None),

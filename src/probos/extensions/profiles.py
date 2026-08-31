@@ -45,9 +45,12 @@ def load_profile(profile_name: str, profiles_dir: Path | None = None) -> Extensi
 def apply_profile(profile_name: str, profiles_dir: Path | None = None) -> list[str]:
     """Return the list of extension_ids the profile enables.
 
-    Caller is responsible for invoking ExtensionRegistry.enable() on each
-    returned id (and ExtensionRegistry.disable() on extensions not in the
-    list, if they are currently ENABLED).
+    AD-1215 (#1172): this is a pure preset reader with **no production caller**.
+    Its only consumer was ``/extensions profile``, deleted with ExtensionRegistry
+    because that registry was never assigned on any runtime. Kept because it is a
+    standalone YAML loader that promises nothing to the Captain, but it enables
+    nothing today — a caller must pair it with whichever admission path (Pack,
+    overlay, MCP) the ids are meant to name.
     """
     profile = load_profile(profile_name, profiles_dir)
     return list(profile.enabled_extensions)

@@ -6220,9 +6220,10 @@ class SPCConfig(BaseModel):
 class ExtensionsConfig(BaseModel):
     """AD-481: Extension subsystem master config.
 
-    Mirrors src/probos/extensions/protocol.py:ExtensionsConfig — duplicated here
-    to avoid circular import (config.py is imported very early; the extensions/
-    package imports config indirectly via runtime).
+    AD-1215 (#1172) deleted the duplicate copy in
+    src/probos/extensions/protocol.py along with ExtensionRegistry; this is now
+    the only definition. ``enforce_sealed_core`` is the live field
+    (cognitive/builder.py reads it on the sealed-path pre-write check).
     """
 
     enabled: bool = False

@@ -27,7 +27,6 @@ from probos.experience.commands import (
     commands_diagnostic,
     commands_tool_access,
     commands_skill,
-    commands_extensions,
     commands_manifest,
 )
 from probos.experience.commands import commands_wake_word
@@ -109,7 +108,6 @@ class ProbOSShell:
         "/grant":     "Manage clearance grants (issue/revoke/list)",
         "/tool-access": "Manage tool permissions (grant/restrict/revoke/break-lock/list/check)",
         "/skill":     "Manage cognitive skills (list/discover/import/info/enrich/remove)",
-        "/extensions": "Manage extensions (list/enable/disable/remove/profile/info) — AD-481",
         "/clinical":  "Clinical telemetry (dreams/traces/breakers/audit) — Captain authority",
         "/diagnostic": "Run a multi-level system diagnostic (/diagnostic [<level>] [<focus>]) — AD-700a",
         "/debug":     "Toggle debug mode (/debug on|off)",
@@ -318,7 +316,6 @@ class ProbOSShell:
             "/grant":      lambda: commands_clearance.cmd_grant(rt, con, arg),
             "/tool-access": lambda: commands_tool_access.cmd_tool_access(rt, con, arg),
             "/skill":      lambda: commands_skill.cmd_skill(rt, con, arg),
-            "/extensions": lambda: commands_extensions.cmd_extensions(rt, con, arg),
             "/clinical":   lambda: commands_clinical.cmd_clinical(rt, con, arg),
             "/diagnostic": lambda: commands_diagnostic.cmd_diagnostic(rt, con, arg),
 

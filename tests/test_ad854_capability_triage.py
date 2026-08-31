@@ -32,12 +32,30 @@ class _FakeToolRegistry:
         return self._regs.get(tool_id)
 
 
-class _FakeExtensionRegistry:
-    def __init__(self, manifests: set[str]) -> None:
-        self._manifests = manifests
+class _FakeMcpServerRecord:
+    """Mirrors the McpServerRecord fields resolve_installable_mcp_server reads."""
 
-    def get_manifest(self, name: str):
-        return object() if name in self._manifests else None
+    def __init__(self, *, id: str, name: str, enabled: bool) -> None:
+        self.id = id
+        self.name = name
+        self.enabled = enabled
+
+
+class _FakeMcpServerStore:
+    def __init__(self, records: list[_FakeMcpServerRecord]) -> None:
+        self._records = records
+        self.set_enabled_calls: list[tuple[str, bool]] = []
+
+    def list_sync(self) -> list[_FakeMcpServerRecord]:
+        return list(self._records)
+
+    async def set_enabled(self, server_id: str, enabled: bool):
+        self.set_enabled_calls.append((server_id, enabled))
+        for rec in self._records:
+            if rec.id == server_id:
+                rec.enabled = enabled
+                return rec
+        return None
 
 
 class _FakeOntology:
@@ -260,14 +278,16 @@ class TestTriageAndFile:
 
     @pytest.mark.asyncio
     async def test_install_left_pending_for_captain(self, store):
-        # Arrange — known skill, no fast path for install
-        ext = _FakeExtensionRegistry(manifests={"pdf_extract"})
+        # Arrange — AD-1215: a registered-but-disabled MCP server is the install rung
+        mcp = _FakeMcpServerStore(
+            [_FakeMcpServerRecord(id="pdf_extract", name="pdf-extract", enabled=False)]
+        )
         # Act
         req = await triage_and_file(
             gap_target="pdf_extract",
             agent_id="agent-2",
             store=store,
-            extension_registry=ext,
+            mcp_server_store=mcp,
         )
         # Assert
         assert req.kind == "install"
@@ -275,7 +295,7 @@ class TestTriageAndFile:
 
     @pytest.mark.asyncio
     async def test_honest_degrades_to_build_with_no_registries(self, store, caplog):
-        # Arrange / Act — no tool or extension registry present
+        # Arrange / Act — no tool or MCP registry present
         import logging
 
         with caplog.at_level(logging.WARNING):

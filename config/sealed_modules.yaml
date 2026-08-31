@@ -17,5 +17,4 @@ sealed_globs:
   - "src/probos/cognitive/llm_client.py"
   - "src/probos/cognitive/architect.py"
   - "src/probos/extensions/protocol.py"
-  - "src/probos/extensions/registry.py"
   - "src/probos/extensions/sealed_core.py"

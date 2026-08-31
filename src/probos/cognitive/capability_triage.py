@@ -40,7 +40,7 @@ def triage(
 
     1. **grant** — a registered tool the agent lacks permission for
        (``tool_registered and not agent_has_permission``).
-    2. **install** — a known skill/extension (``skill_known``).
+    2. **install** — a registered-but-disabled MCP server (``skill_known``).
     3. **build** — otherwise (least reversible; always needs Captain approval).
     """
     if tool_registered and not agent_has_permission:
@@ -135,6 +135,48 @@ def _peer_precedent(
     return False
 
 
+def resolve_installable_mcp_server(
+    mcp_server_store: Any,
+    gap_target: str,
+) -> Any | None:
+    """AD-1215: the registered-but-disabled MCP server an ``install`` would enable.
+
+    This is the whole meaning of the ``install`` rung (#1205): a server the ship
+    already knows about, matched by id or by name, that is currently switched off.
+    An already-enabled server is deliberately **not** installable — the capability
+    is present, so the cheaper ``grant``/``build`` reasoning should stand instead
+    of filing an install that would be a no-op.
+
+    Matching is two-stage: an **exact id match wins over a name match**, because
+    an id is unique (uuid4 + ``PRIMARY KEY``, and ``update`` refuses to change it)
+    whereas a name is only unique within its own column and may equal some other
+    record's id. Within the winning axis, a disabled candidate is returned if one
+    exists, so an enabled record cannot mask a later installable one; ties fall to
+    store order, which ``list_sync`` reports deterministically (creation order).
+
+    Returns ``None`` when the store is absent, unreadable, or holds no match, and
+    when every candidate on the winning axis is already enabled.
+    """
+    if mcp_server_store is None:
+        return None
+    try:
+        records = mcp_server_store.list_sync()
+    except Exception:
+        logger.warning(
+            "AD-1215: mcp_server_store.list_sync() failed while resolving %r; "
+            "treating it as no installable server so triage falls through to build",
+            gap_target,
+            exc_info=True,
+        )
+        return None
+    by_id = [r for r in records if getattr(r, "id", None) == gap_target]
+    matched = by_id or [r for r in records if getattr(r, "name", None) == gap_target]
+    for rec in matched:
+        if not getattr(rec, "enabled", False):
+            return rec
+    return None
+
+
 _DESIGN_CONTEXT_KEYS = (
     "intent_description",
     "parameters",
@@ -164,7 +206,7 @@ async def triage_and_file(
     work_item_id: str | None = None,
     tool_registry: Any = None,
     permission_store: ToolPermissionStore | None = None,
-    extension_registry: Any = None,
+    mcp_server_store: Any = None,
     ontology: Any = None,
     trust_network: Any = None,
     self_mod_pipeline: Any = None,
@@ -190,14 +232,14 @@ async def triage_and_file(
     tool_reg = tool_registry.get(gap_target) if tool_registry is not None else None
     tool_registered = tool_reg is not None
     has_permission = _agent_has_permission(permission_store, agent_id, gap_target)
-    skill_known = (
-        extension_registry is not None
-        and extension_registry.get_manifest(gap_target) is not None
-    )
+    # AD-1215: the install rung means "enable a registered MCP server". It used to
+    # ask an ``extension_registry`` that no runtime ever assigned, so skill_known
+    # was unconditionally False and this rung could never be selected.
+    skill_known = resolve_installable_mcp_server(mcp_server_store, gap_target) is not None
 
-    if tool_registry is None and extension_registry is None:
+    if tool_registry is None and mcp_server_store is None:
         logger.warning(
-            "AD-854: triage for %r has no tool/extension registry; "
+            "AD-854: triage for %r has no tool/MCP registry; "
             "honest-degrading toward build",
             gap_target,
         )
@@ -460,22 +502,53 @@ async def fulfil_install(
 ) -> CapabilityRequest | None:
     """Install what an approved ``install`` request asked for, then fulfil it.
 
-    Delegates to ``runtime.ensure_dependency`` (AD-838c) — the ship's one
-    install actor — with ``pre_approved=True``, because the Captain has just
-    approved this exact request and must not be asked for it a second time.
-    Returns ``None`` without marking fulfilled when the dependency subsystem is
-    absent or the install did not succeed.
+    Two targets, resolved in that order:
+
+    1. **A registered-but-disabled MCP server** (AD-1215 / #1205) — the rung's
+       actual meaning. Enabled in place via ``McpServerStore.set_enabled``, which
+       persists the flip. Selection and fulfilment now agree; before AD-1215 the
+       rung was *selected* on an extension manifest and *satisfied* by a pip
+       install of the same name, so approving one would have installed something
+       unrelated.
+    2. **A Python dependency** — delegated to ``runtime.ensure_dependency``
+       (AD-838c) with ``pre_approved=True``, because the Captain has just approved
+       this exact request and must not be asked for it a second time.
+
+    Returns ``None`` without marking fulfilled when neither actor can satisfy the
+    target or the install did not succeed.
 
     There is no file-time caller: triage leaves every ``install`` rung pending
     for the Captain, so unlike ``fulfil_grant`` / ``fulfil_build`` this one is
     reached from the approval path alone.
     """
+    server = resolve_installable_mcp_server(
+        getattr(runtime, "mcp_server_store", None), target
+    )
+    if server is not None:
+        enabled = await runtime.mcp_server_store.set_enabled(server.id, True)
+        if enabled is None:
+            logger.warning(
+                "AD-1215: enabling MCP server %r for request %s returned no record; "
+                "the approval stands, the request is not fulfilled and can be retried",
+                target, request_id[:12],
+            )
+            return None
+        # The bridge registration that makes it callable without a restart is
+        # #1205's shared register_record() helper; until that lands the boot
+        # seed loop picks this up on the next start.
+        logger.info(
+            "AD-1215: enabled MCP server %s (%s) for approved install request %s",
+            enabled.id, enabled.name, request_id[:12],
+        )
+        return await store.mark_fulfilled(request_id)
+
     ensure = getattr(runtime, "ensure_dependency", None)
     if not callable(ensure):
         logger.warning(
-            "AD-1211: cannot fulfil install request %s for %r — the runtime "
-            "exposes no ensure_dependency; the approval is recorded but "
-            "nothing was installed and any blocked work item stays blocked",
+            "AD-1211: cannot fulfil install request %s for %r — no registered "
+            "MCP server matched and the runtime exposes no ensure_dependency; "
+            "the approval is recorded but nothing was installed and any blocked "
+            "work item stays blocked",
             request_id[:12], target,
         )
         return None
