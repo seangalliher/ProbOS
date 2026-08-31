@@ -590,6 +590,29 @@ class CognitiveConfig(BaseModel):
         ),
     )
 
+    # BF-864 (#1273): master switch for the AD-272 decision cache.
+    decision_cache_enabled: bool = Field(
+        default=False,
+        description=(
+            "BF-864: whether CognitiveAgent.decide() may consult and populate "
+            "the AD-272 in-memory decision cache. Default OFF, deliberately, "
+            "and this is NOT the AD-1157 default-OFF-safety-control mistake: "
+            "that rule governs controls which defend nothing while disabled. "
+            "This is an optimisation, and its observable effect on the vessel "
+            "today is exactly zero — _compute_cache_key hashed the whole "
+            "observation dict, including a fresh uuid4 per cycle, so it scored "
+            "0 hits across 21,243 cognitive-journal rows. BF-864 repairs the "
+            "key; this flag stops that repair from arming the cache as a side "
+            "effect, so OFF reproduces current production behaviour exactly. "
+            "It stays off because the prompt carries 'Current time: <UTC>' "
+            "(_build_temporal_context) and with TTLs of 120-3600s a hit would "
+            "serve a decision whose prompt asserted a time up to an hour "
+            "stale — the AD-984d confabulation class. Turning it on is a "
+            "decision to be taken once that staleness question is settled, "
+            "not one that should arrive silently inside a bugfix."
+        ),
+    )
+
 
 class SubTaskConfig(BaseModel):
     """AD-632a: Sub-task protocol configuration."""

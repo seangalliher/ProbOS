@@ -530,6 +530,22 @@ class TestSubTaskEventEmission:
 class TestCognitiveAgentIntegration:
     """CognitiveAgent sub-task executor wiring and decide() integration."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_decision_cache(self):
+        # BF-864: ``_DECISION_CACHES`` is module-global and these tests share an
+        # agent_type and instructions. They previously stayed isolated only
+        # because the cache key hashed the whole observation, so the differing
+        # ``intent_id`` ("id-1"/"id-2") split them — i.e. isolation depended on
+        # the very defect BF-864 fixes. With volatile identifiers correctly
+        # excluded from the key, both reduce to {"intent": "test"} and the second
+        # test would be served the first one's cached decision. No assertion is
+        # relaxed here; the shared mutable state is simply cleared, as
+        # TestDecisionCache in test_cognitive_agent.py already does.
+        from probos.cognitive.cognitive_agent import _DECISION_CACHES
+        _DECISION_CACHES.clear()
+        yield
+        _DECISION_CACHES.clear()
+
     def _make_agent(self):
         from probos.cognitive.cognitive_agent import CognitiveAgent
         agent = CognitiveAgent(

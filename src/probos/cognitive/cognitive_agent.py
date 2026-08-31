@@ -3481,10 +3481,16 @@ class CognitiveAgent(BaseAgent):
             return {"action": "error", "reason": "No LLM client available"}
 
         # --- Decision cache lookup ---
+        # BF-864: gated by ``cognitive.decision_cache_enabled``, default off.
+        # With the gate off nothing below is consulted or written, so the
+        # observable behaviour is the vessel's current one (0 hits in 21,243
+        # journalled decisions). The miss counter is still incremented so
+        # ``cache_stats()`` reports the same numbers it does today.
+        cache_enabled = self._decision_cache_enabled()
         cache = _DECISION_CACHES.setdefault(self.agent_type, {})
-        cache_key = self._compute_cache_key(observation)
+        cache_key = self._compute_cache_key(observation) if cache_enabled else ""
 
-        if cache_key in cache:
+        if cache_enabled and cache_key in cache:
             decision, created_at, ttl = cache[cache_key]
             if time.monotonic() - created_at < ttl:
                 _CACHE_HITS[self.agent_type] = _CACHE_HITS.get(self.agent_type, 0) + 1
@@ -3564,10 +3570,11 @@ class CognitiveAgent(BaseAgent):
             )
             chain_result = await self._execute_sub_task_chain(chain, observation)
             if chain_result is not None:
-                _cache_ttl = self._get_cache_ttl()
-                cache[cache_key] = (
-                    _cacheable_decision(chain_result), time.monotonic(), _cache_ttl,
-                )
+                if cache_enabled:
+                    _cache_ttl = self._get_cache_ttl()
+                    cache[cache_key] = (
+                        _cacheable_decision(chain_result), time.monotonic(), _cache_ttl,
+                    )
                 return chain_result
             logger.info("AD-632f: Falling back to single-call for %s", self.agent_type)
 
@@ -3593,10 +3600,11 @@ class CognitiveAgent(BaseAgent):
                 if _avatar_event_bus is not None:
                     _avatar_event_bus.notify(self.id)
             if chain_result is not None:
-                _cache_ttl = self._get_cache_ttl()
-                cache[cache_key] = (
-                    _cacheable_decision(chain_result), time.monotonic(), _cache_ttl,
-                )
+                if cache_enabled:
+                    _cache_ttl = self._get_cache_ttl()
+                    cache[cache_key] = (
+                        _cacheable_decision(chain_result), time.monotonic(), _cache_ttl,
+                    )
                 return chain_result
             # chain_result is None → fall through to _decide_via_llm()
             # Skills may already be loaded in observation from intent routing
@@ -3613,13 +3621,14 @@ class CognitiveAgent(BaseAgent):
                 )
 
         # --- Store in cache ---
-        ttl = self._get_cache_ttl()
-        cache[cache_key] = (_cacheable_decision(decision), time.monotonic(), ttl)
+        if cache_enabled:
+            ttl = self._get_cache_ttl()
+            cache[cache_key] = (_cacheable_decision(decision), time.monotonic(), ttl)
 
-        # Evict oldest entry if cache exceeds 1000 per agent type
-        if len(cache) > 1000:
-            oldest_key = min(cache, key=lambda k: cache[k][1])
-            del cache[oldest_key]
+            # Evict oldest entry if cache exceeds 1000 per agent type
+            if len(cache) > 1000:
+                oldest_key = min(cache, key=lambda k: cache[k][1])
+                del cache[oldest_key]
 
         return decision
 
@@ -11518,14 +11527,86 @@ class CognitiveAgent(BaseAgent):
 
     # --- Decision cache helpers (AD-272) ---
 
+    #: BF-864: the ONLY observation fields that participate in the cache key.
+    #: An allowlist, not a denylist: ``perceive()`` stamps a fresh ``uuid4``
+    #: into ``intent_id``/``correlation_id`` and a ``datetime.now()`` into
+    #: ``created_at`` on every cycle, and ~50 further ``_``-prefixed keys are
+    #: injected downstream from agent state (one, ``_emit_event_fn``, is a
+    #: callable whose ``default=str`` repr embeds a memory address). Hashing
+    #: the whole dict therefore produced a digest that could never recur —
+    #: measured 21,243 journal rows at a 0.000% hit rate. A denylist would
+    #: have to enumerate all of those and would silently re-break the key the
+    #: next time a volatile field is added, so exclusion is by construction.
+    _CACHE_KEY_FIELDS: tuple[str, ...] = (
+        "intent",      # selects the prompt-assembly branch in _build_user_message
+        "params",      # the request payload itself (text/query/session_history/...)
+        "context",     # free-text context, appended to the user message
+        "thread_id",   # AD-809 resolves a per-thread personality overlay from this,
+                       # so omitting it would serve thread A's answer inside thread B
+        # The four below are added by ``perceive()`` overrides and are snapshots
+        # of MUTABLE EXTERNAL STATE (the codebase, target files on disk, an HTTP
+        # fetch) that are read straight back into the prompt. None is a function
+        # of ``params``, and every one of these agents reaches the cached
+        # ``decide()`` — Architect and AgentDesigner do not override it at all,
+        # and Builder's override falls through to ``super().decide()``. Omitting
+        # them would let Builder apply an edit computed against a stale copy of
+        # the very file it is about to rewrite, which is a wrong answer rather
+        # than merely a stale one.
+        "codebase_context",   # ArchitectAgent.perceive
+        "file_context",       # BuilderAgent.perceive (reference files)
+        "target_context",     # BuilderAgent.perceive (files about to be rewritten)
+        "fetched_content",    # AgentDesigner.perceive (live HTTP fetch)
+    )
+
+    #: BF-864 finding, recorded not fixed — the ceiling on this whole approach.
+    #: The prompt is not a function of the observation. Temporal awareness
+    #: (``_build_temporal_context`` stamps a live UTC clock), working memory,
+    #: episodic recall and Oracle context are all read from agent and runtime
+    #: state at prompt-assembly time and none of them appears in the
+    #: observation, so no observation-derived key can fully capture what
+    #: determined the answer. The allowlist above makes the key *reachable*;
+    #: it cannot make it *complete*. This is the substantive reason
+    #: ``cognitive.decision_cache_enabled`` defaults to off.
+
     def _compute_cache_key(self, observation: dict) -> str:
-        """Compute a deterministic hash from instructions + observation."""
-        obs_str = json.dumps(observation, sort_keys=True, default=str)
+        """Compute a deterministic hash from instructions + allowlisted fields."""
+        material = {k: observation[k] for k in self._CACHE_KEY_FIELDS if k in observation}
+        obs_str = json.dumps(material, sort_keys=True, default=str)
         key_material = f"{self.instructions}|{obs_str}"
         return hashlib.sha256(key_material.encode()).hexdigest()[:16]
 
+    def _decision_cache_enabled(self) -> bool:
+        """Whether ``decide()`` may consult and populate the AD-272 cache.
+
+        Reads ``cognitive.decision_cache_enabled``, which defaults to False —
+        see that field for why an *optimisation* is allowed to ship off.
+
+        The ``isinstance`` test is load-bearing rather than defensive padding:
+        a large number of test rigs pass ``MagicMock`` runtimes whose attribute
+        access auto-vivifies to a truthy mock, which would silently arm the one
+        feature whose whole point is that it stays off until an operator asks
+        for it. Anything that is not a real ``bool`` reads as off.
+        """
+        runtime = getattr(self, "_runtime", None)
+        config = getattr(runtime, "config", None)
+        cognitive = getattr(config, "cognitive", None)
+        enabled = getattr(cognitive, "decision_cache_enabled", False)
+        return isinstance(enabled, bool) and enabled
+
     def _get_cache_ttl(self) -> float:
-        """Determine TTL based on agent instructions."""
+        """Determine TTL based on agent instructions.
+
+        BF-864 finding, recorded not fixed: these substrings are UNANCHORED, so
+        they match inside longer words. ``"now"`` matches inside ``"knowledge"``,
+        which is why the pathologist and the research specialist are classified
+        as real-time agents on 120s. ``calculator`` — the most cacheable agent
+        aboard — also lands on 120s because its instructions contain "current",
+        while ``news`` and ``web_search`` get the 300s default despite being the
+        most time-sensitive. Measured across the live crew: 11 agents on 120s,
+        4 on 300s, 2 on 3600s, with the classification mostly accidental.
+        Redesigning the heuristic is out of scope here and is moot while
+        ``decision_cache_enabled`` is off.
+        """
         if not self.instructions:
             return self._cache_ttl_seconds
         lower = self.instructions.lower()
@@ -11537,7 +11618,13 @@ class CognitiveAgent(BaseAgent):
 
     @classmethod
     def evict_cache_for_type(cls, agent_type: str, observation: dict | None = None) -> int:
-        """Evict cache entries for an agent type. Returns count of evicted entries."""
+        """Evict cache entries for an agent type. Returns count of evicted entries.
+
+        BF-864 finding, recorded not fixed: the ``observation`` branch is dead.
+        Passing one returns 0 without evicting anything, so a caller asking for
+        a targeted eviction silently gets none. Every present caller passes
+        ``None``, so no live path is affected.
+        """
         cache = _DECISION_CACHES.get(agent_type, {})
         if not cache:
             return 0

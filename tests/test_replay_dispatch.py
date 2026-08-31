@@ -511,6 +511,10 @@ class TestDecideIntegration:
         """Decision cache hit (from LLM path) → procedural memory NOT checked."""
         store = _make_store_mock(find_result=[])  # No procedural matches
         rt = _make_runtime_with_store(store)
+        # BF-864: the AD-272 cache is off unless configured on. A real bool is
+        # required — the gate rejects the auto-vivified MagicMock otherwise left
+        # behind by this attribute chain.
+        rt.config.cognitive.decision_cache_enabled = True
         llm = self._make_llm()
         agent = ReplayTestAgent(llm_client=llm, runtime=rt, pool="test")
         obs = {"intent": "test_intent", "params": {"message": "do it"}}

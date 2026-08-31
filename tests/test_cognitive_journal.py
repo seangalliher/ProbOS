@@ -250,6 +250,16 @@ class TestDecideJournalIntegration:
         mock_journal.record = AsyncMock()
         rt = MagicMock(spec=ProbOSRuntime)
         rt.cognitive_journal = mock_journal
+        # BF-864: the AD-272 cache is off unless configured on. ``config`` is
+        # set in ProbOSRuntime.__init__ rather than on the class, so a spec'd
+        # mock does not carry it — attach a real one.
+        from types import SimpleNamespace
+
+        from probos.config import CognitiveConfig
+
+        rt.config = SimpleNamespace(
+            cognitive=CognitiveConfig(decision_cache_enabled=True)
+        )
 
         llm = MockLLMClient()
         agent = _TestAgent(llm_client=llm, runtime=rt, pool="test")
@@ -262,6 +272,30 @@ class TestDecideJournalIntegration:
         # Second call should have cached=True
         second_call_kwargs = mock_journal.record.call_args_list[1][1]
         assert second_call_kwargs["cached"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_cached_row_when_decision_cache_disabled(self):
+        """BF-864: with the gate at its default, no cached=True row is written.
+
+        The counterpart of test 10. Identical observations twice, and the
+        journal must show two independent LLM decisions rather than a hit —
+        which is what the vessel records today (21,243 rows, none cached).
+        """
+        mock_journal = MagicMock()
+        mock_journal.record = AsyncMock()
+        rt = MagicMock(spec=ProbOSRuntime)
+        rt.cognitive_journal = mock_journal
+
+        llm = MockLLMClient()
+        agent = _TestAgent(llm_client=llm, runtime=rt, pool="test")
+        obs = {"intent": "test", "params": {"q": "cache_test"}, "context": ""}
+
+        await agent.decide(obs)
+        await agent.decide(obs)
+
+        assert mock_journal.record.call_count == 2
+        assert llm.call_count == 2
+        assert [c[1]["cached"] for c in mock_journal.record.call_args_list] == [False, False]
 
     @pytest.mark.asyncio
     async def test_journal_failure_doesnt_block_decide(self):

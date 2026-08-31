@@ -325,10 +325,10 @@ class TestDecisionCache:
         _CACHE_MISSES.clear()
 
     @pytest.mark.asyncio
-    async def test_decision_cache_hit(self):
+    async def test_decision_cache_hit(self, decision_cache_runtime):
         """Second call with same observation returns cached result (no LLM call)."""
         llm = MockLLMClient()
-        agent = SampleCogAgent(llm_client=llm, pool="test")
+        agent = SampleCogAgent(llm_client=llm, pool="test", runtime=decision_cache_runtime)
         obs = {"intent": "test_intent", "params": {"q": "hello"}, "context": ""}
 
         result1 = await agent.decide(obs)
@@ -352,12 +352,12 @@ class TestDecisionCache:
         assert llm.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_decision_cache_ttl_expiry(self, monkeypatch):
+    async def test_decision_cache_ttl_expiry(self, monkeypatch, decision_cache_runtime):
         """Expired cache entries trigger a new LLM call."""
         import probos.cognitive.cognitive_agent as ca
 
         llm = MockLLMClient()
-        agent = SampleCogAgent(llm_client=llm, pool="test")
+        agent = SampleCogAgent(llm_client=llm, pool="test", runtime=decision_cache_runtime)
         obs = {"intent": "test_intent", "params": {"q": "hello"}, "context": ""}
 
         await agent.decide(obs)
@@ -415,13 +415,13 @@ class TestDecisionCache:
         assert stats["test_type"]["misses"] == 3
 
     @pytest.mark.asyncio
-    async def test_cache_eviction_on_overflow(self):
+    async def test_cache_eviction_on_overflow(self, decision_cache_runtime):
         """Cache evicts oldest entry when exceeding 1000 entries."""
         import time as _time
         from probos.cognitive.cognitive_agent import _DECISION_CACHES
 
         llm = MockLLMClient()
-        agent = SampleCogAgent(llm_client=llm, pool="test")
+        agent = SampleCogAgent(llm_client=llm, pool="test", runtime=decision_cache_runtime)
 
         # Pre-fill cache with 1000 entries, oldest at created_at=1.0
         cache = _DECISION_CACHES.setdefault(agent.agent_type, {})
@@ -438,10 +438,10 @@ class TestDecisionCache:
         assert "key_0" not in cache  # oldest (created_at=1.0) evicted
 
     @pytest.mark.asyncio
-    async def test_cached_response_has_cached_flag(self):
+    async def test_cached_response_has_cached_flag(self, decision_cache_runtime):
         """Cache hits include 'cached': True in the decision dict."""
         llm = MockLLMClient()
-        agent = SampleCogAgent(llm_client=llm, pool="test")
+        agent = SampleCogAgent(llm_client=llm, pool="test", runtime=decision_cache_runtime)
         obs = {"intent": "test_intent", "params": {"q": "flag"}, "context": ""}
 
         result1 = await agent.decide(obs)
@@ -450,6 +450,23 @@ class TestDecisionCache:
         result2 = await agent.decide(obs)
         assert result2["cached"] is True
         assert result2["action"] == "execute"
+
+    @pytest.mark.asyncio
+    async def test_cache_is_off_unless_configured_on(self):
+        """BF-864: the same two calls miss twice when the gate is at its default.
+
+        This is the counterpart of ``test_cached_response_has_cached_flag`` and
+        the reason that test now takes ``decision_cache_runtime``: without an
+        explicit opt-in the AD-272 cache is inert, which is the vessel's
+        current behaviour (0 hits in 21,243 journalled decisions).
+        """
+        llm = MockLLMClient()
+        agent = SampleCogAgent(llm_client=llm, pool="test")
+        obs = {"intent": "test_intent", "params": {"q": "flag"}, "context": ""}
+
+        assert "cached" not in await agent.decide(obs)
+        assert "cached" not in await agent.decide(obs)
+        assert llm.call_count == 2
 
 
 # ---------------------------------------------------------------------------

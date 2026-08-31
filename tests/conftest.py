@@ -209,6 +209,28 @@ def real_nats(monkeypatch):
 
 
 @pytest.fixture
+def decision_cache_runtime():
+    """BF-864: minimal runtime that turns the AD-272 decision cache ON.
+
+    ``cognitive.decision_cache_enabled`` defaults to False, so any test that
+    asserts ``decide()`` served a *hit* has to opt in explicitly. Pass the
+    result as ``runtime=`` to the agent under test.
+
+    It carries the real ``CognitiveConfig`` rather than a mock, so renaming or
+    dropping the field reddens the tests that depend on it, and a
+    ``SimpleNamespace`` rather than a ``MagicMock`` so no other runtime
+    attribute auto-vivifies into something truthy.
+    """
+    from types import SimpleNamespace
+
+    from probos.config import CognitiveConfig
+
+    return SimpleNamespace(
+        config=SimpleNamespace(cognitive=CognitiveConfig(decision_cache_enabled=True)),
+    )
+
+
+@pytest.fixture
 def mock_runtime():
     """Shared spec'd ProbOSRuntime mock (BF-079 Phase 2)."""
     from probos.runtime import ProbOSRuntime
