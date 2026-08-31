@@ -269,7 +269,13 @@ async def test_an_answer_too_big_for_the_wire_is_refused_not_submitted() -> None
     reply = await _reply_bytes(result_value="y" * 4096, max_payload=1024)
     assert reply is not None
     assert reply["success"] is False
-    assert "body budget" in (reply["error"] or "")
+    # BF-863: this pinned ``"body budget" in reply["error"]`` -- the ValueError's
+    # own text, put on the wire by the handler-error branch. That branch answers
+    # a PEER, so pinning the exception message made an information leak a
+    # contract. The property this test is actually about -- a refused answer
+    # still produces a failure reply instead of silence -- is unchanged.
+    assert reply["error"] == "nats_intent_handler_failed"
+    assert "body budget" not in (reply["error"] or "")
 
 
 @pytest.mark.asyncio
@@ -454,7 +460,12 @@ async def test_an_unserializable_ANSWER_still_fails_the_reply() -> None:
     reply = await _reply_bytes(metadata={}, result_value={"blob": object()})
     assert reply is not None
     assert reply["success"] is False
-    assert "not JSON serializable" in (reply["error"] or "")
+    # BF-863: this pinned ``"not JSON serializable" in reply["error"]``, which is
+    # json's own message about the caller's payload, sent to a peer. The
+    # fail-fast property under test is that the reply is an honest failure
+    # rather than a hollow ``success=True``; that is what is asserted now.
+    assert reply["error"] == "nats_intent_handler_failed"
+    assert "not JSON serializable" not in (reply["error"] or "")
 
 
 @pytest.mark.asyncio
@@ -497,7 +508,12 @@ async def test_the_handler_error_reply_still_reaches_the_caller() -> None:
     reply = await _reply_bytes(raises=RuntimeError("handler exploded"))
     assert reply is not None
     assert reply["success"] is False
-    assert reply["error"] == "handler exploded"
+    # BF-863: this pinned ``reply["error"] == "handler exploded"`` -- the
+    # handler's own exception text, verbatim on the wire to a peer. The reply
+    # still reaches the caller, which is what this test is named for; it just
+    # no longer carries a message raised on this node.
+    assert reply["error"] == "nats_intent_handler_failed"
+    assert "handler exploded" not in (reply["error"] or "")
 
 
 # ── the probe matches the consumer ────────────────────────────────

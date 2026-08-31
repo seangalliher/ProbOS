@@ -40,6 +40,14 @@ _COGNITIVE_HANDLER_LATENCY_MS = 30_000.0
 _MAX_HANDLER_LATENCY_SAMPLES = 200
 _MAX_HANDLER_METRIC_KEYS = 1_000
 
+# BF-863 (#1341): the wire vocabulary for "a local handler raised". The
+# exception MESSAGE never crosses this boundary -- it is produced by code
+# running on THIS node and can carry local paths, credentials or payload
+# fragments, while the requester is a peer. `federation/bridge.py` has held
+# this contract since AD-730-4 (log the type alone, substitute a stable code);
+# the NATS inbound handlers did not, and answered peers with `str(e)`.
+_NATS_HANDLER_FAILED = "nats_intent_handler_failed"
+
 # BF-747: characters NATS forbids in a durable consumer name. A dot is the
 # subject separator, so `agent-dispatch-perception.vision_aggregator` is not a
 # name the server can hold -- and it does not say so. It TIMES OUT, which is why
@@ -617,8 +625,14 @@ class IntentBus:
                                 "can encode; the caller will time out",
                                 agent_id[:12], budget,
                             )
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
-                logger.warning("NATS intent handler error for %s: %s", agent_id[:8], e)
+                # BF-863: type only, never the message -- see _NATS_HANDLER_FAILED.
+                logger.warning(
+                    "NATS intent handler failed for %s action=%s exception_type=%s",
+                    agent_id[:8], _NATS_HANDLER_FAILED, type(e).__name__,
+                )
                 if msg.reply:
                     intent_id = (
                         msg.data.get("id", "") if isinstance(msg.data, dict) else ""
@@ -627,7 +641,7 @@ class IntentBus:
                         intent_id=intent_id,
                         agent_id=agent_id,
                         success=False,
-                        error=str(e),
+                        error=_NATS_HANDLER_FAILED,
                         confidence=0.0,
                     )
                     budget = self._reply_budget(msg)
@@ -644,7 +658,7 @@ class IntentBus:
                         # holding nothing -- exactly the outcome this BF exists
                         # to prevent, reached by its own error path.
                         payload = IntentBus._smallest_error_bytes(
-                            intent_id, str(e), budget
+                            intent_id, _NATS_HANDLER_FAILED, budget
                         )
                         if payload is None:
                             logger.error(
@@ -657,11 +671,19 @@ class IntentBus:
                             return
                     try:
                         await msg.respond_encoded(payload)
-                    except Exception:
+                    except Exception as send_exc:
+                        # BF-863: this reported the send failure with
+                        # ``exc_info=True``, and Python chains the exception
+                        # being handled onto it -- so the handler's message
+                        # arrived in the log through the traceback even after
+                        # the format string stopped carrying it. The type of
+                        # the SEND failure is the diagnostic BF-805 wanted.
                         logger.error(
                             "BF-805: the error reply to intent %s on agent %s "
-                            "could not be sent; the caller will time out",
-                            intent_id[:16], agent_id[:12], exc_info=True,
+                            "could not be sent; the caller will time out "
+                            "(exception_type=%s)",
+                            intent_id[:16], agent_id[:12],
+                            type(send_exc).__name__,
                         )
 
         sub = await self._nats_bus.subscribe(subject, _on_nats_intent)
@@ -792,12 +814,31 @@ class IntentBus:
                     logger.debug("AD-654b: No queue for %s, direct dispatch", agent_id[:12])
                     await handler(intent_msg)
                     await msg.ack()
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
+                # BF-863: this callback sends no reply, so nothing leaked to the
+                # peer -- but the message still reached the log, and the type is
+                # all the log needs to name the failure.
                 logger.warning(
-                    "AD-654b: Dispatch callback error for %s: %s",
-                    agent_id[:8], e,
+                    "AD-654b: Dispatch callback failed for %s action=term "
+                    "exception_type=%s",
+                    agent_id[:8], type(e).__name__,
                 )
-                await msg.term()
+                try:
+                    await msg.term()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as term_exc:
+                    # A term() failure must not escape: nats_bus's subscriber
+                    # wrapper logs callback exceptions with exc_info, and the
+                    # chained __context__ would carry the handler's message --
+                    # the leak this BF closes, re-entering through the traceback
+                    # rather than the format string.
+                    logger.warning(
+                        "AD-654b: term failed for %s exception_type=%s",
+                        agent_id[:8], type(term_exc).__name__,
+                    )
 
         # BF-747: sanitised, because the comment that used to sit here said the
         # name "must be NATS-safe (alphanumeric + dash)" and then interpolated
