@@ -15,6 +15,7 @@ must stay pinned:
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -143,19 +144,37 @@ async def test_hand_built_incomplete_dir_with_a_valid_manifest_is_refused_by_nam
 def test_stale_incomplete_directories_are_swept_on_the_next_tick(
     tmp_path: Path,
 ) -> None:
+    """AD-1296 D2/D3 retargeted this test rather than deleting it.
+
+    It used to plant a bare ``<ts>.incomplete`` and assert ``not
+    stale.exists()`` -- AD-1265 swept any directory whose ownership marker it
+    could not read, which is the branch review then measured deleting a
+    directory another process held open. A name that does not parse now means
+    *unknown owner*, and unknown means keep, count and warn.
+
+    So the sweep is still pinned here, on the one case it can prove: a
+    directory naming this PID with a run id no longer in flight. The legacy
+    name is kept, and its survival plus its report are asserted so the change
+    is visible rather than silently absent.
+    """
     svc, data_dir, backup_root = _service(tmp_path)
     _make_sqlite_db(data_dir / "payload.db")
-    stale = backup_root / f"20200101-000000{INCOMPLETE_SUFFIX}"
+    stale = backup_root / f"20200101-000000.{os.getpid()}-0ddba11c{INCOMPLETE_SUFFIX}"
     (stale / "data").mkdir(parents=True)
     (stale / "data" / "torn.db").write_bytes(b"half a copy")
+    legacy = backup_root / f"20200101-000000{INCOMPLETE_SUFFIX}"
+    (legacy / "data").mkdir(parents=True)
+    (legacy / "data" / "torn.db").write_bytes(b"half a copy")
 
     result = svc.snapshot()
 
     assert result.succeeded is True
     assert not stale.exists(), "a crashed tick's working directory was never collected"
-    assert sorted(p.name for p in backup_root.iterdir()) == [
-        Path(result.snapshot_dir).name
-    ]
+    assert legacy.exists(), "an unparseable name was deleted on an unprovable guess"
+    assert result.orphaned_working_dirs == [str(legacy)]
+    assert sorted(p.name for p in backup_root.iterdir()) == sorted(
+        [Path(result.snapshot_dir).name, legacy.name]
+    )
 
 
 # ---------------------------------------------------------------------------

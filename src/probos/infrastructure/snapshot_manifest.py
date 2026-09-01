@@ -63,12 +63,6 @@ MANIFEST_NAME = "manifest.json"
 #: hard-linking never sources from one.
 INCOMPLETE_SUFFIX = ".incomplete"
 
-#: Ownership marker written inside every working directory before that
-#: directory is visible under its ``.incomplete`` name. It is what lets the
-#: stale sweep tell an abandoned directory from a peer's in-flight one, and it
-#: is removed on promotion so no promoted snapshot carries it.
-OWNER_NAME = "owner.json"
-
 STATE_COPIED = "copied"
 STATE_LINKED = "linked"
 STATE_FAILED = "failed"

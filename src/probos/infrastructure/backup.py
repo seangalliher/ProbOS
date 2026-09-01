@@ -31,8 +31,6 @@ from __future__ import annotations
 
 import calendar
 import contextlib
-import errno
-import json
 import logging
 import os
 import re
@@ -55,7 +53,6 @@ from probos.infrastructure.backup_inventory import (
 )
 from probos.infrastructure.snapshot_manifest import (
     INCOMPLETE_SUFFIX,
-    OWNER_NAME,
     STATE_COPIED,
     STATE_FAILED,
     STATE_LINKED,
@@ -77,55 +74,44 @@ _SNAPSHOT_DIR_RE = re.compile(r"^(\d{8}-\d{6})(?:-\d{6})?$")
 _DEFAULT_RETAIN_DAYS = 3
 _DEFAULT_MAX_TOTAL_BYTES = 8 * 1024**3
 
-#: Where a working directory is assembled before it is renamed into place
-#: under its ``.incomplete`` name. The owner PID is in the name so a stranded
-#: one can be attributed without reading anything out of it.
-_STAGING_PREFIX = ".staging-"
-_STAGING_RE = re.compile(r"^\.staging-(\d+)-[0-9a-f]{16}$")
+#: ``<ts>[-<micros>].<pid>-<runid>.incomplete``. The owner is in the *name*, so
+#: it is present the instant the directory exists and cannot be truncated,
+#: emptied or made unreadable. AD-1265 kept it in an ``owner.json`` instead;
+#: review then measured a zero-byte marker reading as abandoned and the sweep
+#: removing a directory another process held open. A name has no parse-failure
+#: mode, so that branch does not exist here.
+_WORKING_DIR_RE = re.compile(
+    r"^(\d{8}-\d{6}(?:-\d{6})?)\.(\d+)-([0-9a-f]{8})" + re.escape(INCOMPLETE_SUFFIX) + r"$"
+)
 
-#: Backstop for the single case PID liveness cannot decide: an owner that died
-#: and whose PID the OS then handed to an unrelated, still-running process.
-#: Without it that directory is never swept and accumulates forever.
+_LIVE_LOCK = threading.Lock()
+#: Run ids this process is writing *right now*. Two BackupService instances in
+#: one process share a PID, so the PID alone cannot tell a live sibling's
+#: directory from one an earlier tick left behind; this can.
 #:
-#: This is a bound on accumulation, **not** a safety property. It can in
-#: principle delete a working directory a peer is still writing, which is why
-#: it sits orders of magnitude beyond any plausible snapshot duration instead
-#: of close to one. Ownership -- not this -- is what makes the sweep safe.
-_OWNER_STALE_SECONDS = 24 * 3600
-
-_ACTIVE_LOCK = threading.Lock()
-#: Working directory paths this process intends to write, and how many
-#: in-flight attempts claim each. Two BackupService instances in one process
-#: share a PID, so liveness alone cannot tell a live sibling's directory from
-#: one this process abandoned on an earlier tick; this can.
-#:
-#: A count rather than a set because two attempts legitimately claim the same
-#: ``<ts>`` name in the same second -- one wins the rename and one falls
-#: through to the collision-suffixed name. With a set, the loser's release
-#: revoked the winner's claim and the sweep then ate a live directory: the
-#: reported defect, reached from inside the fix for it.
-_ACTIVE_CLAIMS: dict[str, int] = {}
+#: Keyed on the run id, not the path. AD-1265 keyed it on the path and two
+#: attempts racing for the same ``<ts>`` therefore shared one key, so the
+#: loser's release revoked the winner's claim and the sweep ate a live
+#: directory -- a defect reached from inside the fix for it. A run id is unique
+#: per attempt by construction, so two attempts can never collide on a key and
+#: no reference counting is needed. They also no longer contend for a directory
+#: name at all: each gets its own.
+_LIVE_RUNS: set[str] = set()
 
 
-def _claim_active(working_dir: Path) -> None:
-    key = str(working_dir)
-    with _ACTIVE_LOCK:
-        _ACTIVE_CLAIMS[key] = _ACTIVE_CLAIMS.get(key, 0) + 1
+def _run_begin(run_id: str) -> None:
+    with _LIVE_LOCK:
+        _LIVE_RUNS.add(run_id)
 
 
-def _release_active(working_dir: Path) -> None:
-    key = str(working_dir)
-    with _ACTIVE_LOCK:
-        remaining = _ACTIVE_CLAIMS.get(key, 0) - 1
-        if remaining > 0:
-            _ACTIVE_CLAIMS[key] = remaining
-        else:
-            _ACTIVE_CLAIMS.pop(key, None)
+def _run_end(run_id: str) -> None:
+    with _LIVE_LOCK:
+        _LIVE_RUNS.discard(run_id)
 
 
-def _is_active(working_dir: Path) -> bool:
-    with _ACTIVE_LOCK:
-        return _ACTIVE_CLAIMS.get(str(working_dir), 0) > 0
+def _run_is_live(run_id: str) -> bool:
+    with _LIVE_LOCK:
+        return run_id in _LIVE_RUNS
 
 
 @dataclass(frozen=True)
@@ -156,6 +142,9 @@ class BackupResult:
     #: rather than deleted so the failure can be inspected, and it is swept by
     #: a later tick.
     incomplete_dir: str = ""
+    #: Working directories left alone because ownership could not be proven.
+    orphaned_working_dirs: list[str] = field(default_factory=list)
+    orphaned_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -169,6 +158,17 @@ class PruneResult:
     #: Which bound removed something: ``""`` (nothing pruned), ``"days"``, or
     #: ``"bytes"`` when the ceiling took anything the age rule would have kept.
     bound: str = ""
+
+
+@dataclass
+class SweepResult:
+    """What one working-directory sweep reclaimed, and what it refused to."""
+
+    reclaimed_dirs: list[str] = field(default_factory=list)
+    #: Working directories this process cannot prove are finished. Kept, never
+    #: deleted, and reported so the leak is not silent. See AD-1296 D3.
+    foreign_dirs: list[str] = field(default_factory=list)
+    foreign_bytes: int = 0
 
 
 def parse_snapshot_timestamp(name: str) -> float | None:
@@ -241,23 +241,26 @@ class BackupService:
         on, and does so while reporting success.
         """
         started = time.time()
+        run_id = uuid.uuid4().hex[:8]
 
-        working_dir, final_dir, failure = self._make_snapshot_dir(started)
-        if working_dir is None or final_dir is None:
-            return self._fail(failure[0], started, failure[1])
+        # Registered before the directory exists, never after: the sweep must
+        # never see a directory of ours whose run is not yet marked live.
+        _run_begin(run_id)
         try:
+            working_dir, final_dir, failure = self._make_snapshot_dir(started, run_id)
+            if working_dir is None or final_dir is None:
+                return self._fail(failure[0], started, failure[1])
             return self._write_snapshot(started, working_dir, final_dir)
         finally:
-            # The peer sweep consults these claims. Leaving one behind would
-            # make a finished directory immortal, so it is released on every
-            # path out -- promoted, failed or raised.
-            _release_active(working_dir)
+            # Retired on every path out -- promoted, failed or raised. Leaving
+            # one live would make this run's directory immortal.
+            _run_end(run_id)
 
     def _write_snapshot(
         self, started: float, working_dir: Path, final_dir: Path,
     ) -> BackupResult:
-        """Fill ``working_dir`` and promote it. Claimed as active by caller."""
-        self._sweep_incomplete(exclude=working_dir)
+        """Fill ``working_dir`` and promote it. Its run id is live in the caller."""
+        sweep = self._sweep_incomplete(exclude=working_dir)
 
         files_copied: list[str] = []
         files_linked: list[str] = []
@@ -312,7 +315,8 @@ class BackupService:
                 working_dir, len(files_copied), exc,
             )
             return self._fail(
-                str(working_dir), started, str(exc), incomplete_dir=str(working_dir),
+                str(working_dir), started, str(exc),
+                incomplete_dir=str(working_dir), sweep=sweep,
             )
 
         manifest = SnapshotManifest(
@@ -367,6 +371,8 @@ class BackupService:
             pruned_dirs=pruned,
             retention_bound=retention_bound,
             incomplete_dir="" if succeeded else str(working_dir),
+            orphaned_working_dirs=list(sweep.foreign_dirs),
+            orphaned_bytes=sweep.foreign_bytes,
         )
         if succeeded:
             self._emit_complete(result)
@@ -471,21 +477,19 @@ class BackupService:
     # ------------------------------------------------------------------
 
     def _make_snapshot_dir(
-        self, started: float,
+        self, started: float, run_id: str,
     ) -> tuple[Path | None, Path | None, tuple[str, str]]:
-        """Reserve ``<ts>.incomplete`` and the ``<ts>`` name it promotes to.
+        """Create this run's private working directory and pick its promoted name.
 
-        The directory is assembled elsewhere and *renamed* into place, so a
-        ``<ts>.incomplete`` that a peer can see always already carries its
-        ownership marker. Creating it first and writing the marker second
-        would leave a window in which a peer's sweep sees an unowned
-        directory -- the same defect this protocol closes, reached by another
-        route.
+        One ``mkdir``. No staging directory and no reservation rename: the name
+        carries the owner, so it is never briefly unowned, and two peers in the
+        same second get different directories instead of racing for one.
 
-        The rename is also the reservation: it fails when the target exists
-        (on Windows always; on POSIX because a working directory is never
-        empty, it always holds its marker), so two services in the same
-        second still cannot both claim one ``<ts>``.
+        ``final_dir`` is only *chosen* here. Promotion is what claims it, and
+        ``os.replace`` refuses a directory onto an existing directory, so a peer
+        that picks the same name loses at promotion and degrades down the
+        already-tested ``promote_error`` path. The reservation this replaces
+        bought one avoided wasted build and cost every failure in AD-1296 D1.
         """
         timestamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime(started))
         for base in (
@@ -493,42 +497,21 @@ class BackupService:
             f"{timestamp}-{int((started % 1) * 1_000_000):06d}",
         ):
             final_dir = self._backup_root / base
-            working_dir = self._backup_root / f"{base}{INCOMPLETE_SUFFIX}"
             if final_dir.exists():
                 continue
+            working_dir = (
+                self._backup_root
+                / f"{base}.{os.getpid()}-{run_id}{INCOMPLETE_SUFFIX}"
+            )
             try:
-                staging = self._stage_owned_dir(started)
+                working_dir.mkdir(parents=True, exist_ok=False)
             except OSError as exc:
-                return None, None, (str(working_dir), f"mkdir failed: {exc}")
-            # Claimed before the directory is visible, never after.
-            _claim_active(working_dir)
-            try:
-                os.rename(staging, working_dir)
-            except OSError as exc:
-                _release_active(working_dir)
-                shutil.rmtree(staging, ignore_errors=True)
-                if isinstance(exc, FileExistsError) or exc.errno in (
-                    errno.EEXIST, errno.ENOTEMPTY,
-                ):
-                    continue
                 return None, None, (str(working_dir), f"mkdir failed: {exc}")
             return working_dir, final_dir, ("", "")
         return None, None, (
             str(self._backup_root / timestamp),
             "mkdir failed: both the timestamped and collision-suffixed names exist",
         )
-
-    def _stage_owned_dir(self, started: float) -> Path:
-        """Build a marked working directory under a name no sweep will touch."""
-        staging = self._backup_root / (
-            f"{_STAGING_PREFIX}{os.getpid()}-{uuid.uuid4().hex[:16]}"
-        )
-        staging.mkdir(parents=True, exist_ok=False)
-        (staging / OWNER_NAME).write_text(
-            json.dumps({"pid": os.getpid(), "created_at": started}),
-            encoding="utf-8",
-        )
-        return staging
 
     @staticmethod
     def _promote(working_dir: Path, final_dir: Path) -> Path:
@@ -540,155 +523,95 @@ class BackupService:
         partially-written snapshot visible under a name that reads as
         finished, and process death between "manifest written" and "promoted"
         would leave exactly that on disk.
-
-        The ownership marker is dropped *after* the rename, never before:
-        clearing it first would expose an unowned working directory to a
-        peer's sweep for as long as the rename takes.
         """
         os.replace(working_dir, final_dir)
-        try:
-            (final_dir / OWNER_NAME).unlink(missing_ok=True)
-        except OSError:
-            logger.debug(
-                "AD-1265: could not drop the ownership marker from promoted "
-                "snapshot %s; it is inert there", final_dir, exc_info=True,
-            )
         return final_dir
 
-    def _sweep_incomplete(self, *, exclude: Path) -> None:
-        """Remove working directories nobody is writing any more.
+    def _sweep_incomplete(self, *, exclude: Path) -> SweepResult:
+        """Reclaim this process's finished working directories. Nothing else.
 
-        A crash leaves one behind and nothing else will ever collect it, so
-        the sweep has to exist -- an ``.incomplete`` directory can never be
-        admitted (promotion is the sole marker), which makes keeping them
-        unbounded cost for no recovery value.
+        A working directory can never be admitted -- promotion is the sole
+        marker of completeness -- so one left behind is pure cost. But AD-1265
+        measured what reclaiming aggressively costs: a peer's sweep deleted a
+        live service's directory and the victim failed ``ENOENT`` mid-copy,
+        and a zero-byte ownership marker was enough to make a held-open
+        directory read as abandoned.
 
-        But **"not promoted" and "abandoned" are different states**, and
-        review measured what conflating them costs: a second service's sweep
-        deleted a first service's *active* working directory, and the first
-        then failed with ``No such file or directory`` on a file it was
-        mid-copy. :meth:`_is_abandoned` is what tells the two apart.
+        So this sweep answers only the question it can answer exactly. A
+        directory naming *this* PID and a run id this process is not currently
+        writing is finished, with certainty, from memory, with no syscall.
+        Everything else is left alone and returned to the caller to report: a
+        foreign PID cannot be judged (PIDs recycle and are not comparable
+        across hosts), and neither can a name this code did not write.
 
-        The failure itself survives in the event log and in the warning
-        below, which names the directory before removing it.
+        Deleting on "unknown" trades a silent correctness loss in the one
+        component whose job is not losing data for a visible,
+        operator-reclaimable disk cost. See AD-1296 D3, and
+        ``probos backup-reclaim``.
         """
         try:
             children = list(self._backup_root.iterdir())
         except OSError:
-            return
-        now = time.time()
-        stale = [
-            child for child in children
-            if child != exclude
-            and child.name.endswith(INCOMPLETE_SUFFIX)
-            and child.is_dir()
-            and self._is_abandoned(child, now)
-        ]
+            return SweepResult()
+
+        result = SweepResult()
+        mine: list[Path] = []
+        for child in children:
+            if child == exclude or not child.name.endswith(INCOMPLETE_SUFFIX):
+                continue
+            if not child.is_dir():
+                continue
+            match = _WORKING_DIR_RE.match(child.name)
+            if match is None:
+                # Predates this naming, or nothing this code wrote. Unknown owner.
+                result.foreign_dirs.append(str(child))
+                continue
+            pid, run_id = int(match.group(2)), match.group(3)
+            if pid != os.getpid():
+                result.foreign_dirs.append(str(child))
+                continue
+            if _run_is_live(run_id):
+                continue  # A sibling BackupService in this process is writing it.
+            mine.append(child)
+
         # Oldest first, so a sweep interrupted part-way still made progress on
         # the directories abandoned longest. Names are timestamp-prefixed, so
         # lexical order is chronological order.
-        stale.sort(key=lambda child: child.name)
-        for child in stale:
+        mine.sort(key=lambda child: child.name)
+        for child in mine:
             manifest = read_manifest(child)
             failed = [e.label for e in manifest.failed] if manifest else []
             try:
                 shutil.rmtree(child)
             except OSError as exc:
                 logger.warning(
-                    "AD-1265: could not remove abandoned working directory %s "
-                    "(%s); it stays on disk and is retried next tick",
+                    "AD-1296: could not remove this process's finished working "
+                    "directory %s (%s); it stays on disk and is retried next tick",
                     child, exc,
                 )
                 continue
-            logger.warning(
-                "AD-1265: removed abandoned snapshot working directory %s "
+            result.reclaimed_dirs.append(str(child))
+            logger.info(
+                "AD-1296: reclaimed finished working directory %s "
                 "(never promoted; failed files: %s)",
                 child, ", ".join(failed) or "unrecorded",
             )
-        self._sweep_staging(children)
 
-    @staticmethod
-    def _is_abandoned(working_dir: Path, now: float) -> bool:
-        """Whether nothing is writing ``working_dir`` any more.
-
-        Four cases, and the first two are why a PID alone cannot decide this
-        -- two BackupService instances in one process share one:
-
-        * in this process's active set -- a live sibling. Never sweep.
-        * marked with this PID but not active -- this process's own earlier
-          tick, which failed and left its bytes for inspection. Sweep.
-        * marked with another PID that is alive -- a peer may be mid-copy.
-          Never sweep.
-        * marked with a dead PID, or unmarked -- abandoned. Sweep.
-
-        What this does **not** decide: whether a live foreign PID is really
-        *the* process that made the directory. The OS recycles PIDs, so a
-        dead owner can be impersonated by an unrelated live process, and that
-        directory would then never be swept. :data:`_OWNER_STALE_SECONDS` is
-        the backstop for exactly that case and nothing else.
-        """
-        if _is_active(working_dir):
-            return False
-        pid, created_at = BackupService._read_owner(working_dir)
-        if pid is None:
-            # Unmarked: it predates this protocol, or lost its marker. Every
-            # directory this code creates is marked before it is visible, so
-            # nothing that is live can land here.
-            return True
-        if pid == os.getpid():
-            return True
-        if not is_pid_alive(pid):
-            return True
-        if created_at and now - created_at > _OWNER_STALE_SECONDS:
-            logger.warning(
-                "AD-1265: working directory %s is still claimed by live PID %d "
-                "after %.1f h; treating that PID as recycled and sweeping. If "
-                "that process really is still writing this snapshot it will "
-                "fail -- raise _OWNER_STALE_SECONDS",
-                working_dir, pid, (now - created_at) / 3600.0,
-            )
-            return True
-        logger.debug(
-            "AD-1265: leaving working directory %s alone -- PID %d is alive and "
-            "may be mid-copy; not promoted is not the same as abandoned",
-            working_dir, pid,
+        result.foreign_bytes = sum(
+            self._dir_size(Path(p)) for p in result.foreign_dirs
         )
-        return False
-
-    def _sweep_staging(self, children: Sequence[Path]) -> None:
-        """Collect staging directories a crash stranded before their rename.
-
-        The owner PID is in the *name*, so there is no marker to read and
-        therefore no window in which one is missing. This process's own PID
-        reads as alive, so a sibling's half-built staging directory is never
-        touched.
-        """
-        for child in children:
-            match = _STAGING_RE.match(child.name)
-            if not match or not child.is_dir():
-                continue
-            if is_pid_alive(int(match.group(1))):
-                continue
-            try:
-                shutil.rmtree(child)
-            except OSError as exc:
-                logger.debug(
-                    "AD-1265: could not remove stranded staging directory %s (%s)",
-                    child, exc,
-                )
-                continue
-            logger.info("AD-1265: removed stranded staging directory %s", child)
-
-    @staticmethod
-    def _read_owner(working_dir: Path) -> tuple[int | None, float]:
-        """``(pid, created_at)`` from the ownership marker, or ``(None, 0.0)``."""
-        try:
-            raw = json.loads(
-                (working_dir / OWNER_NAME).read_text(encoding="utf-8")
+        if result.foreign_dirs:
+            # Retention cannot see these -- _SNAPSHOT_DIR_RE matches promoted
+            # names only -- so without this line the leak is completely silent.
+            logger.warning(
+                "AD-1296: %d working director(ies) totalling %d bytes belong to "
+                "another process or predate this naming and are NOT reclaimed "
+                "automatically; retention cannot see them. Run "
+                "'probos backup-reclaim --backup-root %s' to review them: %s",
+                len(result.foreign_dirs), result.foreign_bytes, self._backup_root,
+                ", ".join(result.foreign_dirs[:5]),
             )
-            return int(raw["pid"]), float(raw.get("created_at", 0.0) or 0.0)
-        except (OSError, ValueError, TypeError, KeyError):
-            return None, 0.0
+        return result
 
     @staticmethod
     def _describe(
@@ -854,6 +777,7 @@ class BackupService:
         error: str,
         *,
         incomplete_dir: str = "",
+        sweep: SweepResult | None = None,
     ) -> BackupResult:
         result = BackupResult(
             succeeded=False,
@@ -861,6 +785,8 @@ class BackupService:
             duration_seconds=time.time() - started,
             error=error,
             incomplete_dir=incomplete_dir,
+            orphaned_working_dirs=list(sweep.foreign_dirs) if sweep else [],
+            orphaned_bytes=sweep.foreign_bytes if sweep else 0,
         )
         self._emit_failed(result)
         return result

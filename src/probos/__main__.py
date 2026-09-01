@@ -1358,6 +1358,127 @@ def _cmd_verify_snapshot(args: argparse.Namespace) -> int:
     return report.exit_code
 
 
+def _cmd_backup_reclaim(args: argparse.Namespace) -> int:
+    """Handle ``probos backup-reclaim`` (AD-1296 §4).
+
+    The operator's half of AD-1296 D3. The automatic sweep reclaims only what
+    it can prove is finished -- a working directory naming this process's PID
+    and a run id it is not writing -- and *keeps* everything else, because
+    deleting on "unknown" was measured destroying a live peer's snapshot
+    mid-copy. Retention cannot see a working directory either, so without this
+    command "keep on unknown" would have no bound at all.
+
+    The ``owner PID N is not running`` note is a **hint for a human, never an
+    input to an automatic delete**. It is wrong across hosts (a PID from
+    another machine is meaningless here) and wrong under PID recycling (a dead
+    owner's number can be reissued to an unrelated live process). That is
+    precisely why it informs the operator's judgement instead of driving the
+    sweep's.
+
+    Read-only listing takes no AD-816 pidfile guard, following
+    ``verify-snapshot``. ``--force`` does: it deletes, and a live vessel may
+    own one of the directories it is about to remove.
+    """
+    import time as _time
+
+    from probos.infrastructure.backup import _WORKING_DIR_RE
+    from probos.infrastructure.snapshot_manifest import INCOMPLETE_SUFFIX
+    from probos.pidfile_guard import is_pid_alive
+
+    console = Console()
+    raw_root = getattr(args, "backup_root", "") or ""
+    if not raw_root:
+        console.print("[red]✗[/red] --backup-root is required")
+        return 2
+    backup_root = Path(raw_root).expanduser().resolve()
+    if not backup_root.is_dir():
+        console.print(f"[red]✗[/red] --backup-root is not a directory: {backup_root}")
+        return 2
+
+    force = bool(getattr(args, "force", False))
+    if force:
+        # AD-816: --force deletes, so it must refuse to run against a data dir
+        # a live runtime owns. The listing path deliberately does not.
+        from probos.pidfile_guard import (
+            AnotherInstanceRunning,
+            assert_no_other_instance,
+        )
+
+        data_dir = (getattr(args, "data_dir", None) or _default_data_dir()).resolve()
+        try:
+            assert_no_other_instance(data_dir)
+        except AnotherInstanceRunning as exc:
+            console.print(f"[red]✗[/red] {exc}")
+            console.print(
+                "[yellow]A running vessel may own one of these working "
+                "directories. Stop it before using --force, or drop --force to "
+                "list them read-only.[/yellow]"
+            )
+            return 2
+
+    now = _time.time()
+    orphans: list[tuple[Path, int, float, str]] = []
+    for child in sorted(backup_root.iterdir(), key=lambda p: p.name):
+        if not child.name.endswith(INCOMPLETE_SUFFIX) or not child.is_dir():
+            continue
+        size = sum(
+            f.stat().st_size
+            for f in child.rglob("*")
+            if f.is_file()
+        )
+        try:
+            age = now - child.stat().st_mtime
+        except OSError:
+            age = 0.0
+        match = _WORKING_DIR_RE.match(child.name)
+        if match is None:
+            owner = "unparseable name (predates AD-1296, or not written by ProbOS)"
+        else:
+            pid = int(match.group(2))
+            owner = f"PID {pid}, run {match.group(3)}"
+            if pid == os.getpid():
+                owner += " (this process)"
+            elif not is_pid_alive(pid):
+                owner += " -- hint: owner PID is not running (advisory only)"
+        orphans.append((child, size, age, owner))
+
+    if not orphans:
+        console.print(f"[green]✓[/green] no working directories under {backup_root}")
+        return 0
+
+    total = sum(size for _c, size, _a, _o in orphans)
+    console.print(
+        f"[yellow]{len(orphans)}[/yellow] working director(ies) under "
+        f"{backup_root}, {total} bytes total. Retention does not count these."
+    )
+    for child, size, age, owner in orphans:
+        console.print(f"  {child.name}  {size} bytes  {age / 3600.0:.1f} h  {owner}")
+
+    if not force:
+        console.print(
+            "[yellow]Nothing removed.[/yellow] Re-run with --force to delete "
+            "them. The liveness notes above are hints, not proof of ownership: "
+            "they are meaningless across hosts and can be wrong after PID reuse."
+        )
+        return 1
+
+    removed = 0
+    for child, _size, _age, _owner in orphans:
+        try:
+            shutil.rmtree(child)
+        except OSError as exc:
+            console.print(f"[red]✗[/red] could not remove {child}: {exc}")
+            continue
+        removed += 1
+        console.print(f"[green]✓[/green] removed {child.name}")
+    if removed != len(orphans):
+        console.print(
+            f"[red]✗[/red] removed {removed} of {len(orphans)}; the rest remain"
+        )
+        return 1
+    return 0
+
+
 def _cmd_rebuild_episodic(args: argparse.Namespace) -> int:
     """Handle ``probos rebuild-episodic`` (AD-819).
 
@@ -2430,6 +2551,27 @@ def main() -> None:
     # named on the command line and nothing else, so accepting them would
     # promise a scoping the handler does not perform.
 
+    # --- probos backup-reclaim (AD-1296) ---
+    backup_reclaim_parser = subparsers.add_parser(
+        "backup-reclaim",
+        help=(
+            "List (and optionally delete) backup working directories the "
+            "automatic sweep cannot prove are finished (AD-1296)"
+        ),
+    )
+    backup_reclaim_parser.add_argument(
+        "--backup-root", type=Path, required=True,
+        help="Backup root to inspect (data/backups)",
+    )
+    backup_reclaim_parser.add_argument(
+        "--force", action="store_true",
+        help="Delete the listed directories (refuses while a vessel owns the data dir)",
+    )
+    backup_reclaim_parser.add_argument(
+        "--data-dir", type=Path, default=None,
+        help="Data directory checked for a running vessel; only used with --force",
+    )
+
     # --- probos rebuild-episodic (AD-819) ---
     rebuild_parser = subparsers.add_parser(
         "rebuild-episodic",
@@ -2530,6 +2672,10 @@ def main() -> None:
     if args.command == "verify-snapshot":
         import sys
         sys.exit(_cmd_verify_snapshot(args))
+
+    if args.command == "backup-reclaim":
+        import sys
+        sys.exit(_cmd_backup_reclaim(args))
 
     if args.command == "rebuild-episodic":
         import sys
