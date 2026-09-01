@@ -34,7 +34,14 @@ class AnotherInstanceRunning(RuntimeError):
         self.pidfile = pidfile
 
 
-def _is_pid_alive(pid: int) -> bool:
+def is_pid_alive(pid: int) -> bool:
+    """Whether ``pid`` names a process that is still running.
+
+    Public because it is the repo's one answer to that question: AD-1265's
+    backup sweep decides whether a working directory is abandoned or merely
+    someone else's in-flight write, and a second implementation of liveness
+    would be a second set of platform bugs.
+    """
     if pid <= 0:
         return False
     if sys.platform == "win32":
@@ -136,7 +143,7 @@ def acquire_pidfile(data_dir: Path) -> Path:
         if _try_atomic_create(pidfile, own_pid):
             return pidfile
 
-    if _is_pid_alive(existing):
+    if is_pid_alive(existing):
         raise AnotherInstanceRunning(
             pid=existing, data_dir=Path(data_dir), pidfile=pidfile
         )
@@ -170,7 +177,7 @@ def assert_no_other_instance(data_dir: Path) -> None:
     existing = _read_pid_from(pidfile)
     if existing is None or existing == os.getpid():
         return
-    if _is_pid_alive(existing):
+    if is_pid_alive(existing):
         raise AnotherInstanceRunning(
             pid=existing, data_dir=Path(data_dir), pidfile=pidfile
         )

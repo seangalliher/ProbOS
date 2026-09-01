@@ -10,9 +10,9 @@ import pytest
 
 from probos.pidfile_guard import (
     AnotherInstanceRunning,
-    _is_pid_alive,
     acquire_pidfile,
     assert_no_other_instance,
+    is_pid_alive,
 )
 
 
@@ -114,12 +114,12 @@ def test_assert_does_not_unlink_live_pidfile(tmp_path):
 
 
 def test_is_pid_alive_for_own_process():
-    assert _is_pid_alive(os.getpid()) is True
+    assert is_pid_alive(os.getpid()) is True
 
 
 def test_is_pid_alive_rejects_invalid_pids():
-    assert _is_pid_alive(0) is False
-    assert _is_pid_alive(-1) is False
+    assert is_pid_alive(0) is False
+    assert is_pid_alive(-1) is False
 
 
 def test_another_instance_error_message_includes_remediation(tmp_path):

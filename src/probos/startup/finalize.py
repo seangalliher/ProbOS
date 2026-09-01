@@ -3709,20 +3709,28 @@ async def finalize_startup(
         from probos.infrastructure import (
             BackupService,
             SQLiteStorageBackend,
+            build_default_roots,
         )
         runtime.storage_backend = SQLiteStorageBackend()
         if config.infrastructure.backup_enabled:
             backup_root = runtime.data_dir / config.infrastructure.backup_subdir
             try:
                 backup_root.mkdir(parents=True, exist_ok=True)
+                roots = build_default_roots(runtime.data_dir, config)
                 runtime.backup_service = BackupService(
                     data_dir=runtime.data_dir,
                     backup_root=backup_root,
                     emit_event=runtime.emit_event,
+                    roots=roots,
+                    retain_days=config.infrastructure.backup_retain_days,
+                    max_total_bytes=config.infrastructure.backup_max_total_bytes,
                 )
                 logger.info(
-                    "AD-466: BackupService wired (backup_root=%s)",
-                    backup_root,
+                    "AD-466/AD-1265: BackupService wired (backup_root=%s, roots=%s, "
+                    "retain_days=%d, max_total_bytes=%d)",
+                    backup_root, [r.name for r in roots],
+                    config.infrastructure.backup_retain_days,
+                    config.infrastructure.backup_max_total_bytes,
                 )
             except OSError:
                 logger.warning(

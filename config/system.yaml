@@ -1223,15 +1223,16 @@ infrastructure:
   enabled: true
   backup_enabled: true
   backup_subdir: backups
-  # AD-1262: AD-466 wired BackupService but nothing ever called it. These
-  # drive the scheduler. Cadence x retention is a capacity decision: a full
-  # snapshot of this vessel is ~1.5 GB, so backup_max_total_bytes is the
-  # binding bound, not backup_retain_days.
+  # AD-1265: AD-466 wired BackupService but nothing ever called it. These drive
+  # the scheduler. The defaults are arithmetic, not taste: the included tier is
+  # ~559 MiB/tick (measured 2026-08-24), 6 h gives 4 ticks/day, and 3 days is
+  # 12 ticks => ~6.8 GiB, under the 8 GiB ceiling. Both bounds agree at this
+  # footprint, so backup_retain_days is what actually binds and
+  # backup_max_total_bytes is the valve. Raise the ceiling before the days.
   backup_interval_seconds: 21600.0
   backup_warmup_seconds: 120.0
-  backup_retain_days: 7
+  backup_retain_days: 3
   backup_max_total_bytes: 8589934592
-  backup_bulk_every_n: 4
   backup_include_archive_root: true
 security_infra:
   secrets_persistence_enabled: true

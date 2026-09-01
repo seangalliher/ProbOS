@@ -178,6 +178,7 @@ if TYPE_CHECKING:
     from probos.federation.mcp_server import FederationMCPServer
     from probos.federation.a2a.server import FederationA2AServer
     from probos.identity import AgentIdentityRegistry
+    from probos.infrastructure.backup import BackupResult, BackupService
     from probos.knowledge.records_store import RecordsStore
     from probos.knowledge.store import KnowledgeStore
     from probos.ontology import VesselOntologyService
@@ -521,6 +522,13 @@ class ProbOSRuntime:
         # AD-823: daily episodic backup task handle. Created in start();
         # held here so async hygiene rules (no fire-and-forget) are met.
         self._episodic_backup_task: asyncio.Task[None] | None = None
+
+        # AD-1265 (BF-842): the SQLite snapshot service and its scheduler.
+        # AD-466 constructed the service in finalize.py and nothing ever
+        # called it, so declaring the attribute here is not cosmetic -- it is
+        # the surface a consumer can actually be seen to read.
+        self.backup_service: BackupService | None = None
+        self._sqlite_backup_task: asyncio.Task[None] | None = None
 
         # --- Substrate ---
         self.registry = AgentRegistry()
@@ -3356,6 +3364,17 @@ class ProbOSRuntime:
             drain_on_shutdown=True,
         )
 
+        # AD-1265: the SQLite snapshot loop AD-466 never shipped (BF-842).
+        # Drain is required: a tick cancelled mid-copy would otherwise leave a
+        # torn '.incomplete' directory. Harmless under the promotion rule --
+        # nothing admits an unpromoted directory -- but the sweep should not
+        # be the primary defence.
+        self._sqlite_backup_task = self._spawn_background(
+            self._sqlite_backup_loop(),
+            name="sqlite-backup-loop",
+            drain_on_shutdown=True,
+        )
+
         # AD-828b: startup fully complete — the cognitive layer (dream_scheduler,
         # episodic_memory) is wired. A shutdown after this point that still skips
         # consolidation is a real failure, not a killed-mid-boot event.
@@ -3728,6 +3747,110 @@ class ProbOSRuntime:
         except asyncio.CancelledError:
             logger.debug("AD-824: _episodic_backup_loop cancelled")
             raise
+
+    async def _sqlite_backup_loop(self) -> None:
+        """AD-1265: the scheduler AD-466 never shipped (BF-842).
+
+        ``BackupService`` was constructed at startup and called by nothing --
+        three writes to ``runtime.backup_service`` in finalize.py, zero reads
+        anywhere in ``src/``. On the live vessel ``data/backups/`` held one
+        entry (``episodic/``, written by the unrelated AD-823 loop) and not a
+        single timestamped snapshot, ever.
+
+        Deliberate divergence from the AD-823 precedent: ``snapshot()`` is
+        synchronous and does blocking multi-hundred-MB file I/O, so it runs
+        through ``asyncio.to_thread``. Calling it directly would stall every
+        task on the loop for the duration of the copy.
+
+        The event-log row is written *here* rather than in ``BackupService``.
+        ``emit_event`` fans out to in-memory listeners and does not reach
+        ``events.db``; the diagnosis in #1313 queried ``events.db``, so the
+        loop -- which is on the event loop and can await -- writes the row the
+        operator will actually look for.
+        """
+        cfg = self.config.infrastructure
+        if not cfg.backup_enabled:
+            logger.info("AD-1265: sqlite backup disabled by config; loop exiting")
+            return
+        if self.backup_service is None:
+            logger.info(
+                "AD-1265: no BackupService wired (infrastructure.enabled=%s); "
+                "loop exiting without scheduling snapshots",
+                cfg.enabled,
+            )
+            return
+
+        # AD-825 warmup, staggered past the AD-823 episodic loop's 60s so the
+        # two do not contend for disk at boot.
+        try:
+            await asyncio.wait_for(
+                self._shutdown_event.wait(), timeout=cfg.backup_warmup_seconds,
+            )
+            return
+        except asyncio.TimeoutError:
+            pass
+        try:
+            while True:
+                if self._shutdown_event.is_set():
+                    return
+                try:
+                    service = self.backup_service
+                    if service is None:
+                        return
+                    result = await asyncio.to_thread(service.snapshot)
+                    await self._log_backup_tick(result)
+                except Exception:
+                    # Tier 2: a transient disk-full or permission flip must
+                    # not kill the task for the rest of the session.
+                    logger.warning("AD-1265: snapshot tick raised", exc_info=True)
+                # Deliberately NOT a ``finally: return``. A return inside
+                # finally swallows the in-flight exception, so a tick torn by
+                # the AD-824 cancel sweep would exit *normally* and shutdown
+                # could not tell a clean drain from a torn copy.
+                if self._shutdown_event.is_set():
+                    return
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown_event.wait(),
+                        timeout=cfg.backup_interval_seconds,
+                    )
+                    return
+                except asyncio.TimeoutError:
+                    pass  # normal idle tick
+        except asyncio.CancelledError:
+            logger.debug("AD-1265: _sqlite_backup_loop cancelled")
+            raise
+
+    async def _log_backup_tick(self, result: BackupResult) -> None:
+        """Persist one snapshot outcome to ``events.db`` (AD-1265)."""
+        try:
+            await self.event_log.log(
+                category="backup",
+                event=(
+                    EventType.BACKUP_COMPLETE.value
+                    if result.succeeded
+                    else EventType.BACKUP_FAILED.value
+                ),
+                detail=result.snapshot_dir,
+                data={
+                    "snapshot_dir": result.snapshot_dir,
+                    "files_copied": len(result.files_copied),
+                    "files_linked": len(result.files_linked),
+                    "files_failed": list(result.files_failed),
+                    "bytes_copied": result.bytes_copied,
+                    "snapshot_promoted": result.snapshot_promoted,
+                    "pruned_dirs": list(result.pruned_dirs),
+                    "retention_bound": result.retention_bound,
+                    "duration_seconds": result.duration_seconds,
+                    "error": result.error,
+                },
+            )
+        except Exception:
+            logger.warning(
+                "AD-1265: could not record backup tick in the event log "
+                "(snapshot_dir=%s); the snapshot itself is unaffected",
+                result.snapshot_dir, exc_info=True,
+            )
 
     def _refresh_roster_bridge(self) -> None:
         """Bridge for Phase 5: refresh emergent detector roster before dream_adapter exists."""

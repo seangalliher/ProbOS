@@ -1372,13 +1372,18 @@ Infodynamic telemetry configuration (AD-491).
 
 ## `infrastructure`
 
-Engineering infrastructure configuration (AD-466).
+Engineering infrastructure configuration (AD-466 / AD-1265).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
 | `enabled` | `bool` | `True` | — |  |
 | `backup_enabled` | `bool` | `True` | — |  |
 | `backup_subdir` | `str` | `'backups'` | — |  |
+| `backup_interval_seconds` | `float` | `21600.0` | ≥ 300.0 |  |
+| `backup_warmup_seconds` | `float` | `120.0` | ≥ 0.0 |  |
+| `backup_retain_days` | `int` | `3` | ≥ 1, ≤ 365 |  |
+| `backup_max_total_bytes` | `int` | `8589934592` | ≥ 67108864 |  |
+| `backup_include_archive_root` | `bool` | `True` | — |  |
 
 ## `security_infra`
 

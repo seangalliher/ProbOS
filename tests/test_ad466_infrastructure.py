@@ -37,6 +37,15 @@ def test_infrastructure_config_defaults() -> None:
     assert cfg.enabled is True
     assert cfg.backup_enabled is True
     assert cfg.backup_subdir == "backups"
+    # AD-1265: the scheduler knobs AD-466 never had. The defaults are
+    # arithmetic -- ~559 MiB/tick x 4 ticks/day x 3 days = ~6.8 GiB, under the
+    # 8 GiB ceiling -- so retain_days is what binds and the ceiling is the
+    # valve. AD-1262's retain_days=7 silently meant 2 at its own footprint.
+    assert cfg.backup_interval_seconds == 21600.0
+    assert cfg.backup_warmup_seconds == 120.0
+    assert cfg.backup_retain_days == 3
+    assert cfg.backup_max_total_bytes == 8 * 1024**3
+    assert cfg.backup_include_archive_root is True
 
 
 # ---------------------------------------------------------------------------
@@ -64,10 +73,16 @@ def test_backup_service_snapshot_creates_timestamped_dir(tmp_path: Path) -> None
     result = svc.snapshot()
 
     assert result.succeeded is True
-    assert "events.db" in result.files_copied
+    # AD-1265: files land under their root's namespace (<ts>/data/<rel>) so two
+    # roots cannot collide on a filename, and the label carries that prefix.
+    assert "data/events.db" in result.files_copied
     assert Path(result.snapshot_dir).exists()
-    assert (Path(result.snapshot_dir) / "events.db").exists()
+    assert (Path(result.snapshot_dir) / "data" / "events.db").exists()
     assert result.bytes_copied > 0
+    # AD-1265: promotion -- the atomic rename out of '.incomplete' -- is the
+    # sole marker of a finished snapshot.
+    assert result.snapshot_promoted is True
+    assert not Path(result.snapshot_dir).name.endswith(".incomplete")
 
 
 def test_backup_service_snapshot_handles_no_db_files(tmp_path: Path) -> None:
@@ -103,6 +118,11 @@ def test_backup_service_snapshot_emits_complete_event(tmp_path: Path) -> None:
     assert "files_copied" in payload
     assert "bytes_copied" in payload
     assert "duration_seconds" in payload
+    # AD-1265: additive fields, no new EventType.
+    assert payload["files_linked"] == []
+    assert payload["files_failed"] == []
+    assert payload["pruned_dirs"] == []
+    assert payload["retention_bound"] == ""
 
 
 def test_backup_service_snapshot_emits_failed_event_on_unwritable_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -145,7 +165,7 @@ def test_backup_service_uses_online_backup_api(tmp_path: Path) -> None:
     result = svc.snapshot()
 
     # Verify we can read the backed-up DB
-    backup_db = Path(result.snapshot_dir) / "events.db"
+    backup_db = Path(result.snapshot_dir) / "data" / "events.db"
     conn = sqlite3.connect(str(backup_db))
     rows = conn.execute("SELECT k, v FROM t").fetchall()
     conn.close()
@@ -153,7 +173,15 @@ def test_backup_service_uses_online_backup_api(tmp_path: Path) -> None:
 
 
 def test_backup_service_falls_back_to_file_copy_on_sqlite_error(tmp_path: Path) -> None:
-    """A non-SQLite file with a .db extension triggers the shutil.copyfile fallback."""
+    """A non-SQLite file with a .db extension triggers the shutil.copyfile fallback.
+
+    AD-1265 amendment: the fallback still runs -- the byte copy lands -- but
+    ``PRAGMA integrity_check`` then adjudicates it and refuses. AD-466 asserted
+    ``succeeded is True`` here; that was the ``succeeded = bool(files_copied)``
+    shape, which reported protection for a snapshot holding bytes nothing could
+    read. Under D3 there is no opaque tier: a ``*.db`` that is not a database
+    is a snapshot failure, loudly, rather than a silently accepted entry.
+    """
     data_dir = tmp_path / "data"
     backup_root = tmp_path / "backups"
     data_dir.mkdir()
@@ -165,10 +193,16 @@ def test_backup_service_falls_back_to_file_copy_on_sqlite_error(tmp_path: Path) 
     svc = BackupService(data_dir=data_dir, backup_root=backup_root)
     result = svc.snapshot()
 
-    assert result.succeeded is True
-    assert "fake.db" in result.files_copied
-    backup_path = Path(result.snapshot_dir) / "fake.db"
+    # The copyfile fallback still ran: the bytes are in the working directory.
+    backup_path = Path(result.snapshot_dir) / "data" / "fake.db"
     assert backup_path.exists()
+    assert backup_path.read_bytes() == b"not a sqlite database"
+
+    assert result.succeeded is False
+    assert result.snapshot_promoted is False
+    assert result.files_failed == ["data/fake.db"]
+    assert result.files_copied == []
+    assert Path(result.snapshot_dir).name.endswith(".incomplete")
 
 
 # ---------------------------------------------------------------------------

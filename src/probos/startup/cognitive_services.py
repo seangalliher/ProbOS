@@ -649,29 +649,20 @@ async def init_cognitive_services(
     archive_store = None
     if config.archive.enabled:
         try:
-            import os
-            import sys
-
+            from probos.config import resolve_archive_db_path
             from probos.knowledge.archive_store import ArchiveStore
             from probos.storage.sqlite_factory import default_factory
 
-            archive_db_path = config.archive.db_path
-            if not archive_db_path:
-                if sys.platform == "win32":
-                    archive_base = Path.home() / "AppData" / "Local" / "ProbOS" / "archive"
-                elif sys.platform == "darwin":
-                    archive_base = (
-                        Path.home() / "Library" / "Application Support" / "ProbOS" / "archive"
-                    )
-                else:
-                    xdg_data_home = os.environ.get("XDG_DATA_HOME")
-                    archive_base = (
-                        Path(xdg_data_home) / "ProbOS" / "archive"
-                        if xdg_data_home
-                        else Path.home() / ".local" / "share" / "ProbOS" / "archive"
-                    )
-                archive_base.mkdir(parents=True, exist_ok=True)
-                archive_db_path = str(archive_base / "archive.db")
+            # AD-1265: single source of truth for this path — the backup layer
+            # declares the archive dir as its own root and must not recompute
+            # the platform default independently, or an operator override
+            # silently goes unbacked.
+            resolved_archive_path = resolve_archive_db_path(config.archive)
+            if not config.archive.db_path:
+                # Only the computed default is created here, as before; an
+                # operator-supplied path is used as given.
+                resolved_archive_path.parent.mkdir(parents=True, exist_ok=True)
+            archive_db_path = str(resolved_archive_path)
 
             archive_store = ArchiveStore(archive_db_path, connection_factory=default_factory)
             await archive_store.initialize()

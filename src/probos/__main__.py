@@ -1329,6 +1329,35 @@ class _OfflinePairingVOStub:
         return self._sessions.pop(did, None) is not None
 
 
+def _cmd_verify_snapshot(args: argparse.Namespace) -> int:
+    """Handle ``probos verify-snapshot`` (AD-1265 §7).
+
+    Opens every file in a promoted snapshot through the normal connection
+    path and checks it against the manifest. Writes nothing -- deliberately
+    no AD-816 pidfile guard, because a read-only check must be runnable on a
+    live vessel. That is the difference from restore (AD-1266).
+    """
+    import asyncio as _asyncio
+
+    from probos.infrastructure.snapshot_verify import verify_snapshot
+
+    console = Console()
+    snapshot = Path(getattr(args, "snapshot", "") or "").expanduser()
+    if not snapshot:
+        console.print("[red]✗[/red] --snapshot is required")
+        return 2
+
+    report = _asyncio.run(verify_snapshot(snapshot.resolve()))
+    console.print(report.render())
+    if report.ok:
+        console.print("[green]✓[/green] snapshot verified")
+    else:
+        console.print(
+            "[red]✗[/red] snapshot did NOT verify; do not rely on it for recovery"
+        )
+    return report.exit_code
+
+
 def _cmd_rebuild_episodic(args: argparse.Namespace) -> int:
     """Handle ``probos rebuild-episodic`` (AD-819).
 
@@ -2385,6 +2414,22 @@ def main() -> None:
             help=f"Override source directory (default: ~/.{_src})",
         )
 
+    # --- probos verify-snapshot (AD-1265) ---
+    verify_snapshot_parser = subparsers.add_parser(
+        "verify-snapshot",
+        help=(
+            "Check a promoted backup snapshot against its manifest "
+            "(read-only, safe on a live vessel) (AD-1265)"
+        ),
+    )
+    verify_snapshot_parser.add_argument(
+        "--snapshot", type=Path, required=True,
+        help="Path to a promoted snapshot directory (data/backups/<timestamp>)",
+    )
+    # Deliberately no --data-dir / --config: the check reads the snapshot
+    # named on the command line and nothing else, so accepting them would
+    # promise a scoping the handler does not perform.
+
     # --- probos rebuild-episodic (AD-819) ---
     rebuild_parser = subparsers.add_parser(
         "rebuild-episodic",
@@ -2481,6 +2526,10 @@ def main() -> None:
     if args.command == "migrate":
         import sys
         sys.exit(_cmd_migrate(args))
+
+    if args.command == "verify-snapshot":
+        import sys
+        sys.exit(_cmd_verify_snapshot(args))
 
     if args.command == "rebuild-episodic":
         import sys

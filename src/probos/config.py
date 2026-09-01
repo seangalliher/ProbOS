@@ -3561,6 +3561,33 @@ class ArchiveConfig(BaseModel):
     db_path: str = ""
 
 
+def resolve_archive_db_path(archive: ArchiveConfig) -> Path:
+    """Effective location of the Ship's Archive database (AD-524 / AD-1265).
+
+    ``db_path`` is operator-overridable; only when it is empty does the
+    platform-branched default apply. AD-1265 needs this because the archive
+    lives *outside* ``data_dir`` and so has to be declared as its own backup
+    root -- and recomputing the platform default there would silently leave
+    an operator's overridden path unbacked.
+    """
+    import sys
+
+    if archive.db_path:
+        return Path(archive.db_path)
+    if sys.platform == "win32":
+        base = Path.home() / "AppData" / "Local" / "ProbOS" / "archive"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support" / "ProbOS" / "archive"
+    else:
+        xdg_data_home = os.environ.get("XDG_DATA_HOME")
+        base = (
+            Path(xdg_data_home) / "ProbOS" / "archive"
+            if xdg_data_home
+            else Path.home() / ".local" / "share" / "ProbOS" / "archive"
+        )
+    return base / "archive.db"
+
+
 class TelemetryConfig(BaseModel):
     """Ship's Telemetry configuration (AD-461)."""
 
@@ -4002,11 +4029,23 @@ class EngineeringConfig(BaseModel):
 
 
 class InfrastructureConfig(BaseModel):
-    """Engineering infrastructure configuration (AD-466)."""
+    """Engineering infrastructure configuration (AD-466 / AD-1265)."""
 
     enabled: bool = True
     backup_enabled: bool = True
     backup_subdir: str = "backups"
+
+    # AD-1265: AD-466 shipped the service with no scheduler; these drive it.
+    # Defaults are arithmetic, not taste. Measured 2026-08-24: the included
+    # tier is ~559 MiB/tick (immutable adds 91 MiB once, then hard-links).
+    # 6 h => 4 ticks/day; 3 days => 12 ticks => ~6.8 GiB, under the 8 GiB
+    # ceiling. Both bounds agree at this footprint, so retain_days means what
+    # it says. Raise max_total_bytes before raising retain_days.
+    backup_interval_seconds: float = Field(default=21600.0, ge=300.0)
+    backup_warmup_seconds: float = Field(default=120.0, ge=0.0)
+    backup_retain_days: int = Field(default=3, ge=1, le=365)
+    backup_max_total_bytes: int = Field(default=8 * 1024**3, ge=64 * 1024**2)
+    backup_include_archive_root: bool = True
 
 class DegradationConfig(BaseModel):
     """Saucer separation / graceful degradation (AD-459 / AD-459b).
