@@ -262,8 +262,8 @@ describe('AD-1291 span 1 — arrivals and the send path share one device', () =>
     seed();
     await mount(<ProfileChatTab agentId={AGENT_ID} />);
 
-    // PREMISE, asserted before anything else: the drain must actually be
-    // parked mid-utterance. A drain that never parked would make every
+    // PREMISE, asserted before anything else: the arbiter must actually be
+    // parked mid-utterance. An arbiter that never parked would make every
     // assertion below pass vacuously.
     await serverPushesBurst('ARRIVAL ONE.', 'ARRIVAL TWO.');
     await waitFor(() => expect(deviceTexts()).toEqual(['ARRIVAL ONE.']));
@@ -278,18 +278,24 @@ describe('AD-1291 span 1 — arrivals and the send path share one device', () =>
     const beforeFirstEnd = speakCalls.length;
     await endDevice(0);
     expect(beforeFirstEnd).toBe(1);
-    await waitFor(() => expect(deviceTexts()).toEqual(['ARRIVAL ONE.', 'SEND PATH REPLY.']));
+    await waitFor(() => expect(deviceTexts()).toEqual(['ARRIVAL ONE.', 'ARRIVAL TWO.']));
 
     const beforeSecondEnd = speakCalls.length;
     await endDevice(1);
     expect(beforeSecondEnd).toBe(2);
     await waitFor(() => expect(deviceTexts()).toEqual([
-      'ARRIVAL ONE.', 'SEND PATH REPLY.', 'ARRIVAL TWO.',
+      'ARRIVAL ONE.', 'ARRIVAL TWO.', 'SEND PATH REPLY.',
     ]));
 
-    // The send reply landing BEFORE 'ARRIVAL TWO.' is what proves the second
-    // producer was the send path and not the drain: the drain was parked on
-    // 'ARRIVAL ONE.' and 'ARRIVAL TWO.' is the only thing it could emit next.
+    // #1340: this used to expect 'SEND PATH REPLY.' in the MIDDLE, and read
+    // that position as proof the second producer was the send path rather than
+    // the drain. It was really pinning an artefact OF the drain, which withheld
+    // 'ARRIVAL TWO.' from the arbiter until 'ARRIVAL ONE.' ended -- so a
+    // request the Captain made later overtook an arrival that had already
+    // landed. With the drain retired the arbiter is FIFO by enqueue across all
+    // producers, and both arrivals -- admitted by one refresh, before the
+    // Captain typed -- correctly precede the reply. The text is the
+    // discriminator now: only the send round trip says 'SEND PATH REPLY.'.
     expect(speechSynthesis.cancel).toHaveBeenCalled();
   });
 
@@ -313,7 +319,10 @@ describe('AD-1291 span 1 — arrivals and the send path share one device', () =>
       ended += 1;
       if (speakCalls.length === ended) break;
     }
-    expect(deviceTexts()).toEqual(['ARRIVAL ONE.', 'SEND PATH REPLY.', 'ARRIVAL TWO.']);
+    // #1340: order updated with the sibling assertion above -- the drain used
+    // to delay 'ARRIVAL TWO.' behind the send reply. The property this test
+    // actually owns, one unfinished utterance at a time, is the loop above.
+    expect(deviceTexts()).toEqual(['ARRIVAL ONE.', 'ARRIVAL TWO.', 'SEND PATH REPLY.']);
   });
 });
 

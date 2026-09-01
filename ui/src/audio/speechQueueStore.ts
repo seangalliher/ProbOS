@@ -30,6 +30,16 @@ export interface SpeechQueueEntry {
   text: string;
   profile?: VoiceProfile;
   agent_id?: string;
+  /** WHICH SURFACE enqueued this, deliberately not WHOSE VOICE it is.
+   *
+   *  `agent_id` cannot answer the first question: a room's fan-out replies are
+   *  written into one host tab's transcript under a PER-AGENT author id, so
+   *  entries a single surface produced carry several different `agent_id`s.
+   *  Keying end-of-life on `agent_id` therefore let a peer-tagged utterance
+   *  outlive the tab that queued it (#1340). Minted per MOUNT, not per agent:
+   *  a tab can be re-pointed at a different agent without remounting, and
+   *  nothing stops two surfaces showing the same agent at once. */
+  owner?: string;
   emotion?: string;
   speechClass: SpeechClass;
   /** True once the entry has been handed to the device. A started entry is

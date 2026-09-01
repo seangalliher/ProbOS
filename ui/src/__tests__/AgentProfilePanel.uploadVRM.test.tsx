@@ -18,6 +18,7 @@ vi.mock('../components/profile/ParametricAvatar', () => ({
   ParametricAvatar: () => <div data-testid="parametric-avatar" />,
 }));
 vi.mock('../audio/voice', () => ({
+  flushSpeechQueue: vi.fn(),
   getServerPiperVoices: vi.fn(async () => null),
   onSpeechEvent: () => () => {},
   speakResponse: vi.fn(),

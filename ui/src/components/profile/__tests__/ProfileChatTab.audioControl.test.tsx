@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../audio/voice', () => ({
+  flushSpeechQueue: vi.fn(),
   getServerPiperVoices: vi.fn(async () => null),
   speakResponse: mocks.speakResponse,
   stripMarkdownForSpeech: (text: string) => text,

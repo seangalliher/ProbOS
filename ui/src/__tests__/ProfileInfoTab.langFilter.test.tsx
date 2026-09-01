@@ -4,6 +4,7 @@ import { render, fireEvent, cleanup, screen } from '@testing-library/react';
 import type { Agent, AgentProfileData } from '../store/types';
 
 vi.mock('../audio/voice', () => ({
+  flushSpeechQueue: vi.fn(),
   getAvailableVoices: vi.fn(() => []),
   speakResponse: vi.fn(),
   // AD-718e: ProfileInfoTab calls getServerPiperVoices to load the catalog;

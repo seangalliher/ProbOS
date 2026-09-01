@@ -5,6 +5,7 @@ import type { Agent, AgentProfileData } from '../../../store/types';
 // AD-735: per-agent volume slider in ProfileInfoTab.
 
 vi.mock('../../../audio/voice', () => ({
+  flushSpeechQueue: vi.fn(),
   getServerPiperVoices: vi.fn(async () => null),
   getAvailableVoices: vi.fn(() => []),
   speakResponse: vi.fn(),

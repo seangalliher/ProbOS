@@ -288,6 +288,7 @@ export function speakResponse(
   agent_id?: string,
   emotion?: string,
   speechClass: SpeechClass = 'narration',
+  owner?: string,
 ): number | undefined {
   if (!('speechSynthesis' in window) && typeof Audio !== 'function') return undefined;
 
@@ -314,7 +315,7 @@ export function speakResponse(
     }
   }
 
-  state.entries.push({ id, text, profile, agent_id, emotion, speechClass, started: false });
+  state.entries.push({ id, text, profile, agent_id, owner, emotion, speechClass, started: false });
   // Synchronous up to its first real await, so `_playNow` still runs inside
   // this call on an idle queue -- the pre-AD-738 synchronous side-effect
   // contract that callers and tests depend on.
@@ -408,14 +409,20 @@ function _awaitEntry(state: SpeechQueueState, entry: SpeechQueueEntry): Promise<
  *  `stopSpeaking`'s job, and its consumers must still receive that utterance's
  *  terminal 'end'.
  *
- *  `agentId` scopes the flush to one surface: an unmounting tab must drop its
- *  OWN backlog without silencing whatever another surface is queueing. */
-export function flushSpeechQueue(reason: string, agentId?: string): void {
+ *  `owner` scopes the flush to one SURFACE: an unmounting tab must drop its
+ *  OWN backlog without silencing whatever another surface is queueing. It is
+ *  deliberately not `agent_id` -- one surface produces utterances attributed to
+ *  several speakers (a room's per-agent fan-out replies all land in one host
+ *  tab), so an agent-keyed flush missed exactly the entries a group surface had
+ *  queued and let them keep talking after it unmounted (#1340). An `undefined`
+ *  owner still means EVERY queued entry, which is what barge-in wants: that is
+ *  the Captain saying stop, not one surface tidying up after itself. */
+export function flushSpeechQueue(reason: string, owner?: string): void {
   const state = speechQueueState();
   for (let i = state.entries.length - 1; i >= 0; i -= 1) {
     const entry = state.entries[i];
     if (entry.started) continue;
-    if (agentId !== undefined && entry.agent_id !== agentId) continue;
+    if (owner !== undefined && entry.owner !== owner) continue;
     state.entries.splice(i, 1);
     _fireDropped(entry, reason);
   }

@@ -17,6 +17,7 @@ vi.mock('../audio/speechInput', () => ({
   isSpeechRecognitionSupported: vi.fn(() => true),
 }));
 vi.mock('../audio/voice', () => ({
+  flushSpeechQueue: vi.fn(),
   getServerPiperVoices: vi.fn(async () => null),
   onSpeechEvent: vi.fn(() => () => undefined),
 }));

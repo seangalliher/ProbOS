@@ -22,6 +22,7 @@ vi.mock('../components/profile/ParametricAvatar', () => ({
 }));
 // Mock voice/audio so render doesn't try to wire SpeechSynthesis.
 vi.mock('../audio/voice', () => ({
+  flushSpeechQueue: vi.fn(),
   getServerPiperVoices: vi.fn(async () => null),
   onSpeechEvent: () => () => {},
   speakResponse: vi.fn(),

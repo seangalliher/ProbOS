@@ -3,21 +3,36 @@
  *  One refresh can admit several arrivals at once — a promoted turn's report
  *  landing beside an ordinary reply, or a backlog delivered after a
  *  reconnect. The speaker walked them in a single synchronous pass and called
- *  `speakResponse` for each, but `speakResponse` CANCELS whatever is playing
- *  before it starts (voice.ts ~L246). So every utterance but the last began
- *  and was immediately truncated.
- *
- *  The failure is backend-dependent, which is why it survived so long: browser
- *  TTS produced a clipped burst, while Piper could run two at once, because
- *  `_speakGeneration` gates sentence pipelining WITHIN a reply rather than
- *  whole utterances. Either way the Captain did not hear what was said.
+ *  `speakResponse` for each, but `speakResponse` CANCELLED whatever was
+ *  playing before it started. So every utterance but the last began and was
+ *  immediately truncated.
  *
  *  Nothing is lost from the transcript — each arrival's claim is consumed and
  *  the text renders — so this is an audio-quality defect, and the fix must not
  *  turn it into a silence defect. That is what the two guards below are for,
- *  and both are asserted here: an arrival that produces no utterance at all
- *  must not wedge the queue, and neither must an utterance whose terminal
+ *  and both are still asserted here: an arrival that produces no utterance at
+ *  all must not wedge the queue, and neither must an utterance whose terminal
  *  'end' never arrives.
+ *
+ *  ## Re-pointed at the arbiter (#1340)
+ *
+ *  BF-764 answered this with a queue INSIDE this component. AD-1291 moved that
+ *  ownership into `audio/voice`'s arbiter, where it covers all seven producers
+ *  instead of this component's arrivals alone, and #1340 retired the local
+ *  drain. These tests therefore run against the REAL `audio/voice` module and
+ *  assert on what reached `speechSynthesis.speak` — the audio device — rather
+ *  than on what some producer asked for.
+ *
+ *  That distinction is the whole point of the re-point. The obvious migration
+ *  was to keep mocking `audio/voice` and hand the mock a fake queue, but then
+ *  every assertion below would describe the FAKE's guards while production
+ *  never ran them. The serialisation under test IS that module.
+ *
+ *  The fake engine models `cancel()` faithfully: cancelling a live utterance
+ *  fires its terminal callback, and `voice.ts` routes `onend`/`onerror`
+ *  through one settle guard, so the cancel emits exactly one 'end' carrying
+ *  the SUPERSEDED utterance's id (BF-767). That is the real BF-858 mechanism,
+ *  not a simulation of it.
  *
  *  Mounted against the real component and the real store, following the
  *  BF-718 harness.
@@ -27,39 +42,18 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-type SpeechEventShape = { type: string; agent_id?: string; utterance_id?: number };
-
-const mocks = vi.hoisted(() => {
-  const speechListeners = new Set<(e: SpeechEventShape) => void>();
-  return {
-    speechListeners,
-    /** Mirrors `voice.ts::_fire`: every live listener sees every event. */
-    fireSpeech: (e: SpeechEventShape): void => {
-      for (const fn of [...speechListeners]) fn(e);
-    },
-    speakResponse: vi.fn(),
-    onSpeechEvent: vi.fn((fn: (e: SpeechEventShape) => void) => {
-      speechListeners.add(fn);
-      return () => { speechListeners.delete(fn); };
-    }),
-    startListening: vi.fn(),
-    stopListening: vi.fn(),
-    armConversationMode: vi.fn(() => () => {}),
-    disarmConversationMode: vi.fn(),
-    markAgentReplyComplete: vi.fn(),
-    speakMeetingReplies: vi.fn(),
-    startCameraStream: vi.fn(async () => undefined),
-    stopCameraStream: vi.fn(async () => undefined),
-  };
-});
-
-vi.mock('../../../audio/voice', () => ({
-  getServerPiperVoices: vi.fn(async () => null),
-  speakResponse: mocks.speakResponse,
-  stripMarkdownForSpeech: (text: string) => text,
-  onSpeechEvent: mocks.onSpeechEvent,
-  prewarmTts: vi.fn(),
+const mocks = vi.hoisted(() => ({
+  startListening: vi.fn(),
+  stopListening: vi.fn(),
+  armConversationMode: vi.fn(() => () => {}),
+  disarmConversationMode: vi.fn(),
+  markAgentReplyComplete: vi.fn(),
+  speakMeetingReplies: vi.fn(),
+  startCameraStream: vi.fn(async () => undefined),
+  stopCameraStream: vi.fn(async () => undefined),
 }));
+
+// `audio/voice` is deliberately NOT mocked — see the header.
 vi.mock('../../../audio/speechInput', () => ({
   isSpeechRecognitionSupported: () => true,
   startListening: mocks.startListening,
@@ -91,14 +85,64 @@ vi.mock('../../workspace/WorkspaceFilesRail', () => ({
 
 import { ProfileChatTab } from '../ProfileChatTab';
 import { useStore } from '../../../store/useStore';
+import {
+  SPEECH_JOIN_TIMEOUT_MS, speakResponse, _resetTtsStatusForTests,
+} from '../../../audio/voice';
 import type { Agent } from '../../../store/types';
 
 const AGENT_ID = 'bf764-host';
 const THREAD_ID = 'bf764-thread';
 const TTS_KEY = `hxi_chat_tts_${AGENT_ID}`;
 
-/** The join timeout the component uses, mirrored so a test can outrun it. */
-const SPEECH_JOIN_TIMEOUT_MS = 45000;
+let speakCalls: FakeUtterance[] = [];
+/** When true the device finishes an utterance the instant it receives it, so a
+ *  terminal 'end' lands INSIDE the dispatch, before it has returned. */
+let autoEndOnSpeak = false;
+
+class FakeUtterance {
+  text: string;
+  rate = 1; pitch = 1; volume = 1;
+  voice: SpeechSynthesisVoice | null = null;
+  onstart: (() => void) | null = null;
+  onend: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(text: string) { this.text = text; }
+}
+
+function installSpeechEngine(): void {
+  speakCalls = [];
+  autoEndOnSpeak = false;
+  (globalThis as any).SpeechSynthesisUtterance = FakeUtterance;
+  (globalThis as any).speechSynthesis = {
+    // A real browser fires the live utterance's terminal callback when it is
+    // cancelled, and `voice.ts` turns that into an 'end' carrying the
+    // SUPERSEDED utterance's id. Modelling it is what makes the cascade test
+    // below exercise the genuine BF-858 mechanism. Already-ended utterances
+    // are inert: `voice.ts` holds a per-utterance settle guard.
+    cancel: vi.fn(() => { for (const u of speakCalls) u.onerror?.(); }),
+    speak: vi.fn((u: FakeUtterance) => {
+      speakCalls.push(u);
+      u.onstart?.();
+      if (autoEndOnSpeak) u.onend?.();
+    }),
+    getVoices: () => [],
+    addEventListener: vi.fn(),
+  };
+}
+
+/** What actually reached the audio device, in dispatch order. */
+function deviceTexts(): string[] {
+  return speakCalls.map((u) => u.text);
+}
+
+/** End whatever the device is currently playing, releasing the arbiter. */
+async function endDevice(index: number): Promise<void> {
+  await act(async () => {
+    speakCalls[index].onend?.();
+    await Promise.resolve();
+  });
+  await act(async () => { await Promise.resolve(); });
+}
 
 let serverMessages: Array<Record<string, unknown>>;
 
@@ -135,6 +179,10 @@ function installNetwork(): void {
       return Promise.resolve(response({
         primary_stt: 'browser', engine: 'browser', backend_available: true, healthy: true,
       }));
+    }
+    // Keep voice.ts on the synchronous browser fallback: no Piper, no POST.
+    if (url.endsWith('/api/avatars/tts/status')) {
+      return Promise.resolve(response({ enabled: false, backend: 'browser' }));
     }
     if (url.endsWith('/chat/history')) return Promise.resolve(response({ memories: [] }));
     if (url.endsWith('/profile')) {
@@ -202,23 +250,13 @@ async function serverPushesBurst(...bodies: string[]): Promise<void> {
   await act(async () => { await Promise.resolve(); });
 }
 
-function spokenTexts(): string[] {
-  return mocks.speakResponse.mock.calls.map((call) => String(call[0]));
-}
-
-/** Every utterance gets a distinct id, so the queue has something to correlate
- *  on and GUARD 1 (the undefined-id path) is not silently under test. */
-function speakReturnsIds(): void {
-  let next = 0;
-  mocks.speakResponse.mockImplementation(() => { next += 1; return next; });
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.speechListeners.clear();
   localStorage.clear();
   serverMessages = [];
+  installSpeechEngine();
   installNetwork();
+  _resetTtsStatusForTests();
 });
 
 afterEach(() => {
@@ -229,83 +267,114 @@ afterEach(() => {
 
 describe('BF-764 — a burst of arrivals is spoken one at a time', () => {
   it('does not start the second utterance until the first one ends', async () => {
-    speakReturnsIds();
     seed();
     await mount();
 
     await serverPushesBurst('First thing said.', 'Second thing said.');
 
-    // Before the fix BOTH were called in one synchronous pass, and the second
-    // call cancelled the first mid-sentence.
-    await waitFor(() => expect(spokenTexts()).toContain('First thing said.'));
-    expect(spokenTexts()).not.toContain('Second thing said.');
+    // Before the fix BOTH reached the device in one synchronous pass, and the
+    // second cancelled the first mid-sentence.
+    await waitFor(() => expect(deviceTexts()).toContain('First thing said.'));
+    expect(deviceTexts()).not.toContain('Second thing said.');
 
-    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: 1 }); });
+    await endDevice(0);
 
-    await waitFor(() => expect(spokenTexts()).toContain('Second thing said.'));
-    expect(spokenTexts()).toEqual(['First thing said.', 'Second thing said.']);
+    await waitFor(() => expect(deviceTexts()).toContain('Second thing said.'));
+    expect(deviceTexts()).toEqual(['First thing said.', 'Second thing said.']);
   });
 
   it('speaks a burst in arrival order', async () => {
-    speakReturnsIds();
     seed();
     await mount();
 
     await serverPushesBurst('One.', 'Two.', 'Three.');
 
-    await waitFor(() => expect(spokenTexts()).toEqual(['One.']));
-    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: 1 }); });
-    await waitFor(() => expect(spokenTexts()).toEqual(['One.', 'Two.']));
-    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: 2 }); });
-    await waitFor(() => expect(spokenTexts()).toEqual(['One.', 'Two.', 'Three.']));
+    await waitFor(() => expect(deviceTexts()).toEqual(['One.']));
+    await endDevice(0);
+    await waitFor(() => expect(deviceTexts()).toEqual(['One.', 'Two.']));
+    await endDevice(1);
+    await waitFor(() => expect(deviceTexts()).toEqual(['One.', 'Two.', 'Three.']));
   });
 
-  it('ignores an end that belongs to a different utterance', async () => {
-    // Superseding an utterance emits a terminal 'end' carrying the SAME
-    // agent_id (BF-767), so correlating on agent_id alone would advance the
-    // queue on somebody else's completion and reintroduce the overlap.
-    speakReturnsIds();
+  it('holds a sibling surface behind the arrival in flight', async () => {
+    // Re-pointed (#1340). This used to fire a hand-built 'end' carrying a
+    // foreign id straight at the component's own listener, to pin that the
+    // drain correlated on the utterance id rather than on `agent_id`. That
+    // listener no longer exists, and the id-correlation it was pinning is now
+    // asserted for real against the arbiter in the superseded-'end' test below.
+    //
+    // What it becomes is the property the drain could never provide: a
+    // producer OUTSIDE this component (IntentSurface is mounted for the whole
+    // session beside it) shares the one device, and must neither cut in nor
+    // advance our queue. A component-local queue could not see it at all.
     seed();
     await mount();
 
     await serverPushesBurst('First thing said.', 'Second thing said.');
-    await waitFor(() => expect(spokenTexts()).toEqual(['First thing said.']));
+    await waitFor(() => expect(deviceTexts()).toEqual(['First thing said.']));
 
-    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: 9999 }); });
+    act(() => {
+      speakResponse("Ship's Computer here.", undefined, undefined, undefined, 'narration');
+    });
     await act(async () => { await Promise.resolve(); });
-    expect(spokenTexts()).toEqual(['First thing said.']);
+    expect(deviceTexts()).toEqual(['First thing said.']);
 
-    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: 1 }); });
-    await waitFor(() => expect(spokenTexts()).toEqual(['First thing said.', 'Second thing said.']));
+    await endDevice(0);
+    await waitFor(() => expect(deviceTexts()).toEqual([
+      'First thing said.', 'Second thing said.',
+    ]));
+    await endDevice(1);
+    await waitFor(() => expect(deviceTexts()).toEqual([
+      'First thing said.', 'Second thing said.', "Ship's Computer here.",
+    ]));
   });
 
   it('does not advance on a non-terminal speech event', async () => {
-    speakReturnsIds();
     seed();
     await mount();
 
     await serverPushesBurst('First thing said.', 'Second thing said.');
-    await waitFor(() => expect(spokenTexts()).toEqual(['First thing said.']));
+    await waitFor(() => expect(deviceTexts()).toEqual(['First thing said.']));
 
-    act(() => { mocks.fireSpeech({ type: 'start', agent_id: AGENT_ID, utterance_id: 1 }); });
-    await act(async () => { await Promise.resolve(); });
-    expect(spokenTexts()).toEqual(['First thing said.']);
+    // A 'start' is not a terminal event. Re-firing it must change nothing.
+    await act(async () => {
+      speakCalls[0].onstart?.();
+      await Promise.resolve();
+    });
+    expect(deviceTexts()).toEqual(['First thing said.']);
   });
 
-  // GUARD 1 — an arrival that produced no utterance must not wedge the queue.
-  it('keeps going when there is no TTS engine to return an utterance id', async () => {
-    // `speakResponse` returns undefined when nothing can speak (BF-290). No
-    // 'end' will EVER arrive for it, so waiting on one would silence every
-    // later message — strictly worse than the clipped audio being fixed.
-    mocks.speakResponse.mockReturnValue(undefined);
+  // GUARD 1 — an arrival that can never produce an utterance must not wedge.
+  it('keeps going when there is no TTS engine to speak an arrival', async () => {
+    // Nothing will EVER emit an 'end' for an entry the device cannot take, so
+    // waiting on one would silence every later message — strictly worse than
+    // the clipped audio being fixed.
     seed();
     await mount();
 
     await serverPushesBurst('First thing said.', 'Second thing said.');
+    await waitFor(() => expect(deviceTexts()).toEqual(['First thing said.']));
 
-    await waitFor(() => {
-      expect(spokenTexts()).toEqual(['First thing said.', 'Second thing said.']);
+    // The engine disappears between enqueue and dispatch.
+    const savedSynthesis = (globalThis as any).speechSynthesis;
+    const savedAudio = (globalThis as any).Audio;
+    const live = speakCalls[0];
+    delete (globalThis as any).speechSynthesis;
+    delete (globalThis as any).Audio;
+    await act(async () => {
+      live.onend?.();
+      await Promise.resolve();
     });
+
+    // Drained rather than wedged: with the engine back, the next arrival is
+    // spoken immediately and no timer had to rescue it.
+    (globalThis as any).speechSynthesis = savedSynthesis;
+    (globalThis as any).Audio = savedAudio;
+    _resetTtsStatusForTests();
+    await serverPushesBurst('Third thing said.');
+    await waitFor(() => expect(deviceTexts()).toEqual([
+      'First thing said.', 'Third thing said.',
+    ]));
   });
 
   // GUARD 2 — a lost 'end' must not strand the rest of the queue.
@@ -313,147 +382,137 @@ describe('BF-764 — a burst of arrivals is spoken one at a time', () => {
     // `shouldAdvanceTime` keeps the clock moving so `waitFor` and the mount's
     // network round trips still progress; without it the harness starves.
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    speakReturnsIds();
     seed();
     await mount();
 
     await serverPushesBurst('First thing said.', 'Second thing said.');
-    await waitFor(() => expect(spokenTexts()).toEqual(['First thing said.']));
+    await waitFor(() => expect(deviceTexts()).toEqual(['First thing said.']));
 
-    // Nothing ever fires 'end' for utterance 1.
+    // Nothing ever ends the first utterance.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SPEECH_JOIN_TIMEOUT_MS + 1000);
     });
 
-    expect(spokenTexts()).toEqual(['First thing said.', 'Second thing said.']);
+    expect(deviceTexts()).toEqual(['First thing said.', 'Second thing said.']);
   });
 
   it('does not fire the join timeout on an utterance that ended normally', async () => {
     // The timeout is a safety net. If it were short enough to fire on a real
     // utterance it would reintroduce the overlap it exists to prevent.
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    speakReturnsIds();
     seed();
     await mount();
 
     await serverPushesBurst('First thing said.', 'Second thing said.');
-    await waitFor(() => expect(spokenTexts()).toEqual(['First thing said.']));
+    await waitFor(() => expect(deviceTexts()).toEqual(['First thing said.']));
 
     await act(async () => { await vi.advanceTimersByTimeAsync(SPEECH_JOIN_TIMEOUT_MS - 1000); });
-    expect(spokenTexts()).toEqual(['First thing said.']);
+    expect(deviceTexts()).toEqual(['First thing said.']);
   });
 
   it('leaves a single arrival unchanged', async () => {
     // The queue must not add a round trip to the ordinary one-message case.
-    speakReturnsIds();
     seed();
     await mount();
 
     await serverPushesBurst('Only thing said.');
 
-    await waitFor(() => expect(spokenTexts()).toEqual(['Only thing said.']));
+    await waitFor(() => expect(deviceTexts()).toEqual(['Only thing said.']));
   });
 
   it('survives the superseded utterance ending while the next one starts', async () => {
-    // `speakResponse` calls `speechSynthesis.cancel()` on its first lines, and
-    // the terminal 'end' that emits is delivered SYNCHRONOUSLY -- carrying the
-    // SUPERSEDED utterance's older id, before this call has returned its own.
-    // The listener is already armed at that instant, so a `const` bound to the
-    // return value would be read in its temporal dead zone. voice.ts::_fire
-    // swallows listener exceptions, so the throw would be invisible and the
-    // queue would stall for the full join timeout instead of advancing.
+    // THE BF-858 CASCADE, against real production code. Dispatching an entry
+    // calls `speechSynthesis.cancel()` first, and a real browser answers that
+    // by firing the live utterance's terminal callback — so an 'end' carrying
+    // the SUPERSEDED id lands synchronously, inside the dispatch, while the
+    // arbiter's listener for the NEW entry is already armed.
+    //
+    // Correlating on anything less precise than the utterance id resolves that
+    // listener on somebody else's completion and launches the entry after it
+    // on top of the one just started. Each utterance cancels the last while
+    // the transcript still ends up in the right order, which is why a test
+    // that checked only the final array would pass against the unfixed code.
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    let next = 0;
-    mocks.speakResponse.mockImplementation(() => {
-      // Exactly what cancel() does: emit the PREVIOUS utterance's terminal
-      // 'end' synchronously, from inside this call.
-      if (next > 0) mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: next });
-      next += 1;
-      return next;
-    });
     seed();
     await mount();
 
-    // THREE messages, deliberately. With two, an early 'end' that wrongly
-    // resolved the next utterance would still leave the same final transcript,
-    // so the mistake would be invisible. The third makes it observable.
+    // THREE messages, deliberately. With two, a wrongly-resolved listener
+    // would still leave the same final transcript, so the mistake would be
+    // invisible. The third makes it observable.
     await serverPushesBurst('One.', 'Two.', 'Three.');
-    await waitFor(() => expect(spokenTexts()).toEqual(['One.']));
+    await waitFor(() => expect(deviceTexts()).toEqual(['One.']));
 
-    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: 1 }); });
-    await waitFor(() => expect(spokenTexts()).toEqual(['One.', 'Two.']));
+    // Let the join timeout release 'One.' WITHOUT ending it, so it is still
+    // live when 'Two.' dispatches and the cancel has something to supersede.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SPEECH_JOIN_TIMEOUT_MS + 1000);
+    });
+    expect(deviceTexts()).toEqual(['One.', 'Two.']);
+    // PREMISE: the cancel really did emit 'One.'s terminal 'end' during
+    // 'Two.'s dispatch. Without this the assertion below passes vacuously.
+    expect((globalThis as any).speechSynthesis.cancel).toHaveBeenCalled();
 
-    // 'Two.' started, and starting it re-emitted 'One.'s terminal end. That
-    // must NOT be mistaken for 'Two.' finishing.
+    // That superseded 'end' must NOT be mistaken for 'Two.' finishing.
     await act(async () => { await Promise.resolve(); });
-    expect(spokenTexts()).toEqual(['One.', 'Two.']);
+    expect(deviceTexts()).toEqual(['One.', 'Two.']);
 
-    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: 2 }); });
-
-    // Reached WITHOUT the join timeout having to rescue it.
-    await waitFor(() => expect(spokenTexts()).toEqual(['One.', 'Two.', 'Three.']));
-    expect(vi.getTimerCount()).toBeLessThanOrEqual(1);
+    await endDevice(1);
+    await waitFor(() => expect(deviceTexts()).toEqual(['One.', 'Two.', 'Three.']));
   });
 
   it('resolves when the utterance ends before speakResponse returns', async () => {
     // The mirror case: an 'end' carrying OUR OWN id, fired synchronously from
-    // inside the call. Held and reconciled, not discarded -- discarding it
-    // would strand this utterance until the join timeout.
+    // inside the dispatch. It must resolve the entry rather than be discarded
+    // — discarding it would strand the queue until the join timeout.
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    let next = 0;
-    mocks.speakResponse.mockImplementation(() => {
-      next += 1;
-      const mine = next;
-      mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: mine });
-      return mine;
-    });
+    autoEndOnSpeak = true;
     seed();
     await mount();
 
     await serverPushesBurst('First thing said.', 'Second thing said.');
 
     await waitFor(() => {
-      expect(spokenTexts()).toEqual(['First thing said.', 'Second thing said.']);
+      expect(deviceTexts()).toEqual(['First thing said.', 'Second thing said.']);
     });
+    // Reached WITHOUT the join timeout having to rescue either one.
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('does not start a second drain when an arrival lands mid-utterance', async () => {
     // Arrivals do not wait for the queue to be idle. A refresh landing while
     // an utterance is in flight must join the existing queue, not start a
-    // second drain -- two drains would each call `speakResponse`, which is the
-    // very cancellation this fix exists to stop.
-    speakReturnsIds();
+    // second drain — two drains would each dispatch, which is the very
+    // cancellation this fix exists to stop.
     seed();
     await mount();
 
     await serverPushesBurst('One.', 'Two.');
-    await waitFor(() => expect(spokenTexts()).toEqual(['One.']));
+    await waitFor(() => expect(deviceTexts()).toEqual(['One.']));
 
     // A NEW refresh while 'One.' is still speaking.
     await serverPushesBurst('Three.');
     await act(async () => { await Promise.resolve(); });
-    expect(spokenTexts()).toEqual(['One.']);
+    expect(deviceTexts()).toEqual(['One.']);
 
-    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: 1 }); });
-    await waitFor(() => expect(spokenTexts()).toEqual(['One.', 'Two.']));
-    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: 2 }); });
-    await waitFor(() => expect(spokenTexts()).toEqual(['One.', 'Two.', 'Three.']));
+    await endDevice(0);
+    await waitFor(() => expect(deviceTexts()).toEqual(['One.', 'Two.']));
+    await endDevice(1);
+    await waitFor(() => expect(deviceTexts()).toEqual(['One.', 'Two.', 'Three.']));
   });
 
   it('stops speaking a backlog once the tab unmounts', async () => {
-    // Serialising means the queue outlives the render that filled it. The old
-    // synchronous loop finished before unmount and could not do this.
-    speakReturnsIds();
+    // Serialising means the queue outlives the render that filled it, so it
+    // needs an explicit end-of-life: a Captain who has navigated away must not
+    // still be read the rest of the backlog.
     seed();
     const view = await mount();
 
     await serverPushesBurst('First thing said.', 'Second thing said.');
-    await waitFor(() => expect(spokenTexts()).toEqual(['First thing said.']));
+    await waitFor(() => expect(deviceTexts()).toEqual(['First thing said.']));
 
     view.unmount();
-    act(() => { mocks.fireSpeech({ type: 'end', agent_id: AGENT_ID, utterance_id: 1 }); });
-    await act(async () => { await Promise.resolve(); });
+    await endDevice(0);
 
-    expect(spokenTexts()).toEqual(['First thing said.']);
+    expect(deviceTexts()).toEqual(['First thing said.']);
   });
 });

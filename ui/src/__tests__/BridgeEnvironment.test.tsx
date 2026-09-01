@@ -13,6 +13,7 @@ vi.mock('../audio/soundEngine', () => ({
   },
 }));
 vi.mock('../audio/voice', () => ({
+  flushSpeechQueue: vi.fn(),
   getServerPiperVoices: vi.fn(async () => null),
   getAvailableVoices: vi.fn(() => []),
   setPreferredVoiceName: vi.fn(),

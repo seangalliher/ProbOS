@@ -5,6 +5,7 @@ import type { Agent, AgentProfileData } from '../store/types';
 // AD-718c E8 (UI): wake-phrase row in ProfileInfoTab.
 
 vi.mock('../audio/voice', () => ({
+  flushSpeechQueue: vi.fn(),
   getServerPiperVoices: vi.fn(async () => null),
   getAvailableVoices: vi.fn(() => []),
   speakResponse: vi.fn(),

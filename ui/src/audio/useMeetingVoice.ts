@@ -21,6 +21,13 @@ export interface UseMeetingVoiceOptions {
    *  active their voice profiles are prefetched (cache-warmed) so the FIRST
    *  reply's TTS is not gated on a cold ``/api/agent/{id}/profile`` fetch. */
   participantAgentIds?: string[];
+  /** #1340: the mounting surface's queue-owner key, forwarded to every
+   *  utterance this sequencer enqueues so the surface can drop its own backlog
+   *  when it unmounts. The sequencer speaks as the REPLY's agent, which in a
+   *  room is routinely a peer rather than the host -- so the speaker id cannot
+   *  serve as the owner. Bound here rather than pushed into ``MeetingVoiceDeps``
+   *  because ownership is the CALLER's fact; the sequencer has no surface. */
+  owner?: string;
 }
 
 /** BF-621: optional per-utterance reveal hooks. When supplied, the caller can
@@ -60,6 +67,10 @@ export function useMeetingVoice(opts: UseMeetingVoiceOptions): UseMeetingVoiceRe
   // from a superseded batch can't clobber the current speakingAgentId.
   const genRef = useRef(0);
   const resolverRef = useRef(createVoiceProfileResolver());
+  // Read at speak time, like every other gate here, so a reference-stable
+  // ``speakReplies`` never closes over a stale owner.
+  const ownerRef = useRef(opts.owner);
+  useEffect(() => { ownerRef.current = opts.owner; }, [opts.owner]);
 
   // AD-972: move the cold voice-profile fetch + TTS backend probe OFF the
   // first-utterance critical path. When the meeting opens we prewarm the TTS
@@ -92,7 +103,11 @@ export function useMeetingVoice(opts: UseMeetingVoiceOptions): UseMeetingVoiceRe
     // fetch gap between speakers.
     for (const r of replies) void resolverRef.current(r.agent_id);
     void speakRepliesSequentially(replies, {
-      speak: speakResponse,
+      // ``'narration'`` is ``speakResponse``'s default, so this wrapper changes
+      // nothing but the owner it stamps on each entry.
+      speak: (text, profile, agentId) => speakResponse(
+        text, profile, agentId, undefined, 'narration', ownerRef.current,
+      ),
       subscribe: onSpeechEvent,
       resolveProfile: resolverRef.current,
       strip: stripMarkdownForSpeech,

@@ -342,21 +342,60 @@ describe('AD-1291 speech arbiter — one device, one owner', () => {
   it('an unmounting surface drops only its own queued narration', async () => {
     // A tab leaving must not silence whatever another surface is queueing --
     // there is one device, but several producers on it.
+    //
+    // #1340: this used to scope the flush by agent id, and both surfaces here
+    // spoke as a DIFFERENT agent, so agent and surface were indistinguishable
+    // and the assertion passed either way. That is what let the production
+    // wiring ship keyed on the speaker: in a room ONE surface produces
+    // utterances attributed to several agents, and the agent-keyed flush
+    // skipped them. The two entries below are therefore attributed to the SAME
+    // agent and owned by DIFFERENT surfaces -- the case only a surface key
+    // separates.
     const voiceMod = await import('../voice');
     voiceMod._resetTtsStatusForTests();
     const events = await _capture();
 
-    voiceMod.speakResponse('Playing.', undefined, 'ezri');
-    const mine = voiceMod.speakResponse('Leaving tab.', undefined, 'ezri');
-    voiceMod.speakResponse('Other surface.', undefined, 'meridian');
+    voiceMod.speakResponse('Playing.', undefined, 'ezri', undefined, 'narration', 'surface-a');
+    const mine = voiceMod.speakResponse(
+      'Leaving tab.', undefined, 'ezri', undefined, 'narration', 'surface-a',
+    );
+    voiceMod.speakResponse(
+      'Other surface.', undefined, 'ezri', undefined, 'narration', 'surface-b',
+    );
     await _flush();
 
-    voiceMod.flushSpeechQueue('unmount', 'ezri');
+    voiceMod.flushSpeechQueue('unmount', 'surface-a');
 
     const drops = events.filter((e) => e.type === 'dropped');
     expect(drops.map((d) => d.utterance_id)).toEqual([mine]);
 
     await endSpoken(0);
     expect(spokenTexts()).toEqual(['Playing.', 'Other surface.']);
+  });
+
+  it('an unmounting surface drops a peer-attributed entry it owns', async () => {
+    // #1340 in the arbiter's own terms: the entry a group surface queued is
+    // attributed to a PEER, not to the tab. Ownership and attribution are
+    // different questions, and only the first one decides end-of-life.
+    const voiceMod = await import('../voice');
+    voiceMod._resetTtsStatusForTests();
+    const events = await _capture();
+
+    voiceMod.speakResponse('Playing.', undefined, 'host', undefined, 'narration', 'surface-a');
+    const peer = voiceMod.speakResponse(
+      'Peer reply.', undefined, 'peer', undefined, 'narration', 'surface-a',
+    );
+    await _flush();
+
+    voiceMod.flushSpeechQueue('unmount', 'surface-a');
+
+    expect(events.filter((e) => e.type === 'dropped').map((d) => d.utterance_id))
+      .toEqual([peer]);
+    // Attribution survives the drop: the `dropped` event still names the
+    // speaker, which is what the meeting sequencer and the avatars read.
+    expect(events.find((e) => e.type === 'dropped')?.agent_id).toBe('peer');
+
+    await endSpoken(0);
+    expect(spokenTexts()).toEqual(['Playing.']);
   });
 });

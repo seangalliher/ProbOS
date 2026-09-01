@@ -25,11 +25,12 @@ import { useMeetingVoice } from '../useMeetingVoice';
 import { useStore } from '../../store/useStore';
 import type { PerAgentReply } from '../meetingVoice';
 import useMeetingVoiceSource from '../useMeetingVoice?raw';
-import { prewarmTts } from '../voice';
+import { prewarmTts, speakResponse } from '../voice';
 import { createVoiceProfileResolver } from '../meetingVoice';
 
 beforeEach(() => {
   mocks.speakRepliesSequentially.mockReset();
+  vi.mocked(speakResponse).mockClear();
   useStore.setState({ callAudioEnabled: false });
 });
 
@@ -111,6 +112,26 @@ describe('useMeetingVoice', () => {
     );
     expect(prewarmTts).not.toHaveBeenCalled();
     expect(resolver).not.toHaveBeenCalled();
+  });
+
+  // #1340: the sequencer speaks as the REPLY's agent, which in a room is
+  // routinely a peer rather than the mounted tab. So the surface that owns the
+  // queue has to be stamped separately, or the tab cannot drop these entries
+  // when it unmounts and the Captain keeps hearing the room after leaving it.
+  it('test_speak_stamps_the_owning_surface_not_the_speaker', () => {
+    useStore.setState({ callAudioEnabled: true });
+    const { result } = renderHook(() =>
+      useMeetingVoice({ meetingActive: true, owner: 'profile-chat-7' }),
+    );
+    act(() => { result.current.speakReplies([reply('peer-1')]); });
+
+    const deps = mocks.speakRepliesSequentially.mock.calls[0][1];
+    deps.speak('text-peer-1', undefined, 'peer-1');
+
+    // Attribution is still the speaker; only the owner names the surface.
+    expect(vi.mocked(speakResponse)).toHaveBeenCalledWith(
+      'text-peer-1', undefined, 'peer-1', undefined, 'narration', 'profile-chat-7',
+    );
   });
 });
 
