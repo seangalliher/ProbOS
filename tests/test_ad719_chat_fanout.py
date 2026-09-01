@@ -77,7 +77,12 @@ def test_chat_response_per_agent_reply_round_trip():
     reply = PerAgentReply(agent_id="a-1", callsign="counselor", text="hi")
     response = ChatResponse(response="", per_agent_replies=[reply], mentions=["counselor"])
     dump = response.model_dump()
-    assert dump["per_agent_replies"] == [{"agent_id": "a-1", "callsign": "counselor", "text": "hi"}]
+    # BF-813 added ``status``, empty for a genuine agent turn. Asserted
+    # explicitly rather than dropped, so a future field cannot appear
+    # unnoticed and the empty default stays part of the contract.
+    assert dump["per_agent_replies"] == [
+        {"agent_id": "a-1", "callsign": "counselor", "text": "hi", "status": ""}
+    ]
     assert dump["mentions"] == ["counselor"]
 
 

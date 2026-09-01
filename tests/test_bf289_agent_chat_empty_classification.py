@@ -26,7 +26,10 @@ def test_bf289_agent_chat_distinguishes_empty_content_from_missing_result() -> N
     """
     from probos.routers import agents as agents_module
 
-    src = inspect.getsource(agents_module.agent_chat)
+    # BF-813 split the routed entry point from the handler body so one
+    # ``finally`` could own the DM-sampling bracket. ``agent_chat`` is now the
+    # six-line wrapper; the branches this test is about live in the body.
+    src = inspect.getsource(agents_module._agent_chat_impl)
 
     # Empty-content branch: routes through the BF-714 diagnosis helper.
     assert "_llm_degrade_message(runtime)" in src, (
@@ -90,7 +93,9 @@ def test_bf289_branches_log_at_warning_for_operator_visibility() -> None:
     without trawling DEBUG. The generic branch was silent."""
     from probos.routers import agents as agents_module
 
-    src = inspect.getsource(agents_module.agent_chat)
+    # BF-813: the routed entry point is now a wrapper; the branches live in the
+    # handler body it delegates to.
+    src = inspect.getsource(agents_module._agent_chat_impl)
 
     # Two distinct logger.warning calls citing BF-289.
     bf289_warnings = src.count("BF-289:")

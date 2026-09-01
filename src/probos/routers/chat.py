@@ -202,18 +202,21 @@ async def chat(
                         agent_id="",
                         callsign=callsign,
                         text="(callsign not recognized)",
+                        status="unresolved",
                     )
                 if resolved.get("agent_id") is None:
                     return PerAgentReply(
                         agent_id="",
                         callsign=resolved.get("callsign", callsign),
                         text="(not currently on duty)",
+                        status="off_duty",
                     )
                 if not remaining_message:
                     return PerAgentReply(
                         agent_id=resolved["agent_id"],
                         callsign=resolved["callsign"],
                         text="(no message — append text after the mentions)",
+                        status="no_message",
                     )
                 intent = _IntentMessage(
                     intent="direct_message",
@@ -250,6 +253,14 @@ async def chat(
                         agent_id=resolved["agent_id"],
                         callsign=resolved["callsign"],
                         text="(refused -- not permitted)",
+                        # BF-813: the agent never saw this request, so it never
+                        # said this. Without the marker the placeholder was
+                        # persisted as a role="agent" transcript row AND written
+                        # to episodic memory, where it becomes recallable
+                        # context -- the ship manufacturing a memory of an agent
+                        # announcing its own refusal. Measured against a bus
+                        # denying one of two recipients.
+                        status="refused",
                     )
                 except Exception as e:
                     logger.warning(
@@ -261,6 +272,7 @@ async def chat(
                         agent_id=resolved["agent_id"],
                         callsign=resolved["callsign"],
                         text="(delivery failed)",
+                        status="delivery_failed",
                     )
                 # AD-1248: composed ONCE here, so both sinks on this route --
                 # the per-agent HTTP reply and the main-chat thread append
@@ -271,14 +283,19 @@ async def chat(
                 # that into a false "(no response)".
                 from probos.dm_reply import DmReply
 
-                reply_text = (
+                _rendered = (
                     str(DmReply.from_intent_result(result).render())
                     if result is not None else ""
-                ) or "(no response)"
+                )
                 return PerAgentReply(
                     agent_id=resolved["agent_id"],
                     callsign=resolved["callsign"],
-                    text=str(reply_text),
+                    text=str(_rendered or "(no response)"),
+                    # BF-813: typed, so the sinks below never have to decide
+                    # from prose whether an agent spoke. An agent that genuinely
+                    # replies with the literal text of a placeholder was being
+                    # dropped from the transcript by the string match.
+                    status="" if _rendered else "no_response",
                 )
 
             per_agent_replies_list = await asyncio.gather(
@@ -292,16 +309,20 @@ async def chat(
             # carries only genuine turns. Gated on store-presence; tier-2
             # honest-degrade per reply (one failure never blocks the others
             # or the HTTP response).
+            #
+            # BF-813: the same predicate now also gates the episodic sink
+            # below, which previously admitted every reply carrying an
+            # agent_id -- so "(delivery failed)" and "(refused -- not
+            # permitted)" were skipped here and stored there. It is typed
+            # rather than string-matched, because an agent that genuinely
+            # replied with a placeholder's exact text was being dropped.
+            def _is_genuine_agent_turn(reply: PerAgentReply) -> bool:
+                """Did the agent actually say this?"""
+                return bool(reply.agent_id) and not getattr(reply, "status", "")
+
             if _main_thread_store is not None:
-                _sentinels = {
-                    "(callsign not recognized)",
-                    "(not currently on duty)",
-                    "(no message — append text after the mentions)",
-                    "(delivery failed)",
-                    "(no response)",
-                }
                 for _reply in per_agent_replies:
-                    if not _reply.agent_id or _reply.text in _sentinels:
+                    if not _is_genuine_agent_turn(_reply):
                         continue
                     try:
                         _main_thread_store.append_message(
@@ -326,12 +347,17 @@ async def chat(
             # Episodic write per resolved fan-out reply (one episode per
             # (captain_turn, replying_agent) pair). Stubs (unresolved /
             # off-duty / delivery-failed without an agent_id) are skipped.
+            #
+            # BF-813: gated on the SAME predicate as the transcript above. It
+            # used to skip only on a missing agent_id, so a refused or
+            # failed-delivery placeholder was written as though the agent had
+            # spoken it -- a fabricated utterance in recallable memory.
             episodic_memory = getattr(runtime, "episodic_memory", None)
             if episodic_memory is not None:
                 t_end_fanout = time.monotonic()
                 dream_adapter = getattr(runtime, "dream_adapter", None)
                 for reply in per_agent_replies:
-                    if not reply.agent_id:
+                    if not _is_genuine_agent_turn(reply):
                         continue
                     try:
                         episode_input = f"@{reply.callsign} {remaining_message}"

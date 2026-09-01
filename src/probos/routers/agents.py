@@ -2621,6 +2621,63 @@ def _hold_degraded_turn(
     )
 
 
+class _DmSamplingGuard:
+    """BF-813: one owner for the AD-722f HIGH-tier DM sampling bracket.
+
+    The bracket used to be split across modules -- ``agent_chat`` entered, and
+    step 8 of ``DmReplyPipeline`` exited -- so anything that stopped the route
+    reaching that step orphaned the refcount permanently. The spurious-exit
+    clamp does not cover it: the clamp only fires when the count is already
+    <= 0, so an enter that is never matched never reaches it. Measured, all of
+    them silent: a 403 left ``{'dm': 1}`` tier ``high``; so did a cancellation
+    before dispatch, an error while shaping the response (HTTP 500), and a
+    ``mark_reply_emitted`` that raised inside step 8 (HTTP 200).
+
+    Held by the route, released in a ``finally``. ``release`` is one-shot and
+    a no-op if ``enter`` never ran, so the early-return paths that deliberately
+    never enter -- AD-732's honest-degrade, the crew gate -- cannot decrement a
+    concurrent request's count.
+    """
+
+    __slots__ = ("_agent_id", "_bus", "_entered", "_state")
+
+    def __init__(self, runtime: Any, agent_id: str) -> None:
+        self._state = getattr(runtime, "avatar_sampling_state", None)
+        self._bus = getattr(runtime, "avatar_event_bus", None)
+        self._agent_id = agent_id
+        self._entered = False
+
+    def enter(self) -> None:
+        if self._entered:
+            return
+        if self._state is not None:
+            self._state.enter_dm(self._agent_id)
+            self._entered = True
+        if self._bus is not None:
+            # AD-722b: wake WS publish loop — DM in-flight is a state change.
+            self._bus.notify(self._agent_id)
+
+    def release(self) -> None:
+        """Guarded: this runs in a ``finally``, often with an exception in
+        flight, and must never replace it with a less useful one."""
+        if not self._entered:
+            return
+        self._entered = False
+        try:
+            if self._state is not None:
+                self._state.exit_dm(self._agent_id)
+            if self._bus is not None:
+                # AD-722b: DM-exit is a state change ('responding' -> 'idle').
+                self._bus.notify(self._agent_id)
+        except Exception:
+            logger.debug(
+                "BF-813: could not release DM sampling for agent=%s; the count "
+                "stays one too high for the life of the process, so this "
+                "agent's telemetry samples at HIGH tier until restart",
+                self._agent_id, exc_info=True,
+            )
+
+
 def _build_reply_metadata(
     intent_id: str, result: Any, response: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -2691,7 +2748,30 @@ async def get_or_create_agent_thread(
 
 @router.post("/{agent_id}/chat")
 async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
-    """Send a direct message to a specific agent and get their response."""
+    """Send a direct message to a specific agent and get their response.
+
+    BF-813: this exists only to own the AD-722f DM-sampling bracket end to end.
+    A ``finally`` here is the one place that survives every way the handler can
+    stop -- a 403, a cancellation, an error shaping the response, a pipeline
+    step that raises -- each of which previously left the refcount elevated for
+    the life of the process. The guard is one-shot and a no-op when the handler
+    returned before entering, so the deliberate never-enter paths (the crew
+    gate, AD-732 honest-degrade) cannot decrement a concurrent request.
+    """
+    _dm_guard = _DmSamplingGuard(runtime, agent_id)
+    try:
+        return await _agent_chat_impl(agent_id, req, runtime, _dm_guard)
+    finally:
+        _dm_guard.release()
+
+
+async def _agent_chat_impl(
+    agent_id: str,
+    req: AgentChatRequest,
+    runtime: Any,
+    _dm_guard: _DmSamplingGuard,
+) -> dict[str, Any]:
+    """The agent-chat handler proper. See `agent_chat` for why it is split."""
     agent = runtime.registry.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
@@ -3324,18 +3404,15 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     # never block a reply. No-op when avatar_telemetry.enabled is False
     # (build_telemetry_snapshot itself short-circuits gracefully).
     #
-    # AD-722f: bracket the DM with HIGH-tier sampling. enter_dm here;
-    # exit_dm fires at the mark_reply_emitted site below. The exit is
-    # ALSO guaranteed by the spurious-exit clamp in the state machine,
-    # so an exception path between enter and exit cannot leak refcount
-    # permanently — at worst, the next mark_reply_emitted clamps to 0.
+    # AD-722f: bracket the DM with HIGH-tier sampling.
+    #
+    # BF-813: the bracket is owned end to end by ``agent_chat``'s ``finally``
+    # (see ``_DmSamplingGuard``). It used to be closed by step 8 of the reply
+    # pipeline, one module away and near the end of a 22-step chain, so four
+    # separate ways of not reaching that step each leaked the refcount silently.
+    _dm_guard.enter()
     _sampling_state = getattr(runtime, 'avatar_sampling_state', None)
     _avatar_event_bus = getattr(runtime, 'avatar_event_bus', None)
-    if _sampling_state is not None:
-        _sampling_state.enter_dm(agent_id)
-    if _avatar_event_bus is not None:
-        # AD-722b: wake WS publish loop — DM in-flight is a state change.
-        _avatar_event_bus.notify(agent_id)
     if hasattr(agent, 'observe_self_avatar'):
         try:
             await agent.observe_self_avatar()

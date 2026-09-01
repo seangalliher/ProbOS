@@ -438,16 +438,42 @@ export function IntentSurface() {
         // top-level `response` is intentionally empty.
         const replies = Array.isArray(data.per_agent_replies) ? data.per_agent_replies : [];
         if (replies.length > 0) {
-          for (const r of replies as Array<{ agent_id: string; callsign: string; text: string }>) {
-            addChatMessage('agent', r.text, { agent_id: r.agent_id, callsign: r.callsign });
+          for (const r of replies as Array<{ agent_id: string; callsign: string; text: string; status?: string }>) {
+            // BF-813: a non-empty `status` means `text` is a server-composed
+            // notice about what happened to the request -- refused, off duty,
+            // delivery failed -- not something the agent said. Recorded as
+            // 'agent' it entered chatHistory, was persisted, and rode back to
+            // the server as conversation history on the next turn, so the
+            // model saw an agent announcing its own refusal. 'system' is the
+            // same role the BF-812 denial notice above already uses.
+            //
+            // The callsign goes INTO the text because system messages are not
+            // rendered with attribution and the next turn's history projection
+            // carries only role and text: without it, a two-recipient fan-out
+            // shows "(refused -- not permitted)" without saying who refused.
+            addChatMessage(
+              r.status ? 'system' : 'agent',
+              r.status ? `@${r.callsign} ${r.text}` : r.text,
+              { agent_id: r.agent_id, callsign: r.callsign },
+            );
           }
-          if (voiceEnabled && replies[0]?.text && !replies[0].text.startsWith('(')) {
+          // BF-813: speak the first GENUINE reply, not `replies[0]`. With a
+          // refusal first and a real answer second, gating on index 0 spoke
+          // nothing at all -- the fix for one silence creating another.
+          // An EXPLICIT empty `status` is trusted over the leading-paren
+          // heuristic, which would mute an agent that genuinely opened with a
+          // parenthesis; the heuristic remains only for a legacy reply that
+          // carries no status field at all.
+          const spoken = (replies as Array<{ agent_id: string; text: string; status?: string }>)
+            .find((r) => !r.status && r.text
+              && (r.status === '' || !r.text.startsWith('(')));
+          if (voiceEnabled && spoken) {
             // BF-767: attribute the utterance. Unscoped, its 'end' carried no
             // agent_id and so matched every agent-scoped listener in the app.
             // AD-1291: narration -- the reply is already rendered above by
             // addChatMessage, so this reads out text the Captain can see.
             speakResponse(
-              stripMarkdownForSpeech(replies[0].text), undefined, replies[0].agent_id,
+              stripMarkdownForSpeech(spoken.text), undefined, spoken.agent_id,
               undefined, 'narration',
             );
           }

@@ -6,9 +6,11 @@ type are tolerated (rare but possible: two DMs in flight, or a chain
 spawned during a DM). The current tier is the highest active trigger.
 
 Trigger surfaces (Wave 141):
-  - ``enter_dm`` / ``exit_dm`` — wired at routers/agents.py:agent_chat
-    (entry around the existing ``observe_self_avatar()`` call;
-    exit around the existing ``mark_reply_emitted`` call).
+  - ``enter_dm`` / ``exit_dm`` — both owned by ``routers/agents.py:agent_chat``,
+    which enters around the ``observe_self_avatar()`` call and releases in a
+    ``finally`` (BF-813). The exit used to live one module away, in the reply
+    pipeline's ``mark_reply_emitted`` step; four separate ways of not reaching
+    that step each orphaned the refcount permanently.
   - ``enter_chain`` / ``exit_chain`` — wired at cognitive_agent.py around
     the ``_execute_chain_with_intent_routing`` call site (line ~1394).
 

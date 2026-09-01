@@ -134,6 +134,9 @@ class DmReplyContext:
     # pass through unchanged.
     params: dict[str, object]
     message_text: str
+    # BF-813: no pipeline step reads these any more. The AD-722f DM-sampling
+    # bracket is owned end to end by ``routers/agents.py::agent_chat``; do not
+    # re-add an exit here on the assumption that step 8 still closes it.
     sampling_state: Any | None
     avatar_event_bus: Any | None
     emotion: str | None = None
@@ -2014,22 +2017,22 @@ class DmReplyPipeline:
                 self.ctx.agent_id, exc_info=True,
             )
 
-    # --- step 8: mark_reply_emitted + AD-722f exit_dm + AD-722b wake ---
+    # --- step 8: mark_reply_emitted ---
     async def step_8_mark_emitted(self) -> None:
-        """AD-722: stamp last-reply emission + AD-722f exit_dm + AD-722b wake. Verbatim move."""
+        """AD-722: stamp last-reply emission.
+
+        BF-813: the AD-722f ``exit_dm`` and AD-722b wake USED to live here,
+        pairing with an ``enter_dm`` one module away in ``agent_chat``. Four
+        measured ways of not reaching this step -- a 403, a cancellation, an
+        error shaping the response, and a ``mark_reply_emitted`` that raised
+        here (``_run_steps`` swallows it) -- each orphaned the refcount
+        silently. The route now owns the whole bracket in a ``finally``
+        (``routers/agents.py::_DmSamplingGuard``); exiting here as well would
+        double-decrement.
+        """
         # AD-722: stamp the last-reply emission timestamp. Single source of truth.
         if hasattr(self.ctx.agent, 'mark_reply_emitted'):
             self.ctx.agent.mark_reply_emitted()
-
-        # AD-722f: matched exit for the enter_dm at the top of agent_chat.
-        # Spurious-exit clamp in the state machine handles the (rare)
-        # exception-path case where enter fired but exit didn't.
-        if self.ctx.sampling_state is not None:
-            self.ctx.sampling_state.exit_dm(self.ctx.agent_id)
-        # AD-722b: wake WS publish loop — DM-exit is a state change
-        # (working_state goes from 'responding' back to 'idle').
-        if self.ctx.avatar_event_bus is not None:
-            self.ctx.avatar_event_bus.notify(self.ctx.agent_id)
 
     # --- step 9: AD-738e-1 emotion resolution ---
     async def step_9_emotion_resolve(self) -> None:

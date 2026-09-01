@@ -50,6 +50,12 @@ class PerAgentReply(BaseModel):
     agent_id: str
     callsign: str
     text: str
+    # BF-813: empty for a genuine agent turn. Anything else means ``text`` is a
+    # server-composed placeholder describing what happened to the request, NOT
+    # something the agent said -- so it must not be persisted as an agent
+    # utterance. Optional with an empty default, so every existing producer and
+    # consumer is unchanged.
+    status: str = ""
 
 
 class ChatResponse(BaseModel):

@@ -441,7 +441,10 @@ def test_agent_chat_handler_wires_thread_store() -> None:
     """
     from probos.routers import agents as agents_module
 
-    src = inspect.getsource(agents_module.agent_chat)
+    # BF-813 split the routed entry point from the handler body so one
+    # ``finally`` could own the DM-sampling bracket. ``agent_chat`` is now the
+    # six-line wrapper; the wiring this test is about lives in the body.
+    src = inspect.getsource(agents_module._agent_chat_impl)
 
     assert "get_or_create_default_for_agent" in src, (
         "AD-791a: agent_chat must resolve the default 1:1 thread for the "
