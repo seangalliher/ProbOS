@@ -13,7 +13,6 @@ import ast
 import logging
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -22,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.events import EventType
+from probos.execution.isolation import remove_workdir_off_loop
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -2084,8 +2084,16 @@ Rules for MODIFY blocks:
                 finally:
                     try:
                         await adapter.stop()
-                    except Exception:
-                        logger.debug("Visiting builder: adapter.stop() error (ignored)")
+                    except Exception as stop_exc:
+                        # BF-844: the SDK client holds `tmp_dir` as its cwd, so a
+                        # failed shutdown means a descendant may still be holding
+                        # the tree the `finally` below removes.
+                        logger.warning(
+                            "Visiting builder: adapter.stop() failed (%s: %s); an SDK "
+                            "descendant may still hold the build tree %s, so its removal "
+                            "will retry and will warn if it cannot complete.",
+                            type(stop_exc).__name__, stop_exc, tmp_dir,
+                        )
 
                 if copilot_result.success and copilot_result.file_blocks:
                     self._transporter_result = {
@@ -2116,7 +2124,33 @@ Rules for MODIFY blocks:
                 logger.warning("Visiting builder error: %s — falling back to native", e)
             finally:
                 if tmp_dir:
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    # BF-844: `tmp_dir` is the SDK client's cwd, so a surviving
+                    # descendant holds it. A one-shot `rmtree(ignore_errors=True)`
+                    # cannot remove a held directory on Windows and reports
+                    # nothing when it fails -- measured: the tree survived the
+                    # call AND the holder's exit, because nothing retried.
+                    #
+                    # Normally off-loop, because this `finally` runs on the event
+                    # loop and the retry budget reaches ~9s. `remove_workdir_off_loop`
+                    # falls back to a SYNCHRONOUS removal when it cannot submit to
+                    # the executor (a loop whose executor has already shut down), so
+                    # during shutdown this can still block for that budget.
+                    #
+                    # The `except` is not defensive padding: the replaced one-shot
+                    # could not raise at all, and this helper deliberately
+                    # propagates a worker failure. Measured without it, a cleanup
+                    # error escaped `perceive` and discarded an already-successful
+                    # build. Cleanup must not be able to destroy the work.
+                    try:
+                        await remove_workdir_off_loop(Path(tmp_dir))
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as cleanup_exc:
+                        logger.warning(
+                            "Visiting builder: could not remove build tree %s (%s: %s); "
+                            "it may remain on disk. The build result is unaffected.",
+                            tmp_dir, type(cleanup_exc).__name__, cleanup_exc,
+                        )
 
         # Step 5: Check if Transporter Pattern should be used
         target_size = sum(len(all_files.get(f, "")) for f in target_files)
