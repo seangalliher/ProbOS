@@ -32,14 +32,36 @@ import pytest
 from probos.agents.http_fetch import DomainRateState, HttpFetchAgent
 from probos.security.url_guard import PinnedTarget
 
-#: Windows' timer granularity is ~15.6 ms and `asyncio.sleep` rounds up, so an
-#: exact `>= interval` comparison is measuring the clock, not the limiter.
-TOLERANCE = 0.9
+#: asyncio treats a timer as ready once it is within ONE clock tick of due, so
+#: `asyncio.sleep(d)` can return a whole tick EARLY. On Windows that tick is
+#: 15.625 ms: measured here, `asyncio.sleep(0.03)` returned in 0.0160 s, 14 ms
+#: early. The least gap a correctly-spaced pair can show is therefore
+#: `interval - CLOCK_TICK`, NOT `interval`.
+CLOCK_TICK = time.get_clock_info("monotonic").resolution
 
-#: `asyncio.sleep(d)` can return a millisecond or two before `monotonic()` has
-#: advanced by `d`. Against the defect the first request went out ~80 ms early,
-#: so this distinguishes the two without pinning the clock.
-SLEEP_UNDERSHOOT = 0.01
+#: How far below a nominal wait a healthy sleep may legitimately land.
+#: This replaced a multiplicative `interval * 0.9`, which is unsatisfiable
+#: whenever `interval * 0.1 < CLOCK_TICK` -- i.e. for any interval under about
+#: 156 ms. This file uses 30 ms and 50 ms intervals, so that form was asking
+#: for spacing the platform cannot deliver and flaked under the parallel gate.
+SLEEP_UNDERSHOOT = CLOCK_TICK + 0.002
+
+
+def _floor(nominal: float) -> float:
+    """The least duration a healthy wait of ``nominal`` can measure as.
+
+    Additive rather than proportional, because the error being tolerated is a
+    fixed timer tick and not a fraction of the interval. It stays far above
+    what the BF-820 defect produces -- a burst collapses gaps to ~0, while this
+    floor sits at `nominal` minus one tick -- so sensitivity is unaffected.
+
+    Never stricter than the proportional bound it replaced. On a platform with
+    a fine-grained clock (Linux reports a nanosecond resolution) the additive
+    term would otherwise TIGHTEN the bound to `nominal - 0.002` and could fail
+    a run that passes today. Taking the lower of the two means this change can
+    only ever relax a bound, never introduce a new failure.
+    """
+    return max(min(nominal * 0.9, nominal - SLEEP_UNDERSHOOT), 0.0)
 
 
 @pytest.fixture(autouse=True)
@@ -84,6 +106,56 @@ def _gaps(starts: list[float]) -> list[float]:
     return [starts[i + 1] - starts[i] for i in range(len(starts) - 1)]
 
 
+# ── the floor itself ──────────────────────────────────────────────
+
+
+def test_the_spacing_floor_is_achievable_on_this_platform() -> None:
+    """The bound must be one the event loop can actually satisfy.
+
+    The previous form, `interval * 0.9`, was not: it is below the achievable
+    minimum whenever `interval * 0.1 < CLOCK_TICK`, i.e. for any interval under
+    roughly 156 ms, and this file uses 30 ms and 50 ms. That is why it flaked
+    under the parallel gate rather than reporting a real defect.
+    """
+    for interval in (0.03, 0.05, 0.20):
+        achievable = interval - CLOCK_TICK
+        assert _floor(interval) <= achievable, (
+            f"floor {_floor(interval):.4f} for interval {interval} exceeds the "
+            f"{achievable:.4f} a healthy sleep can deliver at a "
+            f"{CLOCK_TICK:.6f}s tick"
+        )
+        # And never tighter than the bound this replaced, so a fine-clock
+        # platform keeps exactly its previous behaviour.
+        assert _floor(interval) <= interval * 0.9, interval
+        # A floor of zero would accept a burst; the clamp must stay inactive.
+        assert _floor(interval) > 0.0, interval
+
+
+def test_the_spacing_floor_still_rejects_coalescing() -> None:
+    """Widening the floor must not cost sensitivity.
+
+    A real defect collapses gaps toward zero, which is an order of magnitude
+    below the floor, so the two never come close. Pinned explicitly because two
+    earlier attempts at this fix bought tolerance by giving up detection -- one
+    let a single coalesced pair through, the other let the alternating shape
+    `[0.06, 0, 0.06, 0, 0.06]` through.
+    """
+    interval = 0.03
+    floor = _floor(interval)
+
+    healthy = [interval - CLOCK_TICK] * 5
+    assert all(g >= floor for g in healthy), healthy
+
+    burst = [0.0005, 0.0004, 0.0003, 0.0004, 0.0004]
+    assert not all(g >= floor for g in burst), burst
+
+    single_pair = [interval, 0.0, interval, interval, interval]
+    assert not all(g >= floor for g in single_pair), single_pair
+
+    alternating = [2 * interval, 0.0, 2 * interval, 0.0, 2 * interval]
+    assert not all(g >= floor for g in alternating), alternating
+
+
 # ── the defect ────────────────────────────────────────────────────
 
 
@@ -101,7 +173,7 @@ async def test_concurrent_distinct_urls_are_spaced_not_burst() -> None:
 
     assert len(gaps) == 2
     for gap in gaps:
-        assert gap >= interval * TOLERANCE, gaps
+        assert gap >= _floor(interval), gaps
 
 
 @pytest.mark.asyncio
@@ -123,8 +195,8 @@ async def test_the_spacing_holds_as_the_burst_grows() -> None:
 
     gaps = _gaps(starts)
     assert len(gaps) == 5
-    assert all(g >= interval * TOLERANCE for g in gaps), gaps
-    assert elapsed >= interval * 5 * TOLERANCE
+    assert all(g >= _floor(interval) for g in gaps), gaps
+    assert elapsed >= 5 * _floor(interval)
 
 
 @pytest.mark.asyncio
@@ -205,9 +277,9 @@ async def test_a_cancelled_waiter_does_not_consume_the_servers_directive() -> No
     began = time.monotonic()
     remaining = deadline - began
     await agent._wait_for_rate_limit(domain, state)
-    # `asyncio.sleep` can wake a millisecond or two early, so this is the
+    # `asyncio.sleep` can wake a whole clock tick early, so this is the
     # tolerance the rest of the file uses rather than an exact clock compare.
-    assert time.monotonic() - began >= remaining * TOLERANCE
+    assert time.monotonic() - began >= _floor(remaining)
     # Served now, so it is cleared.
     assert state.retry_after is None
 
@@ -267,7 +339,7 @@ async def test_only_one_waiter_consumes_a_retry_after() -> None:
     # Nobody goes before the server said they could.
     assert starts[0] >= deadline - SLEEP_UNDERSHOOT, starts[0] - deadline
     # And the second is still spaced from the first.
-    assert _gaps(starts)[0] >= 0.05 * TOLERANCE
+    assert _gaps(starts)[0] >= _floor(0.05)
 
 
 @pytest.mark.asyncio
@@ -296,7 +368,7 @@ async def test_the_delay_reported_is_the_delay_taken() -> None:
     for reported, actual in reports:
         assert abs(reported - actual) < 0.02, reports
     # The queued callers really did spend more than one interval.
-    assert max(r for r, _ in reports) >= interval * 2 * TOLERANCE, reports
+    assert max(r for r, _ in reports) >= 2 * _floor(interval), reports
 
 
 # ── across the seam into the fetch itself ─────────────────────────
