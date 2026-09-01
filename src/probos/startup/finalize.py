@@ -3185,6 +3185,55 @@ def _wire_task_context(*, runtime: Any, config: "SystemConfig") -> int:
     return wired_count
 
 
+def _wire_backup_service(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-466/AD-1265: construct ``runtime.backup_service`` from config.
+
+    Extracted from ``finalize_startup`` so the config -> service crossing has a
+    seam a test can actually call. Previously every backup knob reached the
+    service only through a ~4,000-line function no runtime test exercises,
+    which is the shape of #1313 itself: the service was constructed and never
+    invoked, and nothing noticed for the life of AD-466. An AST check on the
+    constructor call can prove an argument is *written*; only calling this can
+    prove it *arrives*.
+    """
+    if not config.infrastructure.enabled or not config.infrastructure.backup_enabled:
+        runtime.backup_service = None
+        return False
+
+    from probos.infrastructure import BackupService, build_default_roots
+
+    backup_root = runtime.data_dir / config.infrastructure.backup_subdir
+    try:
+        backup_root.mkdir(parents=True, exist_ok=True)
+        roots = build_default_roots(runtime.data_dir, config)
+        runtime.backup_service = BackupService(
+            data_dir=runtime.data_dir,
+            backup_root=backup_root,
+            emit_event=runtime.emit_event,
+            roots=roots,
+            retain_days=config.infrastructure.backup_retain_days,
+            max_total_bytes=config.infrastructure.backup_max_total_bytes,
+            orphan_alert_bytes=config.infrastructure.backup_orphan_alert_bytes,
+        )
+        logger.info(
+            "AD-466/AD-1265: BackupService wired (backup_root=%s, roots=%s, "
+            "retain_days=%d, max_total_bytes=%d, orphan_alert_bytes=%d)",
+            backup_root, [r.name for r in roots],
+            config.infrastructure.backup_retain_days,
+            config.infrastructure.backup_max_total_bytes,
+            config.infrastructure.backup_orphan_alert_bytes,
+        )
+    except OSError:
+        logger.warning(
+            "AD-466: BackupService mkdir failed (backup_root=%s); "
+            "service disabled for this session",
+            backup_root, exc_info=True,
+        )
+        runtime.backup_service = None
+        return False
+    return True
+
+
 def _populate_agent_tiers(*, runtime: Any, config: "SystemConfig") -> int:
     """AD-571: Classify registered agents and wire tier-aware services."""
     from probos.substrate.agent_tier import AgentTier, AgentTierRegistry
@@ -3706,45 +3755,9 @@ async def finalize_startup(
 
     # AD-466: Engineering Infrastructure (BackupService + StorageBackend)
     if config.infrastructure.enabled:
-        from probos.infrastructure import (
-            BackupService,
-            SQLiteStorageBackend,
-            build_default_roots,
-        )
+        from probos.infrastructure import SQLiteStorageBackend
         runtime.storage_backend = SQLiteStorageBackend()
-        if config.infrastructure.backup_enabled:
-            backup_root = runtime.data_dir / config.infrastructure.backup_subdir
-            try:
-                backup_root.mkdir(parents=True, exist_ok=True)
-                roots = build_default_roots(runtime.data_dir, config)
-                runtime.backup_service = BackupService(
-                    data_dir=runtime.data_dir,
-                    backup_root=backup_root,
-                    emit_event=runtime.emit_event,
-                    roots=roots,
-                    retain_days=config.infrastructure.backup_retain_days,
-                    max_total_bytes=config.infrastructure.backup_max_total_bytes,
-                    orphan_alert_bytes=(
-                        config.infrastructure.backup_orphan_alert_bytes
-                    ),
-                )
-                logger.info(
-                    "AD-466/AD-1265: BackupService wired (backup_root=%s, roots=%s, "
-                    "retain_days=%d, max_total_bytes=%d, orphan_alert_bytes=%d)",
-                    backup_root, [r.name for r in roots],
-                    config.infrastructure.backup_retain_days,
-                    config.infrastructure.backup_max_total_bytes,
-                    config.infrastructure.backup_orphan_alert_bytes,
-                )
-            except OSError:
-                logger.warning(
-                    "AD-466: BackupService mkdir failed (backup_root=%s); "
-                    "service disabled for this session",
-                    backup_root, exc_info=True,
-                )
-                runtime.backup_service = None
-        else:
-            runtime.backup_service = None
+        _wire_backup_service(runtime=runtime, config=config)
         logger.info("AD-466: StorageBackend wired (sqlite)")
 
     # AD-459: Saucer separation -- graceful degradation

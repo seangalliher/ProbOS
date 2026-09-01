@@ -3846,6 +3846,11 @@ class ProbOSRuntime:
                     # the #1313 diagnosis was made by querying this table.
                     "orphaned_working_dirs": list(result.orphaned_working_dirs),
                     "orphaned_bytes": result.orphaned_bytes,
+                    # A tick that fails before the sweep reports zero bytes
+                    # because it never counted, not because there was nothing
+                    # to count. Without this an aggregate over ticks reads
+                    # "not measured" as "no leak".
+                    "orphans_measured": result.orphans_measured,
                     "duration_seconds": result.duration_seconds,
                     "error": result.error,
                 },

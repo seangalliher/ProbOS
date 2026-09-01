@@ -529,39 +529,113 @@ def test_the_service_default_threshold_is_the_configured_one() -> None:
     )
 
 
-def test_startup_threads_the_threshold_from_config_to_the_service() -> None:
-    """A knob ``finalize`` never passes is inert, and reads exactly like working.
+def test_startup_threads_every_backup_knob_from_config_to_the_service(
+    tmp_path: Path,
+) -> None:
+    """The knobs must ARRIVE at the service, not merely appear in the call.
 
-    This is a source-structure assertion rather than a runtime crossing: the
-    backup wiring is inline in a four-thousand-line ``finalize`` that a unit
-    test cannot drive, and extracting a helper to reach it is a refactor this
-    change is not scoped to. It still catches the failure that matters -- the
-    kwarg dropped, misnamed, or pointed at the wrong config field.
+    This replaces an AST assertion on the constructor call site. That check
+    could prove a kwarg was *written*; it could not prove a value *arrives* --
+    the distinction #1313 turned on, where ``BackupService`` was constructed
+    and never invoked and nothing noticed for the life of AD-466. The two are
+    not kept side by side, because the weaker one would only ever fail in cases
+    this already covers.
+
+    All three knobs, not just the newest, and each set to a NON-DEFAULT value
+    so a wirer that quietly ignored config and used its own defaults fails
+    here.
+    """
+    from types import SimpleNamespace
+
+    from probos.startup.finalize import _wire_backup_service
+
+    config = SystemConfig()
+    config.infrastructure.enabled = True
+    config.infrastructure.backup_enabled = True
+    config.infrastructure.backup_retain_days = 11
+    config.infrastructure.backup_max_total_bytes = 123_456_789
+    config.infrastructure.backup_orphan_alert_bytes = 987_654_321
+
+    runtime = SimpleNamespace(
+        data_dir=tmp_path,
+        emit_event=lambda *a, **kw: None,
+        backup_service=None,
+    )
+
+    assert _wire_backup_service(runtime=runtime, config=config) is True
+
+    svc = runtime.backup_service
+    assert svc is not None
+    assert svc._retain_days == 11
+    assert svc._max_total_bytes == 123_456_789
+    assert svc._orphan_alert_bytes == 987_654_321
+    assert svc._backup_root == tmp_path / config.infrastructure.backup_subdir
+
+
+def test_startup_leaves_no_service_when_backups_are_disabled(
+    tmp_path: Path,
+) -> None:
+    """The premise the crossing test needs: the wirer really is consulted.
+
+    Without this, a ``_wire_backup_service`` that unconditionally built a
+    service would satisfy the test above while ignoring the enable flag. Both
+    gates are covered, because the helper carries the ``infrastructure.enabled``
+    precondition itself rather than relying on its one caller to apply it.
+    """
+    from types import SimpleNamespace
+
+    from probos.startup.finalize import _wire_backup_service
+
+    for enabled, backups in ((True, False), (False, True), (False, False)):
+        config = SystemConfig()
+        config.infrastructure.enabled = enabled
+        config.infrastructure.backup_enabled = backups
+        runtime = SimpleNamespace(
+            data_dir=tmp_path,
+            emit_event=lambda *a, **kw: None,
+            backup_service="sentinel",
+        )
+
+        assert _wire_backup_service(runtime=runtime, config=config) is False, (
+            f"wired a backup service with enabled={enabled}, "
+            f"backup_enabled={backups}"
+        )
+        assert runtime.backup_service is None
+
+
+def test_finalize_still_calls_the_backup_wirer() -> None:
+    """The helper being correct is worth nothing if nobody calls it.
+
+    Deliberately a source-structure check. Driving ``finalize_startup`` needs a
+    whole booted runtime, so the alternative is no pin at all on this link --
+    and an unpinned link is precisely #1313, where ``BackupService`` was
+    constructed and never invoked for the life of AD-466. The runtime test
+    above proves the values arrive *once the helper runs*; this proves startup
+    still runs it.
     """
     import ast
     import inspect
 
     from probos.startup import finalize as finalize_module
 
-    calls = [
-        node
-        for node in ast.walk(ast.parse(inspect.getsource(finalize_module)))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "BackupService"
-    ]
-    assert len(calls) == 1, (
-        f"premise: expected exactly one BackupService construction site in "
-        f"finalize, found {len(calls)} -- this probe no longer discriminates"
+    tree = ast.parse(inspect.getsource(finalize_module))
+    defined = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    assert "_wire_backup_service" in defined, (
+        "premise: the helper is gone, so this probe no longer discriminates"
     )
-    kwargs = {kw.arg: kw.value for kw in calls[0].keywords}
-    assert "orphan_alert_bytes" in kwargs, (
-        "finalize constructs BackupService without orphan_alert_bytes, so "
-        "infrastructure.backup_orphan_alert_bytes can never reach the sweep"
-    )
-    assert (
-        ast.unparse(kwargs["orphan_alert_bytes"])
-        == "config.infrastructure.backup_orphan_alert_bytes"
+
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_wire_backup_service" in called, (
+        "finalize defines the backup wirer but never calls it, so every "
+        "infrastructure.backup_* knob is inert at startup"
     )
 
 
@@ -761,6 +835,48 @@ def test_a_mkdir_failure_fails_the_run_and_retires_the_run_id(
     assert result.succeeded is False
     assert "mkdir failed" in result.error
     assert set(backup_module._LIVE_RUNS) == before, "a run id outlived a failed run"
+
+
+def test_a_mkdir_failure_does_not_report_a_measured_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``orphaned_bytes: 0`` here means "not counted", not "nothing to count".
+
+    The sweep never runs when ``mkdir`` fails, so the zero carries no
+    information about orphans. These counts are routed to ``events.db`` and the
+    #1313 diagnosis was made by querying that table, so a consumer aggregating
+    them across ticks would otherwise read an unmeasured tick as a clean one
+    and report no leak while one accumulated.
+    """
+    data_dir, backup_root = _bed(tmp_path)
+
+    def _boom(self, *a, **kw):  # noqa: ANN001, ANN202
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(Path, "mkdir", _boom)
+    failed = _service(data_dir, backup_root).snapshot()
+
+    assert failed.succeeded is False
+    assert failed.orphaned_bytes == 0
+    assert failed.orphans_measured is False, (
+        "a tick that never swept is reporting its zero as a measurement"
+    )
+
+
+def test_a_completed_tick_reports_its_orphan_count_as_measured(
+    tmp_path: Path,
+) -> None:
+    """The companion the test above needs to mean anything.
+
+    Without it ``orphans_measured`` could be hardcoded ``False`` and the
+    unmeasured-zero assertion would still pass, proving nothing.
+    """
+    data_dir, backup_root = _bed(tmp_path)
+
+    result = _service(data_dir, backup_root).snapshot()
+
+    assert result.succeeded is True
+    assert result.orphans_measured is True
 
 
 def test_the_run_is_registered_before_its_directory_exists(

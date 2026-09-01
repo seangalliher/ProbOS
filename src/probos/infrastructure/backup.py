@@ -146,6 +146,11 @@ class BackupResult:
     #: Working directories left alone because ownership could not be proven.
     orphaned_working_dirs: list[str] = field(default_factory=list)
     orphaned_bytes: int = 0
+    #: Whether the orphan sweep actually ran. A tick that fails before the
+    #: sweep reports ``orphaned_bytes = 0`` because nothing was counted, not
+    #: because nothing was there, and an aggregate over ticks would otherwise
+    #: read "not measured" as "no leak".
+    orphans_measured: bool = False
 
 
 @dataclass(frozen=True)
@@ -380,6 +385,7 @@ class BackupService:
             incomplete_dir="" if succeeded else str(working_dir),
             orphaned_working_dirs=list(sweep.foreign_dirs),
             orphaned_bytes=sweep.foreign_bytes,
+            orphans_measured=True,
         )
         if succeeded:
             self._emit_complete(result)
@@ -809,6 +815,7 @@ class BackupService:
             incomplete_dir=incomplete_dir,
             orphaned_working_dirs=list(sweep.foreign_dirs) if sweep else [],
             orphaned_bytes=sweep.foreign_bytes if sweep else 0,
+            orphans_measured=sweep is not None,
         )
         self._emit_failed(result)
         return result
