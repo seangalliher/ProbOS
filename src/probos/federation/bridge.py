@@ -10,7 +10,7 @@ import re
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Awaitable
+from collections.abc import Callable, Awaitable, Iterable
 from typing import Any, TYPE_CHECKING
 
 from probos.config import FederationConfig
@@ -962,6 +962,38 @@ def _detach_local_directed_result(
     return detached
 
 
+class FederationForwardOutcome(list[IntentResult]):
+    """Remote results, plus what the peers said about DELIVERY (AD-1297).
+
+    A ``list`` subclass because every existing reader of ``forward_intent`` --
+    iterate, index, ``len``, ``== []`` -- must keep working untouched. The
+    counters ride alongside for the one caller that has to tell "no peer had a
+    handler" from "a peer ran it and returned nothing", a distinction the list
+    cannot carry: both are ``[]``.
+
+    ``peers_unknown`` is the load-bearing counter. A peer that omits the
+    ``admitted`` key is an OLD peer, not a peer reporting no candidate.
+    Collapsing those two is the same defect as BF-870 pointed the other way --
+    orders stranded active forever because a pre-AD-1297 peer never claimed
+    them -- so omission increments THIS, never ``peers_admitted``'s complement.
+    """
+
+    def __init__(
+        self,
+        results: Iterable[IntentResult] = (),
+        *,
+        peers_attempted: int = 0,
+        peers_answered: int = 0,
+        peers_admitted: int = 0,
+        peers_unknown: int = 0,
+    ) -> None:
+        super().__init__(results)
+        self.peers_attempted: int = peers_attempted
+        self.peers_answered: int = peers_answered
+        self.peers_admitted: int = peers_admitted
+        self.peers_unknown: int = peers_unknown
+
+
 class FederationBridge:
     """Connects the local IntentBus to the federation transport layer.
 
@@ -1133,16 +1165,24 @@ class FederationBridge:
             return False
         return True
 
-    async def forward_intent(self, intent: IntentMessage) -> list[IntentResult]:
+    async def forward_intent(self, intent: IntentMessage) -> FederationForwardOutcome:
         """Forward an intent to selected peers and collect results.
 
         This is the function registered as IntentBus._federation_fn.
+
+        AD-1297: returns a ``FederationForwardOutcome`` -- still a list, so no
+        existing reader changes -- carrying whether any peer ADMITTED the
+        intent. ``[]`` alone could not say whether a peer ran the work and
+        returned nothing or no peer had a handler at all, and the watch path
+        needs those apart before it consumes a one-shot Captain's order.
         """
         peers = self._router.select_peers(
             intent.intent, self._transport.connected_peers
         )
         if not peers:
-            return []
+            # Nothing was attempted, so nothing is unknown: no peer could have
+            # run this. That is a KNOWN zero, and the caller may act on it.
+            return FederationForwardOutcome()
 
         params_for_transport, processed_attachment_keys = (
             _sanitize_attachment_params_for_federation(intent.params)
@@ -1171,12 +1211,35 @@ class FederationBridge:
 
         # Collect responses with timeout
         results: list[IntentResult] = []
+        peers_answered = 0
+        peers_admitted = 0
+        peers_unknown = 0
         for peer_id in peers:
             response = await self._transport.receive_with_timeout(
                 peer_id, self._config.forward_timeout_ms
             )
             if response is None:
+                # AD-1297: silence is NOT absence. The intent was already sent
+                # to this peer above, so it may have run the handler and had
+                # its reply lost -- a timeout cannot prove non-execution. Read
+                # as a known zero it would let the watch path raise, keep the
+                # order active, and re-dispatch work that already ran; that is
+                # BF-814 attempt 1 ("a handler that acts still yields []") one
+                # layer out, and duplicated remote side effects when measured.
+                # The genuine known zero is an EMPTY peer list, which returns
+                # earlier without ever entering this loop.
+                peers_unknown += 1
                 continue
+            peers_answered += 1
+            # AD-1297: THREE states, not two. Only an explicit ``False`` is a
+            # peer telling us it had no candidate. Omission, ``None``, or any
+            # shape this version does not recognise is an old or malformed peer
+            # -- UNKNOWN -- and must never be read as absence.
+            admitted = response.payload.get("admitted")
+            if admitted is True:
+                peers_admitted += 1
+            elif admitted is not False:
+                peers_unknown += 1
             # Deserialize results from response payload
             remote_results = response.payload.get("results", [])
             for rr in remote_results:
@@ -1205,7 +1268,13 @@ class FederationBridge:
                     intent_type=intent.intent,
                 )
 
-        return results
+        return FederationForwardOutcome(
+            results,
+            peers_attempted=len(peers),
+            peers_answered=peers_answered,
+            peers_admitted=peers_admitted,
+            peers_unknown=peers_unknown,
+        )
 
     def _directed_error(
         self,
@@ -1628,6 +1697,35 @@ class FederationBridge:
                     exc_info=True,
                 )
 
+        # AD-1297: the fact the FORWARDER cannot see -- did this node have a
+        # handler at all. Captured before the fan-out, because the roster can
+        # change during it, and reported regardless of how the broadcast then
+        # goes: a peer that admitted the intent and was refused by policy, or
+        # whose handler raised, still ADMITTED it. Admission is about delivery,
+        # not outcome, and conflating the two would re-fire remote work.
+        #
+        # It must not cost the peer its reply. Computing this unconditionally
+        # put a new raise ABOVE the AD-1276 envelope -- measured against a bus
+        # without the method: the peer got no intent_response at all and timed
+        # out, which is the exact failure AD-1276 exists to prevent. A node
+        # that cannot answer the admission question is in the same position as
+        # a pre-AD-1297 peer, so it says nothing and the key is OMITTED, which
+        # the forwarder reads as UNKNOWN.
+        admitted: bool | None
+        try:
+            admitted = bool(self._intent_bus.candidate_agent_ids(intent.intent))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            admitted = None
+            logger.warning(
+                "AD-1297: cannot determine local admission for inbound "
+                "federated intent %s from %s (exception_type=%s); the reply "
+                "will omit 'admitted', which the peer reads as UNKNOWN so it "
+                "does not mistake this node for one without a handler",
+                intent.intent, message.source_node, type(exc).__name__,
+            )
+
         # Broadcast locally with federated=False to prevent loop.
         #
         # AD-1276: opts into the raising shape so a POLICY REFUSAL is
@@ -1689,6 +1787,8 @@ class FederationBridge:
         # different reader with an EXACT key set (``_DIRECTED_RESPONSE_KEYS``),
         # which is one more reason these keys are added here and never there.
         response_payload: dict[str, Any] = {"results": serialized_results}
+        if admitted is not None:
+            response_payload["admitted"] = admitted
         if denied_reason is not None:
             response_payload["denied"] = True
             response_payload["reason"] = denied_reason

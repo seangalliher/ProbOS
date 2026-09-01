@@ -1805,8 +1805,22 @@ async def test_directed_dm_target_and_correlation_path_remains_available() -> No
 
 
 _FROZEN_METHOD_HASHES = {
+    # AD-1297 (BF-870, #1346): rewritten deliberately, not as a side effect. It
+    # now returns a `FederationForwardOutcome` -- still a `list`, so no reader
+    # changes -- carrying how many peers ANSWERED, ADMITTED, or reported
+    # nothing at all. `[]` alone could not say whether a peer ran the work and
+    # returned nothing or no peer had a handler, and the watch path must tell
+    # those apart before consuming a one-shot Captain's order. Only an explicit
+    # `admitted: false` counts as absence; omission is UNKNOWN.
+    #
+    # A timed-out peer also counts as UNKNOWN, not as a known zero: the intent
+    # was already sent, so silence cannot prove non-execution. Reading it as
+    # absence re-dispatched work that may have run, which was measured
+    # producing duplicate remote side effects. The genuine known zero is an
+    # empty peer list, which returns before the response loop.
+    # Previous hash: 595c3fd2fc311b91f8ba3049909d0c383985dbdb15f9d9f19b35f806bf1a7eac
     ("src/probos/federation/bridge.py", "FederationBridge", "forward_intent"):
-        "595c3fd2fc311b91f8ba3049909d0c383985dbdb15f9d9f19b35f806bf1a7eac",
+        "3e5af121362258e5a29ca9cd0c9faf2c703898a15ceecff33670492c4afd2cab",
     # BF-799 (#1263): rewritten deliberately, not as a side effect. The only
     # change to this method is putting the carried AD-1248 disclosure back onto
     # `metadata` after reconstruction, so a tool failure on a remote node is
@@ -1825,8 +1839,16 @@ _FROZEN_METHOD_HASHES = {
     # is ADDITIVE: `results` is still carried unchanged, so a peer that
     # predates the `denied`/`error` keys behaves exactly as it did.
     # Previous hash: e9f950e1c291249f86a6181c1198284da4e783945540c486b148a21978a47348
+    # AD-1297 (BF-870, #1346): rewritten deliberately, not as a side effect.
+    # The reply now carries `admitted` -- whether this node had any local
+    # candidate -- computed BEFORE the fan-out and reported whatever the
+    # broadcast then does, because admission is about delivery, not outcome.
+    # It is ADDITIVE and it cannot cost the peer its reply: a bus that cannot
+    # answer the question OMITS the key rather than raising above the AD-1276
+    # envelope, which would have presented a local fault as a dead node.
+    # Previous hash: b47b8d1ca55923c744f1de056d7b921f8adc1856c56bbbc9a5115e87c86641de
     ("src/probos/federation/bridge.py", "FederationBridge", "_handle_intent_request"):
-        "b47b8d1ca55923c744f1de056d7b921f8adc1856c56bbbc9a5115e87c86641de",
+        "5d10e4c9371c15226effa1158bbba6b33f9de98e95fca61b4f7f36dadb0c60b5",
     ("src/probos/federation/bridge.py", "FederationBridge", "_send_directed_response"):
         "ba1ce85fdd6fb6c3f7e821795c92cc97d8d0f3eb39980145491649c46e8f35f2",
     ("src/probos/federation/bridge.py", "FederationBridge", "_handle_direct_message_request"):

@@ -1883,37 +1883,29 @@ class ProbOSRuntime:
         BF-814: the fourth way this path could report work it never did. The
         first three raised or were refused; this one succeeded and delivered to
         nobody.
+
+        AD-1297: BF-814 keyed the federation carve-out on ``forwards_to_peers``
+        -- federation CONFIGURED -- which is a proxy for delivery, not delivery.
+        With a transport wired and no peer admitting the intent, a one-shot
+        order was still consumed having done nothing. ``broadcast`` now carries
+        the admission fact from the peers themselves, so the decision is made
+        on what a peer said rather than on what this node has configured.
         """
-        from probos.mesh.pre_intent_auth import IntentNoSubscriber
         from probos.types import IntentMessage
-        # BF-814: capture reachability BEFORE the await (topology can change
-        # during it), but publish regardless and refuse AFTER. Refusing first
-        # would skip the pre-intent hooks -- and BF-790a's guard says raising
-        # before publish is exactly how this path went silent. Publishing to
-        # nobody is harmless, and it keeps a policy denial (raised inside
-        # publish) taking precedence over a topology fact.
+        # BF-814/AD-1297: the reachability decision lives inside ``broadcast``,
+        # which computes candidates BEFORE the fan-out and refuses AFTER it.
+        # That ordering is load-bearing and unchanged: refusing first would
+        # skip the pre-intent hooks, and BF-790a's guard records that raising
+        # before publish is exactly how this path went silent. It also keeps a
+        # policy denial (raised inside publish) winning over a topology fact.
         #
-        # Keyed on candidates, never on the result list: a handler that runs,
-        # acts, and returns None also yields [], so an empty list cannot mean
-        # non-delivery without re-firing side effects.
-        candidates = self.intent_bus.candidate_agent_ids(intent_type)
+        # Keyed on candidates and peer admission, never on the result list: a
+        # handler that runs, acts, and returns None also yields [], so an empty
+        # list cannot mean non-delivery without re-firing side effects.
         intent = IntentMessage(intent=intent_type, params=params)
-        results = await self.intent_bus.publish(intent, raise_on_denial=True)
-        # Federation makes an empty LOCAL candidate set insufficient: broadcast
-        # forwards to peers, and a remote agent may have run the order. Claiming
-        # non-delivery there would leave it active and re-execute it remotely on
-        # the next sweep -- the duplicate-side-effect failure this design exists
-        # to avoid, arriving by another route.
-        #
-        # KNOWN LIMITATION: this reports federation CONFIGURED, not a peer
-        # accepting the work, so with federation wired and no peer answering the
-        # order is still consumed having done nothing. That is HEAD's behaviour
-        # for every order, so it is not a regression, and federation is off by
-        # default -- but it is not the desired contract either. Closing it needs
-        # a delivery-admission signal from the federation bridge.
-        if not candidates and not self.intent_bus.forwards_to_peers:
-            raise IntentNoSubscriber(intent_type)
-        return results
+        return await self.intent_bus.publish(
+            intent, raise_on_denial=True, raise_on_no_subscriber=True
+        )
 
     def _populate_watch_roster(self) -> None:
         """Populate watch roster from ontology assignments.

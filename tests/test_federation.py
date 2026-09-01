@@ -243,6 +243,13 @@ def _make_mock_intent_bus(results: list[IntentResult] | None = None):
             self.broadcast_calls: list[dict] = []
             self._results = results or []
             self._federation_fn = None
+            # AD-1297: what this node would tell a forwarder about its own
+            # ability to run the intent. Set per test; empty means "no local
+            # candidate", which the bridge reports as ``admitted=False``.
+            self.candidates: set[str] = set()
+
+        def candidate_agent_ids(self, intent_name: str) -> set[str]:
+            return set(self.candidates)
 
         async def broadcast(self, intent, *, timeout=None, federated=True, raise_on_denial=False):
             self.broadcast_calls.append({
@@ -480,6 +487,265 @@ class TestFederationBridgeOutbound:
         assert len(results) == 1
         assert results[0].success is True
         assert len(validated) == 2
+
+        await env["bridge_a"].stop()
+        await env["bridge_b"].stop()
+
+
+# ── AD-1297 (BF-870, #1346): delivery admission ──────────────────────
+
+
+class _AdmissionTransport:
+    """One peer, one canned reply, so the counters can be read exactly.
+
+    ``receive_with_timeout`` returning ``None`` is a peer that never answered,
+    which is what the real transport does on timeout.
+    """
+
+    def __init__(self, payload: dict | None) -> None:
+        self._payload = payload
+        self.sent: list[FederationMessage] = []
+
+    @property
+    def connected_peers(self) -> list[str]:
+        return ["node-b"]
+
+    async def send_to_peer(self, peer_node_id: str, message: FederationMessage) -> None:
+        self.sent.append(message)
+
+    async def receive_with_timeout(self, *_a, **_k) -> FederationMessage | None:
+        if self._payload is None:
+            return None
+        return FederationMessage(
+            type="intent_response",
+            source_node="node-b",
+            message_id="m1",
+            payload=self._payload,
+            timestamp=0.0,
+        )
+
+
+def _admission_bridge(payload: dict | None):
+    from probos.federation.bridge import FederationBridge
+    from probos.federation.router import FederationRouter
+
+    transport = _AdmissionTransport(payload)
+    bridge = FederationBridge(
+        node_id="node-a",
+        transport=transport,
+        router=FederationRouter(),
+        intent_bus=_make_mock_intent_bus(),
+        config=FederationConfig(
+            enabled=True, node_id="node-a",
+            forward_timeout_ms=50, gossip_interval_seconds=100,
+            validate_remote_results=False,
+        ),
+        self_model_fn=_self_model_fn,
+    )
+    return bridge, transport
+
+
+class TestForwardIntentAdmissionCounters:
+    """``forward_intent`` reports DELIVERY, which ``[]`` alone cannot."""
+
+    async def test_a_peer_that_never_answers_is_unknown_not_a_known_zero(self):
+        """A timeout IS ambiguity, and this test used to say it was not.
+
+        It previously asserted ``peers_unknown == 0`` on the reasoning that
+        "nothing was admitted and nothing was claimed, so this is a KNOWN zero
+        the caller may act on". That does not follow. The intent was already
+        SENT to this peer, so it may have run the handler and had its reply
+        lost -- silence cannot prove non-execution. Acting on it as a known
+        zero let the watch path raise, keep a one-shot order active, and
+        re-dispatch work that had already run: measured as duplicated remote
+        side effects. The genuine known zero is an empty peer list, which
+        returns before this loop.
+        """
+        bridge, transport = _admission_bridge(None)
+        intent = IntentMessage(intent="read_file", params={})
+
+        outcome = await bridge.forward_intent(intent)
+
+        assert transport.sent, "premise: it must actually have been forwarded"
+        assert outcome == []
+        assert outcome.peers_attempted == 1
+        assert outcome.peers_answered == 0
+        assert outcome.peers_admitted == 0
+        assert outcome.peers_unknown == 1
+
+    async def test_a_peer_omitting_the_key_is_unknown_not_absent(self):
+        """THE mixed-version rule. An old peer answers without ``admitted``;
+        reading that as "no candidate" would strand orders active forever."""
+        bridge, _ = _admission_bridge({"results": []})
+        intent = IntentMessage(intent="read_file", params={})
+
+        outcome = await bridge.forward_intent(intent)
+
+        assert outcome.peers_answered == 1
+        assert outcome.peers_unknown == 1
+        assert outcome.peers_admitted == 0
+
+    async def test_an_explicit_null_is_unknown_too(self):
+        """A peer that carries the key but cannot answer it (its bus could not
+        report) is in the same position as one that never had the key."""
+        bridge, _ = _admission_bridge({"results": [], "admitted": None})
+
+        outcome = await bridge.forward_intent(IntentMessage(intent="x", params={}))
+
+        assert outcome.peers_unknown == 1
+        assert outcome.peers_admitted == 0
+
+    async def test_a_shape_this_version_does_not_recognise_is_unknown(self):
+        """Only an explicit ``False`` means absence. Anything else the wire can
+        carry is UNKNOWN, because guessing in the other direction is the
+        defect this closes, pointed backwards."""
+        bridge, _ = _admission_bridge({"results": [], "admitted": "maybe"})
+
+        outcome = await bridge.forward_intent(IntentMessage(intent="x", params={}))
+
+        assert outcome.peers_unknown == 1
+        assert outcome.peers_admitted == 0
+
+    async def test_an_admitting_peer_with_no_results_still_counts_as_admitted(self):
+        """The whole point. The list is empty and the work WAS delivered."""
+        bridge, _ = _admission_bridge({"results": [], "admitted": True})
+
+        outcome = await bridge.forward_intent(IntentMessage(intent="x", params={}))
+
+        assert outcome == [], "premise: the ambiguous empty list"
+        assert outcome.peers_admitted == 1
+        assert outcome.peers_unknown == 0
+        assert outcome.peers_answered == 1
+
+    async def test_a_peer_reporting_no_candidate_is_a_known_zero(self):
+        """``admitted=False`` is the only value that means absence."""
+        bridge, _ = _admission_bridge({"results": [], "admitted": False})
+
+        outcome = await bridge.forward_intent(IntentMessage(intent="x", params={}))
+
+        assert outcome.peers_answered == 1
+        assert outcome.peers_admitted == 0
+        assert outcome.peers_unknown == 0
+
+    async def test_no_peer_selected_is_a_known_zero(self):
+        """Nothing was attempted, so nothing could have run remotely."""
+        from probos.federation.bridge import FederationBridge
+        from probos.federation.mock_transport import (
+            MockFederationTransport, MockTransportBus,
+        )
+        from probos.federation.router import FederationRouter
+
+        bridge = FederationBridge(
+            node_id="node-a",
+            transport=MockFederationTransport("node-a", MockTransportBus()),
+            router=FederationRouter(),
+            intent_bus=_make_mock_intent_bus(),
+            config=FederationConfig(
+                enabled=True, node_id="node-a", gossip_interval_seconds=100,
+            ),
+            self_model_fn=_self_model_fn,
+        )
+
+        outcome = await bridge.forward_intent(IntentMessage(intent="x", params={}))
+
+        assert outcome.peers_attempted == 0
+        assert outcome.peers_admitted == 0
+        assert outcome.peers_unknown == 0
+
+    async def test_the_outcome_is_still_a_list_everywhere_it_is_read(self):
+        """Every existing reader of ``forward_intent`` treats it as a list, so
+        the counters must not have cost list behaviour."""
+        result = IntentResult(intent_id="i1", agent_id="b1", success=True, result="ok")
+        bridge, _ = _admission_bridge({
+            "results": [{
+                "intent_id": "i1", "agent_id": "b1", "success": True,
+                "result": "ok", "error": None, "confidence": 0.9,
+            }],
+            "admitted": True,
+        })
+
+        outcome = await bridge.forward_intent(IntentMessage(intent="x", params={}))
+
+        assert isinstance(outcome, list)
+        assert len(outcome) == 1
+        assert outcome[0].result == result.result
+        assert [r.agent_id for r in outcome] == ["b1"]
+        assert list(outcome) + [] == list(outcome)
+
+
+class TestAdmissionCrossesTheWire:
+    """The producer and the consumer, in one test.
+
+    Each half passing separately is the signature failure of this seam: the
+    responding node sets a key nothing reads, or the forwarder counts a key
+    nobody sends. These drive a real two-node pair so the fact makes the trip.
+    """
+
+    async def test_a_peer_with_a_handler_reports_admitted_and_is_counted(self):
+        env = _make_two_node_env(
+            bus_results_b=[
+                IntentResult(intent_id="i1", agent_id="b1", success=True, result="ok"),
+            ],
+        )
+        # The responding bus reports a candidate.
+        env["bus_b"].candidates = {"b1"}
+        await env["bridge_a"].start()
+        await env["bridge_b"].start()
+
+        outcome = await env["bridge_a"].forward_intent(
+            IntentMessage(intent="read_file", params={})
+        )
+
+        assert outcome.peers_answered == 1
+        assert outcome.peers_admitted == 1, "the peer had a handler and said so"
+        assert outcome.peers_unknown == 0
+
+        await env["bridge_a"].stop()
+        await env["bridge_b"].stop()
+
+    async def test_a_peer_with_no_handler_reports_absence_and_is_counted(self):
+        """The case BF-870 could not see: federation wired, a peer answering,
+        and nobody anywhere able to run the work."""
+        env = _make_two_node_env(bus_results_b=[])
+        env["bus_b"].candidates = set()
+        await env["bridge_a"].start()
+        await env["bridge_b"].start()
+
+        outcome = await env["bridge_a"].forward_intent(
+            IntentMessage(intent="read_file", params={})
+        )
+
+        assert outcome == [], "premise: the empty list BF-870 could not read"
+        assert outcome.peers_answered == 1, "premise: the peer really did answer"
+        assert outcome.peers_admitted == 0
+        assert outcome.peers_unknown == 0, "a known absence, not ambiguity"
+
+        await env["bridge_a"].stop()
+        await env["bridge_b"].stop()
+
+    async def test_a_peer_whose_bus_cannot_report_omits_rather_than_guessing(self):
+        """A responding node that cannot answer the admission question must
+        still REPLY -- AD-1276 -- and must say nothing rather than claim
+        absence. Measured: computing this unconditionally raised above the
+        reply envelope and the forwarder timed out holding nothing."""
+        env = _make_two_node_env(bus_results_b=[])
+
+        def _cannot_report(_intent_name: str) -> set[str]:
+            # Shadows the method on this instance so the call site sees exactly
+            # what a bus WITHOUT the method produces: AttributeError.
+            raise AttributeError("candidate_agent_ids")
+
+        env["bus_b"].candidate_agent_ids = _cannot_report
+        await env["bridge_a"].start()
+        await env["bridge_b"].start()
+
+        outcome = await env["bridge_a"].forward_intent(
+            IntentMessage(intent="read_file", params={})
+        )
+
+        assert outcome.peers_answered == 1, "AD-1276: the peer is still owed a reply"
+        assert outcome.peers_unknown == 1
+        assert outcome.peers_admitted == 0
 
         await env["bridge_a"].stop()
         await env["bridge_b"].stop()

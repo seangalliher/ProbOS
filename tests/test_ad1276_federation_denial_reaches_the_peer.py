@@ -264,6 +264,14 @@ class TestTheAllowedAndDirectedPathsAreUnchanged:
         await bridge.handle_inbound(_inbound_request())
 
         _, response = transport.sent[0]
+        # AD-1297 (BF-870, #1346) added `admitted` to this envelope. The
+        # assertion used to pin the single-key `{"results": [...]}` shape; that
+        # was correct for AD-1276 and is now stale, not wrong-in-principle --
+        # this test's job is to catch an UNINTENDED key change, so it is
+        # updated rather than relaxed. `admitted` reports whether this node had
+        # a local candidate, so a forwarder can tell "a peer ran it and
+        # returned nothing" from "no peer had a handler". `results` is
+        # unchanged, which is what keeps the change additive for old peers.
         assert response.payload == {
             "results": [
                 {
@@ -274,7 +282,8 @@ class TestTheAllowedAndDirectedPathsAreUnchanged:
                     "error": None,
                     "confidence": 0.9,
                 }
-            ]
+            ],
+            "admitted": True,
         }, "the allowed payload gained or lost a key"
 
     async def test_the_directed_federation_path_is_not_altered(self):

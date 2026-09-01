@@ -17,6 +17,15 @@ INVOKED", and that is knowable BEFORE publishing. ``candidate_agent_ids`` answer
 it, and the bridge raises ``IntentNoSubscriber`` so ``WatchManager``'s existing
 exception paths -- which already leave an order active and uncounted -- handle it
 with no change to their logic.
+
+AD-1297 (BF-870, #1346) closed the federation half. BF-814 carved federation out
+using ``forwards_to_peers`` -- transport CONFIGURED -- which is a proxy for
+delivery and not delivery itself, so a wired mesh with nobody answering still
+consumed one-shot orders. ``FederationForwardOutcome`` carries what the peers
+actually said, and the rule is asymmetric on purpose: only an explicit "I had no
+candidate" counts as absence. Silence, an old peer, a partial report or a
+transport fault are all UNKNOWN, and UNKNOWN falls back to consuming -- because
+the other direction strands every order on a mixed-version mesh forever.
 """
 
 from __future__ import annotations
@@ -25,6 +34,7 @@ import time
 
 import pytest
 
+from probos.federation.bridge import FederationForwardOutcome
 from probos.mesh.intent import IntentBus
 from probos.mesh.pre_intent_auth import IntentNoSubscriber
 from probos.mesh.signal import SignalManager
@@ -283,7 +293,12 @@ async def test_a_federated_bus_is_never_reported_as_no_subscriber() -> None:
     """Found by review. ``broadcast`` forwards to peers, so a remote agent may
     have run the order even with zero LOCAL candidates. Reporting non-delivery
     there would leave the order active and re-execute it remotely next sweep --
-    the duplicate side effect this whole design exists to prevent."""
+    the duplicate side effect this whole design exists to prevent.
+
+    AD-1297: the callback here returns a PLAIN LIST, so after AD-1297 this pins
+    the LEGACY path specifically -- a pre-AD-1297 federation handler reports no
+    admission at all, which is UNKNOWN and must still consume. It no longer
+    proves the general federated case; the admission tests below do that."""
     bus = _bus()
     remote_calls: list[str] = []
 
@@ -307,28 +322,76 @@ async def test_a_federated_bus_is_never_reported_as_no_subscriber() -> None:
 
 
 @pytest.mark.asyncio
-async def test_known_limitation_federation_configured_but_no_peer_still_consumes() -> None:
-    """KNOWN LIMITATION, pinned so it is visible rather than discovered.
+async def test_federation_configured_but_no_peer_admitting_does_not_consume() -> None:
+    """AD-1297 (BF-870, #1346). This test previously asserted the OPPOSITE.
 
-    ``forwards_to_peers`` reports that federation is CONFIGURED, not that a peer
-    accepted the work. With federation wired and no peer answering, the order is
-    still consumed having done nothing.
+    It was written as a pinned KNOWN LIMITATION: ``forwards_to_peers`` reported
+    that federation was CONFIGURED, not that a peer accepted the work, so with a
+    transport wired and nobody answering the order was consumed having done
+    nothing. Its own docstring said "when the admission signal lands, this
+    assertion FAILS and forces the behaviour to be corrected here."
 
-    This is NOT a regression -- it is exactly what HEAD does for every order --
-    and it is NOT the desirable contract. Closing it needs a delivery-admission
-    signal from the federation bridge, which does not exist; filed separately.
+    That signal is ``FederationForwardOutcome``. The assertion is updated, not
+    removed -- the old one recorded a real defect, and deleting it would erase
+    the only evidence the defect existed.
 
-    Federation is disabled by default (``FederationConfig.enabled = False``), so
-    a default single-node vessel is fully protected by the tests above. This
-    test exists so that when the admission signal lands, this assertion FAILS
-    and forces the behaviour to be corrected here.
+    Two zeros are required and they are not the same: nothing admitted AND
+    nothing unknown. A peer that answered "no candidate" is a KNOWN absence.
     """
     bus = _bus()
 
-    async def _no_peers(intent: IntentMessage) -> list[IntentResult]:
-        return []  # configured, but nothing accepted it
+    async def _peer_answered_with_no_candidate(
+        intent: IntentMessage,
+    ) -> FederationForwardOutcome:
+        return FederationForwardOutcome(
+            peers_attempted=1,
+            peers_answered=1,
+            peers_admitted=0,
+            peers_unknown=0,
+        )
 
-    bus.set_federation_handler(_no_peers)
+    bus.set_federation_handler(_peer_answered_with_no_candidate)
+    assert bus.candidate_agent_ids("nobody_anywhere") == set(), (
+        "premise: no local candidate either"
+    )
+    order = _order(intent_type="nobody_anywhere")
+    wm = WatchManager(dispatch_fn=_bridge(bus))
+    wm._captain_orders.append(order)
+
+    await wm._dispatch_due_orders()
+
+    assert order.active is True, (
+        "no local candidate and no peer admitted it -- nobody ran this, so the "
+        "order must survive to be run later"
+    )
+    assert order.executed_count == 0
+
+
+@pytest.mark.asyncio
+async def test_federation_peers_that_never_answer_consume_the_order() -> None:
+    """Peers were attempted and none replied. That is UNKNOWN, not absence.
+
+    This test previously asserted the opposite, on the reasoning that "nothing
+    claimed the work, so nothing can have run it". A peer can receive the send,
+    execute the handler with side effects, and have its reply lost -- so
+    silence proves nothing. Keeping the order active on that basis re-dispatches
+    work that may already have run, which is BF-814 attempt 1 one layer out and
+    was measured producing duplicate remote side effects.
+
+    The trade is deliberate and asymmetric: a lost order is recoverable by
+    reissuing it, a duplicated side effect is not. The genuine no-delivery case
+    -- no peer selected at all -- is covered by the test above, where nothing
+    was sent and the order rightly survives.
+    """
+    bus = _bus()
+
+    async def _nobody_answered(intent: IntentMessage) -> FederationForwardOutcome:
+        # What the real bridge now produces for two silent peers.
+        return FederationForwardOutcome(
+            peers_attempted=2, peers_answered=0, peers_unknown=2,
+        )
+
+    bus.set_federation_handler(_nobody_answered)
     order = _order(intent_type="nobody_anywhere")
     wm = WatchManager(dispatch_fn=_bridge(bus))
     wm._captain_orders.append(order)
@@ -336,9 +399,324 @@ async def test_known_limitation_federation_configured_but_no_peer_still_consumes
     await wm._dispatch_due_orders()
 
     assert order.active is False, (
-        "documents today's behaviour, not the desired one -- when federation "
-        "gains a delivery-admission signal this must become active=True"
+        "silence was treated as proof nobody ran it, so the order stayed "
+        "active and will re-fire work that may already have executed"
     )
+    assert order.executed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_peer_that_admits_and_returns_nothing_consumes_the_order() -> None:
+    """The positive control for AD-1297, and the reason an empty list cannot be
+    the signal: the remote handler RAN, acted, and returned nothing.
+
+    Leaving the order active here would re-fire the remote side effect on the
+    next sweep -- the duplicate-execution failure the whole design prevents.
+    """
+    bus = _bus()
+    forwarded: list[str] = []
+
+    async def _peer_admits(intent: IntentMessage) -> FederationForwardOutcome:
+        forwarded.append(intent.intent)
+        return FederationForwardOutcome(
+            peers_attempted=1,
+            peers_answered=1,
+            peers_admitted=1,
+            peers_unknown=0,
+        )
+
+    bus.set_federation_handler(_peer_admits)
+    order = _order(intent_type="remote_handler_returns_none")
+    wm = WatchManager(dispatch_fn=_bridge(bus))
+    wm._captain_orders.append(order)
+
+    await wm._dispatch_due_orders()
+    await wm._dispatch_due_orders()
+
+    assert forwarded == ["remote_handler_returns_none"], (
+        "premise: forwarded exactly once, so the remote side effect fired once"
+    )
+    assert order.active is False, "a peer admitted it -- that is delivery"
+    assert order.executed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_federation_callback_is_unknown_not_absent() -> None:
+    """MIXED VERSION. A callback predating ``FederationForwardOutcome`` returns
+    a plain list and reports nothing about admission.
+
+    Reading that as "no candidate" is this defect inverted: on a mesh with one
+    un-upgraded node every order would sit active forever, re-dispatched on
+    every sweep. UNKNOWN must fall back to today's behaviour -- consume it --
+    because that is the direction that cannot strand work.
+    """
+    bus = _bus()
+
+    async def _legacy(intent: IntentMessage) -> list[IntentResult]:
+        return []
+
+    bus.set_federation_handler(_legacy)
+    order = _order(intent_type="old_peer_out_there")
+    wm = WatchManager(dispatch_fn=_bridge(bus))
+    wm._captain_orders.append(order)
+
+    await wm._dispatch_due_orders()
+
+    assert order.active is False
+    assert order.executed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_partial_outcome_shape_is_unknown_not_absent() -> None:
+    """Same rule, one step subtler: an object carrying SOME counters but not
+    both. Half a report is not a report, so it is UNKNOWN."""
+    bus = _bus()
+
+    class _HalfOutcome(list):
+        peers_admitted = 0  # ...and no peers_unknown
+
+    async def _partial(intent: IntentMessage) -> list[IntentResult]:
+        return _HalfOutcome()
+
+    bus.set_federation_handler(_partial)
+    order = _order(intent_type="half_a_report")
+    wm = WatchManager(dispatch_fn=_bridge(bus))
+    wm._captain_orders.append(order)
+
+    await wm._dispatch_due_orders()
+
+    assert order.active is False, "an incomplete report cannot prove absence"
+    assert order.executed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_federation_transport_failure_is_unknown_not_absent() -> None:
+    """``broadcast`` swallows a federation exception by design. That is an
+    infrastructure fault, not evidence that no peer had a handler -- a peer may
+    have received and run the intent before the failure."""
+    bus = _bus()
+
+    async def _explodes(intent: IntentMessage) -> list[IntentResult]:
+        raise RuntimeError("transport down")
+
+    bus.set_federation_handler(_explodes)
+    order = _order(intent_type="transport_is_broken")
+    wm = WatchManager(dispatch_fn=_bridge(bus))
+    wm._captain_orders.append(order)
+
+    await wm._dispatch_due_orders()
+
+    assert order.active is False, (
+        "an infrastructure failure must not be reported as no-subscriber"
+    )
+    assert order.executed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_federation_callback_returning_a_non_iterable_still_degrades() -> None:
+    """``broadcast`` has always swallowed a bad federation return; AD-1297 must
+    not widen what escapes it.
+
+    Reading the counters after ``extend`` would have moved that ``extend`` out
+    of the guarded block, so a non-iterable return would newly propagate out of
+    ``broadcast`` to callers that have never handled it.
+    """
+    bus = _bus()
+
+    async def _returns_garbage(intent: IntentMessage) -> list[IntentResult]:
+        return 42  # type: ignore[return-value]
+
+    bus.set_federation_handler(_returns_garbage)
+    order = _order(intent_type="bad_callback")
+    wm = WatchManager(dispatch_fn=_bridge(bus))
+    wm._captain_orders.append(order)
+
+    # Must not raise out of publish.
+    results = await bus.publish(
+        IntentMessage(intent="bad_callback", params={}),
+        raise_on_no_subscriber=False,
+    )
+    assert results == []
+
+    await wm._dispatch_due_orders()
+    assert order.active is False, "a malformed callback is UNKNOWN, not absence"
+    assert order.executed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_local_candidate_beats_a_silent_federation() -> None:
+    """Federation reporting nothing does not override a LOCAL handler that ran.
+
+    The predicate needs every clause; this is the one that fails if the local
+    half is dropped in favour of the new federation half."""
+    bus = _bus()
+    side_effects: list[str] = []
+
+    async def acts_then_returns_none(msg: IntentMessage) -> None:
+        side_effects.append(msg.intent)
+        return None
+
+    bus.subscribe("worker", acts_then_returns_none, ["local_and_federated"])
+
+    async def _nobody(intent: IntentMessage) -> FederationForwardOutcome:
+        return FederationForwardOutcome(peers_attempted=1, peers_answered=1)
+
+    bus.set_federation_handler(_nobody)
+    order = _order(intent_type="local_and_federated")
+    wm = WatchManager(dispatch_fn=_bridge(bus))
+    wm._captain_orders.append(order)
+
+    await wm._dispatch_due_orders()
+    await wm._dispatch_due_orders()
+
+    assert side_effects == ["local_and_federated"]
+    assert order.active is False
+    assert order.executed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_remote_result_beats_a_miscounted_admission() -> None:
+    """Defence in depth. Even if the counters said nobody admitted it, a
+    returned remote result is proof the work reached someone."""
+    bus = _bus()
+
+    async def _returned_a_result(intent: IntentMessage) -> FederationForwardOutcome:
+        return FederationForwardOutcome(
+            [IntentResult(intent_id=intent.id, agent_id="remote", success=True)],
+            peers_attempted=1,
+            peers_answered=1,
+            peers_admitted=0,
+            peers_unknown=0,
+        )
+
+    bus.set_federation_handler(_returned_a_result)
+    order = _order(intent_type="answered_anyway")
+    wm = WatchManager(dispatch_fn=_bridge(bus))
+    wm._captain_orders.append(order)
+
+    await wm._dispatch_due_orders()
+
+    assert order.active is False
+    assert order.executed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_a_real_bridge_carries_the_admission_to_the_order() -> None:
+    """THE WHOLE CHAIN: real ``FederationBridge`` -> real ``IntentBus`` ->
+    real watch bridge -> ``WatchManager``.
+
+    Every other test here stops at a callback double, and a double cannot show
+    that the fact survives the trip. The two halves passing separately is
+    exactly the failure mode this repository sees most: the responder sets a
+    key nothing reads, or the forwarder counts one nobody sends.
+
+    Both peers here answer honestly and neither has a handler, so the order must
+    survive -- which under BF-814's ``forwards_to_peers`` proxy it would not.
+    """
+    from probos.federation.bridge import FederationBridge
+    from probos.federation.router import FederationRouter
+    from probos.config import FederationConfig
+    from probos.types import FederationMessage, NodeSelfModel
+
+    class _PeerSaysNoCandidate:
+        @property
+        def connected_peers(self) -> list[str]:
+            return ["node-b"]
+
+        async def send_to_peer(self, peer_node_id: str, message) -> None:
+            return None
+
+        async def receive_with_timeout(self, *_a, **_k):
+            return FederationMessage(
+                type="intent_response",
+                source_node="node-b",
+                message_id="m1",
+                payload={"results": [], "admitted": False},
+                timestamp=0.0,
+            )
+
+    bus = _bus()
+    bridge = FederationBridge(
+        node_id="node-a",
+        transport=_PeerSaysNoCandidate(),
+        router=FederationRouter(),
+        intent_bus=bus,
+        config=FederationConfig(
+            enabled=True, node_id="node-a",
+            forward_timeout_ms=50, gossip_interval_seconds=1000.0,
+            validate_remote_results=False,
+        ),
+        self_model_fn=lambda: NodeSelfModel(node_id="node-a"),
+    )
+    bus.set_federation_handler(bridge.forward_intent)
+
+    order = _order(intent_type="nobody_on_either_node")
+    wm = WatchManager(dispatch_fn=_bridge(bus))
+    wm._captain_orders.append(order)
+
+    await wm._dispatch_due_orders()
+
+    assert bus.forwards_to_peers is True, "premise: federation really is wired"
+    assert order.active is True, (
+        "the peer answered that it had no candidate, so nobody ran this"
+    )
+    assert order.executed_count == 0
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_a_real_bridge_consumes_when_the_peer_admits() -> None:
+    """The pair to the above, through the same real chain: the peer says it
+    HAD a handler and returns nothing. That is delivery, and re-dispatching it
+    would run the remote work twice."""
+    from probos.federation.bridge import FederationBridge
+    from probos.federation.router import FederationRouter
+    from probos.config import FederationConfig
+    from probos.types import FederationMessage, NodeSelfModel
+
+    forwarded: list[str] = []
+
+    class _PeerAdmits:
+        @property
+        def connected_peers(self) -> list[str]:
+            return ["node-b"]
+
+        async def send_to_peer(self, peer_node_id: str, message) -> None:
+            forwarded.append(message.payload["intent"])
+
+        async def receive_with_timeout(self, *_a, **_k):
+            return FederationMessage(
+                type="intent_response",
+                source_node="node-b",
+                message_id="m1",
+                payload={"results": [], "admitted": True},
+                timestamp=0.0,
+            )
+
+    bus = _bus()
+    bridge = FederationBridge(
+        node_id="node-a",
+        transport=_PeerAdmits(),
+        router=FederationRouter(),
+        intent_bus=bus,
+        config=FederationConfig(
+            enabled=True, node_id="node-a",
+            forward_timeout_ms=50, gossip_interval_seconds=1000.0,
+            validate_remote_results=False,
+        ),
+        self_model_fn=lambda: NodeSelfModel(node_id="node-a"),
+    )
+    bus.set_federation_handler(bridge.forward_intent)
+
+    order = _order(intent_type="handled_on_node_b")
+    wm = WatchManager(dispatch_fn=_bridge(bus))
+    wm._captain_orders.append(order)
+
+    await wm._dispatch_due_orders()
+    await wm._dispatch_due_orders()
+
+    assert forwarded == ["handled_on_node_b"], "premise: forwarded exactly once"
+    assert order.active is False
+    assert order.executed_count == 1
 
 
 @pytest.mark.asyncio

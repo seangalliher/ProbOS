@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 from probos.types import HandlerLatencyClass, IntentMessage, IntentResult, Priority, DispatchAdmission
 from probos.mesh.nats_bus import DEFAULT_MAX_PAYLOAD_BYTES
 from probos.mesh.signal import SignalManager
-from probos.mesh.pre_intent_auth import IntentAuthorizationDenied, authorize_intent
+from probos.mesh.pre_intent_auth import (
+    IntentAuthorizationDenied,
+    IntentNoSubscriber,
+    authorize_intent,
+)
 
 if TYPE_CHECKING:
     from probos.mesh.nats_bus import NATSBus
@@ -1283,6 +1287,7 @@ class IntentBus:
         *,
         federated: bool = True,
         raise_on_denial: bool = False,
+        raise_on_no_subscriber: bool = False,
     ) -> list[IntentResult]:
         """Broadcast an intent to all subscribers, collect results.
 
@@ -1299,6 +1304,13 @@ class IntentBus:
         the intent -- the shape AD-698 has always used for a denial. Pass
         ``raise_on_denial=True`` to receive ``IntentAuthorizationDenied``
         instead; it propagates through the targeted path as well.
+
+        AD-1297: ``raise_on_no_subscriber=True`` opts into
+        ``IntentNoSubscriber`` when NOBODY -- locally or across federation --
+        could have run this. Default ``False``, so every existing caller sees
+        the shape it always did. Only the watch bridge asks, because only it
+        must tell "delivered to nobody" from "delivered and returned nothing"
+        before consuming a one-shot Captain's order.
         """
         # BF-296: shutdown gate. Honest-degrade — return empty result list
         # so callers see "no agent responded" rather than an exception, which
@@ -1456,12 +1468,37 @@ class IntentBus:
         self._metrics.record_broadcast(intent.intent, len(results), elapsed_ms)
 
         # Federation: forward to peers if enabled and not an inbound federated intent
+        #
+        # AD-1297: the two counters below feed the no-subscriber predicate and
+        # nothing else. They stay 0/0 when federation is not consulted, which
+        # is a KNOWN zero -- nothing was attempted, so nothing could have run
+        # remotely -- and that is what preserves BF-814's default behaviour.
+        federation_admitted = 0
+        federation_unknown = 0
         if federated and self._federation_fn:
             try:
                 remote_results = await self._federation_fn(intent)
+                # Stays INSIDE the try, where it has always been. Moving it to
+                # the `else` would let a non-iterable callback return escape
+                # `broadcast`, which nothing here has ever had to handle.
                 results.extend(remote_results)
+                admitted = getattr(remote_results, "peers_admitted", None)
+                unknown = getattr(remote_results, "peers_unknown", None)
             except Exception as e:
+                # An infrastructure failure is not evidence that no peer had a
+                # handler, so it counts UNKNOWN. Reporting it as "no
+                # subscriber" would retry work a peer may already have run.
                 logger.debug("Federation forwarding failed: %s", e)
+                federation_unknown += 1
+            else:
+                if isinstance(admitted, int) and isinstance(unknown, int):
+                    federation_admitted += admitted
+                    federation_unknown += unknown
+                else:
+                    # A callback predating FederationForwardOutcome reports
+                    # nothing about admission. That is UNKNOWN -- never "no
+                    # candidate" -- or a mixed-version mesh strands orders.
+                    federation_unknown += 1
 
         logger.info(
             "Intent resolved: %s id=%s results=%d",
@@ -1469,6 +1506,27 @@ class IntentBus:
             intent.id[:8],
             len(results),
         )
+
+        # AD-1297: every clause must hold. `results` is checked as well as
+        # `candidate_ids` because a remote result proves delivery even when no
+        # local handler was reachable.
+        if (
+            raise_on_no_subscriber
+            and not candidate_ids
+            and not results
+            and federation_admitted == 0
+            and federation_unknown == 0
+        ):
+            logger.info(
+                "AD-1297: intent %s id=%s reached no local candidate and no "
+                "peer admitted it (federation_consulted=%s); raising "
+                "IntentNoSubscriber so the caller leaves the work undelivered "
+                "rather than counting it done",
+                intent.intent,
+                intent.id[:8],
+                bool(federated and self._federation_fn),
+            )
+            raise IntentNoSubscriber(intent.intent)
         return results
 
     async def publish(self, intent: IntentMessage, **kwargs: Any) -> list[IntentResult]:
