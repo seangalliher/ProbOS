@@ -252,23 +252,45 @@ class TestExecutionBoundary:
         assert result.execution_time_ms >= 0
 
     @pytest.mark.asyncio
-    async def test_temp_file_cleaned_up(self, runner, tmp_path):
-        """After test_agent(), verify no leftover temp files from sandbox."""
-        import tempfile
-        import os
+    async def test_temp_file_cleaned_up(self, runner, monkeypatch):
+        """After test_agent(), the sandbox deletes the temp module it created.
 
-        # Count temp files before
-        temp_dir = tempfile.gettempdir()
-        before = {f for f in os.listdir(temp_dir) if f.startswith("tmp") and f.endswith(".py")}
+        Scoped to the files THIS invocation created. The previous version
+        diffed ``tempfile.gettempdir()`` before/after, but that directory is
+        shared with every other xdist worker, so a ``tmp*.py`` written by an
+        unrelated worker was attributed to this test -- it failed under the
+        parallel gate with ``{'tmpdqn3zvat.py'}`` and passed on a rerun of the
+        very same commit. Recording the paths the sandbox opens is both
+        deterministic and a closer statement of the property under test.
+        """
+        import os
+        import tempfile
+
+        created: list[str] = []
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+
+        def _recording(*args, **kwargs):
+            handle = real_named_temporary_file(*args, **kwargs)
+            created.append(handle.name)
+            return handle
+
+        monkeypatch.setattr(tempfile, "NamedTemporaryFile", _recording)
 
         await runner.test_agent(VALID_AGENT_SOURCE, intent_name="test_sandbox")
 
-        # Count temp files after
-        after = {f for f in os.listdir(temp_dir) if f.startswith("tmp") and f.endswith(".py")}
+        # Assert the probe's own premise: if the sandbox ever stops routing
+        # through NamedTemporaryFile, an empty list would make the cleanup
+        # assertion below vacuously true and this test would silently stop
+        # covering anything. Require a module file specifically, so an
+        # unrelated temp file cannot stand in for the one under test.
+        modules = [path for path in created if path.endswith(".py")]
+        assert modules, (
+            f"sandbox created no .py temp module (saw {created!r}); "
+            "this test no longer covers cleanup"
+        )
 
-        # No new .py temp files should remain
-        new_files = after - before
-        assert len(new_files) == 0, f"Temp files not cleaned up: {new_files}"
+        leftover = [path for path in modules if os.path.exists(path)]
+        assert leftover == [], f"Temp files not cleaned up: {leftover}"
 
     @pytest.mark.asyncio
     async def test_module_removed_from_sys_modules(self, runner):
