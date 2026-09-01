@@ -1912,11 +1912,24 @@ class DmReplyPipeline:
                 self_contradicted = (
                     sorted(ledger.wrote_nothing) if ledger.evaluated else []
                 )
+                # BF-795 (#1259): the AD-1248 disclosure is composed at egress,
+                # AFTER this step, and ``response`` below is front-truncated at
+                # 500 chars while the disclosure is a tail -- so composing
+                # earlier would not put it here either. Store the facts the
+                # disclosure is built from instead. ``getattr`` because the
+                # reply may be a stand-in without the attachment.
+                failures = getattr(self.ctx.reply, "tool_failures", None)
+                failed_tool_names = list(failures.names()) if failures is not None else []
+                failed_tool_call_count = (
+                    failures.failed_call_count if failures is not None else 0
+                )
                 episode = Episode(
                     user_input=f"[1:1 with {self.ctx.callsign or self.ctx.agent_id}] Captain: {self.ctx.req_message}",
                     timestamp=_time.time(),
                     agent_ids=[sovereign_id],
                     self_contradicted_channels=self_contradicted,  # AD-1293 (#1200)
+                    failed_tool_names=failed_tool_names,  # BF-795 (#1259)
+                    failed_tool_call_count=failed_tool_call_count,  # BF-795 (#1259)
                     outcomes=[{
                         "intent": "direct_message",
                         # Stays the literal ``True``: five consumers

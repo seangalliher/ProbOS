@@ -3576,6 +3576,12 @@ class EpisodicMemory:
             # encode time. Scalar-only metadata, so a JSON string matches the
             # contradicted_by_json convention directly above.
             "self_contradicted_json": json.dumps(ep.self_contradicted_channels or []),
+            # BF-795 (#1259): AD-1248 disclosure facts, scalar metadata only.
+            # The count is stored beside the names because it is not derivable
+            # from them -- two failed calls to one tool are two failures and
+            # one name.
+            "failed_tool_names_json": json.dumps(ep.failed_tool_names or []),
+            "failed_tool_call_count": int(ep.failed_tool_call_count),
             # AD-873: Ebbinghaus memory decay (strength derived from age+stability)
             "strength": float(ep.strength),
             "stability": float(ep.stability),
@@ -3716,6 +3722,20 @@ class EpisodicMemory:
                 self_contradicted = []
         except (json.JSONDecodeError, TypeError):
             self_contradicted = []
+        # BF-795 (#1259): pre-BF-795 episodes lack both keys -> [] / 0, which
+        # reads as "this turn disclosed no tool failure" and is what the reply
+        # said too.
+        failed_tool_raw = metadata.get("failed_tool_names_json", "")
+        try:
+            failed_tool_names = json.loads(failed_tool_raw) if failed_tool_raw else []
+            if not isinstance(failed_tool_names, list):
+                failed_tool_names = []
+        except (json.JSONDecodeError, TypeError):
+            failed_tool_names = []
+        try:
+            failed_tool_call_count = int(metadata.get("failed_tool_call_count", 0))
+        except (TypeError, ValueError):
+            failed_tool_call_count = 0
         # AD-873: Ebbinghaus decay fields (pre-AD-873 episodes default cleanly).
         try:
             strength = float(metadata.get("strength", 1.0))
@@ -3754,6 +3774,8 @@ class EpisodicMemory:
             verification_count=verification_count,
             contradicted_by=contradicted_by,
             self_contradicted_channels=self_contradicted,  # AD-1293 (#1200)
+            failed_tool_names=failed_tool_names,  # BF-795 (#1259)
+            failed_tool_call_count=failed_tool_call_count,  # BF-795 (#1259)
             # AD-873: Ebbinghaus memory decay
             strength=strength,
             stability=stability,

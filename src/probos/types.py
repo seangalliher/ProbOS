@@ -653,6 +653,16 @@ class Episode:
     # never "unassessed", which is why the ledger's ABSTAIN maps to empty here
     # only after ``evaluated`` is checked (AD-1269).
     self_contradicted_channels: list[str] = field(default_factory=list)
+    # BF-795 (#1259): the facts the AD-1248 egress disclosure is composed from,
+    # stamped at encode time. NOT the rendered tail -- that is composed per
+    # route per variant, so no single rendering is the episode's to keep, and
+    # ``outcomes[0]["response"]`` is front-truncated at 500 chars while the
+    # disclosure is a tail. Empty = "this turn disclosed no tool failure",
+    # which is what the Captain-visible reply also said.
+    failed_tool_names: list[str] = field(default_factory=list)
+    # Not derivable from the names above: two failed calls to one tool are two
+    # failures and one name (``ToolFailures.failed_call_count``).
+    failed_tool_call_count: int = 0
     # AD-873: Ebbinghaus memory decay — strength decays over time, stability slows decay.
     strength: float = 1.0  # current retention strength S(t) in [0,1]; 1.0 = freshly encoded
     stability: float = EBBINGHAUS_DEFAULT_STABILITY_SECONDS  # decay time-constant (s); grows on reinforced recall/replay
