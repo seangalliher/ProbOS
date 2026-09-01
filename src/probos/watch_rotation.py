@@ -14,7 +14,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Awaitable
 
-from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
+from probos.mesh.pre_intent_auth import IntentAuthorizationDenied, IntentNoSubscriber
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +250,15 @@ class WatchManager:
                 try:
                     await self._dispatch_fn(task.intent_type, task.intent_params)
                     task.last_executed = time.time()
+                except IntentNoSubscriber:
+                    # BF-814: reached nobody. ``last_executed`` gates
+                    # ``is_due``, so stamping it would idle the task for a full
+                    # interval over work that never ran.
+                    logger.warning(
+                        "standing-task id=%s intent=%s reached no subscriber; "
+                        "left due so it retries next sweep",
+                        task.id, task.intent_type,
+                    )
                 except IntentAuthorizationDenied as e:
                     # BF-790: do NOT stamp `last_executed`. It gates `is_due`,
                     # so recording a refused dispatch as run would make the task
@@ -278,6 +287,14 @@ class WatchManager:
                 order.executed_count += 1
                 if order.one_shot:
                     order.active = False
+            except IntentNoSubscriber:
+                # BF-814: reached nobody, so a one-shot must not be consumed --
+                # the agent that handles it may simply not be registered yet.
+                logger.warning(
+                    "captain-order id=%s intent=%s reached no subscriber; "
+                    "order remains active and uncounted",
+                    order.id, order.intent_type,
+                )
             except IntentAuthorizationDenied as e:
                 # BF-790: neither count it nor deactivate it. A refused one-shot
                 # Captain order that was marked executed was gone for good --

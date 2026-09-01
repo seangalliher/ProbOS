@@ -39,6 +39,29 @@ logger = logging.getLogger(__name__)
 __all__ = ["IntentAuthorizationDenied", "authorize_intent"]
 
 
+class IntentNoSubscriber(RuntimeError):
+    """No handler would be invoked for this intent (BF-814).
+
+    OPT-IN ONLY, for the same reason as :class:`IntentAuthorizationDenied`
+    above: the bus's default refusal shape stays ``[]``, so the other bus seams
+    are untouched. Only a caller that must tell "reached nobody" from "reached
+    someone" asks for it.
+
+    That distinction cannot be recovered from the result list. A handler that
+    runs, performs its side effect, and returns ``None`` also yields ``[]`` --
+    measured -- so a caller treating an empty list as non-delivery re-fires
+    real work. ``candidate_agent_ids`` answers the safe question instead: was
+    any handler INVOKED. Nobody invoked is the only state where a retry cannot
+    duplicate anything.
+    """
+
+    def __init__(self, intent_name: str) -> None:
+        self.intent_name = intent_name
+        super().__init__(
+            f"no subscriber would be invoked for intent '{intent_name}'"
+        )
+
+
 class IntentAuthorizationDenied(PermissionError):
     """A pre-intent authorization hook refused this intent (BF-771).
 

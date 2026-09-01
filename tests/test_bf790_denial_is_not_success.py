@@ -37,7 +37,7 @@ import pytest
 
 from probos.extensions import overlay
 from probos.mesh.intent import IntentBus
-from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
+from probos.mesh.pre_intent_auth import IntentAuthorizationDenied, IntentNoSubscriber
 from probos.mesh.signal import SignalManager
 from probos.runtime import ProbOSRuntime
 from probos.types import IntentMessage
@@ -203,7 +203,13 @@ class TestTheWatchBridgeIsNotDead:
         runtime.intent_bus = IntentBus(SignalManager())
         bridge = ProbOSRuntime._dispatch_watch_intent.__get__(runtime)
 
-        await bridge("scan_sector", {"sector": "gamma"})
+        # BF-814: this bus has no subscribers, so the bridge now refuses AFTER
+        # publishing. The property this test owns -- that it reaches the bus --
+        # is unchanged and still asserted below; only the return path differs.
+        # The refusal is deliberately ordered after publish precisely so this
+        # guard keeps working.
+        with pytest.raises(IntentNoSubscriber):
+            await bridge("scan_sector", {"sector": "gamma"})
 
         assert seen == ["scan_sector"], (
             "the watch bridge did not reach the bus -- it is raising before "
@@ -226,7 +232,10 @@ class TestTheWatchBridgeIsNotDead:
         runtime.intent_bus = IntentBus(SignalManager())
         bridge = ProbOSRuntime._dispatch_watch_intent.__get__(runtime)
 
-        await bridge("remediate", {"agent_id": "a1", "gap_id": "g7"})
+        # BF-814: no subscribers on this bus, so the bridge refuses after
+        # publishing. The params assertion below is untouched.
+        with pytest.raises(IntentNoSubscriber):
+            await bridge("remediate", {"agent_id": "a1", "gap_id": "g7"})
 
         assert seen, "the bridge raised before reaching the bus"
         assert seen[0].params == {"agent_id": "a1", "gap_id": "g7"}

@@ -1871,10 +1871,41 @@ class ProbOSRuntime:
         splatting raised TypeError for every realistic order. Fixing only the
         import would have swapped a silent ModuleNotFoundError for a silent
         TypeError and left the path just as dead.
+
+        BF-814: the fourth way this path could report work it never did. The
+        first three raised or were refused; this one succeeded and delivered to
+        nobody.
         """
+        from probos.mesh.pre_intent_auth import IntentNoSubscriber
         from probos.types import IntentMessage
+        # BF-814: capture reachability BEFORE the await (topology can change
+        # during it), but publish regardless and refuse AFTER. Refusing first
+        # would skip the pre-intent hooks -- and BF-790a's guard says raising
+        # before publish is exactly how this path went silent. Publishing to
+        # nobody is harmless, and it keeps a policy denial (raised inside
+        # publish) taking precedence over a topology fact.
+        #
+        # Keyed on candidates, never on the result list: a handler that runs,
+        # acts, and returns None also yields [], so an empty list cannot mean
+        # non-delivery without re-firing side effects.
+        candidates = self.intent_bus.candidate_agent_ids(intent_type)
         intent = IntentMessage(intent=intent_type, params=params)
-        return await self.intent_bus.publish(intent, raise_on_denial=True)
+        results = await self.intent_bus.publish(intent, raise_on_denial=True)
+        # Federation makes an empty LOCAL candidate set insufficient: broadcast
+        # forwards to peers, and a remote agent may have run the order. Claiming
+        # non-delivery there would leave it active and re-execute it remotely on
+        # the next sweep -- the duplicate-side-effect failure this design exists
+        # to avoid, arriving by another route.
+        #
+        # KNOWN LIMITATION: this reports federation CONFIGURED, not a peer
+        # accepting the work, so with federation wired and no peer answering the
+        # order is still consumed having done nothing. That is HEAD's behaviour
+        # for every order, so it is not a regression, and federation is off by
+        # default -- but it is not the desired contract either. Closing it needs
+        # a delivery-admission signal from the federation bridge.
+        if not candidates and not self.intent_bus.forwards_to_peers:
+            raise IntentNoSubscriber(intent_type)
+        return results
 
     def _populate_watch_roster(self) -> None:
         """Populate watch roster from ontology assignments.

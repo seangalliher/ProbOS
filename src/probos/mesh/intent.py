@@ -1005,6 +1005,43 @@ class IntentBus:
         """Return whether an exact local subscriber is registered for agent_id."""
         return agent_id in self._subscribers
 
+    @property
+    def forwards_to_peers(self) -> bool:
+        """Whether a federated broadcast would be forwarded off this node.
+
+        BF-814: local candidates alone cannot answer "could anyone have run
+        this". With federation wired, ``broadcast`` forwards to peers and a
+        remote agent may execute it, so an empty LOCAL candidate set is not
+        proof that nothing happened.
+        """
+        return self._federation_fn is not None
+
+    def candidate_agent_ids(self, intent_name: str) -> set[str]:
+        """Agent ids ``broadcast`` would invoke for ``intent_name``.
+
+        Named once and read by both ``broadcast`` and callers that need to know
+        whether anyone would be reached, so the two cannot disagree.
+
+        BF-814: an empty return means no handler is INVOKED, which is the only
+        signal that makes a retry safe. The result list cannot carry it -- a
+        handler that runs, acts, and returns ``None`` also yields ``[]``, so a
+        caller inferring non-delivery from an empty list re-fires side effects.
+
+        Note the fallback: an agent that registered no ``intent_names`` at all
+        is a candidate for EVERY intent, so a filtered subscriber is not the
+        only way to be reached.
+        """
+        indexed_agents = self._intent_index.get(intent_name)
+        if indexed_agents is None:
+            return set(self._subscribers)
+        all_indexed: set[str] = set()
+        for agent_set in self._intent_index.values():
+            all_indexed.update(agent_set)
+        return {
+            aid for aid in self._subscribers
+            if aid in indexed_agents or aid not in all_indexed
+        }
+
     def _authorize(
         self,
         intent: IntentMessage,
@@ -1331,35 +1368,21 @@ class IntentBus:
                 len(self._subscribers),
             )
 
-            # Determine which agents to fan out to
-            indexed_agents = self._intent_index.get(intent.intent)
-            if indexed_agents is not None:
-                # Pre-filtered: only invoke agents indexed for this intent
-                # Plus any agents not in the index at all (fallback subscribers)
-                all_indexed = set()
-                for agent_set in self._intent_index.values():
-                    all_indexed.update(agent_set)
-                candidates = {
-                    aid: (
-                        handler,
-                        self._subscriber_latency_classes.get(
-                            aid, HandlerLatencyClass.DETERMINISTIC
-                        ),
-                    )
-                    for aid, handler in self._subscribers.items()
-                    if aid in indexed_agents or aid not in all_indexed
-                }
-            else:
-                # No index entry: fall back to all subscribers
-                candidates = {
-                    aid: (
-                        handler,
-                        self._subscriber_latency_classes.get(
-                            aid, HandlerLatencyClass.DETERMINISTIC
-                        ),
-                    )
-                    for aid, handler in self._subscribers.items()
-                }
+            # Determine which agents to fan out to. Iterate ``_subscribers``
+            # (insertion-ordered) and use the candidate set for MEMBERSHIP only
+            # -- iterating the set directly made fan-out order depend on hash
+            # randomisation, which made a resubscribe test fail 3 runs in 10.
+            candidate_ids = self.candidate_agent_ids(intent.intent)
+            candidates = {
+                aid: (
+                    handler,
+                    self._subscriber_latency_classes.get(
+                        aid, HandlerLatencyClass.DETERMINISTIC
+                    ),
+                )
+                for aid, handler in self._subscribers.items()
+                if aid in candidate_ids
+            }
 
             # Fan out to selected subscribers concurrently
             #
