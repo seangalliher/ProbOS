@@ -28,14 +28,14 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
-| AD | **AD-1295** | **AD-1296** | AD-1295 | _(none)_ |
-| BF | **BF-867** | **BF-868** | BF-866 | 867 |
+| AD | **AD-1296** | **AD-1297** | AD-1296 | _(none)_ |
+| BF | **BF-868** | **BF-869** | BF-868 | _(none)_ |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-09-01T01:57:05+00:00 at `0f200121` | 2443 subjects, 978 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-09-01T06:05:20+00:00 at `450db614` | 2449 subjects, 983 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-08-29T05:45:15+00:00 | 1331 issues, 916 numbers |
@@ -46,15 +46,15 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 85 | 18 | assigned, issue open, no shipped code |
+| `allocated-open` | 85 | 16 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 7 | 1 | abandoned, number **not** reusable |
-| `shipped` | 923 | 517 | code in history |
+| `shipped` | 924 | 520 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-103 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+101 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -144,7 +144,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-276` | — | mentioned by an authority, no code and no closure |  |
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
 | `BF-867` | — | mentioned by an authority, no code and no closure |  |
-| `BF-849` | — | mentioned by an authority, no code and no closure |  |
 | `BF-846` | [#1316](https://github.com/seangalliher/ProbOS/issues/1316) | issue #1316 open, no code | BF-846: check_health's raise-contract blocks per-member recycle containment (BF-824 second half) |
 | `BF-844` | [#1314](https://github.com/seangalliher/ProbOS/issues/1314) | issue #1314 open, no code | BF-844: the visiting-builder temp tree has the same one-shot silent-cleanup shape as BF-840 |
 | `BF-843` | [#1313](https://github.com/seangalliher/ProbOS/issues/1313) | issue #1313 open, no code | BF-843: BackupService is wired but never invoked — zero SQLite snapshots have ever been taken |
@@ -152,7 +151,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `BF-838` | [#1304](https://github.com/seangalliher/ProbOS/issues/1304) | issue #1304 open, no code | BF-838: 22 of 49 declared databases are outside backup coverage, including schema_versions and four grant stores |
 | `BF-818` | [#1282](https://github.com/seangalliher/ProbOS/issues/1282) | issue #1282 open, no code | BF-818: the watch dispatch loop is started, repaired, and has no producer |
 | `BF-817` | [#1281](https://github.com/seangalliher/ProbOS/issues/1281) | issue #1281 open, no code | BF-817: checkpoint resume discards the restored DAG and re-decomposes from source text |
-| `BF-814` | [#1278](https://github.com/seangalliher/ProbOS/issues/1278) | issue #1278 open, no code | BF-814: an authorized watch order with no subscriber is still consumed |
 | `BF-813` | [#1277](https://github.com/seangalliher/ProbOS/issues/1277) | issue #1277 open, no code | BF-813: three consumers must be fixed before the remaining BF-790 opt-ins can land |
 | `BF-811` | [#1275](https://github.com/seangalliher/ProbOS/issues/1275) | issue #1275 open, no code | BF-811: the Dispatcher's delegating arm trusts an unenforced prerequisite |
 | `BF-809` | [#1273](https://github.com/seangalliher/ProbOS/issues/1273) | issue #1273 open, no code | BF-809: the AD-272 decision cache keys on a per-cycle correlation_id, so it may never hit |
@@ -187,9 +185,9 @@ _(none)_
 
 ## Shipped
 
-**AD** (923): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1182, 1184, 1201, 1203-1204, 1209-1211, 1217-1223, 1226-1227, 1230-1235, 1239, 1247-1248, 1257, 1265, 1267, 1269-1271, 1273-1285, 1291-1295
+**AD** (924): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1182, 1184, 1201, 1203-1204, 1209-1211, 1217-1223, 1226-1227, 1230-1235, 1239, 1247-1248, 1257, 1265, 1267, 1269-1271, 1273-1285, 1291-1296
 
-**BF** (517): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-802, 805-808, 810, 812, 815-816, 819-837, 840-842, 845, 847-848, 850-866
+**BF** (520): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-802, 805-808, 810, 812, 814-816, 819-837, 840-842, 845, 847-866, 868
 
 ## Unaccounted — silent, **not** free
 
@@ -340,6 +338,7 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `BF-790` — code is in history but [#1277](https://github.com/seangalliher/ProbOS/issues/1277) is still open.
 - `BF-794` — code is in history but [#1258](https://github.com/seangalliher/ProbOS/issues/1258) is still open.
 - `BF-795` — code is in history but [#1259](https://github.com/seangalliher/ProbOS/issues/1259) is still open.
+- `BF-814` — code is in history but [#1278](https://github.com/seangalliher/ProbOS/issues/1278) is still open.
 - `BF-824` — code is in history but [#1316](https://github.com/seangalliher/ProbOS/issues/1316) is still open.
 - `BF-840` — code is in history but [#1314](https://github.com/seangalliher/ProbOS/issues/1314) is still open.
 - `BF-858` — code is in history but [#1328](https://github.com/seangalliher/ProbOS/issues/1328) is still open.
@@ -350,8 +349,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1025 head-shaped line yielded no AD/BF token
-PROGRESS.md:1031 head-shaped line yielded no AD/BF token
+PROGRESS.md:1027 head-shaped line yielded no AD/BF token
+PROGRESS.md:1033 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token
