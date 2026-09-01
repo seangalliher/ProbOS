@@ -46,6 +46,11 @@ def test_infrastructure_config_defaults() -> None:
     assert cfg.backup_retain_days == 3
     assert cfg.backup_max_total_bytes == 8 * 1024**3
     assert cfg.backup_include_archive_root is True
+    # AD-1296 D3: orphaned working directories are the one part of the backup
+    # root retention cannot see. Half the byte ceiling -- ~7 abandoned ticks --
+    # is where "a crash left one behind" becomes "this is going to fill the
+    # disk", so that is where the message stops being a warning.
+    assert cfg.backup_orphan_alert_bytes == 4 * 1024**3
 
 
 # ---------------------------------------------------------------------------

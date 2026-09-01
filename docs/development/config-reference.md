@@ -1384,6 +1384,7 @@ Engineering infrastructure configuration (AD-466 / AD-1265).
 | `backup_retain_days` | `int` | `3` | ≥ 1, ≤ 365 |  |
 | `backup_max_total_bytes` | `int` | `8589934592` | ≥ 67108864 |  |
 | `backup_include_archive_root` | `bool` | `True` | — |  |
+| `backup_orphan_alert_bytes` | `int` | `4294967296` | ≥ 0 |  |
 
 ## `security_infra`
 

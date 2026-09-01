@@ -3841,6 +3841,11 @@ class ProbOSRuntime:
                     "snapshot_promoted": result.snapshot_promoted,
                     "pruned_dirs": list(result.pruned_dirs),
                     "retention_bound": result.retention_bound,
+                    # AD-1296 D3: retention cannot see working directories, so
+                    # events.db is the only diagnostic surface a leak reaches --
+                    # the #1313 diagnosis was made by querying this table.
+                    "orphaned_working_dirs": list(result.orphaned_working_dirs),
+                    "orphaned_bytes": result.orphaned_bytes,
                     "duration_seconds": result.duration_seconds,
                     "error": result.error,
                 },

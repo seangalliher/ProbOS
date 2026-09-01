@@ -62,7 +62,6 @@ from probos.infrastructure.snapshot_manifest import (
     sha256_file,
     write_manifest,
 )
-from probos.pidfile_guard import is_pid_alive
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +72,8 @@ _SNAPSHOT_DIR_RE = re.compile(r"^(\d{8}-\d{6})(?:-\d{6})?$")
 
 _DEFAULT_RETAIN_DAYS = 3
 _DEFAULT_MAX_TOTAL_BYTES = 8 * 1024**3
+#: Half ``_DEFAULT_MAX_TOTAL_BYTES``. See ``InfrastructureConfig``.
+_DEFAULT_ORPHAN_ALERT_BYTES = 4 * 1024**3
 
 #: ``<ts>[-<micros>].<pid>-<runid>.incomplete``. The owner is in the *name*, so
 #: it is present the instant the directory exists and cannot be truncated,
@@ -213,6 +214,7 @@ class BackupService:
         roots: Sequence[BackupRoot] | None = None,
         retain_days: int = _DEFAULT_RETAIN_DAYS,
         max_total_bytes: int = _DEFAULT_MAX_TOTAL_BYTES,
+        orphan_alert_bytes: int = _DEFAULT_ORPHAN_ALERT_BYTES,
     ) -> None:
         self._data_dir = data_dir
         self._backup_root = backup_root
@@ -224,6 +226,11 @@ class BackupService:
         )
         self._retain_days = retain_days
         self._max_total_bytes = max_total_bytes
+        # Deliberately NOT folded into ``_max_total_bytes``: orphans are
+        # invisible to ``prune`` and charging them to the byte ceiling would
+        # prune healthy promoted snapshots and blame retention for a leak
+        # retention cannot reach (AD-1296 D4).
+        self._orphan_alert_bytes = orphan_alert_bytes
 
     @property
     def roots(self) -> tuple[BackupRoot, ...]:
@@ -603,12 +610,27 @@ class BackupService:
         if result.foreign_dirs:
             # Retention cannot see these -- _SNAPSHOT_DIR_RE matches promoted
             # names only -- so without this line the leak is completely silent.
-            logger.warning(
+            # And one warning repeated every tick for a month is
+            # indistinguishable from background noise, so past the threshold it
+            # is an error: this set has no bound and now rivals everything
+            # retention does bound. Still nothing is deleted -- see the
+            # docstring above for why the sweep must not decide that.
+            escalated = result.foreign_bytes >= self._orphan_alert_bytes
+            emit = logger.error if escalated else logger.warning
+            emit(
                 "AD-1296: %d working director(ies) totalling %d bytes belong to "
                 "another process or predate this naming and are NOT reclaimed "
-                "automatically; retention cannot see them. Run "
+                "automatically; retention cannot see them%s. Run "
                 "'probos backup-reclaim --backup-root %s' to review them: %s",
-                len(result.foreign_dirs), result.foreign_bytes, self._backup_root,
+                len(result.foreign_dirs), result.foreign_bytes,
+                (
+                    " and they are at or past the alert threshold "
+                    f"({self._orphan_alert_bytes} bytes, "
+                    "infrastructure.backup_orphan_alert_bytes), so the backup "
+                    "root will keep growing until they are reclaimed"
+                    if escalated else ""
+                ),
+                self._backup_root,
                 ", ".join(result.foreign_dirs[:5]),
             )
         return result

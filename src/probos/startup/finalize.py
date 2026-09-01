@@ -3724,13 +3724,17 @@ async def finalize_startup(
                     roots=roots,
                     retain_days=config.infrastructure.backup_retain_days,
                     max_total_bytes=config.infrastructure.backup_max_total_bytes,
+                    orphan_alert_bytes=(
+                        config.infrastructure.backup_orphan_alert_bytes
+                    ),
                 )
                 logger.info(
                     "AD-466/AD-1265: BackupService wired (backup_root=%s, roots=%s, "
-                    "retain_days=%d, max_total_bytes=%d)",
+                    "retain_days=%d, max_total_bytes=%d, orphan_alert_bytes=%d)",
                     backup_root, [r.name for r in roots],
                     config.infrastructure.backup_retain_days,
                     config.infrastructure.backup_max_total_bytes,
+                    config.infrastructure.backup_orphan_alert_bytes,
                 )
             except OSError:
                 logger.warning(

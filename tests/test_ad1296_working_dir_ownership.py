@@ -37,7 +37,9 @@ from pathlib import Path
 import pytest
 
 import probos.infrastructure.backup as backup_module
+from probos.config import SystemConfig
 from probos.infrastructure.backup import (
+    _DEFAULT_ORPHAN_ALERT_BYTES,
     _SNAPSHOT_DIR_RE,
     _WORKING_DIR_RE,
     BackupResult,
@@ -49,6 +51,8 @@ from probos.pidfile_guard import is_pid_alive
 
 _FOREIGN_LOG = "are NOT reclaimed"
 _RECLAIM_LOG = "reclaimed finished working directory"
+#: Only the escalated branch says this; the plain warning must not.
+_THRESHOLD_LOG = "at or past the alert threshold"
 
 
 def _make_sqlite_db(path: Path) -> None:
@@ -375,6 +379,190 @@ def test_orphans_warn_and_a_clean_root_does_not(
     warned = [r.getMessage() for r in caplog.records if _FOREIGN_LOG in r.getMessage()]
     assert len(warned) == 1, warned
     assert "backup-reclaim" in warned[0]
+
+
+# ---------------------------------------------------------------------------
+# D3 reporting: the leak has to be visible where the operator actually looks,
+# and it has to get louder as it grows. Neither of those may delete anything.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_orphan_counts_reach_the_event_log_payload(tmp_path: Path) -> None:
+    """``events.db`` is the operator's surface; ``emit_event`` never reaches it.
+
+    ``BackupResult`` carried these two fields from the start, but
+    ``_log_backup_tick`` did not copy them into the row -- so a
+    working-directory leak was absent from the exact table the #1313 diagnosis
+    was made by querying. A field that is set and never read is inert and looks
+    identical to working, so this reads the values back out of the database.
+    """
+    from probos.runtime import ProbOSRuntime
+
+    data_dir, backup_root = _bed(tmp_path)
+    payload = b"y" * 2048
+    orphan = _plant(
+        backup_root,
+        f"20200101-000000.{os.getpid() + 1}-abcd1234{INCOMPLETE_SUFFIX}",
+        payload=payload,
+    )
+
+    runtime = ProbOSRuntime(config=SystemConfig(), data_dir=data_dir)
+    await runtime.event_log.start()
+    try:
+        result = _service(data_dir, backup_root).snapshot()
+        assert result.succeeded is True, result.error
+        await runtime._log_backup_tick(result)
+
+        rows = await runtime.event_log.query(category="backup", limit=10)
+        assert [r["event"] for r in rows] == ["backup_complete"]
+        assert rows[0]["data"]["orphaned_working_dirs"] == [str(orphan)]
+        assert rows[0]["data"]["orphaned_bytes"] == len(payload)
+    finally:
+        await runtime.event_log.stop()
+
+    assert orphan.is_dir(), "recording the leak must not remove the leak"
+
+
+@pytest.mark.parametrize(
+    ("threshold_delta", "expected_level", "why"),
+    [
+        (+1, logging.WARNING, "below the threshold"),
+        (0, logging.ERROR, "exactly at the threshold"),
+        (-1, logging.ERROR, "above the threshold"),
+    ],
+)
+def test_the_orphan_message_escalates_at_the_alert_threshold(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    threshold_delta: int,
+    expected_level: int,
+    why: str,
+) -> None:
+    """One flat warning per tick reads as background noise after a month.
+
+    ``threshold_delta`` moves the *threshold* around a fixed orphan size, so
+    the three cases are orphan-bytes below, equal to, and above it. Equal
+    escalates: this is an alert threshold, and "reached" is the point.
+    """
+    data_dir, backup_root = _bed(tmp_path)
+    payload = b"z" * 4096
+    orphan = _plant(
+        backup_root,
+        f"20200101-000000.{os.getpid() + 1}-abcd1234{INCOMPLETE_SUFFIX}",
+        payload=payload,
+    )
+
+    svc = _service(
+        data_dir, backup_root,
+        orphan_alert_bytes=len(payload) + threshold_delta,
+    )
+    with caplog.at_level(logging.WARNING, logger="probos.infrastructure.backup"):
+        result = svc.snapshot()
+
+    assert result.succeeded is True, result.error
+    assert result.orphaned_bytes == len(payload)
+    records = [r for r in caplog.records if _FOREIGN_LOG in r.getMessage()]
+    assert len(records) == 1, [r.getMessage() for r in records]
+    assert records[0].levelno == expected_level, (
+        f"{why}: expected {logging.getLevelName(expected_level)}, "
+        f"got {records[0].levelname}"
+    )
+    assert "backup-reclaim" in records[0].getMessage(), (
+        "every severity must still say what to run"
+    )
+    escalated = expected_level == logging.ERROR
+    assert (_THRESHOLD_LOG in records[0].getMessage()) is escalated
+
+    # The whole point of AD-1296 D3: escalation is louder, never destructive.
+    assert orphan.is_dir()
+    assert (orphan / "data" / "torn.db").read_bytes() == payload
+
+
+def test_escalation_deletes_nothing_even_when_every_orphan_is_over_threshold(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``orphan_alert_bytes=0`` escalates on any orphan at all. Still no rmtree.
+
+    Deleting on "unknown owner" is the decision AD-1296 exists to remove: it
+    was measured destroying an in-flight snapshot and breaking a live peer
+    mid-write. Raising the log level must not have quietly reintroduced it, so
+    this asserts every planted directory and its bytes survive a tick that
+    fires the loudest branch.
+    """
+    data_dir, backup_root = _bed(tmp_path)
+    payload = b"q" * 512
+    planted = [
+        _plant(backup_root, name, payload=payload)
+        for name in (
+            f"20200101-000000.{os.getpid() + 1}-abcd1234{INCOMPLETE_SUFFIX}",
+            f"20200102-000000.{os.getpid() + 2}-beef5678{INCOMPLETE_SUFFIX}",
+            f"legacy-shape{INCOMPLETE_SUFFIX}",
+        )
+    ]
+
+    svc = _service(data_dir, backup_root, orphan_alert_bytes=0)
+    with caplog.at_level(logging.WARNING, logger="probos.infrastructure.backup"):
+        result = svc.snapshot()
+
+    assert result.succeeded is True, result.error
+    errors = [
+        r for r in caplog.records
+        if _FOREIGN_LOG in r.getMessage() and r.levelno == logging.ERROR
+    ]
+    assert len(errors) == 1, [r.getMessage() for r in caplog.records]
+
+    assert sorted(result.orphaned_working_dirs) == sorted(str(p) for p in planted)
+    assert result.orphaned_bytes == len(payload) * len(planted)
+    for orphan in planted:
+        assert orphan.is_dir(), f"escalation deleted {orphan}"
+        assert (orphan / "data" / "torn.db").read_bytes() == payload
+    # And it did not reach for the promoted set instead (AD-1296 D4).
+    assert result.pruned_dirs == []
+
+
+def test_the_service_default_threshold_is_the_configured_one() -> None:
+    """A default that drifts from config is a knob that silently does nothing."""
+    assert (
+        SystemConfig().infrastructure.backup_orphan_alert_bytes
+        == _DEFAULT_ORPHAN_ALERT_BYTES
+    )
+
+
+def test_startup_threads_the_threshold_from_config_to_the_service() -> None:
+    """A knob ``finalize`` never passes is inert, and reads exactly like working.
+
+    This is a source-structure assertion rather than a runtime crossing: the
+    backup wiring is inline in a four-thousand-line ``finalize`` that a unit
+    test cannot drive, and extracting a helper to reach it is a refactor this
+    change is not scoped to. It still catches the failure that matters -- the
+    kwarg dropped, misnamed, or pointed at the wrong config field.
+    """
+    import ast
+    import inspect
+
+    from probos.startup import finalize as finalize_module
+
+    calls = [
+        node
+        for node in ast.walk(ast.parse(inspect.getsource(finalize_module)))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "BackupService"
+    ]
+    assert len(calls) == 1, (
+        f"premise: expected exactly one BackupService construction site in "
+        f"finalize, found {len(calls)} -- this probe no longer discriminates"
+    )
+    kwargs = {kw.arg: kw.value for kw in calls[0].keywords}
+    assert "orphan_alert_bytes" in kwargs, (
+        "finalize constructs BackupService without orphan_alert_bytes, so "
+        "infrastructure.backup_orphan_alert_bytes can never reach the sweep"
+    )
+    assert (
+        ast.unparse(kwargs["orphan_alert_bytes"])
+        == "config.infrastructure.backup_orphan_alert_bytes"
+    )
 
 
 # ---------------------------------------------------------------------------

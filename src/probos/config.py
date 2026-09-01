@@ -4047,6 +4047,21 @@ class InfrastructureConfig(BaseModel):
     backup_max_total_bytes: int = Field(default=8 * 1024**3, ge=64 * 1024**2)
     backup_include_archive_root: bool = True
 
+    # AD-1296 D3: working directories whose owner cannot be proven are kept,
+    # never deleted, and retention cannot see them -- so they are the one part
+    # of the backup root with no bound at all. At or above this many orphaned
+    # bytes the per-tick message logs at ERROR instead of WARNING; nothing is
+    # deleted either way, the operator is told to run ``probos backup-reclaim``.
+    #
+    # 4 GiB is half of backup_max_total_bytes, which is ~7 abandoned working
+    # directories at the ~559 MiB/tick measured above. Below that, one or two
+    # leftovers from a crash-during-snapshot or a peer host are routine and a
+    # warning is proportionate. At or above it the unreclaimed set rivals
+    # everything retention *does* bound and is still growing, which is a
+    # disk-exhaustion trajectory and must not read as background noise after a
+    # month of identical warnings. 0 escalates on any orphan at all.
+    backup_orphan_alert_bytes: int = Field(default=4 * 1024**3, ge=0)
+
 class DegradationConfig(BaseModel):
     """Saucer separation / graceful degradation (AD-459 / AD-459b).
 
