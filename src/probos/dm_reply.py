@@ -751,6 +751,13 @@ def split_for_wire(text: str, limit: int) -> list[str]:
       The cut is now taken just AFTER the boundary, keeping that character
       with the preceding piece -- lossless, while the next piece still does
       not begin with a blank line.
+    * It **fragmented a structural tail** (BF-794). An early newline was
+      rejected for falling below ``limit // 2`` even when it was the LAST
+      newline in the text and everything after it fit in one piece, so a
+      short body with a long trailing note fell through to the space search
+      and was cut mid-note. Such a boundary is now accepted. Losslessness
+      and termination are unchanged: the cut still lands just after a real
+      character, so it is >= 1 and progress is guaranteed.
     """
     if limit <= 0:
         raise ValueError(f"split_for_wire(limit={limit}) needs a positive limit")
@@ -765,13 +772,24 @@ def split_for_wire(text: str, limit: int) -> list[str]:
 
         # +1 keeps the delimiter with the piece being emitted, so nothing is
         # dropped and the FOLLOWING piece does not start with the boundary.
-        cut = text.rfind("\n", 0, limit)
-        cut = cut + 1 if cut != -1 else -1
-        if cut <= 0 or cut < limit // 2:
-            space = text.rfind(" ", 0, limit)
-            cut = space + 1 if space != -1 else -1
-        if cut <= 0 or cut < limit // 2:
-            cut = limit  # hard cut; >= 1, so progress is guaranteed
+        newline = text.rfind("\n", 0, limit)
+        cut = newline + 1 if newline != -1 else -1
+        # BF-794 (#1258): an early newline is still the right boundary when it
+        # is the LAST one and what follows fits in a single piece. Rejecting it
+        # for being early sent a short-body/long-tail reply to the space search,
+        # which cuts inside the tail because the tail is full of separators --
+        # 7,079 such cuts at Discord's 2,000 limit. Both guards below have to
+        # yield, not just the first: the hard cut is reached by an accepted
+        # newline too, and it moved the fragment rather than removing it.
+        keep_early_newline = (
+            cut > 0 and newline == text.rfind("\n") and len(text) - cut <= limit
+        )
+        if not keep_early_newline:
+            if cut <= 0 or cut < limit // 2:
+                space = text.rfind(" ", 0, limit)
+                cut = space + 1 if space != -1 else -1
+            if cut <= 0 or cut < limit // 2:
+                cut = limit  # hard cut; >= 1, so progress is guaranteed
 
         pieces.append(text[:cut])
         text = text[cut:]
