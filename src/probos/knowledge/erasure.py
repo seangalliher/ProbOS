@@ -4,13 +4,55 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
 
 from probos.security.audit_log import AuditLog
 
+logger = logging.getLogger(__name__)
+
 _ATTACHMENT_ID_RE = re.compile(r"\b[a-f0-9]{64}\b")
+
+# BF-868 (#1343): the ONLY places a genuine attachment id is written into an
+# episode. Enumerated against the live tree by walking every ``Episode(`` and
+# ``store_episode(`` call in ``src/``, because under-erasing is the worse
+# failure of the two -- data the Captain asked to be forgotten surviving is
+# worse than an unrelated file being kept.
+#
+#   anchors.visual_attachment_ref         AD-987 group fan-out
+#                                         (thread_fanout.py, types.py:502)
+#   outcomes[].attachment_ids             AD-720d-3 Captain-chat vision
+#                                         (routers/chat.py)
+#   outcomes[].attachment_ref             AD-733 perception anchors
+#                                         (routers/perception.py,
+#                                          perception/consumer.py)
+#   outcomes[].per_attachment_timing[]    AD-720d-1 per-attachment latency
+#     .attachment_id                      (dm/reply_pipeline.py, chat.py).
+#                                         On the 1:1 DM path this is the ONLY
+#                                         carrier -- that episode has no
+#                                         ``attachment_ids`` key at all.
+#   <metadata>.attachment_id              AD-730-3 image gen
+#                                         (cognitive/image_gen_dispatch.py),
+#                                         reachable only through the flat
+#                                         metadata shape below.
+#
+# All are typed fields holding bare SHA-256 hex. No production path embeds an
+# attachment id in free text, so the free-text scan had no genuine producer to
+# serve -- it was pure risk.
+_ANCHOR_ATTACHMENT_FIELDS = ("visual_attachment_ref",)
+_OUTCOME_ATTACHMENT_KEYS = ("attachment_ids", "attachment_ref")
+# Outcome keys holding a LIST OF RECORDS, each record carrying an id.
+_OUTCOME_RECORD_LIST_KEYS: dict[str, tuple[str, ...]] = {
+    "per_attachment_timing": ("attachment_id",),
+}
+_METADATA_ATTACHMENT_KEYS = ("attachment_id",)
+
+# ``get_episode_metadata`` returns the raw ChromaDB row, which stores
+# ``outcomes``/``anchors`` as JSON STRINGS (episodic.py:3550-3557) rather than
+# nested objects. Decoded back to the nested shape before extraction.
+_FLAT_JSON_FIELDS = (("outcomes_json", "outcomes"), ("anchors_json", "anchors"))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -114,6 +156,27 @@ class ErasureManager:
         return list(await self._episodic_memory.list_episodes(limit=None))
 
     async def _attachment_ids_for_episode(self, episode_id: str) -> set[str]:
+        """Collect every attachment id this episode declares.
+
+        BF-868 reachability scope, recorded rather than left to be rediscovered.
+        The metadata fallback runs ONLY when ``get_by_ids`` yields nothing, so a
+        producer that writes into episode METADATA (rather than into the
+        ``Episode`` dataclass) is seen on this path and not through the
+        ``forget_resource`` / ``forget_agent_memory`` cascades -- those rehydrate
+        a dataclass, which is a non-empty payload, so the fallback never runs.
+
+        Accepted deliberately rather than fixed by querying both stores for
+        every episode, which would add a second round trip per episode to every
+        cascade. The only metadata-shaped producer is AD-730-3 image generation,
+        and it is currently DEAD at the write side: it is guarded by
+        ``hasattr(episodic, "store_episode")`` and ``EpisodicMemory`` has no
+        such method (verified by execution, twice). The key is still extracted
+        so that repairing that guard does not silently reintroduce an
+        under-erase.
+
+        If a live metadata-shaped producer ever appears, merge the two payloads
+        here instead of treating them as alternatives.
+        """
         if self._episodic_memory is None:
             return set()
 
@@ -139,19 +202,112 @@ class ErasureManager:
         return deleted
 
     def _extract_attachment_ids(self, payload: Any) -> set[str]:
+        """Read attachment ids from the fields DECLARED to carry them.
+
+        BF-868 (#1343): this used to scan every string anywhere in the payload
+        with a bare ``[a-f0-9]{64}`` regex, inferring identity from SHAPE. Any
+        coincidentally-shaped token -- a hash-suffixed MCP tool name, a channel
+        label, a hex string the Captain typed, a digest an LLM echoed into
+        ``outcomes[].response`` -- was treated as an attachment id and unlinked.
+
+        ``AttachmentStore.unlink`` is a HARD delete with no refcount, so one
+        wrong id is permanent loss of a file nothing referenced.
+
+        The scan is now keyed on structure instead of shape. Values are still
+        shape-CHECKED before use, so a malformed entry in a declared field is
+        skipped rather than passed to ``unlink``.
+
+        Known and accepted: an attachment id embedded in free text is no longer
+        erased. No production path does that today (enumerated above), and the
+        alternative -- deleting unrelated files on a coincidence -- is worse.
+        A future producer must write into a declared field, not free prose.
+        """
         found: set[str] = set()
-        if isinstance(payload, str):
-            found.update(_ATTACHMENT_ID_RE.findall(payload.lower()))
+        payload = self._normalize_payload(payload)
+        if not payload:
             return found
-        if isinstance(payload, dict):
-            for value in payload.values():
-                found.update(self._extract_attachment_ids(value))
-            return found
-        if isinstance(payload, list):
-            for value in payload:
-                found.update(self._extract_attachment_ids(value))
-            return found
+
+        for key in _METADATA_ATTACHMENT_KEYS:
+            found.update(self._ids_from_value(payload.get(key)))
+
+        anchors = payload.get("anchors")
+        if isinstance(anchors, dict):
+            for field_name in _ANCHOR_ATTACHMENT_FIELDS:
+                found.update(self._ids_from_value(anchors.get(field_name)))
+
+        outcomes = payload.get("outcomes")
+        if isinstance(outcomes, list):
+            for outcome in outcomes:
+                if not isinstance(outcome, dict):
+                    continue
+                for key in _OUTCOME_ATTACHMENT_KEYS:
+                    found.update(self._ids_from_value(outcome.get(key)))
+                for list_key, record_keys in _OUTCOME_RECORD_LIST_KEYS.items():
+                    records = outcome.get(list_key)
+                    if not isinstance(records, (list, tuple)):
+                        continue
+                    for record in records:
+                        if not isinstance(record, dict):
+                            continue
+                        for record_key in record_keys:
+                            found.update(self._ids_from_value(record.get(record_key)))
         return found
+
+    @staticmethod
+    def _normalize_payload(payload: Any) -> dict[str, Any]:
+        """Bring the flat ``get_episode_metadata`` row into the nested shape.
+
+        BF-868 (#1343): ``_attachment_ids_for_episode`` has two sources.
+        ``get_by_ids`` yields a dataclass, so ``asdict`` gives nested
+        ``outcomes``/``anchors``. The ``get_episode_metadata`` fallback yields
+        the raw ChromaDB row, where those live as JSON strings under
+        ``outcomes_json``/``anchors_json``. Without this decode the fallback
+        extracted nothing at all, so any episode reached that way erased zero
+        attachments -- silent under-erase.
+        """
+        if not isinstance(payload, dict):
+            return {}
+        normalized = dict(payload)
+        for json_key, nested_key in _FLAT_JSON_FIELDS:
+            if nested_key in normalized:
+                continue
+            raw = normalized.get(json_key)
+            # Empty is the legitimate "no anchors" encoding, not a failure.
+            if not isinstance(raw, str) or not raw:
+                continue
+            try:
+                normalized[nested_key] = json.loads(raw)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                # Degrade rather than raise, but never silently: erasing
+                # nothing is the exact failure this decode exists to fix.
+                logger.warning(
+                    "BF-868: could not decode %s while resolving attachments for "
+                    "erasure; that half of the episode contributes no attachment "
+                    "ids, so a referenced file may survive the erase",
+                    json_key, exc_info=True,
+                )
+        return normalized
+
+    @staticmethod
+    def _ids_from_value(value: Any) -> set[str]:
+        """Accept a bare id or a list of them, keeping only well-formed ones.
+
+        ``fullmatch``, not ``search``: a declared field holds an id, so a value
+        that merely CONTAINS one is malformed and not something to salvage.
+        """
+        if isinstance(value, str):
+            candidates: list[Any] = [value]
+        elif isinstance(value, (list, tuple)):
+            candidates = list(value)
+        else:
+            return set()
+        cleaned = (
+            item.strip().lower() for item in candidates if isinstance(item, str)
+        )
+        # Return the CLEANED value, not the original: validating the stripped
+        # form and then unlinking the padded one would silently under-erase,
+        # because the store never matches a key with surrounding whitespace.
+        return {value for value in cleaned if _ATTACHMENT_ID_RE.fullmatch(value)}
 
     def _episode_to_dict(self, episode: Any) -> dict[str, Any]:
         if dataclasses.is_dataclass(episode):

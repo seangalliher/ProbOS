@@ -63,12 +63,35 @@ class _FakeAuditLog:
 
 @pytest.mark.asyncio
 async def test_forget_episode_removes_episode_and_attachments() -> None:
+    """BF-868: this asserted a shape production never produces.
+
+    It used ``outcomes=[{"attachment_id": <hex>}]``. An earlier BF-868 note
+    called that key "invented for the test" and said production never produces
+    it -- that was WRONG, and is corrected here. The SINGULAR ``attachment_id``
+    is real: AD-730-3 image generation writes exactly that key
+    (``cognitive/image_gen_dispatch.py:105``). What was wrong was the LOCATION.
+    It lands in episode METADATA, never inside ``outcomes[]``, so the shape
+    asserted here was still one production does not write.
+
+    Inside ``outcomes[]`` the real keys are ``attachment_ids`` (plural list,
+    AD-720d-3 Captain-chat vision), ``attachment_ref`` (singular, AD-733
+    perception anchors) and ``per_attachment_timing[].attachment_id``
+    (AD-720d-1). The old assertion passed only because the extractor scanned
+    every string anywhere in the payload by shape, so a top-level
+    ``outcomes[].attachment_id`` worked by accident.
+
+    Updated rather than deleted: the property it owns -- forgetting an episode
+    unlinks its attachments -- is real and still enforced, now through a key
+    production actually writes into ``outcomes[]``. The metadata-shaped
+    ``attachment_id`` producer has its own coverage in
+    ``test_bf868_erasure_declared_fields.py``.
+    """
     attachment_id = "a" * 64
     episodic = _FakeEpisodicMemory([
         _Episode(
             id="ep-1",
             agent_ids=["yeo"],
-            outcomes=[{"attachment_id": attachment_id}],
+            outcomes=[{"attachment_ids": [attachment_id]}],
         )
     ])
     store = _FakeAttachmentStore()
