@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 import sqlite3
@@ -91,11 +92,32 @@ class BackupService:
             return self._fail(str(snapshot_dir), started, str(exc))
 
     def _backup_one(self, src: Path, dest: Path) -> None:
-        """SQLite online backup -- safe while source is being written."""
+        """SQLite online backup -- safe while source is being written.
+
+        BF-849: this was ``with sqlite3.connect(...) as conn``, which binds a
+        TRANSACTION, not the connection's lifetime -- ``Connection.__exit__``
+        commits or rolls back and never calls ``close()``. Both handles leaked
+        on every call. On POSIX that is reclaimed at GC and mostly invisible;
+        on Windows an open handle LOCKS the file, so the source database could
+        not be renamed, moved or removed after a backup.
+
+        Latent for the life of AD-466 only because ``snapshot()`` was never
+        called from ``src/`` (#1313). Wiring the scheduler is what would make
+        it reachable, so it is fixed ahead of that work rather than behind it.
+
+        The discriminating test renames the source afterwards -- a rename fails
+        while a handle is open. A test that asserts only "the backup succeeded"
+        cannot see this, because the copy does complete.
+        """
         try:
-            with sqlite3.connect(str(src)) as src_conn, sqlite3.connect(str(dest)) as dest_conn:
+            with contextlib.closing(sqlite3.connect(str(src))) as src_conn, \
+                    contextlib.closing(sqlite3.connect(str(dest))) as dest_conn:
                 src_conn.backup(dest_conn)
         except sqlite3.Error:
+            # The fallback opens no handles of its own -- copyfile closes both
+            # streams -- but it is reached only after the connects above have
+            # been closed by ``closing``, so a leak here would be the same
+            # defect in the branch nobody exercises.
             shutil.copyfile(src, dest)
 
     def _fail(self, snapshot_dir: str, started: float, error: str) -> BackupResult:
