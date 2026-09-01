@@ -42,7 +42,7 @@ _ATTACHMENT_ID_RE = re.compile(r"\b[a-f0-9]{64}\b")
 # attachment id in free text, so the free-text scan had no genuine producer to
 # serve -- it was pure risk.
 _ANCHOR_ATTACHMENT_FIELDS = ("visual_attachment_ref",)
-_OUTCOME_ATTACHMENT_KEYS = ("attachment_ids", "attachment_ref")
+_OUTCOME_ATTACHMENT_KEYS = ("attachment_ids", "attachment_ref", "attachment_refs")
 # Outcome keys holding a LIST OF RECORDS, each record carrying an id.
 _OUTCOME_RECORD_LIST_KEYS: dict[str, tuple[str, ...]] = {
     "per_attachment_timing": ("attachment_id",),

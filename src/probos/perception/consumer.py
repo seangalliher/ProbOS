@@ -692,6 +692,7 @@ class VisionConsumer:
             sha, description, novelty_score, session_id,
             agent_ids=anchor_agent_ids,
             sources=sources_list,
+            attachment_refs=attachment_refs,
         )
 
         # 6) AD-733b: proactive observer — may emit one DM per observer if
@@ -1067,6 +1068,7 @@ class VisionConsumer:
         self, sha: str, description: str, novelty: float, session_id: str,
         *, agent_ids: list[str] | None = None,
         sources: list[str] | None = None,
+        attachment_refs: list[str] | None = None,
     ) -> None:
         episodic = getattr(self._runtime, "episodic_memory", None)
         if episodic is None:
@@ -1077,11 +1079,19 @@ class VisionConsumer:
             # frames). The legacy ``source`` field stays as a one-wave
             # forward-compat alias (writes the first element).
             sources_value = list(sources) if sources else ["camera"]
+            # BF-869: EVERY bound ref, not just the primary. A fused frame
+            # carries one ref per source, and `ErasureManager` derives what to
+            # unlink from what the episode declares -- so a ref recorded
+            # nowhere survives "forget this" AND is orphaned, with nothing left
+            # pointing at it. `sources`/`source` already had this shape; the
+            # refs did not, and that asymmetry was the defect.
+            refs_value = list(attachment_refs) if attachment_refs else [sha]
             outcome: dict[str, Any] = {
                 "intent": "vision_observation",
                 "success": True,
                 "session_id": session_id,
                 "attachment_ref": sha,
+                "attachment_refs": refs_value,
                 "novelty_score": novelty,
                 "sources": sources_value,
                 "source": sources_value[0],  # AD-746-5 retires this alias.
