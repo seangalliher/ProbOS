@@ -35,7 +35,7 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-09-02T11:32:59+00:00 at `ff100c8a` | 2467 subjects, 991 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-09-02T13:26:12+00:00 at `c5a63b03` | 2468 subjects, 991 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-08-29T05:45:15+00:00 | 1331 issues, 916 numbers |
@@ -46,15 +46,15 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 84 | 13 | assigned, issue open, no shipped code |
+| `allocated-open` | 83 | 13 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 7 | 1 | abandoned, number **not** reusable |
-| `shipped` | 926 | 526 | code in history |
+| `shipped` | 927 | 526 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-97 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+96 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -99,7 +99,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-1189` | [#1126](https://github.com/seangalliher/ProbOS/issues/1126) | issue #1126 open, no code | AD-1189: deferred tool schemas in swe_harness |
 | `AD-1187` | [#1124](https://github.com/seangalliher/ProbOS/issues/1124), [#1139](https://github.com/seangalliher/ProbOS/issues/1139) | issue #1124, #1139 open, no code | AD-1187: a governed agent-facing claim and discovery surface over AD-496 |
 | `AD-1186` | [#1123](https://github.com/seangalliher/ProbOS/issues/1123), [#1138](https://github.com/seangalliher/ProbOS/issues/1138) | issue #1123, #1138 open, no code | AD-1186: Ship Trials -- a release catalog and policy over the existing evaluators |
-| `AD-1185` | [#1121](https://github.com/seangalliher/ProbOS/issues/1121), [#1138](https://github.com/seangalliher/ProbOS/issues/1138) | issue #1121, #1138 open, no code | AD-1185: a supported SystemConfig contract, parsed and booted in CI |
 | `AD-1183` | [#1118](https://github.com/seangalliher/ProbOS/issues/1118) | issue #1118 open, no code | AD-1183: Replace time-sensitive competitive claims in OSS with dated evidence or neutral contracts |
 | `AD-1174` | [#1105](https://github.com/seangalliher/ProbOS/issues/1105) | issue #1105 open, no code | AD-1174: live tool-call progress in the HXI |
 | `AD-1156` | [#1083](https://github.com/seangalliher/ProbOS/issues/1083) | issue #1083 open, no code | AD-1156: Plan/execute mode provider (MAF framing; supersedes the AD-1150 approach) |
@@ -181,7 +180,7 @@ _(none)_
 
 ## Shipped
 
-**AD** (926): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1182, 1184, 1201, 1203-1204, 1209-1211, 1217-1223, 1226-1227, 1230-1235, 1239, 1247-1248, 1256-1257, 1265, 1267, 1269-1271, 1273-1285, 1291-1297
+**AD** (927): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1182, 1184-1185, 1201, 1203-1204, 1209-1211, 1217-1223, 1226-1227, 1230-1235, 1239, 1247-1248, 1256-1257, 1265, 1267, 1269-1271, 1273-1285, 1291-1297
 
 **BF** (526): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-802, 805-808, 810, 812-816, 819-837, 840-842, 844-866, 868-869, 871-872
 
@@ -301,6 +300,7 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `AD-1170` — collision: 2 issues each lead with this number: [#1101](https://github.com/seangalliher/ProbOS/issues/1101), [#1257](https://github.com/seangalliher/ProbOS/issues/1257).
 - `AD-1179` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
 - `AD-1179` — code is in history but [#1111](https://github.com/seangalliher/ProbOS/issues/1111) is still open.
+- `AD-1185` — code is in history but [#1121](https://github.com/seangalliher/ProbOS/issues/1121), [#1138](https://github.com/seangalliher/ProbOS/issues/1138) is still open.
 - `AD-1203` — code is in history but [#1153](https://github.com/seangalliher/ProbOS/issues/1153) is still open.
 - `AD-1204` — code is in history but [#1163](https://github.com/seangalliher/ProbOS/issues/1163) is still open.
 - `AD-1230` — collision: 2 issues each lead with this number: [#1203](https://github.com/seangalliher/ProbOS/issues/1203), [#1256](https://github.com/seangalliher/ProbOS/issues/1256).
@@ -350,8 +350,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1037 head-shaped line yielded no AD/BF token
-PROGRESS.md:1043 head-shaped line yielded no AD/BF token
+PROGRESS.md:1039 head-shaped line yielded no AD/BF token
+PROGRESS.md:1045 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token

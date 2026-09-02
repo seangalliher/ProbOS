@@ -1,0 +1,614 @@
+# AD-1185 config profile contract: which default-OFF flags are classified,
+# what may arm them, how they depend on and conflict with each other, and
+# which environment reads make a config resolve differently in CI.
+#
+# Regenerate the frozen row set with:
+#   python scripts/check_config_profiles.py --update-baseline
+# A blank review.owner/rationale/review_by fails --check on purpose.
+# Classifying a flag means DELETING its row from unclassified_flags in the
+# same commit that adds its entry to flags.
+schema_version: 1
+baseline_id: ad-1185-config-profiles-v1
+tracking_issue: 1121
+smoke_test_node_id: tests/test_ad1185_config_profiles.py::test_supported_profile_boots_and_reads_a_file
+census:
+  measured_at_commit: c5a63b03
+  instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
+    model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
+    counts compare against config/system.yaml loaded through load_config.
+  boolean_fields_reachable: 427
+  default_false: 202
+  default_true: 225
+  default_false_armed_by_system_yaml: 84
+  default_false_never_armed: 118
+  unattributable_deltas:
+  - measure: default-OFF boolean count
+    this_manifest: 202
+    issue_1121_2026_08_03: 199
+    finding: 'Both figures are internally consistent (80+119=199 there, 84+118=202 here).
+      #1121''s instrument is not recorded, and its ''armed locally'' may mean the reference
+      vessel''s own config rather than the tracked config/system.yaml. The delta is therefore
+      UNATTRIBUTABLE, not a measured +3 growth. Neither number is adopted as the other''s
+      correction.'
+  - measure: security_infra.* default-OFF count
+    this_manifest: 2
+    issue_1121_2026_08_03: 3
+    finding: 'Enumerated on the live model: audit_enabled(T), audit_persistence_enabled(T),
+      credential_tier_enforcement(F), egress_active_enforcement(F), egress_deny_by_default(T),
+      egress_enabled(T), sandbox_enabled(T), secrets_persistence_enabled(T). Two are default-OFF
+      today. AD-1278 (BF-780) flipped audit_persistence_enabled ON, which is a plausible but
+      UNVERIFIED explanation for the third; recorded as a discrepancy rather than resolved.'
+  - measure: environment-dependent defaults on SystemConfig
+    this_manifest: 2
+    issue_1121_2026_08_03: 1
+    finding: '#1121 and the AD-1185 build prompt both record NatsConfig.enabled as the only
+      environment-dependent default, on the grounds that it is the sole field carrying validate_default=True.
+      Measured 2026-09-02, that criterion is wrong: CognitiveConfig._apply_env_overrides is
+      a @model_validator(mode=''after''), which ignores validate_default and runs on every
+      construction, so PROBOS_LLM_URL moves the SystemConfig() dump from sha 8246174c4f0c9cbe
+      to 157cd9fac26d6147. This delta IS attributable -- the older instrument is recorded
+      and can be shown to be unsound -- so it is corrected here rather than only noted, and
+      the checker keys the real->declared direction on validator KIND instead.'
+admission_rules:
+  profile: supported
+  version: 1
+  rules:
+  - A manifest row whose kind is product-feature or security-control.
+  - A non-empty evidence_to_promote naming an EXISTING test node that proves the flag changes
+    behaviour when armed. A test asserting only that the default is False proves the default,
+    not the feature, and does not qualify.
+  - The profile still boots with no network and no external service, proven by the smoke at
+    smoke_test_node_id.
+  - No requires / conflicts_with breach.
+  excluded_by_rule_3:
+    kind: optional-integration
+    reason: A flag whose absence blocks boot cannot sit in a profile whose acceptance is an
+      offline CI boot. config/system.yaml arms nats.enabled, channels.discord.enabled, execution.enabled
+      and browser_tool.enabled; copying it would yield a supported profile whose smoke needs
+      a live NATS server.
+    promotion: An optional-integration flag becomes admissible once its row declares a degrades_to
+      behaviour for the dependency being absent AND a test proves that degraded path.
+  resulting_supported_flag_count: 4
+promotion:
+  conflicts_to_root_validator:
+    current: 'Conflicts fail in the profile loader: probos.config_profiles.load_profile raises
+      ProfileConflictError before returning a SystemConfig, and the checker proves no declared
+      rule fires against SystemConfig(), config/system.yaml, config/node-1.yaml or config/node-2.yaml.'
+    deferred: A model_validator(mode='after') on SystemConfig fires for EVERY construction
+      -- every test module, all three tracked YAMLs, every commercial-overlay import and every
+      untracked operator config in the field. A previously-working config would begin refusing
+      to boot, and AD-1270e1 is freezing the config root's contract in this same wave.
+    promote_when: (i) the checker has shown zero declared conflicts firing across all four
+      configs for a sustained period, and (ii) AD-1270e1's golden parity has shipped so a
+      validator addition can be proven not to alter the frozen dump.
+review:
+  owner: AD-1185
+  rationale: '202 default-OFF booleans cannot be triaged in one slice, and pretending otherwise
+    would produce ~170 rows of invented rationale. The flags in flags: are the ones actually
+    read during AD-1185 -- every profile-armed flag, the two groups #1121 names by count (federation.*,
+    security.memory.enforce_*), the six it names individually, the security_infra.* pair behind
+    the count discrepancy, and one worked instance of each of the six kinds so the taxonomy
+    is exercised rather than described. The rest are frozen below. The frozen rows carry no
+    per-row rationale because every row means the same thing; a field that is always the same
+    sentence stops being read. The property this buys is the one AD-1256 bought -- a NEW default-OFF
+    flag lands in neither list and fails on day one, and the backlog is visible and frozen
+    rather than grandfathered as compliant.'
+  review_by: This list is empty, or every remaining flag has a classification.
+flags:
+- path: approval_inbox.enabled
+  kind: product-feature
+  profiles:
+  - supported
+  - experimental-approval-standing-rules
+  evidence_to_promote: tests/test_ad1154_approval_inbox.py::TestHeadline::test_tier_3_click_parks_only_when_the_flag_is_on
+    -- parametrised over the flag, so it proves the ON behaviour differs from the OFF behaviour
+    rather than merely that the ON path does not crash.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: approval_inbox.standing_rules_enabled
+  kind: product-feature
+  profiles:
+  - experimental-approval-standing-rules
+  evidence_to_promote: tests/test_ad1154_approval_inbox.py::TestStandingRules::test_a_matching_rule_admits_and_carries_the_disposition.
+    Withheld from supported on the owner's stated design -- ApprovalInboxConfig's docstring
+    says an operator can take the audit trail without the durable privilege grant, and the
+    riskier half stays off until asked for.
+  external_dependency: null
+  requires:
+  - approval_inbox.enabled
+  conflicts_with: []
+- path: memory.hybrid_recall_enabled
+  kind: product-feature
+  profiles:
+  - supported
+  evidence_to_promote: tests/test_ad979c_hybrid_retrieval.py::test_hybrid_surfaces_keyword_match_dense_misses
+    -- surfaces a keyword match the dense-only axis misses, so the flag changes recall RESULTS
+    rather than only a code path. Wired at src/probos/__main__.py:567.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: security.memory.enforce_store
+  kind: security-control
+  profiles:
+  - supported
+  evidence_to_promote: tests/test_ad607_memory_security.py::TestPromptInjectionStoreGate::test_store_ignore_previous_enforced_rejected
+    -- with the flag on the gate returns REJECT for an injected episode; its sibling test
+    proves the same input is ALLOW-with-pattern when off.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: security.memory.enforce_provenance
+  kind: security-control
+  profiles:
+  - supported
+  evidence_to_promote: tests/test_ad607_memory_security.py::TestProvenanceIntegrity::test_recall_drops_provenance_gap_when_enforced
+    -- recall drops a provenance-gapped episode only when enforced.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: security.memory.enforce_recall
+  kind: security-control
+  profiles: []
+  evidence_to_promote: Needs a test that exercises the recall gate with the flag ON and shows
+    a different outcome from OFF. tests/test_ad607_memory_security.py covers the anomaly scoring
+    but never constructs MemorySecurityConfig(enforce_recall=True), so nothing currently proves
+    the enforcing branch. Enumerated over that file 2026-09-02.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: security.memory.enforce_leak_guard
+  kind: security-control
+  profiles: []
+  evidence_to_promote: Needs a test that constructs MemorySecurityConfig(enforce_leak_guard=True)
+    and shows a response redacted. TestMemoryLeakageGuard exercises detection; no test arms
+    the enforcement flag. Enumerated 2026-09-02.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: security_infra.credential_tier_enforcement
+  kind: security-control
+  profiles: []
+  evidence_to_promote: 'The flag''s own comment names the condition: AD-456c-5 flips the default
+    once fleet-wide per-spec min_tier coverage is verified AND caller-side tier= propagation
+    (AD-456c-2) has landed in all production credential-using agent paths. supported must
+    not arm it before that, because a partially-covered fleet fails closed on lookups that
+    work today.'
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: security_infra.egress_active_enforcement
+  kind: security-control
+  profiles: []
+  evidence_to_promote: 'AD-456b-7 flips the default once fleet-wide allowlist coverage is
+    verified. BF-751 records the asymmetry this guards: mcp_bridge/transport.py consults the
+    egress policy unconditionally while HttpFetchAgent consults it only when this is True,
+    so arming it silently firewalls every existing http_fetch caller against a loopback-only
+    allowlist. supported arms it once a test proves an allowlisted fetch still succeeds.'
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: federation.enabled
+  kind: optional-integration
+  profiles: []
+  evidence_to_promote: Excluded from supported v1 by admission rule 3 -- federation needs
+    at least one reachable peer and the smoke is offline. Admissible once the row declares
+    a degrades_to behaviour for zero peers and a test proves it.
+  external_dependency: A reachable federation peer.
+  requires: []
+  conflicts_with: []
+- path: federation.a2a.enabled
+  kind: optional-integration
+  profiles: []
+  evidence_to_promote: Excluded by admission rule 3. Needs an A2A peer endpoint.
+  external_dependency: An A2A-speaking peer endpoint.
+  requires: []
+  conflicts_with: []
+- path: federation.ard.enabled
+  kind: optional-integration
+  profiles: []
+  evidence_to_promote: Excluded by admission rule 3. Needs a peer ARD registry.
+  external_dependency: A peer ARD registry.
+  requires: []
+  conflicts_with: []
+- path: federation.ard.discovery_before_design
+  kind: optional-integration
+  profiles: []
+  evidence_to_promote: 'Excluded by admission rule 3 -- a peer fetch before design needs peers.
+    A requires edge on federation.ard.enabled is deliberately NOT declared: it was not verified
+    against the consuming code during AD-1185, and an unverified edge in the loader is a rule
+    nobody can falsify.'
+  external_dependency: A peer ARD registry reachable at design time.
+  requires: []
+  conflicts_with: []
+- path: federation.discovery.multicast_enabled
+  kind: optional-integration
+  profiles: []
+  evidence_to_promote: Excluded by admission rule 3. Needs a multicast-capable LAN, which
+    CI does not have.
+  external_dependency: A multicast-capable network segment.
+  requires: []
+  conflicts_with: []
+- path: federation.mcp_server.enabled
+  kind: optional-integration
+  profiles: []
+  evidence_to_promote: Excluded by admission rule 3. Binds a listening MCP server socket.
+  external_dependency: A bindable MCP server port.
+  requires: []
+  conflicts_with: []
+- path: federation.tls.enabled
+  kind: security-control
+  profiles: []
+  evidence_to_promote: supported arms federation TLS when supported also arms federation.
+    Until federation.enabled is admissible, arming its transport security alone changes nothing
+    and would be a row that looks like a hardening decision while doing no work.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: memory.attention.enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: 'Named individually by #1121. Needs a test showing an attention organ
+    changes recall or routing when armed, not merely that the organ constructs.'
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: hooks.enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: 'Named individually by #1121. Arming it makes agent-authored hook code
+    reachable, so promotion needs evidence of the validation/sandbox path as well as the feature
+    path.'
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: qualification.enforcement_enabled
+  kind: security-control
+  profiles: []
+  evidence_to_promote: 'Named individually by #1121. Arming it turns qualification from observational
+    to blocking; promotion needs a test proving an unqualified agent is refused AND that a
+    qualified one is not.'
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: native_swe_harness.enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: 'Named individually by #1121. Needs a test proving the harness executes
+    a bounded task offline.'
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: browser_tool.action_dispatch_enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: 'Named individually by #1121, and the worked example of the extra=ignore
+    hazard: spelled action_dispatch_enable, a profile would parse clean and ship the feature
+    off. Consumed at src/probos/cognitive/dm/reply_pipeline.py:708. Excluded from supported
+    v1 because dispatching ACTION markers drives a real browser, which admission rule 3 forbids.'
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: dependency.dynamic_install_enabled
+  kind: security-control
+  profiles: []
+  evidence_to_promote: 'Named individually by #1121. It permits installing packages at runtime;
+    dynamic_install_policy defaults to prompt_unlisted and auto_approve_imports is stdlib-only.
+    supported does not arm remote code installation, and promotion is a Captain decision rather
+    than a test result.'
+  external_dependency: A package index, which admission rule 3 also forbids.
+  requires: []
+  conflicts_with: []
+- path: nats.enabled
+  kind: optional-integration
+  profiles: []
+  evidence_to_promote: Excluded by admission rule 3 -- the canonical case. config/system.yaml:2259
+    arms it, so copying that file would give supported a smoke that needs a live NATS server.
+    See ci_divergences/nats-forced-off-in-tests.
+  external_dependency: A reachable NATS server (default nats://localhost:4222).
+  requires: []
+  conflicts_with: []
+- path: channels.discord.enabled
+  kind: optional-integration
+  profiles: []
+  evidence_to_promote: Excluded by admission rule 3. Needs a Discord bot token and outbound
+    network.
+  external_dependency: A Discord bot token and outbound network access.
+  requires: []
+  conflicts_with: []
+- path: os_activity.enabled
+  kind: consent-gate
+  profiles: []
+  evidence_to_promote: Arming it observes the operator's OS activity. That is a human decision,
+    not a test result, so no amount of passing evidence promotes it into supported; it stays
+    opt-in.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: avatar_telemetry.inject_into_agent_context
+  kind: consent-gate
+  profiles: []
+  evidence_to_promote: Arming it puts observed avatar telemetry into agent context. A consent
+    decision, not a capability question.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: social_verification.expose_episode_content
+  kind: consent-gate
+  profiles: []
+  evidence_to_promote: Not promotable. config.py:3708 marks it 'MUST stay False -- privacy
+    boundary'. The row exists so the boundary is checkable rather than only commented.
+  external_dependency: null
+  requires: []
+  conflicts_with:
+  - security.memory.enforce_leak_guard
+  conflict_rationale: 'The leak guard redacts a response when memory leakage is suspected;
+    this flag publishes raw episode content across the social-verification boundary. Arming
+    both asserts two contradictory postures over the same data, which is the ''mutually exclusive
+    research and security modes'' case #1121 names. Declared one-directionally from the exposing
+    flag, so an operator who arms only the guard is unaffected.'
+- path: agentic_loop.structured_tool_messages
+  kind: migration-control
+  profiles: []
+  evidence_to_promote: 'AD-1146 switches between the old flattened single-prompt transcript
+    and the provider''s real multi-turn message array. A migration control rather than a feature:
+    promotion means retiring the flattened path, at which point the flag is deleted rather
+    than armed.'
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: self_mod.research_enabled
+  kind: optional-integration
+  profiles: []
+  evidence_to_promote: Excluded by admission rule 3 -- opt-in web research before design fetches
+    from research_domain_whitelist hosts.
+  external_dependency: Outbound HTTP to the whitelisted documentation domains.
+  requires: []
+  conflicts_with: []
+- path: grounding.referent_gate_enabled
+  kind: research-treatment
+  profiles: []
+  evidence_to_promote: AD-1119 treatment, and the base arm two other grounding treatments
+    depend on. supported arms it once a test shows the gate improves an outcome rather than
+    only firing.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: grounding.confab_probe_enabled
+  kind: research-treatment
+  profiles: []
+  evidence_to_promote: AD-1121 treatment. Its own field description states it has no effect
+    unless referent_gate_enabled is on, which is why the requires edge is declared rather
+    than inferred.
+  external_dependency: null
+  requires:
+  - grounding.referent_gate_enabled
+  conflicts_with: []
+- path: grounding.ground_before_collaborate_enabled
+  kind: research-treatment
+  profiles: []
+  evidence_to_promote: AD-1120 treatment. Its own field description states it has no effect
+    unless referent_gate_enabled is on.
+  external_dependency: null
+  requires:
+  - grounding.referent_gate_enabled
+  conflicts_with: []
+ci_divergences:
+- id: nats-forced-off-in-tests
+  mechanism: config-field-validator
+  env_var: PROBOS_NATS_ENABLED
+  set_by: tests/conftest.py
+  set_to: 'false'
+  config_path: nats.enabled
+  production_resolution: 'config/system.yaml:2259 sets nats.enabled: true, and NatsConfig.enabled
+    carries validate_default=True, so with the variable unset production resolves ON while
+    the suite resolves OFF.'
+  rationale: BF-245 -- a real NATS connection in every test module is a shared external dependency.
+    AD-1185 does not remove this divergence; declaring and checking it is the deliverable.
+  side_effect: conftest's forced value happens to equal the model default, so a naive minimal
+    byte-identity test would pass for the wrong reason. The test deletes the variable instead.
+- id: llm-endpoint-env-override
+  mechanism: model-validator
+  env_var: PROBOS_LLM_URL
+  set_by: null
+  set_to: null
+  config_path: cognitive.llm_base_url
+  production_resolution: 'CognitiveConfig._apply_env_overrides is a @model_validator(mode=''after''),
+    so it runs on EVERY construction including SystemConfig(). With the variable set, the
+    default config''s llm_base_url becomes its value. Measured 2026-09-02: the canonicalised
+    SystemConfig() dump moves from sha 8246174c4f0c9cbe to 157cd9fac26d6147 when PROBOS_LLM_URL
+    is set.'
+  rationale: 'Declared because it is an environment-dependent DEFAULT, not because CI sets
+    it -- nothing in tests/conftest.py does, which is arguably worse: no test pins it, so
+    a developer or container exporting PROBOS_LLM_URL silently resolves a different default
+    config from CI. Found by testing the prompt''s claim that NatsConfig.enabled is the only
+    such default rather than adopting it.'
+  side_effect: The minimal byte-identity test deletes this variable alongside PROBOS_NATS_ENABLED.
+    Identity would in fact survive either being set, because both sides of the comparison
+    move together -- which is exactly why the paired test, and not a hard-coded hash, is the
+    honest assertion.
+- id: hugging-face-forced-offline-in-tests
+  mechanism: third-party-env
+  env_var: HF_HUB_OFFLINE
+  set_by: tests/conftest.py
+  set_to: '1'
+  config_path: null
+  production_resolution: Nothing in ProbOS reads this variable, so production resolves ONLINE
+    because nothing sets it. huggingface_hub reads it directly.
+  rationale: 'Enumerated 2026-09-02: rg ''HF_HUB_OFFLINE|TRANSFORMERS_OFFLINE'' src/ scripts/
+    returns no matches. The mechanism is entirely outside SystemConfig, so config_path is
+    null and no profile can control it. Measured during AD-1185: a standalone supported-profile
+    boot with the variable unset contacted the HF Hub; the same boot inside the suite does
+    not.'
+  side_effect: null
+unclassified_flags:
+- agentic_dispatch.crew_compaction_enabled
+- agentic_dispatch.crew_loop_until_done_enabled
+- agentic_dispatch.enabled
+- agentic_dispatch.orchestrator_enabled
+- agentic_loop.parallel_tool_calls_enabled
+- agentic_tools.browser_enabled
+- agentic_tools.crew_sigma_context_enabled
+- agentic_tools.delegation_enabled
+- agentic_tools.disposition_enabled
+- agentic_tools.oracle_query_enabled
+- agentic_tools.publish_finding_enabled
+- agentic_tools.tool_search_enabled
+- approval_inbox.work_permits_enabled
+- assignments.enabled
+- attachments.auto_resolve_remote_enabled
+- attachments.pdf_extraction_enabled
+- attachments.serve_remote_enabled
+- avatar_telemetry.auto_correct_enabled
+- avatar_telemetry.divergence_detection
+- avatar_telemetry.records_auto_write_enabled
+- avatars.animations_enabled
+- avatars.canvas_render_vrm_avatars
+- avatars.cross_agent_divergence_observation_enabled
+- avatars.image_gen_enabled
+- avatars.pacing_enabled
+- avatars.peer_perception_enabled
+- avatars.render_self_check_enabled
+- avatars.render_verification_enabled
+- avatars.render_verification_followup_enabled
+- avatars.renderer_enabled
+- avatars.self_render_verify_enabled
+- avatars.vision_intent_divergence_enabled
+- bill.allow_partial_assignment
+- bridge_alerts.enabled
+- browser_tool.bridge_enabled
+- browser_tool.credential_vault.enabled
+- browser_tool.enabled
+- browser_tool.input_forwarding_enabled
+- browser_tool.llm_classifier_enabled
+- browser_tool.recording_enabled
+- browser_tool.streaming_enabled
+- capability_triage.grant_fast_path_enabled
+- chain_optimizer.apply_enabled
+- chain_optimizer.enabled
+- chain_optimizer_counselor.auto_revert_enabled
+- chain_optimizer_counselor.enabled
+- channels.discord.mention_required
+- channels.slack.enabled
+- channels.webhook.enabled
+- clinical_telemetry.audit_persistence_enabled
+- clinical_telemetry.circuit_breaker_history_persistence_enabled
+- clinical_telemetry.enabled
+- cloud_pickers.dropbox.enabled
+- cloud_pickers.enabled
+- cloud_pickers.google_drive.enabled
+- cloud_pickers.onedrive.enabled
+- cognitive.conversation_mode_enabled
+- cognitive.decision_cache_enabled
+- cognitive.offline_stt_enabled
+- communications.a2ui_enabled
+- communications.dream_interpretation_enabled
+- communications.recall_interpretation_enabled
+- communications.room_todos_enabled
+- consultation_delivery.default_requires_approval
+- counselor.alert_on_yellow
+- degradation.auto_pause_enabled
+- desktop.autostart_enabled
+- desktop.enabled
+- device.enabled
+- discovery.enabled
+- dm_agentic.compaction_enabled
+- dm_agentic.continue_or_ask_enabled
+- dm_agentic.enabled
+- dm_agentic.hold_degraded_turns
+- dm_deliberate.enabled
+- dm_mesh_synthesis.enabled
+- dm_targeted_lookup.enable_codebase
+- dm_targeted_lookup.enabled
+- dreaming.active_retrieval_enabled
+- dreaming.organ_enabled
+- dreaming.per_agent_dream_attribution_enabled
+- earned_agency.enabled
+- edge_backfill.force
+- emergence_collector.enabled
+- engineering_sensors.auto_start_periodic_report
+- execution.allow_package_install
+- execution.enabled
+- execution.fetch_broker_enabled
+- execution.stage_thread_artifacts
+- execution.workspace_write_enabled
+- extensions.enabled
+- extensions.enforce_sealed_core
+- gap_pipeline_extensions.active_remediation_enabled
+- ground_truth.active_rejection_enabled
+- ground_truth.trust_feedback_enabled
+- group_chat.agent_initiated_kickoff_enabled
+- group_chat.agent_next_speaker_selection_enabled
+- group_chat.agent_reactivity_enabled
+- group_chat.auto_task_room_enabled
+- group_chat.broadcast_terminator_enabled
+- group_chat.conversation_trust_correction_observe_enabled
+- group_chat.conversation_trust_enabled
+- group_chat.escalation_suggestion_enabled
+- group_chat.scale_aware_facilitation_enabled
+- group_chat.turn_mode_policy_enabled
+- holodeck_birth_chamber.enabled
+- holodeck_scenarios.enabled
+- holodeck_scenarios.persist_to_sqlite
+- knowledge_browser.enabled
+- m365.enabled
+- mcp.agent_tools_enabled
+- mcp.management_enabled
+- mcp.stdio_enabled
+- mcp_app_host.discover_external_apps
+- mcp_app_host.enabled
+- memory.affect_capture_enabled
+- memory.attention.arousal_enabled
+- memory.attention.salience_scoring
+- memory.cross_agent_recall_enabled
+- memory.episode_visual_binding_enabled
+- memory.group_episode_enrichment_enabled
+- memory.oracle_match_reason_enabled
+- memory.recall_confidence_gating_enabled
+- memory.recall_fok_logging_enabled
+- memory.recall_outcome_refs_enabled
+- memory.recall_rerank_enabled
+- memory.reconsolidation_enabled
+- memory.remember_know_typing_enabled
+- memory.schema_version_tracking
+- memory.transcript_grounded_recall_enabled
+- office_skills.enabled
+- packs.enabled
+- perception.camera.enabled
+- perception.enabled
+- perception.screen.enabled
+- perception.vad_engagement_enabled
+- persistent_tasks.dag_auto_resume
+- persistent_tasks.enabled
+- pre_flight.token_budget_blocking
+- predictive_branching.enabled
+- proactive_cognitive.duty_schedule.use_work_items
+- proactive_cognitive.enabled
+- proactive_scan.calendar.include_declined
+- proactive_scan.inbox.unread_only
+- qa.auto_remove_on_total_fail
+- qualification.peer_observation_certification_required
+- query_planner.enabled
+- records.semantic_index_enabled
+- repair.enabled
+- self_improvement.enabled
+- self_mod.enabled
+- skill_requests.enabled
+- skills_marketplace.enabled
+- spatial_explorer.enabled
+- step_instruction.enabled
+- sub_task.nats_publish_enabled
+- swe_specialists.enabled
+- team_simulations.enabled
+- team_simulations.persist_to_sqlite
+- threshold_alerts.enabled
+- tts.sentence_pipelining_enabled
+- visiting_officers.enabled
+- wake_word.retain_training_samples
+- wake_word.wake_word_trainer_enabled
+- ward_room.enabled
+- work_board_reconciler.enabled
+- work_board_reconciler.reactive_reclaim
+- workflow_cron.enabled
+- workforce.enabled
+- workstations.enabled

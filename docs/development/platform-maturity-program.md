@@ -17,7 +17,7 @@ This is one dependency-ordered architecture program, not an invitation to file a
 | Existing or reserved owner | Ownership retained here |
 |---|---|
 | AD-1184 / #1120 | Reconciled lifecycle ledger; already shipped |
-| AD-1185 / #1121 | Supported `SystemConfig` profiles and flag dependency contract |
+| AD-1185 / #1121 | Supported `SystemConfig` profiles and flag dependency contract; already shipped |
 | AD-1186 / #1123 | Ship Trials release catalog and policy |
 | AD-1256 / #1302 | Store registry and shared storage lifecycle |
 | AD-1265 prompt reservation | Self-sufficient scheduled snapshots and verification |
@@ -765,7 +765,7 @@ Exit: unsupported activation claims become visible; selection has demonstrated z
 
 ### Wave 2 — Supported Product and Foundations
 
-- AD-1185 supported profile.
+- AD-1185 supported profile. **Delivered 2026-09-02** — `config/profiles/{minimal,supported,experimental-approval-standing-rules}.yaml`, the validating loader `probos.config_profiles`, the reviewed manifest `docs/development/config-profiles.yaml` (32 classified / 170 frozen / 202 default-OFF), the `config-profiles` preflight phase, and a CI boot smoke that starts a real runtime from the supported profile and executes a real `read_file` offline.
 - AD-1270e1 config compatibility baseline.
 - AD-1256 inventory-only store registry and lifecycle metadata.
 

@@ -1,0 +1,18 @@
+# AD-1185 control arm. Deliberately empty.
+#
+# `minimal` is the ablation baseline: it must resolve to a SystemConfig that is
+# byte-identical to SystemConfig(). tests/test_ad1185_config_profiles.py asserts
+# that identity by SHA-256 over the canonicalised model_dump, with
+# PROBOS_NATS_ENABLED deleted, so the property is environment-independent
+# rather than an accident of the suite's conftest.
+#
+# If a future edit gives this file a non-empty `overrides:`, that test is the
+# only thing standing between the change and a silently moved baseline. Do not
+# weaken it to accommodate a new metadata field -- metadata belongs under
+# `profile:`, which the loader strips before model_validate.
+profile:
+  id: minimal
+  version: 1
+  description: The model defaults, unmodified. The control arm every other profile is a delta against.
+  arm: control
+overrides: {}

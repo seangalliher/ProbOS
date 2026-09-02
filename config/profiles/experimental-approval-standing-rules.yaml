@@ -1,0 +1,24 @@
+# AD-1185 experimental treatment: durable approval privilege grants.
+#
+# The third arm of #1121's three-profile decision, exercised rather than
+# described. It exists to prove two things the other two profiles cannot:
+#
+#   1. a treatment can arm a flag `supported` deliberately withholds, and
+#   2. a real `requires` edge resolves -- approval_inbox.standing_rules_enabled
+#      is meaningless without approval_inbox.enabled, which ConfigApprovalInbox's
+#      own docstring states ("Two flags, not one. `enabled` turns on parking.
+#      `standing_rules_enabled` additionally permits a durable privilege grant.").
+#
+# `supported` withholds standing rules on purpose: the owner's stated design is
+# that an operator can take the audit trail without the "don't ask again"
+# lever, and the riskier half stays off until asked for. Arming it is a
+# treatment, not the product default.
+profile:
+  id: experimental-approval-standing-rules
+  version: 1
+  description: Treatment arm -- approval parking plus durable, scoped, expiring standing rules.
+  arm: experiment
+overrides:
+  approval_inbox:
+    enabled: true
+    standing_rules_enabled: true

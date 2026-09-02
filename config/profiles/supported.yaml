@@ -1,0 +1,32 @@
+# AD-1185 supported product configuration.
+#
+# This is NOT a copy of config/system.yaml. That file is the reference vessel's
+# operator config and arms 84 default-OFF flags including nats.enabled,
+# channels.discord.enabled, execution.enabled and browser_tool.enabled. A
+# profile whose acceptance is an offline CI boot cannot arm a flag whose
+# absence blocks boot, so every `optional-integration` flag is excluded from v1
+# by rule -- see docs/development/config-profiles.yaml, admission rule 3.
+#
+# Admission rule for every line below, all four parts required:
+#   1. a manifest row whose `kind` is product-feature or security-control;
+#   2. a non-empty `evidence_to_promote` naming an EXISTING test node that
+#      proves the flag changes behaviour when armed;
+#   3. the profile still boots with no network and no external service;
+#   4. no `requires` / `conflicts_with` breach.
+#
+# Four flags. Not padded: a flag whose only evidence is a test asserting its
+# default is False proves the default, not the feature, and does not qualify.
+profile:
+  id: supported
+  version: 1
+  description: The supported product contract -- the flags ProbOS ships armed, each bound to a test that proves it works.
+  arm: product
+overrides:
+  approval_inbox:
+    enabled: true
+  memory:
+    hybrid_recall_enabled: true
+  security:
+    memory:
+      enforce_provenance: true
+      enforce_store: true

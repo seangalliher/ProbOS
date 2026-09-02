@@ -250,6 +250,7 @@ def test_preflight_contains_import_origin_generated_and_compile_checks(
     assert [spec.name for spec in specs] == [
         "import-origin",
         "config-reference",
+        "config-profiles",
         "ad-ledger",
         "seam-contracts",
         "architecture-fitness",
@@ -257,6 +258,7 @@ def test_preflight_contains_import_origin_generated_and_compile_checks(
         "compile",
     ]
     assert "scripts/gen_config_reference.py" in flattened
+    assert "scripts/check_config_profiles.py" in flattened
     assert "scripts/gen_ad_ledger.py" in flattened
     assert "scripts/check_seam_contracts.py" in flattened
     assert "scripts/check_architecture_principles.py" in flattened

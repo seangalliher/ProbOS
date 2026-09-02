@@ -184,6 +184,8 @@ BLAST_RADIUS_PATTERNS: tuple[str, ...] = (
     "src/probos/runtime.py",
     "src/probos/startup/*",
     "src/probos/config.py",
+    "src/probos/config_profiles.py",
+    "config/profiles/*",
     "src/probos/types.py",
     "src/probos/*protocol*.py",
     "src/probos/*event*.py",
