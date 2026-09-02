@@ -22,12 +22,25 @@ side, which mutation testing showed was the way through every earlier guard.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
+
+from probos.config import ExecutionConfig
 
 
 def _text(relative: str) -> str:
     """Whitespace-normalised source, so a reflowed docstring is not a failure."""
     return " ".join(Path(relative).read_text(encoding="utf-8").split())
+
+
+def _declaring_source(model: type) -> str:
+    """Path to the module that DECLARES ``model``, not the facade re-exporting it.
+
+    AD-1270e2 is moving config models out of ``config.py`` into
+    ``config_models/``; ``probos.config`` still re-exports them, so an import
+    reveals nothing about which file now holds the docstring this guard reads.
+    """
+    return inspect.getfile(model)
 
 
 def test_isolation_does_not_claim_a_consensus_gate() -> None:
@@ -259,7 +272,7 @@ def test_code_runner_does_not_claim_a_gate_it_lacks() -> None:
 
 
 def test_execution_config_does_not_claim_authorization() -> None:
-    source = _text("src/probos/config.py")
+    source = _text(_declaring_source(ExecutionConfig))
 
     assert "attributable through a per-execution audit record" not in source
     assert "neither** ``run_python`` path is quorum-approved" in source

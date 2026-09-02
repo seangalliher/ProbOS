@@ -45,7 +45,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import inspect
+
 import pytest
+
+from probos.config import ExecutionConfig
 
 
 def _text(relative: str) -> str:
@@ -53,8 +57,20 @@ def _text(relative: str) -> str:
     return " ".join(Path(relative).read_text(encoding="utf-8").split())
 
 
+def _declaring_source(model: type) -> str:
+    """Path to the module that DECLARES ``model``, not the facade re-exporting it.
+
+    AD-1270e2 is moving config models out of ``config.py`` into
+    ``config_models/``; ``probos.config`` still re-exports them, so an import
+    reveals nothing about which file now holds the docstring these guards read.
+    Resolving through ``__module__`` means the next batch cannot silently point
+    this file at a source that no longer contains the text it asserts.
+    """
+    return inspect.getfile(model)
+
+
 ISOLATION = "src/probos/execution/isolation.py"
-CONFIG = "src/probos/config.py"
+CONFIG = _declaring_source(ExecutionConfig)
 
 
 def test_the_premise_that_these_files_are_readable() -> None:

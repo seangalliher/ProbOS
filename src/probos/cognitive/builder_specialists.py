@@ -76,7 +76,9 @@ DOMAIN RULES (in addition to the standard SWE output rules):
 - Prefer ``async def`` for any handler that touches I/O. Always
   ``await`` async APIs.
 - Use Pydantic models for any new request/response or config shape;
-  match the existing models in ``src/probos/config.py`` for style.
+  match the existing models for style. ``probos.config`` is the import
+  surface, but most models are DECLARED in ``src/probos/config_models/``
+  (AD-1270e2) — edit the declaring module, not the facade.
 - HTTP routers go in ``src/probos/routers/<name>.py`` and are wired into
   ``src/probos/api.py`` alphabetically.
 - Database access goes through abstract Protocol seams when introducing
@@ -182,7 +184,8 @@ DOMAIN RULES (in addition to the standard SWE output rules):
   third-party actions.
 - YAML config edits in ``config/system.yaml`` must preserve existing
   comments; never introduce defaults that contradict the Pydantic
-  defaults in ``src/probos/config.py``.
+  defaults, which live in ``src/probos/config.py`` or in the declaring
+  module under ``src/probos/config_models/`` (AD-1270e2).
 - Launch scripts in ``scripts/launch-cluster.{ps1,sh}`` — keep PowerShell
   + bash parity for any new feature.
 
