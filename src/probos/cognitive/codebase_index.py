@@ -574,30 +574,65 @@ class CodebaseIndex:
             self._layer_map[layer].append(rel)
 
     def _extract_config_schema(self) -> None:
-        """Parse config.py to extract all config model fields and defaults."""
-        config_path = self._source_root / "config.py"
-        if not config_path.is_file():
-            return
+        """Extract config model fields and defaults from the config package.
 
-        try:
-            source = config_path.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(source)
-        except SyntaxError:
-            return
+        AD-1270e2 split the models out of ``config.py`` into
+        ``config_models/``; ``probos.config`` re-exports them and stays the
+        public facade. This reader does not import — it parses source — so
+        scanning ``config.py`` alone silently dropped every extracted model
+        from the system's self-knowledge. Both are read, ``config.py`` first so
+        a facade definition wins a name clash with the package.
+        """
+        config_paths = [self._source_root / "config.py"]
+        config_paths.extend(sorted((self._source_root / "config_models").glob("*.py")))
 
-        for node in ast.iter_child_nodes(tree):
-            if not isinstance(node, ast.ClassDef):
+        for config_path in config_paths:
+            if not config_path.is_file():
                 continue
-            # Look for Pydantic BaseModel subclasses
-            base_names = self._base_class_names(node)
-            if "BaseModel" not in base_names:
+
+            try:
+                source = config_path.read_text(encoding="utf-8", errors="replace")
+                tree = ast.parse(source)
+            except SyntaxError:
+                logger.warning(
+                    "Config schema: %s failed to parse; its models are missing "
+                    "from codebase self-knowledge. Remaining files still scanned.",
+                    config_path.name,
+                )
                 continue
-            fields: dict[str, str] = {}
-            for item in node.body:
-                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                    field_name = item.target.id
-                    type_str = ast.unparse(item.annotation) if item.annotation else "Any"
-                    default_str = ast.unparse(item.value) if item.value else "required"
-                    fields[field_name] = f"{type_str} = {default_str}"
-            if fields:
+
+            for node in ast.iter_child_nodes(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                # Look for Pydantic BaseModel subclasses
+                base_names = self._base_class_names(node)
+                if "BaseModel" not in base_names:
+                    continue
+                fields: dict[str, str] = {}
+                for item in node.body:
+                    if isinstance(item, ast.AnnAssign) and isinstance(
+                        item.target, ast.Name
+                    ):
+                        field_name = item.target.id
+                        type_str = (
+                            ast.unparse(item.annotation) if item.annotation else "Any"
+                        )
+                        default_str = (
+                            ast.unparse(item.value) if item.value else "required"
+                        )
+                        fields[field_name] = f"{type_str} = {default_str}"
+                if not fields:
+                    continue
+                if node.name in self._config_schema:
+                    # Bare class name is the key, so a duplicate would silently
+                    # replace the first definition and change what the system
+                    # reports about itself. Keep the first, say so loudly.
+                    logger.warning(
+                        "Config schema: %s is declared in more than one config "
+                        "module; keeping the first definition and ignoring the "
+                        "one in %s.",
+                        node.name,
+                        config_path.name,
+                    )
+                    continue
                 self._config_schema[node.name] = fields

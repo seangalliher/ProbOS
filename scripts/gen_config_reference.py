@@ -30,8 +30,11 @@ _HEADER = """# Configuration Reference
 
 **Generated file — do not edit by hand.**
 Regenerate with `python scripts/gen_config_reference.py`.
-Every description below comes from the `Field(description=...)` in
-`src/probos/config.py`, so the way to improve this page is to improve that.
+Every description below comes from the `Field(description=...)` on the model
+that declares it. AD-1270e2 is moving those models out of `src/probos/config.py`
+into `src/probos/config_models/`; `probos.config` remains the import surface, so
+the way to improve this page is to improve the declaring model in whichever of
+those two places currently owns it.
 
 ProbOS runs with **zero configuration** — every field has a default. The
 shipped `config/system.yaml` deliberately does not list every knob; this page
@@ -201,7 +204,7 @@ def main() -> int:
         if current != generated:
             print(
                 "STALE: docs/development/config-reference.md no longer matches "
-                "src/probos/config.py.\nRegenerate with: "
+                "the config models.\nRegenerate with: "
                 "python scripts/gen_config_reference.py",
                 file=sys.stderr,
             )

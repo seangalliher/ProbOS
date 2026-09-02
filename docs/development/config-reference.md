@@ -2,8 +2,11 @@
 
 **Generated file — do not edit by hand.**
 Regenerate with `python scripts/gen_config_reference.py`.
-Every description below comes from the `Field(description=...)` in
-`src/probos/config.py`, so the way to improve this page is to improve that.
+Every description below comes from the `Field(description=...)` on the model
+that declares it. AD-1270e2 is moving those models out of `src/probos/config.py`
+into `src/probos/config_models/`; `probos.config` remains the import surface, so
+the way to improve this page is to improve the declaring model in whichever of
+those two places currently owns it.
 
 ProbOS runs with **zero configuration** — every field has a default. The
 shipped `config/system.yaml` deliberately does not list every knob; this page
@@ -365,7 +368,7 @@ AD-480d / AD-480e: Inbound A2A server + outbound A2A clients.
 | `bind_host` | `str` | `'127.0.0.1'` | — |  |
 | `bind_port` | `int` | `8766` | ≥ 1, ≤ 65535 |  |
 | `agent_card_path` | `str` | `'/.well-known/agent.json'` | — |  |
-| `outbound_peers` | `list[probos.config.A2APeerConfig]` | `[]` | — |  |
+| `outbound_peers` | `list[probos.config_models.integrations.A2APeerConfig]` | `[]` | — |  |
 
 ## `ard`
 
@@ -1487,7 +1490,7 @@ MCP Bridge configuration (AD-449; AD-1014 stdio).
 |---|---|---|---|---|
 | `enabled` | `bool` | `True` | — |  |
 | `request_timeout_seconds` | `float` | `30.0` | ≥ 1.0 |  |
-| `servers` | `list[probos.config.MCPServerConfig]` | `[]` | — |  |
+| `servers` | `list[probos.config_models.integrations.MCPServerConfig]` | `[]` | — |  |
 | `stdio_enabled` | `bool` | `False` | — |  |
 | `command_allowlist` | `list[str]` | `['uvx', 'npx', 'python', 'node', 'docker']` | — |  |
 | `management_enabled` | `bool` | `False` | — |  |
