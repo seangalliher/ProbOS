@@ -61,11 +61,11 @@ The reviewer's advantage is stance, not intelligence: it asks *does the next com
 ### Scope of work
 
 - Work in progress is limited to **one issue**, or at most **three tightly coupled issues** in a bounded wave.
-- Select **existing, actionable** issues. Prefer bounded fixes and dependency blockers that unlock other open issues. Do not select new AD work while in this mode.
+- Select **existing, actionable** issues. Prefer bounded fixes and dependency blockers that unlock other open issues. Do not select AD work unless **Delegated AD Execution Mode** below is active.
 - Every selected issue goes through the full path: implementation → focused validation → adversarial review → broad validation → push → **verified GitHub closure**.
-- Continue autonomously between issues. Stop only for a genuine product decision, an unavailable credential, or an irreducible external blocker.
+- Continue autonomously between issues. Stop only for an out-of-envelope product decision, an unavailable credential, or an irreducible external blocker. An in-envelope decision under **Delegated AD Execution Mode** is actionable work, not a stop condition.
 - If review rejects an implementation, repair or redesign **the same issue** and continue. Do not turn a difficult issue into several new issues to escape it.
-- **Prohibited while in this mode:** proactive adjacent audits, speculative investigation, new AD proposals, roadmap expansion, and unrelated prompt drafting.
+- **Prohibited while in this mode:** proactive adjacent audits, speculative investigation, new AD proposals, roadmap expansion, and unrelated prompt drafting, except for existing AD issues and already-versioned slices admitted by **Delegated AD Execution Mode**.
 - Closures must be shipped fixes, verified duplicates, or demonstrably invalid reports. **Never game the count.**
 
 ### Filing policy — bounded, not unbounded
@@ -89,6 +89,36 @@ After every three closures, report: open at wave start · pre-existing closed ·
 ### Definition of done
 
 A change is done when it satisfies its acceptance criteria, works through **all affected production consumers**, passes required tests and scoped review, carries **no unresolved Critical or High defect**, is committed and pushed, and its issue closure is **verified**. Medium and Low residual risks may be recorded for scheduled quality review and do not block completion. Done means *fit for intended purpose with understood and acceptable residual risk* — not that no further improvement exists.
+
+---
+
+## Delegated AD Execution Mode (Standing Order)
+
+**Activation.** This mode activates only when the Captain explicitly delegates autonomous completion of the existing open GitHub issue queue including AD, enhancement, or epic work. At activation, enumerate the complete open queue through authenticated GitHub tooling. The queue is that snapshot, issues properly created under the filing policy while executing it, and already-versioned incomplete slices in the authorities linked by those issues. Do not invent unrelated roadmap programs merely to remain active.
+
+**Overrides while active.** This mode supersedes only the Backlog Burn-Down prohibitions on selecting existing AD work, making in-scope product/architecture decisions, and executing already-versioned roadmap slices without separate Captain admission. It also satisfies issue text that asks the Captain to choose among in-envelope options. The one-issue/three-coupled-issue WIP bound, net-reduction accounting, filing budget, engineering principles, adversarial review, canonical-gate receipt, compatibility obligations, and verified closure rules remain mandatory.
+
+**Delegated authority.** For an existing open issue in the activated queue, an issue properly created under the filing policy while executing it, or an already-versioned incomplete slice in an authority linked by one of those issues, the agent may autonomously:
+
+1. order work by dependencies, risk, and ability to unlock other issues;
+2. verify the premise, ask Architect for two to four viable options when a design choice exists, rank them by correctness, safety, compatibility, architectural fit, reversibility, and validation cost, and choose the highest-ranked option;
+3. make reversible product and architecture decisions that stay inside the issue objective and existing ProbOS principles;
+4. create or revise the bounded build prompt, record the rationale in the owning issue and in `DECISIONS.md` / `PROGRESS.md` when those trackers own the decision, then run Architect -> Builder -> Diff Reviewer without an approval pause between stages;
+5. allocate an AD number only when the existing work genuinely needs one, using `scripts/ad_ceiling.py`; and
+6. implement, repair review findings, validate, bank gate evidence, commit, push, close or reclassify an issue-backed item with the correct `state_reason`, re-enumerate, and continue. For a parent-backed slice without its own issue, bank the reviewed commit, durable canonical receipt, and parent checklist/evidence update while leaving the parent open until its acceptance criteria are complete.
+
+A decision is inside the envelope only when it has evidence, is backward-compatible or carries a tested compatibility/migration path, preserves or strengthens security/governance/privacy/audit controls, stays within the OSS/commercial repository boundary, and has bounded rollback through Git or an explicitly tested recovery path. Choosing among implementation strategies, defaults that preserve current behavior, dependency ordering, retiring demonstrably unreachable duplication, and resolving stale or superseded issue framing are in-envelope decisions.
+
+**Still requires the Captain.** Escalate only when every viable option requires one or more of:
+
+- an irreversible or destructive production-data operation;
+- weakening security, privacy, consensus, authorization, audit, or safety controls;
+- breaking a public API, persisted schema, federation protocol, or compatibility promise without a backward-compatible migration path;
+- new external spending, a paid or license-incompatible dependency, a secret/credential, or any access to or operation against a live production system;
+- moving information or implementation across the OSS/commercial boundary; or
+- accepting unresolved Critical/High risk or changing the product objective beyond the existing issue or the linked versioned slice.
+
+When one issue crosses this boundary, durably park it with the verified premise, ranked options, recommendation, exact decision required, and resumption condition, then continue every independent in-envelope item. Stop only when a fresh complete enumeration proves that every remaining item is parked behind such a boundary or is dependency-blocked by one and no independent work remains.
 
 ---
 
@@ -265,7 +295,7 @@ When asked to draft implementation prompts for Claude Code sessions:
 
 Before proposing ANY new AD, read PROGRESS.md and find the actual highest AD number. State it explicitly in your response ("Current highest: AD-NNN"). Then assign sequentially from there. **Never guess. Never assume. Never reuse.** A near-collision was caught during Phase 8 review — this is now a hard rule.
 
-**Do not take the number from `docs/development/open-ads-report.md` or `ad-ledger-snapshot.json`.** Measured 2026-08-25: the committed report was **51 ADs stale** (claiming AD-1218 while the real ceiling was AD-1268), because regenerating it is a separate step that is deliberately not run during feature work. Enumerate instead, and state which source gave the ceiling: `git log --all --format='%s'` subjects, GitHub issue titles in **all** states, and in-flight `prompts/ad-*.md` filenames — an allocated-but-unbuilt AD lives only in the last two.
+**Do not take the number from `docs/development/open-ads-report.md` or `ad-ledger-snapshot.json`.** Measured 2026-08-25: the committed report was **51 ADs stale** (claiming AD-1218 while the real ceiling was AD-1268), because regenerating it is a separate step that is deliberately not run during feature work. Run `d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py` as the canonical ceiling check; it enumerates `git log --all --format='%s'` subjects, GitHub issue titles in **all** states, and in-flight `prompts/ad-*.md` filenames. Never reimplement GitHub issue enumeration with raw REST pagination. If the script exits nonzero, do not allocate from the partial sources: leave the number unresolved and continue only work that does not depend on numbering. State which source produced the reported ceiling — an allocated-but-unbuilt AD lives only in the last two.
 
 ## Architect: Strategy
 

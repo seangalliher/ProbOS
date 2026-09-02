@@ -720,11 +720,14 @@ AD-1186 remains the release evaluator. AD-1270h closes only when the evidence se
 ## Delivery Plan
 
 #1324 is a coordination-only completion epic, never a substitute for bounded
-WIP. During Backlog Burn-Down, implementation remains one issue (or at most
-three tightly coupled issues), and no new AD-1270 slice begins unless the
-Captain explicitly pauses/exits burn-down or directly authorizes that slice.
-The Captain directly authorized AD-1270f Slice 0 on 2026-08-30; the remaining
-program stays queued until separately admitted.
+WIP. The Captain activated Delegated AD Execution Mode on 2026-09-01 for the
+existing open issue queue and the already-versioned incomplete slices in this
+plan. Implementation remains one issue (or at most three tightly coupled
+issues), but the agent may now sequence the remaining AD-1270 slices by this
+plan's dependency graph and make in-envelope reversible decisions without
+separate Captain admission. This delegation does not waive acceptance evidence,
+compatibility, adversarial review, canonical-gate receipts, repository-boundary
+rules, or the hard escalation boundaries in `.github/copilot-instructions.md`.
 
 ### Wave 0 — Authority
 
