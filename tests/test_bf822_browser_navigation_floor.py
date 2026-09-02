@@ -38,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from typing import Any
@@ -1018,7 +1019,17 @@ async def test_real_a_released_hop_is_not_escalated_and_the_chain_is_unjudged(
             await page.wait_for_load_state("load", timeout=8000)
         except Exception:
             pass
-        await asyncio.sleep(0.5)
+        # Poll for the terminal hop rather than sleeping a fixed interval.
+        # Under a loaded 16-worker gate /far landed after a fixed 0.5s expired,
+        # failing this characterisation for a reason it does not characterise.
+        # A refused /far still fails: the deadline lapses and the assertion
+        # below reports the real state (measured — refusing /far fails here
+        # after ~11s). It does NOT catch a /far that is judged and *allowed*,
+        # because /far is a `peer.allowed(...)` url; that is a pre-existing
+        # limit of this characterisation, not something this wait introduced.
+        _deadline = time.monotonic() + 10.0
+        while time.monotonic() < _deadline and ("/far", "k=v") not in origin.posts:
+            await asyncio.sleep(0.05)
 
     assert ("/post-chain", "k=v") in origin.posts, "the chain never started"
     assert ("/hop", "k=v") in target.posts, "the released hop did not happen"
