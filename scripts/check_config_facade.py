@@ -194,7 +194,20 @@ _INJECTED_MARKER = "_CONFIG_FACADE_INJECTED"
 
 #: 2.4x the ~2.5s measured cost, leaving room for a slower CI host. A checker
 #: that silently grows into the preflight budget is a checker nobody keeps.
+#:
+#: ADVISORY, not a failure. This is wall clock, and wall clock is a property of
+#: the machine, not of the code: the same check measured 2.5s alone and 7.16s
+#: inside the gate, where 16 xdist workers are competing for the CPU. Failing on
+#: it made a correctness gate turn red for a reason that had nothing to do with
+#: correctness, which is worse than the bloat it was guarding against -- a
+#: checker that goes red at random is the checker nobody keeps.
 SELF_TIMEOUT_SECONDS = 6.0
+
+#: 10x the advisory budget, and ~8x the worst contention actually observed.
+#: Load can multiply this check by three; it cannot multiply it by ten. Crossing
+#: this means the check itself grew -- more rows, more subprocesses -- so it is
+#: still a hard failure, just one that CPU contention alone cannot trigger.
+SELF_TIMEOUT_HARD_CEILING_SECONDS = 60.0
 
 #: Fixed-point bound for alias resolution. Each pass can only add names, so the
 #: loop exits early on the first pass that adds none; the bound exists so a
@@ -1552,6 +1565,8 @@ def load_baseline(path: Path) -> tuple[dict[str, Any], list[str]]:
 class CheckResult:
     errors: list[str] = field(default_factory=list)
     report: dict[str, Any] = field(default_factory=dict)
+    #: Reported and visible, but never a failure. See SELF_TIMEOUT_SECONDS.
+    warnings: list[str] = field(default_factory=list)
 
 
 def check(baseline_path: Path, repo_root: Path = _REPO_ROOT) -> CheckResult:
@@ -1630,15 +1645,24 @@ def check(baseline_path: Path, repo_root: Path = _REPO_ROOT) -> CheckResult:
     errors.extend(tripwire_problems(repo_root))
 
     elapsed = time.monotonic() - started
-    if elapsed > SELF_TIMEOUT_SECONDS:
+    warnings: list[str] = []
+    if elapsed > SELF_TIMEOUT_HARD_CEILING_SECONDS:
         errors.append(
-            f"facade-timeout: the check took {elapsed:.2f}s, over its "
-            f"{SELF_TIMEOUT_SECONDS:.1f}s budget. It runs as a preflight phase; "
-            "a check that grows into the gate budget is a check nobody keeps. "
+            f"facade-timeout: the check took {elapsed:.2f}s, past the "
+            f"{SELF_TIMEOUT_HARD_CEILING_SECONDS:.0f}s ceiling. That is far "
+            "beyond what a loaded machine explains, so the check itself grew. "
             "Reduce the differential row count or move it to a pytest phase."
+        )
+    elif elapsed > SELF_TIMEOUT_SECONDS:
+        warnings.append(
+            f"facade-slow: the check took {elapsed:.2f}s, over its "
+            f"{SELF_TIMEOUT_SECONDS:.1f}s advisory budget. Not a failure -- "
+            "this is wall clock, and a busy machine inflates it. Worth a look "
+            "if it persists on an idle one."
         )
     return CheckResult(
         errors=errors,
+        warnings=warnings,
         report={
             "elapsed_seconds": round(elapsed, 3),
             "counts": surface["counts"],
@@ -1710,6 +1734,9 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(result.report, indent=2, sort_keys=False) + "\n",
             encoding="utf-8",
         )
+
+    for warning in result.warnings:
+        print(f"  ! {warning}", file=sys.stderr)
 
     if result.errors:
         print(

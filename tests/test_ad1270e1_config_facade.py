@@ -1251,15 +1251,65 @@ def test_check_reports_a_capture_child_that_failed(
     assert [p.split(":")[0] for p in result.errors] == ["facade-capture"]
 
 
-def test_check_reports_a_slow_run_against_its_own_budget(
+def test_check_warns_about_a_slow_run_but_does_not_fail_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The advisory budget reports; it does not turn the gate red.
+
+    This test exists because the hard version of it broke the gate. The check
+    measures 2.5s alone and measured 7.16s inside the gate, where 16 xdist
+    workers compete for the CPU -- so a wall-clock failure marked a green tree
+    red for a reason unrelated to correctness. Contention is a property of the
+    machine, and a checker that fails on the machine is one people learn to
+    ignore.
+    """
     monkeypatch.setattr(facade, "run_child", lambda *a, **k: _stub_surface())
     monkeypatch.setattr(facade, "SELF_TIMEOUT_SECONDS", -1.0)
 
     result = facade.check(_stub_baseline(tmp_path), repo_root=_empty_repo(tmp_path))
 
+    assert any(p.startswith("facade-slow:") for p in result.warnings)
+    assert not any(p.startswith("facade-timeout:") for p in result.errors)
+    assert result.errors == []
+
+
+def test_check_still_fails_past_the_hard_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Softening the budget must not delete the guard.
+
+    Load can multiply this check by three; it cannot multiply it by ten. Past
+    the ceiling the check itself grew, which is the condition the original
+    budget was actually for.
+    """
+    monkeypatch.setattr(facade, "run_child", lambda *a, **k: _stub_surface())
+    monkeypatch.setattr(facade, "SELF_TIMEOUT_SECONDS", -2.0)
+    monkeypatch.setattr(facade, "SELF_TIMEOUT_HARD_CEILING_SECONDS", -1.0)
+
+    result = facade.check(_stub_baseline(tmp_path), repo_root=_empty_repo(tmp_path))
+
     assert any(p.startswith("facade-timeout:") for p in result.errors)
+    # One report, not two: past the ceiling it is a failure, not also a warning.
+    assert result.warnings == []
+
+
+def test_the_advisory_budget_sits_far_below_the_ceiling() -> None:
+    """The gap is the contention headroom, and it has to be a real gap."""
+    assert facade.SELF_TIMEOUT_SECONDS < facade.SELF_TIMEOUT_HARD_CEILING_SECONDS
+    assert (
+        facade.SELF_TIMEOUT_HARD_CEILING_SECONDS >= facade.SELF_TIMEOUT_SECONDS * 5
+    )
+
+
+def test_a_green_check_reports_no_warnings_on_this_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absent contention there is nothing to say, so nothing is said."""
+    monkeypatch.setattr(facade, "run_child", lambda *a, **k: _stub_surface())
+
+    result = facade.check(_stub_baseline(tmp_path), repo_root=_empty_repo(tmp_path))
+
+    assert result.warnings == []
 
 
 def test_the_baseline_is_read_by_parsing_it_never_by_hashing_its_bytes() -> None:
