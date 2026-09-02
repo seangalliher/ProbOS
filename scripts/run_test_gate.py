@@ -1099,6 +1099,10 @@ def _preflight_specs(repo_root: Path) -> list[PhaseSpec]:
             [python, "-P", "scripts/check_seam_contracts.py", "--check"],
         ),
         PhaseSpec(
+            "architecture-fitness",
+            [python, "-P", "scripts/check_architecture_principles.py", "--check"],
+        ),
+        PhaseSpec(
             "compile",
             [python, "-P", "-m", "compileall", "-q", "-j", "0", "src", "tests"],
         ),

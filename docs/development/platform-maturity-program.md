@@ -329,9 +329,15 @@ wide implementation wave:
 
 1. **Seam manifest slice:** schema, stable IDs, tombstone rules, symbol/test
     resolution, and one crossing-test family per later bounded build.
+    **Shipped 2026-09-02** as `scripts/check_seam_contracts.py`.
 2. **Architecture fitness slice:** versioned baseline and
     `scripts/check_architecture_principles.py`, with explicit reviewed exceptions
     rather than hidden thresholds.
+    **Shipped 2026-09-02.** `docs/development/architecture-baseline.yaml` freezes
+    138 reviewed rows; `srp-size`, `layer-import`, `db-connect` and
+    `unowned-task` gate by symmetric difference, while `private-access` and
+    `source-text-tests` ship report-only with the promotion conditions recorded
+    in the baseline. `cross_layer_analysis.py` is superseded by it.
 3. **Final Tier A crossing closeout:** after recovery, runtime/cognitive
     decomposition, trace correlation, event meaning, and supported-profile
     exercise exist, fill every active Tier A test node and prove collection.
