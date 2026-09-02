@@ -741,7 +741,15 @@ rules, or the hard escalation boundaries in `.github/copilot-instructions.md`.
 ### Wave 1 — Truth and Guardrails
 
 - AD-1270f Slice 0 canonical preflight/gate wrapper and timing manifest.
-- AD-1270a capability truth shadow report.
+- **AD-1270a capability truth shadow report — migration step 1 DELIVERED (inventory only).**
+    `src/probos/maturity/` resolves eight declarations against three distinct
+    authorities (import system / `SystemConfig` / `list_capability_catalog`) and
+    renders `docs/development/capability-truth-inventory.md` via a `--check`-able
+    generator. Observation only: zero production call sites changed, and nothing
+    reads a row to make a decision. **Migration steps 2-5 remain open** — activation
+    receipts (step 2), exercise receipts (step 3), Doctor reuse and a live-runtime
+    projection (step 5) have no producer yet, so `advertised`, `activated`,
+    `exercise` and `health` are honestly `unknown` and no row can evaluate `live`.
 - AD-1270b seam-manifest slice.
 - AD-1270b architecture-fitness slice.
 - AD-1270b crossing tests, one P0 family per bounded build.
