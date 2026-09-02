@@ -3,12 +3,21 @@ manifest_id: ad-1270-p0-v1
 owner: AD-1270b
 tracking_issue: 1324
 
+# Per-prefix high-water mark. The ordinals in seams + tombstones must be
+# exactly 1..N, so deleting an entry rather than tombstoning it opens a gap the
+# checker sees without git history or a second baseline file.
+id_allocation:
+  TA-P0: 7
+  TB-P0: 1
+
 rules:
   - Every active Tier A ID is part of the AD-1270 completion denominator.
   - Adding an ID is an explicit reviewed manifest change.
   - Removing an ID moves it to tombstones with rationale, replacement, decision, and date.
   - A missing, skipped, uncollected, or judge-unavailable crossing test is not passing evidence.
   - Tier B entries are tracked here for stable identity but do not gate Tier A.
+  - Producer and consumer symbols are fully-qualified dotted paths that resolve against src/probos/.
+  - Ordinals are allocated monotonically per prefix; the union of active and tombstoned ordinals is contiguous to id_allocation.
 
 seams:
   - id: TA-P0-001-turn-act-evidence
@@ -17,7 +26,9 @@ seams:
     evidence_status: planned
     owner: AD-1270b
     producer: governed tool result
+    producer_symbol: probos.tools.protocol.ToolResult
     consumer: Captain reply and episodic evidence
+    consumer_symbol: probos.types.Episode
     path: tool result -> reply ledger -> Captain reply -> episode evidence
     crossing_test: null
 
@@ -27,7 +38,9 @@ seams:
     evidence_status: planned
     owner: AD-1270b
     producer: bounded tool-failure evidence
+    producer_symbol: probos.tools.failure_telemetry.ToolFailureTelemetry
     consumer: repair proposal
+    consumer_symbol: probos.cognitive.repair_brief.RepairBrief
     path: tool failure -> fault row -> repair proposal
     crossing_test: null
 
@@ -37,7 +50,9 @@ seams:
     evidence_status: planned
     owner: AD-1270b
     producer: approval decision
+    producer_symbol: probos.capability_request.CapabilityRequestStore.decide
     consumer: resumed Captain transcript
+    consumer_symbol: probos.cognitive.capability_gap_driver.CapabilityGapDriver.on_capability_event
     path: approval -> fulfilment -> resumed turn -> Captain transcript
     crossing_test: null
 
@@ -47,7 +62,9 @@ seams:
     evidence_status: planned
     owner: AD-1270b
     producer: configured MCP server record
+    producer_symbol: probos.integrations.mcp_bridge.store.McpServerRecord
     consumer: invoked MCP tool
+    consumer_symbol: probos.integrations.mcp_bridge.adapter.MCPToolAdapter
     path: durable store -> runtime registry -> offered tool -> invocation
     crossing_test: null
 
@@ -57,7 +74,9 @@ seams:
     evidence_status: planned
     owner: AD-1270b
     producer: startup result
+    producer_symbol: probos.startup.results.FinalizationResult
     consumer: exactly-once reverse-order shutdown
+    consumer_symbol: probos.startup.shutdown.shutdown
     path: startup result -> public runtime binding -> lifecycle owner -> shutdown
     crossing_test: null
 
@@ -67,7 +86,19 @@ seams:
     evidence_status: planned
     owner: AD-1265/AD-1266/AD-1270b
     producer: promoted verified snapshot
+    producer_symbol: probos.infrastructure.snapshot_manifest.SnapshotManifest
     consumer: normal production read after restore and reboot
+    consumer_symbol: null
+    symbol_status: unresolved
+    symbol_note: >-
+      No committed symbol owns the restore-then-read end of this seam. Searched
+      every git-tracked file under src/probos/ for a snapshot restore owner and
+      found only probos.warm_boot.WarmBootService.restore, which reloads trust,
+      routing, agents, and skills from the knowledge store on warm boot -- a
+      different operation from restoring a promoted snapshot. Naming it here
+      would be a symbol that resolves while pointing at the wrong code, which
+      reads as proof. AD-1265/AD-1266 own landing the restore path; fill this
+      then. Rule 8 keeps this entry off evidence_status: proven until it is.
     path: snapshot -> verification -> restore -> reboot -> production read
     crossing_test: null
 
@@ -77,7 +108,9 @@ seams:
     evidence_status: planned
     owner: AD-1270b
     producer: crew child result
+    producer_symbol: probos.cognitive.crew_executor.SubtaskResult
     consumer: idempotent trust outcome
+    consumer_symbol: probos.consensus.trust.TrustNetwork.record_outcome_once
     path: child result -> verification -> synthesis -> delivery -> trust outcome
     crossing_test: null
 
@@ -87,7 +120,9 @@ seams:
     evidence_status: planned
     owner: AD-1196/AD-1197/AD-1198/#1140
     producer: authenticated federated attachment reference
+    producer_symbol: probos.attachments.store.AttachmentStore
     consumer: configured remote mesh consumer
+    consumer_symbol: probos.federation.attachment_resolve.resolve_missing_attachments
     path: attachment ref -> receive resolution -> local consumer
     crossing_test: null
     tier_a_gating: false

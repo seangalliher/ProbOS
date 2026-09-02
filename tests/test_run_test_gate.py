@@ -251,10 +251,12 @@ def test_preflight_contains_import_origin_generated_and_compile_checks(
         "import-origin",
         "config-reference",
         "ad-ledger",
+        "seam-contracts",
         "compile",
     ]
     assert "scripts/gen_config_reference.py" in flattened
     assert "scripts/gen_ad_ledger.py" in flattened
+    assert "scripts/check_seam_contracts.py" in flattened
     assert "compileall" in flattened
     assert "probos.__file__" in " ".join(specs[0].command)
 

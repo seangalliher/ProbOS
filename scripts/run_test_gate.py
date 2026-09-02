@@ -1095,6 +1095,10 @@ def _preflight_specs(repo_root: Path) -> list[PhaseSpec]:
             "ad-ledger", [python, "-P", "scripts/gen_ad_ledger.py", "--check"]
         ),
         PhaseSpec(
+            "seam-contracts",
+            [python, "-P", "scripts/check_seam_contracts.py", "--check"],
+        ),
+        PhaseSpec(
             "compile",
             [python, "-P", "-m", "compileall", "-q", "-j", "0", "src", "tests"],
         ),
