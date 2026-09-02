@@ -1469,7 +1469,7 @@ AD-656: dict of department-name -> DepartmentCognitiveProfile.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
-| `profiles` | `dict[str, probos.config.DepartmentCognitiveProfile]` | `{}` | — |  |
+| `profiles` | `dict[str, probos.config_models.crew.DepartmentCognitiveProfile]` | `{}` | — |  |
 
 ## `eps`
 
@@ -1480,7 +1480,7 @@ EPS - Compute/Token Distribution (AD-469).
 | `enabled` | `bool` | `True` | — |  |
 | `window_seconds` | `float` | `60.0` | ≥ 10.0 |  |
 | `over_budget_threshold` | `float` | `1.25` | ≥ 1.0, ≤ 10.0 |  |
-| `departments` | `list[probos.config.EPSDepartmentConfig]` | `[EPSDepartmentConfig(name='engineering', percent=0.3, priority=3), EPSDepartmentConfig(name='science', percent=0.2, priority=4), EPSDepartmentConfig(name='medical', percent=0.15, priority=2), EPSDepartmentConfig(name='security', percent=0.15, priority=2), EPSDepartmentConfig(name='operations', percent=0.1, priority=4), EPSDepartmentConfig(name='other', percent=0.1, priority=6)]` | — |  |
+| `departments` | `list[probos.config_models.crew.EPSDepartmentConfig]` | `[EPSDepartmentConfig(name='engineering', percent=0.3, priority=3), EPSDepartmentConfig(name='science', percent=0.2, priority=4), EPSDepartmentConfig(name='medical', percent=0.15, priority=2), EPSDepartmentConfig(name='security', percent=0.15, priority=2), EPSDepartmentConfig(name='operations', percent=0.1, priority=4), EPSDepartmentConfig(name='other', percent=0.1, priority=6)]` | — |  |
 
 ## `mcp`
 

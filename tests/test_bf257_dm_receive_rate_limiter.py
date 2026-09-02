@@ -35,8 +35,19 @@ class TestBf257SourcePresence:
         assert "_dm_response_budget_exceeded" in source
 
     def test_config_fields_exist(self):
-        """WardRoomConfig must have BF-257 config fields."""
-        source = Path("src/probos/config.py").read_text()
+        """WardRoomConfig must have BF-257 config fields.
+
+        Resolves the DECLARING module rather than hard-coding
+        ``src/probos/config.py``. AD-1270e2 is moving config models into
+        ``config_models/`` while ``probos.config`` keeps re-exporting them, so a
+        literal path here goes stale the moment this model is moved -- which is
+        exactly what happened to two sibling guards in an earlier batch.
+        """
+        import inspect
+
+        from probos.config import WardRoomConfig
+
+        source = Path(inspect.getfile(WardRoomConfig)).read_text(encoding="utf-8")
         assert "dm_response_budget" in source
         assert "dm_response_window_seconds" in source
         assert "dm_pair_exchange_budget" in source
