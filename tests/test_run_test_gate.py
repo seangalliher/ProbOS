@@ -251,6 +251,7 @@ def test_preflight_contains_import_origin_generated_and_compile_checks(
         "import-origin",
         "config-reference",
         "config-profiles",
+        "config-facade",
         "ad-ledger",
         "seam-contracts",
         "architecture-fitness",
@@ -259,6 +260,7 @@ def test_preflight_contains_import_origin_generated_and_compile_checks(
     ]
     assert "scripts/gen_config_reference.py" in flattened
     assert "scripts/check_config_profiles.py" in flattened
+    assert "scripts/check_config_facade.py" in flattened
     assert "scripts/gen_ad_ledger.py" in flattened
     assert "scripts/check_seam_contracts.py" in flattened
     assert "scripts/check_architecture_principles.py" in flattened

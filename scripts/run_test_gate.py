@@ -1096,6 +1096,10 @@ def _preflight_specs(repo_root: Path) -> list[PhaseSpec]:
             [python, "-P", "scripts/check_config_profiles.py", "--check"],
         ),
         PhaseSpec(
+            "config-facade",
+            [python, "-P", "scripts/check_config_facade.py", "--check"],
+        ),
+        PhaseSpec(
             "ad-ledger", [python, "-P", "scripts/gen_ad_ledger.py", "--check"]
         ),
         PhaseSpec(
