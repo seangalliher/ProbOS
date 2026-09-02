@@ -242,8 +242,14 @@ async def test_recycle_delete_failure_does_not_wire_replacement(runtime):
 
     runtime.intent_bus._nats_bus = transport
     try:
-        with pytest.raises(TimeoutError, match="nats timeout"):
-            await pool.check_health()
+        # BF-846: this asserted the NATS unwire TimeoutError PROPAGATED out of
+        # `check_health`. That raise-contract is what blocked a failing pass
+        # from reaching its refill step, so it was migrated: the failure is now
+        # reported in the returned status. Everything this test actually
+        # guards -- no replacement wired, the victim retained and still
+        # subscribed -- is asserted unchanged below.
+        status = await pool.check_health()
+        assert status["recycle_failures"] == 1, status
 
         assert runtime.registry.get(victim_id) is victim
         assert victim_id in pool.get_agent_ids()

@@ -543,8 +543,14 @@ class TestResourcePool:
         assert old_agent is not None
         old_agent.state = AgentState.DEGRADED
 
-        with pytest.raises(RuntimeError, match="replacement wire failed"):
-            await pool.check_health()
+        # BF-846: this asserted the wire failure PROPAGATED out of
+        # `check_health`. That contract is gone -- it is what stopped a failing
+        # pass reaching its own refill step. The invariants this test exists to
+        # protect (the replacement is retained and owned, the rollback ran) are
+        # unchanged; only the way the failure is reported has moved, from a
+        # raise to `status["recycle_failures"]`.
+        status = await pool.check_health()
+        assert status["recycle_failures"] == 1, status
 
         replacement = registry.get(victim_id)
         assert replacement is not None

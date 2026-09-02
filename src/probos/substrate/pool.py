@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TYPE_CHECKING, TypeVar
 
@@ -40,6 +41,19 @@ class ResourcePool:
         on_agent_removing: Callable[[AgentID], Awaitable[None]] | None = None,
         **spawn_kwargs: Any,
     ) -> None:
+        # BF-846: ``agent_id`` is assigned per member by this pool, and it is
+        # also forwarded verbatim to ``spawner.spawn``/``recycle`` -- so a
+        # caller-supplied one collides with the explicit keyword and raises
+        # ``TypeError: got multiple values for argument 'agent_id'`` on the
+        # first health pass, long after construction. ``runtime.py`` forwards
+        # arbitrary ``**spawn_kwargs`` publicly, so this is reachable. Rejected
+        # here, where the mistake is, rather than at the failure.
+        if "agent_id" in spawn_kwargs:
+            raise TypeError(
+                "ResourcePool assigns each member's agent_id, so 'agent_id' "
+                "cannot be passed as a spawn kwarg. Use agent_ids=[...] to pin "
+                "member identities."
+            )
         self.name = name
         self.agent_type = agent_type
         self.spawner = spawner
@@ -57,6 +71,16 @@ class ResourcePool:
         self._on_agent_spawned = on_agent_spawned
         self._on_agent_removing = on_agent_removing
         self._lifecycle_lock = asyncio.Lock()
+        # BF-846: members whose recycle failed WITHOUT leaving them degraded.
+        # The ordinary failure leaves the member DEGRADED, so the next scan
+        # re-queues it by itself; the wire-fails-then-rollback-unwire-fails
+        # path instead retains an ACTIVE replacement, which the scan would
+        # never look at again.
+        self._recycle_retry: set[AgentID] = set()
+        # BF-846: last logged failure per ``(member, signature)``, and when. A
+        # permanently unrecyclable member otherwise emits a traceback every
+        # interval forever -- measured at 1,054 exception records in 50 ms.
+        self._recycle_failure_log: dict[tuple[AgentID, str], tuple[float, int]] = {}
 
     async def _notify_agent_spawned(self, agent: BaseAgent) -> None:
         """Wire one dynamically spawned agent into runtime-owned mesh state."""
@@ -268,6 +292,11 @@ class ResourcePool:
             self.target_size,
         )
         self._stop_event.clear()
+        # BF-846: transient recovery state belongs to a RUN, not to the object.
+        # Left over a restart, a retry entry made a fresh member with a reused
+        # predetermined id get recycled once for a previous run's failure.
+        self._recycle_retry.clear()
+        self._recycle_failure_log.clear()
 
         # Spawn to target, using predetermined IDs if provided
         idx = 0
@@ -332,8 +361,107 @@ class ResourcePool:
                 )
             raise
 
+    _RECYCLE_FAILURE_LOG_COOLDOWN_SECONDS = 60.0
+    _RECYCLE_FAILURE_LOG_MAX_ENTRIES = 64
+
+    @staticmethod
+    def _failure_signature(exc: BaseException) -> str:
+        """A bounded, non-throwing fingerprint for one failure.
+
+        ``str(exc)`` is arbitrary caller code. An exception whose ``__str__``
+        raised propagated out of the containment and left the pool short --
+        recreating the exact defect BF-846 removes -- so rendering must not be
+        able to fail. It is truncated because the value goes into a dict key
+        and a dynamic tail would defeat coalescing.
+
+        The last traceback frame is part of the fingerprint: the same class and
+        message can arrive from different lifecycle stages (an initial unwire
+        and a rollback unwire, say), and treating those as one failure hides
+        the second.
+        """
+        try:
+            detail = str(exc)[:200]
+        except Exception:  # noqa: BLE001 - a failure here must not mask the failure
+            detail = "<unprintable>"
+        origin = "?"
+        try:
+            frame = exc.__traceback__
+            while frame is not None and frame.tb_next is not None:
+                frame = frame.tb_next
+            if frame is not None:
+                origin = f"{frame.tb_frame.f_code.co_name}:{frame.tb_lineno}"
+        except Exception:  # noqa: BLE001
+            origin = "?"
+        return f"{type(exc).__name__}@{origin}: {detail}"
+
+    def _prune_recycle_failure_log(self) -> None:
+        """Drop throttle state for members the pool no longer owns.
+
+        Entries were only removed on a SUCCESSFUL recycle, so every member that
+        failed and then left -- the ordinary outcome when a replacement cannot
+        be started -- left one behind forever. Measured: 12 failures, 12 stale
+        entries, none of their ids still tracked.
+        """
+        tracked = set(self._agent_ids)
+        for key in [k for k in self._recycle_failure_log if k[0] not in tracked]:
+            del self._recycle_failure_log[key]
+        # A last-resort bound. Pruning by ownership is the real mechanism; this
+        # only stops a pathological churn of signatures growing without limit.
+        while len(self._recycle_failure_log) > self._RECYCLE_FAILURE_LOG_MAX_ENTRIES:
+            oldest = min(self._recycle_failure_log, key=lambda k: self._recycle_failure_log[k][0])
+            del self._recycle_failure_log[oldest]
+
+    def _report_recycle_failure(self, agent_id: AgentID, exc: BaseException) -> None:
+        """Report a contained recycle failure without flooding the log.
+
+        BF-846: a permanently unrecyclable member used to emit a full traceback
+        on every pass -- measured at 1,054 exception records in 50 ms with the
+        interval at 0.0, and a traceback every five seconds forever at the
+        default. The first occurrence of a signature carries its traceback; a
+        repeat is a single line, at most once per cooldown, carrying how many
+        were suppressed. Silence is not an option -- that is the invisibility
+        BF-824 exists to remove.
+
+        Keyed by ``(member, signature)``, not by member alone: keeping only the
+        LAST signature made two failures that alternate each look new, so
+        neither was ever throttled.
+        """
+        signature = self._failure_signature(exc)
+        key = (agent_id, signature)
+        now = time.monotonic()
+        previous = self._recycle_failure_log.get(key)
+        if previous is not None:
+            last_logged, suppressed = previous
+            if now - last_logged < self._RECYCLE_FAILURE_LOG_COOLDOWN_SECONDS:
+                self._recycle_failure_log[key] = (last_logged, suppressed + 1)
+                return
+            logger.error(
+                "Pool %r still cannot recycle member %s (%s); %d further "
+                "identical failures were suppressed. The pass continues and "
+                "refills, so the pool holds its size, but this member is not "
+                "being replaced.",
+                self.name, agent_id, signature, suppressed,
+            )
+            self._recycle_failure_log[key] = (now, 0)
+            return
+        self._recycle_failure_log[key] = (now, 0)
+        logger.exception(
+            "Pool %r could not recycle member %s; the pass continues to its "
+            "refill step and will retry this member next tick.",
+            self.name, agent_id, exc_info=exc,
+        )
+
     async def _check_health_inner(self) -> dict[str, int]:
-        """Check agent health, recycle degraded agents, respawn to maintain size."""
+        """Check agent health, recycle degraded agents, respawn to maintain size.
+
+        BF-846: a member that cannot be recycled no longer aborts the pass.
+        The recycle loop runs BEFORE refill, so a single raising member left the
+        pool permanently short -- measured, a pool of target 2 held at 1 with
+        ``spawns=0`` while the failure persisted. Failures are contained per
+        member, counted into the returned status, and retried on the next pass.
+
+        `CancelledError` still propagates: shutdown must be able to end a pass.
+        """
         healthy = 0
         degraded = 0
         dead = 0
@@ -354,9 +482,47 @@ class ResourcePool:
             else:
                 healthy += 1
 
+        # BF-846: members carried over from a failure that did NOT leave them
+        # degraded. Without this the ACTIVE replacement retained by the
+        # rollback path is a one-pass signal the scan never revisits.
+        for aid in sorted(self._recycle_retry):
+            if aid in self._agent_ids and aid not in to_recycle:
+                to_recycle.append(aid)
+        self._recycle_retry.clear()
+
         # Recycle degraded agents
+        recycle_failures = 0
         for aid in to_recycle:
-            await self._recycle_registered_agent_inner(aid)
+            try:
+                await self._recycle_registered_agent_inner(aid)
+            except MemoryError:
+                # A contained failure continues into the refill step, which
+                # SPAWNS. Doing that under memory exhaustion is the one way
+                # "keep going" makes things strictly worse.
+                raise
+            except Exception as exc:
+                # Deliberately ``Exception``, not ``BaseException``: everything
+                # outside it -- ``CancelledError``, ``SystemExit``,
+                # ``KeyboardInterrupt``, ``GeneratorExit``, and a
+                # ``BaseExceptionGroup`` carrying any of them -- means STOP,
+                # and containing those let a shutdown continue into refill.
+                recycle_failures += 1
+                self._report_recycle_failure(aid, exc)
+                member = self.registry.get(aid)
+                if (
+                    aid in self._agent_ids
+                    and member is not None
+                    and member.state != AgentState.DEGRADED
+                ):
+                    # Nothing about this member's state will make the next scan
+                    # look at it again, so remember it explicitly.
+                    self._recycle_retry.add(aid)
+            else:
+                self._recycle_failure_log = {
+                    k: v for k, v in self._recycle_failure_log.items() if k[0] != aid
+                }
+
+        self._prune_recycle_failure_log()
 
         # Respawn to maintain target size
         while len(self._agent_ids) < self.target_size:
@@ -373,13 +539,31 @@ class ResourcePool:
         while len(self._agent_ids) > self.max_size:
             await self._remove_registered_agent_inner(self._agent_ids[-1])
 
-        status = {"healthy": healthy, "degraded": degraded, "dead": dead}
-        if degraded or dead:
+        status = {
+            "healthy": healthy,
+            "degraded": degraded,
+            "dead": dead,
+            # BF-846: non-zero means the pool did NOT fully remediate itself.
+            # A caller that reports success on the strength of the call
+            # returning is reporting something it did not check.
+            "recycle_failures": recycle_failures,
+        }
+        if degraded or dead or recycle_failures:
             logger.info("Pool %r health check: %s", self.name, status)
         return status
 
     async def check_health(self) -> dict[str, int]:
-        """Run one serialized pool health and recovery pass."""
+        """Run one serialized pool health and recovery pass.
+
+        BF-846: this no longer raises when an individual member cannot be
+        recycled -- containing that is what lets the same pass reach its refill
+        step. The failure is reported in ``status["recycle_failures"]``, so a
+        caller that needs to know whether the pool actually remediated itself
+        must READ the status rather than treat "it returned" as success.
+
+        It still raises for a failure of the pass itself, such as a spawn that
+        fails during refill.
+        """
         return await self._run_lifecycle_transition(self._check_health_inner)
 
     async def _health_loop(self) -> None:
@@ -391,17 +575,12 @@ class ResourcePool:
         pool kept its members, kept answering, and simply never checked or
         refilled again for the remaining life of the process.
 
-        Scope is deliberately just this boundary. Containing failures per
-        MEMBER inside `check_health` would also let a failing pass reach its own
-        refill step, but `check_health` is public and callers rely on it
-        RAISING (`agents/medical/surgeon.py`, `test_ad1019c_consensus`), so that
-        is a contract change with its own consumer migration -- filed
-        separately.
-
-        The residual is therefore real: while a member keeps failing to recycle,
-        the exception still escapes before refill and the pool stays short. What
-        this boundary buys is that the loop SURVIVES, so the pool recovers by
-        itself the moment the failure clears.
+        BF-846 closed the residual BF-824 left: a member that cannot be
+        recycled is now contained inside `check_health`, so the same pass
+        reaches its refill step and the pool holds its size while the failure
+        persists. This boundary still matters for a failure of the pass ITSELF
+        -- a spawn that fails during refill, say -- which is exactly the class
+        that would otherwise end the loop.
 
         `CancelledError` is deliberately NOT caught: shutdown must still be
         able to end this loop.

@@ -121,7 +121,23 @@ class PoolConfig(BaseModel):
     max_pool_size: int = 7
     min_pool_size: int = 2
     spawn_cooldown_ms: int = 500
-    health_check_interval_seconds: float = 5.0
+    # BF-846: must be a real, finite cadence. ``0.0`` was accepted and turned
+    # the health loop into a busy loop -- measured at 1,054 exception records
+    # in 50 ms against one permanently unrecyclable member. A negative value is
+    # an immediate ``wait_for`` timeout with the same effect, ``inf`` silently
+    # disables health checking altogether, and a denormal such as ``5e-324``
+    # reproduces the busy loop while satisfying "greater than zero". The floor
+    # is a decision, not an inheritance: 100 checks per second is already far
+    # past useful, and disabling the loop should be an explicit choice rather
+    # than a typo in a YAML file.
+    health_check_interval_seconds: float = Field(
+        default=5.0, ge=0.01, allow_inf_nan=False,
+        description=(
+            "Seconds between pool health passes. Must be a finite value of at "
+            "least 0.01; `inf` would silently disable health checking, which "
+            "should be an explicit choice rather than a typo."
+        ),
+    )
 
 
 class MeshConfig(BaseModel):

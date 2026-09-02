@@ -94,7 +94,24 @@ class SurgeonAgent(CognitiveAgent):
             elif remediation_action == "recycle_agent":
                 pool = rt.pools.get(target)
                 if pool:
-                    await pool.check_health()
+                    # BF-846: READ the status. `check_health` no longer raises
+                    # for a member it could not recycle -- containing that is
+                    # what lets the same pass refill the pool -- so "it
+                    # returned" no longer means "the pool is remediated".
+                    # Reporting success over a member still degraded is how a
+                    # Surgeon closes a fault that is still open.
+                    status = await pool.check_health()
+                    failures = int(status.get("recycle_failures", 0) or 0)
+                    if failures:
+                        await self._log_remediation(rt, remediation_action, target, False)
+                        return {
+                            "success": False,
+                            "error": (
+                                f"Pool {target} health check ran but {failures} "
+                                f"member(s) could not be recycled; the pool is "
+                                f"refilled to size but not remediated"
+                            ),
+                        }
                     await self._log_remediation(rt, remediation_action, target, True)
                     return {"success": True, "result": f"Health check triggered for pool {target}"}
                 return {"success": False, "error": f"Pool {target} not found"}

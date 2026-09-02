@@ -33,7 +33,7 @@ Agent pool configuration.
 | `max_pool_size` | `int` | `7` | — |  |
 | `min_pool_size` | `int` | `2` | — |  |
 | `spawn_cooldown_ms` | `int` | `500` | — |  |
-| `health_check_interval_seconds` | `float` | `5.0` | — |  |
+| `health_check_interval_seconds` | `float` | `5.0` | ≥ 0.01 | Seconds between pool health passes. Must be a finite value of at least 0.01; `inf` would silently disable health checking, which should be an explicit choice rather than a typo. |
 
 ## `mesh`
 

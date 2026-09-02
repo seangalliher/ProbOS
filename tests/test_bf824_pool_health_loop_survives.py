@@ -168,20 +168,16 @@ async def test_the_pool_recovers_once_the_failure_clears() -> None:
 
 
 async def test_refill_resumes_once_the_failure_clears() -> None:
-    """The honest bound of the narrowed fix.
+    """BF-846: the residual this test used to pin is CLOSED.
 
-    The recycle loop runs BEFORE refill, so while a member keeps failing to
-    recycle the exception still escapes `check_health` on EVERY pass and refill
-    never runs. Measured: a pool held one short with a permanently unrecyclable
-    member stayed at 1 rather than refilling to 2.
+    It previously asserted the pool stayed at 1 while a member could not be
+    recycled, and told a future reader to rewrite rather than delete it if that
+    residual was ever closed. This is that rewrite.
 
-    What the fix changes is that the LOOP survives, so the moment the failure
-    clears the pool recovers by itself. Before BF-824 the health task was gone
-    and it never would.
-
-    Containing failures per MEMBER so a failing pass still reaches its own
-    refill is the remaining half, and it needs `check_health`'s public
-    raise-contract migrated first -- filed separately.
+    The recycle loop still runs before refill, but a member's failure is now
+    contained, so the same pass reaches its refill step: the pool holds its
+    target size THROUGHOUT the failure instead of only recovering after it
+    clears. Measured before BF-846: size 1 with ``spawns=0``.
     """
     # Arrange: one short, and the survivor cannot be recycled.
     registry = AgentRegistry()
@@ -196,23 +192,37 @@ async def test_refill_resumes_once_the_failure_clears() -> None:
         registry.get(pool._agent_ids[0]).state = AgentState.DEGRADED
         assert len(pool._agent_ids) == 1
 
-        # While the failure persists, refill is blocked -- state it rather than
-        # imply the fix reaches further than it does.
-        await asyncio.sleep(0.25)
-        assert len(pool._agent_ids) == 1, (
-            "refill unexpectedly ran while the recycle was still failing; the "
-            "residual documented here no longer holds and this test should be "
-            "rewritten rather than deleted"
+        # Act / Assert: refill happens WHILE the recycle keeps failing.
+        assert await _wait_until(lambda: len(pool._agent_ids) >= 2), (
+            "the pool never refilled while a member was unrecyclable; the "
+            "BF-846 containment is not reaching the refill step"
         )
 
-        # Act
+        # And the failure is still visible in the status, not swallowed.
+        status = await pool.check_health()
+        assert status["recycle_failures"] >= 1, status
+
+        # Act: clear the failure.
         failing["on"] = False
 
-        # Assert: the surviving loop recovers the pool without help.
-        assert await _wait_until(lambda: len(pool._agent_ids) >= 2), (
-            "the pool never refilled after the failure cleared: the health "
-            "loop had died"
-        )
+        # Assert: the MEMBER is remediated, not merely the bookkeeping. An
+        # empty failure log alone could mean the state was cleared without a
+        # successful recycle, so the pool's actual health leads.
+        #
+        # Both conditions are POLLED together rather than asserted in sequence:
+        # the replacement is registered ACTIVE inside
+        # `_recycle_registered_agent_inner`, and its caller clears the log
+        # afterwards, so there is an await between them where the health
+        # condition holds and the log is not yet clean.
+        assert await _wait_until(
+            lambda: len(pool._agent_ids) >= 2
+            and all(
+                (member := registry.get(aid)) is not None
+                and member.state != AgentState.DEGRADED
+                for aid in pool._agent_ids
+            )
+            and not pool._recycle_failure_log
+        ), "the degraded member was never recycled after the failure cleared"
     finally:
         await pool.stop()
 
@@ -222,8 +232,10 @@ async def test_the_failing_pass_is_reported(
 ) -> None:
     """Silence is the property BF-824 exists to remove.
 
-    A loop that survives but says nothing would hide a pool that can never
-    recycle -- the same invisibility, one level up.
+    BF-846 moved the report: the loop no longer sees an exception at all,
+    because the failure is contained per member inside ``check_health``. So the
+    ERROR now comes from the containment site. A pool that quietly failed to
+    recycle forever would be the same invisibility, one level down.
     """
     # Arrange
     registry = AgentRegistry()
@@ -243,7 +255,7 @@ async def test_the_failing_pass_is_reported(
                     r.name == "probos.substrate.pool" and r.levelno >= logging.ERROR
                     for r in caplog.records
                 )
-            ), "the failing health pass was never reported"
+            ), "the failing recycle was never reported"
         finally:
             await pool.stop()
 
@@ -254,9 +266,13 @@ async def test_the_failing_pass_is_reported(
     ]
     joined = " ".join(r.getMessage() for r in ours)
     assert "p" in joined, "the log must name the pool"
-    assert "survives" in joined, (
-        "the log must say the loop continues -- otherwise a reader cannot tell "
-        "this from the old permanent death"
+    assert "could not recycle" in joined, (
+        "the log must say WHICH failure happened -- a bare 'health check "
+        "failed' cannot be told from the pass itself dying"
+    )
+    assert any(r.exc_info for r in ours), (
+        "the first occurrence must carry its traceback; without one the "
+        "operator cannot see why the recycle failed"
     )
 
 
@@ -302,11 +318,14 @@ async def test_a_healthy_pool_is_untouched() -> None:
         await pool.stop()
 
 
-async def test_check_health_still_raises_for_direct_callers() -> None:
-    """The narrowed scope, pinned.
+async def test_check_health_reports_a_member_failure_in_its_status() -> None:
+    """BF-846 migrated this contract; the property it guards is unchanged.
 
-    `agents/medical/surgeon.py` and `test_ad1019c_consensus` rely on
-    `check_health()` propagating. The loop boundary must not have changed that.
+    It used to assert `check_health()` PROPAGATED a member's recycle failure,
+    which is what stopped a failing pass reaching its refill step. The failure
+    must still be knowable to a direct caller -- ``agents/medical/surgeon.py``
+    reports remediation success on the strength of it -- so it now travels in
+    the returned status instead.
     """
     # Arrange
     registry = AgentRegistry()
@@ -317,8 +336,31 @@ async def test_check_health_still_raises_for_direct_callers() -> None:
     try:
         registry.get(pool._agent_ids[0]).state = AgentState.DEGRADED
 
-        # Act / Assert
-        with pytest.raises(RuntimeError, match="lost dependencies"):
-            await pool.check_health()
+        # Act
+        status = await pool.check_health()
+
+        # Assert
+        assert status["recycle_failures"] == 1, status
+        assert len(pool._agent_ids) == 2, "the pass must still hold the pool's size"
+    finally:
+        await pool.stop()
+
+
+async def test_a_clean_pass_reports_no_member_failure() -> None:
+    """Control. Without it, a status that always reported a failure would pass
+    the test above."""
+    # Arrange
+    registry = AgentRegistry()
+    spawner = _spawner(registry)
+    pool = _pool(registry, spawner, interval=60.0)
+    await pool.start()
+    try:
+        registry.get(pool._agent_ids[0]).state = AgentState.DEGRADED
+
+        # Act
+        status = await pool.check_health()
+
+        # Assert
+        assert status["recycle_failures"] == 0, status
     finally:
         await pool.stop()
