@@ -791,7 +791,11 @@ def test_tripwires_clear_once_e2_has_updated_both(tmp_path: Path) -> None:
 
 
 def test_tripwires_are_silent_against_the_live_tree() -> None:
-    assert not (_REPO_ROOT / facade.CONFIG_MODELS_RELDIR).is_dir()
+    # Pinned ``not ...is_dir()`` until AD-1270e2 created the package. That was a
+    # statement about the tree of the day, not a property; the durable claim is
+    # that on THIS tree both tripwires are satisfied, which now means satisfied
+    # rather than dormant.
+    assert (_REPO_ROOT / facade.CONFIG_MODELS_RELDIR).is_dir()
     assert facade.tripwire_problems(_REPO_ROOT) == []
 
 
@@ -800,7 +804,11 @@ def test_config_profiles_scan_shape_is_read_without_importing_probos() -> None:
         encoding="utf-8"
     )
 
-    assert facade.config_profiles_scan_is_single_file(live) is True
+    # Pinned ``is True`` for the live file pre-e2. AD-1270e2 widened that scan to
+    # the package, so the live answer is now False and the True case comes from
+    # the fixture -- the instrument must still tell the two shapes apart.
+    assert facade.config_profiles_scan_is_single_file(live) is False
+    assert facade.config_profiles_scan_is_single_file(_SINGLE_FILE_SCAN) is True
     assert facade.config_profiles_scan_is_single_file(_PACKAGE_SCAN) is False
 
 

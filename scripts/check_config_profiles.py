@@ -78,7 +78,11 @@ from probos.config_profiles import (  # noqa: E402
 _DEFAULT_MANIFEST = _REPO_ROOT / "docs" / "development" / "config-profiles.yaml"
 _DEFAULT_PROFILE_DIR = _REPO_ROOT / "config" / "profiles"
 _DEFAULT_CONFTEST = _REPO_ROOT / "tests" / "conftest.py"
-_DEFAULT_CONFIG_MODULE = _REPO_ROOT / "src" / "probos" / "config.py"
+#: The package whose modules can hold a configuration default. AD-1270e2 split
+#: the models across ``config.py`` and ``config_models/``, so this must name the
+#: package rather than one file: a scan that stopped at ``config.py`` would keep
+#: passing while the models it measures moved out from under it.
+_DEFAULT_CONFIG_MODULE = _REPO_ROOT / "src" / "probos"
 
 #: Exactly the six kinds #1121 names. A seventh is a taxonomy change, which is
 #: a review decision rather than a row edit.
@@ -398,16 +402,39 @@ def _conftest_setdefaults(conftest: Path) -> dict[str, str]:
     return found
 
 
-def env_reads_reaching_defaults(config_module: Path) -> dict[str, str]:
-    """Environment reads in ``config.py`` that can change a *default* config.
+def _env_scan_paths(config_module: Path) -> list[Path]:
+    """Every module a configuration default can be built from.
 
-    Returns ``{env_var: mechanism}``. A read reaches a default when it sits in
-    a ``model_validator`` (which runs on every construction, defaults included)
-    or in a ``field_validator`` for a field declared ``validate_default=True``.
-    Keying this on ``validate_default`` alone would miss ``PROBOS_LLM_URL``,
-    which is measured moving the ``SystemConfig()`` dump from a
-    ``model_validator``.
+    A file is scanned alone so a caller can still measure one module in
+    isolation; a package expands to ``config.py`` plus every
+    ``config_models/**/*.py`` that AD-1270e2 extracted.
     """
+    if config_module.is_file():
+        return [config_module]
+    paths = [config_module / "config.py"]
+    paths.extend(sorted((config_module / "config_models").rglob("*.py")))
+    return [path for path in paths if path.is_file()]
+
+
+def env_reads_reaching_defaults(config_module: Path) -> dict[str, str]:
+    """Environment reads that can change a *default* config.
+
+    Returns ``{env_var: mechanism}`` merged across every module in
+    ``config_module`` (see :func:`_env_scan_paths`). A read reaches a default
+    when it sits in a ``model_validator`` (which runs on every construction,
+    defaults included) or in a ``field_validator`` for a field declared
+    ``validate_default=True``. Keying this on ``validate_default`` alone would
+    miss ``PROBOS_LLM_URL``, which is measured moving the ``SystemConfig()``
+    dump from a ``model_validator``.
+    """
+    reaching: dict[str, str] = {}
+    for path in _env_scan_paths(config_module):
+        reaching.update(_env_reads_in_module(path))
+    return reaching
+
+
+def _env_reads_in_module(config_module: Path) -> dict[str, str]:
+    """``env_reads_reaching_defaults`` for exactly one module file."""
     tree = ast.parse(config_module.read_text(encoding="utf-8"))
     parents: dict[ast.AST, ast.AST] = {}
     for node in ast.walk(tree):
@@ -553,9 +580,9 @@ def _check_divergences(
         row = declared.get(env_var)
         if row is None:
             errors.append(
-                f"divergence: {env_var} is read in src/probos/config.py from a "
-                f"{mechanism} and can therefore change a DEFAULT config, but "
-                "no ci_divergences row declares it"
+                f"divergence: {env_var} is read in the probos config package "
+                f"from a {mechanism} and can therefore change a DEFAULT "
+                "config, but no ci_divergences row declares it"
             )
         elif row.get("mechanism") != mechanism:
             errors.append(
@@ -790,7 +817,7 @@ def main(argv: list[str] | None = None) -> int:
         profile_dir=profile_dir,
         repo_root=repo_root,
         conftest=repo_root / "tests" / "conftest.py",
-        config_module=repo_root / "src" / "probos" / "config.py",
+        config_module=repo_root / "src" / "probos",
     )
 
     if args.json:
