@@ -55,23 +55,40 @@ Do **not** report the connect figure as a reduction from 34 → 32. The checker 
 
 Two of today's 54 `.db` literals are the same file spelled two ways (`directives.db` and `data/directives.db`; likewise `service_profiles.db` / `data/service_profiles.db`). That is itself a finding for the declaration to resolve — a store has one canonical path.
 
-### 4. One baseline row states something false, and you must fix it
+### 4. RETRACTED — the baseline row is already correct
 
-`docs/development/architecture-baseline.yaml` contains:
+An earlier revision of this prompt claimed that
+`probos.storage.sqlite_factory::SQLiteConnectionFactory.connect` was baselined
+`disposition: debt` with a false rationale, and instructed you to fix it.
+**That claim is refuted.** The row as committed reads:
 
 ```yaml
 - category: db-connect
   key: probos.storage.sqlite_factory::SQLiteConnectionFactory.connect
   callee: aiosqlite.connect
   count: 1
-  disposition: debt
+  disposition: approved
   owner: AD-1256
-  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  rationale: The ConnectionFactory implementation itself; this is the adapter every other store is meant to route through.
 ```
 
-That row **is the approved adapter**. Its rationale is false, and no migration can ever delete it — the adapter has to call `aiosqlite.connect` or nothing works. `scripts/check_architecture_principles.py` has no approved-adapter exclusion: `DB_CONNECT_CALLEES = frozenset({"sqlite3.connect", "aiosqlite.connect"})` and every rendered match becomes a finding.
+Verified against the committed tree, not the worktree:
+`git show HEAD:docs/development/architecture-baseline.yaml` shows
+`disposition: approved`; `git diff --quiet HEAD -- docs/development/architecture-baseline.yaml`
+exits 0, so nothing local is masking it; and
+`git log -S'SQLiteConnectionFactory.connect'` shows it shipped that way in
+`b70c2026`.
 
-Verified that `disposition` is reviewer metadata and does not participate in gating — `compare_to_baseline()` keys on `(category, key, callee)` and compares `count` and `triggers` only. So flip this one row to `disposition: approved` with a truthful rationale. It is a metadata correction inside the category AD-1256 owns, not a gating change and not a migration.
+**Do not edit `docs/development/architecture-baseline.yaml` at all in this
+slice.** Leave all 30 rows alone.
+
+The one true observation underneath the retracted claim is worth keeping:
+`scripts/check_architecture_principles.py` has no approved-adapter exclusion —
+`DB_CONNECT_CALLEES = frozenset({"sqlite3.connect", "aiosqlite.connect"})` and
+every rendered match becomes a finding, so the adapter is baselined rather than
+exempted. `disposition` is reviewer metadata and does not gate:
+`compare_to_baseline()` keys on `(category, key, callee)` and compares `count`
+and `triggers` only. That is context, not a task.
 
 ---
 
@@ -229,7 +246,7 @@ Do not declare all 58. Seed **8–12** declarations covering every enum value at
 
 ### Also in this commit
 
-Flip the `probos.storage.sqlite_factory::SQLiteConnectionFactory.connect` row in `docs/development/architecture-baseline.yaml` to `disposition: approved`, rationale naming it as *the* approved adapter, and `review_by` recording that it is permanent by design. Leave `owner: AD-1256`. Do not touch the other 29 rows.
+Do **not** edit `docs/development/architecture-baseline.yaml`. The row that an earlier revision of this prompt asked you to fix is already correct as committed — see the retraction in § 4. Leave all 30 rows alone.
 
 ### Wire into preflight
 

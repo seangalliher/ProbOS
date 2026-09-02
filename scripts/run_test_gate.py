@@ -1103,6 +1103,10 @@ def _preflight_specs(repo_root: Path) -> list[PhaseSpec]:
             [python, "-P", "scripts/check_architecture_principles.py", "--check"],
         ),
         PhaseSpec(
+            "store-registry",
+            [python, "-P", "scripts/check_store_registry.py", "--check"],
+        ),
+        PhaseSpec(
             "compile",
             [python, "-P", "-m", "compileall", "-q", "-j", "0", "src", "tests"],
         ),
