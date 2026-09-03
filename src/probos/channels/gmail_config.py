@@ -56,5 +56,12 @@ class GmailAdapterConfig(ChannelConfig):
     )
     mark_seen: bool = Field(
         default=True,
-        description="Mark mail as Seen after processing. False keeps it unread.",
+        description=(
+            "Mark mail as Seen only AFTER it has been handled and any reply "
+            "sent (BF-803), so a message whose processing fails stays unread "
+            "and is retried on the next poll. False never sets the flag at "
+            "all: nothing is answered twice while it remains in the adapter's "
+            "bounded processed set, but the mail is re-read on every poll and "
+            "is answered again once it falls out of that set."
+        ),
     )

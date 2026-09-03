@@ -85,14 +85,21 @@ def test_fetch_one_returns_channel_message():
         sender="Alice <alice@example.com>", subject="Question", body="Can you help?"
     )
     mail = MagicMock()
-    mail.fetch.return_value = ("OK", [(b"1 (RFC822 {123}", raw)])
-    mail.store.return_value = ("OK", [])
+    mail.uid.return_value = ("OK", [(b"1 (UID 1 BODY[] {123}", raw)])
     msg = a._fetch_one(mail, b"1")
     assert msg is not None
     assert msg.user_id == "alice@example.com"
     assert "Can you help?" in msg.text
     assert "Question" in msg.text
-    mail.store.assert_called_once()  # mark_seen=True default
+    # BF-803: was `mail.store.assert_called_once()  # mark_seen=True default`.
+    # Marking on fetch is what dropped a message whose processing failed, so
+    # the fetch now issues one non-mutating FETCH and nothing else;
+    # `_poll_loop` acknowledges. RFC 3501 6.4.5 makes the ITEM the load-
+    # bearing half: RFC822 and BODY[] both set \Seen implicitly, so UID
+    # addressing alone would not have fixed anything.
+    assert mail.uid.call_args_list[0].args == ("FETCH", b"1", "(BODY.PEEK[])")
+    assert [c.args[0] for c in mail.uid.call_args_list] == ["FETCH"]
+    mail.store.assert_not_called()
 
 
 def test_fetch_one_respects_allow_list():
@@ -101,7 +108,7 @@ def test_fetch_one_respects_allow_list():
         sender="alice@example.com", subject="hi", body="hi"
     )
     mail = MagicMock()
-    mail.fetch.return_value = ("OK", [(b"1 (RFC822 {1}", raw)])
+    mail.uid.return_value = ("OK", [(b"1 (UID 1 BODY[] {1}", raw)])
     assert a._fetch_one(mail, b"1") is None
 
 
@@ -109,7 +116,7 @@ def test_fetch_one_skips_empty_body():
     a = _make_adapter()
     raw = _build_raw_email(sender="alice@example.com", subject="", body="   ")
     mail = MagicMock()
-    mail.fetch.return_value = ("OK", [(b"1 (RFC822 {1}", raw)])
+    mail.uid.return_value = ("OK", [(b"1 (UID 1 BODY[] {1}", raw)])
     assert a._fetch_one(mail, b"1") is None
 
 
@@ -117,9 +124,25 @@ def test_fetch_one_no_mark_seen_when_disabled():
     a = _make_adapter(mark_seen=False)
     raw = _build_raw_email(sender="alice@example.com", subject="hi", body="hi")
     mail = MagicMock()
-    mail.fetch.return_value = ("OK", [(b"1 (RFC822 {1}", raw)])
-    a._fetch_one(mail, b"1")
+    mail.uid.return_value = ("OK", [(b"1 (UID 1 BODY[] {1}", raw)])
+
+    assert a._fetch_one(mail, b"1") is not None
+
+    # BF-803: this assertion used to hold only because mark_seen was False. It
+    # now holds for every value of mark_seen -- fetching mutates no flag at all.
     mail.store.assert_not_called()
+    assert not [c for c in mail.uid.call_args_list if c.args[0] == "STORE"]
+    # A MagicMock cannot model the implicit \Seen that RFC 3501 6.4.5 attaches
+    # to a non-PEEK body fetch, so the requested ITEM is the only thing that
+    # can be asserted here. The double in tests/test_bf803_gmail_ack.py models
+    # the flag itself.
+    assert mail.uid.call_args_list[0].args[2] == "(BODY.PEEK[])"
+    # Control: both probes above must be able to see a flag mutation, or
+    # "nothing was flagged" would be indistinguishable from a blind probe.
+    mail.store(b"1", "+FLAGS", r"(\Seen)")
+    mail.uid("STORE", b"1", "+FLAGS", r"(\Seen)")
+    mail.store.assert_called_once()
+    assert [c for c in mail.uid.call_args_list if c.args[0] == "STORE"]
 
 
 def test_fetch_one_records_reply_context_for_threading():
@@ -128,7 +151,7 @@ def test_fetch_one_records_reply_context_for_threading():
         sender="alice@example.com", subject="q", body="hi", message_id="<abc@x>"
     )
     mail = MagicMock()
-    mail.fetch.return_value = ("OK", [(b"1 (RFC822 {1}", raw)])
+    mail.uid.return_value = ("OK", [(b"1 (UID 1 BODY[] {1}", raw)])
     msg = a._fetch_one(mail, b"1")
     assert msg is not None
     assert msg.reply_to_message_id == "<abc@x>"
@@ -138,7 +161,7 @@ def test_fetch_one_records_reply_context_for_threading():
 def test_fetch_one_handles_imap_failure_status():
     a = _make_adapter()
     mail = MagicMock()
-    mail.fetch.return_value = ("NO", [])
+    mail.uid.return_value = ("NO", [])
     assert a._fetch_one(mail, b"1") is None
 
 

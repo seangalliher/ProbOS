@@ -441,22 +441,35 @@ def test_the_first_part_sent_is_the_one_that_threads() -> None:
 
 
 def _gmail_adapter_with(messages: list[Any], handler: Any, sender: Any):
-    from probos.channels.gmail_adapter import GmailAdapter
+    from probos.channels.gmail_adapter import GmailAdapter, _InboundMail
 
     adapter = GmailAdapter.__new__(GmailAdapter)
     adapter._stop = asyncio.Event()
-    adapter._gmail_config = type("C", (), {"poll_interval_s": 0.01})()
+    # BF-803: `mark_seen=False` keeps these egress tests off the IMAP
+    # acknowledgement path, and `mailbox` is what its log lines name.
+    adapter._gmail_config = type(
+        "C", (), {"poll_interval_s": 0.01, "mark_seen": False, "mailbox": "INBOX"}
+    )()
+    adapter._acknowledged = {}
     adapter.handle_message = handler                 # type: ignore[method-assign]
     adapter.send_response = sender                   # type: ignore[method-assign]
-    adapter._fetch_unseen = lambda: messages         # type: ignore[method-assign]
+    # BF-803: `_fetch_unseen` yields a private carrier pairing each message
+    # with the UID `_poll_loop` acknowledges it by AFTER processing.
+    adapter._fetch_unseen = lambda: [                # type: ignore[method-assign]
+        _InboundMail(uid=str(i).encode(), uidvalidity="1000", message=m)
+        for i, m in enumerate(messages, start=1)
+    ]
     return adapter
 
 
 def test_one_failing_gmail_message_does_not_discard_the_rest_of_the_batch() -> None:
-    """`_fetch_unseen` marks the whole batch Seen BEFORE processing.
+    """`_fetch_unseen` used to mark the whole batch Seen BEFORE processing.
 
     So a batch-wide guard meant one failure lost every later message
     permanently -- and adding a send inside the loop widened that window.
+    BF-803 (#1267) moved the acknowledgement after processing, so a failure is
+    now retried rather than lost; the per-message isolation this test pins is
+    what keeps the REST of the batch moving in the meantime.
     """
     from probos.channels.base import ChannelMessage
 
@@ -486,8 +499,8 @@ def test_one_failing_gmail_message_does_not_discard_the_rest_of_the_batch() -> N
     asyncio.run(_drive())
 
     assert "b@x" in sent and "c@x" in sent, (
-        "messages after a failure must still be processed; they are already "
-        f"marked Seen and cannot be retried. got {sent}"
+        "messages after a failure must still be processed; a batch-wide guard "
+        f"would silently skip them. got {sent}"
     )
 
 
@@ -680,7 +693,7 @@ def test_a_teams_activity_threads_all_the_way_to_the_wire() -> None:
 
 def test_gmail_forwards_the_reply_instead_of_discarding_it() -> None:
     from probos.channels.base import ChannelMessage
-    from probos.channels.gmail_adapter import GmailAdapter
+    from probos.channels.gmail_adapter import GmailAdapter, _InboundMail
 
     inbound = ChannelMessage(
         text="what is the status?",
@@ -692,7 +705,11 @@ def test_gmail_forwards_the_reply_instead_of_discarding_it() -> None:
 
     adapter = GmailAdapter.__new__(GmailAdapter)
     adapter._stop = asyncio.Event()
-    adapter._gmail_config = type("C", (), {"poll_interval_s": 0.01})()
+    # BF-803: mark_seen=False keeps this egress test off the IMAP ack path.
+    adapter._gmail_config = type(
+        "C", (), {"poll_interval_s": 0.01, "mark_seen": False, "mailbox": "INBOX"}
+    )()
+    adapter._acknowledged = {}
 
     async def _fake_handle(message: ChannelMessage) -> str:
         return "all systems nominal"
@@ -703,7 +720,9 @@ def test_gmail_forwards_the_reply_instead_of_discarding_it() -> None:
 
     adapter.handle_message = _fake_handle          # type: ignore[method-assign]
     adapter.send_response = _fake_send             # type: ignore[method-assign]
-    adapter._fetch_unseen = lambda: [inbound]      # type: ignore[method-assign]
+    adapter._fetch_unseen = lambda: [              # type: ignore[method-assign]
+        _InboundMail(uid=b"1", uidvalidity="1000", message=inbound)
+    ]
 
     asyncio.run(asyncio.wait_for(adapter._poll_loop(), timeout=5))
 
@@ -716,12 +735,15 @@ def test_gmail_forwards_the_reply_instead_of_discarding_it() -> None:
 def test_gmail_sends_nothing_when_there_is_no_reply() -> None:
     """An empty reply must not become an empty email."""
     from probos.channels.base import ChannelMessage
-    from probos.channels.gmail_adapter import GmailAdapter
+    from probos.channels.gmail_adapter import GmailAdapter, _InboundMail
 
     sent: list[Any] = []
     adapter = GmailAdapter.__new__(GmailAdapter)
     adapter._stop = asyncio.Event()
-    adapter._gmail_config = type("C", (), {"poll_interval_s": 0.01})()
+    adapter._gmail_config = type(
+        "C", (), {"poll_interval_s": 0.01, "mark_seen": False, "mailbox": "INBOX"}
+    )()
+    adapter._acknowledged = {}
 
     async def _fake_handle(message: ChannelMessage) -> str:
         adapter._stop.set()
@@ -733,7 +755,11 @@ def test_gmail_sends_nothing_when_there_is_no_reply() -> None:
     adapter.handle_message = _fake_handle          # type: ignore[method-assign]
     adapter.send_response = _fake_send             # type: ignore[method-assign]
     adapter._fetch_unseen = lambda: [              # type: ignore[method-assign]
-        ChannelMessage(text="hi", channel_id="a@b", user_id="a@b")
+        _InboundMail(
+            uid=b"1",
+            uidvalidity="1000",
+            message=ChannelMessage(text="hi", channel_id="a@b", user_id="a@b"),
+        )
     ]
 
     asyncio.run(asyncio.wait_for(adapter._poll_loop(), timeout=5))
