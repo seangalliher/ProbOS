@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "tracker": {
+    "kind": "github",
+    "scope": "seangalliher/ProbOS",
+    "query": "is:issue is:open"
+  },
+  "wip": {
+    "maxActive": 1,
+    "maxCoupled": 3
+  },
+  "authority": {
+    "mode": "delegated",
+    "boundaries": [
+      "destructive production-data operations",
+      "weaker security privacy authorization consensus audit or safety controls",
+      "public persisted or federation compatibility breaks without a tested migration",
+      "new external spending paid dependencies secrets or unavailable credentials",
+      "access to or operation against a live production system",
+      "movement of information or implementation across the OSS-commercial boundary",
+      "acceptance of unresolved Critical or High risk or expansion beyond the issue objective"
+    ]
+  },
+  "roles": {
+    "architect": "probos-architect",
+    "builder": "probos-builder",
+    "reviewer": "probos-diff-reviewer"
+  },
+  "validation": {
+    "focused": "d:/ProbOS/.venv/Scripts/pytest.exe <test-files-or-node-ids> -q -n 0 -p no:randomly",
+    "broad": "d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label <issue-or-wave>",
+    "receiptGlobs": [
+      "logs/gates/*.receipt.json"
+    ]
+  },
+  "review": {
+    "required": true,
+    "independent": true,
+    "agent": "probos-diff-reviewer",
+    "requiredModel": "gpt-5.6-sol",
+    "requiredModelFamily": "openai",
+    "requireDifferentModelFamily": true
+  },
+  "filing": {
+    "maximumNewPerClosures": 1,
+    "closureDenominator": 3
+  }
+}
