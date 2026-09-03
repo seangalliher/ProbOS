@@ -101,10 +101,16 @@ or retired here, and disagreements between the authorities are reported below
 rather than resolved.
 """
 
-# A number token. Sub-letters (AD-574b, BF-688a) are children of the base
-# number -- the base is what a future build must not reuse, so classification
-# keys on the integer and keeps the full token as evidence.
-_TOKEN_RE = re.compile(r"\b(AD|BF)-(\d{1,5})([a-z]{0,3})\b")
+# A number token. Sub-slices (AD-574b, BF-688a, AD-1270e2) are children of the
+# base number -- the base is what a future build must not reuse, so
+# classification keys on the integer and keeps the full token as evidence.
+# The suffix admits a trailing digit because the roadmap already names slices
+# that way (e1, e2, c3, d3); without it the whole token failed to match at all
+# and such a slice was invisible rather than mis-parsed.
+# A non-empty suffix MUST start with a letter. A digit-only suffix would read
+# AD-123456 as AD-12345 slice "6", conflating two distinct numbers -- and
+# ad_ceiling rejects that token outright, so the two tools would disagree.
+_TOKEN_RE = re.compile(r"\b(AD|BF)-(\d{1,5})((?:[a-z]{1,3}\d{0,2})?)\b")
 
 # Text permitted *between* two head tokens for both to count as the head of the
 # same entry: "AD-661b + AD-661c v1", "BF-688 / BF-688a", "**AD-1154 ".

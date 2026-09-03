@@ -356,3 +356,153 @@ def test_the_report_refuses_to_call_unmentioned_numbers_free() -> None:
     text = _REPORT.read_text(encoding="utf-8")
     assert "Unaccounted" in text
     assert "not** free" in text
+
+
+# ---------------------------------------------------------------------------
+# #1349 -- digit-suffixed slices were invisible, not mis-parsed
+# ---------------------------------------------------------------------------
+
+_CEILING_SCRIPT = _REPO_ROOT / "scripts" / "ad_ceiling.py"
+
+
+@pytest.fixture(scope="module")
+def ceiling() -> types.ModuleType:
+    spec = importlib.util.spec_from_file_location("ad_ceiling", _CEILING_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        # The shapes that already worked must be byte-identical.
+        ("AD-1270", ("AD", "1270", "")),
+        ("AD-722b", ("AD", "722", "b")),
+        ("BF-688a", ("BF", "688", "a")),
+        ("AD-12345", ("AD", "12345", "")),
+        # The shapes #1349 reported. `[a-z]{0,3}\b` cannot match these at all:
+        # the suffix stops at `e` and the following digit is a word character,
+        # so there is no boundary and the token was skipped entirely.
+        ("AD-1270e1", ("AD", "1270", "e1")),
+        ("AD-1270e2", ("AD", "1270", "e2")),
+        ("AD-1270c3", ("AD", "1270", "c3")),
+        # The same shape on the other branch of `(AD|BF)`. Every other
+        # digit-suffixed row is AD, so a regression confined to BF would pass
+        # unseen. Base 688 is the letter-only BF row above, which leaves the
+        # trailing digit as the single difference between the two.
+        ("BF-688a2", ("BF", "688", "a2")),
+    ],
+)
+def test_the_ledger_token_parses_digit_suffixed_slices(
+    ledger: types.ModuleType, token: str, expected: tuple[str, str, str]
+) -> None:
+    found = ledger._TOKEN_RE.findall(token)
+
+    assert found == [expected], f"{token} parsed as {found}"
+
+
+@pytest.mark.parametrize("token", ["AD-123456", "AD-1234567", "BF-123456"])
+def test_a_digit_only_suffix_never_splits_a_long_number(
+    ledger: types.ModuleType, ceiling: types.ModuleType, token: str
+) -> None:
+    """The suffix must start with a letter, or two numbers become one.
+
+    An unconstrained ``\\d{0,2}`` tail read ``AD-123456`` as ``AD-12345`` with
+    slice ``6`` -- measured -- while ``ad_ceiling`` rejected the same token
+    outright. The ledger and the ceiling scanner would then disagree about
+    which numbers exist, which is precisely what the ceiling is consulted for.
+    """
+    # Premise: both patterns are live on the nearest ACCEPTED neighbour -- the
+    # same digits with a letter anchor. Without it a dead pattern would satisfy
+    # the two rejections below, and an empty result proves nothing.
+    assert ledger._TOKEN_RE.findall("AD-12345e6") == [("AD", "12345", "e6")]
+    assert ceiling._AD_RE.findall("AD-12345e6") == ["12345"]
+
+    assert ledger._TOKEN_RE.findall(token) == []
+    # `_AD_RE` matches only the AD series, so this line is structurally empty
+    # for the BF-123456 row -- that row is carried by the assertion above, not
+    # by agreement between the two tools. It is not BF coverage.
+    assert ceiling._AD_RE.findall(token) == []
+
+
+def test_a_slice_is_keyed_on_its_base_number(ledger: types.ModuleType) -> None:
+    """A slice is a child of its base, never a new allocation.
+
+    This is the property that makes widening the suffix safe: ``AD-1270e2``
+    must classify under 1270, so admitting it cannot invent a number.
+    """
+    _series, digits, suffix = ledger._TOKEN_RE.findall("AD-1270e2")[0]
+
+    assert int(digits) == 1270
+    assert suffix == "e2"
+
+
+def test_the_entry_parser_keys_a_slice_under_its_base(
+    ledger: types.ModuleType,
+) -> None:
+    """Through the real consumer, not the regex in isolation.
+
+    ``_leading_tokens`` is what ``parse_entry_lines`` uses to decide which
+    number an entry head governs. Asserting on the regex alone would not show
+    that the slice reaches classification under 1270 with its full token kept
+    as evidence.
+    """
+    head = "**AD-1270e2 shipped (2026-09-03) - batch 9**"
+
+    assert ledger._leading_tokens(head) == [("AD", 1270, "AD-1270e2")]
+
+
+def test_the_prompt_scanner_reads_a_digit_suffixed_filename(
+    ceiling: types.ModuleType,
+) -> None:
+    """``_PROMPT_RE`` carried the same trailing-boundary defect.
+
+    ``prompts/ad-1270e2-*.md`` exists in this repository, so without this the
+    prompt authority silently contributed nothing for that slice.
+    """
+    assert ceiling._PROMPT_RE.findall("ad-1270e2-leaf-domain-config-extraction.md") == [
+        "1270"
+    ]
+    assert ceiling._PROMPT_RE.findall("ad-1270-x.md") == ["1270"]
+    assert ceiling._PROMPT_RE.findall("ad-123456-x.md") == []
+
+
+def test_the_ceiling_scanner_sees_the_base_of_a_suffixed_token(
+    ceiling: types.ModuleType,
+) -> None:
+    """A trailing ``\\b`` silently dropped every suffixed token, letters too.
+
+    ``AD-722b`` was as invisible as ``AD-1270e2``; the reported gap was wider
+    than #1349 described.
+    """
+    assert ceiling._AD_RE.findall("AD-1270e2") == ["1270"]
+    assert ceiling._AD_RE.findall("AD-722b") == ["722"]
+    assert ceiling._AD_RE.findall("AD-1270") == ["1270"]
+
+    # A long number must not match a truncated prefix.
+    assert ceiling._AD_RE.findall("AD-12345") == ["12345"]
+
+
+def test_admitting_a_slice_does_not_raise_the_ceiling(
+    ceiling: types.ModuleType,
+) -> None:
+    """The check #1349 asks for: the reported ceiling must not move.
+
+    A corpus whose only mention of a number is a slice of it must yield that
+    base number and nothing higher. The corpus deliberately contains no bare
+    ``AD-1270``: with one, the old pattern found it anyway and this case passed
+    against the defect it exists to catch.
+    """
+    corpus = "AD-1270e2 refines AD-1270e1; see also AD-722b."
+
+    found = [int(n) for n in ceiling._AD_RE.findall(corpus)]
+
+    # Premise: the old pattern really could not see these, so this is not a
+    # comparison between two spellings of the same behaviour.
+    assert re.compile(r"\bAD-(\d{1,5})\b").findall(corpus) == []
+
+    assert found, "the scanner found nothing; it cannot be measuring a ceiling"
+    assert max(found) == 1270
+    assert 1271 not in found

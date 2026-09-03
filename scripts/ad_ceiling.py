@@ -29,8 +29,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-_AD_RE = re.compile(r"\bAD-(\d{1,5})\b", re.IGNORECASE)
-_PROMPT_RE = re.compile(r"^ad-(\d{1,5})\b", re.IGNORECASE)
+# A trailing `\b` loses every suffixed token: there is no word boundary between
+# the digits and the suffix, so `AD-722b` and `AD-1270e2` matched nothing at all
+# and their base number went unseen. A slice never allocates a new number, so
+# capture the base and ignore the suffix; the negative lookahead keeps a long
+# number from matching a truncated prefix.
+_AD_RE = re.compile(r"\bAD-(\d{1,5})(?!\d)", re.IGNORECASE)
+_PROMPT_RE = re.compile(r"^ad-(\d{1,5})(?!\d)", re.IGNORECASE)
 _GH_LIMIT = 4000
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
