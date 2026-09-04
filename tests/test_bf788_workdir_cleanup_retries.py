@@ -105,7 +105,12 @@ async def test_a_cancelled_run_removes_the_workdir_after_the_child_exits(
 
     # The child is still holding it; the directory is still there.
     assert workdir.exists()
-    assert request.cleanup_on_cancel.cancelled.is_set(), "run() did not flag it"
+    # AD-1298: was `cancelled.is_set()`. That Event is gone -- the question it
+    # asked is now answered by the arbiter, and a worker is RUNNING, so the
+    # caller side must have handed teardown over.
+    assert not request.cleanup_on_cancel.caller_owns_teardown, (
+        "run() did not record the cancellation"
+    )
 
     may_finish.set()                        # the child exits
     await asyncio.get_running_loop().run_in_executor(None, finished.wait, 5)
@@ -183,10 +188,14 @@ async def test_it_cleans_up_when_the_worker_finishes_before_the_cancel_lands(
 
         DESCENDANT_RACE immediate_exists=True after_descendant_exists=True
 
-    Thread interleaving cannot be made deterministic, so `finished` is
-    published directly here: that is precisely the state a worker leaves behind
-    when it wins the race. The worker itself stays blocked, which proves the
-    removal came from `run()` and not from the worker's `finally`.
+    Thread interleaving cannot be made deterministic, so the worker's
+    completion is published directly here: that is precisely the state a worker
+    leaves behind when it wins the race. The worker itself stays blocked, which
+    proves the removal came from `run()` and not from the worker's `finally`.
+
+    AD-1298: was `handshake.finished.set()`. The Event is gone; the terminal
+    state carries the same fact, and the arbiter -- not a pair of ordered flag
+    reads -- is what now decides that this side owns it.
     """
     workdir = _populated(tmp_path, "late_cancel")
     entered, release = threading.Event(), threading.Event()
@@ -208,9 +217,9 @@ async def test_it_cleans_up_when_the_worker_finishes_before_the_cancel_lands(
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, entered.wait, 5)
 
-    # Stand in for a worker that published `finished` and read `cancelled` as
-    # clear, all before this cancellation was delivered.
-    handshake.finished.set()
+    # Stand in for a worker that finished and read no cancellation, all before
+    # this cancellation was delivered.
+    handshake.note_worker_done(child_reaped=True)
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -229,60 +238,56 @@ async def test_it_cleans_up_when_the_worker_finishes_before_the_cancel_lands(
     )
 
 
-async def test_the_worker_publishes_finished_before_it_reads_cancelled(
+async def test_the_worker_arbitrates_before_anything_can_be_created(
     tmp_path: Path,
 ) -> None:
-    """The ORDER is the whole fix; reversing it reopens the leak.
+    """The ORDER is the whole fix; moving it reopens the leak.
 
-    With the two writes inverted the worker reads `cancelled` (clear), the loop
-    then sets `cancelled` and reads `finished` (still clear, so it declines),
-    and only afterwards does the worker publish `finished`. Neither side cleans
-    up. Mutation R10 -- swapping those two statements -- survived every other
-    test in this file, which is why this one exists.
+    BF-788's version of this pinned the order of two flag WRITES: the worker
+    had to publish `finished` before reading `cancelled`, or both sides would
+    decline and nobody would clean up (mutation R10 -- swapping those two
+    statements -- survived every other test in this file). Those flags are
+    gone. AD-1298 replaced them with one lock over one state field, so a
+    "which flag was written first" question no longer has meaning.
+
+    Its successor is stricter and matters more: the worker must take the lock
+    as the FIRST thing it does, BEFORE `_run_sync_inner` can create anything.
+    That is what makes the caller's abort safe -- the caller deletes a
+    directory the worker has provably not touched. It is also the boundary
+    `test_bf839_start_boundary_worker_honours_caller_abort` gates on, so if
+    this moves that test silently stops discriminating.
 
     Observed from the worker thread only, on an ordinary uncancelled run, so
     there is no timing dependence.
     """
     workdir = _populated(tmp_path, "ordering")
-    log: list[tuple[int, str]] = []
+    log: list[str] = []
 
-    class _Recording(threading.Event):
-        def __init__(self, name: str) -> None:
-            super().__init__()
-            self._name = name
-
-        def set(self) -> None:
-            log.append((threading.get_ident(), f"{self._name}.set"))
-            super().set()
-
-        def is_set(self) -> bool:
-            log.append((threading.get_ident(), f"{self._name}.is_set"))
-            return super().is_set()
+    class _Recording(CancelCleanup):
+        def begin_worker(self) -> bool:
+            log.append("begin_worker")
+            return super().begin_worker()
 
     sandbox = SubprocessSandbox(scratch_root=tmp_path)
-    worker_ident: list[int] = []
 
     def fake_inner(request: ExecutionRequest) -> ExecutionResult:
-        worker_ident.append(threading.get_ident())
+        log.append("inner")
         return ExecutionResult(success=True, workdir=str(request.workdir))
 
     sandbox._run_sync_inner = fake_inner  # type: ignore[method-assign]
 
     await sandbox.run(ExecutionRequest(
-        code="print(1)",
-        workdir=workdir,
-        cleanup_on_cancel=CancelCleanup(
-            cancelled=_Recording("cancelled"), finished=_Recording("finished"),
-        ),
+        code="print(1)", workdir=workdir, cleanup_on_cancel=_Recording(),
     ))
 
-    assert worker_ident, "the worker never ran"
-    ops = [op for ident, op in log if ident == worker_ident[0]]
-    assert "finished.set" in ops, ops
-    assert "cancelled.is_set" in ops, ops
-    assert ops.index("finished.set") < ops.index("cancelled.is_set"), (
-        "the worker read `cancelled` before publishing `finished`; the loop "
-        f"can then decline too and nobody removes the directory. ops={ops}"
+    assert "inner" in log, "the worker never ran"
+    assert "begin_worker" in log, (
+        "the worker never arbitrated, so a caller that aborted the job would "
+        "be deleting a directory a live child is using"
+    )
+    assert log.index("begin_worker") < log.index("inner"), (
+        "the worker reached `_run_sync_inner` before taking the lock; the "
+        f"caller's abort can no longer be honoured safely. log={log}"
     )
     # An uncancelled run must NOT remove the directory -- artifact capture
     # reads it after `run()` returns.
@@ -558,7 +563,7 @@ async def test_a_shut_down_executor_does_not_mask_the_cancellation(
     task = asyncio.create_task(sandbox.run(request))
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, entered.wait, 5)
-    handshake.finished.set()          # the worker got there first
+    handshake.note_worker_done(child_reaped=True)   # the worker got there first
 
     real_submit = loop.run_in_executor
 
@@ -887,15 +892,28 @@ async def test_a_communicate_failure_reaps_the_child_before_returning(
 async def test_exactly_one_side_removes_when_both_observe(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Review's blocker 2 on attempt 5f.
+    """Review's blocker 2 on attempt 5f, rescoped to what it still proves.
 
     Both flag reads can succeed: if `cancelled` and `finished` are both set
     before either side reads, each sees the other's and removes. Measured
     `REMOVE_CALL_COUNT=2` on two threads. `rmtree` is idempotent, but two retry
     loops occupy two executor threads and can both warn about one directory.
 
-    Driven through the handshake object directly, so the interleaving is exact
-    rather than hoped for.
+    **This is a unit test of the `claim()` primitive, not of exactly-once.**
+    AD-1298's lock-guarded state machine makes the two production owners
+    mutually exclusive on its own, and exactly-once is pinned to the arbiter by
+    `test_exactly_one_production_site_removes_on_a_real_cancellation` in the
+    AD-1298 file -- deleting `claim()` from all three sites leaves both files
+    green. `claim()` remains a second layer against a future site, or a retry
+    loop around an existing one, reintroducing the double removal, and this is
+    the test of that layer.
+
+    The sequence was `note_cancelled()` then `note_worker_done()`, which
+    AD-1298 made unreachable: `ABORTED` means no worker ever entered the
+    callable, so nothing can be finishing, and the arbiter now raises on it. It
+    is repointed at the reachable interleaving that produces the same
+    contention -- the worker finished and read no cancellation (BF-788's
+    measured loop-side race), so both `claim()`-guarded owners are live.
     """
     calls: list[int] = []
     monkeypatch.setattr(
@@ -903,8 +921,13 @@ async def test_exactly_one_side_removes_when_both_observe(
     )
 
     handshake = CancelCleanup()
-    handshake.cancelled.set()
-    handshake.finished.set()
+    handshake.begin_worker()
+    handshake.note_worker_done(child_reaped=True)
+    handshake.note_cancelled()
+    assert handshake.safe_to_remove, (
+        "premise: a removal must be permitted here, or `claim()` is not what "
+        "decides and this test proves nothing"
+    )
 
     barrier = threading.Barrier(2)
 
@@ -1185,9 +1208,11 @@ async def test_the_tool_passes_the_cancellation_flag(tmp_path) -> None:
         "the production request does not carry the opt-in; the fix is inert "
         f"(got {handshake!r})"
     )
-    # It must arrive unset -- a pre-set `cancelled` would remove the workdir
-    # from under artifact capture on every ordinary run.
-    assert not handshake.cancelled.is_set()
+    # It must arrive un-cancelled -- an arbiter that already believed the run
+    # was cancelled would hand the workdir to a worker that is about to finish
+    # normally, and artifact capture would read a removed directory.
+    assert handshake.caller_owns_teardown is True
+    assert handshake.safe_to_remove is True
     # And `workdir` must be absolute by the time the sandbox sees it, so both
     # cleanup sites and the child name one path regardless of process cwd.
     assert seen[0].workdir is not None

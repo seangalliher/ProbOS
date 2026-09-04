@@ -697,11 +697,17 @@ class CodeExecutionTool:
             # call is responsible for it", not "creation finished". A
             # BaseException between a successful mkdir and this line skipped
             # teardown and leaked the directory -- measured under
-            # KeyboardInterrupt. It is responsibility, not proof of ownership;
-            # exclusive creation would be that, and a UUID collision is the
-            # residual (#1305).
+            # KeyboardInterrupt.
             workdir_created = True
-            workdir.mkdir(parents=True, exist_ok=True)
+            try:
+                # AD-1298: EXCLUSIVE. This is what turns "responsible for this
+                # path" into proof of ownership, closing the UUID-collision
+                # residual (#1305) -- `exist_ok=True` would have this run
+                # adopt, and later delete, a directory another owns.
+                workdir.mkdir(parents=True, exist_ok=False)
+            except FileExistsError:
+                workdir_created = False
+                raise
             # AD-1074d: stage the thread's current documents into the workdir so
             # the script can read + modify them in place (the Cowork round-trip).
             staged: dict[str, str] = {}
@@ -906,19 +912,24 @@ class CodeExecutionTool:
                     #   holding the directory defeats it, and the escalation
                     #   below is dispatched rather than awaited, so `invoke`
                     #   can return with the directory still present.
-                    # - Cancelled and NO worker ever started: still this side.
-                    #   The queued job was cancelled outright, so no child can
-                    #   exist and nobody else will ever do it.
+                    # - Cancelled and NO worker ever entered the callable: still
+                    #   this side. AD-1298 makes that a DECISION rather than an
+                    #   observation -- the worker was aborted under the lock, so
+                    #   no child can exist and none will.
                     # - Cancelled and a worker DID start: hands off entirely.
                     #   A child may be live, and removing its files out from
                     #   under it is worse than leaving them -- measured, the
-                    #   script died with FileNotFoundError. The worker removes
-                    #   the directory in its own `finally`, normally after the
-                    #   child has exited -- not guaranteed if reaping itself
-                    #   fails (#1305).
-                    if workdir_created and not (
-                        cleanup_on_cancel.cancelled.is_set()
-                        and cleanup_on_cancel.started.is_set()
+                    #   script died with FileNotFoundError.
+                    #
+                    # AD-1298: `safe_to_remove` is the third question, and both
+                    # owners ask it. A child that outlived its reap still holds
+                    # this directory, so removing it here would be the very
+                    # corruption the hand-off exists to prevent.
+                    if (
+                        workdir_created
+                        and cleanup_on_cancel.caller_owns_teardown
+                        and cleanup_on_cancel.safe_to_remove
+                        and cleanup_on_cancel.claim()
                     ):
                         shutil.rmtree(workdir, ignore_errors=True)
                         if _still_present(workdir):

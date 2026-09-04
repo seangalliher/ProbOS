@@ -100,7 +100,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -148,47 +148,196 @@ class LaunchOutcome:
     launched: bool = False
 
 
+class CleanupState(Enum):
+    """AD-1298: the single field that decides who removes the scratch dir."""
+
+    QUEUED = "queued"      # submitted; no worker has entered the callable
+    ABORTED = "aborted"    # the caller got there first -- no child will exist
+    RUNNING = "running"    # a worker is inside the callable; a child may exist
+    REAPED = "reaped"      # the worker is done and no child survives it
+    UNSAFE = "unsafe"      # the worker is done but a child could NOT be reaped
+
+
+_TERMINAL_STATES = frozenset({CleanupState.REAPED, CleanupState.UNSAFE})
+
+
 @dataclass
 class CancelCleanup:
-    """Ownership handshake for removing a scratch dir after a cancelled run.
+    """Ownership arbiter for removing a scratch dir after a cancelled run.
 
-    BF-788: the worker outlives the cancelled await, so it is usually the only
-    place that can remove the directory once the child releases it. But a
-    single flag races -- the worker can read it in the instant before the loop
-    sets it, and then neither side cleans up. Each side publishes its own flag
-    before reading the other's, so the one that observes last does the work.
-    The loop side removes when the worker got there first, and the caller
-    removes when no worker ever ran, so the worker is the common owner rather
-    than the only one.
+    AD-1298 (#1305): BF-788 arbitrated with three ``Event``s, and ten review
+    rounds each closed one seam and found another at the same seam. The reason
+    is structural -- separate flags cannot be read as one decision, so every
+    reader had to reconstruct the state from a sequence of independent
+    observations and each reconstruction had a different hole. The decisive one
+    was the start boundary: ``ThreadPoolExecutor`` makes a future uncancellable
+    BEFORE it invokes the callable, so a cancel could land on a job that was
+    already RUNNING while ``started`` was still clear. Measured natural
+    frequency ``30/5996`` cancels, with no artificial gating; the caller then
+    deleted the directory beside a child that was about to use it.
 
-    ``started`` answers a different question: whether a worker has ENTERED
-    ``_run_sync``. When the executor is saturated, cancelling the awaiting task
-    cancels the QUEUED job outright and ``_run_sync`` never runs, so nobody
-    would ever publish ``finished``. The caller must own removal in that case
-    -- and must NOT own it otherwise, because removing while a child is live
-    deletes the files it is using (measured: the script died with
-    FileNotFoundError).
+    So there is one lock over one field:
 
-    NOT airtight: a ThreadPoolExecutor future stops being cancellable slightly
-    BEFORE it invokes the callable, so there is a window where the job is
-    running but ``started`` is still clear. Filed; HEAD removes unconditionally
-    and corrupts in that same window.
+        QUEUED -> {ABORTED | RUNNING} -> {REAPED | UNSAFE}
+
+    Whoever takes the lock first decides, and **the loser adapts instead of
+    guessing**. The caller never has to know whether the future was still
+    cancellable -- it only needs the worker to honour the decision, which the
+    worker does by re-reading the state as the first thing it does.
+
+    The right-hand states are FINAL and the graph is enforced rather than
+    merely drawn: an arbiter belongs to one run and is not reusable. Before
+    that was checked, ``UNSAFE -> begin_worker() -> RUNNING -> REAPED`` was
+    reachable, which un-recorded a live child and handed the directory back to
+    a remover. See :meth:`_reject_if_terminal`.
+
+    ``ABORTED`` is a DEFINITE "no child will ever exist", which is strictly
+    better evidence than a bounded wait that can only expire into "unknown".
     """
 
-    cancelled: threading.Event = field(default_factory=threading.Event)
-    finished: threading.Event = field(default_factory=threading.Event)
-    started: threading.Event = field(default_factory=threading.Event)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _state: CleanupState = CleanupState.QUEUED
+    _cancelled: bool = False
     _claimed: bool = False
 
-    def claim(self) -> bool:
-        """Take ownership of the removal. First caller wins; the rest decline.
+    # -- arbitration ------------------------------------------------
 
-        The two flag reads can BOTH succeed: if `cancelled` and `finished` are
-        set before either side reads, each sees the other's and removes.
-        Measured `REMOVE_CALL_COUNT=2` on separate threads. `rmtree` is
-        idempotent, but two retry loops occupy two executor threads and can
-        both warn about the same directory.
+    def note_cancelled(self) -> bool:
+        """The awaiting caller was cancelled. True => NO worker will clean up.
+
+        ``ABORTED`` means nothing was spawned and nothing will be, so the side
+        that created the directory owns it. A terminal state means the worker
+        has already been past its own check and has gone, so the caller side
+        owns it for a different reason. Only ``RUNNING`` hands off.
+        """
+        with self._lock:
+            self._cancelled = True
+            if self._state is CleanupState.QUEUED:
+                self._state = CleanupState.ABORTED
+                return True
+            return self._state in _TERMINAL_STATES
+
+    def begin_worker(self) -> bool:
+        """First effectful operation inside the executor callable. False => do
+        not spawn.
+
+        ``_run_sync`` reads ``request.cleanup_on_cancel`` on the line above
+        this call, so it is not literally the first statement -- but that read
+        creates nothing and can be undone by nobody, so the property still
+        holds: **nothing can have been created by the time the caller's abort
+        is honoured.** An earlier revision claimed "first statement", which was
+        overbroad in exactly the way this change exists to stop.
+        """
+        with self._lock:
+            if self._state is CleanupState.ABORTED:
+                return False
+            self._reject_if_terminal("begin_worker")
+            self._state = CleanupState.RUNNING
+            return True
+
+    def note_worker_done(self, *, child_reaped: bool) -> bool:
+        """The worker is leaving. True => the worker owns the removal.
+
+        A terminal state is never overwritten. ``UNSAFE`` stickiness is the
+        case with a live caller: :meth:`mark_unsafe` records a reap failure
+        mid-run and ``_run_sync``'s ``finally`` then reports whatever it can
+        see, which on a propagating ``BaseException`` is nothing. Reporting
+        again after ``REAPED`` is the same shape and is ignored for the same
+        reason -- the arbiter's answer already stands, so this only re-reads
+        who owns teardown.
+
+        ``ABORTED`` raises instead, because no worker ever entered the
+        callable, so there is no worker to be finishing. That is unreachable
+        from ``_run_sync`` -- it returns before this ``try`` when
+        :meth:`begin_worker` says no -- and reaching it means the arbiter is
+        being driven by something that has lost track of which run it belongs
+        to.
+        """
+        with self._lock:
+            if self._state is CleanupState.ABORTED:
+                raise RuntimeError(
+                    "AD-1298: note_worker_done() on an aborted run -- no "
+                    "worker entered the callable, so nothing can be finishing"
+                )
+            if self._state not in _TERMINAL_STATES:
+                self._state = (
+                    CleanupState.REAPED if child_reaped else CleanupState.UNSAFE
+                )
+            return self._cancelled
+
+    def mark_unsafe(self, reason: str) -> None:
+        """A child could not be confirmed dead, so nothing may remove the dir.
+
+        Warning and then deleting anyway is the original corruption with a log
+        line added -- both cleanup owners consult :attr:`safe_to_remove`.
+        """
+        with self._lock:
+            if self._state is CleanupState.UNSAFE:
+                return  # already recorded; re-reporting one fact is not a move
+            self._reject_if_terminal("mark_unsafe")
+            self._state = CleanupState.UNSAFE
+        logger.warning(
+            "AD-1298: sandbox scratch dir will NOT be removed -- %s", reason,
+        )
+
+    def _reject_if_terminal(self, attempted: str) -> None:
+        """Terminal means terminal. Caller must already hold ``_lock``.
+
+        Measured before this guard existed: ``UNSAFE -> begin_worker() ->
+        RUNNING -> REAPED, safe_to_remove=True``. A reused arbiter could
+        therefore un-record a live child and hand the directory back to a
+        remover, which is the one thing ``UNSAFE`` exists to prevent. It
+        raises rather than degrading because it guards a data-integrity
+        property and no production path reaches it -- one arbiter is
+        constructed per ``invoke``, and each is driven by exactly one worker.
+        """
+        if self._state in _TERMINAL_STATES:
+            raise RuntimeError(
+                f"AD-1298: {attempted}() attempted on a "
+                f"{self._state.value!r} arbiter; terminal states are final "
+                "and an arbiter is not reusable across runs"
+            )
+
+    # -- what each cleanup site asks --------------------------------
+
+    @property
+    def safe_to_remove(self) -> bool:
+        """False once a child has outlived a reap attempt."""
+        with self._lock:
+            return self._state is not CleanupState.UNSAFE
+
+    @property
+    def caller_owns_teardown(self) -> bool:
+        """True when the side that CREATED the directory should remove it.
+
+        That is every uncancelled run (artifact capture reads the directory
+        after ``run()`` returns, so this is the ordinary path) plus a cancel
+        that aborted the job before any worker entered it.
+        """
+        with self._lock:
+            return not self._cancelled or self._state is CleanupState.ABORTED
+
+    # -- de-duplication ---------------------------------------------
+
+    def claim(self) -> bool:
+        """Take the removal. First claimant wins; the rest decline.
+
+        **Not the exactly-once mechanism.** The lock-guarded state above makes
+        the owners mutually exclusive by construction, and that is what the
+        exactly-once test is pinned to -- deleting this method from all three
+        sites leaves the suite green, while mutating the arbiter turns it red.
+        Under BF-788's flags it WAS load-bearing: ``cancelled`` and
+        ``finished`` could both be observed set and both sides removed
+        (measured ``REMOVE_CALL_COUNT=2`` on separate threads). It is kept as a
+        second layer because three sites read the same directory and a future
+        one -- or a retry loop around an existing one -- must not be able to
+        reintroduce that.
+
+        There is deliberately no ``release()``. A claimant that hands a claim
+        back needs a token proving it is the claimant; an ownerless reset is a
+        way for a losing site to take the directory from the winner, which is
+        the failure it would be there to prevent. It comes back with the
+        recovery path that needs it, not before.
         """
         with self._lock:
             if self._claimed:
@@ -389,6 +538,15 @@ class ExecutionResult:
     tier: int = int(IsolationTier.SUBPROCESS)
     error: str = ""
     workdir: str = ""
+    # AD-1298: False only when a child outlived a kill-and-wait, i.e. the
+    # workdir is STILL IN USE despite this result existing. Defaults True so
+    # every path that never spawned reads as before, and every enumerated
+    # in-repo consumer maps explicit fields rather than the whole object. Not
+    # "byte-identical": this is a dataclass, so `repr()` and
+    # `dataclasses.asdict()` both gained a key, and anything that snapshots
+    # one of those wholesale -- a log line, a serialised audit payload -- sees
+    # the difference.
+    child_reaped: bool = True
 
 
 @runtime_checkable
@@ -486,17 +644,29 @@ class SubprocessSandbox:
             return await loop.run_in_executor(None, self._run_sync, request)
         except asyncio.CancelledError:
             cleanup = request.cleanup_on_cancel
-            if cleanup is not None:
-                cleanup.cancelled.set()
-                # The worker publishes `finished` BEFORE reading `cancelled`.
-                # If it is already visible, the worker has been past its check
-                # and will not clean up -- so this side owns it. Handing it to
-                # the executor keeps the sleep off the loop.
-                if (
-                    cleanup.finished.is_set()
-                    and request.workdir is not None
+            if cleanup is not None and cleanup.note_cancelled():
+                # True means no worker will do the teardown -- but for two
+                # different reasons, and they need different handling.
+                if cleanup.caller_owns_teardown:
+                    # ABORTED. The worker honours this and returns before
+                    # `Popen`, so the launch question has a DEFINITE answer
+                    # now. AD-1247 recorded "unknown" here after a bounded wait
+                    # that could only ever expire; a known zero is strictly
+                    # better evidence, and this is a deliberate change to that
+                    # contract.
+                    if request.launch_outcome is not None:
+                        request.launch_outcome.resolved.set()
+                    # The directory is left to whoever created it, which
+                    # removes it synchronously. Dispatching from here would
+                    # queue behind a saturated executor -- and a saturated
+                    # executor is exactly why the job was still QUEUED.
+                elif (
+                    request.workdir is not None
+                    and cleanup.safe_to_remove
                     and cleanup.claim()
                 ):
+                    # The worker has already been past its own check and gone.
+                    # Handing this to the executor keeps the sleep off the loop.
                     try:
                         loop.run_in_executor(None, _remove_workdir, request.workdir)
                     except RuntimeError:
@@ -512,40 +682,55 @@ class SubprocessSandbox:
 
     def _run_sync(self, request: ExecutionRequest) -> ExecutionResult:
         cleanup = request.cleanup_on_cancel
-        if cleanup is not None:
-            # BF-788: FIRST statement. From here a child may come to exist, so
-            # the caller must stop treating the directory as its own. A queued
-            # job that was cancelled never reaches this line, which is exactly
-            # the distinction the caller needs.
-            cleanup.started.set()
+        if cleanup is not None and not cleanup.begin_worker():
+            # AD-1298: the first EFFECTFUL operation in the callable. The
+            # `cleanup_on_cancel` read above it is not one -- it creates
+            # nothing, so the property that makes the caller's abort safe
+            # (nothing can exist yet when it is honoured) still holds. The
+            # test that guards this window wraps exactly this callable, so
+            # putting anything that touches the filesystem or spawns above
+            # this line silently stops it discriminating. The caller took the
+            # lock first and aborted the job, so it owns the directory and may
+            # already have removed it. Returning HERE is what makes that safe:
+            # the worker honours the decision rather than each side guessing
+            # what the other saw.
+            if request.launch_outcome is not None:
+                request.launch_outcome.resolved.set()
+            return ExecutionResult(
+                success=False,
+                error="cancelled before launch",
+                tier=int(self.tier),
+                workdir=str(request.workdir) if request.workdir else "",
+            )
+        result: ExecutionResult | None = None
         try:
-            return self._run_sync_inner(request)
+            result = self._run_sync_inner(request)
+            return result
         finally:
             # AD-1247: the launch question ALWAYS gets an answer, on every exit
             # path including the ones that never reached Popen. A caller
             # unwinding under cancellation is waiting on this.
             if request.launch_outcome is not None:
                 request.launch_outcome.resolved.set()
-            # BF-788: normally reached after the child has exited, which is the
-            # earliest moment a Windows handle can be released. An abnormal
-            # `communicate()` now kills and reaps the child first; if that
-            # reaping itself fails, this can still run beside a live process
-            # (filed -- HEAD has the same hazard and does not even try).
-            #
-            # `finished` is published FIRST. The two ordered checks are what
-            # close the race: whichever side observes the other's flag last
-            # performs the removal, so neither can skip it believing the other
-            # will. `claim()` then ensures only ONE of them acts when both
-            # observe.
-            cleanup = request.cleanup_on_cancel
+            # AD-1298: normally reached after the child has exited, which is
+            # the earliest moment a Windows handle can be released. An abnormal
+            # `communicate()` kills and reaps the child first; when that reap
+            # FAILS the state is already UNSAFE and nothing here removes
+            # anything. `result is None` means an exception unwound past the
+            # degrade arm, and any reap failure on that path has already been
+            # recorded -- `note_worker_done` will not clear it.
             if cleanup is not None:
-                cleanup.finished.set()
+                worker_owns = cleanup.note_worker_done(
+                    child_reaped=(result is None or result.child_reaped),
+                )
                 if (
-                    cleanup.cancelled.is_set()
+                    worker_owns
                     and request.workdir is not None
+                    and cleanup.safe_to_remove
                     and cleanup.claim()
                 ):
                     _remove_workdir(request.workdir)
+
     def _run_sync_inner(self, request: ExecutionRequest) -> ExecutionResult:
         started = time.monotonic()
         created_workdir = request.workdir is None
@@ -576,6 +761,12 @@ class SubprocessSandbox:
                 success=False, error=f"could not create scratch dir: {exc}",
             )
 
+        # AD-1298: read by BOTH the normal return and the degrade arm below, so
+        # a failure after a timeout still reports the timeout, and a child that
+        # outlived its reap is still reported as unreaped.
+        timed_out = False
+        child_reaped = True
+        cleanup = request.cleanup_on_cancel
         try:
             argv = self._build_argv(request, workdir)
             if argv is None:
@@ -610,28 +801,34 @@ class SubprocessSandbox:
                 request.launch_outcome.resolved.set()
             try:
                 out_b, err_b = proc.communicate(timeout=request.timeout_seconds)
-                timed_out = False
             except subprocess.TimeoutExpired:
-                self._kill(proc)
-                out_b, err_b = proc.communicate()
+                # AD-1298: set BEFORE the retry. The retry used to sit outside
+                # every handler, so a failure in it lost `timed_out=True` on
+                # the way out and the degraded result described the run as
+                # something other than the timeout it was.
                 timed_out = True
+                self._kill(proc)
+                try:
+                    out_b, err_b = proc.communicate()
+                except BaseException:
+                    child_reaped = self._terminate_and_reap(proc)
+                    if not child_reaped and cleanup is not None:
+                        cleanup.mark_unsafe(
+                            f"child {proc.pid} survived the post-timeout reap",
+                        )
+                    raise
             except BaseException:
                 # BF-788: any other failure here (a pipe error, a cancellation
                 # unwinding the thread) would otherwise return with the child
                 # STILL RUNNING, and every caller treats return as "the child
                 # is gone" -- cleanup then deletes files out from under it.
                 # Measured on both HEAD and this branch: the script saw
-                # FileNotFoundError. Reap it before returning. If the reap
-                # itself fails the hazard remains, which is why that path warns
-                # rather than pretending (filed).
-                self._kill(proc)
-                try:
-                    proc.wait(timeout=5)
-                except Exception:  # noqa: BLE001 — already failing; best effort
-                    logger.warning(
-                        "BF-788: sandbox child %s did not exit after being "
-                        "killed; its workdir may still be in use.", proc.pid,
-                    )
+                # FileNotFoundError. AD-1298: when the reap itself fails the
+                # hazard is now RECORDED rather than warned about and then
+                # deleted through anyway.
+                child_reaped = self._terminate_and_reap(proc)
+                if not child_reaped and cleanup is not None:
+                    cleanup.mark_unsafe(f"child {proc.pid} survived the reap")
                 raise
 
             cap = request.max_output_bytes
@@ -648,6 +845,7 @@ class SubprocessSandbox:
                 tier=int(self.tier),
                 error=("timed out" if timed_out else ""),
                 workdir=str(workdir),
+                child_reaped=child_reaped,
             )
         except Exception as exc:  # honest-degrade; BF-781: cancellation still propagates
             logger.warning(
@@ -656,9 +854,29 @@ class SubprocessSandbox:
             )
             return ExecutionResult(
                 success=False, error=repr(exc), workdir=str(workdir),
+                # AD-1298: this arm converts the reaping handlers' re-raise
+                # straight back into a result, and every caller reads a result
+                # as "the child is gone". Carry what was actually established.
+                timed_out=timed_out, child_reaped=child_reaped,
             )
         finally:
-            if created_workdir:
+            if created_workdir and not child_reaped:
+                # AD-1298: neither `CancelCleanup` owner can see this
+                # directory -- both are gated on `request.workdir is not
+                # None`, and this branch is exactly the case where it IS None.
+                # So the UNSAFE state does not reach here and the guard has to
+                # be the local fact. Without it the exported default path
+                # deletes beside a live child: on POSIX that is the child's
+                # own cwd, and on Windows it spends the whole ~9s retry budget
+                # on a directory already known to be held.
+                logger.warning(
+                    "AD-1298: sandbox-owned scratch dir %s will NOT be removed "
+                    "-- a child outlived its reap and still holds it, so "
+                    "deleting it now would take files from a live process. It "
+                    "may remain on disk.",
+                    workdir,
+                )
+            elif created_workdir:
                 # BF-840: was a one-shot ``shutil.rmtree(ignore_errors=True)``.
                 # ``ExecutionRequest.workdir`` defaults to None and this class
                 # is exported, so this branch belongs to any caller that lets
@@ -782,3 +1000,25 @@ class SubprocessSandbox:
                 proc.kill()
             except OSError:
                 pass
+
+    def _terminate_and_reap(self, proc: subprocess.Popen) -> bool:
+        """Kill the child and CONFIRM it is gone. True only when it really is.
+
+        AD-1298: the previous version warned and returned, and the degrade arm
+        above turned the re-raise straight back into an ``ExecutionResult`` --
+        which every caller reads as "the child is gone", so cleanup then
+        deleted files beside a live process. Warning and then deleting is the
+        original corruption with a log line added; the answer has to reach the
+        cleanup decision, not just the log.
+        """
+        try:
+            self._kill(proc)
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001 — already unwinding; best effort
+            logger.warning(
+                "AD-1298: sandbox child %s did not exit after being killed; "
+                "its workdir is still in use and must not be removed.",
+                proc.pid,
+            )
+            return False
+        return True
