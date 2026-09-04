@@ -193,8 +193,6 @@ async def cmd_watch(runtime: ProbOSRuntime, console: Console, args: str) -> None
     console.print(f"[bold]Current Watch:[/bold] {status['current_watch'].upper()}")
     console.print(f"  Time-appropriate: {status['time_appropriate_watch'].upper()}")
     console.print(f"  On duty: {len(status['on_duty'])} agent(s)")
-    console.print(f"  Standing tasks: {status['standing_tasks_count']}")
-    console.print(f"  Active orders: {status['active_orders_count']}")
     console.print()
     for watch, agents in status['roster'].items():
         count = len(agents)

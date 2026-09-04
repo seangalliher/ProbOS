@@ -1070,8 +1070,10 @@ class IntentBus:
         ``[]``, ``dispatch_async`` no-ops -- so none of the 35 call seams sees
         a type it did not already handle. Those seams are 14 ``send``, 19
         ``broadcast``, one ``dispatch_async`` and one ``publish`` (the alias
-        that forwards ``**kwargs`` to ``broadcast``; do not omit it, its
-        WatchManager consumer is a real one). Raising unconditionally was tried
+        that forwards ``**kwargs`` to ``broadcast``; AD-1251 deleted its only
+        consumer, the WatchManager dispatch bridge, so it now has no producer
+        in ``src`` -- do not omit it from a future enumeration on that basis).
+        Raising unconditionally was tried
         and rejected: ``IntentAuthorizationDenied`` subclasses
         ``PermissionError``, so 14 of those seams sit inside a broad
         ``except Exception`` that swallows it, which relocates the defect
@@ -1308,9 +1310,30 @@ class IntentBus:
         AD-1297: ``raise_on_no_subscriber=True`` opts into
         ``IntentNoSubscriber`` when NOBODY -- locally or across federation --
         could have run this. Default ``False``, so every existing caller sees
-        the shape it always did. Only the watch bridge asks, because only it
-        must tell "delivered to nobody" from "delivered and returned nothing"
-        before consuming a one-shot Captain's order.
+        the shape it always did.
+
+        FAN-OUT ONLY. The predicate sits at the END of this method, so it is
+        reachable through ``broadcast`` and through ``publish`` (which aliases
+        it), and NOT through a targeted dispatch: an intent carrying
+        ``target_agent_id`` returns from the ``send`` branch below, which is
+        never handed this flag. Measured -- a targeted broadcast at an
+        unsubscribed agent with ``raise_on_no_subscriber=True`` returns ``[]``.
+
+        AD-1251 deleted the watch bridge that was its only production caller,
+        so nothing in ``src`` passes it today. Two stated reasons it is
+        retained, neither of them a hypothetical future consumer: ``broadcast``
+        is public API and ``publish`` forwards ``**kwargs`` into it, so
+        dropping the keyword breaks any out-of-tree caller already passing it;
+        and this flag is the ONLY reader of AD-1297's federation-admission
+        counters, so removing it strands the rule that a peer answering "no
+        candidate" is a known zero while a silent peer is UNKNOWN -- the rule
+        that stops a retry duplicating a remote side effect.
+
+        Cost when unused is near-zero but NOT zero. Only the final ``if``
+        short-circuits on the flag; the counters it reads are computed on every
+        broadcast. Measured on the default path with a federation handler
+        wired: ``self._federation_fn`` is evaluated for truth, called, and both
+        ``peers_admitted`` and ``peers_unknown`` are read off its return.
         """
         # BF-296: shutdown gate. Honest-degrade — return empty result list
         # so callers see "no agent responded" rather than an exception, which
@@ -1530,7 +1553,11 @@ class IntentBus:
         return results
 
     async def publish(self, intent: IntentMessage, **kwargs: Any) -> list[IntentResult]:
-        """Alias for broadcast() — used by WatchManager dispatch (runtime.py:689)."""
+        """Alias for broadcast().
+
+        AD-1251 deleted its only ``src`` caller (the WatchManager dispatch
+        bridge). Kept as a public alias; behaviour is unchanged.
+        """
         return await self.broadcast(intent, **kwargs)
 
     async def dispatch_async(

@@ -1152,10 +1152,15 @@ def test_json_report_carries_the_categories_block(tmp_path: Path) -> None:
     assert document["schema_version"] == 1
     assert document["generated_by"] == "scripts/check_architecture_principles.py"
     categories = document["categories"]
+    # AD-1251 took this from 93 to 92: deleting WatchManager's dispatch half
+    # dropped the class from 22 methods to 13, below the SRP trigger, so its
+    # frozen srp-size row had to go with it or the symmetric-difference gate
+    # fails on a stale row. Updated, not deleted -- the pair still pins that
+    # `current` and `baseline` agree, which is what catches unreviewed drift.
     assert categories["srp-size"] == {
         "mode": "gating",
-        "current": 93,
-        "baseline": 93,
+        "current": 92,
+        "baseline": 92,
     }
     assert categories["layer-import"]["current"] == 0
     assert categories["private-access"]["mode"] == "report-only"

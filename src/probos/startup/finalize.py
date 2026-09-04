@@ -3577,7 +3577,6 @@ async def finalize_startup(
         conn_manager = ConnManager()
         night_orders_mgr = NightOrdersManager()
         watch_manager = WatchManager(
-            dispatch_fn=runtime._dispatch_watch_intent,
             check_interval=30.0,
         )
         # Wire watch_manager early so _populate_watch_roster() can find it

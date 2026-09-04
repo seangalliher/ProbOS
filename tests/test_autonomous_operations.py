@@ -16,7 +16,6 @@ import pytest
 from probos.conn import ConnManager, ConnState
 from probos.runtime import ProbOSRuntime
 from probos.watch_rotation import (
-    CaptainOrder,
     NightOrders,
     NightOrdersManager,
     WatchManager,
@@ -265,39 +264,16 @@ class TestWatchBill:
             result = wm.auto_rotate()
             assert result is None
 
-    def test_night_order_expiry_in_dispatch(self):
-        """Create an expired Night Order CaptainOrder. Call _expire_night_orders(). Verify active=False."""
-        wm = WatchManager()
-        order = CaptainOrder(
-            id="no-1",
-            target="engineering",
-            target_type="department",
-            description="Night monitoring",
-            is_night_order=True,
-            ttl_seconds=1.0,
-            created_at=time.time() - 100,
-            expires_at=time.time() - 50,  # Already expired
-        )
-        wm.issue_order(order)
-        assert order.active is True
-
-        wm._expire_night_orders()
-        assert order.active is False
-
     def test_watch_status_report(self):
-        """Populate roster, add standing tasks. Verify get_watch_status() returns correct counts."""
+        """Populate roster. Verify get_watch_status() reports the on-duty set."""
         wm = WatchManager()
         wm.assign_to_watch("a1", WatchType.ALPHA)
         wm.assign_to_watch("a2", WatchType.ALPHA)
         wm.assign_to_watch("a3", WatchType.BETA)
 
-        from probos.watch_rotation import StandingTask
-        wm.add_standing_task(StandingTask(id="t1", department="eng", enabled=True))
-
         status = wm.get_watch_status()
         assert status["current_watch"] == "alpha"
         assert len(status["on_duty"]) == 2  # a1, a2 on ALPHA
-        assert status["standing_tasks_count"] == 1
         assert "roster" in status
 
 
@@ -333,23 +309,6 @@ class TestIntegration:
         conn_mgr.return_conn()
         night_mgr.expire()  # Simulating shell behavior
         assert not night_mgr.active
-
-    def test_captain_order_night_order_ttl(self):
-        """Create CaptainOrder with is_night_order=True, expired. Verify is_expired()."""
-        order = CaptainOrder(
-            id="co-1",
-            target="all",
-            description="Night patrol",
-            is_night_order=True,
-            ttl_seconds=1.0,
-            created_at=time.time() - 100,
-            expires_at=time.time() - 50,
-        )
-        assert order.is_expired() is True
-
-        # Non-night orders never expire via TTL
-        normal_order = CaptainOrder(id="co-2", target="all")
-        assert normal_order.is_expired() is False
 
 
 # ── Execution path tests ────────────────────────────────────────────
@@ -522,19 +481,3 @@ class TestNightOrdersStatus:
         assert status["template"] == "maintenance"
         assert status["instructions_count"] == 2
         assert "remaining_hours" in status
-
-
-class TestCaptainOrderBackcompat:
-    """Ensure CaptainOrder backward compatibility — new fields have defaults."""
-
-    def test_defaults(self):
-        order = CaptainOrder(id="test")
-        assert order.is_night_order is False
-        assert order.ttl_seconds == 28800.0
-        assert order.expires_at == 0.0
-        assert order.template == ""
-        assert order.is_expired() is False
-
-    def test_night_order_not_expired_when_expires_at_zero(self):
-        order = CaptainOrder(id="test", is_night_order=True, expires_at=0)
-        assert order.is_expired() is False

@@ -1042,14 +1042,6 @@ violations:
   rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
   review_by: AD-1270h closeout
 - category: srp-size
-  key: probos.watch_rotation::WatchManager
-  triggers:
-  - methods
-  disposition: debt
-  owner: AD-1270h
-  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
-  review_by: AD-1270h closeout
-- category: srp-size
   key: probos.workforce::WorkItemStore
   triggers:
   - lines

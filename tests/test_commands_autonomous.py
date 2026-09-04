@@ -83,8 +83,6 @@ class TestCommandsAutonomous:
             "current_watch": "morning",
             "time_appropriate_watch": "morning",
             "on_duty": ["a1"],
-            "standing_tasks_count": 0,
-            "active_orders_count": 0,
             "roster": {"morning": ["a1"], "afternoon": []},
         }
         mock_runtime.watch_manager = mgr
