@@ -369,9 +369,14 @@ class TestTheCheckIsNotHoistedAboveTheBranch:
                     wirings.append(ast.unparse(kw.value))
         assert wirings, "no production Dispatcher(dispatch_async_fn=...) wiring found"
         for expr in wirings:
-            assert expr.endswith(".dispatch_async"), (
-                f"Dispatcher is wired with {expr!r}, which may not authorize; "
-                f"the delegating arm relies on the delegate evaluating AD-698"
+            assert expr == "_dispatch_async", (
+                f"Dispatcher is wired with {expr!r}. BF-811 (#1275) replaced the "
+                "former '.dispatch_async' suffix assertion here: a suffix proves "
+                "spelling, not identity, and an unauthorized lookalike was "
+                "measured delivering with zero policy calls and accepted=1. The "
+                "delegate must now be the local that finalize.py identity-checks "
+                "against IntentBus.dispatch_async before construction; that check "
+                "is pinned by tests/test_bf811_dispatcher_delegate_identity.py."
             )
 
         bus_src = inspect.getsource(IntentBus.dispatch_async)

@@ -11,6 +11,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable
 from datetime import datetime, timezone
+from types import MethodType
 from typing import TYPE_CHECKING, Any, Callable
 
 from probos.startup.results import FinalizationResult
@@ -21,6 +22,42 @@ if TYPE_CHECKING:
     from probos.config import SystemConfig
 
 logger = logging.getLogger(__name__)
+
+
+def is_authorizing_dispatch_delegate(delegate: Any, bus: Any) -> bool:
+    """BF-811: is `delegate` genuinely `bus.dispatch_async` on a real IntentBus?
+
+    `Dispatcher`'s delegating arm deliberately does not evaluate AD-698 --
+    checking there too would charge a stateful hook twice per intent -- so it
+    trusts its delegate to have done so. Nothing in the `Callable[..., Any]`
+    parameter type expresses that, and no source-level check can: three static
+    AST designs were defeated during review by aliases, qualified names,
+    `functools.partial`, subclasses and `**kwargs`, while also failing on
+    legitimate code.
+
+    All three clauses are load-bearing, and review defeated weaker versions by
+    execution:
+
+    * `__func__` alone is not enough -- a bound method of a *different*
+      `IntentBus` instance satisfies it and was measured delivering through the
+      wrong bus (``other_policy_calls 1``).
+    * `__self__` alone is not enough -- an override or unrelated method on the
+      right object would pass.
+    * `isinstance(..., MethodType)` closes a plain object carrying a forged
+      ``__func__`` attribute, which was also measured passing.
+
+    This assumes an untampered `IntentBus`: comparing against the mutable class
+    attribute cannot detect same-process monkeypatching of the class itself, and
+    a subclass that merely *inherits* `dispatch_async` is accepted, since it is
+    the same function object.
+    """
+    from probos.mesh.intent import IntentBus
+
+    return (
+        isinstance(delegate, MethodType)
+        and delegate.__self__ is bus
+        and delegate.__func__ is IntentBus.dispatch_async
+    )
 
 
 def _wire_anomaly_window(*, runtime: Any, config: "SystemConfig") -> bool:
@@ -4890,11 +4927,24 @@ async def finalize_startup(
             # AD-654c: Create Dispatcher
             from probos.activation.dispatcher import Dispatcher
 
+            # BF-811: the delegating arm does not evaluate AD-698, so it trusts
+            # this delegate to have done so. Only identity can establish that;
+            # see is_authorizing_dispatch_delegate for why each clause matters.
+            _dispatch_async = _intent_bus.dispatch_async
+            if not is_authorizing_dispatch_delegate(_dispatch_async, _intent_bus):
+                raise RuntimeError(
+                    "BF-811: the Dispatcher delegate is not "
+                    "IntentBus.dispatch_async bound to this bus, so the "
+                    "delegating arm would dispatch without evaluating AD-698. "
+                    "Refusing to wire a dispatcher that can deliver "
+                    "unauthorized intents."
+                )
+
             dispatcher = Dispatcher(
                 registry=runtime.registry,
                 ontology=runtime.ontology,
                 get_queue=_intent_bus._get_agent_queue,
-                dispatch_async_fn=_intent_bus.dispatch_async,
+                dispatch_async_fn=_dispatch_async,
                 emit_event=runtime.emit_event,
             )
             runtime.dispatcher = dispatcher
