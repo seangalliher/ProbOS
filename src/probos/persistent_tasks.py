@@ -317,7 +317,33 @@ class PersistentTaskStore(EventEmitterMixin):
     # ------------------------------------------------------------------
 
     async def resume_dag(self, dag_id: str) -> dict[str, Any]:
-        """Resume a stale DAG checkpoint by re-feeding it to process_fn.
+        """Resume a stale DAG checkpoint by re-feeding its source text.
+
+        BF-817 (#1281) recorded the decision this method embodies, because the
+        checkpoint machinery's shape implied a guarantee this path does not
+        deliver. `checkpoint.py` faithfully serialises every node, including
+        `use_consensus`, and `restore_dag` faithfully rebuilds it -- but resume
+        does NOT continue that plan. It re-decomposes from `source_text`.
+
+        That is deliberate, not an oversight. A checkpoint can be arbitrarily
+        stale, and ship state may have moved underneath it; re-planning against
+        current reality is the safer recovery. The cost is stated rather than
+        hidden: decomposition is an LLM call and is not deterministic, so the
+        plan after resume may differ from the plan before it, and **any node
+        that already completed will run again**. If such a node had a side
+        effect, that side effect repeats.
+
+        `restore_dag` is therefore still called, but for an honest reason
+        rather than to be discarded: it reports how much completed work is
+        about to be redone, which is the part an operator needs to know.
+
+        It is NOT a validity check, and this docstring said so in an earlier
+        draft until a test disproved it. `DAGCheckpoint` fields default, so a
+        structurally empty or unrecognised checkpoint restores as a DAG with
+        zero nodes and resume proceeds to re-decompose anyway. Claiming
+        validation here would repeat exactly the defect BF-817 is about --
+        machinery whose description asserts a property the path does not
+        deliver.
 
         Returns the result from process_fn or an error dict.
         """
@@ -333,14 +359,26 @@ class PersistentTaskStore(EventEmitterMixin):
 
         try:
             checkpoint = load_checkpoint(checkpoint_path)
-            dag, results = restore_dag(checkpoint)
+            # BF-817: a count of what re-decomposition will redo. Not a
+            # validity check -- see the docstring.
+            _restored_dag, completed_results = restore_dag(checkpoint)
         except Exception as e:
             return {"error": f"Failed to restore checkpoint: {e}"}
 
         if not self._process_fn:
             return {"error": "No process function configured"}
 
+        redone = len(completed_results)
         logger.info("Resuming DAG %s: '%s'", dag_id[:8], checkpoint.source_text[:60])
+        if redone:
+            logger.warning(
+                "BF-817: DAG %s is being resumed by RE-DECOMPOSING its source "
+                "text, not by continuing its checkpointed plan, so %d already "
+                "completed node(s) will run again and any side effects they "
+                "had will repeat. The new plan may also differ from the "
+                "checkpointed one, because decomposition is an LLM call.",
+                dag_id[:8], redone,
+            )
 
         try:
             result = await self._process_fn(
@@ -352,6 +390,7 @@ class PersistentTaskStore(EventEmitterMixin):
             self._emit(EventType.SCHEDULED_TASK_DAG_RESUMED, {
                 "dag_id": dag_id,
                 "source_text": checkpoint.source_text[:100],
+                "completed_nodes_redone": redone,
                 "result": str(result)[:200],
             })
             return {"success": True, "dag_id": dag_id, "result": result}
