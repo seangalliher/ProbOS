@@ -55,16 +55,24 @@ chain instance. But each instance runs independently: a Ward Room reply, a proac
 duty cycle, a DM exchange, and a game move can all be in flight simultaneously. Without
 a unification layer, these parallel thoughts are strangers sharing a brain.
 
-### 2.2 How This Differs from Typical Multi-Agent Frameworks
+### 2.2 How This Differs from Step-Composed Multi-Agent Orchestration
 
-Most multi-agent systems (AutoGen, CrewAI, LangGraph) treat agents as stateless
-functions — call an agent, get a response, move on. No persistent identity, no
-concurrent processing within a single agent, no need for intra-agent coordination.
+The model considered here is stateless step composition: an agent is invoked as a node in
+a graph or a member of a crew, returns a result, and the orchestrator moves on. Where
+state is required, this deployment places it in the orchestrator or in a memory subsystem
+the integrator selects and wires in, rather than inside the agent as an always-present
+property of being that agent. Coherence across concurrent invocations does not disappear
+— it is owned by the orchestrator or the memory subsystem rather than by agent-local
+state, so there is no intra-agent spine to build. This describes one deployment shape,
+not every system that uses an orchestrator: an orchestration framework can equally host
+stateful, memory-bearing agent nodes, and when such a node accepts overlapping
+invocations the coordination problem below reappears inside the agent.
 
 ProbOS agents are closer to SOAR or ACT-R cognitive architectures than to LLM agent
 frameworks. They have persistent identity (DID), evolving character (Big Five),
-autobiographical memory (EpisodicMemory), social relationships (TrustNetwork), and
-internalized behavioral norms (Standing Orders). This is not a tool-calling pattern —
+autobiographical memory (EpisodicMemory, when that subsystem is enabled), social
+relationships (TrustNetwork), and internalized behavioral norms (Standing Orders). This
+is not a tool-calling pattern —
 it's a synthetic mind.
 
 ### 2.3 The Spine Metaphor
