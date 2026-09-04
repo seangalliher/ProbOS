@@ -30,10 +30,36 @@ class ChannelMessage:
     user_display_name: str = ""
     reply_to_message_id: str | None = None
     # AD-802a: DID attached by `_check_pairing` for paired senders.
-    # None when no pairing exists yet (only possible inside `_check_pairing`
-    # itself; once `handle_message` runs the field is always populated for
-    # paired-channel adapters).
+    # Stays None when the sender is not yet paired, when the adapter has no
+    # `channel_name` and so opts out of pairing, when the runtime has no
+    # pairing service, and on the `resolve_did` fail-open path -- so
+    # `handle_message` can legitimately run with this unset.
     paired_did: str | None = None
+
+
+#: BF-804: the entire text of a `PairingNotificationError`. It is echoed into
+#: an HTTP response body by `probos.routers.teams_webhook`, so it names the
+#: channel and nothing else -- the sender id, the raw address and the
+#: underlying transport error belong in the log line only.
+_PAIRING_NOTICE_FAILED = (
+    "pairing instructions could not be delivered on channel {channel}"
+)
+
+
+class PairingNotificationError(RuntimeError):
+    """An unpaired sender could not be told how to pair.
+
+    BF-804: `_check_pairing` returning False means "unknown sender, and the
+    pairing instructions WERE delivered", so a caller that treats the message
+    as handled is right to do so. When the code was never minted, or the
+    instructions never left, the sender gets no instructions, no answer and no
+    retry -- and a bool cannot tell the caller which of the two happened. That
+    is a delivery-integrity failure, so it belongs in the propagate tier.
+
+    `GmailAdapter._poll_loop` already declines to acknowledge when
+    `handle_message` raises, so this leaves the mail UNSEEN and re-fetched on
+    the next poll without any edit to that adapter.
+    """
 
 
 class ChannelAdapter(ABC):
@@ -46,7 +72,9 @@ class ChannelAdapter(ABC):
     """
 
     #: Stable channel identifier used by AD-802 PairingService and AD-801
-    #: doctor checks (e.g. "telegram", "slack"). Subclasses MUST override.
+    #: doctor checks (e.g. "telegram", "slack"). Subclasses that participate
+    #: in pairing MUST override it; leaving it empty is the supported opt-out
+    #: and is how `WebhookAdapter` bypasses the pairing gate entirely.
     channel_name: str = ""
 
     def __init__(self, runtime: ProbOSRuntime, config: ChannelConfig) -> None:
@@ -77,10 +105,27 @@ class ChannelAdapter(ABC):
         """AD-802a: gate inbound messages from unknown senders behind a
         pairing code.
 
+        BF-804: there are THREE outcomes, and only two of them are return
+        values.
+
         Returns:
-            True  -> message can proceed to `handle_message` body.
-            False -> a pairing code was minted, sender notified, message
-                     dropped. Caller should NOT process further.
+            True  -> sender is paired, or the gate is not active; the message
+                     can proceed to the `handle_message` body.
+            False -> sender is unknown, a pairing code was minted AND the
+                     instructions were DELIVERED. The message is dropped and
+                     the caller may treat it as handled.
+
+        Raises:
+            PairingNotificationError: sender is unknown and could NOT be told
+                how to pair -- either `request_pairing` failed or the
+                instruction reply was never accepted. The caller must NOT
+                treat the message as handled. What each caller then does is
+                its own decision, and only Gmail currently recovers:
+                `GmailAdapter._poll_loop` withholds its acknowledgement so the
+                next poll retries the mail, whereas Slack returns an empty
+                response, Discord drops the event, Telegram and Slack advance
+                their offsets, Matrix advances its sync token and Teams answers
+                HTTP 200. On those the sender must send again.
 
         Default behavior:
             * No `runtime.pairing_service` -> no-op pass-through (returns True).
@@ -88,8 +133,25 @@ class ChannelAdapter(ABC):
               opt in).
             * `pairing_service.resolve_did(channel_name, user_id)`:
                 - returns a DID -> attach to `message.paired_did`, return True.
+                - raises        -> fail open, return True.
                 - returns None  -> mint pending pairing, send instructions
-                                   reply, return False.
+                                   reply, return False -- or raise
+                                   `PairingNotificationError` if either step
+                                   fails.
+
+        Reachability of the raise, which is narrower than it looks:
+            The raise fires only when `request_pairing` or `send_response`
+            *raises*. `GmailAdapter.send_response` does, because it surfaces
+            an SMTP rejection, so Gmail -- the adapter where a wrongly
+            acknowledged message is silent data loss -- distinguishes all
+            three outcomes. Adapters whose `send_response` catches its own
+            transport error and returns normally (Slack `SlackAPIError`,
+            Telegram `TelegramAPIError`, Matrix `MatrixAPIError`, Teams
+            `TeamsAPIError`, and Discord's unavailable-channel path) still
+            report an undelivered notice as delivered. Giving those adapters
+            the same three-way discrimination means changing their
+            `send_response` delivery contract, which is deliberately out of
+            scope here.
 
         Subclasses override only for adapter-specific behavior (per-guild
         allow-lists, anon-mode bypasses, etc.).
@@ -117,13 +179,20 @@ class ChannelAdapter(ABC):
                 channel=self.channel_name,
                 raw_id=message.user_id,
             )
-        except Exception:
+        except Exception as exc:
             logger.error(
-                "AD-802a: request_pairing failed for channel=%s user_id=%s; "
-                "dropping message",
+                "AD-802a/BF-804: request_pairing failed for channel=%s "
+                "user_id=%s; no code exists, so the sender cannot be told how "
+                "to pair. Raising PairingNotificationError so the caller can "
+                "decline to treat this as handled. What follows is "
+                "caller-dependent: Gmail withholds its acknowledgement and "
+                "retries on the next poll, while the other adapters settle or "
+                "drop the event, so on those the sender must send again.",
                 self.channel_name, message.user_id, exc_info=True,
             )
-            return False
+            raise PairingNotificationError(
+                _PAIRING_NOTICE_FAILED.format(channel=self.channel_name)
+            ) from exc
 
         instructions = (
             f"Hi — this is a ProbOS bot. The Captain hasn't paired your "
@@ -133,12 +202,20 @@ class ChannelAdapter(ABC):
         )
         try:
             await self.send_response(message.channel_id, instructions)
-        except Exception:
-            logger.warning(
-                "AD-802a: send_response for pairing instructions failed; "
-                "user will need to retry",
-                exc_info=True,
+        except Exception as exc:
+            logger.error(
+                "AD-802a/BF-804: sending the pairing instructions failed for "
+                "channel=%s user_id=%s; the sender was never told how to "
+                "pair. Raising PairingNotificationError so the caller can "
+                "decline to treat this as handled. What follows is "
+                "caller-dependent: Gmail withholds its acknowledgement and "
+                "retries on the next poll, while the other adapters settle or "
+                "drop the event, so on those the sender must send again.",
+                self.channel_name, message.user_id, exc_info=True,
             )
+            raise PairingNotificationError(
+                _PAIRING_NOTICE_FAILED.format(channel=self.channel_name)
+            ) from exc
         return False
 
     async def handle_message(self, message: ChannelMessage) -> str:
@@ -150,6 +227,11 @@ class ChannelAdapter(ABC):
 
         AD-802a: pairing-gate runs first. Unknown senders receive a
         pairing code reply and the message is dropped (returns "").
+
+        BF-804: if those instructions could NOT be delivered, the gate raises
+        `PairingNotificationError` rather than returning "", so a caller with
+        an acknowledgement gate (Gmail) leaves the message for the next poll
+        instead of recording it as handled.
         """
         from probos.utils.response_formatter import extract_response_text
 

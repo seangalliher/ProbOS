@@ -14,7 +14,11 @@ import threading
 import warnings
 from typing import Any
 
-from probos.channels.base import ChannelAdapter, ChannelMessage
+from probos.channels.base import (
+    ChannelAdapter,
+    ChannelMessage,
+    PairingNotificationError,
+)
 from probos.config import DiscordConfig
 from probos.dm_reply import split_for_wire
 
@@ -322,6 +326,22 @@ class DiscordAdapter(ChannelAdapter):
                 except asyncio.TimeoutError:
                     await message.channel.send(
                         "Request timed out \u2014 try a simpler query."
+                    )
+                except PairingNotificationError:
+                    # BF-804: an unpaired sender we could not hand a pairing
+                    # code to. This arm must precede the broad handler below,
+                    # whose "Processing error: <class>" would both change
+                    # AD-807's observable behaviour and disclose an internal
+                    # exception class to an unauthenticated sender. The log is
+                    # the only report; nothing is posted to the channel.
+                    logger.error(
+                        "AD-802a/BF-804: could not deliver Discord pairing "
+                        "instructions to user_id=%s in channel=%s; the sender "
+                        "stays unpaired and nothing is posted to the channel, "
+                        "so they must send again once the transport recovers.",
+                        message.author.id,
+                        message.channel.id,
+                        exc_info=True,
                     )
                 except Exception as e:
                     logger.error(

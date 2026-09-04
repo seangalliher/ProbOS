@@ -31,7 +31,11 @@ import logging
 import time
 from typing import Any
 
-from probos.channels.base import ChannelAdapter, ChannelMessage
+from probos.channels.base import (
+    ChannelAdapter,
+    ChannelMessage,
+    PairingNotificationError,
+)
 from probos.channels.slack_client import SlackAPIError, SlackClient
 from probos.config import SlackConfig
 from probos.events import EventType
@@ -196,7 +200,23 @@ class SlackAdapter(ChannelAdapter):
             user_display_name=user_display_name,
             reply_to_message_id=thread_ts,
         )
-        return await self.handle_message(message)
+        try:
+            return await self.handle_message(message)
+        except PairingNotificationError:
+            # BF-804: this is an operator-wired HTTP entry point, so a raise
+            # here would surface as a 500 and invite an Events API retry.
+            # Slack has no deferred acknowledgement to withhold, so keep the
+            # pre-BF-804 contract and drop the message after logging it.
+            logger.error(
+                "BF-804: pairing instructions could not be delivered for a "
+                "Slack sender in channel=%s; the message is dropped rather "
+                "than answered. This path is also reached when no pairing "
+                "code could be minted at all, so the sender must retry once "
+                "the pairing service is reachable again -- the Captain "
+                "cannot approve a code that was never created.",
+                channel_id, exc_info=True,
+            )
+            return ""
 
     # ---------- AD-804 polling internals ----------
 
