@@ -1397,7 +1397,7 @@ def test_committed_baseline_records_the_measured_surface(
     assert counts["owned"] == 291
     assert counts["incidental"] == 13
     assert counts["own_models"] == 224
-    assert counts["field_definitions"] == 1784
+    assert counts["field_definitions"] == 1785
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 304
     assert len(baseline["models"]) == 225

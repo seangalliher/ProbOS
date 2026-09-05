@@ -538,6 +538,25 @@ class TestRenderTelemetryContext:
         assert "GREEN" in result
         assert "2.3h" in result
 
+    def test_renders_populated_social(self) -> None:
+        snap = {
+            "temporal": {"system_uptime_hours": 2.3},
+            "social": {
+                "routing_affinities": [
+                    {"intent": "analyze_logs", "weight": 0.8},
+                    {"intent": "diagnose", "weight": 0.6},
+                ],
+                "interaction_breadth": 2,
+            },
+        }
+        result = IntrospectiveTelemetryService.render_telemetry_context(snap)
+        assert (
+            "Collaboration: routing affinities: analyze_logs (0.8), "
+            "diagnose (0.6) | interaction breadth: 2"
+        ) in result
+        assert result.index("Uptime: 2.3h") < result.index("Collaboration:")
+        assert result.index("Collaboration:") < result.index("When discussing yourself")
+
     def test_renders_partial_snapshot(self):
         snap = {
             "memory": {"episode_count": 5},

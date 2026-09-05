@@ -636,6 +636,13 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
     crew_sigma_max_chars: int = Field(default=2000, ge=200, le=8000)
     crew_sigma_max_entries: int = Field(default=4, ge=1, le=12)
     crew_sigma_min_score: float = Field(default=0.35, ge=0.0, le=1.0)
+    self_query_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1258: offer first-person telemetry queries through the governed "
+            "agentic loop."
+        ),
+    )
 
 
 class DiscoveryConfig(BaseModel):

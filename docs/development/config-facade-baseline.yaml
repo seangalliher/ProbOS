@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1791
-  field_definitions: 1784
+  canonical_dump_leaves: 1792
+  field_definitions: 1785
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 3a02cf44a2ae5b5f98f785dc8d05ff139cbc6cd780bca37191c26a37cee3c052
+canonical_dump_sha256: 4945f5cb7506097d5dd2bc6a9dd38cd2fe520fcf3c86675dd49ba88db9f8ba89
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -508,7 +508,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: f2f2a1c6dd250e244fae011bc8002dfc87fa8415ee1b8fdc5be01096749d9387
+    schema_sha256: 093053255bb7073be7d1296d45c89fe75407699c5c1e5e4d9c2467cd42db81f4
     fields:
     - {default: 'False', name: tool_search_enabled}
     - {default: 'False', name: delegation_enabled}
@@ -526,6 +526,7 @@ models:
     - {default: '2000', name: crew_sigma_max_chars}
     - {default: '4', name: crew_sigma_max_entries}
     - {default: '0.35', name: crew_sigma_min_score}
+    - {default: 'False', name: self_query_enabled}
   AnomalyWindowConfig:
     qualname: AnomalyWindowConfig
     bases:
@@ -3286,7 +3287,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 54d929f915bb06dd1afac195b79e997f62cc1d14e46b35bb29db44fe5fb37c77
+    schema_sha256: 5aad82d776ae6a050e3beb2573e36c9443cc938de2b52f8e99823a37ec32210a
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

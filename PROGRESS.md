@@ -1,5 +1,7 @@
 # ProbOS Progress
 
+**AD-1258 (2026-09-05), #1308: first-person telemetry.** The shared renderer now includes collected social affinities and interaction breadth, while partial snapshots make no claims about unqueried domains. `self_query` reads only the governed run's authoritative agent identity through an injected telemetry protocol and a public runtime accessor. Domain selection queries only the requested domains; undeclared subject parameters are rejected, ordinary failures return errors, and cancellation propagates. The flag defaults OFF and is enabled in the shipped configuration. Existing DM, ward-room, proactive and query prompt consumers share the renderer unchanged. Intermediate validation: 149 focused tests passed, followed by five additional real collection-to-consumer crossing cases; the social-render omission mutant was killed and exact source bytes restored. These are scoped implementation results, not a release-gate or issue-closure attestation.
+
 > **GitHub issues are the source of truth** (Captain, 2026-08-27). This file is
 > a narrative log of shipped work, not an index. When it disagrees with an
 > issue, the issue wins. It is also **incomplete between AD-1154 and AD-1272** —

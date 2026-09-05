@@ -10,6 +10,18 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1258 -- First-person telemetry collection reaches its consumers
+
+**Date:** 2026-09-05. **Issue:** #1308 (existing allocation).
+
+**Premise.** A real five-domain snapshot contained a subject-filtered Hebbian affinity and interaction breadth, but its rendered context omitted both while rendering the trust control. The collector-to-renderer regression reproduces that omission when the social block is disabled.
+
+**Decision.** Keep collection in `IntrospectiveTelemetryService`. Render each present domain, including social, without manufacturing statements about unqueried domains. Preserve full-snapshot output when social is empty. Expose the startup-owned instance through `ProbOSRuntime.introspective_telemetry` and constructor-inject its narrow protocol into `SelfQueryTool`; do not add another collector or give the tool a runtime handle. The existing governed executor offers `self_query` last, after the existing permission check, only when enabled. The model default is False; the shipped YAML enables it. The independently captured OFF-path ordered definition fingerprint remains unchanged.
+
+**Boundary and prompt reconciliations.** The subject comes exclusively from authoritative invocation context. AD-1179's undeclared-parameter guard supersedes the older prompt's instruction to ignore subject-naming keys. Explicit empty or wholly unknown domain selections fail without widening; mixed selections report unknown names. Selected-domain output uses the same renderer. Ordinary service failures are error-shaped without raw error payloads; lifecycle cancellation propagates. Existing telemetry best-effort collection semantics are retained. No third-person access, wellness or authority domain, `_agent_info` consolidation, permission redesign, or new dependency is added.
+
+**Validation evidence.** Intermediate A+B1 validation passed 149 tests; five additional real DM, ward-room, proactive, ANALYZE and COMPOSE crossing cases passed afterward. The targeted social omission check passed, failed at the missing-marker assertion under mutation, and passed after exact-byte restoration. Final release-gate, independent-review and closure evidence belongs to the immutable release receipts rather than this implementation-stage note.
+
 > **A recurring defect shape, named once here because it appeared SEVEN times in two days (2026-07-27/28): a mechanism is built and tested, and the thing that would exercise it never does.** AD-1157 (a classification field no caller supplied — 2,453/2,453 records took the default), BF-688 (a priority parameter every handler omitted), BF-690 (a guard armed while the offered schema still advertised the refused actions), BF-692 (element discovery guarding a Playwright method that does not exist), BF-695 (the entire browser tool could not start on Windows), AD-1162 (AD-1158's session binding read a context key nothing produced), BF-696 (a boot race needing two things to interleave).
 >
 > In every case the tests passed, because **the test double was more capable than production** — a fake `page` implementing `list_elements`, a test supplying the very key it was meant to prove arrives from elsewhere. BF-695 was worse than invisible: `asyncio_mode="auto"` runs the suite on `ProactorEventLoop` while production runs on `WindowsSelectorEventLoopPolicy`, so the suite was exercising the opposite loop from the one that ships.

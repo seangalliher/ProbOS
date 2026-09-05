@@ -12,14 +12,14 @@ baseline_id: ad-1185-config-profiles-v1
 tracking_issue: 1121
 smoke_test_node_id: tests/test_ad1185_config_profiles.py::test_supported_profile_boots_and_reads_a_file
 census:
-  measured_at_commit: c5a63b03
+  measured_at_commit: 0dbeebd9 plus AD-1258 candidate
   instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
-  boolean_fields_reachable: 427
-  default_false: 202
+  boolean_fields_reachable: 428
+  default_false: 203
   default_true: 225
-  default_false_armed_by_system_yaml: 84
+  default_false_armed_by_system_yaml: 85
   default_false_never_armed: 118
   unattributable_deltas:
   - measure: default-OFF boolean count
@@ -95,6 +95,15 @@ review:
     rather than grandfathered as compliant.'
   review_by: This list is empty, or every remaining flag has a classification.
 flags:
+- path: agentic_tools.self_query_enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1258_self_knowledge.py::test_loop_self_query_returns_context_identity_to_model
+    -- the real governed loop returns the authoritative subject's telemetry to the next model
+    request; the OFF-path test preserves the independently captured ordered tool definitions.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
 - path: approval_inbox.enabled
   kind: product-feature
   profiles:

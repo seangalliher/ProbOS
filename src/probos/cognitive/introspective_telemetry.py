@@ -170,44 +170,62 @@ class IntrospectiveTelemetryService:
         lines.append("--- Your Telemetry (ground self-referential claims in these metrics) ---")
 
         # Memory
-        mem = snapshot.get("memory", {})
-        ep_count = mem.get("episode_count", "unknown")
-        offline = "no offline processing" if not mem.get("offline_processing", False) else "offline processing active"
-        lines.append(
-            f"Memory: {ep_count} episodes (cosine similarity retrieval, {offline})"
-        )
+        if "memory" in snapshot:
+            mem = snapshot["memory"]
+            ep_count = mem.get("episode_count", "unknown")
+            offline = "no offline processing" if not mem.get("offline_processing", False) else "offline processing active"
+            lines.append(
+                f"Memory: {ep_count} episodes (cosine similarity retrieval, {offline})"
+            )
 
         # Trust
-        trust = snapshot.get("trust", {})
-        if "score" in trust:
-            trust_parts = [f"{trust['score']}"]
-            if "observations" in trust:
-                trust_parts.append(f"{trust['observations']} observations")
-            if "uncertainty" in trust:
-                trust_parts.append(f"uncertainty \u00b1{trust['uncertainty']}")
-            if "trend" in trust:
-                trust_parts.append(f"trend: {trust['trend']}")
-            lines.append(f"Trust: {' ('.join(trust_parts[:1])}" +
-                         (f" ({', '.join(trust_parts[1:])})" if len(trust_parts) > 1 else ""))
-        else:
-            lines.append("Trust: no record yet")
+        if "trust" in snapshot:
+            trust = snapshot["trust"]
+            if "score" in trust:
+                trust_parts = [f"{trust['score']}"]
+                if "observations" in trust:
+                    trust_parts.append(f"{trust['observations']} observations")
+                if "uncertainty" in trust:
+                    trust_parts.append(f"uncertainty \u00b1{trust['uncertainty']}")
+                if "trend" in trust:
+                    trust_parts.append(f"trend: {trust['trend']}")
+                lines.append(f"Trust: {' ('.join(trust_parts[:1])}" +
+                             (f" ({', '.join(trust_parts[1:])})" if len(trust_parts) > 1 else ""))
+            else:
+                lines.append("Trust: no record yet")
 
         # Cognitive zone
-        cog = snapshot.get("cognitive", {})
-        zone = cog.get("zone", "unknown")
-        lines.append(f"Cognitive zone: {zone.upper() if isinstance(zone, str) else zone}")
+        if "cognitive" in snapshot:
+            cog = snapshot["cognitive"]
+            zone = cog.get("zone", "unknown")
+            lines.append(f"Cognitive zone: {zone.upper() if isinstance(zone, str) else zone}")
 
         # Temporal
-        temp = snapshot.get("temporal", {})
-        time_parts = []
-        if "system_uptime_hours" in temp:
-            time_parts.append(f"Uptime: {temp['system_uptime_hours']}h")
-        if "agent_age_hours" in temp:
-            time_parts.append(f"Age: {temp['agent_age_hours']}h")
-        if "last_action_minutes" in temp:
-            time_parts.append(f"Last action: {temp['last_action_minutes']}m ago")
-        if time_parts:
-            lines.append(" | ".join(time_parts))
+        if "temporal" in snapshot:
+            temp = snapshot["temporal"]
+            time_parts = []
+            if "system_uptime_hours" in temp:
+                time_parts.append(f"Uptime: {temp['system_uptime_hours']}h")
+            if "agent_age_hours" in temp:
+                time_parts.append(f"Age: {temp['agent_age_hours']}h")
+            if "last_action_minutes" in temp:
+                time_parts.append(f"Last action: {temp['last_action_minutes']}m ago")
+            if time_parts:
+                lines.append(" | ".join(time_parts))
+
+        social = snapshot.get("social") or {}
+        social_parts: list[str] = []
+        affinities = social.get("routing_affinities", [])
+        if affinities:
+            affinity_text = ", ".join(
+                f"{affinity.get('intent', '?')} ({affinity.get('weight', '?')})"
+                for affinity in affinities
+            )
+            social_parts.append(f"routing affinities: {affinity_text}")
+        if "interaction_breadth" in social:
+            social_parts.append(f"interaction breadth: {social['interaction_breadth']}")
+        if social_parts:
+            lines.append(f"Collaboration: {' | '.join(social_parts)}")
 
         lines.append("")
         lines.append(

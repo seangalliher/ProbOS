@@ -2099,6 +2099,36 @@ class WorkItemAgenticExecutor:
                 )
                 delegate_ids = []
 
+        self_query_ids: list[str] = []
+        if (
+            getattr(agentic_tools_cfg, "self_query_enabled", False)
+            and registry is not None
+        ):
+            try:
+                from probos.tools.self_query_tool import SelfQueryTool
+
+                if registry.get("self_query") is None:
+                    registry.register(
+                        SelfQueryTool(
+                            telemetry=getattr(runtime, "introspective_telemetry", None),
+                        ),
+                        provider="AD-1258",
+                        tags=["self_query", "introspection"],
+                    )
+                if registry.check_permission(
+                    agent_id,
+                    "self_query",
+                    ToolPermission.READ,
+                    agent_department=department,
+                    agent_rank=rank,
+                ):
+                    self_query_ids = ["self_query"]
+            except Exception:
+                logger.warning(
+                    "AD-1258: self_query registration or offer failed; "
+                    "continuing with the other tools without self_query",
+                )
+
         event_log_ids: list[str] = []
         if registry is not None and registry.get("event_log_query") is not None:
             if registry.check_permission(
@@ -2222,7 +2252,7 @@ class WorkItemAgenticExecutor:
                 *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
                 *status_ids, *recall_ids,
                 *search_ids, *delegate_ids, *event_log_ids, *oracle_ids,
-                *publish_ids, *browser_ids,
+                *publish_ids, *browser_ids, *self_query_ids,
             ])
         )
         # BF-755: the non-MCP half, so a mid-turn refresh can REBUILD the MCP

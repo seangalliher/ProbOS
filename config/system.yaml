@@ -681,6 +681,7 @@ agentic_tools:
   # and blocks its dependents. It is unset here, so there is no ceiling for
   # these characters to push a child over. If you ever set one, re-check this.
   disposition_enabled: true
+  self_query_enabled: true
 
 approval_inbox:
   # --- AD-1154 (epic #1068), enabled 2026-07-26. Ships default-OFF. ---

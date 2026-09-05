@@ -1779,6 +1779,7 @@ AD-1072: conversational-loop discovery + delegation tools (default-OFF).
 | `crew_sigma_max_chars` | `int` | `2000` | ≥ 200, ≤ 8000 |  |
 | `crew_sigma_max_entries` | `int` | `4` | ≥ 1, ≤ 12 |  |
 | `crew_sigma_min_score` | `float` | `0.35` | ≥ 0.0, ≤ 1.0 |  |
+| `self_query_enabled` | `bool` | `False` | — | AD-1258: offer first-person telemetry queries through the governed agentic loop. |
 
 ## `repair`
 

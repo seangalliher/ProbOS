@@ -167,6 +167,7 @@ if TYPE_CHECKING:
     from probos.cognitive.dependency_resolver import DependencyResult  # AD-838c
     from probos.cognitive.episodic import EpisodicMemory
     from probos.cognitive.feedback import FeedbackEngine
+    from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
     from probos.cognitive.journal import CognitiveJournal
     from probos.cognitive.self_mod import SelfModificationPipeline
     from probos.cognitive.strategy_advisor import StrategyAdvisor
@@ -507,6 +508,11 @@ class ProbOSRuntime:
     _previous_session: dict | None
     _night_orders_mgr: NightOrdersManager | None
     _last_request_time: float
+
+    @property
+    def introspective_telemetry(self) -> IntrospectiveTelemetryService | None:
+        """The startup-owned telemetry service, when available."""
+        return getattr(self, "_introspective_telemetry", None)
 
     def __init__(
         self,
