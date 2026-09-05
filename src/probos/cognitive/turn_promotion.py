@@ -60,9 +60,11 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from types import CoroutineType
 from typing import Any, Awaitable, Callable
 
 from probos.cognitive.dm.bypass_egress import compose_bypass_reply
+from probos.tools.executor import recording_identity, sample_recording_identity
 
 logger = logging.getLogger(__name__)
 
@@ -885,6 +887,55 @@ async def _create_promoted_work_item(
             item.id, exc_info=True,
         )
     return item
+
+
+async def _link_promoted_run(
+    *,
+    runtime: Any,
+    work_item_id: str,
+    run_id: str,
+    agent_id: str,
+    thread_id: str,
+) -> None:
+    """Persist only the diagnostic relation through the store's checked merge."""
+    if any(recording_identity(value) is None for value in (work_item_id, run_id, agent_id, thread_id)):
+        return
+    try:
+        store = getattr(runtime, "work_item_store", None)
+        merge = getattr(store, "merge_work_item_metadata", None)
+        if not callable(merge):
+            logger.warning(
+                "AD-1224: promotion metadata merge is unavailable; the run still "
+                "reports but its durable diagnostic association is missing",
+            )
+            return
+        linked = await merge(
+            work_item_id,
+            {"promoted_agentic_run_id": run_id},
+            expected={
+                "source": PROMOTION_SOURCE,
+                "thread_id": thread_id,
+                "agent_id": agent_id,
+            },
+            expected_absent_keys=frozenset({"promoted_agentic_run_id"}),
+            expected_work_type="task",
+            expected_assigned_to=agent_id,
+        )
+        metadata = getattr(linked, "metadata", None)
+        if (
+            getattr(linked, "id", None) != work_item_id
+            or type(metadata) is not dict
+            or metadata.get("promoted_agentic_run_id") != run_id
+        ):
+            logger.warning(
+                "AD-1224: promotion run link was not acknowledged; the run still "
+                "reports and no durable diagnostic association is confirmed",
+            )
+    except Exception:
+        logger.warning(
+            "AD-1224: promotion run link failed; the run still reports and "
+            "its durable diagnostic association is unconfirmed",
+        )
 
 
 async def _post_report(
@@ -1876,6 +1927,7 @@ async def run_with_promotion(
     deadline_seconds: float = 0.0,
     unconfirmed_grace_seconds: float = 0.0,
     strand_timeout_seconds: float = 0.0,
+    run_id_provider: Callable[[], str | None] | None = None,
 ) -> str:
     """Run ``work``; promote it to a background task if it outlives the budget.
 
@@ -1924,6 +1976,13 @@ async def run_with_promotion(
     A raising ``on_promoted`` is logged and swallowed: the promotion itself
     has already succeeded, and failing it here would trade a working
     background task for a missing link.
+
+    ``run_id_provider`` samples the real run identity synchronously after
+    publication, before another await. With an EventLog, a checked metadata
+    merge links that run to this item before acknowledgement. This diagnostic
+    association never changes execution or rewrites historical tool rows.
+    Ordinary diagnostic failures degrade privately; lifecycle cancellation
+    propagates, with the run and reporter retained by their existing owner.
 
     ``background_slot`` (BF-732) returns an async context manager -- normally
     ``ConcurrencyManager.slot`` -- held by the reporter for as long as the
@@ -2013,14 +2072,23 @@ async def run_with_promotion(
     # as much of the remaining run as possible.
     if on_promoted is not None:
         try:
-            on_promoted(work_item.id)
+            published = on_promoted(work_item.id)
+            if published is not None:
+                if type(published) is CoroutineType:
+                    published.close()
+                logger.warning(
+                    "AD-1204: promotion observer returned an invalid result; "
+                    "the task still runs and reports but its association may be missing",
+                )
         except Exception:
             logger.warning(
-                "AD-1204: publishing work item %s back to the promoted run for "
-                "agent=%s raised; the task still runs and reports, but anything "
-                "it files this turn will not be linked to the item",
-                work_item.id, agent_id, exc_info=True,
+                "AD-1204: promotion observer failed; the task still runs and "
+                "reports but its association may be missing",
             )
+
+    promoted_run_id = None
+    if run_id_provider is not None and getattr(runtime, "event_log", None) is not None:
+        promoted_run_id = sample_recording_identity(run_id_provider)
 
     reporter = asyncio.create_task(
         _report_holding_slot(
@@ -2041,6 +2109,15 @@ async def run_with_promotion(
     )
     hold.add(reporter)
     reporter.add_done_callback(hold.discard)
+
+    if promoted_run_id is not None:
+        await _link_promoted_run(
+            runtime=runtime,
+            work_item_id=work_item.id,
+            run_id=promoted_run_id,
+            agent_id=agent_id,
+            thread_id=thread_id,
+        )
 
     logger.info(
         "AD-1165: promoted agent=%s turn to work item %s after %.1fs measured "

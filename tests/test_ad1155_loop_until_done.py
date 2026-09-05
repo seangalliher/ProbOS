@@ -402,7 +402,12 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
     the conversational DM path can make every pass of one turn share a scope,
     which is what lets an AD-1164 continuation supersede its OWN earlier tool
     failure without erasing a delegated child's.
+
+    AD-1224 adds optional diagnostic-only callbacks without changing execution
+    or continuation policy.
     """
+    from typing import Callable, get_type_hints
+
     params = inspect.signature(WorkItemAgenticExecutor.run).parameters
     assert list(params) == [
         "self",
@@ -422,10 +427,19 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
         "compaction_threshold",
         "token_budget",
         "failure_scope",  # AD-1248
+        "work_item_id_provider",
+        "on_run_started",
     ]
     assert not any(
         "loop_until_done" in name or "continuation" in name for name in params
     )
+    assert params["work_item_id_provider"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params["work_item_id_provider"].default is None
+    assert params["on_run_started"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params["on_run_started"].default is None
+    annotations = get_type_hints(WorkItemAgenticExecutor.run)
+    assert annotations["work_item_id_provider"] == Callable[[], str | None] | None
+    assert annotations["on_run_started"] == Callable[[str], None] | None
 
 
 async def test_converge_for_session_still_passes_no_token_budget() -> None:

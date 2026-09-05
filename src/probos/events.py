@@ -233,6 +233,8 @@ class EventType(str, Enum):
     ORDER_REFUSED = "order_refused"  # AD-581b
     SENSORIUM_BUDGET_EXCEEDED = "sensorium_budget_exceeded"  # AD-666: sensorium injection over char threshold
     TOOL_PERMISSION_DENIED = "tool_permission_denied"  # AD-423b: agent lacks tool permission
+    TOOL_STARTED = "tool_started"  # AD-1224: an unmatched start is an incomplete recorded attempt
+    TOOL_RECORD_BUDGET_EXHAUSTED = "tool_record_budget_exhausted"  # AD-1224: explains omitted pairs
     TOOL_INVOKED = "tool_invoked"  # AD-448
     TOOL_INTERVENTION_REQUIRED = "tool_intervention_required"  # AD-706: tier-3 action awaits Captain ACK
     TOOL_FAILURE_PATTERN = "tool_failure_pattern"  # AD-1168: one tool failing the same way repeatedly

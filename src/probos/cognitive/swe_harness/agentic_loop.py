@@ -10,7 +10,9 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
+from types import CoroutineType
 from typing import Any, Callable, TYPE_CHECKING
 
 from probos.cognitive.swe_harness.tool_call import (
@@ -21,6 +23,7 @@ from probos.cognitive.swe_harness.tool_call import (
     ToolUseBlock,
 )
 from probos.fault_report import canonical_tool_id, error_signature
+from probos.tools.executor import recording_identity, tool_recording_scope
 from probos.types import LLMRequest
 
 if TYPE_CHECKING:
@@ -867,7 +870,44 @@ class AgenticLoop:
         *,
         system_prompt: str,
         user_message: str,
-        tools: list[dict],
+        tools: list[dict[str, Any]],
+        context: dict[str, Any],
+        on_run_started: Callable[[str], None] | None = None,
+    ) -> AgenticResult:
+        """Run with one recording budget, restoring the parent scope on every exit."""
+        run_context = {
+            **context,
+            "_agentic_run_id": context.get("_agentic_run_id") or uuid.uuid4().hex,
+        }
+        if on_run_started is not None:
+            run_id = recording_identity(run_context["_agentic_run_id"])
+            if run_id is not None:
+                try:
+                    observed = on_run_started(run_id)
+                    if observed is not None:
+                        if type(observed) is CoroutineType:
+                            observed.close()
+                        logger.warning(
+                            "AD-1224: run-start observer returned an invalid result; "
+                            "diagnostic association may be unavailable while execution continues",
+                        )
+                except Exception:
+                    logger.warning(
+                        "AD-1224: run-start observer failed; diagnostic association "
+                        "may be unavailable while execution continues",
+                    )
+        with tool_recording_scope():
+            return await self._run_scoped(
+                system_prompt=system_prompt, user_message=user_message,
+                tools=tools, context=run_context,
+            )
+
+    async def _run_scoped(
+        self,
+        *,
+        system_prompt: str,
+        user_message: str,
+        tools: list[dict[str, Any]],
         context: dict[str, Any],
     ) -> AgenticResult:
         """Run the agentic loop until completion or limit reached.
@@ -881,7 +921,8 @@ class AgenticLoop:
         6. Repeat from step 2.
 
         Exit on max_iterations / token_budget / unrecoverable error.
-        Never raises — all failures are translated to AgenticResult.error.
+    Ordinary execution failures become AgenticResult errors; cancellation
+    and other lifecycle exceptions propagate to the run owner.
         """
         result = AgenticResult()
         messages: list[dict] = [
@@ -1369,7 +1410,7 @@ class AgenticLoop:
                 params=use.tool_call.arguments,
                 agent_department=context.get("department", "engineering"),
                 agent_rank=context.get("rank", "ensign"),
-                context=context,
+                context={**context, "iteration": iteration},
             )
             duration_ms = (time.perf_counter() - start) * 1000.0
             # BF-728: hand the bound down so a big structured result is

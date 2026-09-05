@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -13,6 +14,9 @@ from probos.tools.protocol import ToolResult
 class _FakeRegistry:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, Any], dict[str, Any]]] = []
+
+    def list_ids(self) -> list[str]:
+        return ["tool-1"]
 
     async def check_and_invoke(
         self,
@@ -149,6 +153,37 @@ async def test_audit_hook_emits_event() -> None:
     assert emitted[0][1]["tool_id"] == "tool-1"
     assert emitted[0][1]["duration_ms"] > 0
     assert emitted[0][1]["error"] is None
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_bus_only_audit_hook_is_synchronous_and_retains_safe_outcome(
+    failed: bool,
+) -> None:
+    emitted: list[tuple[Any, dict[str, Any]]] = []
+    marker = "private-result-marker-"
+    error = "network failure " + marker * 10000 if failed else None
+    result = ToolResult(output={"private": marker}, error=error)
+    original_output = result.output
+    invocation = InvocationContext("agent-1", "tool-1", {})
+    hook = make_audit_hook(
+        emit_fn=lambda event_type, payload: emitted.append((event_type, payload)),
+    )
+
+    returned = hook(
+        {"agent_id": "agent-1", "tool_id": "tool-1", "invocation": invocation},
+        result,
+    )
+
+    assert returned is None
+    assert len(emitted) == 1
+    event_type, payload = emitted[0]
+    assert event_type is EventType.TOOL_INVOKED
+    assert payload["error"] == ("network" if failed else None)
+    assert payload["error_category"] == payload["error"]
+    assert payload["is_error"] is failed
+    assert marker not in json.dumps(payload)
+    assert result.error is error
+    assert result.output is original_output
 
 
 def test_tool_invoked_event_type_exists() -> None:

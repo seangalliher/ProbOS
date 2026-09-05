@@ -4388,6 +4388,26 @@ class CognitiveAgent(BaseAgent):
             def _record_promotion(work_item_id: str) -> None:
                 _promoted["work_item_id"] = work_item_id
 
+            _current_run: dict[str, str | None] = {"run_id": None}
+
+            def _record_run_started(run_id: str) -> None:
+                _current_run["run_id"] = run_id
+
+            def _current_work_item_id() -> str | None:
+                return _promoted["work_item_id"] or None
+
+            def _current_run_id() -> str | None:
+                return _current_run["run_id"]
+
+            _diagnostic_kwargs: dict[str, Any] = {}
+            _promotion_diagnostic_kwargs: dict[str, Any] = {}
+            if getattr(runtime, "event_log", None) is not None:
+                _diagnostic_kwargs = {
+                    "work_item_id_provider": _current_work_item_id,
+                    "on_run_started": _record_run_started,
+                }
+                _promotion_diagnostic_kwargs["run_id_provider"] = _current_run_id
+
             # AD-1167: compaction for this path. ``AgenticLoop`` re-flattens the
             # entire message history into one prompt every iteration, and no
             # compactor was ever wired here -- so each added step re-paid for
@@ -4438,6 +4458,7 @@ class CognitiveAgent(BaseAgent):
                     # continuation supersedes its own earlier calls while a
                     # sibling's failures stay untouched.
                     failure_scope=str(observation.get("correlation_id", "") or ""),
+                    **_diagnostic_kwargs,
                 )
                 _last_stop["reason"] = str(
                     getattr(outcome, "stopped_reason", "") or ""
@@ -4562,6 +4583,7 @@ class CognitiveAgent(BaseAgent):
                     # passes fold into.
                     failures_probe=lambda: observation.get("_dm_tool_failures"),
                     on_promoted=_record_promotion,
+                    **_promotion_diagnostic_kwargs,
                     background_slot=_bg_slot,
                     # BF-733: bound the promoted run. Same defensive coercion as
                     # the budget above and for the same reason -- a MagicMock

@@ -39,7 +39,7 @@ from probos.integrations.mcp_bridge.risk import (
     McpToolRisk,
     resolve_tool_risk,
 )
-from probos.tools.executor import ToolExecutor
+from probos.tools.executor import ToolExecutor, wire_durable_tool_records
 from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolPermissionDenied
 from probos.types import IntentMessage
@@ -1763,6 +1763,8 @@ class WorkItemAgenticExecutor:
         # correlation id; a caller that does not supply one gets a fresh scope,
         # which is correct for a standalone run and safe for a sibling.
         failure_scope: str | None = None,
+        work_item_id_provider: Callable[[], str | None] | None = None,
+        on_run_started: Callable[[str], None] | None = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -1817,6 +1819,13 @@ class WorkItemAgenticExecutor:
                 observed_tool_results.append((tool_id, result))
 
         executor.add_post_hook(_record_tool_result)
+
+        # AD-1224: this wrapper is separate from the native executor. Durable
+        # hooks only: preserve dispatch bus traffic and its existing post-hook.
+        recording_enabled = wire_durable_tool_records(
+            executor, event_log=getattr(runtime, "event_log", None),
+            work_item_id_provider=work_item_id_provider,
+        )
 
         mesh_ids: list[str] = []
         if intent_bus is not None and registry is not None:
@@ -2429,11 +2438,16 @@ class WorkItemAgenticExecutor:
         ):
             _system_prompt = f"{_system_prompt}{AGENTIC_DISPOSITION}"
 
+        diagnostic_kwargs: dict[str, Any] = {}
+        if recording_enabled and on_run_started is not None:
+            diagnostic_kwargs["on_run_started"] = on_run_started
+
         agentic_result = await loop.run(
             system_prompt=_system_prompt,
             user_message=task_text,
             tools=tools,
             context=_context,
+            **diagnostic_kwargs,
         )
 
         # AD-1279: built ONCE and handed to both the trace writer below and

@@ -5057,12 +5057,15 @@ async def finalize_startup(
         runtime.onboarding.set_tool_registry(runtime.tool_registry)
 
         # AD-448: Wrapped Tool Executor
-        from probos.tools.executor import ToolExecutor, make_audit_hook
+        from probos.tools.executor import ToolExecutor, wire_tool_invocation_hooks
         tool_executor = ToolExecutor(registry=runtime.tool_registry)
-        audit_hook = make_audit_hook(
+        # AD-1224: safe live completion plus the optional durable lifecycle.
+        # Terminal completions stay durable-only; AD-1168 remains a post-hook.
+        wire_tool_invocation_hooks(
+            tool_executor,
             emit_fn=runtime.emit_event,
+            event_log=getattr(runtime, "event_log", None),
         )
-        tool_executor.add_post_hook(audit_hook)
         # AD-1168: count failures by (tool, error signature) so a tool that is
         # broken for EVERY caller stops reading as several agents having a bad
         # day. Sits on the same post-hook seam as the audit hook; the success
