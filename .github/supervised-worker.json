@@ -37,8 +37,8 @@
     "required": true,
     "independent": true,
     "agent": "probos-diff-reviewer",
-    "requiredModel": "gpt-5.6-sol",
-    "requiredModelFamily": "openai",
+    "requiredModel": "claude-opus-5",
+    "requiredModelFamily": "anthropic",
     "requireDifferentModelFamily": true
   },
   "filing": {
