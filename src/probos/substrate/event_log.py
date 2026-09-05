@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -56,6 +57,22 @@ _AUDIT_DETAILS = {
     "invalid": "Governed EventLog query was invalid.",
     "failed": "Governed EventLog query failed.",
 }
+# BF-873: bounded retry when another connection holds the write lock.
+_MAX_CHAIN_WRITE_ATTEMPTS = 3
+_CHAIN_RETRY_BASE_DELAY = 0.05
+# One WAIT budget per log() call. It bounds every kind of waiting the append
+# does — queueing for _write_lock, SQLite's own busy wait, and the retry sleeps
+# — by refusing to start an attempt once it is spent and by capping each
+# attempt's busy_timeout at whatever is left. It does NOT bound an attempt that
+# is already making progress, so a call can overrun by one uncontended write.
+# Say "wait budget", not "hard deadline": measured against the earlier code, a
+# 5.0s budget raised at 5.907s, three callers took 5.938/7.844/9.766s, and a
+# 0.2s caller that spent its whole budget queued still committed at 0.641s.
+_CHAIN_WRITE_BUDGET_S = 5.0
+# Per-attempt cap, sized so _MAX_CHAIN_WRITE_ATTEMPTS of them fit inside the
+# budget. At sqlite3's 5s default the three attempts stacked three full
+# timeouts (measured: 16.8s for one caller).
+_CHAIN_BUSY_TIMEOUT_MS = int(_CHAIN_WRITE_BUDGET_S * 1000 // _MAX_CHAIN_WRITE_ATTEMPTS)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -90,6 +107,27 @@ def _compute_row_hash(*, prev_hash: str, payload: dict[str, Any]) -> str:
     h.update(prev_hash.encode("utf-8"))
     h.update(serialized.encode("utf-8"))
     return h.hexdigest()
+
+
+def _is_database_locked(exc: BaseException) -> bool:
+    """True when another connection holds the write lock (BF-873).
+
+    Matched on message rather than sqlite3.OperationalError so a non-SQLite
+    ConnectionFactory reporting the same condition still gets the retry.
+    """
+    text = str(exc).lower()
+    return "database is locked" in text or "database table is locked" in text
+
+
+def _is_no_active_transaction(exc: BaseException) -> bool:
+    """True for the one ROLLBACK failure that means the work is already undone.
+
+    sqlite3 raises ``cannot rollback - no transaction is active`` when BEGIN
+    IMMEDIATE itself lost the race, which leaves nothing open. Every other
+    ROLLBACK failure leaves the transaction state unknown (BF-873/M2).
+    """
+    text = str(exc).lower()
+    return "no transaction is active" in text or "cannot rollback" in text
 
 
 def _bounded_redacted_text(value: object, cap: int) -> tuple[str, bool]:
@@ -443,6 +481,13 @@ class EventLog:
     def __init__(self, db_path: str | Path, connection_factory: ConnectionFactory | None = None) -> None:
         self.db_path = str(db_path)
         self._db: DatabaseConnection | None = None
+        # BF-873: serializes every writer on this connection. Also required
+        # because BEGIN IMMEDIATE cannot nest inside prune()'s implicit
+        # transaction ("cannot start a transaction within a transaction").
+        self._write_lock = asyncio.Lock()
+        # Live PRAGMA busy_timeout, so log() can tighten it to the remaining
+        # write budget and put it back without an extra round-trip per call.
+        self._busy_timeout_ms: int | None = None
         self._connection_factory = connection_factory
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
@@ -452,6 +497,10 @@ class EventLog:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await self._connection_factory.connect(self.db_path)
         await self._db.execute("PRAGMA foreign_keys = ON")
+        # BF-873: the standing per-attempt cap. log() tightens it to whatever is
+        # left of the caller's wait budget when that is smaller, and restores it.
+        await self._db.execute(f"PRAGMA busy_timeout = {_CHAIN_BUSY_TIMEOUT_MS}")
+        self._busy_timeout_ms = _CHAIN_BUSY_TIMEOUT_MS
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
         # AD-664: Migrate existing databases — add new columns if missing
@@ -520,6 +569,7 @@ class EventLog:
         if self._db:
             await self._db.close()
             self._db = None
+            self._busy_timeout_ms = None
 
     async def log(
         self,
@@ -543,22 +593,20 @@ class EventLog:
         - correlation_id: groups causally related events
         - parent_event_id: references the preceding event's row ID
         - data: structured payload (dict, JSON-serialized on write)
+
+        BF-873: raises rather than returning on contention. A _CHAIN_WRITE_BUDGET_S
+        WAIT budget starts at this call and bounds all three kinds of waiting the
+        append does — queueing for the writer lock, SQLite's busy wait, and the
+        retry sleeps. Once it is spent no further attempt is started (TimeoutError)
+        and no further sleep happens. It does NOT bound an attempt already making
+        progress, so a call may overrun by one uncontended write; it is a wait
+        budget, not a completion deadline.
         """
         if not self._db:
             return None
         now = datetime.now(timezone.utc).isoformat()
         # AD-490: sort_keys=True for deterministic rehash during verify_chain()
         data_json = json.dumps(data, sort_keys=True, default=str) if data is not None else None
-        # AD-490: Compute hash chain — read prior row_hash, then chain this row.
-        prev_hash = self.GENESIS_HASH
-        async with self._db.execute(
-            "SELECT row_hash FROM events ORDER BY id DESC LIMIT 1"
-        ) as cursor:
-            async for row in cursor:
-                prior = row[0]
-                if prior:
-                    prev_hash = prior
-                break
         payload = {
             "timestamp": now,
             "category": category,
@@ -571,17 +619,193 @@ class EventLog:
             "parent_event_id": parent_event_id,
             "data": data_json,
         }
-        row_hash = _compute_row_hash(prev_hash=prev_hash, payload=payload)
-        cursor = await self._db.execute(
-            "INSERT INTO events "
-            "(timestamp, category, event, agent_id, agent_type, pool, detail, "
-            " correlation_id, parent_event_id, data, prev_hash, row_hash) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (now, category, event, agent_id, agent_type, pool, detail,
-             correlation_id, parent_event_id, data_json, prev_hash, row_hash),
-        )
-        await self._db.commit()
-        return cursor.lastrowid
+        # BF-873: appending to the AD-490 hash chain is a read-modify-write
+        # (read the tail row_hash, chain against it, insert). Left unserialized,
+        # two writers chain against the same predecessor and verify_chain()
+        # silently stops holding — tamper-evidence is lost while the rows still
+        # read back fine. Both guards below are load-bearing:
+        #   _write_lock  — serializes writers inside this process.
+        #   BEGIN IMMEDIATE — takes SQLite's RESERVED lock before the read, so a
+        #     second *connection* (the vessel and CLI tooling both open
+        #     events.db) cannot commit between our read and our insert. The lock
+        #     alone does nothing there: measured, two connections corrupt the
+        #     chain with zero lock errors.
+        # The budget starts HERE, before the lock, so queueing spends it too:
+        # measured, three queued callers cost three full budgets (17.7s) when
+        # the deadline began inside the lock, and the last was still delayed
+        # linearly by callers that had already expired.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _CHAIN_WRITE_BUDGET_S
+        async with self._write_lock:
+            try:
+                for attempt in range(1, _MAX_CHAIN_WRITE_ATTEMPTS + 1):
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        # No attempt: a caller whose budget went on queueing used
+                        # to make one full blocking try here, which is how a 0.2s
+                        # budget committed at 0.641s and how stale callers stacked
+                        # delay onto everyone behind them.
+                        logger.error(
+                            "EventLog chain append for %s/%s spent its whole %.1fs "
+                            "write budget waiting, so attempt %d was not started; "
+                            "the event is NOT recorded and the caller sees "
+                            "TimeoutError, but the hash chain stays verifiable",
+                            category,
+                            event,
+                            _CHAIN_WRITE_BUDGET_S,
+                            attempt,
+                        )
+                        raise TimeoutError(
+                            f"EventLog chain append for {category}/{event} exhausted "
+                            f"its {_CHAIN_WRITE_BUDGET_S}s write budget while waiting"
+                        )
+                    # Cap SQLite's own busy wait at what is left, so an attempt
+                    # cannot wait past the budget it is running inside.
+                    await self._apply_busy_timeout(
+                        min(_CHAIN_BUSY_TIMEOUT_MS, int(remaining * 1000))
+                    )
+                    try:
+                        return await self._insert_chained_row(payload)
+                    except Exception as exc:
+                        if not _is_database_locked(exc):
+                            raise
+                        remaining = deadline - loop.time()
+                        if attempt == _MAX_CHAIN_WRITE_ATTEMPTS or remaining <= 0:
+                            logger.error(
+                                "EventLog chain append gave up after %d attempt(s) within a "
+                                "%.1fs budget measured from the log() call on a locked "
+                                "database (%s/%s); the event is NOT recorded and the caller "
+                                "sees the error, but the hash chain stays verifiable",
+                                attempt,
+                                _CHAIN_WRITE_BUDGET_S,
+                                category,
+                                event,
+                            )
+                            raise
+                        await asyncio.sleep(min(_CHAIN_RETRY_BASE_DELAY * attempt, remaining))
+            finally:
+                await self._restore_busy_timeout()
+        return None
+
+    async def _apply_busy_timeout(self, milliseconds: int) -> None:
+        """Point SQLite's busy handler at `milliseconds` (BF-873).
+
+        A no-op when the connection already carries that value, which is the
+        common case: only a nearly-spent budget tightens below the standing cap.
+        """
+        if self._db is None or self._busy_timeout_ms == milliseconds:
+            return
+        await self._db.execute(f"PRAGMA busy_timeout = {milliseconds}")
+        self._busy_timeout_ms = milliseconds
+
+    async def _restore_busy_timeout(self) -> None:
+        """Undo a per-attempt tightening so readers are not left failing fast.
+
+        Self-healing by design: every append re-applies the value it needs, so a
+        restore lost to cancellation costs at most one window.
+        """
+        if self._busy_timeout_ms == _CHAIN_BUSY_TIMEOUT_MS:
+            return
+        try:
+            await self._apply_busy_timeout(_CHAIN_BUSY_TIMEOUT_MS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "EventLog could not restore the %dms busy_timeout after a "
+                "budget-tightened append; reads on this connection may fail fast "
+                "under contention until the next append resets it",
+                _CHAIN_BUSY_TIMEOUT_MS,
+                exc_info=True,
+            )
+
+    async def _insert_chained_row(self, payload: dict[str, Any]) -> int | None:
+        """Read the chain tail and append one row in a single write transaction.
+
+        SQLite-specific by design; this module already speaks SQLite throughout.
+        """
+        if not self._db:
+            return None
+        # BF-873: BEGIN IMMEDIATE is INSIDE the try. Cancelled outside it, the
+        # awaiting future dies but aiosqlite's worker still completes the BEGIN,
+        # leaking a RESERVED transaction that blocks every other writer for the
+        # life of the process — worse than the corruption this method prevents.
+        try:
+            await self._db.execute("BEGIN IMMEDIATE")
+            prev_hash = self.GENESIS_HASH
+            async with self._db.execute(
+                "SELECT row_hash FROM events ORDER BY id DESC LIMIT 1"
+            ) as cursor:
+                async for row in cursor:
+                    prior = row[0]
+                    if prior:
+                        prev_hash = prior
+                    break
+            row_hash = _compute_row_hash(prev_hash=prev_hash, payload=payload)
+            cursor = await self._db.execute(
+                "INSERT INTO events "
+                "(timestamp, category, event, agent_id, agent_type, pool, detail, "
+                " correlation_id, parent_event_id, data, prev_hash, row_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (payload["timestamp"], payload["category"], payload["event"],
+                 payload["agent_id"], payload["agent_type"], payload["pool"],
+                 payload["detail"], payload["correlation_id"],
+                 payload["parent_event_id"], payload["data"], prev_hash, row_hash),
+            )
+            await self._db.commit()
+            return cursor.lastrowid
+        except BaseException:
+            await self._rollback_quietly()
+            raise
+
+    async def _rollback_quietly(self) -> None:
+        """Roll back a failed write, or take the connection out of service.
+
+        BF-873: exactly two failures are suppressed — "no transaction is active"
+        (BEGIN IMMEDIATE lost the race, so nothing is open) and a second
+        cancellation (aiosqlite has already queued the ROLLBACK on its worker,
+        so the transaction still closes). Every caller re-raises the original.
+
+        Anything else leaves the transaction state UNKNOWN. Measured: swallowing
+        it returned with in_transaction=True, and the next append died on
+        "cannot start a transaction within a transaction". A connection that
+        looks usable and is not is worse than no connection, so it is closed and
+        the failure is logged at error — later log() calls return None until the
+        log is restarted.
+        """
+        db = self._db
+        if db is None:
+            return
+        try:
+            await db.execute("ROLLBACK")
+        except asyncio.CancelledError:
+            logger.debug("EventLog rollback was cancelled after its ROLLBACK was queued",
+                         exc_info=True)
+        except BaseException as exc:
+            if _is_no_active_transaction(exc):
+                logger.debug("EventLog rollback after a failed write was a no-op",
+                             exc_info=True)
+                return
+            logger.error(
+                "EventLog ROLLBACK failed (%s); the transaction state is unknown, "
+                "so the connection is being closed rather than handed back "
+                "poisoned — later log() calls return None until EventLog.start() "
+                "runs again",
+                exc,
+                exc_info=True,
+            )
+            self._db = None
+            self._busy_timeout_ms = None
+            try:
+                await db.close()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "EventLog could not close the connection whose ROLLBACK failed; "
+                    "it is already out of service and will be garbage collected",
+                    exc_info=True,
+                )
 
     async def query(
         self,
@@ -992,38 +1216,59 @@ class EventLog:
         """Delete events older than retention_days and enforce max_rows cap.
 
         Returns number of rows deleted.
+
+        BF-873, deliberate and unfixed here: deleting rows severs the AD-490
+        chain, so verify_chain() reports the retained suffix as corrupt at its
+        first row. Repairing that needs a durable truncation anchor (the
+        AD-1278 AuditLog._truncated_at pattern), which needs schema or sidecar
+        state this concurrency fix is not allowed to add. Rehashing the
+        retained rows would forge the audit chain and is not an option. Tracked
+        separately; do not "fix" it by rehashing.
         """
         if not self._db:
             return 0
 
         deleted = 0
 
-        # Age-based pruning
-        if retention_days > 0:
-            from datetime import timedelta
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
-            cursor = await self._db.execute(
-                "DELETE FROM events WHERE timestamp < ?", (cutoff,)
-            )
-            deleted += cursor.rowcount
+        # BF-873: holds an implicit transaction open across awaits, so it must
+        # not interleave with log()'s BEGIN IMMEDIATE on this connection.
+        async with self._write_lock:
+            try:
+                # Age-based pruning
+                if retention_days > 0:
+                    from datetime import timedelta
+                    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+                    cursor = await self._db.execute(
+                        "DELETE FROM events WHERE timestamp < ?", (cutoff,)
+                    )
+                    deleted += cursor.rowcount
 
-        # Row-count cap
-        if max_rows > 0:
-            cursor = await self._db.execute("SELECT COUNT(*) FROM events")
-            row = await cursor.fetchone()
-            total = row[0] if row else 0
-            if total > max_rows:
-                excess = total - max_rows
-                cursor = await self._db.execute(
-                    "DELETE FROM events WHERE id IN "
-                    "(SELECT id FROM events ORDER BY id ASC LIMIT ?)",
-                    (excess,)
-                )
-                deleted += cursor.rowcount
+                # Row-count cap
+                if max_rows > 0:
+                    cursor = await self._db.execute("SELECT COUNT(*) FROM events")
+                    row = await cursor.fetchone()
+                    total = row[0] if row else 0
+                    if total > max_rows:
+                        excess = total - max_rows
+                        cursor = await self._db.execute(
+                            "DELETE FROM events WHERE id IN "
+                            "(SELECT id FROM events ORDER BY id ASC LIMIT ?)",
+                            (excess,)
+                        )
+                        deleted += cursor.rowcount
 
-        if deleted > 0:
-            await self._db.commit()
-            logger.info("EventLog pruned: %d events removed", deleted)
+                # BF-873: unconditional. DELETE opens an implicit transaction
+                # even when zero rows match, so committing only when
+                # deleted > 0 leaves it open — and the runtime prunes hourly,
+                # so one routine no-op prune wedges every later BEGIN IMMEDIATE
+                # and the vessel stops accepting intents.
+                await self._db.commit()
+            except BaseException:
+                await self._rollback_quietly()
+                raise
+
+            if deleted > 0:
+                logger.info("EventLog pruned: %d events removed", deleted)
 
         return deleted
 
@@ -1031,8 +1276,18 @@ class EventLog:
         """Delete all events. Used by probos reset."""
         if not self._db:
             return
-        try:
-            await self._db.execute("DELETE FROM events")
-            await self._db.commit()
-        except Exception:
-            logger.debug("EventLog wipe failed", exc_info=True)
+        async with self._write_lock:
+            try:
+                await self._db.execute("DELETE FROM events")
+                await self._db.commit()
+            except BaseException as exc:
+                # BF-873: the DELETE already opened an implicit transaction;
+                # suppressing the failure without closing it wedges every later
+                # writer. Cancellation still propagates.
+                await self._rollback_quietly()
+                if not isinstance(exc, Exception):
+                    raise
+                logger.warning(
+                    "EventLog wipe failed and was rolled back; events remain",
+                    exc_info=True,
+                )
