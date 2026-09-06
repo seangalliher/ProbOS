@@ -46,15 +46,15 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 79 | 10 | assigned, issue open, no shipped code |
+| `allocated-open` | 78 | 10 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 7 | 0 | abandoned, number **not** reusable |
-| `shipped` | 933 | 531 | code in history |
+| `shipped` | 934 | 531 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-89 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+88 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -66,7 +66,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-1244` | [#1237](https://github.com/seangalliher/ProbOS/issues/1237) | issue #1237 open, no code | AD-1244: a refusal must say what is missing, and a verdict must not contradict itself |
 | `AD-1243` | [#1236](https://github.com/seangalliher/ProbOS/issues/1236) | issue #1236 open, no code | AD-1243: show the Captain what a reply actually consulted |
 | `AD-1242` | [#1234](https://github.com/seangalliher/ProbOS/issues/1234) | issue #1234 open, no code | AD-1242: the verifier is asked whether claims are supported, and shown no evidence |
-| `AD-1241` | [#1216](https://github.com/seangalliher/ProbOS/issues/1216) | issue #1216 open, no code | AD-1241: a mid-turn refreshed tool offer has no bound and rescans every warm adapter |
 | `AD-1240` | [#1239](https://github.com/seangalliher/ProbOS/issues/1239) | issue #1239 open, no code | AD-1240: offload large tool results to the workspace instead of destroying them |
 | `AD-1236` | [#1205](https://github.com/seangalliher/ProbOS/issues/1205) | issue #1205 open, no code | AD-1236: the install rung means enable a registered MCP server (implements #1172 decision B) |
 | `AD-1229` | [#1202](https://github.com/seangalliher/ProbOS/issues/1202) | issue #1202 open, no code | AD-1229: did the action land - closing the loop between an agent's action and its effect |
@@ -172,7 +171,7 @@ _(none)_
 
 ## Shipped
 
-**AD** (933): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1185, 1201, 1203-1204, 1209-1211, 1217-1224, 1226-1227, 1230-1235, 1239, 1247-1248, 1251, 1256-1259, 1265, 1267, 1269-1271, 1273-1285, 1291-1298
+**AD** (934): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1173, 1175-1185, 1201, 1203-1204, 1209-1211, 1217-1224, 1226-1227, 1230-1235, 1239, 1241, 1247-1248, 1251, 1256-1259, 1265, 1267, 1269-1271, 1273-1285, 1291-1298
 
 **BF** (531): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-808, 810-817, 819-837, 840-842, 844-866, 868-869, 871-873
 
@@ -298,6 +297,7 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `AD-1204` — code is in history but [#1163](https://github.com/seangalliher/ProbOS/issues/1163) is still open.
 - `AD-1224` — code is in history but [#1190](https://github.com/seangalliher/ProbOS/issues/1190) is still open.
 - `AD-1230` — collision: 2 issues each lead with this number: [#1203](https://github.com/seangalliher/ProbOS/issues/1203), [#1256](https://github.com/seangalliher/ProbOS/issues/1256).
+- `AD-1241` — code is in history but [#1216](https://github.com/seangalliher/ProbOS/issues/1216) is still open.
 - `AD-1256` — code is in history but [#1302](https://github.com/seangalliher/ProbOS/issues/1302) is still open.
 - `AD-1258` — code is in history but [#1308](https://github.com/seangalliher/ProbOS/issues/1308) is still open.
 - `AD-1259` — code is in history but [#1309](https://github.com/seangalliher/ProbOS/issues/1309) is still open.
@@ -349,8 +349,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1045 head-shaped line yielded no AD/BF token
-PROGRESS.md:1051 head-shaped line yielded no AD/BF token
+PROGRESS.md:1053 head-shaped line yielded no AD/BF token
+PROGRESS.md:1059 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token

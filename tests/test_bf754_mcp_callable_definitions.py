@@ -600,7 +600,8 @@ def test_the_dispatch_module_applies_dedupe_to_the_offered_tools() -> None:
 
     source = inspect.getsource(ad)
     start = source.index("def _build_tools(")
-    builder = source[start:source.index("tools = _build_tools(")]
+    # AD-1241 returns deduped definitions and published IDs from the same builder.
+    builder = source[start:source.index("tools, published_mcp_ids = _build_tools(")]
 
     # AD-1248 bound the result to a name so the offered names can be recorded
     # before returning, so the call is no longer spelled ``return dedupe...``.

@@ -1773,6 +1773,11 @@ class WorkItemAgenticExecutor:
         change on the AD-839 path), then additionally persists the tool trace to
         ``runtime.attachment_store`` and returns a :class:`WorkItemAgenticOutcome`.
         """
+        from probos.cognitive.mcp_workbench import (
+            MCP_DISPATCH_OFFER_CONTEXT_KEY,
+            MCPDispatchOffer,
+            MCPDispatchSource,
+        )
         from probos.cognitive.swe_harness.agentic_loop import (
             TOKEN_SOURCE_MEASURED,
             AgenticLoop,
@@ -1853,6 +1858,9 @@ class WorkItemAgenticExecutor:
                 if intent_grant_store.resolve_sync(agent_id, m) != "restricted"
             ]
 
+        def _is_mcp_id(tool_id: str) -> bool:
+            return tool_id == "find_mcp_tool" or tool_id.startswith("mcp:")
+
         granted_ids: list[str] = []
         if perm_store is not None:
             grants = perm_store.get_active_grants_sync(agent_id)
@@ -1860,14 +1868,16 @@ class WorkItemAgenticExecutor:
                 g.tool_id
                 for g in grants
                 if not g.is_restriction and g.tool_id not in _GATED_TOOL_IDS
+                and not _is_mcp_id(g.tool_id)
             ]
 
-        # AD-1019c: contribute the agent's authorized MCP workbench tools — the
-        # find_mcp_tool search tool plus any currently-warm authorized adapters.
+        # AD-1241: contribute search plus this run's bounded, authorized MCP
+        # selection. Raw grants authorize access, not presentation membership.
         # Default-OFF: gated on config.mcp.agent_tools_enabled + a wired
-        # workbench, so off ⇒ byte-identical to the AD-1007 tool set.
+        # workbench; neither route may offer MCP tools while the gate is off.
         mcp_ids: list[str] = []
-        workbench = getattr(runtime, "mcp_workbench", None)
+        mcp_offer: MCPDispatchOffer | None = None
+        workbench: MCPDispatchSource | None = getattr(runtime, "mcp_workbench", None)
         mcp_cfg = getattr(getattr(runtime, "config", None), "mcp", None)
         # BF-755: the refresher below must be armed by the SAME gate that built
         # the initial offer. Arming on the workbench alone would let a mid-turn
@@ -1878,19 +1888,29 @@ class WorkItemAgenticExecutor:
         )
         if mcp_offer_armed:
             try:
-                # AD-1239: pull the agent's OPEN-risk authorized tools first, so
-                # they are offered BY NAME rather than only behind the
-                # find_mcp_tool search hop. A search tool is not a capability an
-                # agent can see: offered only find_mcp_tool, a counselor asked a
-                # documentation question reached for the browser -- which
-                # advertises a concrete action vocabulary -- while the docs
-                # server sat connected and authorized one call away.
-                await workbench.preload_open_tools(
+                candidate_offer = await workbench.create_dispatch_offer(
                     agent_id,
-                    limit=int(getattr(mcp_cfg, "max_directly_offered_tools", 0) or 0),
+                    preload_limit=int(
+                        getattr(mcp_cfg, "max_directly_offered_tools", 0) or 0
+                    ),
                 )
-                mcp_ids = workbench.dispatch_tool_ids(agent_id)
+                if (
+                    type(candidate_offer) is not MCPDispatchOffer
+                    or not workbench.accepts_dispatch_offer(candidate_offer, agent_id)
+                ):
+                    raise ValueError("MCP workbench returned an invalid dispatch offer")
+                mcp_ids = workbench.dispatch_tool_ids(
+                    agent_id, candidate_ids=candidate_offer.selected_ids
+                )
+                allowed_ids = {"find_mcp_tool", *candidate_offer.selected_ids}
+                if type(mcp_ids) is not list or any(
+                    type(tool_id) is not str or tool_id not in allowed_ids
+                    for tool_id in mcp_ids
+                ):
+                    raise ValueError("MCP workbench returned an invalid initial selection")
+                mcp_offer = candidate_offer
             except Exception:
+                mcp_offer = None
                 logger.warning(
                     "AD-1019c: failed to resolve MCP workbench tools for agent "
                     "%s; continuing without MCP tools",
@@ -2259,10 +2279,10 @@ class WorkItemAgenticExecutor:
         # half from the current authorized view rather than unioning onto the
         # old one. An append-only merge could never drop a tool whose server was
         # disabled or whose grant was revoked mid-turn.
-        _mcp_id_set = set(mcp_ids)
-        non_mcp_ids = [t for t in tool_ids if t not in _mcp_id_set]
+        non_mcp_ids = [tool_id for tool_id in tool_ids if not _is_mcp_id(tool_id)]
+        mcp_insert_at = len(dict.fromkeys([*granted_ids, *mesh_ids]))
 
-        tools: list[dict] = []
+        tools: list[dict[str, Any]] = []
         # AD-1248: one scope for this whole run, so every pass of a turn shares
         # it and a continuation supersedes its own earlier calls. Root == scope
         # here because these are the execution's OWN calls; a delegated child
@@ -2277,14 +2297,18 @@ class WorkItemAgenticExecutor:
 
         offered_names: set[str] = set()
 
-        def _build_tools(ids: list[str]) -> list[dict]:
+        def _build_tools(
+            ids: list[str],
+        ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
             """BF-755: assemble the offer for *ids*. Extracted so the same
             assembly can run again mid-turn when discovery changes the set --
             two assemblies that could drift is the shape this repo keeps
-            producing, so there is exactly one."""
-            built: list[dict] = []
+            producing, so there is exactly one. Return canonical MCP identities
+            only for the exact definition objects retained after dedupe."""
+            built: list[dict[str, Any]] = []
+            mcp_definition_ids: dict[int, str] = {}
             if registry is None:
-                return built
+                return built, ()
             for tid in ids:
                 reg = registry.get(tid)
                 if reg is None:
@@ -2310,6 +2334,8 @@ class WorkItemAgenticExecutor:
                         (definition.get("function") or {}).get("description", ""),
                     )
                 built.append(definition)
+                if tid.startswith("mcp:"):
+                    mcp_definition_ids[id(definition)] = tid
             # BF-757: last gate before the provider. A duplicate function name
             # makes it reject the WHOLE request, so one collision would cost the
             # agent every tool rather than the one.
@@ -2322,39 +2348,53 @@ class WorkItemAgenticExecutor:
                 _offered = (_definition.get("function") or {}).get("name")
                 if isinstance(_offered, str) and _offered:
                     offered_names.add(_offered)
-            return deduped
+            published_ids = tuple(
+                mcp_definition_ids[id(definition)]
+                for definition in deduped
+                if id(definition) in mcp_definition_ids
+            )
+            return deduped, published_ids
 
-        tools = _build_tools(tool_ids)
+        tools, published_mcp_ids = _build_tools(tool_ids)
+        if mcp_offer is not None:
+            mcp_offer.acknowledge_published(published_mcp_ids)
 
-        def _refresh_tools() -> list[dict] | None:
-            """BF-755: re-offer after discovery pulled a tool onto the workbench.
+        def _refresh_tools() -> list[dict[str, Any]] | None:
+            """AD-1241: recheck selected members after every tool iteration.
 
-            ``dispatch_tool_ids`` is the SAME authorized view used to build the
-            initial offer, so a tool can only appear here if the agent was
-            already allowed to have it -- discovery widens what is *visible*,
-            never what is *permitted*.
+            Discovery changes membership, never permission. Fresh authorization
+            and successful assembly precede publication and pin release; an
+            unchanged input reuses the last assembly's actual MCP survivors.
+            Filtering withdraws admissions, never credits them as published.
             """
-            if workbench is None or not mcp_offer_armed:
+            nonlocal published_mcp_ids
+            if workbench is None or not mcp_offer_armed or mcp_offer is None:
                 return None
             try:
-                current = workbench.dispatch_tool_ids(agent_id)
+                current = workbench.dispatch_tool_ids(
+                    agent_id, candidate_ids=mcp_offer.selected_ids
+                )
+                merged = list(dict.fromkeys([
+                    *non_mcp_ids[:mcp_insert_at],
+                    *current,
+                    *non_mcp_ids[mcp_insert_at:],
+                ]))
+                if merged == tool_ids:
+                    mcp_offer.acknowledge_published(published_mcp_ids)
+                    return None
+                refreshed, refreshed_mcp_ids = _build_tools(merged)
+                mcp_offer.acknowledge_published(refreshed_mcp_ids)
+                tool_ids[:] = merged
+                published_mcp_ids = refreshed_mcp_ids
+                return refreshed
             except Exception:
-                # WARNING, not DEBUG: the tool the agent just found becomes
-                # uncallable for the rest of the turn. That is a visible
-                # degradation, and at DEBUG it is invisible at the default
-                # console level.
                 logger.warning(
-                    "BF-755: could not re-read the workbench for %s; keeping "
-                    "the offer as assembled, so a tool discovered this turn "
-                    "stays uncallable until the next one",
+                    "AD-1241: could not refresh the bounded MCP offer for %s; "
+                    "keeping the last assembled offer and discovery pins until "
+                    "a successful refresh; invocation still checks current access",
                     agent_id[:12], exc_info=True,
                 )
                 return None
-            merged = list(dict.fromkeys([*non_mcp_ids, *current]))
-            if merged == tool_ids:
-                return None
-            tool_ids[:] = merged
-            return _build_tools(merged)
 
         # AD-1065: the conversational chat path passes a lower iteration cap +
         # a faster tier than the task-path defaults (25 / deep). When both are
@@ -2379,12 +2419,12 @@ class WorkItemAgenticExecutor:
         # path and every test double keep the exact call they had before.
         if priority is not None:
             _loop_kwargs["priority"] = priority
-        # BF-755: a tool the agent finds mid-turn becomes callable in that turn.
+        # BF-755: mid-turn discoveries enter fresh selection and assembly.
         # Only passed when the MCP offer itself was armed -- an unarmed vessel
         # never receives the kwarg, so its construction is byte-identical and
         # every test double pinning the old signature keeps working (the BF-678
         # class).
-        if mcp_offer_armed:
+        if mcp_offer_armed and mcp_offer is not None:
             _loop_kwargs["refresh_tools"] = _refresh_tools
         # AD-1146: opt into the provider's real multi-turn message array
         # (assistant.tool_calls + role:"tool" results). Default-OFF — with the
@@ -2421,6 +2461,8 @@ class WorkItemAgenticExecutor:
                 "thread_id": thread_id,
             }
         )
+        if mcp_offer_armed and mcp_offer is not None:
+            _context[MCP_DISPATCH_OFFER_CONTEXT_KEY] = mcp_offer
         # AD-1162: supply the key AD-1158 reads. Without a producer, every agent
         # browser call created a fresh signed-out session while the Captain
         # watched a different one. Bound only when the Captain actually has a

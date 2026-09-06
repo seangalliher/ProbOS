@@ -42,6 +42,8 @@ import pytest
 from probos.config import SecurityInfraConfig
 from probos.security.egress import EgressPolicy
 from probos.startup.finalize import _warn_on_mcp_egress_mismatch
+from probos.tools.permissions import ToolPermissionStore
+from probos.tools.protocol import ToolPermission
 
 LEARN = "https://learn.microsoft.com/api/mcp"
 
@@ -243,8 +245,15 @@ async def test_candidates_that_cannot_be_pulled_are_reported(caplog) -> None:
     is what made this read as 'the agent ignored MCP'."""
     from probos.cognitive.mcp_workbench import MCPWorkbench
 
+    permissions = ToolPermissionStore()
+    grant = await permissions.issue_grant(
+        "a1", "mcp:microsoft-learn", ToolPermission.READ,
+    )
+    assert permissions.get_active_grants_sync("a1") == [grant]
+    descriptor = {"name": "microsoft_docs_search", "description": "d"}
+
     async def _tools(_rec: Any) -> list[dict[str, str]]:
-        return [{"name": "microsoft_docs_search", "description": "d"}]
+        return [descriptor]
 
     record = SimpleNamespace(
         name="microsoft-learn", type="http", url=LEARN,
@@ -258,20 +267,19 @@ async def test_candidates_that_cannot_be_pulled_are_reported(caplog) -> None:
         consensus_invoke=None,
         episode_writer=None,
         server_store=_Store([record]),
-        perm_store=None,
+        perm_store=permissions,
         dept_grant_store=None,
         risk_store=None,
         ontology=None,
         agent_registry=None,
     )
     wb._enumerate_tools = _tools  # type: ignore[assignment]
-    # A server-scope grant, the shape DepartmentToolGrantStore issues.
-    grant = SimpleNamespace(tool_id="mcp:microsoft-learn", is_restriction=False)
-    wb._grants = lambda aid: ([grant], [])  # type: ignore[assignment]
+    pull_calls: list[tuple[str, str, str, Any]] = []
 
     async def _cannot_pull(
         aid: str, server: str, tool: str, *, descriptor: Any = None
     ) -> bool:
+        pull_calls.append((aid, server, tool, descriptor))
         return False
 
     wb.pull_tool = _cannot_pull  # type: ignore[assignment]
@@ -279,6 +287,9 @@ async def test_candidates_that_cannot_be_pulled_are_reported(caplog) -> None:
     with caplog.at_level(logging.WARNING):
         pulled = await wb.preload_open_tools("a1", limit=24)
 
+    assert pull_calls == [
+        ("a1", "microsoft-learn", "microsoft_docs_search", descriptor),
+    ]
     assert pulled == []
     assert "none could be pulled" in caplog.text
 
@@ -290,7 +301,10 @@ async def test_candidates_that_cannot_be_pulled_are_reported(caplog) -> None:
 # guess.
 # ---------------------------------------------------------------------------
 
-def _wb(records: list[Any], *, store: Any | None = None) -> Any:
+def _wb(
+    records: list[Any], *, store: Any | None = None,
+    permissions: ToolPermissionStore | None = None,
+) -> Any:
     from probos.cognitive.mcp_workbench import MCPWorkbench
 
     return MCPWorkbench(
@@ -299,7 +313,7 @@ def _wb(records: list[Any], *, store: Any | None = None) -> Any:
         consensus_invoke=None,
         episode_writer=None,
         server_store=_Store(records) if store is None else store,
-        perm_store=None,
+        perm_store=permissions,
         dept_grant_store=None,
         risk_store=None,
         ontology=None,
@@ -361,13 +375,14 @@ async def test_a_server_that_enumerates_nothing_names_that_cause(caplog) -> None
 async def test_unauthorized_tools_are_counted_separately(caplog) -> None:
     """'Enumerated but unauthorized' and 'never enumerated' are different
     failures with different fixes; the message has to tell them apart."""
-    wb = _wb([_record()])
+    permissions = ToolPermissionStore()
+    assert permissions.get_active_grants_sync("a1") == []
+    wb = _wb([_record()], permissions=permissions)
 
     async def _two(_rec: Any) -> list[dict[str, str]]:
         return [{"name": "a", "description": ""}, {"name": "b", "description": ""}]
 
     wb._enumerate_tools = _two  # type: ignore[assignment]
-    wb._grants = lambda aid: ([], [])  # type: ignore[assignment]
 
     with caplog.at_level(logging.INFO):
         assert await wb.preload_open_tools("a1", limit=24) == []

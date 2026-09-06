@@ -178,9 +178,11 @@ async def test_the_dispatch_refresher_swallows_its_own_failure() -> None:
 
     source = inspect.getsource(ad)
     start = source.index("def _refresh_tools()")
-    body = source[start:start + 1400]
+    body = source[start:source.index("# AD-1065:", start)]
 
     assert "except Exception:" in body and "return None" in body
+    assert body.index("_build_tools(merged)") < body.index("except Exception:")
+    assert body.index("_build_tools(merged)") < body.index("tool_ids[:] = merged")
 
 
 # ---------------------------------------------------------------------------
@@ -190,16 +192,38 @@ async def test_the_dispatch_refresher_swallows_its_own_failure() -> None:
 def test_the_refresher_reuses_the_same_authorized_view() -> None:
     """Discovery must widen what is VISIBLE, never what is PERMITTED.
     ``dispatch_tool_ids`` is the same AD-1019b-authorized view that built the
-    initial offer, so a tool can only appear if the agent already had it."""
+    initial offer. AD-1241 supplies this run's selected candidates instead of
+    enumerating the warm population; it does not replace the authorization check.
+
+    Publication must acknowledge assembled identities, not selector candidates:
+    an earlier non-MCP definition can win dedupe under an MCP tool's alias.
+    Unchanged input must reuse that assembly's identities to avoid false credit.
+    """
     import inspect
 
     from probos.cognitive import agentic_dispatch as ad
 
     source = inspect.getsource(ad)
     start = source.index("def _refresh_tools()")
-    body = source[start:start + 1800]
+    body = source[start:source.index("# AD-1065:", start)]
 
-    assert "workbench.dispatch_tool_ids(agent_id)" in body
+    assert "workbench.dispatch_tool_ids(" in body
+    assert "candidate_ids=mcp_offer.selected_ids" in body, (
+        "authorization must refresh the bounded run selection, not all warm adapters"
+    )
+    assert "if merged == tool_ids:" in body
+    assert body.count("mcp_offer.acknowledge_published(") == 2, (
+        "both rebuilt and unchanged successful offers must release discovery pins"
+    )
+    assert "nonlocal published_mcp_ids" in body
+    assert "mcp_offer.acknowledge_published(published_mcp_ids)" in body
+    assert "mcp_offer.acknowledge_published(refreshed_mcp_ids)" in body
+    assert body.index("_build_tools(merged)") < body.rindex(
+        "mcp_offer.acknowledge_published(refreshed_mcp_ids)"
+    )
+    assert body.index("tool_ids[:] = merged") < body.index(
+        "published_mcp_ids = refreshed_mcp_ids"
+    )
     assert "mcp_offer_armed" in body, (
         "the refresher must be gated by the same flag that built the initial "
         "MCP offer, or it introduces MCP tools on a vessel with "
@@ -211,36 +235,71 @@ def test_the_refresher_reuses_the_same_authorized_view() -> None:
     )
 
 
-def test_a_disabled_servers_warm_tool_is_not_offered() -> None:
+@pytest.mark.asyncio
+async def test_a_disabled_servers_warm_tool_is_not_offered() -> None:
     """REVIEW FINDING, executable. An adapter stays warm after an operator
     disables its server, and authorization alone did not notice -- so the offer
     kept a tool that fails at the bridge, spending an LLM call to learn it."""
     from types import SimpleNamespace
 
-    from probos.cognitive.mcp_workbench import MCPWorkbench, _PulledEntry
+    from probos.cognitive.mcp_workbench import MCPWorkbench
+    from probos.integrations.mcp_bridge.store import McpServerRecord, McpServerStore
+    from probos.tools.permissions import ToolPermissionStore
+    from probos.tools.protocol import ToolPermission
+    from probos.tools.registry import ToolRegistry
 
-    wb = MCPWorkbench(
-        tool_registry=SimpleNamespace(register=lambda *a, **k: None, get=lambda _t: object()),
-        bridge=SimpleNamespace(), consensus_invoke=lambda *a: None,
-        episode_writer=None, server_store=None, perm_store=None,
+    async def reject_consensus(
+        server_url: str, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        raise AssertionError("Public descriptor pulls must not invoke consensus")
+
+    registry = ToolRegistry()
+    server_store = McpServerStore()
+    permission_store = ToolPermissionStore()
+    workbench = MCPWorkbench(
+        tool_registry=registry,
+        bridge=SimpleNamespace(), consensus_invoke=reject_consensus,
+        episode_writer=None, server_store=server_store, perm_store=permission_store,
         dept_grant_store=None, risk_store=None, ontology=None,
         agent_registry=None,
     )
-    wb._is_authorized = lambda *a: True
-    wb._pulled = {
-        "mcp:live:t": _PulledEntry("mcp:live:t", "live", "t", 0.0),
-        "mcp:off:t": _PulledEntry("mcp:off:t", "off", "t", 0.0),
-    }
-    wb._record_by_name = lambda name: SimpleNamespace(
-        name=name, enabled=(name == "live")
-    )
+    assert workbench.dispatch_tool_ids("a1") == ["find_mcp_tool"]
+    assert workbench.pulled_count == 0
+    records: dict[str, McpServerRecord] = {}
+    for server_name in ("live", "off"):
+        records[server_name] = await server_store.create(McpServerRecord(
+            name=server_name, type="stdio", command="offline-test",
+        ))
+        await permission_store.issue_grant(
+            "a1", f"mcp:{server_name}", permission=ToolPermission.WRITE
+        )
+        assert await workbench.pull_tool(
+            "a1", server_name, "t",
+            descriptor={
+                "name": "t", "description": "Offline test tool",
+                "input_schema": {"type": "object"},
+            },
+        ) is True
+        registration = registry.get(f"mcp:{server_name}:t")
+        assert registration is not None
+        assert registration.enabled is True
 
-    offered = wb.dispatch_tool_ids("a1")
+    assert workbench.pulled_count == 2
+    assert workbench.dispatch_tool_ids("a1") == [
+        "find_mcp_tool", "mcp:live:t", "mcp:off:t",
+    ]
+    disabled = await server_store.set_enabled(records["off"].id, False)
+    assert disabled is not None
+    assert disabled.enabled is False
+
+    offered = workbench.dispatch_tool_ids("a1")
 
     assert "mcp:live:t" in offered
     assert "mcp:off:t" not in offered, (
         "a tool from a disabled server was offered to the model"
     )
+    assert workbench.pulled_count == 2
+    assert registry.get("mcp:off:t") is not None
 
 
 def test_the_offer_is_assembled_in_exactly_one_place() -> None:
@@ -257,3 +316,4 @@ def test_the_offer_is_assembled_in_exactly_one_place() -> None:
     assert source.count("tool_registration_to_llm_definition(reg)") == 1, (
         "a second definition-assembly appeared; it will drift from the first"
     )
+    assert source.count("dedupe_llm_definitions(built, agent_id=agent_id)") == 1

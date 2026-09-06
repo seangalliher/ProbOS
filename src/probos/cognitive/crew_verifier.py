@@ -50,8 +50,9 @@ import json
 import logging
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from probos.tools.protocol import (
     ToolAccessGrant,
@@ -66,6 +67,7 @@ from probos.types import LLMRequest, Vote
 if TYPE_CHECKING:
     from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
     from probos.cognitive.crew_executor import SubtaskResult
+    from probos.cognitive.mcp_workbench import MCPDispatchOffer, MCPDispatchSource
     from probos.consensus.trust import TrustNetwork
     from probos.substrate.registry import AgentRegistry
     from probos.workforce import WorkItemStore
@@ -304,9 +306,69 @@ class _SessionIntentGrantStore:
 @dataclass(frozen=True, slots=True)
 class _SessionMcpToolIds:
     tool_ids: tuple[str, ...]
+    agent_id: str = ""
+    source: MCPDispatchSource | None = None
+    synchronize: Callable[[Sequence[str]], list[str]] | None = None
 
-    def dispatch_tool_ids(self, _agent_id: str) -> list[str]:
-        return list(self.tool_ids)
+    async def create_dispatch_offer(
+        self, agent_id: str, *, preload_limit: int
+    ) -> MCPDispatchOffer:
+        """Return the original finder's offer without acquiring its ownership."""
+        if type(agent_id) is not str or not agent_id or agent_id != self.agent_id:
+            raise ValueError("session_correction_mcp_agent_invalid")
+        if type(preload_limit) is not int:
+            raise TypeError("MCP dispatch preload limit must be an integer")
+        if self.source is None or self.synchronize is None:
+            raise ValueError("session_correction_mcp_unavailable")
+        if self.synchronize(("find_mcp_tool",)) != ["find_mcp_tool"]:
+            raise ValueError("session_correction_mcp_unavailable")
+        offer = await self.source.create_dispatch_offer(
+            agent_id, preload_limit=preload_limit
+        )
+        if not self.accepts_dispatch_offer(offer, agent_id):
+            raise ValueError("session_correction_mcp_offer_invalid")
+        return offer
+
+    def accepts_dispatch_offer(
+        self, offer: MCPDispatchOffer, agent_id: str
+    ) -> bool:
+        """Require this projection's exact agent and the original source owner."""
+        from probos.cognitive.mcp_workbench import MCPDispatchOffer
+
+        return (
+            type(offer) is MCPDispatchOffer
+            and type(agent_id) is str
+            and bool(agent_id)
+            and agent_id == self.agent_id
+            and self.source is not None
+            and self.source.accepts_dispatch_offer(offer, agent_id)
+        )
+
+    def dispatch_tool_ids(
+        self, agent_id: str, *, candidate_ids: Sequence[str] | None = None
+    ) -> list[str]:
+        """Keep the legacy snapshot, or synchronize only fresh source selections."""
+        if candidate_ids is None:
+            return list(self.tool_ids)
+        candidates = _session_mcp_projection_ids(candidate_ids)
+        if (
+            type(agent_id) is not str
+            or not agent_id
+            or agent_id != self.agent_id
+            or self.source is None
+            or self.synchronize is None
+        ):
+            return []
+        if self.synchronize(("find_mcp_tool",)) != ["find_mcp_tool"]:
+            return []
+        selected = self.source.dispatch_tool_ids(agent_id, candidate_ids=candidate_ids)
+        if type(selected) is not list:
+            raise ValueError("session_correction_mcp_selection_invalid")
+        selected_ids = _session_mcp_projection_ids(selected)
+        allowed = {"find_mcp_tool", *candidates}
+        if any(tool_id not in allowed for tool_id in selected_ids):
+            raise ValueError("session_correction_mcp_selection_invalid")
+        return self.synchronize(selected_ids)
 
 
 class _ProjectedToolDefinition:
@@ -372,6 +434,92 @@ class _SessionProjectedToolRegistry(ToolRegistry):
         self._source_backed_ids = source_backed_ids
         self._explicit_denial_ids = explicit_denial_ids
 
+    def synchronize_mcp_definitions(self, tool_ids: Sequence[str]) -> list[str]:
+        """Install bounded detached metadata for freshly selected source MCP IDs."""
+        candidates = _session_mcp_projection_ids(tool_ids)
+        definitions: dict[str, dict[str, Any]] = {}
+        for tool_id in candidates:
+            if tool_id in self._explicit_denial_ids:
+                continue
+            is_search = tool_id == "find_mcp_tool"
+            parts = tool_id.split(":", 2)
+            if not is_search and (
+                len(parts) != 3 or parts[0] != "mcp" or not parts[1] or not parts[2]
+            ):
+                continue
+            if is_search and tool_id not in self._source_backed_ids:
+                continue
+            current = self.get(tool_id)
+            if current is not None and (
+                tool_id not in self._source_backed_ids
+                or not current.enabled
+                or type(current.tool) is not _ProjectedToolDefinition
+                or (not is_search and current.tool_type is not ToolType.MCP_SERVER)
+            ):
+                continue
+            try:
+                registration = self._source_registry.get(tool_id)
+            except Exception:
+                logger.warning(
+                    "AD-1241: correction MCP metadata for %s could not be read; "
+                    "leaving this definition unavailable without changing its source",
+                    tool_id, exc_info=True,
+                )
+                continue
+            definition = _session_projection_registration(registration)
+            expected_type = ToolType.UTILITY_AGENT if is_search else ToolType.MCP_SERVER
+            if (
+                definition is None
+                or definition["enabled"] is not True
+                or definition["tool"].tool_id != tool_id
+                or definition["tool"].tool_type is not expected_type
+            ):
+                continue
+            definitions[tool_id] = definition
+
+        new_source_ids = set(definitions).difference(self._source_backed_ids)
+        new_definition_count = sum(self.get(tool_id) is None for tool_id in definitions)
+        if (
+            len(self._source_backed_ids) + len(new_source_ids)
+            > _MAX_SESSION_PROJECTION_SOURCE_TOOLS
+            or self.count() + new_definition_count > _MAX_SESSION_PROJECTED_TOOLS
+        ):
+            logger.warning(
+                "AD-1241: %d selected MCP definitions exceed correction projection "
+                "limits; leaving the whole batch unoffered and the projection unchanged",
+                len(definitions),
+            )
+            return []
+
+        installed = 0
+        for tool_id, definition in definitions.items():
+            current_definition = _session_projection_registration(self.get(tool_id))
+            unchanged = (
+                current_definition is not None
+                and all(
+                    current_definition[key] == value
+                    for key, value in definition.items() if key != "tool"
+                )
+                and all(
+                    getattr(current_definition["tool"], attribute)
+                    == getattr(definition["tool"], attribute)
+                    for attribute in (
+                        "tool_id", "name", "tool_type", "description",
+                        "input_schema", "output_schema",
+                    )
+                )
+            )
+            if not unchanged:
+                _session_register_projected_definition(self, definition)
+                installed += 1
+            self._source_backed_ids = self._source_backed_ids | {tool_id}
+        logger.debug(
+            "AD-1241: correction synchronized %d MCP definitions (%d installed, "
+            "%d unavailable); invocation remains governed by the original registry",
+            len(definitions), installed, len(candidates) - len(definitions),
+        )
+        return list(definitions)
+
     async def check_and_invoke(
         self,
         agent_id: str,
@@ -424,7 +572,7 @@ class _SessionCorrectionRuntime:
     artifact_store: Any
     intent_bus: Any
     intent_grant_store: Any
-    mcp_workbench: Any
+    mcp_workbench: MCPDispatchSource | None
     cognitive_skill_catalog: Any
     emit_event: None = None
     event_emit_fn: None = None
@@ -476,6 +624,22 @@ def _session_projection_tool_id(value: Any) -> str | None:
         maximum_bytes=1_024,
         allow_empty=False,
     )
+
+
+def _session_mcp_projection_ids(value: Sequence[str]) -> tuple[str, ...]:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or len(value) > _MAX_SESSION_PROJECTION_SOURCE_TOOLS
+    ):
+        raise ValueError("session_correction_mcp_selection_invalid")
+    normalized: list[str] = []
+    for tool_id in value:
+        candidate = _session_projection_tool_id(tool_id)
+        if candidate is None:
+            raise ValueError("session_correction_mcp_selection_invalid")
+        normalized.append(candidate)
+    return tuple(dict.fromkeys(normalized))
 
 
 def _session_detach_active_grants(
@@ -1048,7 +1212,12 @@ def _session_correction_runtime(
             source=intent_policy,
             restricted_ids=frozenset(restricted_mesh_ids),
         ),
-        mcp_workbench=_SessionMcpToolIds(tuple(dict.fromkeys(mcp_ids))),
+        mcp_workbench=_SessionMcpToolIds(
+            tuple(dict.fromkeys(mcp_ids)),
+            agent_id=agent_id,
+            source=workbench,
+            synchronize=registry.synchronize_mcp_definitions,
+        ),
         cognitive_skill_catalog=(
             object() if "use_skill" in selected else None
         ),
