@@ -164,6 +164,14 @@ class SelfQueryTool:
                 snapshot = {
                     domain: await getters[domain](agent_id) for domain in selected
                 }
+            snapshot = dict(snapshot)
+            social = snapshot.get("social")
+            if isinstance(social, dict):
+                snapshot["social"] = {
+                    key: value
+                    for key, value in social.items()
+                    if key in ("routing_affinities", "interaction_breadth")
+                }
             rendered = telemetry.render_telemetry_context(snapshot)
         except Exception:
             logger.warning(

@@ -17,6 +17,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from probos.config import format_trust
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,11 +58,11 @@ class IntrospectiveTelemetryService:
         if hasattr(rt, 'trust_network') and rt.trust_network:
             trust_net = rt.trust_network
             try:
-                result["score"] = round(trust_net.get_score(agent_id), 3)
+                result["score"] = format_trust(trust_net.get_score(agent_id))
                 record = trust_net.get_record(agent_id)
                 if record:
                     result["observations"] = int(record.observations)
-                    result["uncertainty"] = round(record.uncertainty, 3)
+                    result["uncertainty"] = format_trust(record.uncertainty)
                 # Recent trend
                 events = trust_net.get_events_for_agent(agent_id, n=5)
                 if len(events) >= 2:
@@ -116,23 +118,50 @@ class IntrospectiveTelemetryService:
         return result
 
     async def get_social_state(self, agent_id: str) -> dict[str, Any]:
-        """Routing affinities (Hebbian), interaction breadth."""
+        """Hebbian graph projections, incident connections, interaction breadth."""
         result: dict[str, Any] = {}
         rt = self._runtime
-        if hasattr(rt, 'hebbian_router') and rt.hebbian_router:
-            try:
-                all_weights = rt.hebbian_router.all_weights_typed()
-                agent_weights = {
-                    src: w for (src, tgt, rel), w in all_weights.items()
-                    if tgt == agent_id and w > 0
-                }
-                if agent_weights:
-                    top = sorted(agent_weights.items(), key=lambda x: x[1], reverse=True)[:3]
-                    result["routing_affinities"] = [
-                        {"intent": src, "weight": round(w, 2)} for src, w in top
-                    ]
-            except Exception:
-                pass
+        try:
+            router = getattr(rt, 'hebbian_router', None)
+            if router is None:
+                logger.warning(
+                    "AD-1259: Hebbian router unavailable; returning available "
+                    "interaction signals without graph facts"
+                )
+            else:
+                all_weights = router.all_weights_typed()
+                incoming: list[tuple[str, float]] = []
+                outgoing: list[tuple[str, float]] = []
+                routing_weights: dict[str, float] = {}
+                total_connections = 0
+                for (source, target, _relation), weight in all_weights.items():
+                    if source == agent_id or target == agent_id:
+                        total_connections += 1
+                    if target == agent_id:
+                        incoming.append((source, weight))
+                        if weight > 0:
+                            routing_weights[source] = weight
+                    if source == agent_id:
+                        outgoing.append((target, weight))
+
+                graph: dict[str, Any] = {"total_connections": total_connections}
+                for key, affinities in (
+                    ("routing_affinities", list(routing_weights.items())),
+                    ("incoming_affinities", incoming),
+                    ("outbound_affinities", outgoing),
+                ):
+                    if affinities:
+                        top = sorted(affinities, key=lambda entry: entry[1], reverse=True)[:3]
+                        graph[key] = [
+                            {"intent": endpoint, "weight": format_trust(weight)}
+                            for endpoint, weight in top
+                        ]
+                result.update(graph)
+        except Exception:
+            logger.warning(
+                "AD-1259: Hebbian graph collection failed; returning available "
+                "interaction signals without graph facts"
+            )
         # Trust network social signals
         if hasattr(rt, 'trust_network') and rt.trust_network:
             try:

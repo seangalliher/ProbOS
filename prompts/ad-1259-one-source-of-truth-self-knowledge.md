@@ -1,210 +1,232 @@
-# AD-1259 — one source of truth for agent self-knowledge
+# AD-1259 - One Source of Truth for Agent Self-Knowledge
 
-**Status:** ready to build
-**Issue:** [#1309](https://github.com/seangalliher/ProbOS/issues/1309)
-**Dependencies:** AD-1258 (#1308) — the social domain must render before `_agent_info` reads it back
-**Estimated tests:** 12–15 new, existing introspection tests amended
+**Status:** implemented against the approved amended contract; focused validation recorded below.
+**Issue:** [#1309](https://github.com/seangalliher/ProbOS/issues/1309).
+**Contract hash (Worker supplied):** `c2144d9ab0caf8cf3c5cc65c0be2a7866ec7699559c2491b6f6c930414c4b20d`.
+**Workflow hash:** `03408b885dc3d8f0818ca2019fd8a3efd773d3f6192a6861c2e5b1709d8e8855`.
+**Selected approach:** `service-owned-compatible-projections`.
+**Dependencies:** preserve the shipped AD-1258 identity, domain filtering and rendering contracts.
+**Test budget:** 15-25 focused behavior cases across the completed issue, strengthening existing tests.
 
----
+This reconciled plan applies only to the approved issue-1309 contract. AD-1259 is already
+allocated; do not allocate another AD or infer a current ceiling from this document.
+All edits and checks resolve in `D:/ProbOS-burndown-b2053036-1309`, admitted at
+`02826e03a5cecf8d4df807eb6d3dc212099e39d0`. Preserve dirty `D:/ProbOS`.
+The Worker owns executable validation, the index, durable state, review dispatch and release.
+Builder does not edit `.supervised-worker/`, run commands, stage, commit or spawn agents.
 
-## Numbering
+## Corrected Rationale
 
-Allocated in the AD-1258 wave (#1308, #1309, #1310, #1311). GitHub ceiling at drafting:
-**AD-1256** (#1302); prompts hold AD-1250…AD-1255, AD-1257, and this wave holds
-AD-1258…AD-1261. Next free after the wave: **AD-1262**.
+This is consistency consolidation, not a numeric-faithfulness security fix.
+The [correcting comment 5502529668](https://github.com/seangalliher/ProbOS/issues/1309#issuecomment-5502529668)
+establishes that `_check_introspective_faithfulness` ignores telemetry contents; it does not
+compare the two paths' numeric values. Leave that checker unchanged.
 
----
+The approved probe observed Captain trust `0.5124` versus snapshot trust `0.512`, and
+inbound weight `0.8765` versus `0.88`, against unchanged shared inputs. The baseline service
+collects positive inbound routing affinities and interaction breadth, whereas the Captain
+also reports typed-edge inbound/outbound lists and an incident connection count. Its
+positive-only, source-deduplicated routing list cannot substitute for Captain inbound data.
 
-## Problem
+Worker baseline evidence for
+`tests/test_ad1259_one_source_of_truth.py::test_agent_info_and_telemetry_snapshot_share_facts`:
+the exact first focused command below exited 1 with **1 failed in 0.63s**, at the trust
+equality assertion (`0.5124 == 0.512`). External-worktree module-origin, backend-participation
+and source-unchanged checks passed before that numeric failure. This is expected regression
+evidence, not post-change validation or an observation of the running vessel.
+Log: `logs/gates/ad1259-baseline-crossing.log`; SHA256:
+`beddac13a8875743c9beef60f058927234772d243c306d13bd4a810ff00e3160`.
 
-Two code paths compute the same agent facts, differently, and neither knows the other exists.
+## Outward Protocol Amendment
 
-| Fact | `IntrospectionAgent._agent_info` (`agents/introspect.py:324-347`) | `IntrospectiveTelemetryService` (`cognitive/introspective_telemetry.py`) |
-|---|---|---|
-| Trust score | `format_trust(rt.trust_network.get_score(agent.id))` | `round(trust_net.get_score(agent_id), 3)` (`:59`) |
-| Hebbian inbound | top-3 via `all_weights_typed()`, `format_trust(w)` | top-3 via `all_weights_typed()`, `round(w, 2)` (`:132`) |
-| Hebbian outbound | top-3 (`:333-337`) | **not computed** |
-| Connection count | `total_connections` (`:344-346`) | **not computed** |
-| Interaction breadth | not computed | distinct intents over last 20 trust events (`:139-141`) |
+This amendment supersedes contract
+`ac1512711479eeed690e9e5b06aa27ffd58d277f1fefd24e12ac34c04c4c925d`.
+Retain the existing owner/caller consolidation below; do not reopen either source module.
+Worker-measured **132 owner/boundary** and **145 consumer** passes are **PRE-amendment**
+results. After the projection repair, the exact focused commands passed **1 crossing**, **135
+owner/boundary**, and **156 consumer** cases. Evidence: `logs/gates/ad1259-frozen-crossing.log`,
+`logs/gates/ad1259-frozen-owner.log`, and `logs/gates/ad1259-frozen-consumers.log`.
+These recorded focused results do not attest the canonical gate, formal review, or closure.
 
-### The divergence is live, not latent
+The ledger-only contract amendment admits deterministic regeneration of
+`docs/development/open-ads-report.md` from these local notes and the unchanged pinned
+`docs/development/ad-ledger-snapshot.json`. The historical report is not live queue or
+issue-closure evidence.
 
-`format_trust` (`config.py:112`) is `round(value, TRUST_DISPLAY_PRECISION)` and
-`TRUST_DISPLAY_PRECISION = 4` (`config.py:32`). The telemetry service hardcodes `3`.
+Worker reproduced M1/M2 with real collection: two peer-to-subject relations at `0.876543`
+and `0.5`, plus a subject-to-peer edge at `0.42`, expose three Captain-only social keys
+through `SelfQueryTool`. The unchanged exact-payload regression failed in all three variants
+(omitted domains, explicit `SELF_QUERY_DOMAINS`, selected social), after module-origin,
+subject and backend-participation assertions: **3 failed in 0.77s**. Log:
+`logs/gates/ad1259-projection-baseline.log`; Worker-supplied SHA256:
+`ee83d36de8d61456fb019e5920c2ce1432ac470e3cfbd2604ec562ea057e1370`.
+Preserve the original numeric baseline above and these three real-payload cases.
 
-Verified by execution, not by reading:
+In `src/probos/tools/self_query_tool.py`, after full/selected collection branches converge
+and before rendering, copy the outward snapshot dictionary. For dictionary-valued social,
+create a fresh dictionary retaining only existing `routing_affinities` and
+`interaction_breadth` entries in their original iteration order. Preserve values, including
+None, empty lists and zero; invent no defaults, validation or coercion. Leave absent or
+non-dictionary social and all other domains unchanged. Render and return this projection
+without mutating the returned source snapshot/domain objects or querying the graph again.
 
+Compare Captain graph facts against a direct real service snapshot, then separately invoke
+the actual tool and compare only shared trust and first-person routing/breadth facts. Require
+one graph read per collection. Add small parametrized projection tests retaining the exact
+returned backing snapshot/domain references and pre-call deep-copy controls, including
+empty/partial/absent/non-dictionary social and selections excluding social. Preserve legacy
+renderer success/error behavior and every outward envelope field. Apply prompt/tracker/test
+amendments before the final source edit, then stop for immediate Worker focused validation.
+
+## Implementation Order
+
+### 1. Telemetry Owner and Precision
+
+Retain the implementation in `src/probos/cognitive/introspective_telemetry.py`. Preserve the
+existing async getters and snapshot/rendering interfaces; add no public getter or plumbing.
+
+- Read `all_weights_typed()` once per `get_social_state` call and derive every graph
+   projection from that collection.
+- Add `incoming_affinities` and `outbound_affinities`, each a top-three list of
+   `{"intent": endpoint, "weight": formatted_weight}`. Incoming uses the source endpoint;
+   outbound uses the target. Include all incident typed edges, retaining different relations
+   with the same endpoint and zero/negative weights. Sort by raw weight, descending, with
+   stable ties, before formatting.
+- `total_connections` counts each incident `(source, target, relation)` tuple once.
+   A self-loop participates in both directional projections but contributes only one count.
+   Foreign-agent edges do not participate.
+- Preserve `routing_affinities`: positive inbound weights only, last positive entry per
+   source, top three. A later nonpositive relation must not erase an earlier positive entry.
+- Build the complete graph projection locally and publish its fields and count together
+   only after successful collection. A successful empty graph has `total_connections=0`
+   and no affinity keys. An unavailable or failed graph has no completion marker.
+   Log a safe warning describing the fallback action, without raw exception payloads.
+- Preserve interaction breadth as distinct intent types in the last 20 trust events.
+   Event-query failure must not discard collected graph facts; interaction breadth alone
+   must not imply graph availability.
+- Use `probos.config.format_trust` for score, uncertainty and every emitted graph weight.
+   The discriminating values must produce `0.5124`, `0.1235`, `0.8765` and `0.6543`.
+   Preserve temporal rounding, trust parameters, trend calculations and
+   `TRUST_DISPLAY_PRECISION`.
+
+The owner slice and caller consolidation have PRE-amendment focused evidence. The current
+repair is only the outward protocol amendment above; do not redo those earlier slices.
+
+### 2. Normal Caller Consolidation
+
+Retain asynchronous `_agent_info` and `_team_info` in `src/probos/agents/introspect.py`,
+awaited from `act`. Preserve the other nine dispatch branches and all eleven handled intents.
+The Worker direct `_agent_info`/`_team_info` usage enumeration and affected-hit reads remain
+required evidence; no further caller changes are authorized by this repair. A required edit
+outside `targetFiles` needs amended approval.
+
+Use the existing public `runtime.introspective_telemetry` accessor, which returns the
+startup-owned service or `None`. Do not instantiate a service in a handler, add a sync shim,
+or newly access another object's private telemetry attribute. `_agent_info` reads trust
+and social; `_team_info` reads trust only.
+
+Map `trust.score` to `trust_score`, `incoming_affinities` to `hebbian.incoming_top3`
+(rename `intent` to `source`), and `outbound_affinities` to `hebbian.outgoing_top3`
+(rename `intent` to `target`), retaining `total_connections`. Assert exact successful
+Captain output-key sets. Preserve all other agent metadata and team roster, pool, health,
+summary, matching and message behavior. Do not add Hebbian fields to team rows.
+
+Retain existing raw trust/Hebbian computations as bounded per-domain fallback for absent
+service/accessor, ordinary accessor/getter errors, missing score, or unavailable Captain
+graph projection. Presence, not truthiness, recognizes valid zero/empty values. Never
+recompute or overwrite a valid domain because another failed, and never use the narrower
+`routing_affinities` as Captain inbound data. Log sanitized failure context and fallback
+action without raw exception payloads.
+
+Handle absent registry, trust network and router explicitly. Preserve empty-registry,
+unknown-agent, no-record, type-prefix, pool-name and callsign behavior. If neither service
+nor raw fallback provides a required fact, use the established `success=false`/`error`
+envelope rather than inventing zero connections or silently erasing data. Leave
+`BaseAgent.info` and its live trust read unchanged; contain ordinary `info()` failure
+honestly. Propagate `asyncio.CancelledError` and other `BaseException` lifecycle signals.
+
+### 3. Consumer Compatibility and Documentation
+
+After focused validation, amend only the approved affected fixtures and tests:
+`tests/test_ad588_telemetry_introspection.py`, `tests/test_ad1258_self_knowledge.py`,
+`tests/test_introspect.py` and `tests/test_team_introspection.py`. Await changed callsign
+handlers and represent an absent service explicitly in legacy mocks where appropriate.
+Amend exact collector dictionaries for additive fields without deleting assertions.
+Do not alter literal renderer fixtures solely because they contain supplied three-decimal data.
+
+Preserve `SelfQueryTool` identity authority, undeclared-subject rejection, requested-domain
+filtering, permissions, feature flags, error privacy, cancellation and partial rendering.
+Preserve positive-only routing rendering and empty-social rendering. Strengthen the existing
+real DM, ward-room, proactive, ANALYZE and COMPOSE crossings to require four-decimal
+collected values, without changing their production consumers.
+
+Limit later `DECISIONS.md`/`PROGRESS.md` updates to AD-1259's corrected rationale,
+implementation facts and genuinely obtained focused results. Finish documentation before
+candidate freeze. Final shipped/closed claims and release evidence belong to the Worker,
+not an unverified tracker entry or post-gate source mutation.
+
+## Focused Validation
+
+The crossing compares real `IntrospectionAgent.act` trust and full Captain graph facts with
+a direct real telemetry snapshot. A separate real `SelfQueryTool.invoke` then compares trust
+and only first-person routing/breadth under unchanged shared inputs. Assert imported module
+origins, exact subjects, successful envelopes, backend participation and graph-call deltas of
+one per collection. Preserve every numeric discriminator and the original trust equality
+assertion. Separate injected-service authority tests must still prove both handlers consume
+service results; formatting-only consolidation must not satisfy those tests.
+
+Cover typed-edge multiplicity, nonpositive weights, raw ranking/stable ties, self-loops,
+foreign edges, empty versus failed graph, absent service for both handlers, independent
+domain fallback, partial metadata failure, component absence, cancellation and all eleven
+dispatch routes. Use small typed `_Fake` stubs, reuse existing tests and justify uncovered
+new branches. Keep source inspection distinct from execution evidence.
+
+Worker runs these exact commands from the isolated worktree with process-scoped import
+configuration selecting its `src`. Do not repoint the shared editable install or alter pytest
+configuration:
+
+```text
+d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1259_one_source_of_truth.py::test_agent_info_and_telemetry_snapshot_share_facts -q -n 0 -p no:randomly
+d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1259_one_source_of_truth.py tests/test_ad588_telemetry_introspection.py -q -n 0 -p no:randomly
+d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1258_self_knowledge.py tests/test_introspect.py tests/test_team_introspection.py -q -n 0 -p no:randomly
 ```
-TRUST_DISPLAY_PRECISION = 4
-format_trust: 0.5124 | service round(...,3): 0.512 | differ: True
-weights: format_trust: 0.8765 | service round(...,2): 0.88
-```
 
-So for the same agent at the same instant, the Captain's introspection reports a trust score
-to four decimal places and the agent's own telemetry block reports three. Hebbian weights
-diverge further — 4 dp against 2 dp.
+## Acceptance and Release Gates
 
-`format_trust`'s own docstring says it *"Centralizes precision."* The telemetry service
-falsifies that claim by not calling it.
+- Demonstrate baseline numeric failure and post-change crossing success on the correct
+   source tree; record actual counts. Worker must enumerate remaining `round` calls in the
+   owner and confirm none independently format trust, uncertainty or Hebbian weights.
+- Prove normal service authority, unchanged Captain keys and all affected consumer
+   contracts. Owner formatting alone is an intermediate slice, not completed consolidation.
+- Once stable, obtain scoped independent precommit review and repair its findings before
+   broad validation. Worker runs
+   `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --preflight-only --label ad1259-canary-b2053036`
+   against the staged candidate, then locally commits the reviewed candidate so HEAD and
+   index agree before the full wrapper.
+- Freeze the candidate. Worker runs
+   `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label ad1259-canary-b2053036`
+   synchronously without timeout, output filtering, polling, selector changes or serial
+   substitution. Only the inspected supported `--receipt` option may be appended with a
+   unique destination under this worktree's `logs/gates`. Require an exit-0 receipt bound to
+   the unchanged commit/index and hashed manifest, JUnit and collection artifacts; bank it
+   durably before cleanup, advancement or push.
+- Worker verifies the required GPT-6 Astra dispatch with no fallback, and obtains formal
+   `probos-diff-reviewer` review on independent Claude Opus5 after canonical success and
+   installed prerequisites. Bind the formal handoff to this contract, the build report and
+   the actual frozen tested/staged tree. Preliminary review cannot substitute for it.
+   Repairs invalidate affected validation/review evidence and require a fresh canonical receipt.
+- Push, verified issue closure, lifecycle state and campaign accounting remain Worker-owned.
+   Builder reports are provisional and blocked while executable validation is pending.
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
-This is the shape BF-755 named at the tool-assembly seam — *"two assemblies that could drift
-is the shape this repo keeps producing, so there is exactly one."* Here there are two, and
-the drift is already measurable in the output.
+## Do Not Build
 
-### Why it matters beyond cosmetics
-
-AD-589 cross-checks an agent's self-report against the cached telemetry snapshot
-(`cognitive_agent.py:6147-6153`, `_check_introspective_faithfulness`). If an agent ever
-quotes a number from the Captain-facing path and the faithfulness check compares it against
-the telemetry path, a rounding disagreement is indistinguishable from confabulation. Two
-sources of truth make the confabulation detector unreliable in exactly the domain it exists
-to police.
-
----
-
-## Solution
-
-**`IntrospectiveTelemetryService` becomes the single source of truth for per-agent facts.
-`IntrospectionAgent` reads from it.**
-
-Direction matters and is not arbitrary: the service is already the one wired into all four
-cognitive paths — DM (`cognitive_agent.py:9057`), ward room (`:9390`), sub-tasks
-(`sub_tasks/query.py:381`), proactive (`proactive.py:2353`) — and after AD-1258 it also backs
-the `self_query` tool. `_agent_info` has exactly one consumer surface. Moving the
-smaller-fanout caller onto the larger-fanout service is the cheaper, less reversible-in-anger
-direction.
-
-### The consolidation must not lose the Captain's data
-
-The service currently computes **less** than `_agent_info`: no outbound affinities, no
-connection count. A naive "point `_agent_info` at the service" would silently narrow the
-Captain's view. So the order is:
-
-1. The service **gains** what `_agent_info` has that it lacks.
-2. The service **adopts** `format_trust` so precision is centralized where the docstring
-   already claims it is.
-3. `_agent_info` and `_team_info` then read from the service.
-
-Step 3 is not safe before steps 1 and 2.
-
-### Why not the reverse direction
-
-| Rejected | Why |
-|---|---|
-| Make `_agent_info` the source and have the service call it | `IntrospectionAgent` is a `BaseAgent` in a pool; the service is a stateless collaborator on the runtime. Calling into a pooled agent from four cognitive hot paths adds a registry lookup and a liveness dependency to every introspective turn. |
-| Leave both and add a drift test | Pins the duplication as contract. The repo's own review flag: a test that encodes the defect as a requirement. |
-| Delete `_agent_info` | It serves the Captain's third-person view, which is a real and different need. AD-1260 depends on that separation existing. |
-
----
-
-## Implementation
-
-### Section 1 — the service gains the missing facts
-
-**`src/probos/cognitive/introspective_telemetry.py`**
-
-In `get_social_state` (`:118`), alongside the existing inbound `routing_affinities`:
-
-- `outbound_affinities` — top-3 where `src == agent_id`, same shape as the inbound list.
-- `total_connections` — `sum(1 for (src, tgt, _rel) in all_weights if src == agent_id or tgt == agent_id)`.
-
-Match `_agent_info:333-346` exactly in *what* is counted. Verify the key tuple shape:
-`all_weights_typed()` is keyed `(src, tgt, rel)` — confirmed by
-`tests/test_ad588_telemetry_introspection.py:237-241`, which uses three-tuples.
-
-### Section 2 — precision is centralized
-
-Replace the three hardcoded rounds with `format_trust`:
-
-- `:59` `round(trust_net.get_score(agent_id), 3)` → `format_trust(...)`
-- `:63` `round(record.uncertainty, 3)` → `format_trust(...)`
-- `:132` `round(w, 2)` → `format_trust(w)`
-
-Import from `probos.config` (`introspective_telemetry.py` currently imports stdlib only —
-verify at `:14-19`; `config` is a legal import from `cognitive`, proven by
-`agents/introspect.py:9`).
-
-> This **changes the rendered telemetry string**: trust goes from 3 dp to 4 dp, weights from
-> 2 dp to 4 dp. That is the point. Existing assertions in
-> `tests/test_ad588_telemetry_introspection.py` that pin `0.72` / `0.5` are unaffected
-> (trailing zeros are dropped by `round`), but **check each one and record inline why any
-> amended assertion changed** — never delete one.
-
-### Section 3 — `_agent_info` and `_team_info` read from the service
-
-**`src/probos/agents/introspect.py`**
-
-`_agent_info` (`:271`) and `_team_info` (`:359`) are currently **synchronous**. Verified:
-
-```
-_agent_info: iscoroutinefunction=False
-_team_info:  iscoroutinefunction=False
-act dispatch: return self._agent_info(rt, params)
-act dispatch: return self._team_info(rt, params)
-```
-
-The service getters are `async`. Two options; take the first:
-
-- **Make both handlers `async`** and `await` the service. `act` already `await`s
-  `_explain_last`, `_why`, `_introspect_memory` and `_search_knowledge`, so the dispatch site
-  already supports it — add `await` to the two dispatch lines shown above and leave the other
-  nine branches alone.
-- Do **not** add a sync shim or `run_until_complete`. That is the wrong direction and the
-  dispatch site does not need it.
-
-Then, for each agent in the result, replace the inline trust + Hebbian computation with
-`await svc.get_trust_state(agent.id)` and `await svc.get_social_state(agent.id)`, mapping
-into the **existing output keys** (`trust_score`, `hebbian.incoming_top3`,
-`hebbian.outgoing_top3`, `hebbian.total_connections`) so the Captain-facing shape is
-unchanged.
-
-**Honest-degrade:** `runtime._introspective_telemetry` may be `None` (it is set to `None` on
-init failure — `runtime.py:2661-2662`). When absent, fall back to the existing inline
-computation rather than returning empty. Keep the current code as that fallback; do not
-delete it.
-
----
-
-## Tests
-
-New file `tests/test_ad1259_one_source_of_truth.py`.
-
-1. **The crossing test.** One runtime, one agent. Assert `_agent_info`'s reported
-   `trust_score` and the telemetry snapshot's `trust.score` are **equal** — not merely both
-   present. This is the assertion the whole AD exists to make true, and it must fail on HEAD.
-2. Same for the top inbound Hebbian weight.
-3. `outbound_affinities` present in `get_social_state` and matching `_agent_info`'s
-   `hebbian.outgoing_top3`.
-4. `total_connections` matches between the two paths.
-5. `format_trust` is used: a score of `0.512375` renders as `0.5124`, not `0.512`.
-6. `_agent_info` with `runtime._introspective_telemetry = None` returns the same shape via
-   the fallback, and does not raise.
-7. `_team_info` likewise.
-8. `_agent_info` is awaitable and `act` dispatches it correctly for every one of the 11 intents
-   (parametrized over `_handled_intents`).
-9. Empty Hebbian router ⇒ no affinity keys, no crash, both paths agree on the absence.
-10. An agent with no trust record ⇒ both paths agree.
-11–15. Boundary cases per handler: absent registry, absent trust network, absent hebbian
-    router, unknown agent id, `agent_type` prefix-fallback still resolving.
-
-**Amend, do not rewrite:** any `tests/test_ad588_telemetry_introspection.py` assertion whose
-expected precision changes. Record the reason inline at the assertion.
-
----
-
-## Acceptance criteria
-
-- [ ] Test #1 fails when checked out against HEAD and passes after. Demonstrate both.
-- [ ] `d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q` green; report count before and after.
-- [ ] `grep -n "round(" src/probos/cognitive/introspective_telemetry.py` returns zero trust/weight rounds.
-- [ ] The Captain-facing `_agent_info` output keys are unchanged. Prove with an assertion over the key set, not by inspection.
-- [ ] Run the `Diff Reviewer` subagent on the staged diff with a different model than the author.
-- [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
-
----
-
-## Adjacent, do not build
-
-- **New domains** (wellness, authority, organs). AD-1260, AD-1261, deferred.
-- **Making `IntrospectionAgent` reachable from a DM.** Explicitly out of scope — AD-1258 rejected it and AD-1260 explains the boundary.
-- **Normalizing `TRUST_DISPLAY_PRECISION` itself.** Four decimal places may be more than anyone wants, but changing it touches every trust display on the ship. Separate decision, no number minted.
+- No new telemetry domains, new DM reachability, identity normalization, caching or
+   cross-domain transactional snapshot guarantee.
+- No faithfulness-checker, `TRUST_DISPLAY_PRECISION`, temporal-formatting or configuration
+   changes; no dependencies, runtime/protocol expansion or `BaseAgent` refactor.
+- No typed first-person graph redesign, dedicated Captain getter, duplicate raw graph query,
+   further owner/introspection changes or unrelated Low-review cleanup.
+- No broad private-access cleanup, UI work, adjacent audits, new AD allocation or extra issue.
+- No edits outside the approved contract, dirty-main changes, live-vessel operations,
+   OSS/commercial crossing, weaker governance/privacy controls or lifecycle bypass.

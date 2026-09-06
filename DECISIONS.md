@@ -10,6 +10,20 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1259 -- One collector, compatible self-knowledge projections
+
+**Date:** 2026-09-06. **Issue:** #1309 (existing allocation).
+
+**Premise.** Real Captain-facing dispatch and `SelfQueryTool` against the same runtime disagreed on trust (`0.5124` versus `0.512`) and inbound weights (`0.8765` versus `0.88`). Backend-participation assertions and module-origin checks preceded the crossing regression's numeric failure. The correcting issue comment narrows this to consistency: numeric telemetry faithfulness verification is not provided by the existing checker and is not built here.
+
+**Decision.** The startup-owned `IntrospectiveTelemetryService` collects shared facts. Trust, uncertainty and Hebbian weights use `format_trust`. One typed-edge collection produces the existing positive-only, per-source `routing_affinities` and additive `incoming_affinities`, `outbound_affinities` and `total_connections` for the Captain. The latter preserve relation multiplicity, nonpositive weights, original-weight ordering and self-loop counting. Successful empty graphs carry a zero count; unavailable graphs omit that completion marker.
+
+**Consumers and degradation.** `_agent_info` and `_team_info` become async and use the shipped public runtime accessor. Existing Captain output keys remain unchanged; team rows still contain trust without new graph fields. Absent or failed telemetry domains fall back independently to existing raw providers, preserving valid zero values and empty graphs. If no provider can supply required facts, the handler returns an error rather than invented data. Cancellation propagates. Base-agent metadata, first-person identity and permission checks, domain filtering, rendering, configuration and unrelated temporal precision remain unchanged.
+
+**Validation evidence.** The real Captain-to-self-query crossing failed numerically on the source baseline and passed after the owner and caller changes. Focused suites passed 132 owner/boundary cases and 145 self-query, introspection and team cases, including five real collection-to-prompt paths. The proactive test initially expected one trust read; the existing self-monitoring plus telemetry calls require two subject-bound reads, and the corrected assertion passed without a production change. Canonical gate, formal review, release and closure evidence are recorded separately by the Worker.
+
+**Outward-protocol amendment (2026-09-06).** `SelfQueryTool` copies the outward snapshot and dictionary-valued social, retaining only existing routing/breadth entries without mutating service facts. Captain graph equality now uses a direct service snapshot; a separate real tool invocation checks first-person facts. The 132/145 passes above are PRE-amendment. Worker verified three exact-payload failures before repair, then obtained 1 crossing, 135 owner/boundary and 156 consumer passes. Evidence: `logs/gates/ad1259-frozen-crossing.log`, `logs/gates/ad1259-frozen-owner.log`, and `logs/gates/ad1259-frozen-consumers.log`. Canonical gate, formal review and closure evidence remain separate requirements.
+
 ### AD-1258 -- First-person telemetry collection reaches its consumers
 
 **Date:** 2026-09-05. **Issue:** #1308 (existing allocation).

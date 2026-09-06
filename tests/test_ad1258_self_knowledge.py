@@ -284,7 +284,7 @@ async def test_collection_to_render_preserves_social() -> None:
     other_marker = "other_subject_probe"
     calls = {"hebbian": 0, "trust_events": 0}
     weights = {
-        (marker, subject, "routing"): 0.88,
+        (marker, subject, "routing"): 0.876543,
         (other_marker, other_subject, "routing"): 0.99,
         ("zero_weight_probe", subject, "routing"): 0.0,
         ("negative_weight_probe", subject, "routing"): -0.5,
@@ -295,7 +295,7 @@ async def test_collection_to_render_preserves_social() -> None:
     ]
     router = _FakeHebbianRouter(weights=weights, calls=calls)
     trust = _FakeTrustNetwork(
-        scores={subject: 0.5124, other_subject: 0.91},
+        scores={subject: 0.512375, other_subject: 0.91},
         events=events,
         calls=calls,
     )
@@ -316,9 +316,16 @@ async def test_collection_to_render_preserves_social() -> None:
     assert trust.score_subjects == [subject]
     assert trust.record_subjects == [subject]
     assert trust.event_queries == [(subject, 5), (subject, 20)]
-    assert snapshot["trust"]["score"] == 0.512
+    assert snapshot["trust"]["score"] == 0.5124
+    # AD-1259 adds the Captain projection without widening first-person routing.
     assert snapshot["social"] == {
-        "routing_affinities": [{"intent": marker, "weight": 0.88}],
+        "routing_affinities": [{"intent": marker, "weight": 0.8765}],
+        "incoming_affinities": [
+            {"intent": marker, "weight": 0.8765},
+            {"intent": "zero_weight_probe", "weight": 0.0},
+            {"intent": "negative_weight_probe", "weight": -0.5},
+        ],
+        "total_connections": 3,
         "interaction_breadth": 1,
     }
     original = deepcopy(snapshot)
@@ -327,12 +334,12 @@ async def test_collection_to_render_preserves_social() -> None:
 
     assert snapshot == original
     assert calls == {"hebbian": 1, "trust_events": 2}
-    assert "Trust: 0.512" in rendered
+    assert "Trust: 0.5124\n" in rendered
     assert other_marker not in rendered
     assert "zero_weight_probe" not in rendered
     assert "negative_weight_probe" not in rendered
     assert marker in rendered, "Collected social marker was lost during rendering"
-    assert "0.88" in rendered
+    assert "0.8765" in rendered
     assert "interaction breadth: 1" in rendered
     assert not is_capability_gap(rendered)
 
@@ -370,7 +377,7 @@ class _FakeSelfQueryTelemetry:
         if self.failure is not None and self.failure[0] == domain:
             raise self.failure[1]
         snapshot = self.snapshots[agent_id]
-        return deepcopy(snapshot if domain == "full" else snapshot[domain])
+        return snapshot if domain == "full" else snapshot[domain]
 
     async def get_memory_state(self, agent_id: str) -> dict[str, Any]:
         return self._read("memory", agent_id)
@@ -569,6 +576,157 @@ async def test_self_query_full_selection_calls_snapshot_once(
     )
     assert list(result.output["domains"]) == list(SELF_QUERY_DOMAINS)
     assert self_query_telemetry.calls == [("full", "baseline-agent")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("selection", "social_fields", "projected_social_fields", "render_error"),
+    [
+        pytest.param(
+            None,
+            {"social": {
+                "total_connections": 3,
+                "interaction_breadth": None,
+                "incoming_affinities": [{"intent": "captain-only", "weight": 0.8765}],
+                "routing_affinities": [
+                    {"intent": "second", "weight": 0.5},
+                    {"intent": "first", "weight": 0.8765},
+                ],
+                "outbound_affinities": [{"intent": "peer", "weight": 0.42}],
+            }},
+            {"social": {
+                "interaction_breadth": None,
+                "routing_affinities": [
+                    {"intent": "second", "weight": 0.5},
+                    {"intent": "first", "weight": 0.8765},
+                ],
+            }},
+            False, id="full-ordered-values",
+        ),
+        pytest.param(
+            ["trust", "social"],
+            {"social": {
+                "interaction_breadth": 0, "total_connections": 0, "routing_affinities": [],
+            }},
+            {"social": {"interaction_breadth": 0, "routing_affinities": []}},
+            False, id="selected-zero-and-empty",
+        ),
+        pytest.param(
+            ["social"],
+            {"social": {"routing_affinities": None, "incoming_affinities": []}},
+            {"social": {"routing_affinities": None}},
+            False, id="selected-partial-routing-none",
+        ),
+        pytest.param(
+            None,
+            {"social": {"interaction_breadth": 2, "outbound_affinities": []}},
+            {"social": {"interaction_breadth": 2}},
+            False, id="full-partial-breadth",
+        ),
+        pytest.param(
+            ["social"],
+            {"social": {
+                "total_connections": 0, "incoming_affinities": [], "outbound_affinities": [],
+            }},
+            {"social": {}}, False, id="selected-captain-only",
+        ),
+        pytest.param(None, {"social": {}}, {"social": {}}, False, id="full-empty"),
+        pytest.param(None, {}, {}, False, id="full-absent"),
+        pytest.param(None, {"social": None}, {"social": None}, False, id="full-nondict-none"),
+        pytest.param(
+            ["trust", "social"], {"social": []}, {"social": []},
+            False, id="selected-nondict-empty",
+        ),
+        pytest.param(
+            ["social"], {"social": ["legacy"]}, {"social": ["legacy"]},
+            True, id="selected-nondict-render-error",
+        ),
+        pytest.param(
+            ["memory", "trust", "cognitive", "temporal"],
+            {"social": {
+                "total_connections": 3,
+                "routing_affinities": [{"intent": "unqueried", "weight": 0.5}],
+            }},
+            {}, False, id="social-excluded",
+        ),
+    ],
+)
+async def test_self_query_projection_preserves_backing_objects_and_legacy_output(
+    selection: list[str] | None,
+    social_fields: dict[str, Any],
+    projected_social_fields: dict[str, Any],
+    render_error: bool,
+    full_snapshot: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = full_snapshot
+    del snapshot["social"]
+    snapshot.update(deepcopy(social_fields))
+    original = deepcopy(snapshot)
+    domain_refs = dict(snapshot)
+    telemetry = _FakeSelfQueryTelemetry(snapshots={"baseline-agent": snapshot})
+    rendered_snapshots: list[dict[str, Any]] = []
+
+    def render_snapshot(outward: dict[str, Any]) -> str:
+        rendered_snapshots.append(outward)
+        return IntrospectiveTelemetryService.render_telemetry_context(outward)
+
+    monkeypatch.setattr(telemetry, "render_telemetry_context", render_snapshot)
+    selected = list(snapshot) if selection is None else selection
+    expected_snapshot = {domain: original[domain] for domain in selected}
+    expected_rendered = ""
+    if render_error:
+        with pytest.raises(AttributeError):
+            IntrospectiveTelemetryService.render_telemetry_context(expected_snapshot)
+    else:
+        expected_rendered = IntrospectiveTelemetryService.render_telemetry_context(
+            expected_snapshot,
+        )
+    if "social" in expected_snapshot:
+        expected_snapshot["social"] = deepcopy(projected_social_fields["social"])
+    params = {} if selection is None else {"domains": selection}
+    assert telemetry.snapshots["baseline-agent"] is snapshot
+    assert telemetry.calls == []
+
+    result = await SelfQueryTool(telemetry=telemetry).invoke(
+        params, {"agent_id": "baseline-agent"},
+    )
+
+    assert result.success is (not render_error)
+    assert result.error == ("self_query: telemetry query failed." if render_error else None)
+    assert result.output == {
+        "agent_id": "baseline-agent",
+        "domains": {} if render_error else expected_snapshot,
+        "rendered": expected_rendered,
+        "unknown_domains": [],
+    }
+    assert telemetry.calls == (
+        [("full", "baseline-agent")] if selection is None
+        else [(domain, "baseline-agent") for domain in selected]
+    )
+    assert len(rendered_snapshots) == 1
+    outward = rendered_snapshots[0]
+    assert outward == expected_snapshot
+    assert list(outward) == list(expected_snapshot)
+    assert outward is not snapshot
+    if not render_error:
+        assert result.output["domains"] is outward
+    assert telemetry.snapshots["baseline-agent"] is snapshot
+    assert snapshot == original
+    assert list(snapshot) == list(original)
+    for domain, original_domain in domain_refs.items():
+        assert snapshot[domain] is original_domain
+        if isinstance(original_domain, dict):
+            assert list(original_domain) == list(original[domain])
+        if domain not in outward:
+            continue
+        if domain == "social" and isinstance(original_domain, dict):
+            assert outward[domain] is not original_domain
+            assert list(outward[domain]) == list(expected_snapshot[domain])
+            for key, value in outward[domain].items():
+                assert value is original_domain[key]
+        else:
+            assert outward[domain] is original_domain
 
 
 @pytest.mark.asyncio
@@ -1216,7 +1374,7 @@ def _consumer_telemetry_runtime(
 ) -> tuple[SimpleNamespace, dict[str, int], _FakeTrustNetwork]:
     calls = {"hebbian": 0, "trust_events": 0}
     trust = _FakeTrustNetwork(
-        scores={subject: 0.5124},
+        scores={subject: 0.512375},
         events=[_FakeTrustEvent(subject, "consumer_social_marker", 0.5124)],
         calls=calls,
     )
@@ -1227,7 +1385,7 @@ def _consumer_telemetry_runtime(
         trust_network=trust,
         hebbian_router=_FakeHebbianRouter(
             weights={
-                ("consumer_social_marker", subject, "routing"): 0.88,
+                ("consumer_social_marker", subject, "routing"): 0.876543,
                 ("another_subject_marker", "another-agent", "routing"): 0.99,
             },
             calls=calls,
@@ -1263,9 +1421,11 @@ async def test_collected_social_reaches_conversational_prompt(intent: str) -> No
     prompt = await agent._build_user_message(observation)
 
     assert calls == {"hebbian": 1, "trust_events": 2}
+    assert trust.score_subjects == [subject]
+    assert trust.record_subjects == [subject]
     assert trust.event_queries == [(subject, 5), (subject, 20)]
-    assert "Trust: 0.512" in prompt
-    assert "consumer_social_marker (0.88)" in prompt
+    assert "Trust: 0.5124\n" in prompt
+    assert "consumer_social_marker (0.8765)" in prompt
     assert "interaction breadth: 1" in prompt
     assert "another_subject_marker" not in prompt
 
@@ -1306,10 +1466,12 @@ async def test_query_collected_social_reaches_prompt(consumer: str) -> None:
     assert result.success and result.sub_task_type is SubTaskType.QUERY
     assert result.tokens_used == 0
     assert calls == {"hebbian": 1, "trust_events": 2}
+    assert trust.score_subjects == [subject]
+    assert trust.record_subjects == [subject]
     assert trust.event_queries == [(subject, 5), (subject, 20)]
-    assert "consumer_social_marker (0.88)" in result.result["introspective_telemetry"]
-    assert "Trust: 0.512" in prompt
-    assert "consumer_social_marker (0.88)" in prompt
+    assert "consumer_social_marker (0.8765)" in result.result["introspective_telemetry"]
+    assert "Trust: 0.5124\n" in prompt
+    assert "consumer_social_marker (0.8765)" in prompt
     assert "interaction breadth: 1" in prompt
     assert "another_subject_marker" not in prompt
 
@@ -1333,9 +1495,12 @@ async def test_proactive_collected_social_reaches_think_prompt() -> None:
     })
 
     assert calls == {"hebbian": 1, "trust_events": 2}
+    # Self-monitoring and telemetry each read this agent's trust.
+    assert trust.score_subjects == [subject, subject]
+    assert trust.record_subjects == [subject]
     assert trust.event_queries == [(subject, 5), (subject, 20)]
-    assert "consumer_social_marker (0.88)" in context_parts["introspective_telemetry"]
-    assert "Trust: 0.512" in prompt
-    assert "consumer_social_marker (0.88)" in prompt
+    assert "consumer_social_marker (0.8765)" in context_parts["introspective_telemetry"]
+    assert "Trust: 0.5124\n" in prompt
+    assert "consumer_social_marker (0.8765)" in prompt
     assert "interaction breadth: 1" in prompt
     assert "another_subject_marker" not in prompt

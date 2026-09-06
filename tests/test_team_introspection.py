@@ -55,6 +55,7 @@ def _make_pool(agent_ids, agent_type: str = "unknown"):
 def _build_runtime():
     """Build a mock runtime with pool groups and pools matching the real runtime."""
     rt = MagicMock(spec=ProbOSRuntime)
+    rt.introspective_telemetry = None
 
     # Agents
     med_vitals = _make_agent("vitals_monitor", "med-vm-0", "medical_vitals")

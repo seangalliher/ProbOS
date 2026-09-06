@@ -9,6 +9,7 @@ from probos.substrate.agent import BaseAgent
 from probos.config import TRUST_OUTLIER_LOW, TRUST_OUTLIER_HIGH, format_trust
 
 if TYPE_CHECKING:
+    from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
     from probos.runtime import ProbOSRuntime
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
@@ -96,9 +97,9 @@ class IntrospectionAgent(BaseAgent):
         if action == "explain_last":
             return await self._explain_last(rt)
         elif action == "agent_info":
-            return self._agent_info(rt, params)
+            return await self._agent_info(rt, params)
         elif action == "team_info":
-            return self._team_info(rt, params)
+            return await self._team_info(rt, params)
         elif action == "system_health":
             return self._system_health(rt)
         elif action == "why":
@@ -268,192 +269,267 @@ class IntrospectionAgent(BaseAgent):
             },
         }
 
-    def _agent_info(self, rt: ProbOSRuntime, params: dict[str, Any]) -> dict[str, Any]:
+    def _telemetry_service(self, rt: ProbOSRuntime) -> IntrospectiveTelemetryService | None:
+        try:
+            return getattr(rt, "introspective_telemetry", None)
+        except Exception:
+            logger.warning(
+                "Introspection telemetry access failed; falling back to raw agent facts"
+            )
+            return None
+
+    async def _agent_trust_score(
+        self, rt: ProbOSRuntime, agent_id: str,
+        telemetry: IntrospectiveTelemetryService | None,
+    ) -> float:
+        if telemetry is not None:
+            try:
+                trust = await telemetry.get_trust_state(agent_id)
+                if trust.get("score") is not None:
+                    return trust["score"]
+            except Exception:
+                logger.warning(
+                    "Introspection trust telemetry query failed; falling back to raw trust"
+                )
+            else:
+                logger.warning(
+                    "Introspection trust telemetry has no score; falling back to raw trust"
+                )
+        trust_network = getattr(rt, "trust_network", None)
+        if trust_network is None:
+            raise RuntimeError("Trust network unavailable")
+        return format_trust(trust_network.get_score(agent_id))
+
+    async def _agent_info(self, rt: ProbOSRuntime, params: dict[str, Any]) -> dict[str, Any]:
         """Return details about agents matching type or ID."""
-        agent_type = params.get("agent_type")
-        agent_id = params.get("agent_id")
+        try:
+            agent_type = params.get("agent_type")
+            agent_id = params.get("agent_id")
+            registry = getattr(rt, "registry", None)
+            if registry is None:
+                raise RuntimeError("Agent registry unavailable")
 
-        agents = []
-        if agent_id:
-            agent = rt.registry.get(agent_id)
-            if agent:
-                agents = [agent]
-        elif agent_type:
-            # Exact match first
-            agents = [a for a in rt.registry.all() if a.agent_type == agent_type]
+            agents: list[BaseAgent] = []
+            if agent_id:
+                agent = registry.get(agent_id)
+                if agent is not None:
+                    agents = [agent]
+            elif agent_type:
+                agents = [agent for agent in registry.all() if agent.agent_type == agent_type]
+                if not agents:
+                    needle = agent_type.lower()
+                    agents = [
+                        agent for agent in registry.all()
+                        if needle in agent.agent_type.lower()
+                        or agent.agent_type.lower().startswith(needle)
+                    ]
+                if not agents:
+                    needle = agent_type.lower()
+                    for pool_name, pool in rt.pools.items():
+                        if needle in pool_name.lower():
+                            for candidate_id in pool.healthy_agents:
+                                resolved_agent = registry.get(candidate_id)
+                                if resolved_agent is not None:
+                                    agents.append(resolved_agent)
+                if not agents:
+                    callsign_registry = getattr(rt, "callsign_registry", None)
+                    if callsign_registry is not None:
+                        resolved = callsign_registry.resolve(agent_type or agent_id or "")
+                        if resolved:
+                            agents = [
+                                agent for agent in registry.all()
+                                if agent.agent_type == resolved["agent_type"]
+                            ]
+            else:
+                agents = list(registry.all())
+
             if not agents:
-                # Prefix/substring fallback for partial type names
-                needle = agent_type.lower()
-                agents = [
-                    a for a in rt.registry.all()
-                    if needle in a.agent_type.lower() or a.agent_type.lower().startswith(needle)
-                ]
-            if not agents:
-                # Pool name fallback — search for agents in pools matching the query
-                needle = agent_type.lower()
-                for pool_name, pool in rt.pools.items():
-                    if needle in pool_name.lower():
-                        for aid in pool.healthy_agents:
-                            resolved = rt.registry.get(aid)
-                            if resolved:
-                                agents.append(resolved)
-            if not agents and hasattr(rt, 'callsign_registry'):
-                # Callsign resolution fallback (BF-013)
-                resolved = rt.callsign_registry.resolve(agent_type or agent_id or "")
-                if resolved:
-                    agents = [a for a in rt.registry.all()
-                              if a.agent_type == resolved["agent_type"]]
-        else:
-            # No filter — return all agents
-            agents = list(rt.registry.all())
-
-        if not agents:
-            qualifier = agent_type or agent_id or "all"
-            result = {
-                "success": True,
-                "data": {"agents": [], "message": f"No agents found matching: {qualifier}"},
-            }
-            # Append grounded topology for reflector (AD-320)
-            grounded = self._grounded_context()
-            if grounded:
-                result["data"]["grounded_context"] = grounded
-            return result
-
-        agent_infos = []
-        for agent in agents:
-            info: dict[str, Any] = agent.info()
-
-            # Add trust score
-            trust = rt.trust_network.get_score(agent.id)
-            info["trust_score"] = format_trust(trust)
-
-            # Add Hebbian weight context
-            all_weights = rt.hebbian_router.all_weights_typed()
-            incoming = sorted(
-                [(k[0], v) for k, v in all_weights.items() if k[1] == agent.id],
-                key=lambda x: x[1],
-                reverse=True,
-            )[:3]
-            outgoing = sorted(
-                [(k[1], v) for k, v in all_weights.items() if k[0] == agent.id],
-                key=lambda x: x[1],
-                reverse=True,
-            )[:3]
-            info["hebbian"] = {
-                "incoming_top3": [{"source": s, "weight": format_trust(w)} for s, w in incoming],
-                "outgoing_top3": [{"target": t, "weight": format_trust(w)} for t, w in outgoing],
-                "total_connections": sum(
-                    1 for k in all_weights if k[0] == agent.id or k[1] == agent.id
-                ),
-            }
-            agent_infos.append(info)
-
-        # Append grounded topology for reflector (AD-320)
-        grounded = self._grounded_context()
-        if grounded:
-            data = {"agents": agent_infos, "grounded_context": grounded}
-        else:
-            data = {"agents": agent_infos}
-        return {"success": True, "data": data}
-
-    def _team_info(self, rt: ProbOSRuntime, params: dict[str, Any]) -> dict[str, Any]:
-        """Return details about a crew team (pool group)."""
-        team_name = params.get("team", "").strip().lower()
-
-        if not team_name:
-            # No specific team — list all teams
-            groups = rt.pool_groups.all_groups()
-            if not groups:
+                qualifier = agent_type or agent_id or "all"
                 result = {
                     "success": True,
-                    "data": {"message": "No crew teams registered."},
+                    "data": {"agents": [], "message": f"No agents found matching: {qualifier}"},
                 }
-                # Append grounded topology for reflector (AD-320)
                 grounded = self._grounded_context()
                 if grounded:
                     result["data"]["grounded_context"] = grounded
                 return result
-            team_summaries = []
-            for group in groups:
-                health = rt.pool_groups.group_health(group.name, rt.pools)
-                team_summaries.append({
-                    "name": group.name,
-                    "display_name": group.display_name,
-                    "total_agents": health.get("total_agents", 0),
-                    "healthy_agents": health.get("healthy_agents", 0),
-                    "health_ratio": health.get("health_ratio", 1.0),
-                    "pool_count": len(group.pool_names),
-                })
+
+            telemetry = self._telemetry_service(rt)
+            agent_infos: list[dict[str, Any]] = []
+            for agent in agents:
+                info: dict[str, Any] = agent.info()
+                info["trust_score"] = await self._agent_trust_score(rt, agent.id, telemetry)
+
+                graph: dict[str, Any] | None = None
+                if telemetry is not None:
+                    try:
+                        social = await telemetry.get_social_state(agent.id)
+                        if social.get("total_connections") is not None:
+                            graph = {
+                                "incoming_top3": [
+                                    {"source": affinity["intent"], "weight": affinity["weight"]}
+                                    for affinity in social.get("incoming_affinities", [])
+                                ],
+                                "outgoing_top3": [
+                                    {"target": affinity["intent"], "weight": affinity["weight"]}
+                                    for affinity in social.get("outbound_affinities", [])
+                                ],
+                                "total_connections": social["total_connections"],
+                            }
+                    except Exception:
+                        logger.warning(
+                            "Introspection social telemetry query failed; "
+                            "falling back to raw Hebbian graph facts"
+                        )
+                    else:
+                        if graph is None:
+                            logger.warning(
+                                "Introspection social telemetry has no complete graph; "
+                                "falling back to raw Hebbian graph facts"
+                            )
+                if graph is None:
+                    router = getattr(rt, "hebbian_router", None)
+                    if router is None:
+                        raise RuntimeError("Hebbian router unavailable")
+                    all_weights = router.all_weights_typed()
+                    incoming = sorted(
+                        [(key[0], weight) for key, weight in all_weights.items()
+                         if key[1] == agent.id],
+                        key=lambda entry: entry[1],
+                        reverse=True,
+                    )[:3]
+                    outgoing = sorted(
+                        [(key[1], weight) for key, weight in all_weights.items()
+                         if key[0] == agent.id],
+                        key=lambda entry: entry[1],
+                        reverse=True,
+                    )[:3]
+                    graph = {
+                        "incoming_top3": [
+                            {"source": source, "weight": format_trust(weight)}
+                            for source, weight in incoming
+                        ],
+                        "outgoing_top3": [
+                            {"target": target, "weight": format_trust(weight)}
+                            for target, weight in outgoing
+                        ],
+                        "total_connections": sum(
+                            1 for key in all_weights if key[0] == agent.id or key[1] == agent.id
+                        ),
+                    }
+                info["hebbian"] = graph
+                agent_infos.append(info)
+
+            data: dict[str, Any] = {"agents": agent_infos}
+            grounded = self._grounded_context()
+            if grounded:
+                data["grounded_context"] = grounded
+            return {"success": True, "data": data}
+        except Exception as exc:
+            logger.warning(
+                "Agent information collection failed (%s); returning an error without partial details",
+                type(exc).__name__,
+            )
+            return {"success": False, "error": "Agent information unavailable"}
+
+    async def _team_info(self, rt: ProbOSRuntime, params: dict[str, Any]) -> dict[str, Any]:
+        """Return details about a crew team (pool group)."""
+        try:
+            team_name = params.get("team", "").strip().lower()
+
+            if not team_name:
+                groups = rt.pool_groups.all_groups()
+                if not groups:
+                    result = {
+                        "success": True,
+                        "data": {"message": "No crew teams registered."},
+                    }
+                    grounded = self._grounded_context()
+                    if grounded:
+                        result["data"]["grounded_context"] = grounded
+                    return result
+                team_summaries = []
+                for group in groups:
+                    health = rt.pool_groups.group_health(group.name, rt.pools)
+                    team_summaries.append({
+                        "name": group.name,
+                        "display_name": group.display_name,
+                        "total_agents": health.get("total_agents", 0),
+                        "healthy_agents": health.get("healthy_agents", 0),
+                        "health_ratio": health.get("health_ratio", 1.0),
+                        "pool_count": len(group.pool_names),
+                    })
+                result = {
+                    "success": True,
+                    "data": {"teams": team_summaries, "count": len(team_summaries)},
+                }
+                grounded = self._grounded_context()
+                if grounded:
+                    result["data"]["grounded_context"] = grounded
+                return result
+
+            group = rt.pool_groups.get_group(team_name)
+            if group is None:
+                for candidate in rt.pool_groups.all_groups():
+                    if team_name in candidate.name or team_name in candidate.display_name.lower():
+                        group = candidate
+                        break
+
+            if group is None:
+                return {
+                    "success": True,
+                    "data": {
+                        "message": f"No crew team found matching '{team_name}'.",
+                        "available_teams": [candidate.name for candidate in rt.pool_groups.all_groups()],
+                    },
+                }
+
+            health = rt.pool_groups.group_health(group.name, rt.pools)
+            registry = getattr(rt, "registry", None)
+            if registry is None:
+                raise RuntimeError("Agent registry unavailable")
+            telemetry = self._telemetry_service(rt)
+            agent_details: list[dict[str, Any]] = []
+            for pool_name in sorted(group.pool_names):
+                pool = rt.pools.get(pool_name)
+                if pool is None:
+                    continue
+                for agent_id in pool.healthy_agents:
+                    agent = registry.get(agent_id)
+                    if agent is None:
+                        continue
+                    info: dict[str, Any] = agent.info()
+                    info["trust_score"] = await self._agent_trust_score(rt, agent_id, telemetry)
+                    info["pool"] = pool_name
+                    agent_details.append(info)
+
             result = {
                 "success": True,
-                "data": {"teams": team_summaries, "count": len(team_summaries)},
+                "data": {
+                    "team": {
+                        "name": group.name,
+                        "display_name": group.display_name,
+                        "exclude_from_scaler": group.exclude_from_scaler,
+                    },
+                    "health": {
+                        "total_agents": health.get("total_agents", 0),
+                        "healthy_agents": health.get("healthy_agents", 0),
+                        "health_ratio": format_trust(health.get("health_ratio", 1.0)),
+                    },
+                    "pools": health.get("pools", {}),
+                    "agents": agent_details,
+                },
             }
-            # Append grounded topology for reflector (AD-320)
             grounded = self._grounded_context()
             if grounded:
                 result["data"]["grounded_context"] = grounded
             return result
-
-        # Look up the specific team
-        group = rt.pool_groups.get_group(team_name)
-
-        # Fuzzy fallback: try substring match on group names
-        if group is None:
-            for g in rt.pool_groups.all_groups():
-                if team_name in g.name or team_name in g.display_name.lower():
-                    group = g
-                    break
-
-        if group is None:
-            return {
-                "success": True,
-                "data": {
-                    "message": f"No crew team found matching '{team_name}'.",
-                    "available_teams": [g.name for g in rt.pool_groups.all_groups()],
-                },
-            }
-
-        # Get aggregate health
-        health = rt.pool_groups.group_health(group.name, rt.pools)
-
-        # Get individual agent details for all pools in this group
-        agent_details = []
-        for pool_name in sorted(group.pool_names):
-            pool = rt.pools.get(pool_name)
-            if pool is None:
-                continue
-            for agent_id in pool.healthy_agents:
-                agent = rt.registry.get(agent_id)
-                if agent is None:
-                    continue
-                info: dict[str, Any] = agent.info()
-                trust = rt.trust_network.get_score(agent_id)
-                info["trust_score"] = format_trust(trust)
-                info["pool"] = pool_name
-                agent_details.append(info)
-
-        result = {
-            "success": True,
-            "data": {
-                "team": {
-                    "name": group.name,
-                    "display_name": group.display_name,
-                    "exclude_from_scaler": group.exclude_from_scaler,
-                },
-                "health": {
-                    "total_agents": health.get("total_agents", 0),
-                    "healthy_agents": health.get("healthy_agents", 0),
-                    "health_ratio": format_trust(health.get("health_ratio", 1.0)),
-                },
-                "pools": health.get("pools", {}),
-                "agents": agent_details,
-            },
-        }
-        # Append grounded topology for reflector (AD-320)
-        grounded = self._grounded_context()
-        if grounded:
-            result["data"]["grounded_context"] = grounded
-        return result
+        except Exception as exc:
+            logger.warning(
+                "Team information collection failed (%s); returning an error without partial roster data",
+                type(exc).__name__,
+            )
+            return {"success": False, "error": "Team information unavailable"}
 
     def _system_health(self, rt: ProbOSRuntime) -> dict[str, Any]:
         """Compute a structured health assessment."""
