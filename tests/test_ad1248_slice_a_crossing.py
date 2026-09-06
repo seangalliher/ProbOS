@@ -588,7 +588,8 @@ def test_the_offered_names_are_captured_after_dedupe() -> None:
 
     source = inspect.getsource(ad)
     start = source.index("def _build_tools(")
-    builder = source[start:source.index("tools = _build_tools(")]
+    # AD-1241 returns definitions and published IDs; name capture still follows dedupe.
+    builder = source[start:source.index("tools, published_mcp_ids = _build_tools(")]
 
     assert "deduped = dedupe_llm_definitions(" in builder
     assert builder.index("deduped = dedupe_llm_definitions(") < builder.index(
