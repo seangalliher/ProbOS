@@ -2,6 +2,8 @@
 
 > **Alpha** — ProbOS is under active development. APIs will change, features may break, and documentation may lag behind the code. Contributions and feedback welcome.
 
+**Nooplex readiness:** ProbOS currently implements an alpha, single-mesh Cognitive Mesh with an experimental federation substrate. A dependable supported mesh, authenticated multi-mesh operation, the Nooplex Core Fabric, and emergence validation are separate evidence gates tracked in the [Nooplex Readiness Map](docs/development/nooplex-readiness.md).
+
 **Probabilistic agent-native OS runtime** — an operating system kernel where every component is an autonomous agent, coordination happens through consensus, and the system learns from its own behavior.
 
 > *"What if an OS didn't execute instructions — it negotiated them?"*
@@ -56,8 +58,8 @@ Five layers plus two cross-cutting concerns, each built on the one below:
 │  Substrate     Agent lifecycle, pools, spawner,       │
 │                registry, heartbeat, event log        │
 ├─────────────────────────────────────────────────────┤
-│  Federation    ZeroMQ transport, node bridge,         │
-│                intent router, gossip exchange        │
+│  Federation    NATS or ZeroMQ transport,              │
+│                node bridge, routing, gossip exchange │
 ├─────────────────────────────────────────────────────┤
 │  Knowledge     Git-backed store, ChromaDB semantic,   │
 │                warm boot, per-artifact rollback      │
@@ -279,9 +281,10 @@ src/probos/
 │   ├── knowledge_panel.py   #   Knowledge store panels
 │   └── qa_panel.py          #   QA result panels
 ├── federation/              # Multi-node mesh
-│   ├── bridge.py            #   ZeroMQ node bridge
+│   ├── bridge.py            #   Transport-neutral node bridge
 │   ├── router.py            #   Intent forwarding + loop prevention
-│   └── transport.py         #   Transport abstraction
+│   ├── nats_transport.py    #   NATS federation transport
+│   └── transport.py         #   ZeroMQ federation transport
 ├── knowledge/               # Persistent storage
 │   ├── store.py             #   Git-backed artifact persistence
 │   └── semantic.py          #   SemanticKnowledgeLayer (5 ChromaDB collections)
@@ -337,7 +340,7 @@ cd ui && npx vitest run           # UI tests
 
 **Dynamic intent discovery.** Each agent class declares structured `IntentDescriptor` metadata. The decomposer's system prompt is assembled at runtime from whatever agents are registered. New agent types self-integrate without any configuration changes.
 
-**Federation.** Multiple ProbOS nodes form a Nooplex — a cognitive mesh of meshes. Each node is sovereign (its own agents, trust, memory). Nodes exchange capabilities via ZeroMQ gossip protocol and can forward intents across the federation.
+**Federation.** Multiple ProbOS nodes can form an experimental federation of sovereign Cognitive Meshes, each with its own agents, trust, and memory. Nodes can exchange capabilities and forward intents. Authenticated multi-mesh operation and the semantic Nooplex Core Fabric have separate readiness gates; transport connectivity alone is not described as a complete Nooplex.
 
 **HXI (Human Experience Interface).** A WebGL visualization of the cognitive mesh rendered in Three.js. Agent nodes glow with trust-mapped colors, pulse with activity, and connect with Hebbian-weighted edges. Real-time WebSocket streaming from the runtime.
 

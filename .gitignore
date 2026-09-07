@@ -73,6 +73,7 @@ desktop/dist/
 .idea/
 .vscode/
 .claude/
+.supervised-worker/
 *.code-workspace
 *.swp
 *.swo

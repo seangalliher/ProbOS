@@ -313,6 +313,36 @@ their scope and no campaign is started by this entry.
 |----|-------|-------|
 | AD-1299 | Governed self-maintenance: Utility agent and backend-neutral campaigns | [#1352](https://github.com/seangalliher/ProbOS/issues/1352) |
 
+#### Existing Programs
+
+**Platform maturity program — turn advanced mechanisms into an exercised, contract-checked, modular, recoverable, and truthfully documented supported product. Full program: [AD-1270](platform-maturity-program.md). Its place in the larger architecture is tracked by the [Nooplex Readiness Map](nooplex-readiness.md). One epic tracks the program; existing AD owners remain independent rather than being duplicated. The program builds on completed AD-1256 storage ownership rather than queuing that decision again.**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-1270a | Capability Truth Ledger and Activation Receipts | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
+| AD-1270b | Distributed Seam Contract Catalog and production-crossing tests | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
+| AD-1270f | Fail-broad impact selection and duration-balanced complete gate | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
+| AD-1185 + AD-1270e1/e2/e3 | Supported profile plus stable configuration-facade decomposition | [#1121](https://github.com/seangalliher/ProbOS/issues/1121) / [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
+| AD-1270c1/c2/c3 | Finalization bundles, lifecycle ownership, and runtime-service extraction | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 2 |
+| AD-1270d1/d2/d3 | Prompt/sensorium, turn-effects, and cognitive-pipeline extraction | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 2 |
+| AD-1265 + AD-1266 | Verified snapshot and point-in-time restore round trip | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
+| AD-1270g | Executable README capability facts | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 2 |
+| AD-1186 + AD-1270h | Ship Trials and no-code maturity closeout | [#1123](https://github.com/seangalliher/ProbOS/issues/1123) / [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
+
+**Elastic Cognitive Teams - preserve the process, evidence, methods, and
+governance while commissioning temporary, skill-qualified workers for bounded
+missions. This extends the completed AD-618 Bill System and the durable
+CrewSession path; it does not create another workflow engine. Parent epic:
+[#1332](https://github.com/seangalliher/ProbOS/issues/1332).**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-1286 | Elastic Team Contract - immutable team specs, durable slots, ephemeral attempts | [#1333](https://github.com/seangalliher/ProbOS/issues/1333) | 1 |
+| AD-1287 | Evidence-Bound Skill Qualification - exact skill/model/tool/policy/eval profiles | [#1334](https://github.com/seangalliher/ProbOS/issues/1334) | 1 |
+| AD-1288 | Agent-Commissioned Team Lifecycle - governed provision, leases, recovery, teardown | [#1335](https://github.com/seangalliher/ProbOS/issues/1335) | 1 |
+| AD-1289 | Typed Mission Blackboard - claims, evidence, challenges, decisions, and dissent | [#1336](https://github.com/seangalliher/ProbOS/issues/1336) | 2 |
+| AD-1290 | Elastic Scatter/Gather and Team Trials - replicas, reducers, attribution, ablations | [#1337](https://github.com/seangalliher/ProbOS/issues/1337) | 2 |
+
 #### Other Backlog Items
 
 **User Experience & Adoption (Phase 35 + Phase 24) — install, onboarding, channels, getting-started stability (2026-07-23 decomposition):**
