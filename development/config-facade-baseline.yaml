@@ -1,0 +1,3803 @@
+# AD-1270e1 configuration facade contract: the public surface of
+# probos.config -- names, tiers, model identity, field order, defaults,
+# aliases and schema digests -- frozen before AD-1270e2/e3 move any model.
+#
+# Regenerate with:
+#   python scripts/check_config_facade.py --update-baseline
+#
+# Read before editing:
+#   * `fields` is DECLARATION order. --check re-proves that model_dump()
+#     order and schema `properties` order still derive from it; a
+#     divergence is a Pydantic behaviour change, not a regeneration.
+#   * `schema_sha256` is a digest, not a dump. Defaults, order and aliases
+#     are explicit dimensions above it; the digest catches type and
+#     constraint changes only. Do not expand it into a full schema.
+#   * Defaults come from model_fields, never from model_json_schema(),
+#     which silently drops the three Path-valued defaults.
+#   * Path values are POSIX-normalised. A raw dump is Windows-only and
+#     goes red on Linux CI while --check passes locally.
+#   * `tier: owned` is the contract. `tier: incidental` names are import
+#     leakage recorded so nothing is invisible; removing one is a
+#     reviewable diff, not a contract break.
+#   * A re-export keeps qualname/bases/fields and passes, provided the
+#     model moved into src/probos/config_models/ -- the same directory G2
+#     scans for environment reads. A wrapper or subclass changes `bases`;
+#     a partial clone changes `fields`.
+#   * The `environment` rows are captured in a scrubbed subprocess. Adding
+#     an environment read without a row here fails on day one.
+#   * Written with the platform's default line endings, like every other
+#     generated doc here, so a Windows working tree holds CRLF and the
+#     index holds LF. Nothing compares these bytes -- both the checker and
+#     its tests compare the parsed document -- but a raw read_bytes()
+#     probe must fold newlines before hashing or it will disagree with
+#     `git show :<path>` on Windows and agree on Linux.
+# A blank review.owner/rationale/review_by fails --check on purpose.
+schema_version: 1
+baseline_id: ad-1270e1-config-facade-v1
+epic: 1324
+review:
+  owner: AD-1270e1
+  rationale: AD-1270e2/e3 move 224 models out of a 304-name module that 703 tracked files import. Freezing imports, defaults, aliases, schema digests and field order first means an extraction that changes behaviour shows up as a data diff on the exact symbol, not as a large mechanical rename nobody can read. The five dimensions are one document because a reviewer comparing a moved model wants one place to look, and because a per-domain split would pre-commit the domain boundary e2 is supposed to decide.
+  review_by: AD-1270e3 has landed the thin permanent facade and every incidental row is gone, or a domain partition exists and this file has been split to match it.
+handoff_to_e2:
+- Widen check_config_profiles._DEFAULT_CONFIG_MODULE from a single file to the config_models package. Its real->declared environment gate scans one path and goes blind the moment models move; the config-facade checker fails the day the directory appears so this cannot be forgotten.
+- Add a select_tests.BLAST_RADIUS_PATTERNS entry covering src/probos/config_models/*. src/probos/config.py is a blast-radius entry today; a moved model must keep selecting the full suite. Add it in the same commit that creates the directory -- changing the selector invalidates selector claims about that same tree, so it cannot be done here in advance.
+- Re-export moved models from probos.config, and move them into src/probos/config_models/. Identity is compared by qualname, MRO bases and ordered fields, never by __module__, so a re-export passes and a wrapper, subclass or partial clone fails. Ownership -- the owned/incidental tier -- does read __module__, and accepts probos.config or that one package, because it is the same directory G2 scans for environment reads. A move anywhere else fails here rather than silently keeping the tier while the environment scan goes blind.
+- 'Regenerating this baseline is expected during e2/e3. Regenerating it to make a failure go away is not: every row here is a behaviour a consumer already depends on.'
+pydantic_version: 2.12.5
+surface_counts:
+  aliased_fields: 1
+  canonical_dump_leaves: 1792
+  field_definitions: 1785
+  incidental: 13
+  own_models: 224
+  owned: 291
+  public_names: 304
+canonical_dump_sha256: 4945f5cb7506097d5dd2bc6a9dd38cd2fe520fcf3c86675dd49ba88db9f8ba89
+non_instantiable:
+- A2APeerConfig
+- BaseModel
+- DutyDefinition
+- EPSDepartmentConfig
+- MCPServerConfig
+- PeerConfig
+schema_unavailable:
+- BaseModel
+models_with_model_config: []
+environment:
+  control_variable: PROBOS_CONFIG_FACADE_CONTROL_SENTINEL
+  reads:
+  - {name: PROBOS_CONFIG_FACADE_CONTROL_SENTINEL, mechanism: control, reaches_defaults: false, moves: []}
+  - {name: PROBOS_LLM_URL, mechanism: model-validator, reaches_defaults: true, moves: [cognitive.llm_base_url]}
+  - {name: PROBOS_NATS_ENABLED, mechanism: config-field-validator, reaches_defaults: true, moves: [nats.enabled]}
+  - {name: XDG_DATA_HOME, mechanism: module-function, reaches_defaults: false, moves: []}
+constants:
+  COMPILATION_DEMOTION_LEVEL: '2'
+  COMPILATION_MAX_LEVEL: '5'
+  COMPILATION_PROMOTION_THRESHOLD: '3'
+  COMPILATION_TRUST_LEVEL_2_MIN: '0.0'
+  COMPILATION_TRUST_LEVEL_3_MIN: '0.5'
+  COMPILATION_TRUST_LEVEL_4_MIN: '0.5'
+  COMPILATION_VALIDATION_TIMEOUT_SECONDS: '15.0'
+  COMPOUND_STEP_TIMEOUT_SECONDS: '10.0'
+  COUNSELOR_CONFIDENCE_LOW: '0.3'
+  COUNSELOR_TRUST_DRIFT_CONCERN: '-0.2'
+  COUNSELOR_TRUST_PROMOTION: '0.7'
+  COUNSELOR_WELLNESS_FIT: '0.3'
+  COUNSELOR_WELLNESS_PROMOTION: '0.8'
+  COUNSELOR_WELLNESS_YELLOW: '0.5'
+  EVOLUTION_COOLDOWN_SECONDS: '259200'
+  EVOLUTION_MAX_RETRIES: '3'
+  GAP_MIN_EPISODES: '5'
+  GAP_MIN_FAILURE_RATE: '0.3'
+  GAP_MIN_PROCEDURE_FAILURES: '3'
+  GAP_PROFICIENCY_TARGET: '3'
+  GAP_REPORT_MAX_PER_DREAM: '10'
+  LIFECYCLE_ARCHIVE_DAYS: '90'
+  LIFECYCLE_DECAY_DAYS: '30'
+  LIFECYCLE_DEDUP_MAX_CANDIDATES: '50'
+  LIFECYCLE_DEDUP_SIMILARITY_THRESHOLD: '0.85'
+  LIFECYCLE_MIN_SELECTIONS_FOR_DECAY: '3'
+  LIFECYCLE_REVALIDATION_LEVEL: '2'
+  MAX_FALLBACK_QUEUE_SIZE: '50'
+  MAX_FALLBACK_RESPONSE_CHARS: '4000'
+  OBSERVATION_MAX_THREADS_PER_DREAM: '20'
+  OBSERVATION_MIN_DETAIL_SCORE: '0.6'
+  OBSERVATION_MIN_TRUST: '0.5'
+  OBSERVATION_WARD_ROOM_LOOKBACK_HOURS: '24'
+  PROACTIVE_SCAN_INTERVAL_SECONDS: '300'
+  PROCEDURE_HEALTH_APPLIED_RATE: '0.4'
+  PROCEDURE_HEALTH_COMPLETION_RATE: '0.35'
+  PROCEDURE_HEALTH_DERIVED_APPLIED: '0.25'
+  PROCEDURE_HEALTH_EFFECTIVE_RATE: '0.55'
+  PROCEDURE_HEALTH_FALLBACK_RATE: '0.4'
+  PROCEDURE_MATCH_THRESHOLD: '0.6'
+  PROCEDURE_MIN_COMPILATION_LEVEL: '2'
+  PROCEDURE_MIN_SELECTIONS: '5'
+  PROMOTION_CRITICALITY_CAPTAIN_THRESHOLD: '''high'''
+  PROMOTION_DESTRUCTIVE_KEYWORDS: frozenset({'delete', 'destroy', 'drop', 'force', 'override', 'purge', 'remove', 'reset'})
+  PROMOTION_MIN_COMPILATION_LEVEL: '4'
+  PROMOTION_MIN_EFFECTIVE_RATE: '0.7'
+  PROMOTION_MIN_TOTAL_COMPLETIONS: '10'
+  PROMOTION_REJECTION_COOLDOWN_HOURS: '72'
+  REACTIVE_COOLDOWN_SECONDS: '60'
+  TEACHING_MIN_COMPILATION_LEVEL: '5'
+  TEACHING_MIN_TRUST: '0.85'
+  TRUST_COLOR_GREEN: '0.6'
+  TRUST_COLOR_YELLOW: '0.4'
+  TRUST_COMMANDER: '0.7'
+  TRUST_DEFAULT: '0.5'
+  TRUST_DEGRADED: '0.2'
+  TRUST_DISPLAY_PRECISION: '4'
+  TRUST_FLOOR_CONN: '0.6'
+  TRUST_FLOOR_CREDIBILITY: '0.3'
+  TRUST_HARD_FLOOR: '0.05'
+  TRUST_LIEUTENANT: '0.5'
+  TRUST_OUTLIER_HIGH: '0.9'
+  TRUST_OUTLIER_LOW: '0.3'
+  TRUST_SENIOR: '0.85'
+names:
+  A2APeerConfig: {kind: model, tier: owned}
+  AgentTierConfig: {kind: model, tier: owned}
+  AgenticDispatchConfig: {kind: model, tier: owned}
+  AgenticLoopConfig: {kind: model, tier: owned}
+  AgenticToolsConfig: {kind: model, tier: owned}
+  AliasChoices: {kind: class, removable_in: e3, tier: incidental}
+  AnomalyWindowConfig: {kind: model, tier: owned}
+  Any: {kind: class, removable_in: e3, tier: incidental}
+  ApprovalInboxConfig: {kind: model, tier: owned}
+  ArchiveConfig: {kind: model, tier: owned}
+  AssignmentConfig: {kind: model, tier: owned}
+  AttachmentsConfig: {kind: model, tier: owned}
+  AttentionConfig: {kind: model, tier: owned}
+  AuthConfig: {kind: model, tier: owned}
+  AutonomyBoundariesConfig: {kind: model, tier: owned}
+  AvatarTelemetryConfig: {kind: model, tier: owned}
+  AvatarsConfig: {kind: model, tier: owned}
+  BaseModel: {kind: model, removable_in: e3, tier: incidental}
+  BaselineVRMManifest: {kind: model, tier: owned}
+  BehavioralMetricsConfig: {kind: model, tier: owned}
+  BillConfig: {kind: model, tier: owned}
+  BootCampConfig: {kind: model, tier: owned}
+  BootCampPhaseConfig: {kind: model, tier: owned}
+  BridgeAlertConfig: {kind: model, tier: owned}
+  BridgeConfig: {kind: model, tier: owned}
+  BrowserToolConfig: {kind: model, tier: owned}
+  COMPILATION_DEMOTION_LEVEL: {kind: constant, tier: owned}
+  COMPILATION_MAX_LEVEL: {kind: constant, tier: owned}
+  COMPILATION_PROMOTION_THRESHOLD: {kind: constant, tier: owned}
+  COMPILATION_TRUST_LEVEL_2_MIN: {kind: constant, tier: owned}
+  COMPILATION_TRUST_LEVEL_3_MIN: {kind: constant, tier: owned}
+  COMPILATION_TRUST_LEVEL_4_MIN: {kind: constant, tier: owned}
+  COMPILATION_VALIDATION_TIMEOUT_SECONDS: {kind: constant, tier: owned}
+  COMPOUND_STEP_TIMEOUT_SECONDS: {kind: constant, tier: owned}
+  COUNSELOR_CONFIDENCE_LOW: {kind: constant, tier: owned}
+  COUNSELOR_TRUST_DRIFT_CONCERN: {kind: constant, tier: owned}
+  COUNSELOR_TRUST_PROMOTION: {kind: constant, tier: owned}
+  COUNSELOR_WELLNESS_FIT: {kind: constant, tier: owned}
+  COUNSELOR_WELLNESS_PROMOTION: {kind: constant, tier: owned}
+  COUNSELOR_WELLNESS_YELLOW: {kind: constant, tier: owned}
+  CameraStreamConfig: {kind: model, tier: owned}
+  CapabilityTriageConfig: {kind: model, tier: owned}
+  CaptainsLogConfig: {kind: model, tier: owned}
+  CausalReasoningConfig: {kind: model, tier: owned}
+  ChainOptimizerConfig: {kind: model, tier: owned}
+  ChainOptimizerCounselorConfig: {kind: model, tier: owned}
+  ChainTuningConfig: {kind: model, tier: owned}
+  ChannelsConfig: {kind: model, tier: owned}
+  CircuitBreakerConfig: {kind: model, tier: owned}
+  ClassificationGateConfig: {kind: model, tier: owned}
+  ClinicalTelemetryConfig: {kind: model, tier: owned}
+  CloudPickerProviderConfig: {kind: model, tier: owned}
+  CloudPickersConfig: {kind: model, tier: owned}
+  CognitiveConfig: {kind: model, tier: owned}
+  CognitiveJournalConfig: {kind: model, tier: owned}
+  CommunicationBenchmarksConfig: {kind: model, tier: owned}
+  CommunicationsConfig: {kind: model, tier: owned}
+  ConcurrencyConfig: {kind: model, tier: owned}
+  ConfidenceConfig: {kind: model, tier: owned}
+  ConsensusConfig: {kind: model, tier: owned}
+  ConsultationConfig: {kind: model, tier: owned}
+  ConsultationDeliveryConfig: {kind: model, tier: owned}
+  ConsultationDispatchConfig: {kind: model, tier: owned}
+  ConsultationWorkspaceConfig: {kind: model, tier: owned}
+  CounselorConfig: {kind: model, tier: owned}
+  CreativeExpressionConfig: {kind: model, tier: owned}
+  CredentialVaultConfig: {kind: model, tier: owned}
+  CrewDevelopmentConfig: {kind: model, tier: owned}
+  DegradationConfig: {kind: model, tier: owned}
+  DeliberationConfig: {kind: model, tier: owned}
+  DepartmentCognitiveProfile: {kind: model, tier: owned}
+  DepartmentProfilesConfig: {kind: model, tier: owned}
+  DependencyConfig: {kind: model, tier: owned}
+  DesktopConfig: {kind: model, tier: owned}
+  DeviceConfig: {kind: model, tier: owned}
+  DiagnosticContextConfig: {kind: model, tier: owned}
+  DiscordConfig: {kind: model, tier: owned}
+  DiscoveryConfig: {kind: model, tier: owned}
+  DiscoveryLearningConfig: {kind: model, tier: owned}
+  DistillationConfig: {kind: model, tier: owned}
+  DmAgenticConfig: {kind: model, tier: owned}
+  DmDeliberateConfig: {kind: model, tier: owned}
+  DmMeshSynthesisConfig: {kind: model, tier: owned}
+  DmSanityGateConfig: {kind: model, tier: owned}
+  DmTargetedLookupConfig: {kind: model, tier: owned}
+  DreamWMConfig: {kind: model, tier: owned}
+  DreamingConfig: {kind: model, tier: owned}
+  DutyDefinition: {kind: model, tier: owned}
+  DutyPolicyConfig: {kind: model, tier: owned}
+  DutyScheduleConfig: {kind: model, tier: owned}
+  EPSConfig: {kind: model, tier: owned}
+  EPSDepartmentConfig: {kind: model, tier: owned}
+  EVOLUTION_COOLDOWN_SECONDS: {kind: constant, tier: owned}
+  EVOLUTION_MAX_RETRIES: {kind: constant, tier: owned}
+  EarnedAgencyConfig: {kind: model, tier: owned}
+  EdgeBackfillConfig: {kind: model, tier: owned}
+  EmergenceCollectorConfig: {kind: model, tier: owned}
+  EmergenceMetricsConfig: {kind: model, tier: owned}
+  EmergentDetectorConfig: {kind: model, tier: owned}
+  EmergentLeadershipConfig: {kind: model, tier: owned}
+  EngineeringConfig: {kind: model, tier: owned}
+  EngineeringSensorsConfig: {kind: model, tier: owned}
+  EventLogConfig: {kind: model, tier: owned}
+  ExecutionConfig: {kind: model, tier: owned}
+  ExpertiseConfig: {kind: model, tier: owned}
+  ExtensionsConfig: {kind: model, tier: owned}
+  FederationA2AConfig: {kind: model, tier: owned}
+  FederationArdConfig: {kind: model, tier: owned}
+  FederationClusterMonitorConfig: {kind: model, tier: owned}
+  FederationConfig: {kind: model, tier: owned}
+  FederationDiscoveryConfig: {kind: model, tier: owned}
+  FederationMCPServerConfig: {kind: model, tier: owned}
+  FederationPeerTrustConfig: {kind: model, tier: owned}
+  FederationTLSConfig: {kind: model, tier: owned}
+  Field: {kind: function, removable_in: e3, tier: incidental}
+  FirewallConfig: {kind: model, tier: owned}
+  GAP_MIN_EPISODES: {kind: constant, tier: owned}
+  GAP_MIN_FAILURE_RATE: {kind: constant, tier: owned}
+  GAP_MIN_PROCEDURE_FAILURES: {kind: constant, tier: owned}
+  GAP_PROFICIENCY_TARGET: {kind: constant, tier: owned}
+  GAP_REPORT_MAX_PER_DREAM: {kind: constant, tier: owned}
+  GapPipelineExtensionsConfig: {kind: model, tier: owned}
+  GroundTruthConfig: {kind: model, tier: owned}
+  GroundingConfig: {kind: model, tier: owned}
+  GroupChatConfig: {kind: model, tier: owned}
+  HolodeckBirthChamberConfig: {kind: model, tier: owned}
+  HolodeckScenarioConfig: {kind: model, tier: owned}
+  HolodeckTeamSimulationConfig: {kind: model, tier: owned}
+  HooksConfig: {kind: model, tier: owned}
+  HybridDispatchConfig: {kind: model, tier: owned}
+  InfodynamicConfig: {kind: model, tier: owned}
+  InfrastructureConfig: {kind: model, tier: owned}
+  KnowledgeBrowserConfig: {kind: model, tier: owned}
+  KnowledgeConfig: {kind: model, tier: owned}
+  KnowledgeEdgeClassificationConfig: {kind: model, tier: owned}
+  KnowledgeEdgesConfig: {kind: model, tier: owned}
+  KnowledgeLoadingConfig: {kind: model, tier: owned}
+  LIFECYCLE_ARCHIVE_DAYS: {kind: constant, tier: owned}
+  LIFECYCLE_DECAY_DAYS: {kind: constant, tier: owned}
+  LIFECYCLE_DEDUP_MAX_CANDIDATES: {kind: constant, tier: owned}
+  LIFECYCLE_DEDUP_SIMILARITY_THRESHOLD: {kind: constant, tier: owned}
+  LIFECYCLE_MIN_SELECTIONS_FOR_DECAY: {kind: constant, tier: owned}
+  LIFECYCLE_REVALIDATION_LEVEL: {kind: constant, tier: owned}
+  LLMRateConfig: {kind: model, tier: owned}
+  LearnedShortcutsConfig: {kind: model, tier: owned}
+  LintConfig: {kind: model, tier: owned}
+  LipSyncConfig: {kind: model, tier: owned}
+  Literal: {kind: function, removable_in: e3, tier: incidental}
+  M365Config: {kind: model, tier: owned}
+  MAX_FALLBACK_QUEUE_SIZE: {kind: constant, tier: owned}
+  MAX_FALLBACK_RESPONSE_CHARS: {kind: constant, tier: owned}
+  MCPAppHostConfig: {kind: model, tier: owned}
+  MCPConfig: {kind: model, tier: owned}
+  MCPServerConfig: {kind: model, tier: owned}
+  MedicalConfig: {kind: model, tier: owned}
+  MemoryBudgetConfig: {kind: model, tier: owned}
+  MemoryConfig: {kind: model, tier: owned}
+  MemorySecurityConfig: {kind: model, tier: owned}
+  MeshConfig: {kind: model, tier: owned}
+  MetabolismConfig: {kind: model, tier: owned}
+  ModelRoutingConfig: {kind: model, tier: owned}
+  NLGraphQueryConfig: {kind: model, tier: owned}
+  NamingConfig: {kind: model, tier: owned}
+  NativeSWEHarnessConfig: {kind: model, tier: owned}
+  NatsConfig: {kind: model, tier: owned}
+  NavalOrganizationConfig: {kind: model, tier: owned}
+  NoveltyGateConfig: {kind: model, tier: owned}
+  OBSERVATION_MAX_THREADS_PER_DREAM: {kind: constant, tier: owned}
+  OBSERVATION_MIN_DETAIL_SCORE: {kind: constant, tier: owned}
+  OBSERVATION_MIN_TRUST: {kind: constant, tier: owned}
+  OBSERVATION_WARD_ROOM_LOOKBACK_HOURS: {kind: constant, tier: owned}
+  OSActivityConfig: {kind: model, tier: owned}
+  ObservabilityBridgeConfig: {kind: model, tier: owned}
+  ObservableStateConfig: {kind: model, tier: owned}
+  OfficeSkillsConfig: {kind: model, tier: owned}
+  OnboardingConfig: {kind: model, tier: owned}
+  OperationalStatusConfig: {kind: model, tier: owned}
+  OperationsConfig: {kind: model, tier: owned}
+  OrdersConfig: {kind: model, tier: owned}
+  OrientationConfig: {kind: model, tier: owned}
+  PROACTIVE_SCAN_INTERVAL_SECONDS: {kind: constant, tier: owned}
+  PROCEDURE_HEALTH_APPLIED_RATE: {kind: constant, tier: owned}
+  PROCEDURE_HEALTH_COMPLETION_RATE: {kind: constant, tier: owned}
+  PROCEDURE_HEALTH_DERIVED_APPLIED: {kind: constant, tier: owned}
+  PROCEDURE_HEALTH_EFFECTIVE_RATE: {kind: constant, tier: owned}
+  PROCEDURE_HEALTH_FALLBACK_RATE: {kind: constant, tier: owned}
+  PROCEDURE_MATCH_THRESHOLD: {kind: constant, tier: owned}
+  PROCEDURE_MIN_COMPILATION_LEVEL: {kind: constant, tier: owned}
+  PROCEDURE_MIN_SELECTIONS: {kind: constant, tier: owned}
+  PROMOTION_CRITICALITY_CAPTAIN_THRESHOLD: {kind: constant, tier: owned}
+  PROMOTION_DESTRUCTIVE_KEYWORDS: {kind: constant, tier: owned}
+  PROMOTION_MIN_COMPILATION_LEVEL: {kind: constant, tier: owned}
+  PROMOTION_MIN_EFFECTIVE_RATE: {kind: constant, tier: owned}
+  PROMOTION_MIN_TOTAL_COMPLETIONS: {kind: constant, tier: owned}
+  PROMOTION_REJECTION_COOLDOWN_HOURS: {kind: constant, tier: owned}
+  PacksConfig: {kind: model, tier: owned}
+  Path: {kind: class, removable_in: e3, tier: incidental}
+  PeerConfig: {kind: model, tier: owned}
+  PerceptionConfig: {kind: model, tier: owned}
+  PermissionsConfig: {kind: model, tier: owned}
+  PersistentTasksConfig: {kind: model, tier: owned}
+  PinnedKnowledgeConfig: {kind: model, tier: owned}
+  PlanOfDayConfig: {kind: model, tier: owned}
+  PolicyWindowConfig: {kind: model, tier: owned}
+  PoolConfig: {kind: model, tier: owned}
+  PostBudgetTelemetryConfig: {kind: model, tier: owned}
+  PreFlightConfig: {kind: model, tier: owned}
+  PredictiveBranchingConfig: {kind: model, tier: owned}
+  ProactiveCognitiveConfig: {kind: model, tier: owned}
+  ProactiveScanCalendarConfig: {kind: model, tier: owned}
+  ProactiveScanConfig: {kind: model, tier: owned}
+  ProactiveScanInboxConfig: {kind: model, tier: owned}
+  ProcessChainRegistryConfig: {kind: model, tier: owned}
+  QAConfig: {kind: model, tier: owned}
+  QualificationConfig: {kind: model, tier: owned}
+  QualityRouterConfig: {kind: model, tier: owned}
+  QualityTriggerConfig: {kind: model, tier: owned}
+  QueryPlannerConfig: {kind: model, tier: owned}
+  QuestionAdaptiveConfig: {kind: model, tier: owned}
+  REACTIVE_COOLDOWN_SECONDS: {kind: constant, tier: owned}
+  ReadyRoomConfig: {kind: model, tier: owned}
+  ReconsolidationConfig: {kind: model, tier: owned}
+  RecordsConfig: {kind: model, tier: owned}
+  RepairConfig: {kind: model, tier: owned}
+  RetroactiveConfig: {kind: model, tier: owned}
+  RiskTierConfig: {kind: model, tier: owned}
+  RuntimeOverridesConfig: {kind: model, tier: owned}
+  SPCConfig: {kind: model, tier: owned}
+  SalienceConfig: {kind: model, tier: owned}
+  SamplingRatesConfig: {kind: model, tier: owned}
+  ScalingConfig: {kind: model, tier: owned}
+  ScopedCognitionConfig: {kind: model, tier: owned}
+  ScreenStreamConfig: {kind: model, tier: owned}
+  SecurityConfig: {kind: model, tier: owned}
+  SecurityInfraConfig: {kind: model, tier: owned}
+  SelfContradictionRecallConfig: {kind: model, tier: owned}
+  SelfDistillationConfig: {kind: model, tier: owned}
+  SelfImprovementConfig: {kind: model, tier: owned}
+  SelfModConfig: {kind: model, tier: owned}
+  SensoriumConfig: {kind: model, tier: owned}
+  ShipStateSnapshotConfig: {kind: model, tier: owned}
+  SkillRequestConfig: {kind: model, tier: owned}
+  SkillsMarketplaceConfig: {kind: model, tier: owned}
+  SlackConfig: {kind: model, tier: owned}
+  SocialVerificationConfig: {kind: model, tier: owned}
+  SoftwareEngineerSpecialistsConfig: {kind: model, tier: owned}
+  SourceTracingConfig: {kind: model, tier: owned}
+  SpatialExplorerConfig: {kind: model, tier: owned}
+  SpreadingActivationConfig: {kind: model, tier: owned}
+  StepInstructionConfig: {kind: model, tier: owned}
+  StorageGateConfig: {kind: model, tier: owned}
+  SubTaskConfig: {kind: model, tier: owned}
+  SystemConfig: {kind: model, tier: owned}
+  SystemInfo: {kind: model, tier: owned}
+  TEACHING_MIN_COMPILATION_LEVEL: {kind: constant, tier: owned}
+  TEACHING_MIN_TRUST: {kind: constant, tier: owned}
+  TRUST_COLOR_GREEN: {kind: constant, tier: owned}
+  TRUST_COLOR_YELLOW: {kind: constant, tier: owned}
+  TRUST_COMMANDER: {kind: constant, tier: owned}
+  TRUST_DEFAULT: {kind: constant, tier: owned}
+  TRUST_DEGRADED: {kind: constant, tier: owned}
+  TRUST_DISPLAY_PRECISION: {kind: constant, tier: owned}
+  TRUST_FLOOR_CONN: {kind: constant, tier: owned}
+  TRUST_FLOOR_CREDIBILITY: {kind: constant, tier: owned}
+  TRUST_HARD_FLOOR: {kind: constant, tier: owned}
+  TRUST_LIEUTENANT: {kind: constant, tier: owned}
+  TRUST_OUTLIER_HIGH: {kind: constant, tier: owned}
+  TRUST_OUTLIER_LOW: {kind: constant, tier: owned}
+  TRUST_SENIOR: {kind: constant, tier: owned}
+  TTSConfig: {kind: model, tier: owned}
+  TaskContextConfig: {kind: model, tier: owned}
+  TelemetryConfig: {kind: model, tier: owned}
+  TemporalConfig: {kind: model, tier: owned}
+  TemporalValidityConfig: {kind: model, tier: owned}
+  ThoughtStoreConfig: {kind: model, tier: owned}
+  ThreadPriorityConfig: {kind: model, tier: owned}
+  ThresholdAlertConfig: {kind: model, tier: owned}
+  TieredTrustConfig: {kind: model, tier: owned}
+  TraitAdaptiveConfig: {kind: model, tier: owned}
+  TrustDampeningConfig: {kind: model, tier: owned}
+  UtilityAgentsConfig: {kind: model, tier: owned}
+  ValidationFrameworkConfig: {kind: model, tier: owned}
+  VisitingOfficersConfig: {kind: model, tier: owned}
+  WakeWordConfig: {kind: model, tier: owned}
+  WardRoomConfig: {kind: model, tier: owned}
+  WardRoomHebbianConfig: {kind: model, tier: owned}
+  WebhookConfig: {kind: model, tier: owned}
+  WorkBoardReconcilerConfig: {kind: model, tier: owned}
+  WorkflowCronTriggerConfig: {kind: model, tier: owned}
+  WorkforceConfig: {kind: model, tier: owned}
+  WorkingMemoryConfig: {kind: model, tier: owned}
+  WorkspaceOntologyConfig: {kind: model, tier: owned}
+  WorkstationsConfig: {kind: model, tier: owned}
+  WriteClaimGuardConfig: {kind: model, tier: owned}
+  annotations: {kind: other, removable_in: e3, tier: incidental}
+  field_validator: {kind: function, removable_in: e3, tier: incidental}
+  format_trust: {kind: function, tier: owned}
+  load_config: {kind: function, tier: owned}
+  math: {kind: module, removable_in: e3, tier: incidental}
+  model_validator: {kind: function, removable_in: e3, tier: incidental}
+  os: {kind: module, removable_in: e3, tier: incidental}
+  resolve_archive_db_path: {kind: function, tier: owned}
+  urllib: {kind: module, removable_in: e3, tier: incidental}
+  yaml: {kind: module, removable_in: e3, tier: incidental}
+models:
+  A2APeerConfig:
+    qualname: A2APeerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 1493300473d24e459ba6c4e5366813f2380d89a585eb4d8874dfaf16d3a00884
+    fields:
+    - {default: <required>, name: peer_url}
+    - {default: '''''', name: auth_token}
+    - {default: '''''', name: node_id}
+  AgentTierConfig:
+    qualname: AgentTierConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 0bb44b4008c3b501bb728ed9e6d69c8b75dbeb4206115ffcb44a08949a27219f
+    fields:
+    - {default: <required>, has_default_factory: true, name: crew_types}
+    - {default: <required>, has_default_factory: true, name: core_types}
+  AgenticDispatchConfig:
+    qualname: AgenticDispatchConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: c9d07513681ff87af8b478bb1ec34e818e5a5e330a516c6b1be21d3010167916
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '3', name: max_parallel_subtasks}
+    - {default: '2', name: max_convergence_rounds}
+    - {default: 'False', name: orchestrator_enabled}
+    - {default: '2', name: max_active_crew_sessions}
+    - {default: '100', name: crew_resume_scan_limit}
+    - {default: '100', name: crew_ingress_scan_limit}
+    - {default: '32', name: crew_ingress_semantic_call_limit}
+    - {default: '0.9', name: crew_ingress_semantic_threshold}
+    - {default: '100', name: crew_provisioning_repair_limit}
+    - {default: '3', name: crew_recovery_max_retries}
+    - {default: '5.0', name: crew_recovery_initial_backoff_seconds}
+    - {default: '300.0', name: crew_recovery_max_backoff_seconds}
+    - {default: 'False', name: crew_compaction_enabled}
+    - {default: '60000', name: crew_compaction_threshold_tokens}
+    - {default: None, name: crew_token_budget}
+    - {default: 'False', name: crew_loop_until_done_enabled}
+    - {default: '2', name: crew_loop_until_done_max_iterations}
+    - {default: '''stopped_reason''', name: crew_loop_until_done_predicate}
+    - {default: '''TASK COMPLETE''', name: crew_loop_until_done_completion_marker}
+  AgenticLoopConfig:
+    qualname: AgenticLoopConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 10846ecb2fc44b17abcd2c503b4de8c1ae8190c108d3614b3d716814304f8abc
+    fields:
+    - {default: 'False', name: structured_tool_messages}
+    - {default: '0', name: tool_result_max_chars}
+    - {default: '4000', name: tool_result_head_chars}
+    - {default: '2000', name: tool_result_tail_chars}
+    - {default: 'False', name: parallel_tool_calls_enabled}
+    - {default: '3', name: max_parallel_tool_calls}
+    - {default: '8192', name: tool_trace_output_max_chars}
+    - {default: '262144', name: tool_trace_max_bytes}
+  AgenticToolsConfig:
+    qualname: AgenticToolsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 093053255bb7073be7d1296d45c89fe75407699c5c1e5e4d9c2467cd42db81f4
+    fields:
+    - {default: 'False', name: tool_search_enabled}
+    - {default: 'False', name: delegation_enabled}
+    - {default: '1', name: delegation_max_depth}
+    - {default: '5', name: delegation_max_iterations}
+    - {default: '''standard''', name: delegation_tier}
+    - {default: 'False', name: oracle_query_enabled}
+    - {default: 'False', name: publish_finding_enabled}
+    - {default: '12', name: publish_finding_max_per_hour}
+    - {default: '4000', name: publish_finding_max_content_chars}
+    - {default: '40', name: publish_finding_max_per_hour_ship}
+    - {default: 'False', name: browser_enabled}
+    - {default: 'False', name: disposition_enabled}
+    - {default: 'False', name: crew_sigma_context_enabled}
+    - {default: '2000', name: crew_sigma_max_chars}
+    - {default: '4', name: crew_sigma_max_entries}
+    - {default: '0.35', name: crew_sigma_min_score}
+    - {default: 'False', name: self_query_enabled}
+  AnomalyWindowConfig:
+    qualname: AnomalyWindowConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 0924515356567c79752ff778a76223a77880b50b858ea50d621384c17b5b4026
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '1800.0', name: max_window_duration_seconds}
+    - {default: '60.0', name: lookback_seconds}
+  ApprovalInboxConfig:
+    qualname: ApprovalInboxConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: aa30085c0d17b3bd45a8ffd050b4790347b42aca7fe343c3151cdcc09ccd6671
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'False', name: standing_rules_enabled}
+    - {default: '168', name: standing_rule_max_ttl_hours}
+    - {default: '24', name: standing_rule_default_ttl_hours}
+    - {default: '20', name: max_pending_per_agent}
+    - {default: '72', name: pending_ask_ttl_hours}
+    - {default: 'False', name: work_permits_enabled}
+    - {default: '3600.0', name: work_permit_default_ttl_seconds}
+    - {default: '2', name: work_permit_max_tier_ceiling}
+  ArchiveConfig:
+    qualname: ArchiveConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a584d12ca1aea41ee628921455b177a1371142aea34b18ab865d45ccf89a4948
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''''', name: db_path}
+  AssignmentConfig:
+    qualname: AssignmentConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 3a99b990b55aac798b3b20f842e477e1b39d98ebd6c50f4d9686e573458d060f
+    fields:
+    - {default: 'False', name: enabled}
+  AttachmentsConfig:
+    qualname: AttachmentsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 6236f492e18f8c50a163f29cb73840d12f52580510b7f127b7ff047f0e8890a5
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: 'False', name: serve_remote_enabled}
+    - {default: 'False', name: auto_resolve_remote_enabled}
+    - {default: '''data/attachments''', name: attachments_dir}
+    - {default: '10485760', name: max_attachment_bytes}
+    - {default: <required>, has_default_factory: true, name: allowed_mime_types}
+    - {default: '''vision''', name: vision_tier}
+    - {default: '1048576', name: text_extraction_max_bytes}
+    - {default: 'False', name: pdf_extraction_enabled}
+    - {default: '5', name: multi_image_warn_threshold}
+    - {default: '8', name: images_per_dm_hard_cap}
+    - {default: '1024', name: image_max_dimension}
+    - {default: '50', name: daily_image_budget_per_captain}
+    - {default: None, name: image_budget_path}
+    - {default: <required>, has_default_factory: true, name: vision_tier_overrides}
+    - {default: '5368709120', name: max_store_bytes}
+  AttentionConfig:
+    qualname: AttentionConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: f7e79bca12e75d71e8dec8a1f07fa006b2b42898b1bc83dad018414c5a985708
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '120000', name: token_budget}
+    - {default: 'False', name: salience_scoring}
+    - {default: '1.0', name: w_rel}
+    - {default: '0.5', name: w_rec}
+    - {default: '0.5', name: w_imp}
+    - {default: '86400.0', name: recency_half_life_seconds}
+    - {default: 'True', name: camera_scene_bid_enabled}
+    - {default: '0.3', name: camera_novelty_minimum}
+    - {default: '0.3', name: camera_novelty_ema_alpha}
+    - {default: '0.15', name: camera_recessive_suppress_threshold}
+    - {default: 'False', name: arousal_enabled}
+    - {default: '0.5', name: arousal_red_budget_multiplier}
+    - {default: '300.0', name: arousal_full_decay_seconds}
+    - {default: '60.0', name: arousal_repeat_window_seconds}
+  AuthConfig:
+    qualname: AuthConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 63c5d174135e72a154b351d654b0488351c4c72adc4308cd3d4a8054097793f7
+    fields:
+    - {default: '''''', name: crew_scope_token}
+  AutonomyBoundariesConfig:
+    qualname: AutonomyBoundariesConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: b98b8eda818f9662b6aa7907e81edf90205b80bc02b52420774c464ff119579b
+    fields:
+    - {default: 'True', name: enabled}
+  AvatarTelemetryConfig:
+    qualname: AvatarTelemetryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a5743b8d476e94b6251700c7ced2fd535b1a56b4a18fe398a759cf181f784c01
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: 'False', name: inject_into_agent_context}
+    - {default: '3.0', name: mouth_active_window_seconds}
+    - {default: '2000', name: polling_interval_ms}
+    - {default: <required>, has_default_factory: true, name: sampling_rates}
+    - {default: '4', name: max_connections_per_agent}
+    - {default: 'False', name: divergence_detection}
+    - {default: '0.3', name: divergence_negative_threshold}
+    - {default: '0.5', name: divergence_positive_threshold}
+    - {default: '0.4', name: divergence_negative_weight}
+    - {default: '0.1', name: divergence_positive_weight}
+    - {default: '100', name: divergence_history_size}
+    - {default: '50', name: divergence_aggregate_window}
+    - {default: 'False', name: auto_correct_enabled}
+    - {default: '0.6', name: auto_correct_threshold}
+    - {default: '1', name: max_corrections_per_utterance}
+    - {default: '1.15', name: correction_noise_factor}
+    - {default: '0.92', name: correction_length_factor}
+    - {default: 'True', name: history_enabled}
+    - {default: '30', name: history_retention_days}
+    - {default: '''data/avatar_telemetry''', name: history_dir}
+    - {default: 'False', name: records_auto_write_enabled}
+    - {default: '3600', name: records_throttle_seconds}
+    - {default: <required>, has_default_factory: true, name: records_significant_events}
+    - {default: '1800', name: sustained_silence_seconds}
+    - {default: 'True', name: ws_diff_enabled}
+    - {default: '0.05', name: ws_diff_threshold}
+    - {default: '10', name: ws_full_snapshot_every_n}
+    - {default: 'True', name: fleet_stream_enabled}
+  AvatarsConfig:
+    qualname: AvatarsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: e43e929dd48ef70668db7db92456c3a8e4f0d600ed3aaca01e9af8e6ebe8b209
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''data/avatars''', name: avatars_dir}
+    - {default: '26214400', name: max_vrm_size_bytes}
+    - {default: 'True', name: fallback_to_parametric_on_error}
+    - {default: '''''', name: blender_path}
+    - {default: '180', name: blender_render_timeout_s}
+    - {default: '''data/avatars/.drafts''', name: dsl_drafts_dir}
+    - {default: 'False', name: renderer_enabled}
+    - {default: 'True', name: procedural_base_mesh_fallback}
+    - {default: '3', name: max_proposal_iterations}
+    - {default: <required>, has_default_factory: true, name: baseline_vrms}
+    - {default: None, name: proposal_history_path}
+    - {default: None, name: vision_proposal_history_path}
+    - {default: 'False', name: vision_intent_divergence_enabled}
+    - {default: '3', name: vision_intent_divergence_max_per_hour_per_agent}
+    - {default: 'False', name: self_render_verify_enabled}
+    - {default: '3', name: self_render_verify_max_per_hour_per_agent}
+    - {default: 'False', name: render_verification_enabled}
+    - {default: '3', name: render_verification_max_per_hour_per_agent}
+    - {default: 'False', name: render_verification_followup_enabled}
+    - {default: 'False', name: render_self_check_enabled}
+    - {default: '3', name: render_self_check_max_per_hour_per_agent}
+    - {default: '2', name: render_self_check_max_per_active_conversation}
+    - {default: '600', name: render_self_check_active_window_seconds}
+    - {default: '8', name: affect_drift_default_window}
+    - {default: '0.7', name: affect_drift_threshold}
+    - {default: 'False', name: image_gen_enabled}
+    - {default: '512', name: image_gen_max_prompt_chars}
+    - {default: 'True', name: image_gen_wellness_review_required}
+    - {default: '4194304', name: image_gen_max_image_bytes}
+    - {default: '''image/png''', name: image_gen_mime}
+    - {default: 'False', name: peer_perception_enabled}
+    - {default: '604800', name: peer_observation_decay_seconds}
+    - {default: '1', name: peer_observation_max_per_pair_per_thread}
+    - {default: 'False', name: cross_agent_divergence_observation_enabled}
+    - {default: 'False', name: canvas_render_vrm_avatars}
+    - {default: '12', name: canvas_max_concurrent_vrms}
+    - {default: '15.0', name: canvas_vrm_lod_distance}
+    - {default: '''data/avatars/animations''', name: animations_dir}
+    - {default: 'False', name: animations_enabled}
+    - {default: 'False', name: pacing_enabled}
+    - {default: '2', name: pacing_max_followups_per_active_conversation}
+    - {default: '6', name: pacing_max_followups_per_hour_per_agent}
+    - {default: '600', name: pacing_active_window_seconds}
+    - {default: '1', name: pacing_min_delay_seconds}
+    - {default: '300', name: pacing_max_delay_seconds}
+  BaseModel:
+    qualname: BaseModel
+    bases:
+    - object
+    schema_sha256: null
+    fields: []
+  BaselineVRMManifest:
+    qualname: BaselineVRMManifest
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: dcc5b1d90057ac086f33d5ccfa330e8dfc6bc89466a77c09a1a87a9e09323fba
+    fields:
+    - {default: '''''', name: ensign}
+    - {default: '''''', name: lieutenant}
+    - {default: '''''', name: commander}
+    - {default: '''''', name: senior}
+  BehavioralMetricsConfig:
+    qualname: BehavioralMetricsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 99508cf05ac933acebbf3381a3744af1599b305f293d910156d620c19f7aa980
+    fields:
+    - {default: '72.0', name: thread_lookback_hours}
+    - {default: '2', name: min_thread_contributors}
+    - {default: '3', name: min_thread_posts}
+    - {default: '2', name: frame_diversity_min_departments}
+    - {default: '0.35', name: synthesis_novelty_threshold}
+    - {default: '4', name: synthesis_min_thread_posts}
+    - {default: '24.0', name: trigger_correlation_window_hours}
+    - {default: '0.6', name: trigger_topic_similarity_threshold}
+    - {default: '0.75', name: convergence_similarity_threshold}
+    - {default: '2', name: convergence_min_agreeing}
+    - {default: '3', name: anchor_independence_min_episodes}
+    - {default: '100', name: max_snapshots}
+  BillConfig:
+    qualname: BillConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 17191b74733b2c8bd4c6441a33079f5fd3e1fcc988b54d7eed226522a1dea476
+    fields:
+    - {default: '10', name: max_concurrent_instances}
+    - {default: '300.0', name: default_step_timeout_seconds}
+    - {default: 'False', name: allow_partial_assignment}
+  BootCampConfig:
+    qualname: BootCampConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 1609dc6ca6d6156be32ba3234909705290b38773a782106cf4253ac2e593ed49
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '5', name: min_episodes}
+    - {default: '3', name: min_ward_room_posts}
+    - {default: '1', name: min_dm_conversations}
+    - {default: '0.55', name: min_trust_score}
+    - {default: '60', name: min_time_minutes}
+    - {default: '120', name: timeout_minutes}
+    - {default: '600', name: nudge_cooldown_seconds}
+  BootCampPhaseConfig:
+    qualname: BootCampPhaseConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: abf70b4dec26cac51eca8568ed2a469bb1e5c5e575321a6c21348310fa4b2c3c
+    fields:
+    - {default: 'True', name: enabled}
+  BridgeAlertConfig:
+    qualname: BridgeAlertConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 82910bdb21b2ea9ff2f72f345c78f94babc2914b4431ad4b17a2ea1c8d8e3def
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '300', name: cooldown_seconds}
+    - {default: '0.15', name: trust_drop_threshold}
+    - {default: '0.25', name: trust_drop_alert_threshold}
+    - {default: '3600.0', name: resolve_clean_period}
+    - {default: '14400.0', name: default_dismiss_duration}
+  BridgeConfig:
+    qualname: BridgeConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: b2a0af18f1156d244cc57a45cd03b8d5be233850242d1e985649033dbc1aa564
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '5', name: min_cross_cycle_episodes}
+    - {default: '0.3', name: novelty_threshold}
+  BrowserToolConfig:
+    qualname: BrowserToolConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 5b5acf360360cdca65886abea7e32e6316a4bc50f08db5015c11b2f29a52614d
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'True', name: headless}
+    - {default: '30000', name: default_timeout_ms}
+    - {default: '1800', name: session_max_duration_seconds}
+    - {default: '60', name: session_reaper_interval_seconds}
+    - {default: None, name: domain_allowlist}
+    - {default: <required>, has_default_factory: true, name: domain_denylist}
+    - {default: '1024', name: screenshot_max_width}
+    - {default: '768', name: screenshot_max_height}
+    - {default: 'True', name: require_confirmation_for_tier_3}
+    - {default: '300', name: confirmation_timeout_seconds}
+    - {default: '1.0', name: default_min_interval_seconds}
+    - {default: <required>, has_default_factory: true, name: per_action_timeout_ms}
+    - {default: <required>, has_default_factory: true, name: tier_3_domain_patterns}
+    - {default: 'False', name: llm_classifier_enabled}
+    - {default: '''fast''', name: llm_classifier_tier}
+    - {default: '60', name: llm_classifier_max_per_hour}
+    - {default: '300', name: llm_classifier_cache_ttl_seconds}
+    - {default: '5', name: compute_use_max_consecutive_autonomous_actions}
+    - {default: '50', name: compute_use_max_per_session}
+    - {default: 'False', name: streaming_enabled}
+    - {default: '4', name: streaming_fps}
+    - {default: '60', name: streaming_jpeg_quality}
+    - {default: '4', name: streaming_max_concurrent_viewers}
+    - {default: 'False', name: recording_enabled}
+    - {default: '''data/browser-sessions''', name: recording_dir}
+    - {default: '7', name: recording_retention_days}
+    - {default: '3600', name: recording_reaper_interval_seconds}
+    - {default: '500', name: recording_max_size_mb_per_session}
+    - {default: 'False', name: bridge_enabled}
+    - {default: <required>, has_default_factory: true, name: bridge_allowed_hosts}
+    - {default: 'False', name: input_forwarding_enabled}
+    - {default: '1280', name: viewport_width}
+    - {default: '720', name: viewport_height}
+    - {default: <required>, has_default_factory: true, name: credential_vault}
+    - {default: 'False', name: action_dispatch_enabled}
+    - {default: '5', name: action_dispatch_max_consecutive_autonomous}
+    - {default: '1', name: action_dispatch_max_per_dm_turn}
+    - {default: '60', name: action_dispatch_ack_timeout_seconds}
+    - {default: <required>, has_default_factory: true, name: destructive_url_patterns}
+  CameraStreamConfig:
+    qualname: CameraStreamConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 52fd1272a0d5f7da876d476afdb4da7acecbf126226e763565ea43ac7797d6c0
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '1', name: default_fps}
+    - {default: '0.6', name: frame_jpeg_quality}
+    - {default: '512', name: frame_max_dimension}
+  CapabilityTriageConfig:
+    qualname: CapabilityTriageConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 3b5ee9b4e09468c8c3dacf41cdfda3f3ff4412480c157c615cc005dadbf62824
+    fields:
+    - {default: 'False', name: grant_fast_path_enabled}
+    - {default: '0.8', name: grant_trust_floor}
+  CaptainsLogConfig:
+    qualname: CaptainsLogConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 57727c71274f1d4cdeb1f86f545dbc0c94c3daa29d88d1f6660a735dcdff4261
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''data/captains_log''', name: output_dir}
+    - {default: '23', name: end_of_day_hour}
+    - {default: '5', name: top_episodes_count}
+    - {default: '5', name: importance_threshold}
+  CausalReasoningConfig:
+    qualname: CausalReasoningConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d268e49f00f053437072a7ba201f7c137e57ea6ae7cdaf0d95ca2798ded79d1f
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '700', name: max_tokens}
+    - {default: '''standard''', name: tier}
+    - {default: '5', name: max_invocations_per_hour}
+  ChainOptimizerConfig:
+    qualname: ChainOptimizerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 8372111d006b9eb37dbc57703d2ea4c2d1de19c5856d6b4e3da72475580ca1ea
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '100', name: analysis_window}
+    - {default: '10000.0', name: latency_p95_ms_floor}
+    - {default: '0.7', name: success_rate_floor}
+    - {default: '0.3', name: error_rate_ceiling}
+    - {default: '20', name: min_samples_per_group}
+    - {default: 'False', name: apply_enabled}
+    - {default: '0', name: analysis_interval_seconds}
+  ChainOptimizerCounselorConfig:
+    qualname: ChainOptimizerCounselorConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 9f502e86b2b9dae8d4eeaa90f2c31d5357683eb329253b09d4076a391532e592
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '1800.0', name: baseline_window_seconds}
+    - {default: '1800.0', name: observation_window_seconds}
+    - {default: '0.1', name: success_rate_drop_floor}
+    - {default: '20', name: min_samples_per_window}
+    - {default: 'False', name: auto_revert_enabled}
+  ChainTuningConfig:
+    qualname: ChainTuningConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 90f4189b8ef542533edf0f7a200e01f030c178e0bd27e82a22b8855377e5b409
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.6', name: low_trust_ceiling}
+    - {default: '0.75', name: high_trust_floor}
+  ChannelsConfig:
+    qualname: ChannelsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 2cf71c2db8a5035e963208c18d170ac407a1990b66637c76a2d5b0e081dd3089
+    fields:
+    - {default: DiscordConfig(...), name: discord}
+    - {default: SlackConfig(...), name: slack}
+    - {default: WebhookConfig(...), name: webhook}
+  CircuitBreakerConfig:
+    qualname: CircuitBreakerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a048b6b0c5b7d2bd3515246393b0c1ccaf5b93b599debbb46983b93ee0419bd0
+    fields:
+    - {default: '8', name: velocity_threshold}
+    - {default: '300.0', name: velocity_window_seconds}
+    - {default: '0.6', name: similarity_threshold}
+    - {default: '4', name: similarity_min_events}
+    - {default: '900.0', name: base_cooldown_seconds}
+    - {default: '3600.0', name: max_cooldown_seconds}
+    - {default: '0.25', name: amber_similarity_ratio}
+    - {default: '0.6', name: amber_velocity_ratio}
+    - {default: '900.0', name: amber_decay_seconds}
+    - {default: '1800.0', name: red_decay_seconds}
+    - {default: '3600.0', name: critical_decay_seconds}
+    - {default: '3600.0', name: critical_trip_window_seconds}
+    - {default: '3', name: critical_trip_count}
+  ClassificationGateConfig:
+    qualname: ClassificationGateConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 46f7d2c98075a0ab057c3d469a4e06c706d1e2125dab98ed9b9e505abfbd07f2
+    fields:
+    - {default: 'True', name: enabled}
+  ClinicalTelemetryConfig:
+    qualname: ClinicalTelemetryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: dcb67ddb746bb223371f4e183bddff924e26b46b70e52b739e3a5595055661af
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '1000', name: audit_max_entries}
+    - {default: 'False', name: audit_persistence_enabled}
+    - {default: '''data/clinical_audit.db''', name: audit_db_path}
+    - {default: 'False', name: circuit_breaker_history_persistence_enabled}
+    - {default: '''data/circuit_breaker_history.db''', name: circuit_breaker_history_db_path}
+  CloudPickerProviderConfig:
+    qualname: CloudPickerProviderConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 0d5c189520f8ee4b9740c46ecb8e3810e4ed51f4f72dce03dd3b2e93c1f1c672
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''''', name: client_id}
+    - {default: '''''', name: client_secret}
+    - {default: '''http://127.0.0.1:8081/api/cloud-pickers/{provider}/callback''', name: redirect_uri}
+  CloudPickersConfig:
+    qualname: CloudPickersConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d0afaccc04d038ffb3919c2d619ab9eec83ab6e299c0ffe51fa6db9089a8216e
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '50000000', name: max_file_size_bytes}
+    - {default: '300', name: state_ttl_seconds}
+    - {default: <required>, has_default_factory: true, name: google_drive}
+    - {default: <required>, has_default_factory: true, name: onedrive}
+    - {default: <required>, has_default_factory: true, name: dropbox}
+  CognitiveConfig:
+    qualname: CognitiveConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 66ff2e9a3a18d7fe3a34e5475bcaa7080e811b27552bde50833f17c916767df0
+    fields:
+    - {default: '''http://127.0.0.1:8080/v1''', name: llm_base_url}
+    - {default: '''''', name: llm_api_key}
+    - {default: '30.0', name: llm_timeout_seconds}
+    - {default: '''claude-sonnet-4-6''', name: llm_model_fast}
+    - {default: '''claude-sonnet-4-6''', name: llm_model_standard}
+    - {default: '''claude-opus-4-6''', name: llm_model_deep}
+    - {default: '3', name: llm_health_min_consecutive_healthy}
+    - {default: None, name: llm_base_url_fast}
+    - {default: None, name: llm_api_key_fast}
+    - {default: None, name: llm_timeout_fast}
+    - {default: None, name: llm_api_format_fast}
+    - {default: None, name: llm_base_url_standard}
+    - {default: None, name: llm_api_key_standard}
+    - {default: None, name: llm_timeout_standard}
+    - {default: None, name: llm_api_format_standard}
+    - {default: None, name: llm_base_url_deep}
+    - {default: None, name: llm_api_key_deep}
+    - {default: None, name: llm_timeout_deep}
+    - {default: None, name: llm_api_format_deep}
+    - {default: None, name: llm_base_url_vision}
+    - {default: None, name: llm_api_key_vision}
+    - {default: None, name: llm_model_vision}
+    - {default: None, name: llm_timeout_vision}
+    - {default: None, name: llm_api_format_vision}
+    - {default: None, name: llm_base_url_compute_use}
+    - {default: None, name: llm_api_key_compute_use}
+    - {default: None, name: llm_model_compute_use}
+    - {default: None, name: llm_timeout_compute_use}
+    - {default: None, name: llm_api_format_compute_use}
+    - {default: None, name: llm_temperature_compute_use}
+    - {default: None, name: llm_top_p_compute_use}
+    - {default: None, name: llm_max_tokens_compute_use}
+    - {default: None, name: llm_base_url_vision_fast}
+    - {default: None, name: llm_api_key_vision_fast}
+    - {default: None, name: llm_model_vision_fast}
+    - {default: None, name: llm_timeout_vision_fast}
+    - {default: None, name: llm_api_format_vision_fast}
+    - {default: '''whisper/ggml-tiny.en.bin''', name: whisper_model_path}
+    - {default: 'False', name: offline_stt_enabled}
+    - {default: '''transformers''', name: primary_stt}
+    - {default: '''Xenova/whisper-tiny.en''', name: transformers_model}
+    - {default: 'True', name: fallback_stt_enabled}
+    - {default: 'False', name: conversation_mode_enabled}
+    - {default: '30000', name: conversation_silence_timeout_ms}
+    - {default: 'True', name: conversation_barge_in_enabled}
+    - {default: None, name: llm_base_url_image_gen}
+    - {default: None, name: llm_api_key_image_gen}
+    - {default: None, name: llm_model_image_gen}
+    - {default: None, name: llm_timeout_image_gen}
+    - {default: None, name: llm_api_format_image_gen}
+    - {default: None, name: llm_temperature_fast}
+    - {default: None, name: llm_temperature_standard}
+    - {default: None, name: llm_temperature_deep}
+    - {default: None, name: llm_temperature_vision}
+    - {default: None, name: llm_top_p_fast}
+    - {default: None, name: llm_top_p_standard}
+    - {default: None, name: llm_top_p_deep}
+    - {default: None, name: llm_top_p_vision}
+    - {default: None, name: llm_max_tokens_fast}
+    - {default: None, name: llm_max_tokens_standard}
+    - {default: None, name: llm_max_tokens_deep}
+    - {default: None, name: llm_max_tokens_vision}
+    - {default: None, name: llm_system_prompt_suffix_fast}
+    - {default: None, name: llm_system_prompt_suffix_standard}
+    - {default: None, name: llm_system_prompt_suffix_deep}
+    - {default: None, name: llm_system_prompt_suffix_vision}
+    - {default: '''fast''', name: default_llm_tier}
+    - {default: '''30m''', name: ollama_keep_alive}
+    - {default: '4000', name: working_memory_token_budget}
+    - {default: '30.0', name: decomposition_timeout_seconds}
+    - {default: '60.0', name: dag_execution_timeout_seconds}
+    - {default: 'True', name: use_consensus_for_writes}
+    - {default: '8', name: max_concurrent_tasks}
+    - {default: '0', name: deferred_capability_threshold}
+    - {default: '0.95', name: attention_decay_rate}
+    - {default: '10', name: focus_history_size}
+    - {default: '0.25', name: background_demotion_factor}
+    - {default: 'True', name: captain_card_enabled}
+    - {default: '''captain_card.json''', name: captain_card_path}
+    - {default: '500', name: captain_card_max_tokens}
+    - {default: '40', name: artifact_fenced_threshold_lines}
+    - {default: 'False', name: decision_cache_enabled}
+  CognitiveJournalConfig:
+    qualname: CognitiveJournalConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 013340e976a337d154f6c5c7e9a0f389418caf5d2e6ca99aa15fb7adc81639ca
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '14', name: retention_days}
+    - {default: '500000', name: max_rows}
+    - {default: '3600.0', name: prune_interval_seconds}
+  CommunicationBenchmarksConfig:
+    qualname: CommunicationBenchmarksConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 571275b158ea7d5178a8ae5d8083b6a90bdc62813d07ee6da94dc3afb1296861
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '12.0', name: frequency_hours}
+    - {default: '[''thread_relevance'', ''memory_grounding'', ''memory_absence'', ''expertise'', ''silence_appropriateness'', ''dm_action'']', name: probes}
+  CommunicationsConfig:
+    qualname: CommunicationsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 1b80ddbbe3df020b788766d547fc41e612d8bcbaeeda655c6eb32f94f1946dab
+    fields:
+    - {default: '''ensign''', name: dm_min_rank}
+    - {default: '''ensign''', name: recreation_min_rank}
+    - {default: '''commander''', name: group_chat_min_rank}
+    - {default: '''lieutenant''', name: artifact_min_rank}
+    - {default: '3', name: artifact_max_per_turn}
+    - {default: '262144', name: artifact_max_bytes}
+    - {default: 'False', name: a2ui_enabled}
+    - {default: '''lieutenant''', name: a2ui_min_rank}
+    - {default: '10', name: a2ui_max_options}
+    - {default: 'False', name: room_todos_enabled}
+    - {default: '''commander''', name: room_todos_min_rank}
+    - {default: '''ensign''', name: room_todos_seed_min_rank}
+    - {default: '''python-docx''', name: office_backend}
+    - {default: '''''', name: libreoffice_path}
+    - {default: '''lieutenant''', name: status_min_rank}
+    - {default: '3', name: status_max_per_turn}
+    - {default: '4096', name: status_max_bytes}
+    - {default: '90.0', name: presence_working_window_seconds}
+    - {default: 'True', name: proactive_conversation_enabled}
+    - {default: 'True', name: conversational_memory_enabled}
+    - {default: 'True', name: room_awareness_enabled}
+    - {default: 'False', name: recall_interpretation_enabled}
+    - {default: 'False', name: dream_interpretation_enabled}
+  ConcurrencyConfig:
+    qualname: ConcurrencyConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 741e7336cc5e5202fd7bdf950dd2135a50cd92a8368f302f8a5de3d3ecf75b59
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '4', name: default_max_concurrent}
+    - {default: '10', name: queue_max_size}
+    - {default: '0.75', name: capacity_warning_ratio}
+    - {default: <required>, has_default_factory: true, name: role_overrides}
+  ConfidenceConfig:
+    qualname: ConfidenceConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 5636d48c5a58e67a24b465fbb13d3ee56543cf56ea7010e2136a1ccc7acfbf11
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.5', name: default_confidence}
+    - {default: '0.15', name: confirm_delta}
+    - {default: '0.25', name: contradict_delta}
+    - {default: '0.1', name: auto_supersede_threshold}
+    - {default: '0.8', name: auto_apply_threshold}
+    - {default: '0.5', name: suppress_threshold}
+  ConsensusConfig:
+    qualname: ConsensusConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: c9331fce838f1d047f8231fc318456dd0f80f36574787c1a40eee4f0f19f5658
+    fields:
+    - {default: '3', name: min_votes}
+    - {default: '0.6', name: approval_threshold}
+    - {default: 'True', name: use_confidence_weights}
+    - {default: '5.0', name: verification_timeout_seconds}
+    - {default: '2', name: red_team_pool_size}
+    - {default: '2.0', name: trust_prior_alpha}
+    - {default: '2.0', name: trust_prior_beta}
+    - {default: '0.999', name: trust_decay_rate}
+  ConsultationConfig:
+    qualname: ConsultationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 3d3ac37f937e0fdc1d20e9ea2bf14bd9e607b714ece7da1e96b238c4b7fd8190
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '30.0', name: timeout_seconds}
+    - {default: '20', name: max_consultations_per_agent_per_hour}
+    - {default: '10', name: max_pending_requests}
+    - {default: '5', name: expert_selection_max_candidates}
+    - {default: '0.5', name: weight_capability_match}
+    - {default: '0.3', name: weight_trust}
+    - {default: '0.2', name: weight_billet_relevance}
+  ConsultationDeliveryConfig:
+    qualname: ConsultationDeliveryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 47a53addafc53c6a064c64eb2adfd315c8c16229ade5c07b9f3584919f2aee9e
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: 'True', name: local_file_enabled}
+    - {default: 'True', name: github_enabled}
+    - {default: <required>, has_default_factory: true, name: local_file_allowed_roots}
+    - {default: '''GITHUB_TOKEN''', name: github_token_env}
+    - {default: 'False', name: default_requires_approval}
+  ConsultationDispatchConfig:
+    qualname: ConsultationDispatchConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 0da674ea0fc2dc7f4c45d064713793bbe578ee041c8aeaf522b3c9bb1038b0b9
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''duty''', name: default_work_type}
+    - {default: <required>, has_default_factory: true, name: default_tags}
+    - {default: '600.0', name: blocker_threshold_seconds}
+    - {default: 'True', name: progress_subscription_enabled}
+    - {default: '''markdown''', name: decomposer}
+    - {default: '12', name: max_subtasks}
+    - {default: '''standard''', name: decomposer_tier}
+  ConsultationWorkspaceConfig:
+    qualname: ConsultationWorkspaceConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: ea778ef5e61a97caa3819a6e7408c9b075acbfc70491c9f436fd7e8248c31834
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''consultations''', name: root_path}
+    - {default: '''passthrough''', name: input_processor}
+  CounselorConfig:
+    qualname: CounselorConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 291ee4ffe326798ad17fb483f5e00412d4703e4d39713a0f53890367fdf3f389
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '90', name: profile_retention_days}
+    - {default: '0.15', name: trust_delta_threshold}
+    - {default: '50', name: sweep_max_agents}
+    - {default: 'True', name: alert_on_red}
+    - {default: 'False', name: alert_on_yellow}
+  CreativeExpressionConfig:
+    qualname: CreativeExpressionConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 5b8bae0f8de1d9c69af769d600f2edc3ec9bb57a6a9c863864ac4953b1d7ad95
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''ship''', name: default_classification}
+  CredentialVaultConfig:
+    qualname: CredentialVaultConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 514b690b873c3887cbcb538c909874c34e30170a2f3f6a0686abb727899af835
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''file''', name: backend}
+    - {default: '''data/credential_vault.json''', name: file_path}
+    - {default: '''data/credential_keyring_index.json''', name: keyring_index_path}
+    - {default: '''probos.credentials''', name: keyring_service_name}
+    - {default: '100', name: max_credentials}
+    - {default: 'True', name: require_https_for_fill}
+  CrewDevelopmentConfig:
+    qualname: CrewDevelopmentConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 1a067035b124c76455091cbd560dbe7e9017b7ac403c2aa4a64d4904de75c8ea
+    fields:
+    - {default: 'True', name: enabled}
+  DegradationConfig:
+    qualname: DegradationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: c2ab743cc5a4a3767dd50dfcbade79324c96740de18bf1d8d14ba14b48d12f66
+    fields:
+    - {default: 'False', name: auto_pause_enabled}
+  DeliberationConfig:
+    qualname: DeliberationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 25a81d0040fb507f09469d44a7f19c164002065a8dae52804f9df488ae7400d9
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''Captain''', name: captain_callsign}
+  DepartmentCognitiveProfile:
+    qualname: DepartmentCognitiveProfile
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 2e21f928401d6bed926436b11cad7671da4744b6366ec5d140836ac5f4305621
+    fields:
+    - {default: '5', name: recall_depth}
+    - {default: '0.25', name: recall_threshold}
+    - {default: '4000', name: context_token_budget}
+  DepartmentProfilesConfig:
+    qualname: DepartmentProfilesConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 023595f2942cc7a70ee918a2ed459c8742be18fe29fecedaddb58e1f5bf8963a
+    fields:
+    - {default: <required>, has_default_factory: true, name: profiles}
+  DependencyConfig:
+    qualname: DependencyConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: e82308ce6adc184088ab68da1095653c864154707fd6afda0e8ff05bb15a602d
+    fields:
+    - {default: 'False', name: dynamic_install_enabled}
+    - {default: '''prompt_unlisted''', name: dynamic_install_policy}
+    - {default: <required>, has_default_factory: true, name: dynamic_install_deny}
+    - {default: <required>, has_default_factory: true, name: auto_approve_imports}
+  DesktopConfig:
+    qualname: DesktopConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 27bdbffcc4a2ef075912914ef84607c52555ffc9a48297a7e07ca16f8756665b
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'True', name: tray_autostart}
+    - {default: '''ctrl+shift+space''', name: hotkey}
+    - {default: '5', name: notification_timeout_sec}
+    - {default: '''19:00''', name: quiet_hours_start}
+    - {default: '''08:00''', name: quiet_hours_end}
+    - {default: '''~/.probos/yeo.lock''', name: lock_file}
+    - {default: 'False', name: autostart_enabled}
+  DeviceConfig:
+    qualname: DeviceConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: f5159a1d2a07299b0aad2031e66ea645e29bba0c29abfac0ae61914a11b132d6
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '1.0', name: probationary_alpha}
+    - {default: '3.0', name: probationary_beta}
+  DiagnosticContextConfig:
+    qualname: DiagnosticContextConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 7e56a8894685a70cb160bbfe63bf34c8d995cd03e7b3618e0467b0f954c28b7e
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '8000', name: default_budget_tokens}
+    - {default: '0.3', name: chain_trace_ratio}
+    - {default: '0.25', name: procedure_ratio}
+    - {default: '0.25', name: episode_ratio}
+    - {default: '0.2', name: records_ratio}
+    - {default: '4', name: chars_per_token}
+    - {default: 'True', name: redistribute_remainder}
+  DiscordConfig:
+    qualname: DiscordConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 2564f97a71ef8e87fbb46da496d8e9485231e616ccbff765a53bb23c38eb3e7c
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''''', name: token}
+    - {default: '[]', name: allowed_channel_ids}
+    - {default: '[]', name: allowed_user_ids}
+    - {default: '''!''', name: command_prefix}
+    - {default: 'False', name: mention_required}
+    - {default: '0', name: scout_channel_id}
+  DiscoveryConfig:
+    qualname: DiscoveryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 34314aca45c80f61c5ba44a54d8b4e814a13f59fd82dba976f16c306682f54b6
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''_probos._tcp.local.''', name: service_type}
+    - {default: '''probos''', name: hostname}
+    - {default: '''ProbOS''', name: instance_name}
+    - {default: '''/''', name: txt_path}
+  DiscoveryLearningConfig:
+    qualname: DiscoveryLearningConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 48620a2daee8136ef5e7c7e8be5f1639d20fb537572d4f637f4b6e0e0d474e50
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '1.0', name: confidence_prior_alpha}
+    - {default: '1.0', name: confidence_prior_beta}
+    - {default: '0.4', name: zpd_lower_bound}
+    - {default: '0.75', name: zpd_upper_bound}
+  DistillationConfig:
+    qualname: DistillationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d38ed7b4120161e49915329dec1a8ac157bd34e41af3d1ed7bf308f3b675bad8
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '3', name: min_failure_cluster_size}
+    - {default: 'True', name: comparative_enabled}
+  DmAgenticConfig:
+    qualname: DmAgenticConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 8b0e476b6fc4f2356cd009ab9faa013b881702d358be470eb2f27b1876cc67c8
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '5', name: max_iterations}
+    - {default: '''standard''', name: tier}
+    - {default: 'False', name: continue_or_ask_enabled}
+    - {default: '2', name: continue_or_ask_max_passes}
+    - {default: '0.0', name: promote_to_task_after_seconds}
+    - {default: '1800.0', name: promoted_run_deadline_seconds}
+    - {default: '1800.0', name: promoted_run_unconfirmed_grace_seconds}
+    - {default: 'False', name: hold_degraded_turns}
+    - {default: '900.0', name: hold_degraded_turn_ttl_seconds}
+    - {default: '16', name: hold_degraded_turn_max_threads}
+    - {default: 'False', name: compaction_enabled}
+    - {default: '60000', name: compaction_threshold_tokens}
+  DmDeliberateConfig:
+    qualname: DmDeliberateConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 98e6d240179b724ac7c322107d638f412852065e3ca91ff02771221e0032ca48
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''deep''', name: tier}
+    - {default: '800', name: max_tokens}
+  DmMeshSynthesisConfig:
+    qualname: DmMeshSynthesisConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 60f5b305ae0e24a7a7ef1c15c319f8caebd464ca561f975f6624ed7492bb0ee0
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''standard''', name: tier}
+    - {default: '700', name: max_tokens}
+  DmSanityGateConfig:
+    qualname: DmSanityGateConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: f8b5739fc46951cdc382f7986a927d1e33f60f708c2fc4eddf91ffd4e9928a16
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '5', name: length_floor}
+    - {default: '100', name: repetition_prefix_chars}
+    - {default: '0.85', name: repetition_similarity_threshold}
+    - {default: 'True', name: retry_on_rejection}
+    - {default: <required>, has_default_factory: true, name: retry_warnings}
+  DmTargetedLookupConfig:
+    qualname: DmTargetedLookupConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 016473fe0e312ff57f2863717921a41a6e26dcd6638d8a7444cb6f7d13b8db23
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''regex''', name: classifier_tier}
+    - {default: '500', name: timeout_ms}
+    - {default: 'True', name: enable_oracle}
+    - {default: 'True', name: enable_episodic}
+    - {default: 'False', name: enable_codebase}
+    - {default: 'True', name: enable_knowledge}
+    - {default: 'True', name: identity_enabled}
+    - {default: '1500', name: max_lookup_chars}
+  DreamWMConfig:
+    qualname: DreamWMConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 08f2756ad3d3e5b22d39eb4a4062f0aae04655a00c0859c562c55e4a6c36b8af
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '3', name: max_priming_entries}
+    - {default: '5', name: flush_min_entries}
+    - {default: '''observation''', name: priming_category}
+  DreamingConfig:
+    qualname: DreamingConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 18c1ce0832d1819e294bc26fa744fad3284001f9b4cae739e1cb3d9252f7a876
+    fields:
+    - {default: 'False', name: organ_enabled}
+    - {default: '120.0', name: idle_threshold_seconds}
+    - {default: '600.0', name: dream_interval_seconds}
+    - {default: '50', name: replay_episode_count}
+    - {default: '0.03', name: pathway_strengthening_factor}
+    - {default: '0.02', name: pathway_weakening_factor}
+    - {default: '0.01', name: prune_threshold}
+    - {default: '0.1', name: trust_boost}
+    - {default: '0.1', name: trust_penalty}
+    - {default: '5', name: pre_warm_top_k}
+    - {default: 'True', name: notebook_consolidation_enabled}
+    - {default: '0.6', name: notebook_consolidation_threshold}
+    - {default: '2', name: notebook_consolidation_min_entries}
+    - {default: '0.5', name: notebook_convergence_threshold}
+    - {default: '3', name: notebook_convergence_min_agents}
+    - {default: '2', name: notebook_convergence_min_departments}
+    - {default: 'False', name: active_retrieval_enabled}
+    - {default: '3', name: retrieval_episodes_per_cycle}
+    - {default: '0.6', name: retrieval_success_threshold}
+    - {default: '0.3', name: retrieval_partial_threshold}
+    - {default: '24.0', name: retrieval_initial_interval_hours}
+    - {default: '168.0', name: retrieval_max_interval_hours}
+    - {default: '3', name: retrieval_counselor_failure_streak}
+    - {default: 'True', name: reminiscence_enabled}
+    - {default: '3', name: reminiscence_episodes_per_session}
+    - {default: '3', name: reminiscence_concern_threshold}
+    - {default: '0.3', name: reminiscence_confabulation_alert}
+    - {default: '2.0', name: reminiscence_cooldown_hours}
+    - {default: 'True', name: activation_enabled}
+    - {default: '0.5', name: activation_decay_d}
+    - {default: '-2.0', name: activation_prune_threshold}
+    - {default: '180', name: activation_access_max_age_days}
+    - {default: '24', name: prune_min_age_hours}
+    - {default: '0.1', name: prune_max_fraction}
+    - {default: 'True', name: reflection_enabled}
+    - {default: '3', name: reflection_max_per_cycle}
+    - {default: '8', name: reflection_min_importance}
+    - {default: 'False', name: per_agent_dream_attribution_enabled}
+    - {default: 'True', name: aggressive_prune_enabled}
+    - {default: '168', name: aggressive_prune_min_age_hours}
+    - {default: '0.0', name: aggressive_prune_threshold}
+    - {default: '0.25', name: aggressive_prune_max_fraction}
+    - {default: '5000', name: episode_pressure_threshold}
+    - {default: '1.5', name: episode_pressure_multiplier}
+    - {default: '3', name: trace_exemplars_per_procedure}
+    - {default: 'True', name: relationship_inference_enabled}
+    - {default: '50', name: relationship_inference_max_pairs_per_run}
+    - {default: '5', name: relationship_inference_max_per_entity}
+    - {default: '0.6', name: relationship_inference_min_confidence}
+  DutyDefinition:
+    qualname: DutyDefinition
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 8fde9db248186e72c799020bdf8f7965e069a029e6389997ad2d431252cdd79a
+    fields:
+    - {default: <required>, name: duty_id}
+    - {default: <required>, name: description}
+    - {default: '''''', name: cron}
+    - {default: '0', name: interval_seconds}
+    - {default: '2', name: priority}
+    - {default: '[]', name: required_skills}
+  DutyPolicyConfig:
+    qualname: DutyPolicyConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 9247332c3064752ac859aa608a3a7bfb3476a1e989c5ad55ab777584329afbae
+    fields:
+    - {default: <required>, has_default_factory: true, name: work_hours}
+    - {default: <required>, has_default_factory: true, name: quiet_hours}
+    - {default: <required>, has_default_factory: true, name: scan_throttle_sec}
+    - {default: '''08:00''', name: daily_briefing_time}
+    - {default: '3600', name: briefing_reminder_throttle_sec}
+  DutyScheduleConfig:
+    qualname: DutyScheduleConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 3a9c8719ea14e5f29795d35850a878c2952e01b11797bdca8cc4a7b61bc4523d
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '{}', name: schedules}
+    - {default: 'False', name: use_work_items}
+  EPSConfig:
+    qualname: EPSConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 9515b1811284ec9fa4a97d2ebb0becd0456fb1e74dd72c0bad75a531d4ed34e5
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '60.0', name: window_seconds}
+    - {default: '1.25', name: over_budget_threshold}
+    - {default: <required>, has_default_factory: true, name: departments}
+  EPSDepartmentConfig:
+    qualname: EPSDepartmentConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: cce57da20229500456280fdabb6945df49965ebcebcc30ba86c367e7e90585eb
+    fields:
+    - {default: <required>, name: name}
+    - {default: '0.0', name: percent}
+    - {default: '5', name: priority}
+  EarnedAgencyConfig:
+    qualname: EarnedAgencyConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 9e5761f79edf8304082df4e960536f5532dedf8247bf5f781c24df7b3e1fd7fe
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '{''responsive'': 0.3, ''contributory'': 0.5, ''proactive'': 0.7}', name: initiative_trust_thresholds}
+  EdgeBackfillConfig:
+    qualname: EdgeBackfillConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 43cbc61db6c2dd4a9717a2f141ece7ef950bb22afa8abc5bd24d403d10ccc8f3
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: 'True', name: run_on_warm_boot}
+    - {default: '0.5', name: hebbian_threshold}
+    - {default: 'False', name: force}
+    - {default: <required>, has_default_factory: true, name: decisions_paths}
+  EmergenceCollectorConfig:
+    qualname: EmergenceCollectorConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 5ff415e8ee15afa00183c9e4284e962d4756b383c8dece3370ed0cab4d2e25dc
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '0.7', name: confidence_threshold}
+    - {default: '600.0', name: dedup_window_seconds}
+    - {default: '''data/research/emergence-evidence''', name: output_dir}
+    - {default: '''fast''', name: llm_tier}
+    - {default: '''default''', name: trial_id}
+    - {default: '5', name: thread_context_limit}
+    - {default: '2000', name: max_reasoning_chars}
+  EmergenceMetricsConfig:
+    qualname: EmergenceMetricsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 908d5cfdb87839b49c2ca8b3f01742a909c157e42983e83b11715cdaf570fe43
+    fields:
+    - {default: '2', name: pid_bins}
+    - {default: '50', name: pid_permutation_shuffles}
+    - {default: '0.05', name: pid_significance_threshold}
+    - {default: '2', name: min_thread_contributors}
+    - {default: '3', name: min_thread_posts}
+    - {default: '24.0', name: thread_lookback_hours}
+    - {default: '0.8', name: groupthink_redundancy_threshold}
+    - {default: '0.1', name: fragmentation_synergy_threshold}
+    - {default: '20', name: tom_baseline_window}
+    - {default: '10', name: tom_trend_min_samples}
+    - {default: '5', name: hebbian_synergy_min_interactions}
+  EmergentDetectorConfig:
+    qualname: EmergentDetectorConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 996aaec3ba80fd75692b98ac3092864ad10e1b3d918fca3140bedba91f50be21
+    fields:
+    - {default: '0.3', name: cluster_edge_threshold}
+    - {default: '3', name: cluster_min_size}
+    - {default: '0.25', name: cluster_min_avg_weight}
+    - {default: '1800.0', name: cluster_cooldown_seconds}
+    - {default: '900.0', name: cluster_activity_window}
+    - {default: '5', name: dream_min_history}
+    - {default: '10', name: dream_anomaly_min_strengthened}
+    - {default: '5', name: dream_anomaly_min_pruned}
+    - {default: '10', name: dream_anomaly_min_trust_adj}
+    - {default: '30', name: adaptive_window_size}
+    - {default: '2.5', name: adaptive_z_threshold}
+    - {default: '2', name: adaptive_debounce_count}
+    - {default: '8', name: adaptive_min_history}
+  EmergentLeadershipConfig:
+    qualname: EmergentLeadershipConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 54d737ee67b8dafe1da96eecf710887b94ea0a2005aad62e82b0d1bd6523a0ee
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.1', name: min_weight}
+    - {default: '1.5', name: min_ratio}
+  EngineeringConfig:
+    qualname: EngineeringConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 6d79855df3f7247ab6a2ddd6f42e888d2628c8266dd81da75937884f0fb6a267
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '10.0', name: performance_interval_seconds}
+    - {default: '300.0', name: maintenance_interval_seconds}
+    - {default: '60.0', name: damage_control_cooldown_seconds}
+  EngineeringSensorsConfig:
+    qualname: EngineeringSensorsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 0555c3f7666afdf106bca17131d45964613becbaeee95df54f4dd7b4aa5bbfe7
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '60.0', name: report_interval_seconds}
+    - {default: 'False', name: auto_start_periodic_report}
+  EventLogConfig:
+    qualname: EventLogConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 8593769a58893fe4b70d105bd803ee7390f805f8ce665639263b836072fcb286
+    fields:
+    - {default: '7', name: retention_days}
+    - {default: '100000', name: max_rows}
+    - {default: '3600.0', name: prune_interval_seconds}
+  ExecutionConfig:
+    qualname: ExecutionConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 23cd2470ce9ff70c8cb0fda8156e0f61da05decaca1c1c97107627567d0210b5
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '1', name: default_tier}
+    - {default: '''data/execution''', name: scratch_dir}
+    - {default: 'True', name: persistent_workspaces}
+    - {default: '''data/execution/workspaces''', name: workspace_root}
+    - {default: 'False', name: fetch_broker_enabled}
+    - {default: '8388608', name: fetch_broker_max_body_bytes}
+    - {default: 'False', name: workspace_write_enabled}
+    - {default: '30.0', name: timeout_seconds}
+    - {default: '65536', name: max_output_bytes}
+    - {default: '512', name: max_memory_mb}
+    - {default: 'False', name: stage_thread_artifacts}
+    - {default: '20', name: max_staged_artifacts}
+    - {default: 'False', name: allow_package_install}
+    - {default: '''https://pypi.org/simple''', name: pip_index_url}
+    - {default: '180.0', name: install_timeout_seconds}
+  ExpertiseConfig:
+    qualname: ExpertiseConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 725dbd2ef43008f33cbe2a12f8f7a14bc32ce665a1bd136df0aa2dc228786dd5
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '50', name: max_topics_per_agent}
+    - {default: '0.1', name: min_confidence}
+    - {default: '0.95', name: decay_rate}
+    - {default: '3', name: top_k_experts}
+  ExtensionsConfig:
+    qualname: ExtensionsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 27f8f44c555352ed2e8853beb2b12ed8b1c2c50e02c024f519fe65de59fc1da9
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'False', name: enforce_sealed_core}
+    - {default: '''minimal''', name: default_profile}
+    - {default: '''src/probos/extensions''', name: extensions_dir}
+  FederationA2AConfig:
+    qualname: FederationA2AConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a51d7168458a299ef9c2c5741efcea146fd0f526097a8cf8a110b2326e4a680b
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''127.0.0.1''', name: bind_host}
+    - {default: '8766', name: bind_port}
+    - {default: '''/.well-known/agent.json''', name: agent_card_path}
+    - {default: <required>, has_default_factory: true, name: outbound_peers}
+  FederationArdConfig:
+    qualname: FederationArdConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 1216088969d67c95d690a3e3007eb3f2d6f2157ad3c8319362d20ccf5b6557f4
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''/.well-known/ai-catalog.json''', name: well_known_path}
+    - {default: <required>, has_default_factory: true, name: discovery_endpoints}
+    - {default: '''''', name: registry_url}
+    - {default: '''''', name: publisher_namespace_domain}
+    - {default: 'False', name: discovery_before_design}
+    - {default: '''none''', name: federation_mode}
+    - {default: '5', name: max_referral_peers}
+  FederationClusterMonitorConfig:
+    qualname: FederationClusterMonitorConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: f5c74a85ac4af379bae4a289a692fe863f68973d6ff812f6fc157cfd18d132da
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '60.0', name: peer_unreachable_seconds}
+  FederationConfig:
+    qualname: FederationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 04c247baf23a88e4b6dfa2ce3694f6ab1e686ed873420cb2aab430f164608975
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''node-1''', name: node_id}
+    - {default: '''tcp://127.0.0.1:5555''', name: bind_address}
+    - {default: '[]', name: peers}
+    - {default: '5000', name: forward_timeout_ms}
+    - {default: '10.0', name: gossip_interval_seconds}
+    - {default: 'True', name: validate_remote_results}
+    - {default: '''clean_room''', name: memory_policy}
+    - {default: '[]', name: memory_policy_selective_tags}
+    - {default: <required>, has_default_factory: true, name: mcp_server}
+    - {default: <required>, has_default_factory: true, name: a2a}
+    - {default: <required>, has_default_factory: true, name: ard}
+    - {default: <required>, has_default_factory: true, name: peer_trust}
+    - {default: <required>, has_default_factory: true, name: tls}
+    - {default: <required>, has_default_factory: true, name: discovery}
+    - {default: <required>, has_default_factory: true, name: cluster_monitor}
+    - {default: '0.0', name: min_peer_trust_score}
+    - {default: '''shared_trust''', name: memory_access_policy}
+    - {default: '0.5', name: shared_trust_min_score}
+    - {default: '3', name: dp_min_cohort_size}
+  FederationDiscoveryConfig:
+    qualname: FederationDiscoveryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 9bb594bd284f5720d42601ce6ff86a38bd3556f1b6bfefb1be7b62b8bd5e4f2d
+    fields:
+    - {default: 'False', name: multicast_enabled}
+    - {default: '''239.255.42.99''', name: multicast_group}
+    - {default: '5556', name: multicast_port}
+    - {default: '5.0', name: announce_interval_seconds}
+  FederationMCPServerConfig:
+    qualname: FederationMCPServerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 134c2d626a348fc6f031920b993d809b935071da9860ebc82957b27efdc6850e
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''127.0.0.1''', name: bind_host}
+    - {default: '8765', name: bind_port}
+    - {default: '''/mcp''', name: path_prefix}
+  FederationPeerTrustConfig:
+    qualname: FederationPeerTrustConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 8edce3ebe27d63d56d1084e0861b3e2cadd42f94b63abbbc22709aa13f93212a
+    fields:
+    - {default: '1.0', name: probationary_alpha}
+    - {default: '3.0', name: probationary_beta}
+  FederationTLSConfig:
+    qualname: FederationTLSConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a427bfba4a57c7318202367890ce186af09a4bc634338f9a20c2d153de1f8450
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: None, name: cert_file}
+    - {default: None, name: key_file}
+    - {default: None, name: ca_file}
+    - {default: 'True', name: verify_peer}
+  FirewallConfig:
+    qualname: FirewallConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 00fb8208e92438d15d540a34048f7407730684dbb405e89a2cacf88d54732ccd
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.65', name: scan_trust_threshold}
+    - {default: '0.45', name: low_trust_threshold}
+    - {default: '6', name: hex_id_min_length}
+    - {default: '2', name: hex_id_threshold}
+    - {default: '3', name: fabricated_metrics_threshold}
+    - {default: '3600.0', name: flag_window_seconds}
+    - {default: '3', name: quarantine_threshold}
+  GapPipelineExtensionsConfig:
+    qualname: GapPipelineExtensionsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a33f569481bd34e856b307c7342a37b1b2203251bf822961799946732f0c8934
+    fields:
+    - {default: 'True', name: remediation_tracker_enabled}
+    - {default: 'True', name: fleet_aggregator_enabled}
+    - {default: '100', name: remediation_max_history}
+    - {default: 'False', name: active_remediation_enabled}
+  GroundTruthConfig:
+    qualname: GroundTruthConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: bc532df5be768e023b88b821d0accb2d8483a454dd5032b9823fb85c5e127817
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.75', name: threshold}
+    - {default: '600.0', name: event_window_seconds}
+    - {default: 'True', name: write_episode}
+    - {default: 'False', name: active_rejection_enabled}
+    - {default: '''ground_truth_quarantine''', name: quarantine_metadata_key}
+    - {default: 'False', name: trust_feedback_enabled}
+    - {default: '1.0', name: trust_feedback_success_weight}
+    - {default: '0.5', name: trust_feedback_failure_weight}
+  GroundingConfig:
+    qualname: GroundingConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 88c7657b4e36eaf5c5787eba1eb487271616179c46f51d1e91a6c9212dcb9fb7
+    fields:
+    - {default: 'False', name: referent_gate_enabled}
+    - {default: 'False', name: ground_before_collaborate_enabled}
+    - {default: 'False', name: confab_probe_enabled}
+  GroupChatConfig:
+    qualname: GroupChatConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d60356d83b69970e7e5e2b35a231f14bd99d0018766f320b2a2a734b601d39cd
+    fields:
+    - {default: '0', name: max_speakers_per_turn}
+    - {default: 'True', name: convergence_enabled}
+    - {default: '0.6', name: convergence_similarity_threshold}
+    - {default: '4', name: convergence_min_messages}
+    - {default: '2', name: convergence_min_agents}
+    - {default: '0.4', name: weight_mention}
+    - {default: '0.25', name: weight_recency}
+    - {default: '0.25', name: weight_department}
+    - {default: '0.1', name: weight_trust}
+    - {default: '0.0', name: weight_exploration}
+    - {default: 'False', name: conversation_trust_enabled}
+    - {default: '0.05', name: conversation_trust_positive_weight}
+    - {default: '0.15', name: conversation_trust_negative_weight}
+    - {default: '4', name: conversation_trust_max_outcomes}
+    - {default: 'False', name: conversation_trust_correction_observe_enabled}
+    - {default: '60.0', name: agent_create_cooldown_seconds}
+    - {default: '5', name: agent_create_max_per_window}
+    - {default: '3600.0', name: agent_create_window_seconds}
+    - {default: 'False', name: auto_task_room_enabled}
+    - {default: 'False', name: agent_reactivity_enabled}
+    - {default: '2', name: max_agent_rounds}
+    - {default: 'False', name: agent_next_speaker_selection_enabled}
+    - {default: '1', name: max_address_extensions}
+    - {default: 'False', name: agent_initiated_kickoff_enabled}
+    - {default: 'False', name: escalation_suggestion_enabled}
+    - {default: '3', name: escalation_min_crew}
+    - {default: '6', name: escalation_min_posts}
+    - {default: 'False', name: broadcast_terminator_enabled}
+    - {default: 'False', name: turn_mode_policy_enabled}
+    - {default: '0.2', name: broadcast_weight_mention}
+    - {default: '0.15', name: broadcast_weight_recency}
+    - {default: '0.5', name: broadcast_weight_department}
+    - {default: '0.1', name: broadcast_weight_trust}
+    - {default: 'False', name: scale_aware_facilitation_enabled}
+    - {default: '5', name: facilitation_gate_threshold}
+    - {default: '0', name: force_facilitation_min}
+  HolodeckBirthChamberConfig:
+    qualname: HolodeckBirthChamberConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 8169314c573b9b8b3bd5cf7eb0c59cad38a8e5c2b94416b2984a35ba149ac7d8
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'True', name: bypass_for_existing_agents}
+    - {default: <required>, has_default_factory: true, name: department_order}
+    - {default: '5', name: calibration_min_episodes}
+    - {default: 'True', name: affective_baseline_check_enabled}
+    - {default: 'True', name: auto_advance_enabled}
+    - {default: '2.0', name: auto_advance_poll_interval_seconds}
+    - {default: '3', name: max_self_discovery_probe_attempts}
+  HolodeckScenarioConfig:
+    qualname: HolodeckScenarioConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 5eca23cb40ad70c5c4306916054289abb1844f1b9ef7ea7ec141607b3351ac49
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'True', name: auto_register_with_harness}
+    - {default: '0.6', name: default_threshold}
+    - {default: '2', name: default_tier}
+    - {default: '''construction''', name: category_fallback}
+    - {default: 'False', name: persist_to_sqlite}
+    - {default: '''holodeck_scenarios''', name: data_subdir}
+  HolodeckTeamSimulationConfig:
+    qualname: HolodeckTeamSimulationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: ab64c0ec7e4361703c3cc3799d9a57f184cfdfdeff1772fe8214daa5b4f727a4
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'True', name: auto_register_with_harness}
+    - {default: '0.6', name: default_threshold}
+    - {default: '2', name: default_tier}
+    - {default: 'True', name: enforce_required_departments}
+    - {default: 'False', name: persist_to_sqlite}
+    - {default: '''team_simulations''', name: data_subdir}
+  HooksConfig:
+    qualname: HooksConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 6c8044f58dc28f085f11b78b14e9d1d123adece97ce1660cb00579872a50bce1
+    fields:
+    - {default: 'False', name: enabled}
+  HybridDispatchConfig:
+    qualname: HybridDispatchConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a5ee1d2eb8a80a844943000ac7fa9805c27e3de96ef751977bfd21add74df926
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.4', name: confidence_threshold}
+    - {default: '0.05', name: confidence_margin}
+    - {default: '0.05', name: min_hebbian_weight}
+    - {default: '50', name: success_rate_window}
+    - {default: '3', name: min_samples_for_routing}
+    - {default: <required>, has_default_factory: true, name: dispatchable_tags}
+  InfodynamicConfig:
+    qualname: InfodynamicConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 975e34bfb4120e904f4297f3a87c230db32040cf5f50a9fecbef82b46b67e30f
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '3600.0', name: event_window_seconds}
+    - {default: '10', name: trust_buckets}
+  InfrastructureConfig:
+    qualname: InfrastructureConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d1478b86f7f82b23962aa0889e94e3e6022c934d768b7705b82f41a752827b49
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: 'True', name: backup_enabled}
+    - {default: '''backups''', name: backup_subdir}
+    - {default: '21600.0', name: backup_interval_seconds}
+    - {default: '120.0', name: backup_warmup_seconds}
+    - {default: '3', name: backup_retain_days}
+    - {default: '8589934592', name: backup_max_total_bytes}
+    - {default: 'True', name: backup_include_archive_root}
+    - {default: '4294967296', name: backup_orphan_alert_bytes}
+  KnowledgeBrowserConfig:
+    qualname: KnowledgeBrowserConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: af3bca84c6c16ce00635eda253d4374b6a53144561e36be455f71035ca0a893c
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '500', name: max_graph_nodes}
+    - {default: '1000', name: max_graph_edges}
+    - {default: '0.3', name: jaccard_threshold}
+    - {default: '5', name: max_suggestions_per_entry}
+    - {default: '300', name: index_refresh_seconds}
+  KnowledgeConfig:
+    qualname: KnowledgeConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 8bb35223b1d17b37c75466ae807f24ff03cdb786733118181e1fc7ddc96eb39e
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''''', name: repo_path}
+    - {default: 'True', name: auto_commit}
+    - {default: '5.0', name: commit_debounce_seconds}
+    - {default: '1000', name: max_episodes}
+    - {default: '200', name: max_workflows}
+    - {default: 'True', name: restore_on_boot}
+  KnowledgeEdgeClassificationConfig:
+    qualname: KnowledgeEdgeClassificationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: f5ea07fced32512c4b8e05d7e3a32c692a87aaed7c217f295114077bdf5ad98e
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''private''', name: default_classification}
+  KnowledgeEdgesConfig:
+    qualname: KnowledgeEdgesConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 4d2f3b4e6c9d97dbc63d6fcd2b5694743971b1cff177183c3d5e4f3cbdc6ecc7
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''data/knowledge_edges.sqlite''', name: db_path}
+    - {default: '3', name: max_traverse_hops}
+  KnowledgeLoadingConfig:
+    qualname: KnowledgeLoadingConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 67fe86e7b59fb965160bdc8b9e65c4f1217486922fde1516247ce64d52bb4fdf
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '200', name: ambient_token_budget}
+    - {default: '400', name: contextual_token_budget}
+    - {default: '600', name: on_demand_token_budget}
+    - {default: '300.0', name: ambient_max_age_seconds}
+    - {default: '60.0', name: contextual_max_age_seconds}
+    - {default: '0.0', name: on_demand_max_age_seconds}
+    - {default: <required>, has_default_factory: true, name: intent_knowledge_map}
+  LLMRateConfig:
+    qualname: LLMRateConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 265eb12f458aebc98bbb389851b95f52a573811065cbd1ba8e4923136fa51469
+    fields:
+    - {default: '120', name: rpm_fast}
+    - {default: '120', name: rpm_standard}
+    - {default: '30', name: rpm_deep}
+    - {default: '30.0', name: max_wait_seconds}
+    - {default: '500', name: cache_max_entries}
+    - {default: '0', name: per_agent_hourly_token_cap}
+    - {default: '6', name: max_concurrent_calls}
+    - {default: '2', name: interactive_reserved_slots}
+    - {default: '8', name: max_inflight_per_endpoint}
+    - {default: '15.0', name: endpoint_failure_cooldown_seconds}
+  LearnedShortcutsConfig:
+    qualname: LearnedShortcutsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a890e527a9fa31c90ec1b2fe21d174c0b006f54cd824bae69444bf7337d4d5a1
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: 'True', name: register_workflow_cache}
+  LintConfig:
+    qualname: LintConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 45f217d2da16bab7c24abaeb86d0fd86debd6dc42cb1f715a4fae821b0ae9fb8
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '5', name: min_coverage_per_department}
+    - {default: <required>, has_default_factory: true, name: inconsistency_keywords}
+  LipSyncConfig:
+    qualname: LipSyncConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d5adee563ab41080001fdcb8b20360072647629e1589fab0e1d6ec8bd7e58dc6
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''heuristic''', name: backend}
+    - {default: '''tools/rhubarb/rhubarb''', name: binary_path}
+    - {default: '30.0', name: timeout_seconds}
+    - {default: '''tools/ffmpeg/ffmpeg''', name: ffmpeg_binary_path}
+  M365Config:
+    qualname: M365Config
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 78d126842d064a6aed83e68db09b4036a0fb20e662f917ca77962d14fc0ef964
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: None, name: client_id}
+    - {default: '''https://login.microsoftonline.com/common''', name: authority}
+    - {default: <required>, has_default_factory: true, name: scopes}
+    - {default: '''~/.probos/m365_cache''', name: cache_dir}
+  MCPAppHostConfig:
+    qualname: MCPAppHostConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: bada5b7051c78a0a53b77f5c4c5c9e0e499ba1d9fa9ef686ee69fab5316b2a4b
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'True', name: serve_internal_games}
+    - {default: 'False', name: discover_external_apps}
+    - {default: '"default-src ''self''; script-src ''self'' ''unsafe-inline''; style-src ''self'' ''unsafe-inline''"', name: internal_default_csp}
+    - {default: '"default-src ''none''; script-src ''self''; style-src ''self'' ''unsafe-inline''"', name: external_default_csp}
+    - {default: '''''', name: bundles_dir}
+  MCPConfig:
+    qualname: MCPConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 4b1c3caa04c5ee61b8a6fddb01593f659fe7f7ba1afd36dc89cc9b23bdcf9917
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '30.0', name: request_timeout_seconds}
+    - {default: <required>, has_default_factory: true, name: servers}
+    - {default: 'False', name: stdio_enabled}
+    - {default: <required>, has_default_factory: true, name: command_allowlist}
+    - {default: 'False', name: management_enabled}
+    - {default: 'False', name: agent_tools_enabled}
+    - {default: '86400.0', name: agent_tool_idle_ttl_seconds}
+    - {default: '3600.0', name: agent_tool_reaper_interval_seconds}
+    - {default: '24', name: max_directly_offered_tools}
+  MCPServerConfig:
+    qualname: MCPServerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 2b66ea902108b70cdb5796614ccdbbc1bdbf245420aa39716ebd3a451086cbcb
+    fields:
+    - {default: '''http''', name: type}
+    - {default: '''''', name: url}
+    - {default: <required>, has_default_factory: true, name: headers}
+    - {default: '''''', name: command}
+    - {default: <required>, has_default_factory: true, name: args}
+    - {default: <required>, has_default_factory: true, name: env}
+    - {default: '''''', name: cwd}
+    - {default: None, name: timeout_seconds}
+    - {default: '''''', name: name}
+  MedicalConfig:
+    qualname: MedicalConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 77511fecb6964c90cdb24730b8c74755ffa0b6cdb3f9d9064da4c27717818857
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '5.0', name: vitals_interval_seconds}
+    - {default: '12', name: vitals_window_size}
+    - {default: '0.5', name: pool_health_min}
+    - {default: '0.3', name: trust_floor}
+    - {default: '0.6', name: health_floor}
+    - {default: '3', name: max_trust_outliers}
+    - {default: '300.0', name: scheduled_diagnosis_interval}
+  MemoryBudgetConfig:
+    qualname: MemoryBudgetConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 833fe26c2e0edca432ca48c191d2cd877ce3efc4f0367f405b4de14eab52cbef
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '4650', name: total_budget_tokens}
+    - {default: '150', name: l0_budget}
+    - {default: '3000', name: l1_budget}
+    - {default: '1000', name: l2_budget}
+    - {default: '500', name: l3_budget}
+  MemoryConfig:
+    qualname: MemoryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 880831e50f03803db88703e2f3512645ab83491eefd7a8dd98526e2bd7df7d38
+    fields:
+    - {default: '''probos_episodes''', name: collection_name}
+    - {default: '100000', name: max_episodes}
+    - {default: <required>, has_default_factory: true, name: attention}
+    - {default: '''permissive''', name: access_policy}
+    - {default: '0.7', name: relevance_threshold}
+    - {default: '0.25', name: agent_recall_threshold}
+    - {default: '0.2', name: fts_keyword_semantic_floor}
+    - {default: '''multi-qa-MiniLM-L6-cos-v1''', name: embedding_model}
+    - {default: 'True', name: query_reformulation_enabled}
+    - {default: '0.6', name: similarity_threshold}
+    - {default: 'True', name: verify_content_hash}
+    - {default: 'True', name: eviction_audit_enabled}
+    - {default: '30.0', name: shutdown_consolidation_timeout_s}
+    - {default: '300.0', name: migration_timeout_s}
+    - {default: 'False', name: schema_version_tracking}
+    - {default: 'False', name: oracle_match_reason_enabled}
+    - {default: '30.0', name: shutdown_drain_timeout_s}
+    - {default: '64', name: hnsw_sync_threshold}
+    - {default: '32', name: hnsw_batch_size}
+    - {default: 'True', name: backup_enabled}
+    - {default: '7', name: backup_retain_days}
+    - {default: '{''semantic'': 0.35, ''keyword'': 0.2, ''trust'': 0.1, ''hebbian'': 0.05, ''recency'': 0.15, ''anchor'': 0.15}', name: recall_weights}
+    - {default: '0.1', name: recall_convergence_bonus}
+    - {default: 'False', name: recall_rerank_enabled}
+    - {default: <required>, has_default_factory: true, name: recall_rerank_weights}
+    - {default: 'False', name: affect_capture_enabled}
+    - {default: '0.25', name: recall_temporal_match_weight}
+    - {default: '0.15', name: recall_temporal_mismatch_penalty}
+    - {default: '0.45', name: recall_confidence_weak_floor}
+    - {default: 'False', name: hybrid_recall_enabled}
+    - {default: '60', name: hybrid_rrf_k}
+    - {default: 'False', name: recall_fok_logging_enabled}
+    - {default: 'False', name: remember_know_typing_enabled}
+    - {default: 'False', name: cross_agent_recall_enabled}
+    - {default: 'False', name: recall_confidence_gating_enabled}
+    - {default: 'False', name: reconsolidation_enabled}
+    - {default: 'False', name: transcript_grounded_recall_enabled}
+    - {default: '8', name: transcript_grounding_max_threads}
+    - {default: '1200', name: transcript_grounding_max_chars}
+    - {default: '0', name: transcript_retention_days}
+    - {default: '3600', name: transcript_reaper_interval_seconds}
+    - {default: 'False', name: group_episode_enrichment_enabled}
+    - {default: '600', name: group_reflection_max_chars}
+    - {default: 'False', name: episode_visual_binding_enabled}
+    - {default: 'False', name: recall_outcome_refs_enabled}
+    - {default: 'True', name: tcm_enabled}
+    - {default: '16', name: tcm_dimension}
+    - {default: '0.95', name: tcm_drift_rate}
+    - {default: '0.15', name: tcm_weight}
+    - {default: '0.05', name: tcm_fallback_watch_weight}
+    - {default: '4000', name: recall_context_budget_chars}
+    - {default: '{''temporal'': 0.25, ''spatial'': 0.25, ''social'': 0.25, ''causal'': 0.15, ''evidential'': 0.1}', name: anchor_dimension_weights}
+    - {default: '0.3', name: anchor_confidence_gate}
+    - {default: '0.35', name: composite_score_floor}
+    - {default: '0', name: max_recall_episodes}
+    - {default: '0.4', name: recall_quality_floor}
+    - {default: '{''basic'': {''k'': 3, ''context_budget'': 1500, ''anchor_confidence_gate'': 0.0, ''composite_score_floor'': 0.0, ''max_recall_episodes'': 0, ''recall_quality_floor'': 0.0, ''use_salience_weights'': False, ''cross_department_anchors'': False}, ''enhanced'': {''k'': 5, ''context_budget'': 4000, ''anchor_confidence_gate'': 0.3, ''composite_score_floor'': 0.35, ''max_recall_episodes'': 0, ''recall_quality_floor'': 0.4, ''use_salience_weights'': True, ''cross_department_anchors'': False}, ''full'': {''k'': 8, ''context_budget'': 6000, ''anchor_confidence_gate'': 0.3, ''composite_score_floor'': 0.35, ''max_recall_episodes'': 0, ''recall_quality_floor'': 0.4, ''use_salience_weights'': True, ''cross_department_anchors'': True}, ''oracle'': {''k'': 10, ''context_budget'': 8000, ''anchor_confidence_gate'': 0.2, ''composite_score_floor'': 0.0, ''max_recall_episodes'': 0, ''recall_quality_floor'': 0.0, ''use_salience_weights'': True, ''cross_department_anchors'': True}}', name: recall_tiers}
+  MemorySecurityConfig:
+    qualname: MemorySecurityConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 4ca560bf13410271d09acdded6aa80bb4bc3802f52922f7219895bd6ffd99b94
+    fields:
+    - {default: 'False', name: enforce_recall}
+    - {default: 'False', name: enforce_provenance}
+    - {default: 'False', name: enforce_leak_guard}
+    - {default: 'False', name: enforce_store}
+    - {default: '0.7', name: anchor_mismatch_threshold}
+    - {default: '3', name: dp_min_cohort_size}
+  MeshConfig:
+    qualname: MeshConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: bbe2b33f3787d2b66d3ae9e63bdd425d511b01eabc7ee58ce844e586326b6d65
+    fields:
+    - {default: '1000', name: gossip_interval_ms}
+    - {default: '0.995', name: hebbian_decay_rate}
+    - {default: '0.995', name: hebbian_social_decay_rate}
+    - {default: <required>, has_default_factory: true, name: intent_skill_map}
+    - {default: '0.05', name: hebbian_reward}
+    - {default: '30.0', name: signal_ttl_seconds}
+    - {default: '5.0', name: capability_broadcast_interval_seconds}
+    - {default: 'True', name: semantic_matching}
+    - {default: '100.0', name: handler_latency_deterministic_ms}
+    - {default: '10000.0', name: handler_latency_network_ms}
+    - {default: '30000.0', name: handler_latency_cognitive_ms}
+  MetabolismConfig:
+    qualname: MetabolismConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: def91a4ed609a5b1dee6dcfb34d552c6b5ed9b1c824ed9a57b576d18b32c338d
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '3600.0', name: decay_half_life_seconds}
+    - {default: '0.05', name: forget_threshold}
+    - {default: '2', name: min_entries_per_buffer}
+    - {default: 'True', name: audit_enabled}
+    - {default: '300.0', name: cycle_interval_seconds}
+    - {default: '0.8', name: triage_fullness_threshold}
+    - {default: '0.3', name: triage_base_score}
+  ModelRoutingConfig:
+    qualname: ModelRoutingConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: e94dd5e90673a27c21c706cd7e8ecbdf85532d5968cc9caff3f5f69110922749
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: None, name: cost_ceiling_per_million_output_tokens}
+  NLGraphQueryConfig:
+    qualname: NLGraphQueryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 8f5618dda34724568ebd41bd49cdd9521a70bba1fc88e6afbe8404a87e35825b
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '2', name: default_max_hops}
+    - {default: '10', name: default_limit}
+    - {default: '''standard''', name: llm_tier}
+    - {default: '600', name: extraction_max_tokens}
+    - {default: '800', name: synthesis_max_tokens}
+  NamingConfig:
+    qualname: NamingConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 82a6e7ce45a89158d390becde03003ef876dac47ed6ab78d91b8d5ebff4dd8af
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''''', name: captain_ship_override}
+    - {default: <required>, has_default_factory: true, name: extra_banned_words}
+  NativeSWEHarnessConfig:
+    qualname: NativeSWEHarnessConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 01fb36ea69dadb60bb076ef7fcfbc36d4497856f27b79debc392e531332cc1f5
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'True', name: eligibility_modify_only}
+    - {default: '25', name: max_iterations}
+    - {default: '5', name: max_fix_iterations}
+    - {default: None, name: token_budget}
+    - {default: '0.8', name: compaction_threshold_pct}
+    - {default: <required>, has_default_factory: true, name: blocked_paths}
+  NatsConfig:
+    qualname: NatsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 7f3524d06322e7dbc9690e41c2d012a5760ab6399bfd92ea0677544ce1704011
+    fields:
+    - {default: 'False', name: enabled, validate_default: true}
+    - {default: '''nats://localhost:4222''', name: url}
+    - {default: '5.0', name: connect_timeout_seconds}
+    - {default: '60', name: max_reconnect_attempts}
+    - {default: '2.0', name: reconnect_time_wait_seconds}
+    - {default: '5.0', name: drain_timeout_seconds}
+    - {default: 'True', name: jetstream_enabled}
+    - {default: None, name: jetstream_domain}
+    - {default: '''probos.local''', name: subject_prefix}
+    - {default: '5.0', name: js_publish_timeout}
+  NavalOrganizationConfig:
+    qualname: NavalOrganizationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 9467c9b07f6d0646970c90da566e9e38cbb0154fcd2781b1e5e43c12beaf3df3
+    fields:
+    - {default: <required>, has_default_factory: true, name: captains_log}
+    - {default: <required>, has_default_factory: true, name: plan_of_day}
+  NoveltyGateConfig:
+    qualname: NoveltyGateConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 173f11595dd842576dbf18b19108d5d900a2eacae8571f102a09fef4a2f5651b
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.82', name: similarity_threshold}
+    - {default: '50', name: max_fingerprints_per_agent}
+    - {default: '24.0', name: decay_hours}
+    - {default: '80', name: min_text_length}
+  OSActivityConfig:
+    qualname: OSActivityConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 9ca775e5a9c745e9a110b165e3c93d3c84840345a110407a16e22cb34917e3a7
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '5', name: poll_interval_seconds}
+  ObservabilityBridgeConfig:
+    qualname: ObservabilityBridgeConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: e1536fae726dfa46ef71de10305e047c248e69b0a251333f1c985f3d25e1828c
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '60.0', name: publish_interval_seconds}
+    - {default: '''system_observability''', name: system_channel}
+  ObservableStateConfig:
+    qualname: ObservableStateConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a5a7902eaab8a3431027a65a6af39474cbb76f2e6373862e7209f26848d74f06
+    fields:
+    - {default: 'True', name: verification_enabled}
+    - {default: '10', name: max_claims_per_thread}
+  OfficeSkillsConfig:
+    qualname: OfficeSkillsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d04115d6b0486d7ea1ba19b08ad3e8d24a62afcba8d8bc52eb8d9e7ed0d99c51
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''~/.probos/templates''', name: template_dir}
+    - {default: '''~/.probos/output''', name: output_dir}
+  OnboardingConfig:
+    qualname: OnboardingConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 6b19e58bccbdcc5be1c44abeaffcdce49f3dac72bcd19b184edd79dc3a7d56ea
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.65', name: activation_trust_threshold}
+    - {default: 'True', name: naming_ceremony}
+  OperationalStatusConfig:
+    qualname: OperationalStatusConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: b30533ba610db1db61d96a2793186d2d9141043fbea14a2d6d9ed7fe57cd9940
+    fields:
+    - {default: '50', name: sample_window_size}
+    - {default: '0.85', name: available_success_rate}
+    - {default: '5000.0', name: degraded_p95_latency_ms}
+    - {default: '5', name: offline_consecutive_errors}
+  OperationsConfig:
+    qualname: OperationsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: dd5e05fe0a567409936f6474890286713fd1b54da69858ba218a07b0cb24c71c
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '30.0', name: resource_interval_seconds}
+    - {default: '60.0', name: resource_emit_interval_seconds}
+    - {default: '60.0', name: scheduler_interval_seconds}
+    - {default: '60.0', name: coordinator_interval_seconds}
+  OrdersConfig:
+    qualname: OrdersConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: cfb4ddc536901b0eccfbf5aac70dca68de00f138bde33e0a39eba42811a6e8a6
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '8', name: max_active_per_post}
+    - {default: '3600.0', name: default_ttl_seconds}
+  OrientationConfig:
+    qualname: OrientationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 25d606acaf314c60af02bf54b68530f2176a4d54797ad499d872ff94c06a78ae
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '600.0', name: orientation_window_seconds}
+    - {default: 'True', name: cold_start_full_orientation}
+    - {default: 'True', name: warm_boot_orientation}
+    - {default: 'True', name: proactive_supplement}
+    - {default: 'True', name: populate_watch_section}
+    - {default: 'True', name: populate_ward_room_department}
+    - {default: 'True', name: populate_event_log_window}
+  PacksConfig:
+    qualname: PacksConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 30b6db0b07bb4a0af2807a634ebfccd1157be54e650beac12237b80f13177e7a
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''data/packs''', name: packs_dir}
+  PeerConfig:
+    qualname: PeerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 273c2b82ad3631f8124e6360c2f7aa4cdd86ae30611c8570aa684c8b1b39fd81
+    fields:
+    - {default: <required>, name: node_id}
+    - {default: <required>, name: address}
+    - {default: <required>, has_default_factory: true, name: avatar_telemetry_agent_ids}
+  PerceptionConfig:
+    qualname: PerceptionConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 3535f3f4bf32ed1c4b22050b8bd7f2f1118127031391371f59d4865b716e183f
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: <required>, has_default_factory: true, name: camera}
+    - {default: <required>, has_default_factory: true, name: screen}
+    - {default: 'True', name: explicit_share_enabled}
+    - {default: '4', name: camera_max_fps_server}
+    - {default: '2', name: screen_max_fps_server}
+    - {default: '524288', name: frame_max_size_bytes}
+    - {default: '300', name: frame_retention_seconds}
+    - {default: '60', name: reaper_interval_seconds}
+    - {default: 'True', name: vision_consumer_enabled}
+    - {default: '3.0', name: vision_min_interval_seconds}
+    - {default: '0.08', name: vision_novelty_threshold}
+    - {default: '30.0', name: vision_baseline_max_age_seconds}
+    - {default: '''ahash''', name: vision_supervisor_strategy}
+    - {default: '8', name: working_memory_capacity}
+    - {default: 'True', name: wm_persistence_enabled}
+    - {default: '''vision''', name: vision_tier}
+    - {default: '''vision_fast''', name: vision_fast_tier}
+    - {default: 'True', name: dm_force_describe_enabled}
+    - {default: '120.0', name: prompt_freshness_seconds}
+    - {default: '300.0', name: engaged_idle_seconds}
+    - {default: '1800.0', name: ambient_idle_seconds}
+    - {default: '30.0', name: idle_watchdog_tick_seconds}
+    - {default: '''''', name: captain_avatar_ref}
+    - {default: '0.6', name: identity_match_threshold}
+    - {default: 'True', name: identity_resolver_enabled}
+    - {default: 'True', name: proactive_observer_enabled}
+    - {default: '3', name: proactive_max_emissions}
+    - {default: '30.0', name: proactive_dwell_seconds}
+    - {default: '0.5', name: proactive_novelty_threshold}
+    - {default: 'True', name: engaged_budget_enforcement}
+    - {default: '200', name: engaged_call_cap_per_session}
+    - {default: '2000', name: engaged_call_cap_per_day}
+    - {default: 'False', name: vad_engagement_enabled}
+    - {default: '400', name: vad_min_speech_duration_ms}
+    - {default: 'True', name: source_fusion_enabled}
+    - {default: '800', name: fusion_window_ms}
+  PermissionsConfig:
+    qualname: PermissionsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 293583a550656854c6bef357f87a114078eea5b96e642bb1d2832212ef5238f0
+    fields:
+    - {default: <required>, has_default_factory: true, name: allow}
+    - {default: <required>, has_default_factory: true, name: deny}
+  PersistentTasksConfig:
+    qualname: PersistentTasksConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 7769c8e28401635aa94f67c6807bc2d8efff8075a043e37787aeef01f713e7dc
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '5.0', name: tick_interval_seconds}
+    - {default: '1', name: max_concurrent_executions}
+    - {default: 'False', name: dag_auto_resume}
+  PinnedKnowledgeConfig:
+    qualname: PinnedKnowledgeConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a8ff4bb4f488477f40c5f164cc1453d644a450d8b8a803b9674eb5c8fe0238f0
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '150', name: max_tokens}
+    - {default: '10', name: max_pins}
+    - {default: '86400.0', name: default_ttl_seconds}
+  PlanOfDayConfig:
+    qualname: PlanOfDayConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 97d0992a78d4ac105448200142be106beef55400244637a4790b98a1ece98c66
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''data/plan_of_day''', name: output_dir}
+    - {default: '8', name: start_of_day_hour}
+    - {default: 'True', name: include_alert_conditions}
+  PolicyWindowConfig:
+    qualname: PolicyWindowConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: bdfccc6cd85bc378c4f6631b833e02d88ffebc0111d4e69248887e4aa1335591
+    fields:
+    - {default: '''08:00''', name: start_time}
+    - {default: '''18:00''', name: end_time}
+    - {default: <required>, has_default_factory: true, name: days}
+  PoolConfig:
+    qualname: PoolConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 6dae6308b2799f0463194008b2df4a63e9ecb0cbcd925a25b937383d27d758a5
+    fields:
+    - {default: '3', name: default_pool_size}
+    - {default: '7', name: max_pool_size}
+    - {default: '2', name: min_pool_size}
+    - {default: '500', name: spawn_cooldown_ms}
+    - {default: '5.0', name: health_check_interval_seconds}
+  PostBudgetTelemetryConfig:
+    qualname: PostBudgetTelemetryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: dc64d8c7d198d2d2aed6bb1b7573db8e3352db87b04ad6749ba90ac31ac57f37
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.5', name: exhaustion_alert_threshold}
+    - {default: '10', name: min_samples_for_alert}
+    - {default: '100', name: recent_suppressions_max}
+  PreFlightConfig:
+    qualname: PreFlightConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: eab13b3b32768f9d6e32df562eda58d674df876cd926f13efec8b13152eb5514
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: 'True', name: llm_tier_check_enabled}
+    - {default: '''deep''', name: required_llm_tier}
+    - {default: 'True', name: token_budget_check_enabled}
+    - {default: 'False', name: token_budget_blocking}
+  PredictiveBranchingConfig:
+    qualname: PredictiveBranchingConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: e537f97a35fd0cc5d5cae9fb44f0f85d968f26f0d66ab454d5fbd9565f60cb14
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '60.0', name: cache_ttl_seconds}
+    - {default: '128', name: cache_max_entries}
+    - {default: '2000', name: speculation_tokens_per_window}
+    - {default: '300.0', name: speculation_window_seconds}
+    - {default: '0.3', name: flush_rate_feedback_threshold}
+    - {default: '3600.0', name: flush_rate_window_seconds}
+    - {default: '100', name: accuracy_ring_size}
+    - {default: '0.3', name: cheap_tier_min_confidence}
+    - {default: '0.7', name: standard_tier_min_confidence}
+    - {default: '0.85', name: anticipatory_tier_min_confidence}
+  ProactiveCognitiveConfig:
+    qualname: ProactiveCognitiveConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: bd2ed38dd38933c779ff5ae4f09334fdfa9c0edb9bc57ad7bc459466e1dbe922
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '120.0', name: interval_seconds}
+    - {default: '300.0', name: cooldown_seconds}
+    - {default: '0.1', name: trust_reward_weight}
+    - {default: '0.0', name: trust_no_response_weight}
+    - {default: '0.1', name: trust_duty_bonus}
+    - {default: DutyScheduleConfig(...), name: duty_schedule}
+    - {default: 'True', name: stagger_enabled}
+    - {default: '5.0', name: min_stagger_seconds}
+    - {default: '60.0', name: yeoman_digest_window_seconds}
+  ProactiveScanCalendarConfig:
+    qualname: ProactiveScanCalendarConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 4a07dbabdfb9fceb9bc8ce480be5bf1e1c10e1d35403a8ea5bd9d949bab4ae2b
+    fields:
+    - {default: <required>, has_default_factory: true, name: calendar_ids}
+    - {default: '24', name: lookahead_hours}
+    - {default: 'False', name: include_declined}
+  ProactiveScanConfig:
+    qualname: ProactiveScanConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 546f9a08c3130522b258bb4e406acee390f278104ee09f69a3f4053182ee61cb
+    fields:
+    - {default: <required>, has_default_factory: true, name: inbox}
+    - {default: <required>, has_default_factory: true, name: calendar}
+  ProactiveScanInboxConfig:
+    qualname: ProactiveScanInboxConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: bd9cf60283e0a52ee430b5d5054ea2edcb7895d75ff2b2326d45c1cc635d680a
+    fields:
+    - {default: <required>, has_default_factory: true, name: folders}
+    - {default: '24', name: lookback_hours}
+    - {default: '''any''', name: importance_filter}
+    - {default: 'False', name: unread_only}
+    - {default: <required>, has_default_factory: true, name: sender_allowlist}
+    - {default: <required>, has_default_factory: true, name: sender_denylist}
+  ProcessChainRegistryConfig:
+    qualname: ProcessChainRegistryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 3c6fff8f997345ab5f762f3c8f837afadc664faa5a3bfe1da111a2e8a276f8a6
+    fields:
+    - {default: 'True', name: enabled}
+  QAConfig:
+    qualname: QAConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a27f0fb6ba212f73290e102330bab035cf7d3231822db128a6cd12d25efc85f3
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '5', name: smoke_test_count}
+    - {default: '10.0', name: timeout_per_test_seconds}
+    - {default: '30.0', name: total_timeout_seconds}
+    - {default: '0.6', name: pass_threshold}
+    - {default: '1.0', name: trust_reward_weight}
+    - {default: '2.0', name: trust_penalty_weight}
+    - {default: 'True', name: flag_on_fail}
+    - {default: 'False', name: auto_remove_on_total_fail}
+  QualificationConfig:
+    qualname: QualificationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 6f930fccfed80e53a8870e2e7607eb18f75947b26a6beb3780a113a56aba965a
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: 'True', name: baseline_auto_capture}
+    - {default: '0.15', name: significance_threshold}
+    - {default: '60.0', name: test_timeout_seconds}
+    - {default: 'False', name: enforcement_enabled}
+    - {default: 'True', name: enforcement_log_only}
+    - {default: CommunicationBenchmarksConfig(...), name: communication_benchmarks}
+    - {default: 'True', name: drift_check_enabled}
+    - {default: '604800.0', name: drift_check_interval_seconds}
+    - {default: '2.0', name: drift_warning_sigma}
+    - {default: '3.0', name: drift_critical_sigma}
+    - {default: '3', name: drift_min_samples}
+    - {default: '20', name: drift_history_window}
+    - {default: '3600.0', name: drift_cooldown_seconds}
+    - {default: '[1, 2, 3]', name: drift_check_tiers}
+    - {default: '''config/manuals/peer_observation_conduct.yaml''', name: peer_observation_module_path}
+    - {default: 'False', name: peer_observation_certification_required}
+  QualityRouterConfig:
+    qualname: QualityRouterConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 86857f1a2718ad418153af195d3b231226c158ae05b8a581fb4736da409ac333
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.5', name: min_weight}
+    - {default: '1.5', name: max_weight}
+    - {default: '0.3', name: concern_threshold}
+  QualityTriggerConfig:
+    qualname: QualityTriggerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 7d757effc9433485311b048d2a26357431995e24beaf3a1268296bb70e262430
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.4', name: min_quality_threshold}
+    - {default: '0.3', name: max_stale_rate}
+    - {default: '0.2', name: max_repetition_rate}
+    - {default: '1800.0', name: cooldown_seconds}
+    - {default: '5', name: max_forced_per_day}
+  QueryPlannerConfig:
+    qualname: QueryPlannerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a19bffba923eac3efbfbf914a9d2762ae71b09e007e7538a92c30e53900e6a72
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'True', name: fall_through_on_empty}
+  QuestionAdaptiveConfig:
+    qualname: QuestionAdaptiveConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 7c0d2cda9732f565ed393a7c2c57f0edf5c3af5332a75bbedd979e02193e32ee
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: <required>, has_default_factory: true, name: strategy_overrides}
+  ReadyRoomConfig:
+    qualname: ReadyRoomConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 52ac847be41fc3f249abe638122b26946649f81ebf1149fbc1961f865e2ea283
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''ready_room/ideas.json''', name: idea_store_filename}
+    - {default: '''ready_room''', name: wardroom_channel_id}
+  ReconsolidationConfig:
+    qualname: ReconsolidationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 162de0078d3fee458aff6bafcec6ae40b40ed925a634f8d4adceedcdb79c76a6
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: <required>, has_default_factory: true, name: base_intervals_hours}
+    - {default: '0.1', name: importance_scale_factor}
+    - {default: '500', name: max_scheduled}
+  RecordsConfig:
+    qualname: RecordsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 659282bea3c479223d34bac5429cf8aaee0546cf1f61fc35b7a528cdcba90a8b
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''''', name: repo_path}
+    - {default: 'True', name: auto_commit}
+    - {default: '5.0', name: commit_debounce_seconds}
+    - {default: '20', name: max_episodes_per_hour}
+    - {default: 'True', name: notebook_dedup_enabled}
+    - {default: '0.8', name: notebook_similarity_threshold}
+    - {default: '72.0', name: notebook_staleness_hours}
+    - {default: '20', name: notebook_max_scan_entries}
+    - {default: 'True', name: notebook_repetition_enabled}
+    - {default: '48.0', name: notebook_repetition_window_hours}
+    - {default: '3', name: notebook_repetition_threshold_count}
+    - {default: '0.2', name: notebook_repetition_novelty_threshold}
+    - {default: '5', name: notebook_repetition_suppression_count}
+    - {default: 'True', name: notebook_metrics_enabled}
+    - {default: 'True', name: realtime_convergence_enabled}
+    - {default: '0.5', name: realtime_convergence_threshold}
+    - {default: '0.3', name: realtime_divergence_threshold}
+    - {default: '72.0', name: realtime_convergence_staleness_hours}
+    - {default: '5', name: realtime_max_scan_per_agent}
+    - {default: '2', name: realtime_min_convergence_agents}
+    - {default: '2', name: realtime_min_convergence_departments}
+    - {default: '0.3', name: convergence_independence_threshold}
+    - {default: 'True', name: notebook_quality_enabled}
+    - {default: '0.3', name: notebook_quality_low_threshold}
+    - {default: '0.5', name: notebook_quality_warn_threshold}
+    - {default: '0.7', name: notebook_staleness_alert_rate}
+    - {default: 'False', name: semantic_index_enabled}
+  RepairConfig:
+    qualname: RepairConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 9c0854f94adeab7957325ad569ce015ca4859e492649343cfb12fa56af7ff6db
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: <required>, has_default_factory: true, name: targets}
+    - {default: '2', name: propose_after_occurrences}
+  RetroactiveConfig:
+    qualname: RetroactiveConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 1df97af8a36955590acf526638c6e921532b7b2cdd00c964c39463894b8729d5
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '5', name: neighbor_k}
+    - {default: '0.7', name: similarity_threshold}
+    - {default: '10', name: max_relations_per_episode}
+    - {default: 'True', name: propagate_watch_section}
+    - {default: 'True', name: propagate_department}
+  RiskTierConfig:
+    qualname: RiskTierConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d1b1c3e4f19bab41b4cb033373e865e13a48557a194bf98a61aa436bd3add8d6
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.0', name: elevated_min_trust}
+    - {default: '0.7', name: critical_min_trust}
+  RuntimeOverridesConfig:
+    qualname: RuntimeOverridesConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d491eeb0395410bd969edd5cb22fb8a48fe141734b4a15ae206387d1ec2e98e1
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''runtime_overrides.json''', name: store_filename}
+  SPCConfig:
+    qualname: SPCConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 71d8c27a0c7e7f8450b6f5f72a6bf8815e712ee1b3eeae1bc214b44324fb3c04
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '100', name: sample_window}
+  SalienceConfig:
+    qualname: SalienceConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d214bd82e994c553867421baecefb32188f903d2b22adb46e8bdfc20d0147328
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '{''relevance'': 0.3, ''recency'': 0.25, ''novelty'': 0.15, ''urgency'': 0.2, ''social'': 0.1}', name: weights}
+    - {default: '0.3', name: threshold}
+    - {default: '50', name: background_max_entries}
+  SamplingRatesConfig:
+    qualname: SamplingRatesConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 9ae04ef14b761055b55b7bbe18e451dea475d6e5f485afe87f6547160e2de04d
+    fields:
+    - {default: '250', name: high_ms}
+    - {default: '2000', name: normal_ms}
+    - {default: '10000', name: low_ms}
+  ScalingConfig:
+    qualname: ScalingConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 6cbe614fb5d1264f1df944169e96e35f2f0b1243b6a005e0adc9a49fb532d937
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.8', name: scale_up_threshold}
+    - {default: '0.2', name: scale_down_threshold}
+    - {default: '1', name: scale_up_step}
+    - {default: '1', name: scale_down_step}
+    - {default: '30.0', name: cooldown_seconds}
+    - {default: '60.0', name: observation_window_seconds}
+    - {default: '120.0', name: idle_scale_down_seconds}
+  ScopedCognitionConfig:
+    qualname: ScopedCognitionConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 31fc8971993e0dee389ebb46bb20b810cdb244e5eba043c41bff2ca218920b6e
+    fields:
+    - {default: 'True', name: enabled}
+  ScreenStreamConfig:
+    qualname: ScreenStreamConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 0df1d9f7be135837624b56b528f3420c0c6aee75082150481df0e71443fbe8bc
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '1', name: default_fps}
+  SecurityConfig:
+    qualname: SecurityConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 0b15c41e0df70423ede1dd854bd18cdd03d64c06ca70a785ca61574ff636ce98
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '65536', name: max_payload_bytes}
+    - {default: '60.0', name: rate_window_seconds}
+    - {default: '60', name: rate_max_requests}
+    - {default: '0.8', name: max_threat_severity}
+    - {default: '60.0', name: burst_window_seconds}
+    - {default: '20', name: burst_threshold}
+    - {default: '3600.0', name: campaign_interval_seconds}
+    - {default: <required>, has_default_factory: true, name: memory}
+    - {default: '''strict''', name: profile}
+    - {default: <required>, has_default_factory: true, name: permissions}
+    - {default: '''manual''', name: permission_mode}
+    - {default: '''NullPolicyEngine''', name: policy_engine_class}
+  SecurityInfraConfig:
+    qualname: SecurityInfraConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 727a50fb06d4a28a309e0519db30b28887c1412b277c7c5c956bd3f12b0a0704
+    fields:
+    - {default: 'True', name: secrets_persistence_enabled}
+    - {default: '''secrets.json''', name: secrets_store_filename}
+    - {default: 'True', name: egress_enabled}
+    - {default: 'True', name: egress_deny_by_default}
+    - {default: <required>, has_default_factory: true, name: egress_allowlist}
+    - {default: 'True', name: audit_enabled}
+    - {default: <required>, has_default_factory: true, name: read_roots}
+    - {default: 'True', name: sandbox_enabled}
+    - {default: '30.0', name: sandbox_default_wall_timeout_seconds}
+    - {default: '256.0', name: sandbox_default_memory_peak_mb}
+    - {default: 'False', name: egress_active_enforcement}
+    - {default: 'False', name: credential_tier_enforcement}
+    - {default: 'True', name: audit_persistence_enabled}
+    - {default: '''audit_log.db''', name: audit_persistence_filename}
+    - {default: '90', name: audit_retention_days}
+    - {default: '10000', name: audit_max_entries}
+    - {default: '2.0', name: audit_drain_timeout_s}
+    - {default: '1000', name: audit_write_queue_maxsize}
+    - {default: '3', name: audit_write_max_retries}
+    - {default: '10000', name: audit_spill_maxsize}
+  SelfContradictionRecallConfig:
+    qualname: SelfContradictionRecallConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d8ba55b27ddd32736bab3b313d7841be6abe857bbea382f92193d9ae2e649a56
+    fields:
+    - {default: 'True', name: enabled}
+  SelfDistillationConfig:
+    qualname: SelfDistillationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 65120086c9fa16a4ee2b5084be1a3cb0b31cbfeda4564a7dc0bb95fad16fcdf0
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '24', name: rate_limit_hours}
+    - {default: '30.0', name: llm_timeout_seconds}
+    - {default: '5', name: max_sub_topics}
+    - {default: '''data/agent_probes.db''', name: db_path}
+  SelfImprovementConfig:
+    qualname: SelfImprovementConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: bd5e994169a634451e4928a6010863024e13ec969a3b571ce7dae1003f8c482b
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '3', name: qa_pool_size}
+    - {default: '5', name: iteration_cap}
+    - {default: '2592000.0', name: evolution_half_life_seconds}
+    - {default: '''self_improvement_lessons''', name: evolution_collection_name}
+    - {default: '''src/probos/agents/designed''', name: persistence_root_dir}
+  SelfModConfig:
+    qualname: SelfModConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: cb6014ea13fd9ad2441c541fde195ddbfb03e8398dcb4a025210daaec825d74d
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: 'True', name: require_user_approval}
+    - {default: '1.0', name: probationary_alpha}
+    - {default: '3.0', name: probationary_beta}
+    - {default: '5', name: max_designed_agents}
+    - {default: '60.0', name: sandbox_timeout_seconds}
+    - {default: '[''asyncio'', ''pathlib'', ''json'', ''os'', ''re'', ''datetime'', ''typing'', ''dataclasses'', ''collections'', ''math'', ''hashlib'', ''urllib.parse'', ''base64'', ''csv'', ''io'', ''tempfile'']', name: allowed_imports}
+    - {default: '[''subprocess'', ''shutil\\.rmtree'', ''os\\.remove'', ''os\\.unlink'', ''eval\\s*\\('', ''exec\\s*\\('', ''__import__'', ''open\\s*\\(.*[\''\\"][waxWAX]'', ''socket\\b'', ''ctypes\\b'', ''os\\.system'', ''os\\.popen'', ''os\\.exec'', ''os\\.kill'', ''\\.write_text\\s*\\('', ''\\.write_bytes\\s*\\('', ''\\.unlink\\s*\\('', ''__builtins__'', ''compile\\s*\\('']', name: forbidden_patterns}
+    - {default: 'False', name: research_enabled}
+    - {default: '[''docs.python.org'', ''pypi.org'', ''developer.mozilla.org'', ''learn.microsoft.com'']', name: research_domain_whitelist}
+    - {default: '3', name: research_max_pages}
+    - {default: '2000', name: research_max_content_per_page}
+  SensoriumConfig:
+    qualname: SensoriumConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 230a0bbcc42d105e82985c9acd1b4aec0d4ad1c9857784a62746a272c24c0cfb
+    fields:
+    - {default: 'True', name: enabled}
+    - {accepted_names: [warning_chars, token_budget_warning], default: '10000', name: warning_chars}
+    - {default: '21600.0', name: warning_cooldown_seconds}
+    - {default: '0.9', name: warning_rearm_ratio}
+    - {default: '1.25', name: warning_escalation_ratio}
+    - {default: '5', name: top_contributors}
+  ShipStateSnapshotConfig:
+    qualname: ShipStateSnapshotConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 90e5fff33235778a49ea79b4fe43e387dde0c6a9b611481c3743fd6192a961d2
+    fields:
+    - {default: 'True', name: enabled}
+  SkillRequestConfig:
+    qualname: SkillRequestConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: a33f0789c3e4f265e586222e82d0db4dc5efa54ffa29425f83e58d2946557f8e
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''skill_requests''', name: data_subdir}
+  SkillsMarketplaceConfig:
+    qualname: SkillsMarketplaceConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: ae39ac6ecc1a7de39604e66bb9c49a4b1623e50965e60a378e0a5e11f26ef55d
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''''', name: registry_url}
+    - {default: '10.0', name: timeout_seconds}
+    - {default: '2000000', name: max_bytes}
+    - {default: '100', name: max_results}
+    - {default: '20', name: default_page_size}
+  SlackConfig:
+    qualname: SlackConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 6656aa053b176b91bde23975f1bcfda7b1167c302e3b7ceaa6e8268f031c6cc9
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''''', name: bot_token}
+    - {default: '''''', name: signing_secret}
+    - {default: '[]', name: allowed_channel_ids}
+    - {default: '[]', name: allowed_user_ids}
+    - {default: 'True', name: default_thread_ts}
+    - {default: '[]', name: channels}
+    - {default: '8.0', name: poll_interval_s}
+    - {default: 'True', name: poll_inbound}
+    - {default: '''https://slack.com/api''', name: api_base}
+  SocialVerificationConfig:
+    qualname: SocialVerificationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: c73ceab37fe1164b43a6d4015dc140428d9523be5393d3dedad26dc1bf77e020
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.4', name: corroboration_threshold}
+    - {default: '5', name: corroboration_max_agents}
+    - {default: '0.3', name: corroboration_min_confidence}
+    - {default: 'True', name: cascade_enabled}
+    - {default: '0.3', name: cascade_independence_threshold}
+    - {default: '300.0', name: cascade_cooldown_seconds}
+    - {default: '0.5', name: anomaly_window_discount}
+    - {default: '0.7', name: provenance_version_independence_weight}
+    - {default: 'True', name: provenance_validation_enabled}
+    - {default: 'False', name: expose_episode_content}
+  SoftwareEngineerSpecialistsConfig:
+    qualname: SoftwareEngineerSpecialistsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 0367d2eb4a3ac3885e0e071a83dbd5a41c026d66b79e9a9f9b81020a88e5bb98
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '1', name: pool_size_per_specialty}
+    - {default: <required>, has_default_factory: true, name: model_tier_overrides}
+  SourceTracingConfig:
+    qualname: SourceTracingConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 221ca82d2b148534212fdef0fc6fcc012115ffd594127a27b76658faabaccad2
+    fields:
+    - {default: '3', name: echo_min_chain_length}
+    - {default: '0.4', name: echo_similarity_threshold}
+    - {default: 'True', name: echo_analysis_enabled}
+  SpatialExplorerConfig:
+    qualname: SpatialExplorerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d78e7dd8e2589ba741e99d67639974080fea0ec3730982a98f0d5c89e9873f6f
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '500', name: max_graph_edges}
+    - {default: '200', name: max_graph_nodes}
+    - {default: '''''', name: spatial_layout_path}
+  SpreadingActivationConfig:
+    qualname: SpreadingActivationConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 5ec9f822c154e1b0bdf39c111d37b835b02cff96b217a0498d84bf56064b2d70
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '2', name: max_hops}
+    - {default: '5', name: k_per_hop}
+    - {default: '0.6', name: hop_decay_factor}
+    - {default: '2', name: min_anchor_fields}
+  StepInstructionConfig:
+    qualname: StepInstructionConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: bd8fc70c70db37d697a87678264fa38068c619637a467201cc6a86f2efba65be
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '{''query'': [], ''analyze'': [''observation_guidelines'', ''situation_assessment'', ''when_to_act_vs_observe'', ''memory_anchoring'', ''source_attribution'', ''self_monitoring''], ''compose'': [''communication_style'', ''personality_expression'', ''audience_awareness'', ''ward_room_actions'', ''knowledge_capture'', ''duty_reporting''], ''evaluate'': [''self_monitoring'', ''scope_discipline'', ''communication_style''], ''reflect'': [''self_monitoring'', ''scope_discipline'', ''knowledge_capture'']}', name: step_categories}
+    - {default: '[''identity'', ''chain_of_command'', ''core_directives'', ''encoding_safety'']', name: universal_categories}
+    - {default: 'True', name: log_token_savings}
+  StorageGateConfig:
+    qualname: StorageGateConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: c9c5ca01241c35f0ce6d4f61584a8d2f661d3af11cf64b1ed3561a3d9bf5ee90
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.95', name: duplicate_threshold}
+    - {default: '0.2', name: utility_floor}
+    - {default: '50', name: recent_window}
+    - {default: 'True', name: contradiction_check_enabled}
+  SubTaskConfig:
+    qualname: SubTaskConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 30fac071a93c2178cab3a5678a028eaf42130837e1249ac3a7d1bc42bdd5df5a
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '30000', name: chain_timeout_ms}
+    - {default: '15000', name: step_timeout_ms}
+    - {default: '6', name: max_chain_steps}
+    - {default: '''single_call''', name: fallback_on_timeout}
+    - {default: '4', name: max_concurrent_chains}
+    - {default: 'False', name: nats_publish_enabled}
+    - {default: '16384', name: nats_payload_max_bytes}
+  SystemConfig:
+    qualname: SystemConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 5aad82d776ae6a050e3beb2573e36c9443cc938de2b52f8e99823a37ec32210a
+    fields:
+    - {default: SystemInfo(...), name: system}
+    - {default: PoolConfig(...), name: pools}
+    - {default: MeshConfig(...), name: mesh}
+    - {default: ConsensusConfig(...), name: consensus}
+    - {default: CognitiveConfig(...), name: cognitive}
+    - {default: '30.0', name: health_probe_interval_seconds}
+    - {default: MemoryConfig(...), name: memory}
+    - {default: DreamingConfig(...), name: dreaming}
+    - {default: DreamWMConfig(...), name: dream_wm}
+    - {default: ScalingConfig(...), name: scaling}
+    - {default: FederationConfig(...), name: federation}
+    - {default: SelfModConfig(...), name: self_mod}
+    - {default: DeviceConfig(...), name: device}
+    - {default: <required>, has_default_factory: true, name: os_activity}
+    - {default: <required>, has_default_factory: true, name: grounding}
+    - {default: <required>, has_default_factory: true, name: dependency}
+    - {default: ExecutionConfig(...), name: execution}
+    - {default: HooksConfig(...), name: hooks}
+    - {default: <required>, has_default_factory: true, name: packs}
+    - {default: <required>, has_default_factory: true, name: skills_marketplace}
+    - {default: <required>, has_default_factory: true, name: workstations}
+    - {default: QAConfig(...), name: qa}
+    - {default: KnowledgeConfig(...), name: knowledge}
+    - {default: RecordsConfig(...), name: records}
+    - {default: ArchiveConfig(...), name: archive}
+    - {default: TelemetryConfig(...), name: telemetry}
+    - {default: PostBudgetTelemetryConfig(...), name: post_budget_telemetry}
+    - {default: ConfidenceConfig(...), name: confidence}
+    - {default: LintConfig(...), name: lint}
+    - {default: QualityTriggerConfig(...), name: quality_trigger}
+    - {default: QualityRouterConfig(...), name: quality_router}
+    - {default: OnboardingConfig(...), name: onboarding}
+    - {default: HolodeckBirthChamberConfig(...), name: holodeck_birth_chamber}
+    - {default: HolodeckScenarioConfig(...), name: holodeck_scenarios}
+    - {default: HolodeckTeamSimulationConfig(...), name: team_simulations}
+    - {default: SkillRequestConfig(...), name: skill_requests}
+    - {default: NamingConfig(...), name: naming}
+    - {default: RuntimeOverridesConfig(...), name: runtime_overrides}
+    - {default: UtilityAgentsConfig(...), name: utility_agents}
+    - {default: <required>, has_default_factory: true, name: swe_specialists}
+    - {default: <required>, has_default_factory: true, name: native_swe_harness}
+    - {default: <required>, has_default_factory: true, name: agentic_loop}
+    - {default: WardRoomConfig(...), name: ward_room}
+    - {default: GroupChatConfig(...), name: group_chat}
+    - {default: VisitingOfficersConfig(...), name: visiting_officers}
+    - {default: WorkflowCronTriggerConfig(...), name: workflow_cron}
+    - {default: QueryPlannerConfig(...), name: query_planner}
+    - {default: AssignmentConfig(...), name: assignments}
+    - {default: BridgeAlertConfig(...), name: bridge_alerts}
+    - {default: FirewallConfig(...), name: firewall}
+    - {default: SecurityConfig(...), name: security}
+    - {default: <required>, has_default_factory: true, name: auth}
+    - {default: EmergentDetectorConfig(...), name: emergent_detector}
+    - {default: <required>, has_default_factory: true, name: emergence_collector}
+    - {default: NoveltyGateConfig(...), name: novelty_gate}
+    - {default: EarnedAgencyConfig(...), name: earned_agency}
+    - {default: <required>, has_default_factory: true, name: duty_schedule}
+    - {default: ProactiveCognitiveConfig(...), name: proactive_cognitive}
+    - {default: <required>, has_default_factory: true, name: proactive_scan}
+    - {default: PersistentTasksConfig(...), name: persistent_tasks}
+    - {default: ChannelsConfig(...), name: channels}
+    - {default: <required>, has_default_factory: true, name: m365}
+    - {default: <required>, has_default_factory: true, name: office_skills}
+    - {default: MedicalConfig(...), name: medical}
+    - {default: CounselorConfig(...), name: counselor}
+    - {default: CircuitBreakerConfig(...), name: circuit_breaker}
+    - {default: TraitAdaptiveConfig(...), name: trait_adaptive}
+    - {default: ConcurrencyConfig(...), name: concurrency}
+    - {default: TrustDampeningConfig(...), name: trust_dampening}
+    - {default: EmergenceMetricsConfig(...), name: emergence_metrics}
+    - {default: EmergentLeadershipConfig(...), name: emergent_leadership}
+    - {default: OrdersConfig(...), name: orders}
+    - {default: ValidationFrameworkConfig(...), name: validation_framework}
+    - {default: PreFlightConfig(...), name: pre_flight}
+    - {default: EngineeringConfig(...), name: engineering}
+    - {default: DegradationConfig(...), name: degradation}
+    - {default: InfodynamicConfig(...), name: infodynamic}
+    - {default: InfrastructureConfig(...), name: infrastructure}
+    - {default: SecurityInfraConfig(...), name: security_infra}
+    - {default: GroundTruthConfig(...), name: ground_truth}
+    - {default: OperationsConfig(...), name: operations}
+    - {default: ModelRoutingConfig(...), name: model_routing}
+    - {default: ReadyRoomConfig(...), name: ready_room}
+    - {default: DepartmentProfilesConfig(...), name: dept_profiles}
+    - {default: EPSConfig(...), name: eps}
+    - {default: MCPConfig(...), name: mcp}
+    - {default: <required>, has_default_factory: true, name: mcp_app_host}
+    - {default: <required>, has_default_factory: true, name: browser_tool}
+    - {default: <required>, has_default_factory: true, name: avatars}
+    - {default: <required>, has_default_factory: true, name: avatar_telemetry}
+    - {default: <required>, has_default_factory: true, name: dm_sanity_gate}
+    - {default: <required>, has_default_factory: true, name: dm_targeted_lookup}
+    - {default: <required>, has_default_factory: true, name: dm_deliberate}
+    - {default: <required>, has_default_factory: true, name: dm_agentic}
+    - {default: <required>, has_default_factory: true, name: write_claim_guard}
+    - {default: <required>, has_default_factory: true, name: self_contradiction_recall}
+    - {default: <required>, has_default_factory: true, name: agentic_tools}
+    - {default: <required>, has_default_factory: true, name: repair}
+    - {default: <required>, has_default_factory: true, name: approval_inbox}
+    - {default: <required>, has_default_factory: true, name: dm_mesh_synthesis}
+    - {default: <required>, has_default_factory: true, name: attachments}
+    - {default: <required>, has_default_factory: true, name: cloud_pickers}
+    - {default: <required>, has_default_factory: true, name: lipsync}
+    - {default: <required>, has_default_factory: true, name: tts}
+    - {default: <required>, has_default_factory: true, name: spatial_explorer}
+    - {default: <required>, has_default_factory: true, name: knowledge_browser}
+    - {default: <required>, has_default_factory: true, name: extensions}
+    - {default: <required>, has_default_factory: true, name: observability_bridge}
+    - {default: <required>, has_default_factory: true, name: threshold_alerts}
+    - {default: <required>, has_default_factory: true, name: ward_room_hebbian}
+    - {default: <required>, has_default_factory: true, name: perception}
+    - {default: <required>, has_default_factory: true, name: wake_word}
+    - {default: <required>, has_default_factory: true, name: engineering_sensors}
+    - {default: <required>, has_default_factory: true, name: learned_shortcuts}
+    - {default: <required>, has_default_factory: true, name: thread_priority}
+    - {default: <required>, has_default_factory: true, name: deliberation}
+    - {default: BehavioralMetricsConfig(...), name: behavioral_metrics}
+    - {default: EventLogConfig(...), name: event_log}
+    - {default: CognitiveJournalConfig(...), name: cognitive_journal}
+    - {default: <required>, has_default_factory: true, name: knowledge_edges}
+    - {default: <required>, has_default_factory: true, name: knowledge_edge_classification}
+    - {default: <required>, has_default_factory: true, name: edge_backfill}
+    - {default: CommunicationsConfig(...), name: communications}
+    - {default: WorkforceConfig(...), name: workforce}
+    - {default: TemporalConfig(...), name: temporal}
+    - {default: QualificationConfig(...), name: qualification}
+    - {default: OrientationConfig(...), name: orientation}
+    - {default: SocialVerificationConfig(...), name: social_verification}
+    - {default: AnomalyWindowConfig(...), name: anomaly_window}
+    - {default: WorkingMemoryConfig(...), name: working_memory}
+    - {default: PredictiveBranchingConfig(...), name: predictive_branching}
+    - {default: SelfImprovementConfig(...), name: self_improvement}
+    - {default: MemoryBudgetConfig(...), name: memory_budget}
+    - {default: MetabolismConfig(...), name: metabolism}
+    - {default: PinnedKnowledgeConfig(...), name: pinned_knowledge}
+    - {default: TemporalValidityConfig(...), name: temporal_validity}
+    - {default: TaskContextConfig(...), name: task_context}
+    - {default: QuestionAdaptiveConfig(...), name: question_adaptive}
+    - {default: StorageGateConfig(...), name: storage_gate}
+    - {default: SalienceConfig(...), name: salience}
+    - {default: SensoriumConfig(...), name: sensorium}
+    - {default: SourceTracingConfig(...), name: source_tracing}
+    - {default: ObservableStateConfig(...), name: observable_state}
+    - {default: LLMRateConfig(...), name: llm_rate}
+    - {default: SubTaskConfig(...), name: sub_task}
+    - {default: BootCampConfig(...), name: boot_camp}
+    - {default: <required>, has_default_factory: true, name: ship_state_snapshot}
+    - {default: TieredTrustConfig(...), name: tiered_trust}
+    - {default: ChainTuningConfig(...), name: chain_tuning}
+    - {default: ChainOptimizerConfig(...), name: chain_optimizer}
+    - {default: ChainOptimizerCounselorConfig(...), name: chain_optimizer_counselor}
+    - {default: CausalReasoningConfig(...), name: causal_reasoning}
+    - {default: <required>, has_default_factory: true, name: diagnostic_context}
+    - {default: <required>, has_default_factory: true, name: nl_graph_query}
+    - {default: <required>, has_default_factory: true, name: clinical_telemetry}
+    - {default: <required>, has_default_factory: true, name: consultation_workspaces}
+    - {default: <required>, has_default_factory: true, name: consultation_delivery}
+    - {default: <required>, has_default_factory: true, name: consultation_dispatch}
+    - {default: <required>, has_default_factory: true, name: capability_triage}
+    - {default: <required>, has_default_factory: true, name: agentic_dispatch}
+    - {default: <required>, has_default_factory: true, name: hybrid_dispatch}
+    - {default: <required>, has_default_factory: true, name: work_board_reconciler}
+    - {default: <required>, has_default_factory: true, name: process_chain_registry}
+    - {default: KnowledgeLoadingConfig(...), name: knowledge_loading}
+    - {default: StepInstructionConfig(...), name: step_instruction}
+    - {default: AgentTierConfig(...), name: agent_tiers}
+    - {default: OperationalStatusConfig(...), name: operational_status}
+    - {default: RiskTierConfig(...), name: risk_tiers}
+    - {default: BridgeConfig(...), name: procedural_bridge}
+    - {default: NatsConfig(...), name: nats}
+    - {default: BillConfig(...), name: bill}
+    - {default: ConsultationConfig(...), name: consultation}
+    - {default: ExpertiseConfig(...), name: expertise}
+    - {default: <required>, has_default_factory: true, name: creative_expression}
+    - {default: <required>, has_default_factory: true, name: classification_gate}
+    - {default: <required>, has_default_factory: true, name: autonomy_boundaries}
+    - {default: <required>, has_default_factory: true, name: crew_development}
+    - {default: <required>, has_default_factory: true, name: boot_camp_phase}
+    - {default: <required>, has_default_factory: true, name: discovery_learning}
+    - {default: <required>, has_default_factory: true, name: scoped_cognition}
+    - {default: <required>, has_default_factory: true, name: workspace_ontology}
+    - {default: <required>, has_default_factory: true, name: gap_pipeline_extensions}
+    - {default: SpreadingActivationConfig(...), name: spreading_activation}
+    - {default: ThoughtStoreConfig(...), name: thought_store}
+    - {default: RetroactiveConfig(...), name: retroactive}
+    - {default: DistillationConfig(...), name: distillation}
+    - {default: ReconsolidationConfig(...), name: reconsolidation}
+    - {default: <required>, has_default_factory: true, name: naval_organization}
+    - {default: SelfDistillationConfig(...), name: self_distillation}
+    - {default: <required>, has_default_factory: true, name: spc}
+    - {default: <required>, has_default_factory: true, name: desktop}
+    - {default: <required>, has_default_factory: true, name: discovery}
+  SystemInfo:
+    qualname: SystemInfo
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: ea745c2758ece4a25b87e9020b7be3b7a6f5ab90d8bc09cc859896376b710b0a
+    fields:
+    - {default: '''ProbOS''', name: name}
+    - {default: '''0.1.0''', name: version}
+    - {default: '''INFO''', name: log_level}
+  TTSConfig:
+    qualname: TTSConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: ad694b104fd603a3f87564fbf42f62c3fb9f158ed1dc36a0d9996feb43b41728
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''browser''', name: backend}
+    - {default: '''tools/piper/piper''', name: binary_path}
+    - {default: '''en_US-amy-medium''', name: voice_model}
+    - {default: '''tools/piper/voices''', name: voices_dir}
+    - {default: '10.0', name: timeout_seconds}
+    - {default: '0.85', name: noise_scale}
+    - {default: '1.0', name: length_scale}
+    - {default: '1.0', name: noise_w}
+    - {default: '0.35', name: sentence_silence}
+    - {default: 'False', name: sentence_pipelining_enabled}
+  TaskContextConfig:
+    qualname: TaskContextConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 4fa19d59a6bb59096db846bd1376e6ee02f1d6e9141b9fd674e8d01b4c316f7b
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '''config/task_orders''', name: orders_dir}
+    - {default: '500', name: max_tokens}
+  TelemetryConfig:
+    qualname: TelemetryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 0c422038b633ea1ed2ff85f30e114c4f622346854e3bfdf4bb3ff7d4e02fafa3
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '60.0', name: report_interval_seconds}
+    - {default: '1000', name: max_samples_per_bucket}
+  TemporalConfig:
+    qualname: TemporalConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: e5fc4ace51588e39d616ae5ad29762e6516f7bf89624c58377f4556f9368e577
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: 'True', name: include_birth_time}
+    - {default: 'True', name: include_system_uptime}
+    - {default: 'True', name: include_last_action}
+    - {default: 'True', name: include_post_count}
+    - {default: '''''', name: captain_timezone}
+    - {default: 'True', name: include_episode_timestamps}
+  TemporalValidityConfig:
+    qualname: TemporalValidityConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 927be2f10588c66b802cb6078f1e5ab41c49975ccd3c3831097ad2cf3400e68d
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.0', name: default_validity_hours}
+  ThoughtStoreConfig:
+    qualname: ThoughtStoreConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: e8cd6fc00e5cb10b5e6cdc4d4f623bab132513c29acf62753dc23b64c8a73c54
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '5', name: min_importance}
+    - {default: '3', name: max_thoughts_per_cycle}
+  ThreadPriorityConfig:
+    qualname: ThreadPriorityConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 5876bf3915d568a4175c0cf48dae4c827ff2a0da599792db4c3513b5a8da9e88
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.3', name: weight_captain}
+    - {default: '0.2', name: weight_unresolved}
+    - {default: '0.15', name: weight_cross_department}
+    - {default: '0.2', name: weight_recency}
+    - {default: '0.15', name: weight_endorsement}
+    - {default: '''Captain''', name: captain_callsign}
+  ThresholdAlertConfig:
+    qualname: ThresholdAlertConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 29966f022a95fa85fe7e7194cf7390f9fda511acc3953786c475d4c961165c81
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '0.9', name: pool_saturation_floor}
+    - {default: '''degraded''', name: degradation_min_severity}
+    - {default: '20', name: attention_queue_depth}
+    - {default: '300.0', name: dedup_window_seconds}
+  TieredTrustConfig:
+    qualname: TieredTrustConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 23256221818486e38e8750283e6a8d092dc4ac24e5bba189742b35de76b5cb8a
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '4.5', name: bridge_alpha}
+    - {default: '1.0', name: bridge_beta}
+    - {default: '3.0', name: chief_alpha}
+    - {default: '1.0', name: chief_beta}
+    - {default: '[''counselor'', ''yeoman'']', name: bridge_pools}
+    - {default: '[''Meridian'', ''Yeo'']', name: bridge_callsigns}
+    - {default: '[''Bones'', ''LaForge'', ''Number One'', ''Worf'', "O''Brien"]', name: chief_callsigns}
+  TraitAdaptiveConfig:
+    qualname: TraitAdaptiveConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: cdfa495a116714fa894804b8cea6fdf148f89699eb69176b2085684583a24c98
+    fields:
+    - {default: 'True', name: enabled}
+  TrustDampeningConfig:
+    qualname: TrustDampeningConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: ec2809df23c931b18657a2c24414c351a7f4ef45f03da7eeb64a2828c2d65539
+    fields:
+    - {default: '300.0', name: dampening_window_seconds}
+    - {default: '(1.0, 0.75, 0.5, 0.25)', name: dampening_geometric_factors}
+    - {default: '0.25', name: dampening_floor}
+    - {default: '0.05', name: hard_trust_floor}
+    - {default: '3', name: cascade_agent_threshold}
+    - {default: '2', name: cascade_department_threshold}
+    - {default: '0.15', name: cascade_delta_threshold}
+    - {default: '300.0', name: cascade_window_seconds}
+    - {default: '0.5', name: cascade_global_dampening}
+    - {default: '600.0', name: cascade_cooldown_seconds}
+    - {default: '20.0', name: cold_start_observation_threshold}
+    - {default: '0.5', name: cold_start_dampening_floor}
+  UtilityAgentsConfig:
+    qualname: UtilityAgentsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 5c09ca84ac49d1ee0b8a4279afd80bad057335d551c1a24dd57cfeb28fe5b601
+    fields:
+    - {default: 'True', name: enabled}
+  ValidationFrameworkConfig:
+    qualname: ValidationFrameworkConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: d98a0a8fd14967f6c16701a390a7145f7c9eaa51a674a7ab29266b641aaf64b6
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.85', name: metadata_threshold}
+    - {default: '0.2', name: min_confidence_delta}
+  VisitingOfficersConfig:
+    qualname: VisitingOfficersConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 0629438a33ac13428e96545ee84a57834e015e400b116872cca571625751087f
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '3600.0', name: session_ttl_seconds}
+    - {default: '60.0', name: sweep_interval_seconds}
+    - {default: <required>, has_default_factory: true, name: default_capabilities}
+  WakeWordConfig:
+    qualname: WakeWordConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 32e44ed5cc7d85ceb777a019eb6e701a8592812034c6dce01482b67df4899b19
+    fields:
+    - {default: 'False', name: wake_word_trainer_enabled}
+    - {default: '''captain.onnx''', name: custom_model_filename}
+    - {default: 'False', name: retain_training_samples}
+    - {default: '200', name: training_samples_max_count}
+    - {default: '1048576', name: training_audio_max_bytes}
+  WardRoomConfig:
+    qualname: WardRoomConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: ef6f941c88ea50a5584913d6999b12398a04f099d71a357d0ee9a7d4b2be11aa
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '5', name: max_agent_rounds}
+    - {default: '45', name: agent_cooldown_seconds}
+    - {default: '50', name: max_thread_posts}
+    - {default: '3', name: default_discuss_responder_cap}
+    - {default: '7', name: retention_days}
+    - {default: '30', name: retention_days_endorsed}
+    - {default: '0', name: retention_days_captain}
+    - {default: 'True', name: archive_enabled}
+    - {default: '86400.0', name: prune_interval_seconds}
+    - {default: '15', name: dm_exchange_limit}
+    - {default: '0.6', name: dm_similarity_threshold}
+    - {default: '10', name: router_concurrency_limit}
+    - {default: '200', name: event_coalesce_ms}
+    - {default: '6', name: dm_response_budget}
+    - {default: '600.0', name: dm_response_window_seconds}
+    - {default: '8', name: dm_pair_exchange_budget}
+  WardRoomHebbianConfig:
+    qualname: WardRoomHebbianConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 3a1a8e55695a694512f31f2b2e0b3f68a813e30292577e827513ca54aadc077b
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '0.1', name: learning_rate}
+    - {default: '0.99', name: decay_factor}
+  WebhookConfig:
+    qualname: WebhookConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 764c786cfd53b5b401492fb8dbf252fbf2a861879cd0e795a6b91f495a5758bc
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''''', name: shared_secret}
+    - {default: '[]', name: allowed_channels}
+  WorkBoardReconcilerConfig:
+    qualname: WorkBoardReconcilerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 791f2f1891694fa4fbf56e2d4b62fac8465958206760f1ea073197924cab3861
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '300', name: interval_seconds}
+    - {default: 'True', name: warm_boot}
+    - {default: '200', name: scan_limit}
+    - {default: '3', name: max_reconcile_attempts}
+    - {default: '600', name: reconcile_backoff_seconds}
+    - {default: '30', name: min_item_age_seconds}
+    - {default: 'False', name: reactive_reclaim}
+    - {default: '0', name: stall_timeout_seconds}
+    - {default: '14400', name: strand_timeout_seconds}
+  WorkflowCronTriggerConfig:
+    qualname: WorkflowCronTriggerConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 1552cdcbd86cf0ed626d4b8582dc1078d9df8687f06fd51c53a5efd9ad0d9415
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''''', name: db_path}
+    - {default: '1.0', name: tick_interval_seconds}
+    - {default: <required>, has_default_factory: true, name: initial_triggers}
+  WorkforceConfig:
+    qualname: WorkforceConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: e47e375315fb5aefd857dbfdae6b4b3a0ddbac6e585623f66d2ed4d41c950601
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '10.0', name: tick_interval_seconds}
+    - {default: '1', name: default_capacity}
+    - {default: '[]', name: custom_work_types}
+    - {default: '[]', name: custom_templates}
+    - {default: '''config/work_templates.yaml''', name: template_config_path}
+  WorkingMemoryConfig:
+    qualname: WorkingMemoryConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 33d77f02fdb9e2da454dad49a4cd8cca374a7b8b2c7b85987c8d63123dd439f2
+    fields:
+    - {default: '3000', name: token_budget}
+    - {default: '10', name: max_recent_actions}
+    - {default: '5', name: max_recent_observations}
+    - {default: '5', name: max_recent_conversations}
+    - {default: '10', name: max_events}
+    - {default: '1500', name: proactive_budget}
+    - {default: '24.0', name: stale_threshold_hours}
+    - {default: '1800.0', name: conclusion_ttl_seconds}
+    - {default: '20', name: max_conclusions}
+    - {default: '600', name: duty_budget}
+    - {default: '800', name: social_budget}
+    - {default: '800', name: ship_budget}
+    - {default: '800', name: engagement_budget}
+  WorkspaceOntologyConfig:
+    qualname: WorkspaceOntologyConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 236b4eb800aff7e3549f59cd87fc8fe19c51229b10914f1d8ee839b521bc44c6
+    fields:
+    - {default: 'True', name: enabled}
+    - {default: '1000', name: max_terms}
+  WorkstationsConfig:
+    qualname: WorkstationsConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: f72cf8d8fa3d561126f7bb4f1dd82e7b2d2213c308be43a286a4aee12d58aa7e
+    fields:
+    - {default: 'False', name: enabled}
+  WriteClaimGuardConfig:
+    qualname: WriteClaimGuardConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: f52a9886550b551b13497f79179c9135be1b9f16bf00c682f44de468ac229b51
+    fields:
+    - {default: 'True', name: enabled}
