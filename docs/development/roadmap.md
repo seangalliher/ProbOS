@@ -294,6 +294,27 @@ for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 
 ### Backlog (queued, awaiting wave-plan slot)
 
+#### ProbOS Self-Maintenance (AD-1299)
+
+**Planned, not implemented or activated.** A Utility-tier Engineering Maintenance
+Agent composes the existing fault/RepairBrief, Architect, Builder, QA, Red Team,
+trust, episodic, and self-modification systems. Independent Supervised Worker
+governance is reached through `SupervisedCampaignAdapter` v1; either the ProbOS
+coding harness or GitHub Copilot/GHCP executes the same campaign contract.
+Backend choice cannot change identity, authority, review, evidence, completion,
+promotion, or rollback. Repair, maintenance, and enhancement grants are separate.
+Use isolated worktrees and shadow validation, then independently approved
+immutable promotion, external health checks, and rollback; never patch the
+active runtime in place. Full architecture and acceptance slices:
+[AD-1299](self-maintenance-architecture.md). One epic; existing owners retain
+their scope and no campaign is started by this entry.
+
+| AD | Title | Issue |
+|----|-------|-------|
+| AD-1299 | Governed self-maintenance: Utility agent and backend-neutral campaigns | [#1352](https://github.com/seangalliher/ProbOS/issues/1352) |
+
+#### Other Backlog Items
+
 **User Experience & Adoption (Phase 35 + Phase 24) — install, onboarding, channels, getting-started stability (2026-07-23 decomposition):**
 
 | AD | Title | Issue | Priority |

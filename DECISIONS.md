@@ -8883,3 +8883,100 @@ Closes #868. The UI half of the clinical-confidential trio (#866/AD-903 read sur
 **What this does NOT change.** No consumer of `OS_ACTIVITY` in OSS (nothing subscribes; inert until a separate overlay consumer subscribes — no intelligence/suggestion layer added here); no `config/system.yaml` edit; no file read/write; no `file_path` field (forward-only; `get-windows` does not provide the edited-document path); no packaging/installer (the deferred AD-759b must `asar`-unpack `get-windows`/`koffi` for a packaged app — flagged forward, no artifact produced today); no new router registration; no `/api/config` change.
 
 **Tests + gates.** Backend `tests/test_ad1054_os_activity_sensor.py` (**13**, BF-287 real fixtures — real `SystemConfig` (flip the consent flag), the real `OSActivityEvent` (real `BaseEvent.to_dict`), a thin recording `emit_event` sink, FastAPI `TestClient` via `dependency_overrides[get_runtime]`): config default-OFF + bounds (ge=1/le=60); mounted on `SystemConfig`; `EventType.OS_ACTIVITY.value`; `OSActivityEvent.to_dict()` shape + no keystroke/screen/clipboard field; `GET` OFF/ON; `POST` OFF → `{ingested:False, reason:disabled}` AND no event captured; `POST` ON → `{ingested:True}` + exactly one `OSActivityEvent` with mapped fields; `ts`-omitted → server fallback `ts > 0`; bad payload (missing/empty/over-length/wrong-type) → 422 + no event; emit-raises → honest-degrade `{ingested:False, reason:emit_error}` HTTP-200; default round-trips OFF. Desktop `desktop/src/main/osActivityWatcher.test.ts` (**9**, vitest DI + `vi.useFakeTimers()` + `vi.runOnlyPendingTimersAsync()`): `mapActiveWindowToPayload` well-formed/minimal/bad-shape; `shouldEmit`; consent OFF → no probe + no POST; consent ON → probe + POST the mapped JSON; change-detection (same window → one POST, changed → a 2nd); honest-degrade (probe throws / returns undefined → no POST, no throw); and the lazy-import gate — a hoisted `vi.mock("get-windows")` import spy proves `get-windows` is NEVER imported when consent is off. **Gates:** backend isolated `pytest tests/test_ad1054_os_activity_sensor.py -q -n 0` → **13 passed**; backend regression `test_config.py` + `test_events.py` + `test_ad1053_actionable_notifications.py` + `test_ad637d_system_events_nats.py` → **56 passed, 0 regressions**; desktop focused watcher vitest **9 passed**; full desktop vitest **85 passed** (was 76, +9, 0 regressions); `npm install` succeeded (resolved `get-windows`/`koffi`); `npm run build` (electron-vite) **clean** (main bundle 41.22 kB; `get-windows` externalized); `get_errors` clean on all 8 touched files. AD-1054 gates a commercial overlay consumer (out of scope here). `config/system.yaml` UNTOUCHED. UNCOMMITTED. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+---
+
+### AD-1299 (2026-09-06) - Governed ProbOS self-maintenance
+
+**Status: planned, not implemented.** One bounded implementation epic:
+[#1352](https://github.com/seangalliher/ProbOS/issues/1352). Full contract and
+acceptance slices: [self-maintenance architecture](docs/development/self-maintenance-architecture.md).
+Roadmap: [AD-1299](docs/development/roadmap.md#probos-self-maintenance-ad-1299).
+This decision records architecture only; it starts no Supervised Worker campaign,
+grants no execution authority, and changes no runtime or campaign state.
+
+**Allocation evidence.** The first operation was `scripts/ad_ceiling.py`, repeated
+before issue creation. All three authoritative sources succeeded: git log
+subjects across all refs reached AD-1298 (1,976 AD references), GitHub titles in
+all states reached AD-1291 (1,351 issues, 993 AD-titled, untruncated below 4,000),
+and 61 `prompts/ad-*.md` filenames reached AD-1298. **Verified prior ceiling:
+AD-1298; next sequential allocation: AD-1299.** S1-S4 are slices of this decision,
+not additional AD numbers. Open-and-closed duplicate searches and their exact
+results are recorded in the architecture and epic.
+
+**D1 - A Utility cognitive role, not another engineering stack.** A proposed
+instructions-first `EngineeringMaintenanceAgent` composes the existing
+perceive -> decide -> act -> report lifecycle with fault diagnosis, Architect,
+Builder, System QA, Red Team, raw-Beta trust, episodic learning, and the
+self-modification validation/sandbox/probation/monitoring chain. Preserve the
+Domain-tier Engineering officer and existing Architect/Builder roles. AD-1172
+already supplies a harness-neutral RepairBrief and a target-choice approval
+surface; reuse those rather than creating another dispatcher or fault database.
+The closed [#1095](https://github.com/seangalliher/ProbOS/issues/1095) remains the
+completed fault/repair foundation, not an unfinished part of this epic.
+
+**D2 - External root of trust.** Supervised Worker remains independent and the
+sole durable campaign-state owner and authority for admission, review, evidence,
+reconciliation, and completion. The proposed versioned `SupervisedCampaignAdapter`
+(`supervised-campaign-adapter/v1`) uses supported authenticated operations and
+validated role handoffs, not copied Worker code or direct `.supervised-worker/`
+writes. Negotiate Worker/protocol/handoff versions and capabilities explicitly;
+incompatibility blocks mutation while leaving diagnosis and proposals available.
+Protect Worker installation, state, policy, and credentials from the candidate's
+process/filesystem authority. A worktree under unrestricted shared credentials
+does not establish root-of-trust independence.
+
+**D3 - Backend choice changes execution, never governance.** The Worker may
+execute through either the ProbOS coding harness or GitHub Copilot/GHCP. Both
+consume the same admitted contract; neither can change campaign identity,
+authority, review, evidence, completion, promotion, or rollback semantics. Bind
+repository/base/candidate identities, accepted workflow/policy/contract hashes,
+scoped grants, budgets, producer provenance, and evidence references. Backend
+identity belongs to an attempt. Reconcile unknown outcomes and revoke the old
+attempt's write authority before switching; retain operation identity and
+history, and never replay an uncertain side effect as automatic fallback.
+
+**D4 - Repair, maintenance, and enhancement have distinct grants.** Repair
+restores approved behavior against a reproduced defect; maintenance preserves
+behavior through declared upkeep and compatibility criteria; enhancement changes
+behavior or architecture under explicit Captain-approved scope/AD. No grant
+implies another. Expiry, revocation, scope drift, mixed/unknown effects, or
+protected governance/deployment/data changes require explicit authorization.
+Trust and consensus remain controls, never a replacement for external authority.
+Learned state is advisory and cannot modify grants, policy, or required evidence.
+
+**D5 - Never patch the active runtime in place.** Use an isolated worktree and
+enforced build/test environment, then a separate shadow runtime with candidate
+import origins, isolated data and controlled effects. CodeValidator must run
+before generated/restored agent import; its agent schema is not a general core
+code validator. Retain repository gates, System QA, Red Team, and independent
+review. The existing Builder's soft review and a repair retry that merely fails
+with a different signature are insufficient. Worker's formal pre-review still
+requires its focused/broad evidence and issued review attempt; no informal
+review is relabeled as a receipt. Reviewed index, tested committed tree, and
+promoted artifact hashes must identify the same frozen candidate.
+
+**D6 - Promotion and recovery outlive ProbOS.** An external release controller
+uses Worker-verified authorization to activate an immutable, content-addressed
+release with an expected-release/generation check and controlled drain/restart
+or atomic selection. Only external health observation of that release establishes
+success. Retain the prior known-good release and preauthorized rollback; verify
+restored health and reconcile interrupted promotion/rollback before retry.
+Code rollback is not data rollback. Ordinary v1 admission excludes irreversible
+migrations; data-affecting work requires an approved compatibility/restore proof.
+ProbOS and either coding backend lack direct promotion credentials, and an
+unhealthy ProbOS cannot prevent Worker recovery. Record linked episodes and
+idempotent raw `(alpha, beta)` updates for verified attempted outcomes; blocked
+or unattempted work earns no success credit.
+
+**Bounded delivery and acceptance.** One epic carries four slices: adapter
+contract/conformance, Utility agent/admission, isolated engineering, and immutable
+release/recovery. Both real execution backends must pass the same seeded-defect
+end-to-end milestone and denial/tamper/staleness/unknown-outcome/health/rollback
+cases. A fixture must prove it reached the boundary under test. Existing
+[#1324](https://github.com/seangalliher/ProbOS/issues/1324) retains platform-maturity
+ownership; this link does not inherit its execution delegation. No new coding
+loop, LLM client, campaign engine, central cognitive dispatcher, tracker, fault
+store, runtime hot patcher, or governance self-editor is authorized. Future
+implementation must comply with the Engineering Principles in
+`.github/copilot-instructions.md`.
