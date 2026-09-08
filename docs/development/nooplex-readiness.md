@@ -40,8 +40,13 @@ Technical readiness belongs in the OSS repository because it describes how the p
 |---|---|---|---|---|
 | A | Dependable Cognitive Mesh | `planned` | AD-1270 / #1324 | “ProbOS is an alpha implementation of a governed Cognitive Mesh.” |
 | B | Secure Multi-Mesh | `planned` | AD-1196–1198 / #1140 | “ProbOS has an experimental federation transport.” |
-| C | Nooplex Core Fabric | `not-started` | No active owner | “ProbOS provides local foundations for a future Nooplex Core.” |
-| D | Emergence Research | `research` | No active complete owner | “ProbOS is an experimental platform for testing the Nooplex hypothesis.” |
+| C | Nooplex Core Fabric | `not-started` | AD-1303 / #1356 bounded pilot planning; AD-1304 / #1357 conformance | “ProbOS provides local foundations for a future Nooplex Core.” |
+| D | Emergence Research | `research` | #1139 staged research planning; complete evidence program pending | “ProbOS is an experimental platform for testing the Nooplex hypothesis.” |
+
+**2026-09-07 planning update:** the Captain requested roadmap/AD/issue follow-through.
+[The planning record](nooplex-roadmap-follow-through.md) assigns bounded owners,
+not implementation admission or passing evidence. Readiness statuses and permitted
+claims above remain unchanged; no tier has advanced through document edits.
 
 ### Tier A — Dependable Cognitive Mesh
 
@@ -98,7 +103,14 @@ Use “federated ProbOS cluster” or “multi-mesh substrate” before this gat
 
 Tier C implements the paper's Core Fabric rather than only forwarding intents between nodes.
 
-**Owner status:** No active integrated owner. Local ontology, knowledge graph, memory, trust, and federation components are prerequisites, not substitutes for this tier.
+**Owner status:** [AD-1303 / #1356](https://github.com/seangalliher/ProbOS/issues/1356)
+owns a planned, bounded human-claim -> cross-mesh reuse -> correction pilot;
+[AD-1304 / #1357](https://github.com/seangalliher/ProbOS/issues/1357) owns its
+independent-peer conformance and sovereign-exit evidence. Human claims retain
+AD-1199/#1136; local derived-knowledge reassessment is AD-1302/#1355. Neither the
+pilot nor the local ontology, graph, memory and trust prerequisites substitute
+for the full required architecture below. Broader Core Fabric work remains
+unscheduled until bounded follow-on decisions are admitted.
 
 **Required architecture**
 
@@ -125,7 +137,9 @@ Tier D tests the paper's falsifiable research hypothesis. It is not a release mi
 
 **Required research program**
 
-- Re-establish the objective of retired AD-1188 under a new evaluation owner.
+- Use the refreshed [#1139](https://github.com/seangalliher/ProbOS/issues/1139)
+	as the staged cooperation-research planning owner. AD-1188/#1125 remains retired;
+	AD-1231's hybrid-coordination decision is not reopened.
 - Compare the full system, independent-mesh ensemble, and predeclared ablations under identical models, tasks, budgets, and evidence policies.
 - Measure cross-domain synthesis against an ensemble baseline.
 - Replace or clearly separate vessel-local collaboration proxies from the paper's cross-mesh $TC_N$ measure.
@@ -155,7 +169,7 @@ These do not form a fifth tier. They supply evidence required by more than one t
 |---|---|---|
 | Supported configuration | AD-1185 / #1121 | Defines what is actually supported |
 | Ship Trials | AD-1186 / #1123 | Release evidence for Tier A and later tiers |
-| Orchestration ablation | AD-1188 retired | Needs a new owner before Tier D experiments |
+| Cooperation research | #1139; AD-1188 remains retired | Local and staged cross-mesh hypotheses, baselines and claim discipline |
 | Event persistence | AD-1195 / #1132 | Defines what historical claims event storage can answer |
 | Trace correlation | AD-1152 / #1079 | Connects ingress, reasoning, tools, artifacts, and outcomes |
 | Agentic risk/cost bounds | AD-1208 / #1154 | Begins resource governance for individual turns |
@@ -163,16 +177,21 @@ These do not form a fifth tier. They supply evidence required by more than one t
 | Fleet policy | AD-703 / #479 | Tier B/C policy propagation; conflict semantics remain required |
 | Store lifecycle/recovery | AD-1256, AD-1265, AD-1266 | Tier A durability and Tier C storage foundation |
 | Platform maturity | AD-1270 / #1324 | Tier A evidence and maintainability |
+| Goal validity and external effects | AD-1300 / #1353, AD-1301 / #1354 | Contracts before broader unattended consequential missions |
+| Human claims and derived reassessment | AD-1199 / #1136, AD-1302 / #1355 | Knowledge contribution, correction and enrolled downstream consumers |
+| Core Fabric pilot and peer conformance | AD-1303 / #1356, AD-1304 / #1357 | Bounded Tier C experiment, not full-tier completion |
 
-## Currently Unowned Programs
+## Remaining Program Gaps
 
-Do not file one issue per bullet. When work is scheduled, create one bounded epic per program and keep independent findings as checklist items.
+Do not file one issue per bullet. Reuse the bounded planning owners below; when
+additional work is scheduled, keep independent findings actionable without
+duplicating existing epics. Planning ownership is not evidence of implementation.
 
-1. **Core Fabric:** global ontology/schema evolution, federated semantic query, embedding alignment, global knowledge graph, model-of-models, and cross-mesh governance.
+1. **Core Fabric beyond the pilot:** AD-1303/1304 own the first bounded crossing. Full global ontology/schema evolution, heterogeneous alignment, global knowledge graph, model-of-models and broader cross-mesh governance still need bounded follow-on contracts.
 2. **Operational Science:** platform SLOs, performance/cost accounting, load shedding, chaos engineering, and concrete shadow deployment/rollback.
-3. **Knowledge Lifecycle and Human Contribution:** common human/agent ingestion, validation, citation effects, deprecation, archival, retraction, deletion, and rights-aware provenance.
+3. **Knowledge Lifecycle and Human Contribution:** AD-1199 owns human claims and AD-1302 owns enrolled derivation reassessment. A complete lifecycle across every substrate, citation effects, archival, erasure and rights-aware provenance remains broader than those contracts.
 4. **Federation Adversarial Assurance:** Byzantine knowledge validation, Sybil resistance beyond key possession, poisoning quarantine, privacy-preserving cross-mesh cognition, and data-sovereignty enforcement.
-5. **Emergence Evaluation:** controlled multi-mesh baselines, cross-mesh $TC_N$, novel coordination, longitudinal capability curves, and human evaluation.
+5. **Emergence Evaluation:** #1139 owns staged planning, with protected/representative release trials under #1123. Complete multi-mesh, cross-mesh $TC_N$, novel-coordination, longitudinal and human-panel evidence is still pending and is not implied by a pilot result.
 
 ## Update Rules
 
@@ -180,19 +199,19 @@ Do not file one issue per bullet. When work is scheduled, create one bounded epi
 2. A tier changes status only when its required evidence artifact is committed and linked.
 3. Every status change records the commit, supported profile, evidence artifact, and residual risks.
 4. GitHub issues track executable work. Do not create issues merely to mirror this table.
-5. Use one epic per active tier/program. Existing epics remain authoritative: #1324 for Tier A and #1140 for Tier B.
-6. Do not open Tier C or Tier D epics until the Captain schedules those programs.
+5. Use one epic per active tier/program. Existing owners remain authoritative: #1324 for Tier A, #1140 for Tier B, #1356 for the bounded Tier C pilot, and #1139 for staged cooperation research.
+6. The 2026-09-07 request schedules the bounded Tier C/D planning recorded above, not live experiments or the entire planetary program. Additional epics require separately scheduled scope.
 7. AD-1270g should generate the readiness summary exposed in README; this full document remains human-reviewed architecture narrative.
 8. Commercial documentation links to this status rather than duplicating it.
 
 ## Current Assessment
 
-As of 2026-08-25:
+As of the 2026-09-07 planning reconciliation (not a new live-system measurement):
 
 - ProbOS contains unusually advanced local governance, memory, trust, learning, self-modification, durable crew, and HXI mechanisms.
 - AD-1270 is planned but not yet complete, so Tier A remains `planned`, not `supported`.
 - Federation transport exists, but authenticated multi-node admission and real-socket evidence remain open, so Tier B remains `planned` with an experimental substrate.
-- Tier C has strong local prerequisites but no active integrated owner.
-- Tier D has useful local emergence instrumentation and a narrow Sigma ablation, but no complete multi-mesh, longitudinal, statistically governed evidence program.
+- Tier C has strong local prerequisites and a planned integrated pilot with independent conformance; implementation/evidence has not advanced its readiness status.
+- Tier D has useful local instrumentation, a narrow Sigma ablation and a refreshed research owner, but no complete multi-mesh, longitudinal, statistically governed evidence program has passed its gates.
 
 ProbOS therefore appears capable of evolving toward the Nooplex without a foundational rewrite. The next architectural step is to prove the Cognitive Mesh unit cell, then federate sovereign units securely, then build the Core Fabric as a new layer rather than enlarging `ProbOSRuntime` into a planetary controller.

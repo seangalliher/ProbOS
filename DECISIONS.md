@@ -8980,3 +8980,96 @@ loop, LLM client, campaign engine, central cognitive dispatcher, tracker, fault
 store, runtime hot patcher, or governance self-editor is authorized. Future
 implementation must comply with the Engineering Principles in
 `.github/copilot-instructions.md`.
+
+---
+
+### Nooplex Roadmap Follow-Through (2026-09-07)
+
+**Planning only.** The Captain requested roadmap updates and related ADs/issues
+from the alignment review. [The bounded planning record](docs/development/nooplex-roadmap-follow-through.md)
+owns scope, dependencies, milestone checks and duplicate-search evidence. No
+implementation, live experiment, spending or readiness promotion is attested.
+Existing maturity, approval, verification, human-claim and federation owners are
+retained. Ship Trials (#1123) gains protected/representative evaluation and
+human-effort criteria; #1139 gains a staged research plan while AD-1188 remains
+retired and AD-1231's hybrid coordination remains settled.
+
+**Allocation evidence.** Two successful canonical `scripts/ad_ceiling.py` runs
+before publication measured Git subjects at AD-1299 (1,977 AD references),
+all-state GitHub titles at AD-1299 (1,352 issues, 994 AD-titled, below 4,000),
+and 61 prompt filenames at AD-1298. Prior ceiling: AD-1299, from Git and GitHub.
+This batch allocates AD-1300 through AD-1304 sequentially. The linked planning
+record preserves the exact open-and-closed duplicate searches and existing owners.
+
+### AD-1300 (2026-09-07) - Goal validity and supersession
+
+**Status: planned, not implemented.** [#1353](https://github.com/seangalliher/ProbOS/issues/1353).
+Extend CrewSession/WorkItem with immutable goal revisions, material assumptions,
+validity/expiry conditions and authority references. Bind consequential admission
+to the current revision and revalidate after waits/restarts and before effects.
+Agents judge relevance and propose replanning; services own CAS and lifecycle.
+Revision cannot widen authority. Preserve existing records and plan identity with
+a tested compatibility path. A paused/restarted mission with a changed goal must
+reject its stale plan, while an unchanged control resumes normally. Cancellation
+prevents new work but does not erase already-started or unknown effects. No
+replacement planner, goal store or central cognitive dispatcher is introduced.
+
+### AD-1301 (2026-09-07) - External-effect reconciliation and compensation
+
+**Status: planned, not implemented.** [#1354](https://github.com/seangalliher/ProbOS/issues/1354).
+Extend the existing recovery/tool/mission owners with durable operation identity,
+observed outcomes, target preconditions and adapter-declared reversal properties.
+Unknown outcomes require authoritative reconciliation before retry. Compensation
+is a separately authorized consequential action with verified readback, not a
+model-generated inverse or an inferred rollback. Prove partial-success recovery
+through the real dispatch path against a local external-service fixture, including
+lost acknowledgements and interrupted compensation. AD-1300 supplies goal-aware
+integration; AD-1299 retains runtime-release recovery. No universal exactly-once
+or rollback guarantee, distributed transaction coordinator or live test writes.
+
+### AD-1302 (2026-09-07) - Dependency-aware knowledge reassessment
+
+**Status: planned, not implemented.** [#1355](https://github.com/seangalliher/ProbOS/issues/1355).
+Record derivation dependencies on exact source revisions and propagate authorized
+correction into bounded, durable reassessment of explicitly enrolled consumers.
+Preserve independent support, history, confidentiality and unrelated valid claims;
+an unsupported conclusion needs review rather than continued established status.
+Reuse Records, provenance, correction, erasure and procedure owners. Existing
+write-claim evidence filtering (#1200's completed subset) and mission-blackboard
+supersession are not rebuilt; the former does not establish general retraction.
+Enrolled retrieval and procedure paths require production-crossing evidence;
+legacy or untracked derivations remain unknown. No blanket descendant deletion,
+automatic trust rollback or model-weight unlearning. AD-1303 owns the federation
+crossing.
+
+### AD-1303 (2026-09-07) - Sovereign Core Fabric pilot
+
+**Status: planned, not implemented.** [#1356](https://github.com/seangalliher/ProbOS/issues/1356).
+One bounded integrated pilot crosses human claim -> validation on mesh A ->
+authenticated query/reuse on independent mesh B -> challenge/correction ->
+reassessment and matched evaluation. Reuse #1140 authentication, #479 scoped fleet
+policy, #1136 human claims and AD-1302 dispositions. One versioned claim/query
+contract states rights, provenance, semantic mapping, partial results and unknown
+outcomes; receivers retain policy and adoption authority. Knowledge remains
+untrusted data, never instructions or grants. Separate storage/processes and
+real-socket failure cases are required. AD-1304 conformance gates pilot closure.
+The pilot neither builds a planetary controller nor completes all Tier C/D gates.
+
+### AD-1304 (2026-09-07) - Independent-peer conformance and sovereign exit
+
+**Status: planned, not implemented.** [#1357](https://github.com/seangalliher/ProbOS/issues/1357),
+child of #1356. Publish the pilot contract and valid/invalid vectors; a minimal
+independent peer must exchange, challenge and correct claims without importing
+ProbOS runtime, serializers or stores. Test version skew, tampering/replay,
+denied disclosure, partial results, membership exit and re-entry through real
+sockets. Departure closes future admission but reconciles in-flight outcomes;
+retention/deletion follows agreed rights with explicit limits on remote proof.
+Fleet authority requires accepted, scoped membership, not universal creator
+authority. Consume AD-1303 contract/exchange slices without waiting for parent
+closure. No second full runtime, transport stack or remote-erasure guarantee.
+
+**Implementation gates for AD-1300 through AD-1304.** Each bounded build requires
+current API/consumer verification, full public typing and boundary tests,
+production-consumer crossings, scoped adversarial review and a current canonical
+gate. Planning status does not attest those results. Verify all changes comply
+with the Engineering Principles in `.github/copilot-instructions.md`.

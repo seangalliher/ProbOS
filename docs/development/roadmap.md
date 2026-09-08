@@ -6,7 +6,8 @@ ProbOS doesn't just orchestrate agents — it gives them a civilization to come 
 
 > **Status tags (BF #465 reconciliation, 2026-05-07):** AD entries below are tagged
 > `(planned, OSS)` for unbuilt work or `(SHIPPED, OSS)` once delivered. PROGRESS.md
-> remains the authoritative source — this file lags. The 2026-05-07 reconciliation
+> is a narrative log; live GitHub issues and their evidence receipts are the
+> completion authority. This file's historical status tags can lag. The 2026-05-07 reconciliation
 > pass flipped 27 entries that had drifted (AD-486, 510, 512, 520, 526, 543-549, 562,
 > 566, 567, 569, 571, 595, 597, 599, 601, 604, 607).
 
@@ -292,7 +293,74 @@ ProbOS's value isn't any single agent's capability — it's the **orchestration 
 For full historical context (team details, completed phases, AD descriptions
 for shipped work), see [roadmap-era-5-completed.md](roadmap-era-5-completed.md).
 
+### Nooplex Alignment Priorities (2026-09-07)
+
+This order records the Captain-requested roadmap follow-up to the Nooplex
+alignment review. It supersedes conflicting historical priority numbers below,
+but does not activate implementation campaigns, change existing issue completion,
+waive release gates, or declare a readiness tier passed. The
+[Nooplex Readiness Map](nooplex-readiness.md) retains the evidence requirements.
+
+1. **Finish the dependable mesh.** Keep [AD-1270 / #1324](https://github.com/seangalliher/ProbOS/issues/1324)
+   as the Tier A owner. Prioritize inspectable approval and delegated authority
+   ([#1166](https://github.com/seangalliher/ProbOS/issues/1166),
+   [#1170](https://github.com/seangalliher/ProbOS/issues/1170)), evidence-aware
+   verification and honest abstention
+   ([#1234](https://github.com/seangalliher/ProbOS/issues/1234),
+   [#1238](https://github.com/seangalliher/ProbOS/issues/1238)), and verified recovery.
+   Preserve the program's accepted decomposition scope and bounded WIP.
+2. **Measure benefit as paths become ready.** Give the
+   [Sigma ablation / #1064](https://github.com/seangalliher/ProbOS/issues/1064) and
+   [Ship Trials / #1123](https://github.com/seangalliher/ProbOS/issues/1123)
+   protected delivery slots; do not wait for every platform improvement before
+   collecting usable baselines. A harness existing is not an experiment passing.
+   Reframe [#1139](https://github.com/seangalliher/ProbOS/issues/1139) around
+   measurable coordination benefit without reopening AD-1231's hybrid-coordination decision.
+3. **Bring human contribution and independent adoption forward.** Schedule
+   [typed human claims / #1136](https://github.com/seangalliher/ProbOS/issues/1136)
+   alongside shared-memory validation, rather than behind all fleet work. Retain
+   [install / #1053](https://github.com/seangalliher/ProbOS/issues/1053),
+   [provider setup / #1054](https://github.com/seangalliher/ProbOS/issues/1054), and
+   [doctor / #1056](https://github.com/seangalliher/ProbOS/issues/1056) so evidence
+   can extend beyond the reference operator's configuration.
+4. **Authenticate before wider federation.** Complete
+   [two-node authentication / #1140](https://github.com/seangalliher/ProbOS/issues/1140)
+   before [fleet policy / #479](https://github.com/seangalliher/ProbOS/issues/479).
+   Fleet authority applies within explicitly accepted administrative membership,
+   not universally across sovereign meshes. A bounded Core Fabric experiment
+   follows; transport connectivity alone does not establish shared intelligence.
+5. **Keep extensions tied to outcomes.** Retain
+   [elastic-team trials / #1337](https://github.com/seangalliher/ProbOS/issues/1337)
+   and [governed self-maintenance / #1352](https://github.com/seangalliher/ProbOS/issues/1352)
+   with independent evidence and promotion authority. Goal validity and recovery
+   from external side effects must precede broader unattended consequential work.
+   Keep VR and Blender integration behind these outcomes unless a concrete user
+   task makes them necessary. Do not add another generic echo/dissent subsystem;
+   AD-583 and [the mission blackboard / #1336](https://github.com/seangalliher/ProbOS/issues/1336)
+   already own those concepts.
+
 ### Backlog (queued, awaiting wave-plan slot)
+
+#### Nooplex Follow-Through (AD-1300 to AD-1304)
+
+**Planned, not implemented or activated.** The Captain's 2026-09-07 roadmap
+request supplies planning ownership for the contracts below. Scope, milestone
+tests, existing owners, non-goals and duplicate-search/allocation evidence live in
+[Nooplex Roadmap Follow-Through](nooplex-roadmap-follow-through.md).
+
+| AD | Outcome | Issue | Sequence |
+|----|---------|-------|----------|
+| AD-1300 | Goal validity, revision and supersession for durable missions | [#1353](https://github.com/seangalliher/ProbOS/issues/1353) | Before broader unattended consequential work |
+| AD-1301 | External-effect reconciliation and authorized compensation | [#1354](https://github.com/seangalliher/ProbOS/issues/1354) | Goal-aware integration after AD-1300 |
+| AD-1302 | Dependency-aware reassessment of derived knowledge | [#1355](https://github.com/seangalliher/ProbOS/issues/1355) | Local contract first; AD-1303 owns the federation crossing |
+| AD-1303 | Sovereign Core Fabric pilot: human claim, cross-mesh reuse, challenge and correction | [#1356](https://github.com/seangalliher/ProbOS/issues/1356) | After authenticated exchange, human claims and local reassessment |
+| AD-1304 | Independent-peer conformance and sovereign exit | [#1357](https://github.com/seangalliher/ProbOS/issues/1357) | After AD-1303 contract/exchange slices; required for pilot closeout |
+
+Protected evaluation, representative baselines and human-effort accounting extend
+[AD-1186 / #1123](https://github.com/seangalliher/ProbOS/issues/1123); staged
+cooperation research remains [#1139](https://github.com/seangalliher/ProbOS/issues/1139).
+AD-1188/#1125 stays retired and AD-1231's hybrid coordination remains settled.
+The bounded Core Fabric pilot does not complete all Tier C or Tier D requirements.
 
 #### ProbOS Self-Maintenance (AD-1299)
 
@@ -322,7 +390,7 @@ their scope and no campaign is started by this entry.
 | AD-1270a | Capability Truth Ledger and Activation Receipts | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
 | AD-1270b | Distributed Seam Contract Catalog and production-crossing tests | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
 | AD-1270f | Fail-broad impact selection and duration-balanced complete gate | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
-| AD-1185 + AD-1270e1/e2/e3 | Supported profile plus stable configuration-facade decomposition | [#1121](https://github.com/seangalliher/ProbOS/issues/1121) / [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
+| AD-1270e1/e2/e3 | Stable configuration-facade decomposition, building on completed AD-1185 / #1121 | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
 | AD-1270c1/c2/c3 | Finalization bundles, lifecycle ownership, and runtime-service extraction | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 2 |
 | AD-1270d1/d2/d3 | Prompt/sensorium, turn-effects, and cognitive-pipeline extraction | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 2 |
 | AD-1265 + AD-1266 | Verified snapshot and point-in-time restore round trip | [#1324](https://github.com/seangalliher/ProbOS/issues/1324) | 1 |
