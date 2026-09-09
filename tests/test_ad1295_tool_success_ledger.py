@@ -922,21 +922,50 @@ def test_successful_write_with_an_unverifiable_id_is_never_contradicted(
     assert ctx.response_text == before
 
 
-def test_unverifiable_id_abstains_through_the_whole_pipeline() -> None:
+@pytest.mark.parametrize("triples", [
+    pytest.param([(FINDING, True, bad_id)], id=f"malformed-{index}")
+    for index, bad_id in enumerate([None, "", 12345, ["c-1"]])
+] + [
+    pytest.param(
+        [(FINDING, True, "same"), ("read_file", False, "same")],
+        id="duplicate-id",
+    ),
+])
+def test_unverifiable_id_abstains_through_the_whole_pipeline(
+    triples: list[tuple[str, bool, object]],
+) -> None:
     """The same case through ``run()`` rather than the two steps in isolation,
     so a future reordering cannot reintroduce the accusation past this file."""
+    control = _make_ctx(
+        runtime=_runtime(),
+        tool_invocations=_project_tool_invocations(
+            _agentic_result_with_ids([(FINDING, False, "correlated")])
+        ),
+    )
+    assert control.tool_invocations is not None
+    assert control.tool_invocations.attempted == (FINDING,)
+    asyncio.run(DmReplyPipeline(control).run())
+    assert control.write_ledger.wrote_nothing == frozenset({WRITE_CHANNEL_FINDING})
+    assert DISCLOSURE_FRAGMENT in control.response_text
+
     episodic = _CapturingEpisodicMemory()
     ctx = _make_ctx(
         runtime=_runtime(episodic=episodic),
         tool_invocations=_project_tool_invocations(
-            _agentic_result_with_ids([(FINDING, True, None)])
+            _agentic_result_with_ids(triples)
         ),
     )
     before = ctx.response_text
+    assert ctx.tool_invocations is not None
+    assert ctx.tool_invocations.attempted == ()
+    assert ctx.tool_invocations.succeeded == ()
 
     asyncio.run(DmReplyPipeline(ctx).run())
 
     assert ctx.response_text == before
+    assert ctx.write_ledger == WriteLedger()
+    assert DmReplyPipeline(ctx).build_response()["response"] == before
     assert episodic.stored, "step_5 stored nothing -- the fixture never reached it"
     assert episodic.stored[0].self_contradicted_channels == []
+    assert episodic.stored[0].outcomes[0]["success"] is True
 
