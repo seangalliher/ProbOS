@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import textwrap
 from datetime import datetime, timezone
 from typing import Any
@@ -40,6 +41,9 @@ from probos.mesh.nats_bus import (
     encoded_header_size,
 )
 from probos.types import IntentMessage, IntentResult
+
+
+_ENCODER_DEPTH_CEILING = 20_000
 
 
 class _RawMsg:
@@ -144,25 +148,62 @@ def _deep(depth: int):
 
 def _encodes(value: Any) -> bool:
     try:
-        json.dumps(value)
+        json.dumps(value).encode()
     except (TypeError, ValueError, RecursionError):
         return False
     return True
 
 
-def _envelope_seam_depth() -> int:
-    """The depth where a value encodes alone but not under ``metadata``.
+def _envelope_seam_depth(conditions: str = "") -> int:
+    """Calibrate locally; only the callback can establish the consumer premise."""
+    lower, upper = 0, _ENCODER_DEPTH_CEILING
+    assert _encodes({"metadata": {"deep": _deep(lower)}}), (
+        f"calibration: shallow envelope must encode; {conditions}"
+    )
+    assert not _encodes({"metadata": {"deep": _deep(upper)}}), (
+        f"calibration: upper sentinel must fail at depth {upper}; {conditions}"
+    )
+    while upper - lower > 1:
+        middle = (lower + upper) // 2
+        if _encodes({"metadata": {"deep": _deep(middle)}}):
+            lower = middle
+        else:
+            upper = middle
+    value = _deep(upper)
+    assert _encodes({"deep": value}), "calibration: fragment must encode"
+    assert not _encodes({"metadata": {"deep": value}}), (
+        "calibration: envelope must fail at the same helper call depth"
+    )
+    return upper
 
-    Measured at the CALLER's stack depth, never cached at import: the recursion
-    limit is relative to how deep the stack already is, so a constant computed
-    at module load is wrong by several levels inside a test frame.
-    """
-    for depth in range(3200, 2000, -1):
-        if _encodes({"deep": _deep(depth)}) and not _encodes(
-            {"metadata": {"deep": _deep(depth)}}
-        ):
-            return depth
-    raise AssertionError("no depth separates the two envelope shapes")
+
+def test_envelope_seam_depth_searches_above_legacy_ceiling(monkeypatch) -> None:
+    """Synthetic predicate checks search logic, not a platform's serializer."""
+    depths: list[int] = []
+
+    def _synthetic_encodes(value: Any) -> bool:
+        depth = 0
+        while isinstance(value, (dict, list)):
+            depth += 1
+            value = next(iter(value.values())) if isinstance(value, dict) else value[0]
+        depths.append(depth)
+        return depth < 5000
+
+    monkeypatch.setitem(globals(), "_encodes", _synthetic_encodes)
+    assert _envelope_seam_depth() == 4998
+    assert max(depths) == _ENCODER_DEPTH_CEILING + 2
+    assert len(depths) <= 20
+
+
+@pytest.mark.parametrize(
+    ("encodes", "message"),
+    [(True, "upper sentinel must fail"), (False, "shallow envelope must encode")],
+)
+def test_envelope_seam_depth_rejects_invalid_bracket(monkeypatch, encodes, message) -> None:
+    """Synthetic predicates must not turn an invalid bracket into calibration."""
+    monkeypatch.setitem(globals(), "_encodes", lambda value: encodes)
+    with pytest.raises(AssertionError, match=f"{message}.*synthetic conditions"):
+        _envelope_seam_depth("synthetic conditions")
 
 
 # ── the defect ────────────────────────────────────────────────────
@@ -533,7 +574,7 @@ def test_the_serializability_probe_asks_exactly_what_respond_asks() -> None:
     assert IntentBus._encoded({"x": object()}) is None
     assert IntentBus._encoded({object(): 1}) is None
     # And depth: this raises RecursionError, not TypeError.
-    assert IntentBus._encoded({"x": _deep(20_000)}) is None
+    assert IntentBus._encoded({"x": _deep(_ENCODER_DEPTH_CEILING)}) is None
 
 # ── the transport's other two refusals ────────────────────────────
 
@@ -575,22 +616,91 @@ async def test_two_values_that_only_overflow_together_are_pruned() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deeply_nested_metadata_does_not_cost_the_answer() -> None:
-    """Encodes alone at this depth, fails nested under the real envelope.
+async def test_deeply_nested_metadata_does_not_cost_the_answer(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    record_property,
+) -> None:
+    """Require fragment retention and assembled failure in the real callback."""
+    conditions = (
+        f"python={sys.version}; recursion_limit={sys.getrecursionlimit()}; "
+        f"dumps={json.dumps.__module__}.{json.dumps.__qualname__}; "
+        f"c_make_encoder={json.encoder.c_make_encoder!r}"
+    )
+    record_property("serializer_conditions", conditions)
+    calibrated_depth = _envelope_seam_depth(conditions)
+    record_property("calibrated_depth", calibrated_depth)
+    original_encoded = IntentBus._encoded
+    observations: list[tuple[str, int | None]] = []
+    value: Any = "leaf"
+    metadata: dict[str, Any] = {"deep": value}
 
-    The depth is chosen at the seam and the premise is asserted: a value that
-    also fails standalone would be dropped by an isolated probe too, so such a
-    fixture would leave this test green against the defect it names.
-    """
-    value = _deep(_envelope_seam_depth())
-    assert _encodes({"deep": value}), "premise: the value encodes on its own"
-    assert not _encodes({"metadata": {"deep": value}}), "premise: nested it does not"
+    def _observe_encoded(payload: Any) -> bytes | None:
+        encoded = original_encoded(payload)
+        stage = "other"
+        if isinstance(payload, dict):
+            if set(payload) == {"deep"} and payload["deep"] is value:
+                stage = "fragment"
+            elif "metadata" in payload:
+                if payload["metadata"] is metadata:
+                    stage = "initial"
+                elif payload["metadata"].get("deep") is value:
+                    stage = "assembled"
+                elif payload["metadata"] == {}:
+                    stage = "bare"
+        observations.append((stage, None if encoded is None else len(encoded)))
+        return encoded
 
-    reply = await _reply_bytes(metadata={"deep": value}, result_value="the answer")
+    monkeypatch.setattr(IntentBus, "_encoded", staticmethod(_observe_encoded))
+    reply = await _reply_bytes(metadata=metadata, result_value="the answer")
     assert reply is not None
     assert reply["success"] is True
     assert reply["result"] == "the answer"
-    assert reply["metadata"] == {}
+    assert reply["metadata"] == metadata
+    assert len(observations) == 1 and observations[0][0] == "initial"
+    assert observations[0][1] is not None
+
+    attempts: list[tuple[int, list[tuple[str, int | None]]]] = []
+    with caplog.at_level(logging.WARNING, logger="probos.mesh.intent"):
+        for depth in range(
+            max(1, calibrated_depth - 32),
+            min(_ENCODER_DEPTH_CEILING, calibrated_depth + 32) + 1,
+        ):
+            value = _deep(depth)
+            metadata = {"deep": value}
+            observations.clear()
+            caplog.clear()
+            reply = await _reply_bytes(metadata=metadata, result_value="the answer")
+            attempts.append((depth, observations.copy()))
+            if [stage for stage, _ in observations[:4]] != [
+                "initial", "bare", "fragment", "assembled",
+            ]:
+                continue
+            initial_size, bare_size, fragment_size, assembled_size = (
+                size for _, size in observations[:4]
+            )
+            if initial_size is not None or fragment_size is None or assembled_size is not None:
+                continue
+            assert bare_size is not None
+            assert bare_size + fragment_size - 2 <= 1024 * 1024, (
+                "premise: retained fragment must fit the unchanged wire budget"
+            )
+            record_property("consumer_depth", depth)
+            record_property("consumer_encoding_observations", repr(observations))
+            assert reply is not None, "assembled failure left the caller with silence"
+            assert reply["success"] is True
+            assert reply["result"] == "the answer"
+            assert reply["error"] is None
+            assert reply["metadata"] == {}
+            assert any(
+                "BF-805" in record.getMessage() and "<metadata>" in record.getMessage()
+                for record in caplog.records
+            ), "assembled fallback must log the container drop"
+            break
+        else:
+            pytest.fail(
+                f"no real callback retained a fragment then rejected its envelope; "
+                f"{conditions}; calibration={calibrated_depth}; attempts={attempts}"
+            )
 
 
 @pytest.mark.asyncio

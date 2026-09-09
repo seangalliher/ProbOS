@@ -31,8 +31,10 @@ import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from probos.artifacts import ArtifactStore
-from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
+from probos.cognitive.decomposer import _CAPABILITY_GAP_RE, is_capability_gap
 from probos.cognitive.dm.reply_pipeline import DmReplyContext, DmReplyPipeline
 from probos.cognitive.dm.reply_value import DmReply  # AD-1248
 from probos.cognitive.dm.write_ledger import (
@@ -265,6 +267,26 @@ def test_assess_write_claim_takes_the_ledger_and_nothing_else() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def test_mixed_write_disclosure_preserves_successful_sibling() -> None:
+    ledger = (
+        WriteLedger()
+        .consulted_with(WRITE_CHANNEL_NOTEBOOK, wrote=False)
+        .consulted_with(WRITE_CHANNEL_ARTIFACT, wrote=True)
+    )
+    assert ledger.wrote == frozenset({WRITE_CHANNEL_ARTIFACT})
+    assert ledger.wrote_nothing == frozenset({WRITE_CHANNEL_NOTEBOOK})
+
+    verdict = assess_write_claim(ledger)
+    assert verdict is ClaimVerdict.MARKER_WROTE_NOTHING
+    disclosure = disclosure_for(verdict)
+    assert disclosure.strip()
+    assert "nothing was saved" not in disclosure
+    assert disclosure == (
+        "\n\n[A durable write was attempted on this turn and did not "
+        "complete; that write was not saved.]"
+    )
+
+
 def test_disclosure_does_not_match_the_capability_gap_regex() -> None:
     """A match on ``decomposer._CAPABILITY_GAP_RE`` would misclassify the turn
     as a capability gap and trigger self-modification. The REAL compiled regex
@@ -284,6 +306,49 @@ def test_disclosure_is_non_empty_and_separated() -> None:
 
 def test_abstain_has_no_disclosure() -> None:
     assert disclosure_for(ClaimVerdict.ABSTAIN) == ""
+
+
+@pytest.mark.parametrize("verdict, expected", [
+    (
+        ClaimVerdict.MARKER_WROTE_NOTHING,
+        "\n\n[A durable write was attempted on this turn and did not "
+        "complete; that write was not saved.]",
+    ),
+    (
+        ClaimVerdict.MARKER_WROTE_PARTIALLY,
+        "\n\n[More than one durable write was attempted on this turn and at "
+        "least one did not complete \u2014 part of the above was not saved.]",
+    ),
+])
+def test_disclosures_are_bounded_constants_and_real_detector_safe(
+    verdict: ClaimVerdict, expected: str,
+) -> None:
+    assert is_capability_gap("I cannot perform that operation.") is True
+    text = disclosure_for(verdict)
+    assert text == expected
+    assert 0 < len(text) <= 200
+    assert is_capability_gap(text) is False
+    hostile_channel = "secret/path <script>uncontrolled payload</script>" * 20
+    ledger = WriteLedger().consulted_with(
+        hostile_channel,
+        wrote=verdict is ClaimVerdict.MARKER_WROTE_PARTIALLY,
+        partial=verdict is ClaimVerdict.MARKER_WROTE_PARTIALLY,
+    )
+    assert assess_write_claim(ledger) is verdict
+    assert disclosure_for(assess_write_claim(ledger)) == expected
+    assert hostile_channel not in text
+
+
+@pytest.mark.parametrize("known_failure", [False, True])
+def test_empty_response_is_not_given_a_write_disclosure(known_failure: bool) -> None:
+    ctx = _make_ctx(runtime=_runtime(), response_text="")
+    if known_failure:
+        ctx.write_ledger = ctx.write_ledger.consulted_with(
+            WRITE_CHANNEL_NOTEBOOK, wrote=False,
+        )
+    asyncio.run(DmReplyPipeline(ctx).step_4m_write_claim_guard())
+    assert ctx.response_text == ""
+    assert DmReplyPipeline(ctx).build_response()["response"] == ""
 
 
 # --------------------------------------------------------------------------- #

@@ -157,7 +157,7 @@ def assess_write_claim(ledger: WriteLedger) -> ClaimVerdict:
 _DISCLOSURES: dict[ClaimVerdict, str] = {
     ClaimVerdict.MARKER_WROTE_NOTHING: (
         "\n\n[A durable write was attempted on this turn and did not "
-        "complete — nothing was saved.]"
+        "complete; that write was not saved.]"
     ),
     ClaimVerdict.MARKER_WROTE_PARTIALLY: (
         "\n\n[More than one durable write was attempted on this turn and at "

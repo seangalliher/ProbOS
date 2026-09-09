@@ -13,7 +13,7 @@
 #     are explicit dimensions above it; the digest catches type and
 #     constraint changes only. Do not expand it into a full schema.
 #   * Defaults come from model_fields, never from model_json_schema(),
-#     which silently drops the three Path-valued defaults.
+#     whose typed defaults are separately normalised before encoding.
 #   * Path values are POSIX-normalised. A raw dump is Windows-only and
 #     goes red on Linux CI while --check passes locally.
 #   * `tier: owned` is the contract. `tier: incidental` names are import
@@ -53,7 +53,7 @@ surface_counts:
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 4945f5cb7506097d5dd2bc6a9dd38cd2fe520fcf3c86675dd49ba88db9f8ba89
+canonical_dump_sha256: ab89c78e37711b7a9e559233a2194d571da0883a0ce8cc040fbf1eca1ffb759d
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -884,7 +884,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 57727c71274f1d4cdeb1f86f545dbc0c94c3daa29d88d1f6660a735dcdff4261
+    schema_sha256: b626eb0c3553cbfbb463dd71a39d2e54811ae8cc544f438a27e64dcf2bd516ba
     fields:
     - {default: 'True', name: enabled}
     - {default: '''data/captains_log''', name: output_dir}
@@ -2445,7 +2445,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 9467c9b07f6d0646970c90da566e9e38cbb0154fcd2781b1e5e43c12beaf3df3
+    schema_sha256: 1b00363221199de10a7b0c928bd10c5d6134f1cd49a9e08d3a160068ebefc62c
     fields:
     - {default: <required>, has_default_factory: true, name: captains_log}
     - {default: <required>, has_default_factory: true, name: plan_of_day}
@@ -2656,7 +2656,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 97d0992a78d4ac105448200142be106beef55400244637a4790b98a1ece98c66
+    schema_sha256: 86ce90759546c2d0050f48bc978d617f3ac4ff1ef747c5ecc10fec5dc9e49aee
     fields:
     - {default: 'True', name: enabled}
     - {default: '''data/plan_of_day''', name: output_dir}
@@ -3084,7 +3084,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 65120086c9fa16a4ee2b5084be1a3cb0b31cbfeda4564a7dc0bb95fad16fcdf0
+    schema_sha256: 297be7bc560f58ba422b2db1ae031e9e3d3a89b6932ba2e7caf4524e9008b269
     fields:
     - {default: 'True', name: enabled}
     - {default: '24', name: rate_limit_hours}
@@ -3287,7 +3287,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 5aad82d776ae6a050e3beb2573e36c9443cc938de2b52f8e99823a37ec32210a
+    schema_sha256: 421e4333881ab34812818f045f42cf0a45b6d7a0c3a8ac48bd8c257c99f4d99d
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

@@ -11,6 +11,7 @@
   },
   "authority": {
     "mode": "delegated",
+    "assurance": "local-scoped",
     "boundaries": [
       "destructive production-data operations",
       "weaker security privacy authorization consensus audit or safety controls",

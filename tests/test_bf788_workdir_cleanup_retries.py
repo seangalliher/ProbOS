@@ -849,44 +849,92 @@ async def test_a_communicate_failure_reaps_the_child_before_returning(
     sandbox = SubprocessSandbox(scratch_root=tmp_path)
     workdir = tmp_path / "reap"
     workdir.mkdir()
-    killed: list[str] = []
-    spawned: list = []
+    events: list[str] = []
+    waited: list[int] = []
+    spawned: list[_sp.Popen] = []
     real_popen = _sp.Popen
+    real_os = iso.os
+
+    class ObservedOS:
+        def __getattr__(self, name: str) -> object:
+            return getattr(real_os, name)
+
+        def killpg(self, process_group: int, signal_number: int) -> None:
+            assert len(spawned) == 1
+            assert process_group == spawned[0].pid
+            assert signal_number == 9
+            real_os.killpg(process_group, signal_number)
+            events.append("killpg")
 
     class Injecting(real_popen):  # type: ignore[misc, valid-type]
-        def __init__(self, *a, **kw):
-            super().__init__(*a, **kw)
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
             spawned.append(self)
 
-        def communicate(self, *a, **kw):
+        def communicate(
+            self, input: bytes | None = None, timeout: float | None = None,
+        ) -> tuple[bytes, bytes]:
+            assert real_popen.poll(self) is None, (
+                "the child was not live before the injected communicate failure"
+            )
+            events.append("communicate_live")
             raise OSError("injected pipe failure while the child is live")
 
-        def kill(self):
-            killed.append("kill")
-            return super().kill()
+        def kill(self) -> None:
+            real_popen.kill(self)
+            events.append("kill")
+
+        def wait(self, timeout: float | None = None) -> int:
+            returncode = real_popen.wait(self, timeout=timeout)
+            waited.append(returncode)
+            events.append("wait_completed")
+            return returncode
 
     monkeypatch.setattr(_sp, "Popen", Injecting)
+    if iso.sys.platform != "win32":
+        monkeypatch.setattr(iso, "os", ObservedOS())
 
-    result = await sandbox.run(ExecutionRequest(
-        code="import time; time.sleep(30)",
-        workdir=workdir,
-        timeout_seconds=60,
-    ))
+    try:
+        result = await sandbox.run(ExecutionRequest(
+            code="import time; time.sleep(30)",
+            workdir=workdir,
+            timeout_seconds=60,
+        ))
+        events.append("run_returned")
 
-    assert result.success is False
-    assert killed, (
-        "the run returned after a communicate() failure without killing the "
-        "child; cleanup will now delete files from under a live process"
-    )
-    # Asserting `kill()` was CALLED is not enough -- review showed those
-    # assertions still hold with `proc.wait()` removed. Read `returncode`
-    # DIRECTLY: `poll()` performs a nonblocking reap itself, so calling it
-    # here would do production's job and pass 13/20 runs against a mutant.
-    assert spawned, "no child was created, so this proves nothing"
-    assert spawned[0].returncode is not None, (
-        "kill() was called but the child had not been reaped when `run` "
-        "returned; cleanup will act beside a live process"
-    )
+        assert result.success is False
+        assert "injected pipe failure" in result.error
+        assert len(spawned) == 1, "expected exactly one real child"
+        # Asserting `kill()` was CALLED is not enough -- review showed those
+        # assertions still hold with `proc.wait()` removed. Read `returncode`
+        # DIRECTLY: `poll()` performs a nonblocking reap itself, so calling it
+        # here would do production's job and pass 13/20 runs against a mutant.
+        assert spawned[0].returncode is not None, (
+            "termination was requested but the child had not been reaped when "
+            "`run` returned; cleanup will act beside a live process"
+        )
+        assert result.child_reaped is True
+        assert waited == [spawned[0].returncode]
+        termination = "kill" if iso.sys.platform == "win32" else "killpg"
+        expected = [
+            "communicate_live", termination, "wait_completed", "run_returned",
+        ]
+        assert events == expected
+        assert workdir.exists()
+        shutil.rmtree(workdir)
+        events.append("directory_deleted")
+        assert not workdir.exists()
+        assert events == [*expected, "directory_deleted"]
+    finally:
+        for process in spawned:
+            try:
+                if real_popen.poll(process) is None:
+                    real_popen.kill(process)
+                real_popen.wait(process, timeout=5)
+            finally:
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
 
 
 async def test_exactly_one_side_removes_when_both_observe(

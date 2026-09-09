@@ -39,11 +39,13 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from probos.artifacts import Artifact, ArtifactStore
-from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
+from probos.attachments.filesystem_store import FilesystemAttachmentStore
+from probos.cognitive.decomposer import _CAPABILITY_GAP_RE, is_capability_gap
 from probos.cognitive.dm.artifact_extractor import (
     ArtifactPersistCounts,
     count_explicit_artifact_markers,
@@ -61,7 +63,11 @@ from probos.cognitive.dm.write_ledger import (
     assess_write_claim,
     disclosure_for,
 )
-from probos.config import WriteClaimGuardConfig
+from probos.config import RecordsConfig, WriteClaimGuardConfig
+from probos.dm_reply import ToolFailures, call_signature, failure_key, require_rendered
+from probos.knowledge.records_store import RecordsStore
+from probos.proactive import ProactiveCognitiveLoop
+from probos.types import Episode
 
 #: The AD-1285 total-failure sentence.
 NOTHING_FRAGMENT = "A durable write was attempted on this turn"
@@ -146,9 +152,9 @@ def _runtime(store) -> SimpleNamespace:
     )
 
 
-def _run(store, response_text: str) -> DmReplyContext:
-    ctx = DmReplyContext(
-        runtime=_runtime(store),
+def _make_ctx(runtime: SimpleNamespace, response_text: str) -> DmReplyContext:
+    return DmReplyContext(
+        runtime=runtime,
         agent=SimpleNamespace(id="a1", agent_type="yeoman"),
         agent_id="a1",
         callsign="Yeo",
@@ -163,6 +169,10 @@ def _run(store, response_text: str) -> DmReplyContext:
         avatar_event_bus=None,
         chat_thread_id="t1",
     )
+
+
+def _run(store, response_text: str) -> DmReplyContext:
+    ctx = _make_ctx(_runtime(store), response_text)
     asyncio.run(DmReplyPipeline(ctx).run())
     return ctx
 
@@ -689,3 +699,218 @@ def test_every_verdict_except_abstain_carries_a_disclosure() -> None:
             assert text == ""
         else:
             assert text.startswith("\n\n") and text.strip(), verdict
+
+
+class _RecordingRecordsStore(RecordsStore):
+    def __init__(self, config: RecordsConfig, fail_topics: set[str]) -> None:
+        super().__init__(config)
+        self.fail_topics = set(fail_topics)
+        self.attempted: list[str] = []
+        self.similarity_results: list[dict[str, Any]] = []
+
+    async def write_notebook(
+        self, callsign: str, topic_slug: str, content: str, *,
+        department: str = "", tags: list[str] | None = None,
+        classification: str | None = None,
+        metrics: dict[str, Any] | None = None,
+        extra_frontmatter: dict[str, Any] | None = None,
+    ) -> str:
+        self.attempted.append(topic_slug)
+        if topic_slug in self.fail_topics:
+            raise RuntimeError("injected notebook persistence failure")
+        return await super().write_notebook(
+            callsign, topic_slug, content, department=department, tags=tags,
+            classification=classification, metrics=metrics,
+            extra_frontmatter=extra_frontmatter,
+        )
+
+    async def check_notebook_similarity(
+        self, callsign: str, topic_slug: str, new_content: str, *,
+        similarity_threshold: float = 0.8, staleness_hours: float = 72.0,
+        max_scan_entries: int = 20,
+    ) -> dict[str, Any]:
+        result = await super().check_notebook_similarity(
+            callsign, topic_slug, new_content,
+            similarity_threshold=similarity_threshold,
+            staleness_hours=staleness_hours, max_scan_entries=max_scan_entries,
+        )
+        self.similarity_results.append(dict(result))
+        return result
+
+
+class _CapturingEpisodicMemory:
+    def __init__(self) -> None:
+        self.stored: list[Episode] = []
+
+    async def store(self, episode: Episode) -> None:
+        self.stored.append(episode)
+
+
+async def _real_write_runtime(
+    tmp_path: Path, fail_artifacts: set[str], fail_notebook: bool,
+) -> SimpleNamespace:
+    records_config = RecordsConfig(
+        repo_path=str(tmp_path / "records"), enabled=True, auto_commit=False,
+    )
+    records = _RecordingRecordsStore(
+        records_config, {"decision"} if fail_notebook else set(),
+    )
+    await records.initialize()
+    runtime = _runtime(
+        _SelectivelyFailingStore(tmp_path / "artifacts.db", fail_artifacts),
+    )
+    runtime.config.records = records_config
+    runtime.attachment_store = FilesystemAttachmentStore(tmp_path / "attachments")
+    runtime.episodic_memory = _CapturingEpisodicMemory()
+    runtime._records_store = records
+    runtime.proactive_loop = ProactiveCognitiveLoop()
+    runtime.proactive_loop.set_runtime(runtime)
+    return runtime
+
+
+_FAILED_WRITE_NOTICE = (
+    "\n\n[A durable write was attempted on this turn and did not "
+    "complete; that write was not saved.]"
+)
+_NOTE_CONTENT = "Record the agreed maintenance decision for the next watch."
+_NOTE_REPLY = f"Recorded. [NOTEBOOK decision]{_NOTE_CONTENT}[/NOTEBOOK]"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_artifacts, fail_notebook, long_reply", [
+    pytest.param(set(), True, False, id="artifact-saved-notebook-failed"),
+    pytest.param({"first.md", "second.md"}, False, False, id="notebook-saved-artifacts-failed"),
+    pytest.param({"first.md", "second.md"}, True, False, id="all-writes-failed"),
+    pytest.param(set(), False, False, id="all-writes-saved"),
+    pytest.param({"second.md"}, True, False, id="partial-artifact-notebook-failed"),
+    pytest.param({"second.md"}, False, False, id="partial-artifact-notebook-saved"),
+    pytest.param(set(), True, True, id="mixed-long-history-projection"),
+])
+async def test_real_writes_reach_delivery_and_episode(
+    tmp_path: Path, fail_artifacts: set[str], fail_notebook: bool, long_reply: bool,
+) -> None:
+    runtime = await _real_write_runtime(tmp_path, fail_artifacts, fail_notebook)
+    records = runtime._records_store
+    prefix = "Neutral context. " * 40 if long_reply else ""
+    ctx = _make_ctx(runtime, prefix + _two_tags() + "\n" + _NOTE_REPLY)
+    scope = "aaaaaaaaaaaa"
+    failures = ToolFailures.from_mapping({
+        failure_key(scope, scope, call_signature("web_search", None)): "web_search",
+    })
+    ctx.reply = DmReply(body=ctx.response_text, tool_failures=failures)
+    assert ctx.write_ledger == WriteLedger()
+    pipeline = DmReplyPipeline(ctx)
+
+    await pipeline.run()
+
+    assert runtime.artifact_store.attempted == ["first.md", "second.md"]
+    assert records.attempted == ["decision"]
+    assert len(records.similarity_results) == 1
+    assert records.similarity_results[0]["action"] != "suppress"
+    rows = runtime.artifact_store.list_thread_latest("t1")
+    expected_blobs = {"first.md": b"# First", "second.md": b"# Second"}
+    assert {row.name for row in rows} == set(expected_blobs) - fail_artifacts
+    for row in rows:
+        assert row.version == 1
+        assert await runtime.attachment_store.read(row.content_hash) == expected_blobs[row.name]
+    note = await records.read_entry("notebooks/yeoman/decision.md", "yeoman")
+    if fail_notebook:
+        assert note is None
+    else:
+        assert note is not None
+        assert note["content"].strip() == _NOTE_CONTENT
+
+    expected_failed = set()
+    expected_wrote = set()
+    if len(fail_artifacts) == 2:
+        expected_failed.add(WRITE_CHANNEL_ARTIFACT)
+    else:
+        expected_wrote.add(WRITE_CHANNEL_ARTIFACT)
+    if fail_notebook:
+        expected_failed.add(WRITE_CHANNEL_NOTEBOOK)
+    else:
+        expected_wrote.add(WRITE_CHANNEL_NOTEBOOK)
+    assert ctx.write_ledger.consulted == frozenset({"artifact", "notebook"})
+    assert ctx.write_ledger.wrote == frozenset(expected_wrote)
+    assert ctx.write_ledger.wrote_nothing == frozenset(expected_failed)
+    assert ctx.write_ledger.wrote_partially == (
+        frozenset({"artifact"}) if len(fail_artifacts) == 1 else frozenset()
+    )
+    expected_verdict = (
+        ClaimVerdict.MARKER_WROTE_NOTHING if expected_failed else
+        ClaimVerdict.MARKER_WROTE_PARTIALLY if len(fail_artifacts) == 1 else
+        ClaimVerdict.ABSTAIN
+    )
+    assert assess_write_claim(ctx.write_ledger) is expected_verdict
+    rendered = pipeline.build_response()["response"]
+    assert require_rendered(rendered, sink="http") is rendered
+    assert require_rendered(rendered, sink="thread") is rendered
+    assert ctx.reply.tool_failures == failures
+    assert "web_search" in rendered
+    assert rendered.startswith(ctx.response_text)
+    assert "nothing was saved" not in rendered
+    if expected_failed:
+        assert disclosure_for(expected_verdict) == _FAILED_WRITE_NOTICE
+        assert ctx.response_text.endswith(_FAILED_WRITE_NOTICE)
+        assert rendered.count(_FAILED_WRITE_NOTICE) == 1
+        assert PARTIAL_FRAGMENT not in rendered
+    elif len(fail_artifacts) == 1:
+        assert ctx.response_text.endswith(disclosure_for(expected_verdict))
+        assert PARTIAL_FRAGMENT in rendered
+        assert NOTHING_FRAGMENT not in rendered
+    else:
+        assert NOTHING_FRAGMENT not in rendered
+        assert PARTIAL_FRAGMENT not in rendered
+    assert is_capability_gap("I cannot perform that operation.") is True
+    assert is_capability_gap(rendered) is False
+    assert len(runtime.episodic_memory.stored) == 1
+    episode = runtime.episodic_memory.stored[0]
+    assert episode.self_contradicted_channels == sorted(expected_failed)
+    assert episode.outcomes[0]["success"] is True
+    assert episode.outcomes[0]["response"] == ctx.response_text[:500]
+    assert episode.failed_tool_names == ["web_search"]
+    assert episode.failed_tool_call_count == 1
+    if expected_failed and not long_reply:
+        assert _FAILED_WRITE_NOTICE in episode.outcomes[0]["response"]
+    if long_reply:
+        assert len(episode.outcomes[0]["response"]) == 500
+        assert _FAILED_WRITE_NOTICE not in episode.outcomes[0]["response"]
+
+
+@pytest.mark.asyncio
+async def test_real_notebook_dedup_preserves_durable_note_without_disclosure(
+    tmp_path: Path,
+) -> None:
+    runtime = await _real_write_runtime(tmp_path, set(), False)
+    records = runtime._records_store
+    first = _make_ctx(runtime, _NOTE_REPLY)
+    await DmReplyPipeline(first).run()
+    assert records.attempted == ["decision"]
+    assert first.write_ledger.wrote == frozenset({"notebook"})
+    before = await records.read_entry("notebooks/yeoman/decision.md", "yeoman")
+    assert before is not None
+    assert before["content"].strip() == _NOTE_CONTENT
+    note_path = records.repo_path / "notebooks" / "yeoman" / "decision.md"
+    before_bytes = note_path.read_bytes()
+
+    second = _make_ctx(runtime, _NOTE_REPLY)
+    pipeline = DmReplyPipeline(second)
+    await pipeline.run()
+
+    assert len(records.similarity_results) == 2
+    assert records.similarity_results[0]["action"] != "suppress"
+    assert records.similarity_results[1]["action"] == "suppress"
+    assert records.attempted == ["decision"]
+    assert await records.read_entry("notebooks/yeoman/decision.md", "yeoman") == before
+    assert note_path.read_bytes() == before_bytes
+    assert second.write_ledger.wrote == frozenset({"notebook"})
+    assert second.write_ledger.wrote_nothing == frozenset()
+    assert assess_write_claim(second.write_ledger) is ClaimVerdict.ABSTAIN
+    rendered = pipeline.build_response()["response"]
+    assert require_rendered(rendered, sink="thread") is rendered
+    assert rendered == first.response_text == "Recorded."
+    assert NOTHING_FRAGMENT not in rendered
+    assert PARTIAL_FRAGMENT not in rendered
+    assert len(runtime.episodic_memory.stored) == 2
+    assert runtime.episodic_memory.stored[1].self_contradicted_channels == []
+    assert runtime.episodic_memory.stored[1].outcomes[0]["success"] is True
