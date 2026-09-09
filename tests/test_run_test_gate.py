@@ -5,13 +5,14 @@ import hashlib
 import io
 import json
 import os
+import shlex
 import signal
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -1655,37 +1656,161 @@ def test_terminate_process_tree_reaps_child_and_grandchild(
             gate._terminate_process_tree(process)
 
 
+@pytest.mark.parametrize(
+    ("returncode", "missing_at", "expected_signals", "expected_elapsed"),
+    [
+        pytest.param(0, None, [9], 0.0, id="completed-owned-group"),
+        pytest.param(0, "kill", [9], 0.0, id="completed-missing-group"),
+        pytest.param(None, None, [15, 9], 5.0, id="live-resistant-group"),
+        pytest.param(None, "term", [15], 0.0, id="live-missing-group"),
+        pytest.param(None, "probe", [15], 0.1, id="live-graceful-exit"),
+        pytest.param(None, "kill", [15, 9], 5.0, id="live-escalation-race"),
+    ],
+)
+def test_supervisor_terminate_child_tree_posix_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int | None,
+    missing_at: str | None,
+    expected_signals: list[int],
+    expected_elapsed: float,
+) -> None:
+    supervisor_path = REPO_ROOT / "scripts" / "_gate_process_supervisor.py"
+    spec = importlib.util.spec_from_file_location("gate_supervisor_test", supervisor_path)
+    assert spec is not None and spec.loader is not None
+    supervisor = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, supervisor)
+    spec.loader.exec_module(supervisor)
+    assert Path(supervisor.__file__).resolve() == supervisor_path.resolve()
+    ticks = 0
+    poll_calls: list[int | None] = []
+    signals: list[tuple[int, float]] = []
+    probes: list[float] = []
+
+    def poll() -> int | None:
+        poll_calls.append(returncode)
+        return returncode
+
+    def monotonic() -> float:
+        return ticks * 0.05
+
+    def sleep(seconds: float) -> None:
+        nonlocal ticks
+        assert seconds == 0.05
+        ticks += 1
+        assert ticks <= 100, "termination exceeded the five-second grace budget"
+
+    process = SimpleNamespace(pid=43210, returncode=returncode, poll=poll)
+
+    def killpg(process_id: int, signum: int) -> None:
+        assert process_id == process.pid, "termination targeted an unowned group"
+        assert signum in (0, 9, 15)
+        if signum == 0:
+            probes.append(monotonic())
+        else:
+            signals.append((signum, monotonic()))
+        if (
+            (missing_at == "term" and signum == 15)
+            or (missing_at == "probe" and signum == 0 and ticks >= 2)
+            or (missing_at == "kill" and signum == 9)
+        ):
+            raise ProcessLookupError(process_id)
+
+    monkeypatch.setattr(supervisor, "os", SimpleNamespace(name="posix", killpg=killpg))
+    monkeypatch.setattr(supervisor, "signal", SimpleNamespace(SIGTERM=15, SIGKILL=9))
+    monkeypatch.setattr(supervisor, "time", SimpleNamespace(monotonic=monotonic, sleep=sleep))
+    assert supervisor.os.name == "posix"
+    assert process.poll() == returncode
+    assert signals == [] and probes == [] and ticks == 0
+
+    supervisor._terminate_child_tree(process)
+
+    assert [signum for signum, _when in signals] == expected_signals
+    assert monotonic() == pytest.approx(expected_elapsed)
+    assert signals[0][1] == 0.0
+    if returncode is not None:
+        assert len(poll_calls) >= 2, "the helper must observe the completed leader"
+        assert probes == []
+        assert ticks == 0
+    elif missing_at != "term":
+        assert probes, "the live group must be checked during grace"
+        if expected_signals[-1] == 9:
+            assert signals[-1][1] == pytest.approx(5.0)
+
+
 def test_streaming_supervisor_kills_resistant_orphan_after_leader_exits(
     gate: ModuleType, tmp_path: Path
 ) -> None:
     pid_file = tmp_path / "orphan-pid.txt"
+    ready_file = tmp_path / "orphan-ready.txt"
+    leader_exit_file = tmp_path / "leader-exit-time.txt"
     orphan_code = (
-        "import signal,time; "
-        "signal.signal(signal.SIGTERM, lambda *_: None); "
-        "time.sleep(60)"
+        "from pathlib import Path\n"
+        "import signal,time\n"
+        "signal.signal(signal.SIGTERM, lambda *_: None)\n"
+        f"with Path({str(ready_file)!r}).open('w') as ready:\n"
+        "    print('ready', file=ready, flush=True)\n"
+        "time.sleep(60)\n"
     )
     leader_code = (
-        "from pathlib import Path; import subprocess,sys; "
-        f"child=subprocess.Popen([sys.executable, '-c', {orphan_code!r}]); "
-        f"Path({str(pid_file)!r}).write_text(str(child.pid)); "
-        "print('leader-exit', flush=True)"
+        "from pathlib import Path\n"
+        "import subprocess,sys,time\n"
+        f"child=subprocess.Popen([sys.executable, '-c', {orphan_code!r}])\n"
+        "try:\n"
+        f"    ready = Path({str(ready_file)!r})\n"
+        "    deadline = time.monotonic() + 3.0\n"
+        "    while not ready.exists() or ready.read_text().strip() != 'ready':\n"
+        "        assert child.poll() is None, 'orphan exited before readiness'\n"
+        "        assert time.monotonic() < deadline, 'orphan readiness timed out'\n"
+        "        time.sleep(0.01)\n"
+        "    assert child.poll() is None, 'ready orphan must still be alive'\n"
+        "    print('child-ready', flush=True)\n"
+        f"    Path({str(pid_file)!r}).write_text(str(child.pid))\n"
+        f"    Path({str(leader_exit_file)!r}).write_text(str(time.monotonic()))\n"
+        "    print('leader-exit', flush=True)\n"
+        "except BaseException:\n"
+        "    child.kill()\n"
+        "    child.wait(timeout=5)\n"
+        "    raise\n"
     )
     log = io.StringIO()
 
     started = time.monotonic()
-    exit_code = gate._run_streaming_command(
-        [sys.executable, "-c", leader_code],
-        cwd=tmp_path,
-        log=log,
-        env=os.environ.copy(),
-    )
-    elapsed = time.monotonic() - started
-    orphan_pid = int(pid_file.read_text())
+    try:
+        exit_code = gate._run_streaming_command(
+            [sys.executable, "-c", leader_code],
+            cwd=tmp_path,
+            log=log,
+            env=os.environ.copy(),
+        )
+        finished = time.monotonic()
+        elapsed = finished - started
 
-    assert exit_code == 0
-    assert elapsed < 5
-    assert "leader-exit" in log.getvalue()
-    assert not _process_exists(orphan_pid)
+        assert exit_code == 0, log.getvalue()
+        assert ready_file.read_text().strip() == "ready"
+        assert log.getvalue().splitlines()[-2:] == ["child-ready", "leader-exit"]
+        orphan_pid = int(pid_file.read_text())
+        leader_exiting = float(leader_exit_file.read_text())
+        assert started <= leader_exiting <= finished
+        assert elapsed < 5, (
+            f"startup={leader_exiting - started:.3f}s, "
+            f"cleanup={finished - leader_exiting:.3f}s"
+        )
+        assert not _process_exists(orphan_pid)
+    finally:
+        if pid_file.exists():
+            orphan_pid = int(pid_file.read_text())
+            if _process_exists(orphan_pid):
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(orphan_pid), "/T", "/F"],
+                        check=False,
+                        capture_output=True,
+                    )
+                else:
+                    try:
+                        os.kill(orphan_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
 
 def test_supervisor_parent_death_terminates_child(tmp_path: Path) -> None:
@@ -2294,56 +2419,105 @@ def test_wave_orchestrator_push_rejects_commit_created_after_gate(
 def test_wave_orchestrator_push_race_cannot_publish_concurrent_commit(
     tmp_path: Path,
 ) -> None:
-    repo, _remote, env = _make_push_orchestrator_repo(tmp_path)
+    repo, remote, env = _make_push_orchestrator_repo(tmp_path)
     assert _run_orchestrator(repo, env, "verify").returncode == 0
     assert _run_orchestrator(repo, env, "advance").returncode == 0
     assert _run_orchestrator(repo, env, "advance").returncode == 0
     gated_commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=repo, text=True
     ).strip()
+    branch = subprocess.check_output(
+        ["git", "branch", "--show-current"], cwd=repo, text=True
+    ).strip()
+    remote_ref = subprocess.check_output(
+        ["git", "config", "--get", f"branch.{branch}.merge"], cwd=repo, text=True
+    ).strip()
+    assert remote_ref.startswith("refs/heads/")
+    assert subprocess.check_output(
+        ["git", "--git-dir", str(remote), "rev-parse", remote_ref], text=True
+    ).strip() == gated_commit
     real_git = shutil.which("git")
     assert real_git is not None
+    interceptor_marker = repo / ".git" / "race-interceptor-executed"
+    commit_marker = repo / ".git" / "race-committed"
+    push_marker = repo / ".git" / "race-push-exit"
     wrapper_dir = tmp_path / "git-wrapper"
     wrapper_dir.mkdir()
-    wrapper_script = wrapper_dir / "git_wrapper.py"
+    wrapper_script = wrapper_dir / "push_race.py"
     wrapper_script.write_text(
         "from pathlib import Path\n"
         "import os, subprocess, sys\n"
-        "arguments = ['HEAD^{tree}' if value == 'HEAD{tree}' else value "
-        "for value in sys.argv[1:]]\n"
         "repo = Path(os.environ['RACE_REPO'])\n"
-        "marker = repo / '.race-committed'\n"
         "git = os.environ['REAL_GIT']\n"
-        "if 'push' in arguments and not marker.exists():\n"
-        "    marker.write_text('once')\n"
-        "    (repo / 'concurrent.txt').write_text('concurrent\\n')\n"
+        "arguments = sys.argv[1:]\n"
+        "if os.name == 'nt':\n"
+        "    arguments = ['HEAD^{tree}' if argument == 'HEAD{tree}' else argument "
+        "for argument in arguments]\n"
+        "is_push = arguments[:1] == ['-C'] and arguments[2:3] == ['push']\n"
+        "marker = repo / '.git' / 'race-interceptor-executed'\n"
+        "if is_push and not marker.exists():\n"
+        "    marker.write_text('started', encoding='utf-8')\n"
+        "    (repo / 'concurrent.txt').write_text('concurrent\\n', encoding='utf-8')\n"
         "    subprocess.run([git, '-C', str(repo), 'add', 'concurrent.txt'], check=True)\n"
         "    subprocess.run([git, '-C', str(repo), '-c', 'user.name=ProbOS Tests', "
         "'-c', 'user.email=tests@probos.invalid', 'commit', '-q', '-m', "
         "'concurrent'], check=True)\n"
-        "raise SystemExit(subprocess.run([git, *arguments]).returncode)\n",
+        "    commit = subprocess.check_output([git, '-C', str(repo), 'rev-parse', 'HEAD'], "
+        "text=True).strip()\n"
+        "    (repo / '.git' / 'race-committed').write_text(commit, encoding='utf-8')\n"
+        "completed = subprocess.run([git, *arguments])\n"
+        "if is_push:\n"
+        "    (repo / '.git' / 'race-push-exit').write_text("
+        "str(completed.returncode), encoding='utf-8')\n"
+        "raise SystemExit(completed.returncode)\n",
         encoding="utf-8",
+        newline="\n",
     )
-    (wrapper_dir / "git.cmd").write_text(
-        f'@"{sys.executable}" "%~dp0git_wrapper.py" %*\r\n',
-        encoding="utf-8",
-    )
+    if os.name == "nt":
+        (wrapper_dir / "git.cmd").write_text(
+            f'@echo off\n"{sys.executable}" "%~dp0push_race.py" %*\n'
+            'exit /b %errorlevel%\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+    else:
+        wrapper = wrapper_dir / "git"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f"exec {shlex.quote(sys.executable)} "
+            f'{shlex.quote(str(wrapper_script))} "$@"\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        wrapper.chmod(0o755)
     env["PATH"] = str(wrapper_dir) + os.pathsep + env.get("PATH", "")
     env["REAL_GIT"] = real_git
     env["RACE_REPO"] = str(repo)
 
     pushed = _run_orchestrator(repo, env, "verify")
 
+    assert interceptor_marker.is_file(), pushed.stdout + pushed.stderr
+    assert commit_marker.is_file(), pushed.stdout + pushed.stderr
+    assert push_marker.is_file(), pushed.stdout + pushed.stderr
+    assert push_marker.read_text(encoding="utf-8") == "0"
     local_commit = subprocess.check_output(
         [real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True
     ).strip()
-    remote_commit = subprocess.check_output(
-        [real_git, "-C", str(repo), "rev-parse", "@{upstream}"], text=True
-    ).strip()
-    assert pushed.returncode == 3
-    assert "git tree changed" in pushed.stderr.lower()
     assert local_commit != gated_commit
+    assert commit_marker.read_text(encoding="utf-8") == local_commit
+    remote_commit = subprocess.check_output(
+        [real_git, "--git-dir", str(remote), "rev-parse", remote_ref], text=True
+    ).strip()
+    assert pushed.returncode == 3, pushed.stdout + pushed.stderr
+    assert "git tree changed" in pushed.stderr.lower()
+    state = json.loads(
+        (repo / "prompts" / "wave-orchestrator-state.json").read_text(
+            encoding="utf-8-sig"
+        )
+    )
+    assert state.get("push_receipt") is None
     assert remote_commit == gated_commit
+    assert remote_commit != local_commit
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell unavailable")

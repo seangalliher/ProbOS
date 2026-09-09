@@ -21,6 +21,12 @@ def _terminate_child_tree(process: subprocess.Popen[bytes]) -> None:
             capture_output=True,
         )
         return
+    if process.poll() is not None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:

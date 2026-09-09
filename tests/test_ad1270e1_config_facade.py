@@ -34,13 +34,13 @@ import importlib.util
 import os
 import subprocess
 import sys
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from types import ModuleType
 from typing import Any
 
 import pytest
 import yaml
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, create_model
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPT = _REPO_ROOT / "scripts" / "check_config_facade.py"
@@ -125,6 +125,131 @@ def test_normalise_json_posixifies_paths_nested_in_json_structures() -> None:
     )
 
     assert normalised == {"a": [{"b": "x/y"}], "c": "z/w"}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),
+        ({}, {}),
+        ([], []),
+        ((), []),
+        (set(), set()),
+        (frozenset(), frozenset()),
+        ((PureWindowsPath("data/logs"),), ["data/logs"]),
+        ({PureWindowsPath("data/logs")}, {"data/logs"}),
+        (frozenset({PureWindowsPath("data/logs")}), frozenset({"data/logs"})),
+        ({PureWindowsPath("data/logs"): 3.0}, {"data/logs": 3.0}),
+    ],
+)
+def test_normalise_json_preserves_container_semantics(value: Any, expected: Any) -> None:
+    actual = facade.normalise_json(value)
+    assert actual == expected
+    assert type(actual) is type(expected)
+
+
+def test_normalise_json_model_keeps_non_path_json_values() -> None:
+    model = create_model(
+        "ModelDefault",
+        output_dir=(PurePath, PureWindowsPath("data/logs")),
+        cooldown=(float, 300),
+        literal=(str, r"data\literal"),
+    )
+    normalised = facade.normalise_json(model())
+    assert normalised == {
+        "output_dir": "data/logs", "cooldown": 300.0, "literal": r"data\literal",
+    }
+    assert type(normalised["cooldown"]) is float
+
+
+def _path_flavor_model(path_type: type[PurePath]) -> type[BaseModel]:
+    nested = create_model(
+        "PathDefaults",
+        __module__=facade.FACADE_MODULE,
+        output_dir=(PurePath, path_type("data/captains_log")),
+        paths=(dict[str, list[PurePath]], {"logs": [path_type("data/plan_of_day")]}),
+        literal=(str, r"data\literal"),
+        cooldown=(float, 300),
+    )
+    return create_model(
+        "SystemConfig",
+        __module__=facade.FACADE_MODULE,
+        nested=(nested, Field(default_factory=nested)),
+    )
+
+
+def test_model_record_normalises_nested_typed_path_schema_defaults() -> None:
+    windows_model = _path_flavor_model(PureWindowsPath)
+    posix_model = _path_flavor_model(PurePosixPath)
+    windows_schema = windows_model.model_json_schema()
+    posix_schema = posix_model.model_json_schema()
+    assert windows_schema != posix_schema, "path defaults must discriminate"
+
+    expected_schemas = []
+    for model, schema, path_type in (
+        (windows_model, windows_schema, PureWindowsPath),
+        (posix_model, posix_schema, PurePosixPath),
+    ):
+        nested = model.model_fields["nested"].annotation
+        assert nested.model_fields["output_dir"].default == path_type("data/captains_log")
+        assert nested.model_fields["paths"].default == {
+            "logs": [path_type("data/plan_of_day")]
+        }
+        expected = copy.deepcopy(schema)
+        properties = expected["$defs"]["PathDefaults"]["properties"]
+        for field_name, raw, normalised in (
+            ("output_dir", str(path_type("data/captains_log")), "data/captains_log"),
+            ("paths", {"logs": [str(path_type("data/plan_of_day"))]},
+             {"logs": ["data/plan_of_day"]}),
+        ):
+            assert "default" not in properties[field_name] or properties[field_name]["default"] == raw
+            properties[field_name]["default"] = normalised
+        assert properties["literal"]["default"] == r"data\literal"
+        expected_schemas.append(expected)
+
+    assert expected_schemas[0] == expected_schemas[1], "only typed defaults may differ"
+    windows_record = facade.model_record("SystemConfig", windows_model)
+    posix_record = facade.model_record("SystemConfig", posix_model)
+    assert windows_record.schema_available and posix_record.schema_available
+    assert windows_record.record["fields"] == posix_record.record["fields"]
+    assert windows_record.record["schema_sha256"] == posix_record.record["schema_sha256"]
+    assert windows_record.record["schema_sha256"] == facade.digest(expected_schemas[0])
+
+
+def test_build_surface_preserves_typed_paths_before_json_erasure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = {
+        "nested.output_dir": "data/captains_log",
+        "nested.paths.logs[0]": "data/plan_of_day",
+        "nested.literal": r"data\literal",
+        "nested.cooldown": 300.0,
+    }
+    captures = []
+    erased_flats = []
+    for path_type in (PureWindowsPath, PurePosixPath):
+        model = _path_flavor_model(path_type)
+        instance = model()
+        typed = instance.model_dump(mode="python")
+        erased = instance.model_dump(mode="json")
+        assert isinstance(typed["nested"]["output_dir"], path_type)
+        assert isinstance(typed["nested"]["paths"]["logs"][0], path_type)
+        assert type(typed["nested"]["cooldown"]) is int
+        assert type(erased["nested"]["cooldown"]) is float
+        assert erased["nested"]["output_dir"] == str(path_type("data/captains_log"))
+        assert erased["nested"]["paths"]["logs"][0] == str(path_type("data/plan_of_day"))
+        assert facade.flatten_dump(typed) == expected
+        erased_flats.append(facade.flatten_dump(erased))
+        module = ModuleType(facade.FACADE_MODULE)
+        module.SystemConfig = model
+        monkeypatch.setattr(facade, "_import_facade", lambda: module)
+        captures.append(facade.build_surface())
+
+    assert erased_flats[0] != erased_flats[1], "JSON erasure must lose path provenance"
+    assert all(flat["nested.literal"] == r"data\literal" for flat in erased_flats)
+    assert [capture["canonical_flat"] for capture in captures] == [expected, expected]
+    assert all(type(capture["canonical_flat"]["nested.cooldown"]) is float for capture in captures)
+    assert all(capture["canonical_dump_sha256"] == facade.digest(expected) for capture in captures)
 
 
 def test_flatten_dump_produces_dotted_leaf_paths() -> None:

@@ -107,9 +107,9 @@ normalises ``PurePath`` to POSIX **recursively** -- top-level type is not a
 reliable guard, because a ``list[Path]`` or ``dict[str, Path]`` default hides
 the same trap one level down.
 
-Relatedly: ``model_json_schema()`` silently **drops** those three defaults
-(three ``PydanticJsonSchemaWarning``s). Defaults come from ``model_fields``.
-Never from the schema.
+Schema defaults are normalised through Pydantic's default-encoding hook before
+serialization can erase their path types. Independent default records still
+come from ``model_fields``, never from the schema.
 
 Cross-check, not absorption
 ---------------------------
@@ -164,6 +164,7 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel
+from pydantic.json_schema import GenerateJsonSchema, JsonValue
 from pydantic_core import PydanticUndefined
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -249,7 +250,7 @@ _HEADER = (
     "#     are explicit dimensions above it; the digest catches type and\n"
     "#     constraint changes only. Do not expand it into a full schema.\n"
     "#   * Defaults come from model_fields, never from model_json_schema(),\n"
-    "#     which silently drops the three Path-valued defaults.\n"
+    "#     whose typed defaults are separately normalised before encoding.\n"
     "#   * Path values are POSIX-normalised. A raw dump is Windows-only and\n"
     "#     goes red on Linux CI while --check passes locally.\n"
     "#   * `tier: owned` is the contract. `tier: incidental` names are import\n"
@@ -319,11 +320,42 @@ def normalise_json(value: Any) -> Any:
     """POSIX-normalise any ``PurePath`` reachable inside a JSON-ish structure."""
     if isinstance(value, PurePath):
         return value.as_posix()
+    if isinstance(value, BaseModel):
+        return _normalised_dump(value)
     if isinstance(value, dict):
-        return {key: normalise_json(item) for key, item in value.items()}
+        return {normalise_json(key): normalise_json(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [normalise_json(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return type(value)(normalise_json(item) for item in value)
     return value
+
+
+class _NormalisedJsonSchema(GenerateJsonSchema):
+    def encode_default(self, default: Any) -> JsonValue:
+        return super().encode_default(normalise_json(default))
+
+
+def _normalise_dump_paths(typed: Any, serialized: Any) -> Any:
+    if isinstance(typed, PurePath):
+        return typed.as_posix()
+    if isinstance(typed, dict) and isinstance(serialized, dict):
+        return {
+            key: _normalise_dump_paths(typed[key], value) if key in typed else value
+            for key, value in serialized.items()
+        }
+    if isinstance(typed, (list, tuple)) and isinstance(serialized, list):
+        return [
+            _normalise_dump_paths(typed[index], value)
+            for index, value in enumerate(serialized)
+        ]
+    return serialized
+
+
+def _normalised_dump(model: BaseModel) -> Any:
+    return _normalise_dump_paths(
+        model.model_dump(mode="python"), model.model_dump(mode="json")
+    )
 
 
 def flatten_dump(value: Any, prefix: str = "") -> dict[str, Any]:
@@ -941,7 +973,7 @@ def model_record(name: str, model: type[BaseModel]) -> ModelRecord:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            schema = model.model_json_schema()
+            schema = model.model_json_schema(schema_generator=_NormalisedJsonSchema)
     except Exception:
         result.schema_available = False
         schema = None
@@ -1024,7 +1056,7 @@ def build_surface() -> dict[str, Any]:
         models[name] = inspected.record
 
     system = facade.SystemConfig()
-    flat = flatten_dump(system.model_dump(mode="json"))
+    flat = flatten_dump(_normalised_dump(system))
 
     owned = sum(1 for row in names.values() if row["tier"] == "owned")
     return {
@@ -1061,7 +1093,7 @@ def _emit(mode: str) -> int:
         payload = build_surface()
     elif mode == "dump":
         facade = _import_facade()
-        payload = {"flat": flatten_dump(facade.SystemConfig().model_dump(mode="json"))}
+        payload = {"flat": flatten_dump(_normalised_dump(facade.SystemConfig()))}
     else:  # pragma: no cover - argparse constrains the choices
         raise SystemExit(f"unknown emit mode: {mode}")
     json.dump(payload, sys.stdout, sort_keys=True)
