@@ -43,6 +43,9 @@ from probos.mesh.nats_bus import (
 from probos.types import IntentMessage, IntentResult
 
 
+_ENCODER_DEPTH_CEILING = 20_000
+
+
 class _RawMsg:
     """Stands in for ``nats.aio.msg.Msg``.
 
@@ -151,13 +154,15 @@ def _encodes(value: Any) -> bool:
     return True
 
 
-def _envelope_seam_depth() -> int:
+def _envelope_seam_depth(conditions: str = "") -> int:
     """Calibrate locally; only the callback can establish the consumer premise."""
-    lower, upper = 0, 1
-    assert _encodes({"metadata": {"deep": _deep(lower)}})
-    while _encodes({"metadata": {"deep": _deep(upper)}}):
-        assert upper < 3200, "no encoder failure within the bounded depth search"
-        lower, upper = upper, min(upper * 2, 3200)
+    lower, upper = 0, _ENCODER_DEPTH_CEILING
+    assert _encodes({"metadata": {"deep": _deep(lower)}}), (
+        f"calibration: shallow envelope must encode; {conditions}"
+    )
+    assert not _encodes({"metadata": {"deep": _deep(upper)}}), (
+        f"calibration: upper sentinel must fail at depth {upper}; {conditions}"
+    )
     while upper - lower > 1:
         middle = (lower + upper) // 2
         if _encodes({"metadata": {"deep": _deep(middle)}}):
@@ -170,6 +175,35 @@ def _envelope_seam_depth() -> int:
         "calibration: envelope must fail at the same helper call depth"
     )
     return upper
+
+
+def test_envelope_seam_depth_searches_above_legacy_ceiling(monkeypatch) -> None:
+    """Synthetic predicate checks search logic, not a platform's serializer."""
+    depths: list[int] = []
+
+    def _synthetic_encodes(value: Any) -> bool:
+        depth = 0
+        while isinstance(value, (dict, list)):
+            depth += 1
+            value = next(iter(value.values())) if isinstance(value, dict) else value[0]
+        depths.append(depth)
+        return depth < 5000
+
+    monkeypatch.setitem(globals(), "_encodes", _synthetic_encodes)
+    assert _envelope_seam_depth() == 4998
+    assert max(depths) == _ENCODER_DEPTH_CEILING + 2
+    assert len(depths) <= 20
+
+
+@pytest.mark.parametrize(
+    ("encodes", "message"),
+    [(True, "upper sentinel must fail"), (False, "shallow envelope must encode")],
+)
+def test_envelope_seam_depth_rejects_invalid_bracket(monkeypatch, encodes, message) -> None:
+    """Synthetic predicates must not turn an invalid bracket into calibration."""
+    monkeypatch.setitem(globals(), "_encodes", lambda value: encodes)
+    with pytest.raises(AssertionError, match=f"{message}.*synthetic conditions"):
+        _envelope_seam_depth("synthetic conditions")
 
 
 # ── the defect ────────────────────────────────────────────────────
@@ -540,7 +574,7 @@ def test_the_serializability_probe_asks_exactly_what_respond_asks() -> None:
     assert IntentBus._encoded({"x": object()}) is None
     assert IntentBus._encoded({object(): 1}) is None
     # And depth: this raises RecursionError, not TypeError.
-    assert IntentBus._encoded({"x": _deep(20_000)}) is None
+    assert IntentBus._encoded({"x": _deep(_ENCODER_DEPTH_CEILING)}) is None
 
 # ── the transport's other two refusals ────────────────────────────
 
@@ -593,7 +627,7 @@ async def test_deeply_nested_metadata_does_not_cost_the_answer(
         f"c_make_encoder={json.encoder.c_make_encoder!r}"
     )
     record_property("serializer_conditions", conditions)
-    calibrated_depth = _envelope_seam_depth()
+    calibrated_depth = _envelope_seam_depth(conditions)
     record_property("calibrated_depth", calibrated_depth)
     original_encoded = IntentBus._encoded
     observations: list[tuple[str, int | None]] = []
@@ -627,7 +661,10 @@ async def test_deeply_nested_metadata_does_not_cost_the_answer(
 
     attempts: list[tuple[int, list[tuple[str, int | None]]]] = []
     with caplog.at_level(logging.WARNING, logger="probos.mesh.intent"):
-        for depth in range(max(1, calibrated_depth - 32), min(3200, calibrated_depth + 32) + 1):
+        for depth in range(
+            max(1, calibrated_depth - 32),
+            min(_ENCODER_DEPTH_CEILING, calibrated_depth + 32) + 1,
+        ):
             value = _deep(depth)
             metadata = {"deep": value}
             observations.clear()
