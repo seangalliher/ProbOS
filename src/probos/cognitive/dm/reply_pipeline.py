@@ -162,6 +162,8 @@ class DmReplyContext:
     # Defaulted per the AD-791a convention above, so every existing
     # ``DmReplyContext(...)`` construction site is untouched.
     write_ledger: WriteLedger = field(default_factory=WriteLedger)
+    pre_write_disclosure_body: str | None = None
+    write_disclosure_suffix: str | None = None
     # AD-1295 (#1087): the agentic loop's own record of which tools it called
     # and which of them succeeded, reconstructed from ``IntentResult.metadata``
     # by the route that built this context.
@@ -251,11 +253,11 @@ class DmReplyPipeline:
     def _escalation_steps(self) -> tuple[Callable, ...]:
         """AD-933: the channel-agnostic escalation subset reused by the
         group-chat fan-out (``routers/thread_fanout.py:group_chat_fanout``).
-        Each step is a strict no-op for any reply lacking its marker, and the
-        markers are emitted only by specifically-taught agents, so the subset
-        is inherently bounded and safe outside the 1:1 path. Relative order is
+        Marker steps are strict no-ops for replies lacking their markers;
+        the write-claim guard reads the resulting ledger and abstains when no
+        channel ran. Relative order is
         preserved from :meth:`_full_steps` (4c -> 4e -> 4i -> 4h -> 4f -> 4k ->
-        4g -> 4j).
+        4g -> 4l -> 4j -> 4m).
 
         Included: ``step_4c_image_gen_parse`` (AD-730-3 ``[GEN_IMAGE]``, added
         AD-933b), ``step_4e_action_dispatch`` (AD-745 ``[ACTION]``),
@@ -265,9 +267,10 @@ class DmReplyPipeline:
         into artifacts + inline stubs; channel-agnostic, reads
         ``chat_thread_id`` / ``a2ui_enabled``; AD-811c activates it on the
         group fan-out path), ``step_4g_create_task_parse`` (AD-845
-        ``[CREATE_TASK]``), ``step_4j_deliberate_parse`` (AD-934
-        ``[THINK]``/``[DELIBERATE]`` deep-tier re-roll, flag-gated, appended
-        last).
+        ``[CREATE_TASK]``), ``step_4l_extract_todos`` (AD-1081 room Todos),
+        ``step_4j_deliberate_parse`` (AD-934 ``[THINK]``/``[DELIBERATE]``
+        deep-tier re-roll, flag-gated), ``step_4m_write_claim_guard`` (AD-1305
+        shared disclosure after producers and the final rewrite).
 
         Excluded (1:1 semantics / mislabel risk): sanity-gate retry (1),
         games (2/3), self-check (4), follow-up (4d), outbound-DM (4b),
@@ -276,10 +279,10 @@ class DmReplyPipeline:
         (6 — records ``"Captain DM"``), divergence (7), mark-emitted/avatar
         (8), emotion (9). Forward marker: AD-933b-2 (``step_4d_follow_up``,
         whose ``conversation_pacing_scheduler`` re-injects a synthesized
-        user-turn — an ambiguous target in a multi-agent room). Forward marker:
-        AD-1285 ``step_4m_write_claim_guard`` is 1:1-only pending group-sink
-        verification (#1087) — the same write-claim hazard exists on the group
-        fan-out, but its disclosure sink is unverified."""
+        user-turn — an ambiguous target in a multi-agent room).
+        ``step_4n_tool_write_ledger`` stays excluded: group replies do not run
+        the conversational agentic loop and carry no tool invocations. The
+        group episode writer consumes the same ledger projection as step 5."""
         return (
             self.step_4c_image_gen_parse,  # AD-933b (AD-730-3 [GEN_IMAGE])
             self.step_4e_action_dispatch,
@@ -290,6 +293,7 @@ class DmReplyPipeline:
             self.step_4g_create_task_parse,
             self.step_4l_extract_todos,  # AD-1081 room-Todo validation loop
             self.step_4j_deliberate_parse,  # AD-934
+            self.step_4m_write_claim_guard,
         )
 
     async def _run_steps(self, steps: tuple[Callable, ...]) -> None:
@@ -1810,8 +1814,10 @@ class DmReplyPipeline:
         ``step_5``. Producing the record inside the consumer would silently
         disable the episode marker along with the guard.
 
-        Forward marker: 1:1 only, matching AD-1285. The group fan-out has no
-        verified disclosure sink, and ``federation/bridge.py``'s directed-result
+        Forward marker: 1:1 only. Group notebook/artifact disclosure is wired,
+        but group contexts have ``tool_invocations=None``, so this step remains
+        excluded and finding-channel provenance is unknown.
+        Separately, ``federation/bridge.py``'s directed-result
         serializer forwards only ``DM_REPLY_METADATA_KEY``, so a federated turn
         arrives with no invocation record and this channel is never consulted.
         Both degrade to ABSTAIN, never to a false accusation.
@@ -1864,6 +1870,8 @@ class DmReplyPipeline:
         Tier-2 honest-degrade: never raises.
         """
         try:
+            self.ctx.write_disclosure_suffix = None
+            self.ctx.pre_write_disclosure_body = self.ctx.response_text
             if not self.ctx.response_text:
                 return
             config = getattr(self.ctx.runtime, "config", None)
@@ -1887,9 +1895,9 @@ class DmReplyPipeline:
                 sorted(self.ctx.write_ledger.wrote_partially),
                 sorted(self.ctx.write_ledger.wrote),
             )
-            self.ctx.response_text = (
-                self.ctx.response_text + disclosure_for(verdict)
-            )
+            suffix = disclosure_for(verdict)
+            self.ctx.response_text = self.ctx.response_text + suffix
+            self.ctx.write_disclosure_suffix = suffix
         except Exception:
             logger.warning(
                 "AD-1285: write-claim guard raised for agent=%s; shipping "
@@ -1907,14 +1915,6 @@ class DmReplyPipeline:
                 from probos.cognitive.episodic import resolve_sovereign_id
                 from probos.types import AnchorFrame, Episode
                 sovereign_id = resolve_sovereign_id(self.ctx.agent)
-                ledger = self.ctx.write_ledger
-                # AD-1293 (#1200): the AD-1285 verdict is computed one step
-                # earlier (step_4m) and was previously discarded here. An
-                # unevaluated ledger yields [] — "no channel ran" and "a channel
-                # ran and wrote nothing" stay distinct (AD-1269).
-                self_contradicted = (
-                    sorted(ledger.wrote_nothing) if ledger.evaluated else []
-                )
                 # BF-795 (#1259): the AD-1248 disclosure is composed at egress,
                 # AFTER this step, and ``response`` below is front-truncated at
                 # 500 chars while the disclosure is a tail -- so composing
@@ -1930,7 +1930,7 @@ class DmReplyPipeline:
                     user_input=f"[1:1 with {self.ctx.callsign or self.ctx.agent_id}] Captain: {self.ctx.req_message}",
                     timestamp=_time.time(),
                     agent_ids=[sovereign_id],
-                    self_contradicted_channels=self_contradicted,  # AD-1293 (#1200)
+                    self_contradicted_channels=list(self.ctx.write_ledger.self_contradicted_channels),
                     failed_tool_names=failed_tool_names,  # BF-795 (#1259)
                     failed_tool_call_count=failed_tool_call_count,  # BF-795 (#1259)
                     outcomes=[{

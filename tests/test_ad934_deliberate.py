@@ -259,6 +259,7 @@ def test_escalation_subset_appends_4j_after_4g() -> None:
         "step_4g_create_task_parse",
         "step_4l_extract_todos",  # AD-1081 room-Todo validation loop
         "step_4j_deliberate_parse",
+        "step_4m_write_claim_guard",
     ]
 
 

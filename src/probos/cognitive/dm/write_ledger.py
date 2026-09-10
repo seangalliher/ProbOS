@@ -111,6 +111,11 @@ class WriteLedger:
         """
         return self.consulted - self.wrote
 
+    @property
+    def self_contradicted_channels(self) -> tuple[str, ...]:
+        """AD-1293 episode markers: total channel failures, never partial writes."""
+        return tuple(sorted(self.wrote_nothing)) if self.evaluated else ()
+
 
 class ClaimVerdict(enum.Enum):
     """The outcomes of comparing a turn against its own write ledger."""

@@ -24,9 +24,13 @@ from typing import Any, Literal
 
 from probos.cognitive.chat_facilitator import (
     ChatFacilitator,
+    ConvergenceEvidence,
     SpeakerSignals,
     build_room_signal,
+    capture_convergence_evidence,
     facilitation_mode,
+    project_convergence_body,
+    project_persisted_convergence_body,
 )
 from probos.cognitive.conversation_trust import (
     conversation_topic_tag,
@@ -34,6 +38,7 @@ from probos.cognitive.conversation_trust import (
     extract_conversation_trust_outcomes,
 )
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+from probos.cognitive.dm.write_ledger import WriteLedger
 from probos.dm_reply import DmReply  # AD-1248
 from probos.cognitive.confab_probe import probe_referent
 from probos.cognitive.emergence_taxonomy import BehaviorCode
@@ -437,6 +442,7 @@ async def _fan_one_round(
     grounding_cue: str | None = None,
     broadcast: bool = False,
     max_speakers_override: int | None = None,
+    _semantic_replies: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     """One reactivity round (AD-935): facilitate over ``candidate_ids`` (minus
     ``exclude_ids``) using ``trigger_body`` for mention/relevance, dispatch the
@@ -478,7 +484,8 @@ async def _fan_one_round(
             runtime, trigger_body, candidate_pool, prior, addressed_callsigns
         )
         recent_agent_msgs = [
-            (m.author_id, m.body) for m in prior[-_CONVERGENCE_WINDOW:] if m.role == "agent"
+            (m.author_id, project_persisted_convergence_body(m.body, m.metadata))
+            for m in prior[-_CONVERGENCE_WINDOW:] if m.role == "agent"
         ]
         result = facilitator.facilitate(signals, recent_agent_msgs)
         speaking_order = result.speaking_order
@@ -524,7 +531,10 @@ async def _fan_one_round(
             "without room sense", thread_id, exc_info=True,
         )
 
-    async def _send_one(agent_id: str) -> dict[str, str]:
+    write_ledgers: dict[str, WriteLedger] = {}
+    semantic_texts: list[str] = [""] * len(speaking_order)
+
+    async def _send_one(reply_index: int, agent_id: str) -> dict[str, str]:
         callsign = ""
         agent: Any = None
         try:
@@ -670,9 +680,12 @@ async def _fan_one_round(
         # would mislabel a multi-agent turn. Only when a real reply came back
         # AND the agent resolved (no agent -> can't escalate). Tier-2
         # honest-degrade: any failure ships the raw reply_text unchanged.
+        eligibility_text = reply_text
+        reply_context: DmReplyContext | None = None
+        convergence_evidence: ConvergenceEvidence | None = None
         if result and result.result and agent is not None:
             try:
-                pipeline = DmReplyPipeline(DmReplyContext(
+                reply_context = DmReplyContext(
                     runtime=runtime,
                     agent=agent,
                     agent_id=agent_id,
@@ -691,20 +704,44 @@ async def _fan_one_round(
                     sampling_state=None,
                     avatar_event_bus=None,
                     chat_thread_id=thread_id,
-                ))
+                )
+                pipeline = DmReplyPipeline(reply_context)
                 await pipeline.run_escalation_only()
-                reply_text = pipeline.ctx.response_text or reply_text
                 # AD-933b: surface SHA refs of any [GEN_IMAGE] image the
                 # escalation subset (step_4c, AD-730-3) generated for this
                 # group turn, read from the SAME ctx the escalation just ran.
                 # [] when no image was generated; persisted below (AD-916 ref
                 # carriage) only when non-empty.
                 generated_ids = list(pipeline.ctx.generated_attachment_ids or [])
+                processed_body = reply_context.response_text
+                pre_body = reply_context.pre_write_disclosure_body
+                suffix = reply_context.write_disclosure_suffix
+                processed_evidence: ConvergenceEvidence | None = None
+                if (
+                    processed_body
+                    and type(pre_body) is str
+                    and type(suffix) is str
+                    and processed_body == pre_body + suffix
+                ):
+                    processed_evidence = capture_convergence_evidence(
+                        strip_intent_self_tag(processed_body),
+                        strip_intent_self_tag(pre_body),
+                    )
+                eligibility_text = (
+                    reply_context.pre_write_disclosure_body
+                    if reply_context.pre_write_disclosure_body is not None
+                    else reply_context.response_text
+                ) or reply_text
+                reply_text = reply_context.response_text or reply_text
+                convergence_evidence = processed_evidence
             except Exception:
                 logger.warning(
                     "AD-933: escalation subset failed for thread=%s agent=%s; "
                     "shipping raw reply", thread_id, agent_id, exc_info=True,
                 )
+            finally:
+                if reply_context is not None:
+                    write_ledgers[agent_id] = reply_context.write_ledger
         # AD-948: strip the AD-722a intent self-tag (<intent emotion=...>)
         # UNCONDITIONALLY before the decline check / persist / return. The 1:1
         # path strips it via apply_divergence_check (routers/agents.py); the
@@ -713,6 +750,7 @@ async def _fan_one_round(
         # placed BEFORE the NO_RESPONSE check so a decline that trails a tag is
         # still detected. The tag MUST NEVER reach the Captain.
         reply_text = strip_intent_self_tag(reply_text)
+        eligibility_text = strip_intent_self_tag(eligibility_text)
         # AD-935: an agent may decline to respond in a group turn. A
         # [NO_RESPONSE] (case-insensitive, after strip + bracket removal) or an
         # empty reply is NOT persisted and NOT returned — the round collector
@@ -728,9 +766,11 @@ async def _fan_one_round(
         # visible transcript. Matching the established proactive.py contract
         # (``"[NO_RESPONSE]" in response_text``), any decline marker suppresses
         # the whole reply — a human who decides not to respond says nothing.
-        _declined = bool(_NO_RESPONSE_RE.search(reply_text)) or not reply_text.strip()
+        _declined = bool(_NO_RESPONSE_RE.search(eligibility_text)) or not eligibility_text.strip()
         if _declined:
             return {"agent_id": agent_id, "callsign": callsign, "text": "", "_declined": True}
+        if _semantic_replies is not None:
+            semantic_texts[reply_index] = project_convergence_body(reply_text, convergence_evidence)
         try:
             # AD-933b: attach the generated-image refs only when the
             # escalation produced any; an empty/failed escalation leaves the
@@ -741,6 +781,7 @@ async def _fan_one_round(
             store.append_message(
                 thread_id, author_id=agent_id, role="agent",
                 body=reply_text, metadata=metadata,
+                convergence_evidence=convergence_evidence,
             )
         except Exception:
             logger.warning(
@@ -753,11 +794,20 @@ async def _fan_one_round(
     # the parallel dispatch (shared camera frame -> one describe, not one per
     # agent). No-op + cheap when perception is disabled (the default).
     await _maybe_force_describe_frame(runtime)
-    raw = await asyncio.gather(*[_send_one(a) for a in speaking_order])
+    raw = await asyncio.gather(*[
+        _send_one(reply_index, agent_id)
+        for reply_index, agent_id in enumerate(speaking_order)
+    ])
     # AD-935: drop [NO_RESPONSE]/empty declines BEFORE the episode write and
     # the returned per_agent_replies list. (_send_one already early-returns a
     # decline before its own append, so a decline never reaches append_message.)
     replies = [r for r in raw if not r.get("_declined")]
+    if _semantic_replies is not None:
+        _semantic_replies.extend(
+            {"agent_id": reply["agent_id"], "callsign": reply["callsign"], "text": semantic_text}
+            for reply, semantic_text in zip(raw, semantic_texts)
+            if not reply.get("_declined")
+        )
     t_end = time.monotonic()
 
     # AD-933a: group-anchored episodic write — one episode per crew reply.
@@ -837,6 +887,9 @@ async def _fan_one_round(
                         "source": "group_chat_fanout",
                     }],
                     agent_ids=[reply["agent_id"]],
+                    self_contradicted_channels=list(
+                        write_ledgers.get(reply["agent_id"], WriteLedger()).self_contradicted_channels
+                    ),
                     duration_ms=(t_end - t_start) * 1000,
                     # AD-977/AD-986a: index the agent's OWN reply so it can recall what
                     # it said in the room. The embedded document (_prepare_document)
@@ -1295,6 +1348,7 @@ async def group_chat_fanout(
     # AD-970: an agent-initiated kickoff passes opener_id so the opener is
     # excluded from round 0 (it just spoke); a Captain turn excludes nobody.
     all_replies: list[dict[str, str]] = []
+    semantic_replies: list[dict[str, str]] = []
     # AD-963b: hoist the turn-mode policy ABOVE round 0 so the department-dominant
     # weight tilt reaches round 0 — the round that decides who FRAMES the topic
     # first. ``cfg`` is reused by the AD-935 cascade below (the duplicate read was
@@ -1357,6 +1411,7 @@ async def group_chat_fanout(
         grounding_cue=grounding_cue,
         broadcast=broadcast_weights,
         max_speakers_override=_speakers_override,
+        _semantic_replies=semantic_replies,
     )
     all_replies.extend(round0)
 
@@ -1469,6 +1524,7 @@ async def group_chat_fanout(
                     grounding_cue=grounding_cue,
                     broadcast=broadcast_weights,
                     max_speakers_override=_speakers_override,
+                    _semantic_replies=semantic_replies,
                 )
             except Exception:
                 logger.warning(
@@ -1483,6 +1539,6 @@ async def group_chat_fanout(
             if broadcast_mode:
                 broadcast_spoke |= {r["agent_id"] for r in nxt if r.get("agent_id")}
             rounds_done += 1
-    _record_conversation_trust(runtime, thread, all_replies, agent_ids)
+    _record_conversation_trust(runtime, thread, semantic_replies, agent_ids)
     _observe_conversation_corrections(runtime, thread, all_replies, agent_ids)
     return all_replies

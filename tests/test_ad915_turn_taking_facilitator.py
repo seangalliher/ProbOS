@@ -15,13 +15,21 @@ Two halves:
 """
 from __future__ import annotations
 
+from dataclasses import asdict, replace
 from types import SimpleNamespace
+
+import pytest
 
 from probos.cognitive.chat_facilitator import (
     ChatFacilitator,
+    ConvergenceEvidence,
     FacilitationResult,
     SpeakerScore,
     SpeakerSignals,
+    capture_convergence_evidence,
+    project_convergence_body,
+    project_persisted_convergence_body,
+    validate_convergence_evidence,
 )
 from probos.config import GroupChatConfig
 from probos.mesh.intent import IntentBus
@@ -36,6 +44,65 @@ from probos.types import IntentMessage, IntentResult
 
 
 # ============================ pure facilitator ============================
+
+
+@pytest.mark.parametrize("prefix", ["", " ", "Choose quartz.", "\u00e9\U0001f680\nNext line."])
+def test_convergence_evidence_projects_character_prefix(prefix: str) -> None:
+    body = prefix + "\n\nSystem disclosure."
+    evidence = capture_convergence_evidence(body, prefix)
+    assert type(evidence) is ConvergenceEvidence
+    assert evidence.substantive_chars == len(prefix)
+    assert validate_convergence_evidence(body, evidence)
+    assert project_convergence_body(body, evidence) == prefix
+    assert project_persisted_convergence_body(
+        body, {"ad1305_convergence": asdict(evidence)},
+    ) == prefix
+    assert project_convergence_body(body + "changed", evidence) == body + "changed"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("version", True), ("version", 2), ("version", "1"),
+    ("source", "unknown"), ("source", None),
+    ("substantive_chars", True), ("substantive_chars", -1),
+    ("substantive_chars", 999), ("substantive_chars", 1.0),
+    ("body_sha256", "A" * 64), ("body_sha256", None),
+])
+def test_convergence_evidence_invalid_fields_preserve_body(
+    field: str, value: object,
+) -> None:
+    body = "Choose quartz.\n\nSystem disclosure."
+    evidence = capture_convergence_evidence(body, "Choose quartz.")
+    assert evidence is not None
+    invalid = replace(evidence, **{field: value})
+    assert not validate_convergence_evidence(body, invalid)
+    assert project_convergence_body(body, invalid) == body
+    assert project_persisted_convergence_body(
+        body, {"ad1305_convergence": asdict(invalid)},
+    ) == body
+
+
+@pytest.mark.parametrize("metadata", [
+    None, {}, [], {"ad1305_convergence": None},
+    {"ad1305_convergence": {}}, {"ad1305_convergence": "legacy"},
+])
+def test_convergence_evidence_legacy_metadata_preserves_body(metadata: object) -> None:
+    body = "System disclosure."
+    assert project_persisted_convergence_body(body, metadata) == body
+    assert project_convergence_body(body, None) == body
+    assert capture_convergence_evidence(body, "Unrelated prefix") is None
+
+
+def test_convergence_evidence_exact_type_required() -> None:
+    class DerivedEvidence(ConvergenceEvidence):
+        pass
+
+    body = "System disclosure.\n\nSystem disclosure."
+    prefix = "System disclosure."
+    evidence = capture_convergence_evidence(body, prefix)
+    assert evidence is not None
+    assert project_convergence_body(body, evidence) == prefix
+    assert project_convergence_body(body, asdict(evidence)) == body
+    assert project_convergence_body(body, DerivedEvidence(**asdict(evidence))) == body
 
 
 def test_rank_orders_by_relevance():

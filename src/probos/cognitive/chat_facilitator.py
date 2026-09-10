@@ -20,10 +20,72 @@ which cannot be pointed at chat_thread_messages rows.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Literal
 
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
+
+
+@dataclass(frozen=True)
+class ConvergenceEvidence:
+    substantive_chars: int
+    body_sha256: str
+    version: int = 1
+    source: str = "write_claim_guard"
+
+
+def validate_convergence_evidence(body: str, evidence: object) -> bool:
+    if type(body) is not str or type(evidence) is not ConvergenceEvidence:
+        return False
+    return (
+        type(evidence.version) is int
+        and evidence.version == 1
+        and type(evidence.source) is str
+        and evidence.source == "write_claim_guard"
+        and type(evidence.substantive_chars) is int
+        and 0 <= evidence.substantive_chars <= len(body)
+        and type(evidence.body_sha256) is str
+        and evidence.body_sha256 == hashlib.sha256(body.encode("utf-8")).hexdigest()
+    )
+
+
+def capture_convergence_evidence(
+    body: str, substantive_body: str,
+) -> ConvergenceEvidence | None:
+    if (
+        type(body) is not str
+        or type(substantive_body) is not str
+        or not body.startswith(substantive_body)
+    ):
+        return None
+    return ConvergenceEvidence(
+        substantive_chars=len(substantive_body),
+        body_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+    )
+
+
+def project_convergence_body(body: str, evidence: object) -> str:
+    if validate_convergence_evidence(body, evidence):
+        return body[:evidence.substantive_chars]
+    return body
+
+
+def project_persisted_convergence_body(body: str, metadata: object) -> str:
+    if type(metadata) is not dict:
+        return body
+    envelope = metadata.get("ad1305_convergence")
+    if type(envelope) is not dict or set(envelope) != {
+        "version", "source", "substantive_chars", "body_sha256",
+    }:
+        return body
+    evidence = ConvergenceEvidence(
+        substantive_chars=envelope["substantive_chars"],
+        body_sha256=envelope["body_sha256"],
+        version=envelope["version"],
+        source=envelope["source"],
+    )
+    return project_convergence_body(body, evidence)
 
 
 @dataclass(frozen=True)

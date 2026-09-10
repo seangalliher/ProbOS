@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -190,6 +191,66 @@ def test_two_channels_accumulate_independently() -> None:
     assert ledger.wrote_nothing == frozenset({WRITE_CHANNEL_NOTEBOOK})
 
 
+@pytest.mark.parametrize(
+    ("records", "expected"),
+    [
+        ((), ()),
+        (((WRITE_CHANNEL_NOTEBOOK, True, False),), ()),
+        (((WRITE_CHANNEL_NOTEBOOK, False, False),), (WRITE_CHANNEL_NOTEBOOK,)),
+        (((WRITE_CHANNEL_ARTIFACT, True, True),), ()),
+        (
+            ((WRITE_CHANNEL_ARTIFACT, True, False), (WRITE_CHANNEL_NOTEBOOK, False, False)),
+            (WRITE_CHANNEL_NOTEBOOK,),
+        ),
+        (
+            ((WRITE_CHANNEL_NOTEBOOK, True, False), (WRITE_CHANNEL_ARTIFACT, False, False)),
+            (WRITE_CHANNEL_ARTIFACT,),
+        ),
+        (
+            ((WRITE_CHANNEL_ARTIFACT, True, True), (WRITE_CHANNEL_NOTEBOOK, False, False)),
+            (WRITE_CHANNEL_NOTEBOOK,),
+        ),
+        (
+            ((WRITE_CHANNEL_NOTEBOOK, False, False), (WRITE_CHANNEL_ARTIFACT, False, False)),
+            (WRITE_CHANNEL_ARTIFACT, WRITE_CHANNEL_NOTEBOOK),
+        ),
+    ],
+    ids=[
+        "unevaluated", "success", "failure", "partial-only", "artifact-success",
+        "notebook-success", "partial-and-failure", "all-failed-sorted",
+    ],
+)
+def test_self_contradicted_channels_projects_only_total_failures(
+    records: tuple[tuple[str, bool, bool], ...], expected: tuple[str, ...],
+) -> None:
+    ledger = WriteLedger()
+    reverse_ledger = WriteLedger()
+    for channel, wrote, partial in records:
+        ledger = ledger.consulted_with(channel, wrote=wrote, partial=partial)
+    for channel, wrote, partial in reversed(records):
+        reverse_ledger = reverse_ledger.consulted_with(channel, wrote=wrote, partial=partial)
+
+    assert isinstance(ledger.self_contradicted_channels, tuple)
+    assert ledger.self_contradicted_channels == expected
+    assert reverse_ledger.self_contradicted_channels == expected
+
+
+def test_self_contradicted_channels_snapshot_is_immutable() -> None:
+    ledger = WriteLedger().consulted_with(WRITE_CHANNEL_NOTEBOOK, wrote=False)
+    snapshot = ledger.self_contradicted_channels
+    derived = ledger.consulted_with(WRITE_CHANNEL_NOTEBOOK, wrote=True)
+    episode_channels = list(snapshot)
+    sibling_channels = list(snapshot)
+    episode_channels.clear()
+
+    assert snapshot == (WRITE_CHANNEL_NOTEBOOK,)
+    assert ledger.self_contradicted_channels == snapshot
+    assert derived.self_contradicted_channels == ()
+    assert sibling_channels == [WRITE_CHANNEL_NOTEBOOK]
+    with pytest.raises(FrozenInstanceError):
+        setattr(ledger, "self_contradicted_channels", ())
+
+
 def test_recording_the_same_channel_twice_is_idempotent() -> None:
     """Sets, not counters. step_4i can reach ``consulted_with`` from both the
     normal path and the ``except`` path on one turn."""
@@ -349,6 +410,64 @@ def test_empty_response_is_not_given_a_write_disclosure(known_failure: bool) -> 
     asyncio.run(DmReplyPipeline(ctx).step_4m_write_claim_guard())
     assert ctx.response_text == ""
     assert DmReplyPipeline(ctx).build_response()["response"] == ""
+
+
+def test_pre_write_disclosure_body_defaults_to_none() -> None:
+    ctx = _make_ctx(runtime=_runtime(), response_text="Unprocessed reply.")
+    assert ctx.pre_write_disclosure_body is None
+    assert ctx.write_disclosure_suffix is None
+
+
+@pytest.mark.parametrize("body", ["", ' \n<intent emotion="focused"/>Exact body. \t'])
+@pytest.mark.parametrize("guard_enabled", [False, True])
+@pytest.mark.parametrize("outcome", ["unevaluated", "success", "total", "partial"])
+async def test_guard_captures_exact_body_before_every_early_return(
+    body: str, guard_enabled: bool, outcome: str,
+) -> None:
+    ctx = _make_ctx(runtime=_runtime(guard_enabled=guard_enabled), response_text=body)
+    if outcome != "unevaluated":
+        ctx.write_ledger = ctx.write_ledger.consulted_with(
+            WRITE_CHANNEL_ARTIFACT, wrote=outcome != "total", partial=outcome == "partial",
+        )
+    ledger = ctx.write_ledger
+    reply = ctx.reply
+    verdict = assess_write_claim(ledger)
+    expected = body + (disclosure_for(verdict) if body and guard_enabled else "")
+    ctx.write_disclosure_suffix = "stale suffix"
+
+    await DmReplyPipeline(ctx).step_4m_write_claim_guard()
+
+    assert ctx.pre_write_disclosure_body == body
+    assert ctx.response_text == expected
+    expected_suffix = (
+        disclosure_for(verdict)
+        if body and guard_enabled and verdict is not ClaimVerdict.ABSTAIN
+        else None
+    )
+    assert ctx.write_disclosure_suffix == expected_suffix
+    if expected_suffix is not None:
+        assert ctx.response_text == ctx.pre_write_disclosure_body + expected_suffix
+    assert ctx.write_ledger is ledger
+    assert ctx.reply.tool_failures is reply.tool_failures
+    assert DmReplyPipeline(ctx).build_response()["response"] == expected
+
+
+async def test_guard_exception_leaves_no_suffix_provenance(monkeypatch) -> None:
+    ctx = _make_ctx(runtime=_runtime(), response_text="Original body.")
+    ctx.write_ledger = ctx.write_ledger.consulted_with(WRITE_CHANNEL_NOTEBOOK, wrote=False)
+    ctx.write_disclosure_suffix = "stale suffix"
+    calls: list[ClaimVerdict] = []
+
+    def fail_disclosure(verdict: ClaimVerdict) -> str:
+        calls.append(verdict)
+        raise RuntimeError("disclosure unavailable")
+
+    monkeypatch.setattr("probos.cognitive.dm.reply_pipeline.disclosure_for", fail_disclosure)
+    await DmReplyPipeline(ctx).step_4m_write_claim_guard()
+
+    assert calls == [ClaimVerdict.MARKER_WROTE_NOTHING]
+    assert ctx.response_text == ctx.pre_write_disclosure_body == "Original body."
+    assert ctx.write_disclosure_suffix is None
 
 
 # --------------------------------------------------------------------------- #
@@ -632,8 +751,8 @@ def test_a_passive_fenced_lift_that_failed_to_persist_is_not_disclosed() -> None
 
 def test_guard_runs_after_the_deliberate_re_roll_and_before_episodic_store() -> None:
     """After 4j so the guard reads the text the Captain will actually see;
-    before 5 so the stored episode carries the corrected text. Absent from the
-    escalation subset: the group sink is unverified (#1087 forward marker)."""
+    before 5 so the stored episode carries the corrected text. AD-1305 puts
+    the same guard after 4j in groups, leaving the 1:1 episode step excluded."""
     pipeline = DmReplyPipeline.__new__(DmReplyPipeline)
     names = [s.__name__ for s in DmReplyPipeline._full_steps(pipeline)]
 
@@ -646,4 +765,7 @@ def test_guard_runs_after_the_deliberate_re_roll_and_before_episodic_store() -> 
     )
 
     escalation = [s.__name__ for s in DmReplyPipeline._escalation_steps(pipeline)]
-    assert "step_4m_write_claim_guard" not in escalation
+    assert escalation[-2:] == ["step_4j_deliberate_parse", "step_4m_write_claim_guard"]
+    assert escalation.count("step_4m_write_claim_guard") == 1
+    assert "step_4n_tool_write_ledger" not in escalation
+    assert "step_5_episodic_store" not in escalation

@@ -15,6 +15,7 @@ asyncio_mode="auto": integration tests are plain ``async def`` (no marker).
 """
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -314,6 +315,121 @@ async def test_loop_closes_raised_trust_reaches_speaker_signals(tmp_path):
     by_id = {s.agent_id: s.trust for s in signals}
     assert by_id == {aid: tn.get_score(aid) for aid in ids}
     assert all(t > 0.5 for t in by_id.values())  # all four were corroborated
+
+
+@pytest.mark.parametrize("guard_enabled", [False, True])
+@pytest.mark.parametrize("trust_enabled", [False, True])
+@pytest.mark.parametrize("body_kind", [
+    "agreement-failed-write", "total-notice", "partial-notice",
+    "total-notice-appended", "partial-notice-appended",
+])
+async def test_substantive_convergence_preserves_trust_and_mention_override(
+    tmp_path: Path, guard_enabled: bool, trust_enabled: bool, body_kind: str,
+) -> None:
+    from probos.cognitive.chat_facilitator import project_persisted_convergence_body
+    from probos.cognitive.dm.write_ledger import ClaimVerdict, disclosure_for
+    from probos.config import SystemConfig
+    from tests.test_ad1285_write_claim_guard import _FakeProactiveLoop
+    from tests.test_ad933_group_chat_escalation import (
+        _RecordingEpisodic, _build_env as build_group_env,
+    )
+
+    agents = {
+        "voice1": "scout", "voice2": "counselor",
+        "voice3": "scout", "voice4": "counselor",
+    }
+    substantive = (
+        disclosure_for(ClaimVerdict.MARKER_WROTE_PARTIALLY).strip()
+        if body_kind.startswith("partial-notice") else
+        disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING).strip()
+        if body_kind.startswith("total-notice") else _CONV
+    )
+    writes = body_kind.endswith("appended") or body_kind == "agreement-failed-write"
+    raw = substantive + (" [NOTEBOOK finding][/NOTEBOOK]" if writes else "")
+    producer = _FakeProactiveLoop(actions=[])
+    recorder = _RecordingEpisodic()
+    store, runtime = build_group_env(
+        tmp_path, agents=agents, replies=dict.fromkeys(agents, raw),
+        callsigns={"scout": "Scout", "counselor": "Counselor"}, episodic=recorder,
+    )
+    runtime.config = SystemConfig()
+    runtime.config.group_chat.agent_reactivity_enabled = False
+    runtime.config.group_chat.conversation_trust_enabled = trust_enabled
+    runtime.config.write_claim_guard.enabled = guard_enabled
+    runtime.proactive_loop = producer
+    runtime.trust_network = TrustNetwork()
+    for agent_id in agents:
+        record = runtime.trust_network.get_or_create(agent_id)
+        assert (record.alpha, record.beta) == (2.0, 2.0)
+    assert runtime.trust_network.get_recent_events() == []
+    facilitator = ChatFacilitator.from_config(runtime.config)
+    assert facilitator.is_converged([(agent_id, substantive) for agent_id in agents])
+    thread = store.create_thread(title="release planning", participants=list(agents))
+    captain = store.append_message(
+        thread.id, author_id="captain", role="captain", body="Compare the alternatives.",
+    )
+
+    replies = await group_chat_fanout(
+        runtime, thread.id, captain_body=captain.body, captain_msg=captain,
+    )
+
+    messages = [message for message in store.list_messages(thread.id) if message.role == "agent"]
+    assert len(replies) == len(messages) == len(recorder.stored) == 4
+    assert len({message.author_id for message in messages}) == 4
+    assert producer.calls == ([raw] * 4 if writes else [])
+    suffix = disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING) if writes and guard_enabled else ""
+    expected_body = substantive + suffix
+    assert {reply["agent_id"] for reply in replies} == set(agents)
+    assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
+    assert all(reply["text"] == expected_body for reply in replies)
+    for message in messages:
+        assert message.body == expected_body
+        assert project_persisted_convergence_body(message.body, message.metadata) == substantive
+        assert ("ad1305_convergence" in message.metadata) is bool(suffix)
+    for episode in recorder.stored:
+        assert episode.outcomes[0]["success"] is True
+        assert episode.outcomes[0]["response"] == expected_body
+        assert episode.self_contradicted_channels == (["notebook"] if writes else [])
+    events = runtime.trust_network.get_recent_events()
+    assert len(events) == 4 * int(trust_enabled)
+    assert {event.agent_id for event in events} == (set(agents) if trust_enabled else set())
+    for event in events:
+        assert event.success is True
+        assert event.weight == 0.05
+        assert event.verifier_id in agents and event.verifier_id != event.agent_id
+    for agent_id in agents:
+        record = runtime.trust_network.get_record(agent_id)
+        assert record is not None
+        assert (record.alpha, record.beta) == (2.05 if trust_enabled else 2.0, 2.0)
+
+    captain = store.append_message(
+        thread.id, author_id="captain", role="captain", body="Reconsider the alternatives.",
+    )
+    prior = store.list_messages(thread.id, before=captain.created_at)
+    signals = _assemble_speaker_signals(runtime, captain.body, list(agents), prior)
+    assert len(signals) == 4 and all(not signal.mentioned for signal in signals)
+    assert await group_chat_fanout(
+        runtime, thread.id, captain_body=captain.body, captain_msg=captain,
+    ) == []
+    assert len(recorder.stored) == 4
+    assert producer.calls == ([raw] * 4 if writes else [])
+
+    captain = store.append_message(
+        thread.id, author_id="captain", role="captain", body="@Scout reconsider the alternatives.",
+    )
+    prior = store.list_messages(thread.id, before=captain.created_at)
+    signals = _assemble_speaker_signals(runtime, captain.body, list(agents), prior)
+    mentioned = {signal.agent_id for signal in signals if signal.mentioned}
+    assert mentioned == {"voice1", "voice3"}
+    mentioned_replies = await group_chat_fanout(
+        runtime, thread.id, captain_body=captain.body, captain_msg=captain,
+    )
+    assert len(mentioned_replies) == 2
+    assert {reply["agent_id"] for reply in mentioned_replies} == mentioned
+    assert len(recorder.stored) == 6
+    assert producer.calls == ([raw] * 6 if writes else [])
+    assert len([message for message in store.list_messages(thread.id) if message.role == "agent"]) == 6
+    assert runtime.trust_network.get_recent_events() == events
 
 
 def test_core_tier_immunity_record_outcome_unit():

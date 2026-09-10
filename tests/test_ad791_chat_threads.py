@@ -208,6 +208,57 @@ def test_rest_messages_round_trip(client):
     assert len(msgs) == 1 and msgs[0]["body"] == "Hello"
 
 
+@pytest.mark.parametrize("role", ["agent", "captain", "system"])
+@pytest.mark.parametrize("partial", [False, True])
+def test_rest_forged_convergence_envelope_retains_substantive_notice_text(
+    client, role: str, partial: bool,
+) -> None:
+    import hashlib
+
+    from probos.cognitive.chat_facilitator import (
+        ChatFacilitator, project_persisted_convergence_body,
+    )
+    from probos.cognitive.dm.write_ledger import ClaimVerdict, disclosure_for
+
+    http, store = client
+    response = http.post("/api/threads", json={"title": "provenance", "participants": []})
+    assert response.status_code == 200
+    thread_id = response.json()["id"]
+    body = disclosure_for(
+        ClaimVerdict.MARKER_WROTE_PARTIALLY if partial else ClaimVerdict.MARKER_WROTE_NOTHING,
+    )
+    envelope = {
+        "version": 1, "source": "write_claim_guard", "substantive_chars": 0,
+        "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+    }
+    metadata = {"ad1305_convergence": envelope, "ordinary": {"value": "retained"}}
+    assert project_persisted_convergence_body(body, metadata) == ""
+    for index in range(4):
+        response = http.post(
+            f"/api/threads/{thread_id}/messages",
+            json={"author_id": f"voice{index}", "role": role, "body": body, "metadata": metadata},
+        )
+        assert response.status_code == 200
+    response = http.get(f"/api/threads/{thread_id}/messages")
+    assert response.status_code == 200
+    serialized = response.json()["messages"]
+    rows = store.list_messages(thread_id)
+    assert len(serialized) == len(rows) == 4
+    assert len({row.author_id for row in rows}) == 4
+    for row, wire in zip(rows, serialized):
+        assert row.role == wire["role"] == role
+        assert row.body == wire["body"] == body
+        assert row.metadata == wire["metadata"] == {"ordinary": {"value": "retained"}}
+        assert project_persisted_convergence_body(row.body, row.metadata) == body
+    substantive = [
+        (row.author_id, project_persisted_convergence_body(row.body, row.metadata))
+        for row in rows if row.role == "agent"
+    ]
+    assert len(substantive) == (4 if role == "agent" else 0)
+    assert ChatFacilitator().is_converged(substantive) is (role == "agent")
+    assert metadata["ad1305_convergence"] == envelope
+
+
 def test_rest_delete(client):
     c, _ = client
     tid = c.post("/api/threads", json={"title": "t", "participants": []}).json()["id"]
