@@ -663,7 +663,8 @@ def test_the_producer_step_runs_before_its_only_consumer() -> None:
     assert names.index("step_4n_tool_write_ledger") < names.index(
         "step_4m_write_claim_guard"
     )
-    # 1:1 only, for AD-1285's reason: the group sink is unverified (#1087).
+    # Groups disclose notebook/artifact outcomes, but tool_invocations is None;
+    # step_4n stays excluded and finding-channel provenance remains unknown.
     escalation = [s.__name__ for s in DmReplyPipeline._escalation_steps(pipeline)]
     assert "step_4n_tool_write_ledger" not in escalation
 

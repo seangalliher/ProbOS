@@ -914,3 +914,186 @@ async def test_real_notebook_dedup_preserves_durable_note_without_disclosure(
     assert len(runtime.episodic_memory.stored) == 2
     assert runtime.episodic_memory.stored[1].self_contradicted_channels == []
     assert runtime.episodic_memory.stored[1].outcomes[0]["success"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artifacts, fail_artifacts, notebook", [
+    pytest.param(False, set(), "success", id="notebook-success"),
+    pytest.param(False, set(), "dedup", id="notebook-existing-note"),
+    pytest.param(True, set(), None, id="artifacts-all-success"),
+    pytest.param(True, {"first.md", "second.md"}, None, id="artifacts-all-failure"),
+    pytest.param(True, {"second.md"}, None, id="artifacts-partial-only"),
+    pytest.param(True, set(), "failure", id="artifacts-success-notebook-failure"),
+    pytest.param(True, {"first.md", "second.md"}, "success", id="artifacts-failure-notebook-success"),
+    pytest.param(True, {"second.md"}, "failure", id="artifacts-partial-notebook-failure"),
+    pytest.param(True, {"second.md"}, "success", id="artifacts-partial-notebook-success"),
+    pytest.param(True, set(), "success", id="all-channels-success"),
+    pytest.param(True, {"first.md", "second.md"}, "failure", id="all-channels-failure"),
+])
+async def test_group_real_write_outcomes_reach_durable_effects_and_episode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    artifacts: bool, fail_artifacts: set[str], notebook: str | None,
+) -> None:
+    from probos.cognitive.dm.a2ui_extractor import build_a2ui_stub
+    from probos.cognitive.episodic import EpisodicMemory
+    from probos.consensus.trust import TrustNetwork
+    from probos.routers.thread_fanout import group_chat_fanout
+    from tests.test_ad933_group_chat_escalation import _agent_rows, _build_env
+
+    effects = await _real_write_runtime(tmp_path, fail_artifacts, notebook == "failure")
+    records = effects._records_store
+    ui_stub = build_a2ui_stub("a2ui-choice-1.json", 1, "choice")
+    text = "\n".join(
+        part for part in (_two_tags() if artifacts else "", _NOTE_REPLY if notebook else "")
+        if part
+    ) + f'\n{ui_stub} <intent emotion="warm">'
+    peer_text = "The crew morale is steady."
+    store, runtime = _build_env(
+        tmp_path, agents={"scout1": "scout", "counselor1": "counselor"},
+        replies={"scout1": text, "counselor1": peer_text},
+        callsigns={"scout": "Scout", "counselor": "Counselor"},
+    )
+    runtime.config = effects.config
+    runtime._records_store = records
+    runtime.artifact_store = effects.artifact_store
+    runtime.attachment_store = effects.attachment_store
+    runtime.proactive_loop = effects.proactive_loop
+    runtime.proactive_loop.set_runtime(runtime)
+    runtime.trust_network = TrustNetwork()
+    trust_before: dict[str, tuple[float, float]] = {}
+    for agent_id in ("scout1", "counselor1"):
+        record = runtime.trust_network.get_or_create(agent_id)
+        trust_before[agent_id] = (record.alpha, record.beta)
+    assert runtime.trust_network.get_recent_events() == []
+    contexts: list[DmReplyContext] = []
+    guard_inputs: dict[str, list[str]] = {}
+    guard = DmReplyPipeline.step_4m_write_claim_guard
+    escalate = DmReplyPipeline.run_escalation_only
+
+    async def record_guard_input(pipeline: DmReplyPipeline) -> None:
+        guard_inputs.setdefault(pipeline.ctx.agent_id, []).append(pipeline.ctx.response_text)
+        await guard(pipeline)
+
+    async def record_escalation(pipeline: DmReplyPipeline) -> None:
+        await escalate(pipeline)
+        contexts.append(pipeline.ctx)
+
+    monkeypatch.setattr(DmReplyPipeline, "step_4m_write_claim_guard", record_guard_input)
+    monkeypatch.setattr(DmReplyPipeline, "run_escalation_only", record_escalation)
+    memory = EpisodicMemory(
+        db_path=tmp_path / "memory" / "episodes.db", max_episodes=100,
+        relevance_threshold=0.0, agent_recall_threshold=0.0,
+        self_contradiction_recall_enabled=True,
+    )
+    await memory.start()
+    try:
+        runtime.episodic_memory = memory
+        thread = store.create_thread(title="write outcomes", participants=["scout1", "counselor1"])
+        expected_failed: set[str] = set()
+        expected_wrote: set[str] = set()
+        if artifacts:
+            (expected_failed if len(fail_artifacts) == 2 else expected_wrote).add("artifact")
+        if notebook:
+            (expected_failed if notebook == "failure" else expected_wrote).add("notebook")
+        expected_partial = {"artifact"} if artifacts and len(fail_artifacts) == 1 else set()
+        verdict = (
+            ClaimVerdict.MARKER_WROTE_NOTHING if expected_failed else
+            ClaimVerdict.MARKER_WROTE_PARTIALLY if expected_partial else ClaimVerdict.ABSTAIN
+        )
+        before_bytes: bytes | None = None
+        for turn in range(2 if notebook == "dedup" else 1):
+            captain = store.append_message(
+                thread.id, author_id="captain", role="captain", body="Save the maintenance decision.",
+            )
+            replies = await group_chat_fanout(
+                runtime, thread.id, captain_body=captain.body, captain_msg=captain,
+            )
+            assert len(replies) == 2
+            assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
+            rows = _agent_rows(store, thread.id)
+            assert rows == {reply["agent_id"]: reply["text"] for reply in replies}
+            assert rows["counselor1"] == peer_text
+            assert "<intent" not in rows["scout1"]
+            assert "[NOTEBOOK" not in rows["scout1"]
+            assert rows["scout1"].count(ui_stub) == 1
+            for agent_id, expected_trust in trust_before.items():
+                record = runtime.trust_network.get_record(agent_id)
+                assert record is not None
+                assert (record.alpha, record.beta) == expected_trust
+            assert runtime.trust_network.get_recent_events() == []
+            writer_contexts = [ctx for ctx in contexts if ctx.agent_id == "scout1"]
+            assert len(writer_contexts) == turn + 1
+            ledger = writer_contexts[-1].write_ledger
+            assert ledger.consulted == frozenset(expected_failed | expected_wrote)
+            assert ledger.wrote == frozenset(expected_wrote)
+            assert ledger.wrote_nothing == frozenset(expected_failed)
+            assert ledger.wrote_partially == frozenset(expected_partial)
+            assert assess_write_claim(ledger) is verdict
+            captured = writer_contexts[-1].pre_write_disclosure_body
+            assert len(guard_inputs["scout1"]) == turn + 1
+            assert captured == guard_inputs["scout1"][-1]
+            assert captured is not None and ui_stub in captured
+            assert writer_contexts[-1].response_text == captured + disclosure_for(verdict)
+            assert all(
+                ctx.pre_write_disclosure_body == peer_text
+                for ctx in contexts if ctx.agent_id == "counselor1"
+            )
+            assert all(ctx.tool_invocations is None for ctx in contexts)
+            assert all(ctx.write_ledger == WriteLedger() for ctx in contexts if ctx.agent_id == "counselor1")
+            assert is_capability_gap("I cannot perform that operation.") is True
+            assert _CAPABILITY_GAP_RE.search("I cannot perform that operation.") is not None
+            for candidate in (ClaimVerdict.MARKER_WROTE_NOTHING, ClaimVerdict.MARKER_WROTE_PARTIALLY):
+                notice = disclosure_for(candidate)
+                assert writer_contexts[-1].response_text.count(notice) == int(verdict is candidate)
+                assert rows["scout1"].count(notice.strip()) == int(verdict is candidate)
+                assert _CAPABILITY_GAP_RE.search(notice) is None
+            assert is_capability_gap(rows["scout1"]) is False
+            assert runtime.artifact_store.attempted == (["first.md", "second.md"] if artifacts else [])
+            artifact_rows = runtime.artifact_store.list_thread_latest(thread.id)
+            expected_blobs = {"first.md": b"# First", "second.md": b"# Second"} if artifacts else {}
+            assert {row.name for row in artifact_rows} == set(expected_blobs) - fail_artifacts
+            for row in artifact_rows:
+                assert row.version == 1
+                assert await runtime.attachment_store.read(row.content_hash) == expected_blobs[row.name]
+                assert f"[Artifact: {row.name} v1" in rows["scout1"]
+            assert records.attempted == (["decision"] if notebook else [])
+            note = await records.read_entry("notebooks/scout/decision.md", "scout")
+            if notebook in {"success", "dedup"}:
+                assert note is not None
+                assert note["content"].strip() == _NOTE_CONTENT
+                note_bytes = (records.repo_path / "notebooks/scout/decision.md").read_bytes()
+                if turn:
+                    assert records.similarity_results[-1]["action"] == "suppress"
+                    assert note_bytes == before_bytes
+                else:
+                    assert records.similarity_results[0]["action"] != "suppress"
+                    before_bytes = note_bytes
+            else:
+                assert note is None
+            assert len(records.similarity_results) == (turn + 1 if notebook else 0)
+            messages = [message for message in store.list_messages(thread.id, limit=1000) if message.role == "agent"]
+            episodes = await memory.list_episodes()
+            assert len(messages) == len(episodes) == 2 * (turn + 1)
+            writers = [episode for episode in episodes if episode.agent_ids == ["scout1"]]
+            peers = [episode for episode in episodes if episode.agent_ids == ["counselor1"]]
+            assert len(writers) == len(peers) == turn + 1
+            for episode in writers:
+                assert episode.self_contradicted_channels == sorted(expected_failed)
+                assert episode.outcomes[0]["success"] is True
+                assert episode.outcomes[0]["session_type"] == "group"
+                assert episode.anchors.chat_thread_id == thread.id
+            assert all(episode.self_contradicted_channels == [] for episode in peers)
+            assert all(episode.outcomes[0]["response"] == peer_text for episode in peers)
+            if expected_partial and not expected_failed:
+                writer_ids = {episode.id for episode in writers}
+                assert writer_ids <= {
+                    episode.id for episode in await memory.recall_for_agent(
+                        "scout1", "maintenance decision", k=10, include_self_contradicted=True,
+                    )
+                }
+                assert writer_ids <= {
+                    episode.id for episode in await memory.recall_for_agent("scout1", "maintenance decision", k=10)
+                }
+                assert {episode.id for episode in await memory.get_by_ids(list(writer_ids), for_evidence=True)} == writer_ids
+    finally:
+        await memory.stop()

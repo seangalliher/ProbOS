@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -205,6 +206,170 @@ def _clean_episode() -> Episode:
 async def _store_both(mem) -> None:
     await mem.store(_clean_episode())
     await mem.store(_marked_episode())
+
+
+async def _exercise_group_notebook_recall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
+    disclosure_enabled: bool = True, recall_enabled: bool = True,
+    long_reply: bool = False,
+) -> None:
+    from probos.cognitive.dm import bypass_egress
+    from probos.cognitive.dm.write_ledger import ClaimVerdict, disclosure_for
+    from probos.routers.thread_fanout import group_chat_fanout
+    from tests.test_ad933_group_chat_escalation import _agent_rows, _build_env
+    from tests.test_bf866_artifact_channel_seams import _NOTE_REPLY, _real_write_runtime
+
+    effects = await _real_write_runtime(tmp_path, set(), True)
+    records = effects._records_store
+    prefix = "Maintenance decision context. " * 40 if long_reply else ""
+    peer_text = "The crew morale is steady."
+    store, runtime = _build_env(
+        tmp_path,
+        agents={"scout1": "scout", "counselor1": "counselor"},
+        replies={"scout1": prefix + _NOTE_REPLY, "counselor1": peer_text},
+        callsigns={"scout": "Scout", "counselor": "Counselor"},
+    )
+    runtime.config = effects.config
+    runtime.config.write_claim_guard = WriteClaimGuardConfig(enabled=disclosure_enabled)
+    runtime._records_store = records
+    runtime.proactive_loop = effects.proactive_loop
+    runtime.proactive_loop.set_runtime(runtime)
+    sink_calls: list[str] = []
+    compose = bypass_egress.compose_bypass_reply
+
+    def record_composition(text: str) -> str:
+        sink_calls.append(text)
+        return compose(text)
+
+    monkeypatch.setattr(bypass_egress, "compose_bypass_reply", record_composition)
+    memory_path = tmp_path / "memory" / "episodes.db"
+    memory = EpisodicMemory(
+        db_path=memory_path, max_episodes=100, relevance_threshold=0.0,
+        agent_recall_threshold=0.0,
+        self_contradiction_recall_enabled=recall_enabled,
+    )
+    await memory.start()
+    try:
+        runtime.episodic_memory = memory
+        thread = store.create_thread(
+            title="maintenance decision", participants=["scout1", "counselor1"],
+        )
+        captain = store.append_message(
+            thread.id, author_id="captain", role="captain",
+            body="Record the maintenance decision for the next watch.",
+        )
+        replies = await group_chat_fanout(
+            runtime, thread.id, captain_body=captain.body, captain_msg=captain,
+        )
+
+        assert records.attempted == ["decision"]
+        assert len(records.similarity_results) == 1
+        assert records.similarity_results[0]["action"] != "suppress"
+        assert await records.read_entry("notebooks/scout/decision.md", "scout") is None
+        assert not (records.repo_path / "notebooks/scout/decision.md").exists()
+        messages = [
+            message for message in store.list_messages(thread.id, limit=1000)
+            if message.role == "agent"
+        ]
+        assert len(messages) == len(replies) == 2
+        assert sorted(message.author_id for message in messages) == ["counselor1", "scout1"]
+        assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
+        rows = _agent_rows(store, thread.id)
+        assert rows == {reply["agent_id"]: reply["text"] for reply in replies}
+        assert sorted(sink_calls) == sorted(rows.values())
+        notice = disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
+        assert rows["scout1"] == prefix + "Recorded." + (notice if disclosure_enabled else "")
+        assert rows["scout1"].count(notice) == int(disclosure_enabled)
+        assert "[NOTEBOOK" not in rows["scout1"]
+        assert rows["counselor1"] == peer_text
+
+        episodes = await memory.list_episodes()
+        assert len(episodes) == 2
+        writer_episodes = [episode for episode in episodes if episode.agent_ids == ["scout1"]]
+        peers = [episode for episode in episodes if episode.agent_ids == ["counselor1"]]
+        assert len(writer_episodes) == len(peers) == 1
+        writer = writer_episodes[0]
+        assert writer.self_contradicted_channels == ["notebook"]
+        assert peers[0].self_contradicted_channels == []
+        assert peers[0].outcomes[0]["response"] == peer_text
+        for episode in episodes:
+            assert episode.source == "group_chat_fanout"
+            assert episode.anchors.channel == "chat"
+            assert episode.anchors.trigger_type == "group_fanout"
+            assert episode.anchors.chat_thread_id == thread.id
+            assert set(episode.anchors.participants) == {"captain", "Scout", "Counselor"}
+            assert len(episode.outcomes) == 1
+            assert episode.outcomes[0]["session_type"] == "group"
+            assert episode.outcomes[0]["success"] is True
+            assert episode.outcomes[0]["response"] == rows[episode.agent_ids[0]][:500]
+        if long_reply:
+            assert len(writer.outcomes[0]["response"]) == 500
+            assert notice not in writer.outcomes[0]["response"]
+            assert DISCLOSURE_FRAGMENT not in writer.reflection
+
+        valid = Episode(
+            user_input="[1:1 with Scout] Record the maintenance decision for the next watch.",
+            reflection="The maintenance decision is to inspect coolant before the next watch.",
+            agent_ids=["scout1"],
+            outcomes=[{"intent": "direct_message", "success": True}],
+        )
+        await memory.store(valid)
+        history_ids = {episode.id for episode in await memory.list_episodes()}
+        assert history_ids == {writer.id, peers[0].id, valid.id}
+        await memory.stop()
+        memory = EpisodicMemory(
+            db_path=memory_path, max_episodes=100, relevance_threshold=0.0,
+            agent_recall_threshold=0.0,
+            self_contradiction_recall_enabled=recall_enabled,
+        )
+        await memory.start()
+        history = await memory.get_by_ids([writer.id, valid.id])
+        assert {episode.id for episode in history} == {writer.id, valid.id}
+        reloaded = next(episode for episode in history if episode.id == writer.id)
+        assert reloaded.self_contradicted_channels == ["notebook"]
+        assert reloaded.outcomes == writer.outcomes
+        assert reloaded.anchors == writer.anchors
+        assert {episode.id for episode in await memory.list_episodes()} == history_ids
+        query = "maintenance decision next watch"
+        for included in (
+            await memory.recall_for_agent("scout1", query, k=10, include_self_contradicted=True),
+            await memory.recall(query, k=10, include_self_contradicted=True),
+        ):
+            assert {writer.id, valid.id} <= {episode.id for episode in included}
+        for evidence in (
+            await memory.recall_for_agent("scout1", query, k=10),
+            await memory.recall(query, k=10),
+            await memory.get_by_ids([writer.id, valid.id], for_evidence=True),
+        ):
+            evidence_ids = {episode.id for episode in evidence}
+            assert valid.id in evidence_ids
+            assert (writer.id in evidence_ids) is (not recall_enabled)
+        assert records.attempted == ["decision"]
+    finally:
+        await memory.stop()
+
+
+@pytest.mark.asyncio
+async def test_group_failed_notebook_write_persists_and_filters_recall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _exercise_group_notebook_recall(tmp_path, monkeypatch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disclosure_enabled, recall_enabled, long_reply", [
+    pytest.param(False, True, False, id="disclosure-off-marker-still-filters"),
+    pytest.param(True, False, False, id="recall-policy-off-history-is-evidence"),
+    pytest.param(True, True, True, id="truncated-prose-keeps-typed-marker"),
+])
+async def test_group_notebook_failure_policy_and_truncation_compatibility(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    disclosure_enabled: bool, recall_enabled: bool, long_reply: bool,
+) -> None:
+    await _exercise_group_notebook_recall(
+        tmp_path, monkeypatch, disclosure_enabled=disclosure_enabled,
+        recall_enabled=recall_enabled, long_reply=long_reply,
+    )
 
 
 # =========================================================================== #

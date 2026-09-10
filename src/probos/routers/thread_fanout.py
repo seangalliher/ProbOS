@@ -34,6 +34,7 @@ from probos.cognitive.conversation_trust import (
     extract_conversation_trust_outcomes,
 )
 from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+from probos.cognitive.dm.write_ledger import WriteLedger
 from probos.dm_reply import DmReply  # AD-1248
 from probos.cognitive.confab_probe import probe_referent
 from probos.cognitive.emergence_taxonomy import BehaviorCode
@@ -524,6 +525,8 @@ async def _fan_one_round(
             "without room sense", thread_id, exc_info=True,
         )
 
+    write_ledgers: dict[str, WriteLedger] = {}
+
     async def _send_one(agent_id: str) -> dict[str, str]:
         callsign = ""
         agent: Any = None
@@ -670,9 +673,11 @@ async def _fan_one_round(
         # would mislabel a multi-agent turn. Only when a real reply came back
         # AND the agent resolved (no agent -> can't escalate). Tier-2
         # honest-degrade: any failure ships the raw reply_text unchanged.
+        eligibility_text = reply_text
+        reply_context: DmReplyContext | None = None
         if result and result.result and agent is not None:
             try:
-                pipeline = DmReplyPipeline(DmReplyContext(
+                reply_context = DmReplyContext(
                     runtime=runtime,
                     agent=agent,
                     agent_id=agent_id,
@@ -691,20 +696,29 @@ async def _fan_one_round(
                     sampling_state=None,
                     avatar_event_bus=None,
                     chat_thread_id=thread_id,
-                ))
+                )
+                pipeline = DmReplyPipeline(reply_context)
                 await pipeline.run_escalation_only()
-                reply_text = pipeline.ctx.response_text or reply_text
                 # AD-933b: surface SHA refs of any [GEN_IMAGE] image the
                 # escalation subset (step_4c, AD-730-3) generated for this
                 # group turn, read from the SAME ctx the escalation just ran.
                 # [] when no image was generated; persisted below (AD-916 ref
                 # carriage) only when non-empty.
                 generated_ids = list(pipeline.ctx.generated_attachment_ids or [])
+                eligibility_text = (
+                    reply_context.pre_write_disclosure_body
+                    if reply_context.pre_write_disclosure_body is not None
+                    else reply_context.response_text
+                ) or reply_text
+                reply_text = reply_context.response_text or reply_text
             except Exception:
                 logger.warning(
                     "AD-933: escalation subset failed for thread=%s agent=%s; "
                     "shipping raw reply", thread_id, agent_id, exc_info=True,
                 )
+            finally:
+                if reply_context is not None:
+                    write_ledgers[agent_id] = reply_context.write_ledger
         # AD-948: strip the AD-722a intent self-tag (<intent emotion=...>)
         # UNCONDITIONALLY before the decline check / persist / return. The 1:1
         # path strips it via apply_divergence_check (routers/agents.py); the
@@ -713,6 +727,7 @@ async def _fan_one_round(
         # placed BEFORE the NO_RESPONSE check so a decline that trails a tag is
         # still detected. The tag MUST NEVER reach the Captain.
         reply_text = strip_intent_self_tag(reply_text)
+        eligibility_text = strip_intent_self_tag(eligibility_text)
         # AD-935: an agent may decline to respond in a group turn. A
         # [NO_RESPONSE] (case-insensitive, after strip + bracket removal) or an
         # empty reply is NOT persisted and NOT returned — the round collector
@@ -728,7 +743,7 @@ async def _fan_one_round(
         # visible transcript. Matching the established proactive.py contract
         # (``"[NO_RESPONSE]" in response_text``), any decline marker suppresses
         # the whole reply — a human who decides not to respond says nothing.
-        _declined = bool(_NO_RESPONSE_RE.search(reply_text)) or not reply_text.strip()
+        _declined = bool(_NO_RESPONSE_RE.search(eligibility_text)) or not eligibility_text.strip()
         if _declined:
             return {"agent_id": agent_id, "callsign": callsign, "text": "", "_declined": True}
         try:
@@ -837,6 +852,9 @@ async def _fan_one_round(
                         "source": "group_chat_fanout",
                     }],
                     agent_ids=[reply["agent_id"]],
+                    self_contradicted_channels=list(
+                        write_ledgers.get(reply["agent_id"], WriteLedger()).self_contradicted_channels
+                    ),
                     duration_ms=(t_end - t_start) * 1000,
                     # AD-977/AD-986a: index the agent's OWN reply so it can recall what
                     # it said in the room. The embedded document (_prepare_document)
