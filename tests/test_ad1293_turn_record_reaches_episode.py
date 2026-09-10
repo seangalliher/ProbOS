@@ -276,7 +276,10 @@ async def _exercise_group_notebook_recall(
         assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
         rows = _agent_rows(store, thread.id)
         assert rows == {reply["agent_id"]: reply["text"] for reply in replies}
-        assert sorted(sink_calls) == sorted(rows.values())
+        expected_composition_inputs = list(rows.values())
+        if disclosure_enabled:
+            expected_composition_inputs.append(prefix + "Recorded.")
+        assert sorted(sink_calls) == sorted(expected_composition_inputs)
         notice = disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
         assert rows["scout1"] == prefix + "Recorded." + (notice if disclosure_enabled else "")
         assert rows["scout1"].count(notice) == int(disclosure_enabled)

@@ -415,6 +415,7 @@ def test_empty_response_is_not_given_a_write_disclosure(known_failure: bool) -> 
 def test_pre_write_disclosure_body_defaults_to_none() -> None:
     ctx = _make_ctx(runtime=_runtime(), response_text="Unprocessed reply.")
     assert ctx.pre_write_disclosure_body is None
+    assert ctx.write_disclosure_suffix is None
 
 
 @pytest.mark.parametrize("body", ["", ' \n<intent emotion="focused"/>Exact body. \t'])
@@ -432,14 +433,41 @@ async def test_guard_captures_exact_body_before_every_early_return(
     reply = ctx.reply
     verdict = assess_write_claim(ledger)
     expected = body + (disclosure_for(verdict) if body and guard_enabled else "")
+    ctx.write_disclosure_suffix = "stale suffix"
 
     await DmReplyPipeline(ctx).step_4m_write_claim_guard()
 
     assert ctx.pre_write_disclosure_body == body
     assert ctx.response_text == expected
+    expected_suffix = (
+        disclosure_for(verdict)
+        if body and guard_enabled and verdict is not ClaimVerdict.ABSTAIN
+        else None
+    )
+    assert ctx.write_disclosure_suffix == expected_suffix
+    if expected_suffix is not None:
+        assert ctx.response_text == ctx.pre_write_disclosure_body + expected_suffix
     assert ctx.write_ledger is ledger
     assert ctx.reply.tool_failures is reply.tool_failures
     assert DmReplyPipeline(ctx).build_response()["response"] == expected
+
+
+async def test_guard_exception_leaves_no_suffix_provenance(monkeypatch) -> None:
+    ctx = _make_ctx(runtime=_runtime(), response_text="Original body.")
+    ctx.write_ledger = ctx.write_ledger.consulted_with(WRITE_CHANNEL_NOTEBOOK, wrote=False)
+    ctx.write_disclosure_suffix = "stale suffix"
+    calls: list[ClaimVerdict] = []
+
+    def fail_disclosure(verdict: ClaimVerdict) -> str:
+        calls.append(verdict)
+        raise RuntimeError("disclosure unavailable")
+
+    monkeypatch.setattr("probos.cognitive.dm.reply_pipeline.disclosure_for", fail_disclosure)
+    await DmReplyPipeline(ctx).step_4m_write_claim_guard()
+
+    assert calls == [ClaimVerdict.MARKER_WROTE_NOTHING]
+    assert ctx.response_text == ctx.pre_write_disclosure_body == "Original body."
+    assert ctx.write_disclosure_suffix is None
 
 
 # --------------------------------------------------------------------------- #

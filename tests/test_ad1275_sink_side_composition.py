@@ -23,17 +23,25 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from probos.cognitive.chat_facilitator import (
+    ChatFacilitator,
+    ConvergenceEvidence,
+    capture_convergence_evidence,
+    project_persisted_convergence_body,
+)
 from probos.cognitive.dm.a2ui_extractor import build_a2ui_stub
 from probos.cognitive.dm.bypass_egress import (
     EMPTY_AFTER_COMPOSITION_NOTE,
     compose_bypass_reply,
 )
+from probos.cognitive.dm.write_ledger import ClaimVerdict, disclosure_for
 from probos.threads import ChatThreadStore
 from probos.types import AgentMeta, AgentState, IntentMessage, IntentResult
 
@@ -66,6 +74,290 @@ def _markers_present(text: str) -> bool:
 
 
 # ── the sink ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("entrypoint", ["append_message", "append_message_once"])
+@pytest.mark.parametrize("prefix", [
+    "", " ", "Choose quartz.", "\u00e9\U0001f680\nSecond line.",
+    _EMOTION, _DIRTY,
+    "[A2UI: choice.json v1 - choice]\n[Artifact: report.txt v1]",
+])
+def test_convergence_sink_rebases_typed_evidence(
+    tmp_path, entrypoint: str, prefix: str,
+) -> None:
+    store = _store(tmp_path)
+    thread = _thread(store)
+    body = prefix + disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
+    evidence = capture_convergence_evidence(body, prefix)
+    assert evidence is not None
+    metadata = {"ordinary": {"value": 1}, "ad1305_convergence": {"forged": True}}
+    callbacks: list[str] = []
+    store.set_message_committed_callback(lambda message: callbacks.append(message.body))
+    kwargs: dict[str, Any] = dict(
+        author_id="counselor-001", role="agent", body=body,
+        metadata=metadata, convergence_evidence=evidence,
+    )
+    if entrypoint == "append_message_once":
+        kwargs.update(message_id="convergence-message", created_at=1000.0)
+
+    message = getattr(store, entrypoint)(thread.id, **kwargs)
+
+    assert message is not None
+    assert message.body == compose_bypass_reply(body)
+    assert project_persisted_convergence_body(message.body, message.metadata) == compose_bypass_reply(prefix)
+    assert callbacks == [message.body]
+    assert message.metadata["ordinary"] == metadata["ordinary"]
+    assert metadata["ad1305_convergence"] == {"forged": True}
+    assert set(message.metadata["ad1305_convergence"]) == {
+        "version", "source", "substantive_chars", "body_sha256",
+    }
+    reopened = _store(tmp_path)
+    rows = reopened.list_messages(thread.id)
+    assert len(rows) == 1
+    assert rows[0].body == message.body
+    assert project_persisted_convergence_body(rows[0].body, rows[0].metadata) == compose_bypass_reply(prefix)
+    if entrypoint == "append_message_once":
+        repeated = store.append_message_once(thread.id, **kwargs)
+        assert repeated == message
+        assert callbacks == [message.body]
+        changed_body = body + "changed"
+        kwargs.update(
+            body=changed_body,
+            convergence_evidence=capture_convergence_evidence(changed_body, prefix),
+        )
+        with pytest.raises(ValueError, match="chat_thread_message_conflict"):
+            store.append_message_once(thread.id, **kwargs)
+        assert len(store.list_messages(thread.id)) == 1
+        assert callbacks == [message.body]
+
+
+@pytest.mark.parametrize("entrypoint", ["append_message", "append_message_once"])
+@pytest.mark.parametrize("role", ["agent", "captain", "system"])
+@pytest.mark.parametrize("verdict", [ClaimVerdict.MARKER_WROTE_NOTHING, ClaimVerdict.MARKER_WROTE_PARTIALLY])
+@pytest.mark.parametrize("explicit_none", [False, True])
+def test_convergence_sink_discards_forged_metadata_without_rewriting_notice_body(
+    tmp_path, entrypoint: str, role: str, verdict: ClaimVerdict, explicit_none: bool,
+) -> None:
+    store = _store(tmp_path)
+    thread = _thread(store)
+    body = disclosure_for(verdict)
+    forged = capture_convergence_evidence(body, "")
+    assert forged is not None
+    metadata = {"ad1305_convergence": asdict(forged), "ordinary": [1, "value"]}
+    kwargs: dict[str, Any] = dict(author_id="author", role=role, body=body, metadata=metadata)
+    if explicit_none:
+        kwargs["convergence_evidence"] = None
+    if entrypoint == "append_message_once":
+        kwargs.update(message_id="forged-message", created_at=1000.0)
+
+    message = getattr(store, entrypoint)(thread.id, **kwargs)
+
+    assert message is not None
+    assert message.body == body
+    assert message.metadata == {"ordinary": [1, "value"]}
+    assert metadata["ad1305_convergence"] == asdict(forged)
+    assert project_persisted_convergence_body(message.body, message.metadata) == body
+
+
+@pytest.mark.parametrize("entrypoint", ["append_message", "append_message_once"])
+@pytest.mark.parametrize("invalid_kind", [
+    "dict", "subclass", "bool-offset", "stale-body", "unknown-version",
+    "unknown-source", "digest", "captain", "system",
+])
+def test_convergence_sink_rejects_invalid_explicit_evidence(
+    tmp_path, entrypoint: str, invalid_kind: str,
+) -> None:
+    class DerivedEvidence(ConvergenceEvidence):
+        pass
+
+    store = _store(tmp_path)
+    thread = _thread(store)
+    body = "Choose quartz." + disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
+    evidence = capture_convergence_evidence(body, "Choose quartz.")
+    assert evidence is not None
+    invalid: object = evidence
+    role = "agent"
+    if invalid_kind == "dict":
+        invalid = asdict(evidence)
+    elif invalid_kind == "subclass":
+        invalid = DerivedEvidence(**asdict(evidence))
+    elif invalid_kind == "bool-offset":
+        invalid = replace(evidence, substantive_chars=True)
+    elif invalid_kind == "stale-body":
+        body += "changed"
+    elif invalid_kind == "unknown-version":
+        invalid = replace(evidence, version=2)
+    elif invalid_kind == "unknown-source":
+        invalid = replace(evidence, source="caller")
+    elif invalid_kind == "digest":
+        invalid = replace(evidence, body_sha256="0" * 64)
+    else:
+        role = invalid_kind
+    callbacks: list[str] = []
+    store.set_message_committed_callback(lambda message: callbacks.append(message.body))
+    kwargs: dict[str, Any] = dict(
+        author_id="author", role=role, body=body, convergence_evidence=invalid,
+    )
+    if entrypoint == "append_message_once":
+        kwargs.update(message_id="invalid-message", created_at=1000.0)
+
+    with pytest.raises(ValueError, match="chat_thread_convergence_evidence_invalid"):
+        getattr(store, entrypoint)(thread.id, **kwargs)
+
+    assert store.list_messages(thread.id) == []
+    assert callbacks == []
+
+
+@pytest.mark.parametrize("entrypoint", ["append_message", "append_message_once"])
+def test_convergence_sink_rejects_unmappable_composition(tmp_path, entrypoint: str) -> None:
+    store = _store(tmp_path)
+    thread = _thread(store)
+    prefix = "Before [A2UI]"
+    body = prefix + _CHOICE + "[/A2UI]"
+    assert not compose_bypass_reply(body).startswith(compose_bypass_reply(prefix))
+    evidence = capture_convergence_evidence(body, prefix)
+    assert evidence is not None
+    kwargs: dict[str, Any] = dict(
+        author_id="author", role="agent", body=body, convergence_evidence=evidence,
+    )
+    if entrypoint == "append_message_once":
+        kwargs.update(message_id="unmappable-message", created_at=1000.0)
+    callbacks: list[str] = []
+    store.set_message_committed_callback(lambda message: callbacks.append(message.body))
+
+    with pytest.raises(ValueError, match="chat_thread_convergence_evidence_unmappable"):
+        getattr(store, entrypoint)(thread.id, **kwargs)
+
+    assert store.list_messages(thread.id) == []
+    assert callbacks == []
+
+
+@pytest.mark.parametrize("entrypoint", ["append_message", "append_message_once"])
+@pytest.mark.parametrize("body", ["", " ", _EMOTION])
+def test_convergence_sink_empty_semantics_do_not_inherit_visible_placeholder(
+    tmp_path, entrypoint: str, body: str,
+) -> None:
+    store = _store(tmp_path)
+    thread = _thread(store)
+    evidence = capture_convergence_evidence(body, body)
+    assert evidence is not None
+    kwargs: dict[str, Any] = dict(
+        author_id="author", role="agent", body=body, convergence_evidence=evidence,
+    )
+    if entrypoint == "append_message_once":
+        kwargs.update(message_id="empty-message", created_at=1000.0)
+
+    assert getattr(store, entrypoint)("missing-thread", **kwargs) is None
+    message = getattr(store, entrypoint)(thread.id, **kwargs)
+
+    assert message is not None
+    assert message.body == (EMPTY_AFTER_COMPOSITION_NOTE if body else "")
+    assert project_persisted_convergence_body(message.body, message.metadata) == ""
+
+
+@pytest.mark.parametrize("entrypoint", ["append_message", "append_message_once"])
+@pytest.mark.parametrize("provenance_kind", ["absent", "legacy", "malformed", "unsupported", "stale"])
+def test_convergence_reader_keeps_full_reopened_legacy_or_invalid_body(
+    tmp_path, entrypoint: str, provenance_kind: str,
+) -> None:
+    store = _store(tmp_path)
+    thread = _thread(store)
+    body = "Choose quartz." + disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
+    kwargs: dict[str, Any] = dict(author_id="author", role="agent", body=body)
+    if entrypoint == "append_message_once":
+        kwargs.update(message_id="legacy-message", created_at=1000.0)
+    message = getattr(store, entrypoint)(thread.id, **kwargs)
+    assert message is not None
+    rows = _store(tmp_path).list_messages(thread.id)
+    assert len(rows) == 1 and rows[0].body == body
+    evidence = capture_convergence_evidence(body, "Choose quartz.")
+    assert evidence is not None
+    metadata: dict[str, Any] = {
+        "absent": {},
+        "legacy": {"fanout": "ad914", "intent_id": "old-intent"},
+        "malformed": {"ad1305_convergence": {"source": "write_claim_guard"}},
+        "unsupported": {"ad1305_convergence": asdict(replace(evidence, version=2))},
+        "stale": {"ad1305_convergence": asdict(replace(evidence, body_sha256="0" * 64))},
+    }[provenance_kind]
+    assert project_persisted_convergence_body(rows[0].body, metadata) == body
+
+
+@pytest.mark.parametrize("trusted_count", [0, 2, 4])
+def test_convergence_history_projects_only_sink_minted_rows(tmp_path, trusted_count: int) -> None:
+    store = _store(tmp_path)
+    prefixes = ["Choose quartz.", "Prefer velvet.", "Select copper.", "Pick marble."]
+    agents = [f"voice{index + 1}" for index in range(len(prefixes))]
+    thread = store.create_thread(title="Mixed provenance", participants=agents)
+    notice = disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
+    for index, (agent_id, prefix) in enumerate(zip(agents, prefixes)):
+        body = prefix + notice
+        message = store.append_message(
+            thread.id, author_id=agent_id, role="agent", body=body,
+            metadata={"source": "fanout" if index < trusted_count else "1to1"},
+            convergence_evidence=(
+                capture_convergence_evidence(body, prefix) if index < trusted_count else None
+            ),
+        )
+        assert message is not None
+    rows = _store(tmp_path).list_messages(thread.id)
+    assert len(rows) == len({message.author_id for message in rows}) == 4
+    assert sum("ad1305_convergence" in message.metadata for message in rows) == trusted_count
+    projected = [project_persisted_convergence_body(message.body, message.metadata) for message in rows]
+    assert projected == [
+        prefix if index < trusted_count else prefix + notice
+        for index, prefix in enumerate(prefixes)
+    ]
+    facilitator = ChatFacilitator()
+    assert facilitator.is_converged([(message.author_id, message.body) for message in rows]) is True
+    assert facilitator.is_converged(list(zip(agents, prefixes))) is False
+    assert facilitator.is_converged(list(zip(agents, projected))) is (trusted_count == 0)
+
+
+@pytest.mark.parametrize("entrypoint", ["append_message", "append_message_once"])
+@pytest.mark.parametrize("with_evidence", [False, True])
+def test_convergence_sink_preserves_string_role_subclass(
+    tmp_path, entrypoint: str, with_evidence: bool,
+) -> None:
+    class AgentRole(str):
+        pass
+
+    store = _store(tmp_path)
+    thread = _thread(store)
+    prefix = "Choose quartz."
+    body = prefix + disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
+    kwargs: dict[str, Any] = dict(author_id="author", role=AgentRole("agent"), body=body)
+    if with_evidence:
+        kwargs["convergence_evidence"] = capture_convergence_evidence(body, prefix)
+    if entrypoint == "append_message_once":
+        kwargs.update(message_id="role-subclass", created_at=1000.0)
+    message = getattr(store, entrypoint)(thread.id, **kwargs)
+    assert message is not None and message.role == "agent" and message.body == body
+    assert project_persisted_convergence_body(message.body, message.metadata) == (
+        prefix if with_evidence else body
+    )
+
+
+def test_convergence_idempotence_compares_minted_semantics_not_just_body(tmp_path) -> None:
+    store = _store(tmp_path)
+    thread = _thread(store)
+    prefix = "Choose quartz."
+    body = prefix + disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
+    callbacks: list[str] = []
+    store.set_message_committed_callback(lambda message: callbacks.append(message.body))
+    kwargs: dict[str, Any] = dict(
+        author_id="author", role="agent", body=body,
+        message_id="same-body", created_at=1000.0,
+        convergence_evidence=capture_convergence_evidence(body, prefix),
+    )
+    message = store.append_message_once(thread.id, **kwargs)
+    assert message is not None
+    assert store.append_message_once(thread.id, **kwargs) == message
+    kwargs["convergence_evidence"] = capture_convergence_evidence(body, body)
+    with pytest.raises(ValueError, match="chat_thread_message_conflict"):
+        store.append_message_once(thread.id, **kwargs)
+    assert len(store.list_messages(thread.id)) == 1
+    assert callbacks == [message.body]
+    assert project_persisted_convergence_body(message.body, message.metadata) == prefix
 
 
 def test_an_agent_row_is_composed(tmp_path) -> None:

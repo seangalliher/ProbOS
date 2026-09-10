@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 
@@ -402,6 +402,321 @@ async def test_group_failed_notebook_write_discloses_and_marks_episode(tmp_path)
     assert writer_episodes[0].self_contradicted_channels == [WRITE_CHANNEL_NOTEBOOK]
 
 
+async def _run_disparate_disclosure_turn(
+    tmp_path: Path,
+    guard_enabled: bool,
+    record_property: Callable[[str, object], None],
+) -> SimpleNamespace:
+    import inspect
+
+    from probos.cognitive.chat_facilitator import ChatFacilitator
+    from probos.cognitive.dm.write_ledger import (
+        WRITE_CHANNEL_NOTEBOOK,
+        ClaimVerdict,
+        disclosure_for,
+    )
+    from probos.config import SystemConfig
+    from probos.consensus.trust import TrustNetwork
+    from tests.test_ad1285_write_claim_guard import _FakeProactiveLoop
+
+    root = Path(__file__).resolve().parents[1]
+    for symbol in (
+        DmReplyPipeline, group_chat_fanout, IntentBus, ChatThreadStore,
+        ChatFacilitator, SystemConfig, TrustNetwork,
+    ):
+        assert Path(inspect.getfile(symbol)).resolve().is_relative_to(root / "src")
+    assert Path(inspect.getfile(_FakeProactiveLoop)).resolve() == (
+        root / "tests/test_ad1285_write_claim_guard.py"
+    )
+
+    agents = {
+        "voice1": "scout", "voice2": "counselor",
+        "voice3": "scout", "voice4": "counselor",
+    }
+    substantive = {
+        "voice1": "Choose quartz.", "voice2": "Prefer velvet.",
+        "voice3": "Select copper.", "voice4": "Pick marble.",
+    }
+    original_inputs = {
+        agent_id: text + " [NOTEBOOK finding][/NOTEBOOK]"
+        for agent_id, text in substantive.items()
+    }
+    recorder = _RecordingEpisodic()
+    producer = _FakeProactiveLoop(actions=[])
+    store, runtime = _build_env(
+        tmp_path, agents=agents, replies=original_inputs,
+        callsigns={"scout": "Scout", "counselor": "Counselor"},
+        episodic=recorder,
+    )
+    config = SystemConfig()
+    config.group_chat.conversation_trust_enabled = True
+    config.write_claim_guard.enabled = guard_enabled
+    runtime.config = config
+    runtime.proactive_loop = producer
+    trust = TrustNetwork()
+    runtime.trust_network = trust
+    for agent_id in agents:
+        initial = trust.get_or_create(agent_id)
+        assert (initial.alpha, initial.beta) == (2.0, 2.0)
+    initial_trust = trust.raw_scores()
+    assert trust.get_recent_events() == []
+    facilitator = ChatFacilitator.from_config(config)
+    assert facilitator.is_converged(list(substantive.items())) is False
+    disclosure = disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
+    assert disclosure.strip()
+    thread = store.create_thread(title="disparate choices", participants=list(agents))
+    captain = store.append_message(
+        thread.id, author_id="captain", role="captain", body="Compare the alternatives.",
+    )
+
+    replies = await group_chat_fanout(
+        runtime, thread.id, captain_body=captain.body, captain_msg=captain,
+    )
+
+    agent_messages = [
+        message for message in store.list_messages(thread.id, limit=1000)
+        if message.role == "agent"
+    ]
+    counts = {
+        "producers": len(producer.calls), "replies": len(replies),
+        "rows": len(agent_messages), "episodes": len(recorder.stored),
+    }
+    record_property("guard_enabled", guard_enabled)
+    record_property("first_turn_counts", counts)
+    record_property("first_turn_producer_inputs", list(producer.calls))
+    record_property("first_turn_trust", trust.raw_scores())
+    record_property("first_turn_trust_event_count", len(trust.get_recent_events()))
+    assert counts == {"producers": 4, "replies": 4, "rows": 4, "episodes": 4}
+    assert sorted(producer.calls) == sorted(original_inputs.values())
+    assert len({message.author_id for message in agent_messages}) == 4
+    assert {message.author_id for message in agent_messages} == set(agents)
+    assert len({reply["agent_id"] for reply in replies}) == 4
+    assert {reply["agent_id"] for reply in replies} == set(agents)
+    assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
+    rows = {message.author_id: message.body for message in agent_messages}
+    reply_bodies = {reply["agent_id"]: reply["text"] for reply in replies}
+    assert reply_bodies == rows
+    assert sorted(episode.agent_ids for episode in recorder.stored) == [
+        [agent_id] for agent_id in sorted(agents)
+    ]
+    for agent_id, body in rows.items():
+        assert body.startswith(substantive[agent_id])
+        assert "[NOTEBOOK" not in body
+        assert body.count(disclosure) == int(guard_enabled)
+        if not guard_enabled:
+            assert body == substantive[agent_id]
+    for episode in recorder.stored:
+        assert episode.source == "group_chat_fanout"
+        assert episode.anchors.chat_thread_id == thread.id
+        assert episode.anchors.channel == "chat"
+        assert episode.anchors.trigger_type == "group_fanout"
+        assert len(episode.outcomes) == 1
+        assert episode.outcomes[0]["success"] is True
+        assert episode.outcomes[0]["session_type"] == "group"
+        assert episode.outcomes[0]["response"] == rows[episode.agent_ids[0]]
+        assert episode.self_contradicted_channels == [WRITE_CHANNEL_NOTEBOOK]
+    notice_counts = {
+        "replies": sum(reply["text"].count(disclosure) for reply in replies),
+        "rows": sum(message.body.count(disclosure) for message in agent_messages),
+        "episodes": sum(
+            episode.outcomes[0]["response"].count(disclosure)
+            for episode in recorder.stored
+        ),
+    }
+    record_property("first_turn_notice_counts", notice_counts)
+    assert notice_counts == dict.fromkeys(("replies", "rows", "episodes"), 4 * int(guard_enabled))
+    assert facilitator.is_converged([
+        (reply["agent_id"], reply["text"]) for reply in replies
+    ]) is guard_enabled
+    return SimpleNamespace(
+        store=store, runtime=runtime, thread=thread, agents=agents,
+        original_inputs=original_inputs, substantive=substantive,
+        producer=producer, recorder=recorder, trust=trust,
+        initial_trust=initial_trust, agent_messages=agent_messages,
+    )
+
+
+@pytest.mark.parametrize("guard_enabled", [False, True], ids=["guard-off", "guard-on"])
+async def test_group_disclosure_does_not_manufacture_conversation_trust(
+    tmp_path: Path, guard_enabled: bool,
+    record_property: Callable[[str, object], None],
+) -> None:
+    turn = await _run_disparate_disclosure_turn(tmp_path, guard_enabled, record_property)
+
+    events = turn.trust.get_recent_events()
+    parameters = turn.trust.raw_scores()
+    assert (events, parameters) == ([], turn.initial_trust)
+
+
+@pytest.mark.parametrize("guard_enabled", [False, True], ids=["guard-off", "guard-on"])
+@pytest.mark.parametrize("toggle_guard", [False, True], ids=["same-flag", "changed-flag"])
+async def test_group_disclosure_history_does_not_suppress_next_request(
+    tmp_path: Path, guard_enabled: bool, toggle_guard: bool,
+    record_property: Callable[[str, object], None],
+) -> None:
+    from probos.cognitive.chat_facilitator import ChatFacilitator
+    from probos.routers.thread_fanout import (
+        _assemble_speaker_signals,
+        crew_agent_participants,
+    )
+
+    turn = await _run_disparate_disclosure_turn(tmp_path, guard_enabled, record_property)
+    reopened = ChatThreadStore(tmp_path / "threads.db")
+    turn.runtime.chat_thread_store = reopened
+    if toggle_guard:
+        turn.runtime.config.write_claim_guard.enabled = not guard_enabled
+    thread = reopened.get_thread(turn.thread.id)
+    assert thread is not None
+    captain = reopened.append_message(
+        thread.id, author_id="captain", role="captain", body="Reconsider the alternatives.",
+    )
+    prior = reopened.list_messages(thread.id, limit=1000, before=captain.created_at)
+    prior_agents = [message for message in prior if message.role == "agent"]
+    assert len(prior_agents) == 4
+    assert prior_agents == turn.agent_messages
+    candidates = crew_agent_participants(turn.runtime, thread.participants)
+    assert len(candidates) == 4
+    assert set(candidates) == set(turn.agents)
+    signals = _assemble_speaker_signals(turn.runtime, captain.body, candidates, prior)
+    assert len(signals) == 4
+    assert all(not signal.mentioned for signal in signals)
+    facilitator = ChatFacilitator.from_config(turn.runtime.config)
+    substantive_order = facilitator.facilitate(signals, list(turn.substantive.items()))
+    assert substantive_order.converged is False
+    assert set(substantive_order.speaking_order) == set(candidates)
+    record_property("second_turn_candidate_count", len(candidates))
+    record_property("second_turn_prior_agent_rows", len(prior_agents))
+    first_message_ids = {message.id for message in prior_agents}
+
+    replies = await group_chat_fanout(
+        turn.runtime, thread.id, captain_body=captain.body, captain_msg=captain,
+    )
+
+    all_agent_messages = [
+        message for message in reopened.list_messages(thread.id, limit=1000)
+        if message.role == "agent"
+    ]
+    new_agent_messages = [
+        message for message in all_agent_messages if message.id not in first_message_ids
+    ]
+    second_inputs = turn.producer.calls[4:]
+    second_episodes = turn.recorder.stored[4:]
+    counts = {
+        "producers": len(second_inputs), "replies": len(replies),
+        "rows": len(new_agent_messages), "episodes": len(second_episodes),
+    }
+    record_property("second_turn_counts", counts)
+    record_property("second_turn_producer_inputs", list(second_inputs))
+    record_property("total_counts", {
+        "producers": len(turn.producer.calls), "rows": len(all_agent_messages),
+        "episodes": len(turn.recorder.stored),
+    })
+    assert counts == {"producers": 4, "replies": 4, "rows": 4, "episodes": 4}
+    assert sorted(second_inputs) == sorted(turn.original_inputs.values())
+    assert len({reply["agent_id"] for reply in replies}) == 4
+    assert {reply["agent_id"] for reply in replies} == set(candidates)
+    assert len({message.author_id for message in new_agent_messages}) == 4
+    assert {message.author_id for message in new_agent_messages} == set(candidates)
+    assert len(all_agent_messages) == len(turn.producer.calls) == len(turn.recorder.stored) == 8
+    rows = {message.author_id: message.body for message in new_agent_messages}
+    assert {reply["agent_id"]: reply["text"] for reply in replies} == rows
+    assert sorted(episode.agent_ids for episode in second_episodes) == [
+        [agent_id] for agent_id in sorted(candidates)
+    ]
+    for episode in second_episodes:
+        agent_id = episode.agent_ids[0]
+        assert rows[agent_id].startswith(turn.substantive[agent_id])
+        assert episode.outcomes[0]["success"] is True
+        assert episode.outcomes[0]["response"] == rows[agent_id]
+        assert episode.self_contradicted_channels == ["notebook"]
+
+
+@pytest.mark.parametrize("guard_enabled", [False, True])
+@pytest.mark.parametrize("convergent", [False, True])
+async def test_disclosure_cascade_has_an_eligible_unspoken_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    guard_enabled: bool, convergent: bool,
+) -> None:
+    from probos.cognitive.chat_facilitator import (
+        ChatFacilitator, project_persisted_convergence_body,
+    )
+    from probos.config import SystemConfig
+    from probos.routers import thread_fanout
+    from tests.test_ad1285_write_claim_guard import _FakeProactiveLoop
+
+    agents = {
+        "voice1": "scout", "voice2": "counselor", "voice3": "scout",
+        "voice4": "counselor", "voice5": "scout",
+    }
+    choices = ["Choose quartz.", "Prefer velvet.", "Select copper.", "Pick marble.", "Favor silk."]
+    substantive = {
+        agent_id: "We should ship the release this sprint." if convergent else choices[index]
+        for index, agent_id in enumerate(agents)
+    }
+    inputs = {agent_id: text + " [NOTEBOOK finding][/NOTEBOOK]" for agent_id, text in substantive.items()}
+    recorder = _RecordingEpisodic()
+    producer = _FakeProactiveLoop(actions=[])
+    store, runtime = _build_env(
+        tmp_path, agents=agents, replies=inputs, episodic=recorder,
+        callsigns={"scout": "Scout", "counselor": "Counselor"},
+    )
+    runtime.config = SystemConfig()
+    runtime.config.write_claim_guard.enabled = guard_enabled
+    runtime.config.group_chat.agent_reactivity_enabled = True
+    runtime.config.group_chat.max_agent_rounds = 1
+    runtime.config.group_chat.max_speakers_per_turn = 4
+    runtime.config.group_chat.agent_next_speaker_selection_enabled = False
+    runtime.config.group_chat.broadcast_terminator_enabled = False
+    runtime.proactive_loop = producer
+    rounds: list[tuple[list[str], list[dict[str, str]]]] = []
+    fan_round = thread_fanout._fan_one_round
+
+    async def record_round(*args: Any, **kwargs: Any) -> list[dict[str, str]]:
+        pool = [agent_id for agent_id in kwargs["candidate_ids"] if agent_id not in kwargs["exclude_ids"]]
+        result = await fan_round(*args, **kwargs)
+        rounds.append((pool, result))
+        return result
+
+    monkeypatch.setattr(thread_fanout, "_fan_one_round", record_round)
+    thread = store.create_thread(title="alternatives", participants=list(agents))
+    captain = store.append_message(
+        thread.id, author_id="captain", role="captain", body="Compare the alternatives.",
+    )
+
+    replies = await group_chat_fanout(runtime, thread.id, captain_body=captain.body, captain_msg=captain)
+
+    assert len(rounds) == 2
+    assert rounds[0][0] == list(agents)
+    assert len(rounds[0][1]) == 4
+    first_ids = {reply["agent_id"] for reply in rounds[0][1]}
+    assert len(first_ids) == 4
+    assert len(rounds[1][0]) == 1
+    assert set(rounds[1][0]) == set(agents) - first_ids
+    assert len(rounds[1][1]) == (0 if convergent else 1)
+    assert {reply["agent_id"] for reply in rounds[1][1]} == (set() if convergent else set(rounds[1][0]))
+    expected_count = 4 if convergent else 5
+    messages = [message for message in store.list_messages(thread.id) if message.role == "agent"]
+    assert len(replies) == len(messages) == len(recorder.stored) == len(producer.calls) == expected_count
+    assert len({message.author_id for message in messages}) == expected_count
+    assert sorted(producer.calls) == sorted(inputs[reply["agent_id"]] for reply in replies)
+    bodies = {message.author_id: message.body for message in messages}
+    assert {reply["agent_id"]: reply["text"] for reply in replies} == bodies
+    first_messages = [message for message in messages if message.author_id in first_ids]
+    assert len(first_messages) == 4
+    facilitator = ChatFacilitator.from_config(runtime.config)
+    assert facilitator.is_converged([
+        (message.author_id, project_persisted_convergence_body(message.body, message.metadata))
+        for message in first_messages
+    ]) is convergent
+    assert facilitator.is_converged([
+        (message.author_id, message.body) for message in first_messages
+    ]) is (convergent or guard_enabled)
+    for episode in recorder.stored:
+        assert episode.outcomes[0]["success"] is True
+        assert episode.outcomes[0]["response"] == bodies[episode.agent_ids[0]]
+        assert episode.self_contradicted_channels == ["notebook"]
+
+
 async def test_group_tag_only_failed_write_remains_declined(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -710,6 +1025,12 @@ async def test_group_failure_before_write_facts_does_not_invent_ledger(
     original_context = thread_fanout.DmReplyContext
     original_pipeline = thread_fanout.DmReplyPipeline
     escalate = DmReplyPipeline.run_escalation_only
+    semantic_replies: list[dict[str, str]] = []
+    record_trust = thread_fanout._record_conversation_trust
+
+    def capture_trust(runtime: Any, thread: Any, replies: list[dict[str, str]], participants: list[str]) -> None:
+        semantic_replies.extend(replies)
+        record_trust(runtime, thread, replies, participants)
 
     def construct_reply(*, body: str) -> DmReply:
         if body == marked_reply and failure_stage == "reply":
@@ -741,6 +1062,7 @@ async def test_group_failure_before_write_facts_does_not_invent_ledger(
     monkeypatch.setattr(thread_fanout, "DmReply", construct_reply)
     monkeypatch.setattr(thread_fanout, "DmReplyContext", construct_context)
     monkeypatch.setattr(thread_fanout, "DmReplyPipeline", construct_pipeline)
+    monkeypatch.setattr(thread_fanout, "_record_conversation_trust", capture_trust)
     if failure_stage == "before-producer":
         monkeypatch.setattr(DmReplyPipeline, "run_escalation_only", fail_before_producer)
     thread = store.create_thread(title="unestablished ledger", participants=["scout1", "counselor1"])
@@ -749,6 +1071,8 @@ async def test_group_failure_before_write_facts_does_not_invent_ledger(
     replies = await group_chat_fanout(runtime, thread.id, captain_body=captain.body, captain_msg=captain)
 
     assert failures == [failure_stage]
+    assert semantic_replies == replies
+    assert all(semantic is not public for semantic, public in zip(semantic_replies, replies))
     assert producer.calls == []
     writer_contexts = [ctx for ctx in contexts if ctx.agent_id == "scout1"]
     assert len(writer_contexts) == int(failure_stage in {"pipeline", "before-producer"})
@@ -765,6 +1089,135 @@ async def test_group_failure_before_write_facts_does_not_invent_ledger(
         assert episodes[0].outcomes[0]["response"] == expected
         assert episodes[0].self_contradicted_channels == []
         assert episodes[0].outcomes[0]["success"] is True
+
+
+@pytest.mark.parametrize("case", [
+    "ordinary", "disclosed", "failed-result", "no-agent", "persist-failure",
+    "dispatch-failure", "empty", "decline",
+])
+async def test_round_semantic_accumulator_matches_non_disclosed_reply_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    from probos.cognitive.chat_facilitator import ChatFacilitator
+    from probos.cognitive.dm.write_ledger import ClaimVerdict, disclosure_for
+    from probos.config import SystemConfig
+    from probos.routers.thread_fanout import _assemble_speaker_signals, _fan_one_round
+    from tests.test_ad1285_write_claim_guard import _FakeProactiveLoop
+
+    first_text = {
+        "empty": "", "decline": "Deferring [NO_RESPONSE] today.",
+        "failed-result": "The operation failed.",
+    }.get(case, "Choose quartz.")
+    first_semantic = first_text
+    if case == "disclosed":
+        first_text += " [NOTEBOOK finding][/NOTEBOOK]"
+    recorder = _RecordingEpisodic()
+    store, runtime = _build_env(
+        tmp_path,
+        agents={"voice1": "scout", "voice2": "counselor", "voice3": "scout"},
+        replies={"voice1": first_text, "voice2": "Prefer velvet.", "voice3": "[NO_RESPONSE]"},
+        callsigns={"scout": "Scout", "counselor": "Counselor"}, episodic=recorder,
+    )
+    producer = _FakeProactiveLoop(actions=[])
+    if case == "disclosed":
+        runtime.config = SystemConfig()
+        runtime.proactive_loop = producer
+    thread = store.create_thread(title="ordering", participants=["voice1", "voice2", "voice3"])
+    captain = store.append_message(thread.id, author_id="captain", role="captain", body="Report.")
+    send = runtime.intent_bus.send
+    append = store.append_message
+    get_agent = runtime.registry.get
+    completed: list[str] = []
+    persist_failures: list[str] = []
+    peer_completed = asyncio.Event()
+
+    async def dispatch(intent: IntentMessage, *, raise_on_denial: bool = False) -> IntentResult | None:
+        agent_id = intent.target_agent_id
+        if agent_id == "voice1":
+            await asyncio.wait_for(peer_completed.wait(), timeout=2.0)
+        result = await send(intent, raise_on_denial=raise_on_denial)
+        completed.append(agent_id)
+        if agent_id == "voice2":
+            peer_completed.set()
+        if agent_id == "voice1" and case == "dispatch-failure":
+            raise RuntimeError("Injected dispatch failure after real handler completion")
+        if agent_id == "voice1" and case == "failed-result":
+            return IntentResult(intent_id=intent.id, agent_id=agent_id, success=False, result=first_text)
+        return result
+
+    def append_reply(thread_id: str, **kwargs: Any) -> Any:
+        if case == "persist-failure" and kwargs["author_id"] == "voice1":
+            persist_failures.append(kwargs["body"])
+            raise RuntimeError("Injected persistence boundary failure")
+        return append(thread_id, **kwargs)
+
+    def get_or_missing(agent_id: str) -> _FakeAgent | None:
+        return None if case == "no-agent" and agent_id == "voice1" else get_agent(agent_id)
+
+    monkeypatch.setattr(runtime.intent_bus, "send", dispatch)
+    monkeypatch.setattr(store, "append_message", append_reply)
+    monkeypatch.setattr(runtime.registry, "get", get_or_missing)
+    seed = {"agent_id": "previous", "callsign": "Previous", "text": "Prior turn."}
+    semantic = [seed]
+    all_replies: list[dict[str, str]] = []
+    round_count = 2 if case in {"ordinary", "disclosed"} else 1
+    for _ in range(round_count):
+        peer_completed.clear()
+        prior = store.list_messages(thread.id, limit=1000)
+        signals = _assemble_speaker_signals(runtime, captain.body, list(thread.participants), prior)
+        order = ChatFacilitator().facilitate(
+            signals, [(message.author_id, message.body) for message in prior if message.role == "agent"],
+        ).speaking_order
+        assert len(order) == 3 and set(order) == set(thread.participants)
+        replies = await _fan_one_round(
+            runtime, store, thread.id, trigger_body=captain.body,
+            candidate_ids=list(thread.participants), exclude_ids=set(), vision_messages=None,
+            sanity_gate=runtime.dm_sanity_gate, t_start=asyncio.get_running_loop().time(),
+            _semantic_replies=semantic,
+        )
+        eligible = {"voice2"} if case in {"empty", "decline", "dispatch-failure"} else {"voice1", "voice2"}
+        expected_ids = [agent_id for agent_id in order if agent_id in eligible]
+        assert [reply["agent_id"] for reply in replies] == expected_ids
+        assert len(completed[-3:]) == 3 and set(completed[-3:]) == set(thread.participants)
+        assert completed[-3:].index("voice2") < completed[-3:].index("voice1")
+        for reply in replies:
+            assert set(reply) == {"agent_id", "callsign", "text"}
+            expected_first = (
+                first_semantic + disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
+                if case == "disclosed" else first_text
+            )
+            assert reply["text"] == (expected_first if reply["agent_id"] == "voice1" else "Prefer velvet.")
+        all_replies.extend(replies)
+        expected_semantic = [
+            {**reply, "text": first_semantic}
+            if case == "disclosed" and reply["agent_id"] == "voice1" else dict(reply)
+            for reply in all_replies
+        ]
+        assert semantic == [seed, *expected_semantic]
+        assert all(internal is not public for internal, public in zip(semantic[1:], all_replies))
+        if case == "disclosed":
+            assert any(internal["text"] != public["text"] for internal, public in zip(semantic[1:], all_replies))
+    assert len(completed) == 3 * round_count
+    messages = [message for message in store.list_messages(thread.id) if message.role == "agent"]
+    assert len(messages) == len(all_replies) - int(case == "persist-failure")
+    assert len(recorder.stored) == len(all_replies)
+    assert persist_failures == ([first_text] if case == "persist-failure" else [])
+    assert all(
+        ("ad1305_convergence" in message.metadata) is (case == "disclosed" and message.author_id == "voice1")
+        for message in messages
+    )
+    assert all(
+        episode.self_contradicted_channels == (
+            ["notebook"] if case == "disclosed" and episode.agent_ids == ["voice1"] else []
+        )
+        for episode in recorder.stored
+    )
+    if case == "disclosed":
+        assert producer.calls == [first_text] * round_count
+    if case in {"ordinary", "disclosed"}:
+        semantic_ids = [reply["agent_id"] for reply in semantic[1:]]
+        assert len(semantic_ids) == 4
+        assert semantic_ids.count("voice1") == semantic_ids.count("voice2") == 2
 
 
 # ---------------- 5. AD-869 mesh-read marker resolves or honest-degrades ------

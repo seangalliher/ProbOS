@@ -36,9 +36,12 @@ import re
 import sqlite3
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import TYPE_CHECKING, Callable, Iterable
+
+if TYPE_CHECKING:
+    from probos.cognitive.chat_facilitator import ConvergenceEvidence
 
 logger = logging.getLogger(__name__)
 
@@ -1267,6 +1270,7 @@ class ChatThreadStore:
         role: str,
         body: str,
         metadata: dict | None = None,
+        convergence_evidence: ConvergenceEvidence | None = None,
     ) -> ChatThreadMessage | None:
         return self.append_message_once(
             thread_id,
@@ -1276,6 +1280,7 @@ class ChatThreadStore:
             body=body,
             created_at=self._clock(),
             metadata=metadata,
+            convergence_evidence=convergence_evidence,
         )
 
     def append_message_once(
@@ -1288,6 +1293,7 @@ class ChatThreadStore:
         body: str,
         created_at: float,
         metadata: dict | None = None,
+        convergence_evidence: ConvergenceEvidence | None = None,
     ) -> ChatThreadMessage | None:
         if (
             type(thread_id) is not str
@@ -1306,6 +1312,17 @@ class ChatThreadStore:
         ):
             raise ValueError("chat_thread_message_invalid")
         timestamp = float(created_at)
+        substantive_body: str | None = None
+        if convergence_evidence is not None:
+            from probos.cognitive.chat_facilitator import (
+                capture_convergence_evidence,
+                project_convergence_body,
+                validate_convergence_evidence,
+            )
+
+            if role != "agent" or not validate_convergence_evidence(body, convergence_evidence):
+                raise ValueError("chat_thread_convergence_evidence_invalid")
+            substantive_body = project_convergence_body(body, convergence_evidence)
 
         # AD-1275 (BF-806): the model-authored egress contract is enforced here
         # because this is the only INSERT into chat_thread_messages, and `role`
@@ -1329,6 +1346,8 @@ class ChatThreadStore:
             )
 
             composed = compose_bypass_reply(body)
+            if substantive_body is not None:
+                substantive_body = compose_bypass_reply(substantive_body)
             if not composed:
                 logger.warning(
                     "AD-1275: agent %s posted a body to thread %s that was "
@@ -1341,6 +1360,12 @@ class ChatThreadStore:
             body = composed
 
         message_metadata = dict(metadata or {})
+        message_metadata.pop("ad1305_convergence", None)
+        if substantive_body is not None:
+            rebased_evidence = capture_convergence_evidence(body, substantive_body)
+            if rebased_evidence is None:
+                raise ValueError("chat_thread_convergence_evidence_unmappable")
+            message_metadata["ad1305_convergence"] = asdict(rebased_evidence)
         try:
             metadata_json = json.dumps(
                 message_metadata,

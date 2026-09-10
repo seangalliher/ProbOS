@@ -163,6 +163,7 @@ class DmReplyContext:
     # ``DmReplyContext(...)`` construction site is untouched.
     write_ledger: WriteLedger = field(default_factory=WriteLedger)
     pre_write_disclosure_body: str | None = None
+    write_disclosure_suffix: str | None = None
     # AD-1295 (#1087): the agentic loop's own record of which tools it called
     # and which of them succeeded, reconstructed from ``IntentResult.metadata``
     # by the route that built this context.
@@ -1869,6 +1870,7 @@ class DmReplyPipeline:
         Tier-2 honest-degrade: never raises.
         """
         try:
+            self.ctx.write_disclosure_suffix = None
             self.ctx.pre_write_disclosure_body = self.ctx.response_text
             if not self.ctx.response_text:
                 return
@@ -1893,9 +1895,9 @@ class DmReplyPipeline:
                 sorted(self.ctx.write_ledger.wrote_partially),
                 sorted(self.ctx.write_ledger.wrote),
             )
-            self.ctx.response_text = (
-                self.ctx.response_text + disclosure_for(verdict)
-            )
+            suffix = disclosure_for(verdict)
+            self.ctx.response_text = self.ctx.response_text + suffix
+            self.ctx.write_disclosure_suffix = suffix
         except Exception:
             logger.warning(
                 "AD-1285: write-claim guard raised for agent=%s; shipping "

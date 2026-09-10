@@ -349,8 +349,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1057 head-shaped line yielded no AD/BF token
-PROGRESS.md:1063 head-shaped line yielded no AD/BF token
+PROGRESS.md:1059 head-shaped line yielded no AD/BF token
+PROGRESS.md:1065 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token

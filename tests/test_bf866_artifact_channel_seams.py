@@ -878,6 +878,243 @@ async def test_real_writes_reach_delivery_and_episode(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("agree", [False, True], ids=["distinct-prefixes", "agreeing-prefixes"])
+@pytest.mark.parametrize("artifacts, artifact_failure, notebook, raw_fallback", [
+    pytest.param(False, "none", "success", False, id="notebook-success"),
+    pytest.param(False, "none", "failure", False, id="notebook-failure"),
+    pytest.param(True, "none", None, False, id="artifacts-success"),
+    pytest.param(True, "all", None, False, id="artifacts-failure"),
+    pytest.param(True, "partial", None, False, id="artifacts-partial-only"),
+    pytest.param(True, "partial", "failure", False, id="partial-artifacts-notebook-failure"),
+    pytest.param(True, "all", "success", False, id="failed-artifacts-notebook-success"),
+    pytest.param(False, "none", "failure", True, id="raw-notebook-failure"),
+    pytest.param(True, "partial", "failure", True, id="raw-mixed-failure"),
+])
+async def test_four_speaker_real_writes_preserve_semantic_trust_across_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agree: bool,
+    artifacts: bool, artifact_failure: str, notebook: str | None, raw_fallback: bool,
+) -> None:
+    from probos.avatars.divergence_detector import strip_intent_self_tag
+    from probos.cognitive.chat_facilitator import (
+        ChatFacilitator, project_persisted_convergence_body,
+    )
+    from probos.cognitive.conversation_trust import extract_conversation_trust_outcomes
+    from probos.cognitive.dm.a2ui_extractor import build_a2ui_stub
+    from probos.config import SystemConfig
+    from probos.consensus.trust import TrustNetwork
+    from probos.routers import thread_fanout
+    from tests.test_ad933_group_chat_escalation import _build_env
+
+    agents = {
+        "voice1": "scout", "voice2": "counselor",
+        "voice3": "diagnostician", "voice4": "architect",
+    }
+    choices = ["Choose quartz.", "Prefer velvet.", "Select copper.", "Pick marble."]
+    names = {agent_id: (f"{agent_id}-first.md", f"{agent_id}-second.md") for agent_id in agents}
+    topics = {agent_id: f"decision-{agent_id}" for agent_id in agents}
+    fail_names = {
+        name for first, second in names.values() for name in (first, second)
+        if artifacts and (artifact_failure == "all" or artifact_failure == "partial" and name == second)
+    }
+    ui_stub = build_a2ui_stub("a2ui-choice-1.json", 1, "choice")
+    inputs = {
+        agent_id: "\n".join(part for part in (
+            "We should ship the release this sprint." if agree else choices[index],
+            _two_tags(*names[agent_id]) if artifacts else "",
+            f"[NOTEBOOK {topics[agent_id]}]{_NOTE_CONTENT}[/NOTEBOOK]" if notebook else "",
+            ui_stub if artifacts else "",
+        ) if part)
+        for index, agent_id in enumerate(agents)
+    }
+    escalate = DmReplyPipeline.run_escalation_only
+    record_trust = thread_fanout._record_conversation_trust
+    comparisons: list[dict[str, Any]] = []
+    for guard_enabled in (False, True):
+        arm_path = tmp_path / ("guard-on" if guard_enabled else "guard-off")
+        effects = await _real_write_runtime(arm_path, fail_names, False)
+        records = effects._records_store
+        records.fail_topics = set(topics.values()) if notebook == "failure" else set()
+        store, runtime = _build_env(
+            arm_path, agents=agents, replies=inputs,
+            callsigns={agent_type: agent_type.title() for agent_type in agents.values()},
+        )
+        runtime.config = SystemConfig()
+        runtime.config.records = effects.config.records
+        runtime.config.group_chat.agent_reactivity_enabled = False
+        runtime.config.group_chat.conversation_trust_enabled = True
+        runtime.config.write_claim_guard.enabled = guard_enabled
+        runtime._records_store = records
+        runtime.artifact_store = effects.artifact_store
+        runtime.attachment_store = effects.attachment_store
+        runtime.episodic_memory = effects.episodic_memory
+        runtime.proactive_loop = effects.proactive_loop
+        runtime.proactive_loop.set_runtime(runtime)
+        runtime.trust_network = TrustNetwork()
+        for agent_id in agents:
+            record = runtime.trust_network.get_or_create(agent_id)
+            assert (record.alpha, record.beta) == (2.0, 2.0)
+        assert runtime.trust_network.get_recent_events() == []
+        contexts: list[DmReplyContext] = []
+        producer_inputs: list[tuple[str, str]] = []
+        failures: list[str] = []
+        semantic_replies: list[dict[str, str]] = []
+        blob_attempts: list[tuple[str, bytes, str]] = []
+        write_blob = runtime.attachment_store.write
+
+        async def record_blob(
+            content_hash: str, blob: bytes, mime: str, *, origin: str = "chat_attachment",
+        ) -> Path:
+            blob_attempts.append((content_hash, blob, origin))
+            return await write_blob(content_hash, blob, mime, origin=origin)
+
+        async def record_escalation(pipeline: DmReplyPipeline) -> None:
+            producer_inputs.append((pipeline.ctx.agent_id, pipeline.ctx.response_text))
+            await escalate(pipeline)
+            contexts.append(pipeline.ctx)
+            if raw_fallback:
+                assert pipeline.ctx.write_ledger.evaluated
+                assert pipeline.ctx.pre_write_disclosure_body is not None
+                failures.append(pipeline.ctx.agent_id)
+                raise RuntimeError("Injected outer failure after real writes and guard completed")
+
+        def capture_trust(
+            runtime: Any, thread: Any, replies: list[dict[str, str]], participants: list[str],
+        ) -> None:
+            semantic_replies.extend(replies)
+            record_trust(runtime, thread, replies, participants)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(runtime.attachment_store, "write", record_blob)
+            patch.setattr(DmReplyPipeline, "run_escalation_only", record_escalation)
+            patch.setattr(thread_fanout, "_record_conversation_trust", capture_trust)
+            thread = store.create_thread(title="write outcomes", participants=list(agents))
+            captain = store.append_message(
+                thread.id, author_id="captain", role="captain", body="Compare the alternatives.",
+            )
+            replies = await thread_fanout.group_chat_fanout(
+                runtime, thread.id, captain_body=captain.body, captain_msg=captain,
+            )
+
+        messages = [message for message in store.list_messages(thread.id) if message.role == "agent"]
+        episodes = runtime.episodic_memory.stored
+        assert len(producer_inputs) == len(contexts) == len(replies) == len(messages) == len(episodes) == 4
+        assert sorted(producer_inputs) == sorted(inputs.items())
+        assert len({message.author_id for message in messages}) == 4
+        assert len({context.agent_id for context in contexts}) == 4
+        assert len({episode.agent_ids[0] for episode in episodes}) == 4
+        assert sorted(failures) == (sorted(agents) if raw_fallback else [])
+        assert len(semantic_replies) == 4
+        assert [reply["agent_id"] for reply in semantic_replies] == [reply["agent_id"] for reply in replies]
+        assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
+        rows = {message.author_id: message for message in messages}
+        by_context = {context.agent_id: context for context in contexts}
+        assert {reply["agent_id"]: reply["text"] for reply in replies} == {
+            agent_id: message.body for agent_id, message in rows.items()
+        }
+        assert len(blob_attempts) == (8 if artifacts else 0)
+        assert all(origin == "agent_artifact" for _, _, origin in blob_attempts)
+        assert sorted(runtime.artifact_store.attempted) == (
+            sorted(name for pair in names.values() for name in pair) if artifacts else []
+        )
+        artifact_rows = runtime.artifact_store.list_thread_latest(thread.id)
+        expected_blobs = {
+            name: content for first, second in names.values()
+            for name, content in ((first, b"# First"), (second, b"# Second"))
+        } if artifacts else {}
+        assert len(artifact_rows) == len(expected_blobs) - len(fail_names)
+        assert {row.name for row in artifact_rows} == set(expected_blobs) - fail_names
+        for artifact in artifact_rows:
+            assert artifact.version == 1
+            assert await runtime.attachment_store.read(artifact.content_hash) == expected_blobs[artifact.name]
+            owner = next(agent_id for agent_id, pair in names.items() if artifact.name in pair)
+            assert f"[Artifact: {artifact.name} v1" in by_context[owner].pre_write_disclosure_body
+        for content_hash, blob, _ in blob_attempts:
+            assert await runtime.attachment_store.read(content_hash) == blob
+        assert sorted(records.attempted) == (sorted(topics.values()) if notebook else [])
+        assert len(records.similarity_results) == (4 if notebook else 0)
+        assert all(result["action"] != "suppress" for result in records.similarity_results)
+        for agent_id, agent_type in agents.items():
+            note = await records.read_entry(f"notebooks/{agent_type}/{topics[agent_id]}.md", agent_type)
+            if notebook == "success":
+                assert note is not None and note["content"].strip() == _NOTE_CONTENT
+            else:
+                assert note is None
+        expected_failed = set()
+        if artifacts and artifact_failure == "all":
+            expected_failed.add("artifact")
+        if notebook == "failure":
+            expected_failed.add("notebook")
+        consulted = ({"artifact"} if artifacts else set()) | ({"notebook"} if notebook else set())
+        expected_partial = {"artifact"} if artifacts and artifact_failure == "partial" else set()
+        verdict = (
+            ClaimVerdict.MARKER_WROTE_NOTHING if expected_failed else
+            ClaimVerdict.MARKER_WROTE_PARTIALLY if expected_partial else ClaimVerdict.ABSTAIN
+        )
+        expected_semantics: dict[str, str] = {}
+        for context in contexts:
+            ledger = context.write_ledger
+            assert ledger.consulted == frozenset(consulted)
+            assert ledger.wrote_nothing == frozenset(expected_failed)
+            assert ledger.wrote == frozenset(consulted - expected_failed)
+            assert ledger.wrote_partially == frozenset(expected_partial)
+            assert assess_write_claim(ledger) is verdict
+            prefix = context.pre_write_disclosure_body
+            assert prefix is not None
+            assert (ui_stub in prefix) is artifacts
+            suffix = disclosure_for(verdict) if guard_enabled else ""
+            assert context.response_text == prefix + suffix
+            assert context.write_disclosure_suffix == (suffix or None)
+            delivered = inputs[context.agent_id] if raw_fallback else context.response_text
+            assert rows[context.agent_id].body == strip_intent_self_tag(delivered)
+            expected_semantics[context.agent_id] = strip_intent_self_tag(
+                inputs[context.agent_id] if raw_fallback else prefix,
+            )
+            assert project_persisted_convergence_body(
+                rows[context.agent_id].body, rows[context.agent_id].metadata,
+            ) == expected_semantics[context.agent_id]
+            assert ("ad1305_convergence" in rows[context.agent_id].metadata) is bool(suffix and not raw_fallback)
+        assert {reply["agent_id"]: reply["text"] for reply in semantic_replies} == expected_semantics
+        for episode in episodes:
+            assert episode.outcomes[0]["success"] is True
+            assert episode.outcomes[0]["session_type"] == "group"
+            assert episode.outcomes[0]["response"] == rows[episode.agent_ids[0]].body[:500]
+            assert episode.self_contradicted_channels == sorted(expected_failed)
+            assert episode.anchors.chat_thread_id == thread.id
+        facilitator = ChatFacilitator.from_config(runtime.config)
+        control_replies = [
+            {"agent_id": reply["agent_id"], "callsign": reply["callsign"], "text": expected_semantics[reply["agent_id"]]}
+            for reply in replies
+        ]
+        outcomes = extract_conversation_trust_outcomes(
+            control_replies, facilitator=facilitator, intent_type="write outcomes",
+            positive_weight=0.05, max_outcomes=4,
+        )
+        converged = facilitator.is_converged(list(expected_semantics.items()))
+        if not artifacts and not raw_fallback:
+            assert converged is agree
+        assert len(outcomes) == (4 if converged else 0)
+        events = runtime.trust_network.get_recent_events()
+        assert len(events) == len(outcomes)
+        assert sorted((event.agent_id, event.verifier_id, event.weight, event.success) for event in events) == sorted(
+            (outcome.agent_id, outcome.verifier_id, outcome.weight, outcome.success) for outcome in outcomes
+        )
+        for event in events:
+            assert event.weight == 0.05 and event.success is True
+            assert event.verifier_id in agents and event.verifier_id != event.agent_id
+        for agent_id in agents:
+            record = runtime.trust_network.get_record(agent_id)
+            assert record is not None
+            assert (record.alpha, record.beta) == (2.05 if converged else 2.0, 2.0)
+        comparisons.append({
+            "semantics": expected_semantics, "trust": runtime.trust_network.raw_scores(),
+            "outcomes": outcomes, "blob_count": len(blob_attempts),
+            "artifact_count": len(artifact_rows), "notebook_attempts": sorted(records.attempted),
+        })
+    assert len(comparisons) == 2
+    assert comparisons[0] == comparisons[1]
+
+
+@pytest.mark.asyncio
 async def test_real_notebook_dedup_preserves_durable_note_without_disclosure(
     tmp_path: Path,
 ) -> None:
