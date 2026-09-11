@@ -22,15 +22,21 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, Protocol
 
+from probos.cognitive.agentic_dispatch import (
+    AgenticIdentity,
+    AgenticIdentityUnresolved,
+    AgentIdentityOntology,
+    AgentIdentityRegistry,
+    AgentIdentityTrust,
+    resolve_agentic_identity,
+)
 from probos.consultation.dispatch import WorkItemSpec
 
 if TYPE_CHECKING:
-    from probos.consensus.trust import TrustNetwork
     from probos.mesh.capability import CapabilityMatch, CapabilityRegistry
-    from probos.ontology import VesselOntologyService
-    from probos.substrate.registry import AgentRegistry
+    from probos.substrate.agent import BaseAgent
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +45,24 @@ _REASON_CAPABILITY = "capability_match"
 _REASON_CAPABILITY_DEPT_UNAVAILABLE = "capability_match_dept_unavailable"
 _REASON_DEPARTMENT_ONLY = "department_only"
 _REASON_UNRESOLVED = "unresolved_no_candidate"
+
+
+class CrewAssignmentRegistry(AgentIdentityRegistry, Protocol):
+    def all(self) -> list[BaseAgent]: ...
+
+
+class CrewAssignmentTrust(AgentIdentityTrust, Protocol):
+    def all_scores(self) -> dict[str, float]: ...
+
+
+@dataclass(frozen=True)
+class CrewWorkerEligibility:
+    identity: AgenticIdentity | None
+    reason: Literal["eligible", "missing", "inactive", "unresolved_identity"]
+
+
+class CrewWorkerEligibilityResolver(Protocol):
+    def check_eligibility(self, agent_id: str) -> CrewWorkerEligibility: ...
 
 
 @dataclass(frozen=True)
@@ -73,9 +97,9 @@ class CrewAssignmentResolver:
         self,
         *,
         capability_registry: "CapabilityRegistry",
-        ontology: "VesselOntologyService",
-        trust_network: "TrustNetwork",
-        agent_registry: "AgentRegistry",
+        ontology: AgentIdentityOntology,
+        trust_network: CrewAssignmentTrust,
+        agent_registry: CrewAssignmentRegistry,
     ) -> None:
         self._capability_registry = capability_registry
         self._ontology = ontology
@@ -85,6 +109,34 @@ class CrewAssignmentResolver:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def check_eligibility(self, agent_id: str) -> CrewWorkerEligibility:
+        """Check current crew execution eligibility without changing lifecycle."""
+        if type(agent_id) is not str or not agent_id:
+            return CrewWorkerEligibility(None, "unresolved_identity")
+        try:
+            agent = self._agent_registry.get(agent_id)
+            if agent is None:
+                return CrewWorkerEligibility(None, "missing")
+            if not agent.is_alive:
+                return CrewWorkerEligibility(None, "inactive")
+            identity = resolve_agentic_identity(
+                agent_id=agent_id,
+                agent_registry=self._agent_registry,
+                ontology=self._ontology,
+                trust_network=self._trust_network,
+            )
+        except AgenticIdentityUnresolved:
+            return CrewWorkerEligibility(None, "unresolved_identity")
+        except Exception:
+            logger.warning(
+                "Crew eligibility lookup failed for agent=%s; "
+                "execution identity cannot be established, rejecting candidate",
+                agent_id,
+                exc_info=True,
+            )
+            return CrewWorkerEligibility(None, "unresolved_identity")
+        return CrewWorkerEligibility(identity, "eligible")
 
     def resolve(self, spec: WorkItemSpec) -> AssignmentDecision:
         """Resolve a single spec to an :class:`AssignmentDecision`.
@@ -134,13 +186,18 @@ class CrewAssignmentResolver:
     ) -> AssignmentDecision | None:
         """Capability hint set: query, filter to alive (and in-department), pick top."""
         matches = self._capability_registry.query(capability, trust_scores=all_scores)
-        alive_matches = [m for m in matches if self._is_alive(m.agent_id)]
-        if not alive_matches:
+        eligible_matches = []
+        for match in matches:
+            eligibility = self.check_eligibility(match.agent_id)
+            if eligibility.identity is not None:
+                eligible_matches.append((match, eligibility.identity))
+        if not eligible_matches:
             return None
 
         if department:
             dept_matches = [
-                m for m in alive_matches if self._department_of(m.agent_id) == department
+                match for match, identity in eligible_matches
+                if identity.department == department
             ]
             if dept_matches:
                 return self._capability_decision(
@@ -149,32 +206,36 @@ class CrewAssignmentResolver:
             # Department filter emptied the list — fall back to the alive
             # capability ranking and flag that the department was unavailable.
             return self._capability_decision(
-                spec, alive_matches[0], _REASON_CAPABILITY_DEPT_UNAVAILABLE
+                spec, eligible_matches[0][0], _REASON_CAPABILITY_DEPT_UNAVAILABLE
             )
 
-        return self._capability_decision(spec, alive_matches[0], _REASON_CAPABILITY)
+        return self._capability_decision(spec, eligible_matches[0][0], _REASON_CAPABILITY)
 
     def _resolve_by_department(
         self, spec: WorkItemSpec, department: str
     ) -> AssignmentDecision | None:
         """No capability hint, department hint set: pick highest-trust alive in-dept agent."""
-        candidates = [
-            a for a in self._agent_registry.all() if self._department_of(a.id) == department
-        ]
+        candidates = []
+        for agent in self._agent_registry.all():
+            identity = self.check_eligibility(agent.id).identity
+            if identity is not None and identity.department == department:
+                candidates.append(identity)
         if not candidates:
             return None
 
         # Deterministic tie-break: higher trust first, then agent_id lexical.
         best = min(
             candidates,
-            key=lambda a: (-self._trust_network.get_score(a.id), a.id),
+            key=lambda identity: (
+                -self._trust_network.get_score(identity.agent_id), identity.agent_id
+            ),
         )
         return AssignmentDecision(
             spec_id=spec.spec_id,
-            agent_id=best.id,
+            agent_id=best.agent_id,
             department=department,
             capability=spec.capability,
-            score=self._trust_network.get_score(best.id),
+            score=self._trust_network.get_score(best.agent_id),
             reason=_REASON_DEPARTMENT_ONLY,
         )
 
@@ -203,12 +264,3 @@ class CrewAssignmentResolver:
             score=0.0,
             reason=_REASON_UNRESOLVED,
         )
-
-    def _is_alive(self, agent_id: str) -> bool:
-        return self._agent_registry.get(agent_id) is not None
-
-    def _department_of(self, agent_id: str) -> str | None:
-        agent = self._agent_registry.get(agent_id)
-        if agent is None:
-            return None
-        return self._ontology.get_agent_department(agent.agent_type)

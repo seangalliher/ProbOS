@@ -103,7 +103,6 @@ ALLOWED_EXCEPTIONS = {
     # AD-482 cognitive→consensus.shapley). All TrustNetwork imports are
     # TYPE_CHECKING-only (DI via constructor); compute_shapley_values is a
     # pure function used for cross-verifier Shapley attribution.
-    ("cognitive/crew_assignment.py", "probos.consensus.trust"),
     ("cognitive/crew_synth.py", "probos.consensus.shapley"),
     ("cognitive/crew_synth.py", "probos.consensus.trust"),
     ("cognitive/crew_verifier.py", "probos.consensus.trust"),

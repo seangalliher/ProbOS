@@ -22,6 +22,7 @@ from probos.workforce import (
     WorkItem,
     WorkItemStore,
 )
+from tests.test_ad859_crew_executor import native_workers
 
 
 _SHA_A = "a" * 64
@@ -2846,6 +2847,7 @@ async def test_finalizer_resume_checkpoints_and_reuses_complete_pipeline(
 @pytest.mark.asyncio
 async def test_finalizer_artifact_checkpoint_missing_identity_creates_no_replacement(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     import hashlib
 
@@ -2856,7 +2858,7 @@ async def test_finalizer_artifact_checkpoint_missing_identity_creates_no_replace
         stores as stores_fixture,
     )
 
-    stores_generator = stores_fixture.__wrapped__(tmp_path)
+    stores_generator = stores_fixture.__wrapped__(tmp_path, request)
     stores = await stores_generator.__anext__()
     try:
         _parent, thread, service, session = await __import__(
@@ -3307,6 +3309,67 @@ def test_enabled_startup_missing_mandatory_dependency_fails_before_admission(
         _wire_crew_orchestrator(runtime=runtime, config=config)
 
     assert not hasattr(runtime, "crew_orchestrator")
+
+
+@pytest.mark.asyncio
+async def test_native_startup_shares_eligibility_before_scheduler_binding(
+    tmp_path: Path, native_workers: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from probos.attachments.filesystem_store import FilesystemAttachmentStore
+    from probos.cognitive import crew_executor as executor_module
+    from probos.cognitive import crew_orchestrator as orchestrator_module
+    from probos.config import SystemConfig
+    from probos.startup.finalize import _wire_crew_orchestrator, _wire_crew_session_service
+
+    executor_bindings: list[dict[str, Any]] = []
+    owner_bindings: list[dict[str, Any]] = []
+
+    class _RecordingExecutor(executor_module.CrewTaskExecutor):
+        def __init__(self, **kwargs: Any) -> None:
+            executor_bindings.append(kwargs)
+            super().__init__(**kwargs)
+
+    class _RecordingOwner(orchestrator_module.CrewOrchestrator):
+        def __init__(self, **kwargs: Any) -> None:
+            owner_bindings.append(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(executor_module, "CrewTaskExecutor", _RecordingExecutor)
+    monkeypatch.setattr(orchestrator_module, "CrewOrchestrator", _RecordingOwner)
+    config = SystemConfig()
+    config.agentic_dispatch.orchestrator_enabled = True
+    work = WorkItemStore(db_path=str(tmp_path / "startup-work.db"), tick_interval=1_000)
+    await work.start()
+    runtime = SimpleNamespace(
+        work_item_store=work,
+        registry=native_workers.registry,
+        capability_registry=native_workers.capabilities,
+        ontology=native_workers.ontology,
+        trust_network=native_workers.trust,
+        llm_client=SimpleNamespace(),
+        chat_thread_store=ChatThreadStore(tmp_path / "startup-chat.db"),
+        artifact_store=ArtifactStore(tmp_path / "startup-artifacts.db"),
+        attachment_store=FilesystemAttachmentStore(tmp_path / "startup-attachments"),
+        config=config,
+    )
+    try:
+        assert _wire_crew_session_service(runtime=runtime, config=config)
+        with pytest.raises(ValueError, match="worker_eligibility_unwired"):
+            _ = runtime.crew_session_service.worker_eligibility
+        assert _wire_crew_orchestrator(runtime=runtime, config=config)
+        assert len(executor_bindings) == len(owner_bindings) == 1
+        resolver = runtime.crew_session_service.worker_eligibility
+        assert resolver is owner_bindings[0]["assignment_resolver"]
+        assert resolver is owner_bindings[0]["eligibility_resolver"]
+        assert resolver is executor_bindings[0]["eligibility_resolver"]
+        assert resolver.check_eligibility("builder-1").identity is not None
+        await native_workers.registry.get("builder-1").stop()
+        assert resolver.check_eligibility("builder-1").identity is None
+    finally:
+        owner = getattr(runtime, "crew_orchestrator", None)
+        if owner is not None:
+            await owner.stop()
+        await work.stop()
 
 
 @pytest.mark.asyncio

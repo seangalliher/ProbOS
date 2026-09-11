@@ -24,10 +24,10 @@ import sqlite3
 import time
 import uuid
 from collections import defaultdict
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Protocol
 
 import aiosqlite
 
@@ -1780,13 +1780,15 @@ def _bounded_child_snapshot_bytes(
 def _detach_direct_child_snapshots(
     work_item_id: str,
     value: tuple[dict[str, Any], ...],
+    *,
+    retry_evidence: bool = False,
 ) -> tuple[dict[str, Any], ...]:
     error = "work_item_child_barrier_invalid"
     if (
         type(work_item_id) is not str
         or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(work_item_id) is None
         or type(value) is not tuple
-        or not 1 <= len(value) <= _MAX_WORK_ITEM_DIRECT_CHILDREN
+        or not (0 if retry_evidence else 1) <= len(value) <= _MAX_WORK_ITEM_DIRECT_CHILDREN
     ):
         raise ValueError(error)
     detached: list[dict[str, Any]] = []
@@ -1805,9 +1807,12 @@ def _detach_direct_child_snapshots(
             or child_id <= previous_id
             or type(parent_id) is not str
             or parent_id != work_item_id
-            or type(assigned_to) is not str
-            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(assigned_to) is None
-            or raw["status"] != "done"
+            or not (
+                retry_evidence and assigned_to is None
+                or type(assigned_to) is str
+                and _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(assigned_to) is not None
+            )
+            or (not retry_evidence and raw["status"] != "done")
             or type(raw["status"]) is not str
             or any(
                 type(raw[key]) is not str
@@ -1861,6 +1866,69 @@ def _detach_direct_child_snapshots(
         detached.append(json.loads(serialized.decode("utf-8")))
         previous_id = child_id
     return tuple(detached)
+
+
+class WorkItemRetryConflict(ValueError):
+    """An atomic native retry proof no longer matches durable rows."""
+
+    def __init__(self) -> None:
+        super().__init__("work_item_retry_barrier_conflict")
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class WorkItemRetryBarrier:
+    """Detached bounded observations for native retry or failure disposition."""
+
+    parent_id: str
+    parent_work_type: str
+    parent_status: str
+    parent_assigned_to: str | None
+    parent_metadata: bytes
+    children: tuple[bytes, ...]
+    mode: Literal["untouched", "observed"]
+
+    def __init__(
+        self,
+        parent: WorkItem,
+        children: tuple[WorkItem, ...],
+        *,
+        mode: Literal["untouched", "observed"] = "untouched",
+    ) -> None:
+        error = "work_item_retry_barrier_invalid"
+        if (
+            type(parent) is not WorkItem
+            or type(children) is not tuple
+            or not (0 if mode == "observed" else 1) <= len(children) <= _MAX_WORK_ITEM_DIRECT_CHILDREN
+            or any(type(child) is not WorkItem for child in children)
+            or type(mode) is not str
+            or mode not in {"untouched", "observed"}
+            or type(parent.work_type) is not str
+            or parent.work_type != "crew_session"
+            or type(parent.status) is not str
+            or parent.status not in {"open", "blocked", "in_progress"}
+            or type(parent.assigned_to) is not str
+            or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(parent.assigned_to) is None
+            or type(parent.metadata) is not dict
+        ):
+            raise ValueError(error)
+        metadata = _bounded_child_snapshot_bytes(
+            parent.metadata, error=error, seen_containers=set(),
+        )
+        snapshots = _detach_direct_child_snapshots(
+            parent.id,
+            tuple(_work_item_child_snapshot(child) for child in children),
+            retry_evidence=True,
+        )
+        object.__setattr__(self, "parent_id", parent.id)
+        object.__setattr__(self, "parent_work_type", parent.work_type)
+        object.__setattr__(self, "parent_status", parent.status)
+        object.__setattr__(self, "parent_assigned_to", parent.assigned_to)
+        object.__setattr__(self, "parent_metadata", metadata)
+        object.__setattr__(self, "children", tuple(
+            _bounded_child_snapshot_bytes(snapshot, error=error, seen_containers=set())
+            for snapshot in snapshots
+        ))
+        object.__setattr__(self, "mode", mode)
 
 
 def _work_item_child_snapshot(item: WorkItem) -> dict[str, Any]:
@@ -3345,10 +3413,29 @@ class WorkItemStore(EventEmitterMixin):
         new_status: str | None = None,
         actual_tokens_delta: int = 0,
         crew_session_delivery: CrewSessionDeliveryRecord | None = None,
+        retry_barrier: WorkItemRetryBarrier | None = None,
         source: str = "system",
     ) -> WorkItem | None:
         """Atomically shallow-merge top-level metadata for this store instance."""
+        if retry_barrier is not None:
+            if type(retry_barrier) is not WorkItemRetryBarrier:
+                raise ValueError("work_item_retry_barrier_invalid")
+            patch = json.loads(_bounded_child_snapshot_bytes(
+                patch, error="work_item_retry_barrier_invalid", seen_containers=set(),
+            ))
+            if expected is not None:
+                expected = json.loads(_bounded_child_snapshot_bytes(
+                    expected,
+                    error="work_item_retry_barrier_invalid",
+                    seen_containers=set(),
+                ))
+            self._validate_retry_merge(
+                work_item_id, retry_barrier, patch, new_status, source,
+                actual_tokens_delta, crew_session_delivery,
+            )
         if not self._db:
+            if retry_barrier is not None:
+                raise WorkItemRetryConflict()
             return None
         if type(patch) is not dict or any(type(key) is not str for key in patch):
             raise ValueError("work_item_metadata_patch_invalid")
@@ -3409,7 +3496,9 @@ class WorkItemStore(EventEmitterMixin):
             )
         ):
             raise ValueError("work_item_expected_state_invalid")
-        async with self._work_item_row_write_lock:
+        async with self._work_item_row_write_lock, self._retry_barrier_transaction(
+            work_item_id, retry_barrier,
+        ):
             item = await self.get_work_item(work_item_id)
             if item is None:
                 return None
@@ -3548,7 +3637,8 @@ class WorkItemStore(EventEmitterMixin):
                             (serialized, now, work_item_id),
                         )
                 await _insert_crew_session_delivery(self._db, delivery_payload)
-                await self._db.commit()
+                if retry_barrier is None:
+                    await self._db.commit()
             except BaseException:
                 try:
                     await self._db.execute("ROLLBACK")
@@ -3570,6 +3660,170 @@ class WorkItemStore(EventEmitterMixin):
                 "source": source,
             })
         return updated
+
+    def _validate_retry_merge(
+        self,
+        work_item_id: str,
+        barrier: WorkItemRetryBarrier,
+        patch: dict[str, Any],
+        new_status: str | None,
+        source: str,
+        actual_tokens_delta: int,
+        delivery: CrewSessionDeliveryRecord | None,
+    ) -> None:
+        error = "work_item_retry_barrier_invalid"
+        if (
+            type(work_item_id) is not str
+            or work_item_id != barrier.parent_id
+            or type(patch) is not dict
+            or set(patch) != {"crew_session", "crew_recovery"}
+            or type(actual_tokens_delta) is not int
+            or actual_tokens_delta != 0
+            or type(source) is not str
+            or type(new_status) is not str
+        ):
+            raise ValueError(error)
+        metadata = json.loads(barrier.parent_metadata)
+        current = metadata.get("crew_session")
+        recovery = metadata.get("crew_recovery")
+        target = patch["crew_session"]
+        checkpoint = patch["crew_recovery"]
+        if any(type(value) is not dict for value in (current, recovery, target, checkpoint)):
+            raise ValueError(error)
+        if type(recovery.get("phase")) is not str:
+            raise ValueError(error)
+        phase_pair = {
+            "planned": ("discussing", "open"),
+            "executing": ("executing", "in_progress"),
+        }.get(recovery.get("phase"))
+        if phase_pair is None or "crew_provisioning" in metadata:
+            raise ValueError(error)
+        active_state, active_status = phase_pair
+        mutable_session_keys = {
+            "revision", "state", "previous_state", "transitioned_at",
+            "blocked_reason", "blocked_since", "blocked_duration_seconds",
+            "owner_ids", "duplicate_resume_count",
+        } if source == "crew_session_ingress_resume" else {
+            "revision", "state", "previous_state", "transitioned_at",
+            "blocked_reason", "blocked_since", "last_result_summary", "first_result_at",
+        }
+        mutable_recovery_keys = {
+            "retry_count", "next_attempt_at", "last_error_code", "interrupted_child_ids",
+        } if source == "crew_session_ingress_resume" else {"last_error_code"}
+        if (
+            set(current) != set(target)
+            or set(recovery) != set(checkpoint)
+            or any(
+                not _json_values_exactly_equal(value, target[key])
+                for key, value in current.items() if key not in mutable_session_keys
+            )
+            or any(
+                not _json_values_exactly_equal(value, checkpoint[key])
+                for key, value in recovery.items() if key not in mutable_recovery_keys
+            )
+            or current.get("task_id") != work_item_id
+            or current.get("facilitator_id") != barrier.parent_assigned_to
+            or type(current.get("revision")) is not int
+            or type(target.get("revision")) is not int
+            or target["revision"] != current["revision"] + 1
+            or checkpoint.get("phase") != recovery.get("phase")
+            or recovery.get("plan") is None
+            or not _json_values_exactly_equal(recovery.get("plan"), checkpoint.get("plan"))
+            or any(
+                not _json_values_exactly_equal(current.get(key), target.get(key))
+                for key in ("task_id", "thread_id", "facilitator_id", "goal", "origin", "originator_id")
+            )
+        ):
+            raise ValueError(error)
+        blocked = (
+            barrier.parent_status == "blocked"
+            and current.get("state") == "blocked_needs_captain"
+            and current.get("previous_state") == active_state
+            and current.get("blocked_reason") == "crew_worker_unavailable"
+            and recovery.get("last_error_code") == "crew_worker_unavailable"
+        )
+        if source == "crew_session_ingress_resume":
+            if (
+                not blocked
+                or barrier.mode != "untouched"
+                or new_status != active_status
+                or target.get("state") != active_state
+                or target.get("previous_state") != "blocked_needs_captain"
+                or target.get("blocked_reason") is not None
+                or checkpoint.get("last_error_code") is not None
+                or recovery.get("interrupted_child_ids") != []
+                or delivery is not None
+            ):
+                raise ValueError(error)
+        elif source == "crew_session_retry_failure":
+            reason = target.get("blocked_reason")
+            if (
+                not (blocked or (barrier.parent_status == active_status and current.get("state") == active_state))
+                or new_status != "blocked"
+                or target.get("state") != "blocked_needs_captain"
+                or target.get("previous_state") != active_state
+                or type(reason) is not str
+                or re.fullmatch(r"[a-z0-9][a-z0-9_]{0,127}", reason) is None
+                or not (reason in {"crew_worker_unavailable", "crew_worker_identity_lost"} or reason.startswith("crew_recovery_"))
+                or checkpoint.get("last_error_code") != reason
+                or (reason == "crew_worker_unavailable" and barrier.mode != "untouched")
+                or (reason != "crew_worker_unavailable" and barrier.mode != "observed")
+            ):
+                raise ValueError(error)
+        else:
+            raise ValueError(error)
+
+    @asynccontextmanager
+    async def _retry_barrier_transaction(
+        self,
+        work_item_id: str,
+        barrier: WorkItemRetryBarrier | None,
+    ) -> AsyncIterator[None]:
+        if barrier is None:
+            yield
+            return
+        assert self._db is not None
+        try:
+            await self._db.execute("BEGIN IMMEDIATE")
+            parent = await self.get_work_item(work_item_id)
+            if (
+                parent is None
+                or parent.work_type != barrier.parent_work_type
+                or parent.status != barrier.parent_status
+                or not _json_values_exactly_equal(parent.assigned_to, barrier.parent_assigned_to)
+                or not _json_values_exactly_equal(parent.metadata, json.loads(barrier.parent_metadata))
+            ):
+                raise WorkItemRetryConflict()
+            cursor = await self._db.execute(
+                "SELECT * FROM work_items WHERE parent_id = ? ORDER BY id ASC LIMIT ?",
+                (work_item_id, _MAX_WORK_ITEM_DIRECT_CHILDREN + 1),
+            )
+            rows = await cursor.fetchall()
+            if len(rows) != len(barrier.children):
+                raise WorkItemRetryConflict()
+            for row, snapshot in zip(rows, barrier.children):
+                child = self._row_to_work_item(row)
+                if not _json_values_exactly_equal(_work_item_child_snapshot(child), json.loads(snapshot)):
+                    raise WorkItemRetryConflict()
+                if barrier.mode == "untouched":
+                    definition = self.work_type_registry.get(child.work_type)
+                    if (
+                        definition is None
+                        or child.status != definition.initial_status
+                        or not _json_values_exactly_equal(child.verification, {})
+                        or any(key in child.metadata for key in (
+                            "crew_execution", "crew_execution_output", "crew_verification_recovery",
+                        ))
+                    ):
+                        raise WorkItemRetryConflict()
+            yield
+            await self._db.commit()
+        except BaseException:
+            try:
+                await self._db.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
 
     async def compare_and_set_work_item_verification(
         self,

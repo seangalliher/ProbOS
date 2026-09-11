@@ -1955,6 +1955,7 @@ def _wire_crew_session_service(*, runtime: Any, config: "SystemConfig") -> bool:
         compute_similarity=compute_similarity,
         decomposer=LLMPlanDecomposer(llm_client),
         admission_port=admission_port,
+        require_worker_eligibility=True,
     )
     logger.info(
         "AD-1124: CrewSessionService initialized; durable sessions remain inert until explicitly bound"
@@ -2040,6 +2041,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         trust_network=trust_network,
         agent_registry=registry,
     )
+    crew_session_service.bind_worker_resolver(assignment_resolver)
     delegator = CrewDelegator(
         ontology=ontology,
         order_manager=order_manager,
@@ -2060,6 +2062,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         max_parallel_subtasks=max_parallel,
         emit_fn=emit_fn,
         crew_session_service=crew_session_service,
+        eligibility_resolver=assignment_resolver,
         attachment_store=attachment_store,
         oracle=getattr(runtime, "oracle", None),
         crew_sigma_context_enabled=agentic_tools_cfg.crew_sigma_context_enabled,
@@ -2138,6 +2141,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
     )
     runtime.crew_orchestrator = CrewOrchestrator(  # public attr (Wave 5 conv #1)
         assignment_resolver=assignment_resolver,
+        eligibility_resolver=assignment_resolver,
         delegator=delegator,
         crew_executor=crew_executor,
         verifier=verifier,

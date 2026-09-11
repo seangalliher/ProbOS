@@ -24,7 +24,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.dm.reply_value import correlate_tool_outcomes  # AD-1248
@@ -46,6 +46,7 @@ from probos.types import IntentMessage
 
 if TYPE_CHECKING:
     from probos.mesh.intent import IntentBus
+    from probos.substrate.agent import BaseAgent
     from probos.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -315,30 +316,41 @@ def _with_disposition(output: Any, note: str) -> Any:
     return merged
 
 
-def _resolve_agentic_identity(
+class AgentIdentityRegistry(Protocol):
+    def get(self, agent_id: str) -> BaseAgent | None: ...
+
+
+class AgentIdentityOntology(Protocol):
+    def get_agent_department(self, agent_type: str) -> str | None: ...
+
+
+class AgentIdentityTrust(Protocol):
+    def get_score(self, agent_id: str) -> float: ...
+
+
+@dataclass(frozen=True)
+class AgenticIdentity:
+    agent_id: str
+    agent_type: str
+    department: str
+    rank: str
+
+
+class AgenticIdentityUnresolved(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("agentic_identity_unresolved")
+
+
+def resolve_agentic_identity(
     *,
-    runtime: Any,
-    tool_registry: Any,
     agent_id: str,
-    fallback_department: str,
-    fallback_rank: str,
-) -> tuple[str, str]:
+    agent_registry: AgentIdentityRegistry | None,
+    ontology: AgentIdentityOntology | None,
+    trust_network: AgentIdentityTrust | None,
+) -> AgenticIdentity:
+    """Resolve registered authority, without lifecycle policy or caller fallback."""
     try:
-        agent_registry = getattr(runtime, "registry", None)
-        ontology = getattr(runtime, "ontology", None)
-        trust_network = getattr(runtime, "trust_network", None)
-        services = (agent_registry, ontology, trust_network)
-
-        if all(service is None for service in services):
-            event_log_registered = (
-                tool_registry is not None
-                and tool_registry.get("event_log_query") is not None
-            )
-            if event_log_registered:
-                raise ValueError("governed tool requires authoritative identity")
-            return fallback_department, fallback_rank
-
-        if any(service is None for service in services):
+        if agent_registry is None or ontology is None or trust_network is None:
             raise ValueError("partial authoritative identity")
 
         agent = agent_registry.get(agent_id)
@@ -368,9 +380,39 @@ def _resolve_agentic_identity(
         ).value
         if type(resolved_rank) is not str or resolved_rank not in _AGENTIC_RANKS:
             raise ValueError("rank unresolved")
-        return resolved_department, resolved_rank
+        return AgenticIdentity(agent_id, agent_type, resolved_department, resolved_rank)
     except Exception:
-        raise RuntimeError("agentic_identity_unresolved") from None
+        raise AgenticIdentityUnresolved() from None
+
+
+def _resolve_agentic_identity(
+    *,
+    runtime: Any,
+    tool_registry: Any,
+    agent_id: str,
+    fallback_department: str,
+    fallback_rank: str,
+) -> tuple[str, str]:
+    try:
+        agent_registry = getattr(runtime, "registry", None)
+        ontology = getattr(runtime, "ontology", None)
+        trust_network = getattr(runtime, "trust_network", None)
+        if all(service is None for service in (agent_registry, ontology, trust_network)):
+            if tool_registry is not None and tool_registry.get("event_log_query") is not None:
+                raise AgenticIdentityUnresolved()
+            return fallback_department, fallback_rank
+
+        identity = resolve_agentic_identity(
+            agent_id=agent_id,
+            agent_registry=agent_registry,
+            ontology=ontology,
+            trust_network=trust_network,
+        )
+        return identity.department, identity.rank
+    except AgenticIdentityUnresolved:
+        raise
+    except Exception:
+        raise AgenticIdentityUnresolved() from None
 
 
 def _extract_artifact_refs(

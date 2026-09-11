@@ -147,8 +147,8 @@ async def trust_network(tmp_path: Path) -> Any:
 
 
 @pytest.fixture
-async def stores(tmp_path: Path) -> Any:
-    generator = stores_fixture.__wrapped__(tmp_path)
+async def stores(tmp_path: Path, request: pytest.FixtureRequest) -> Any:
+    generator = stores_fixture.__wrapped__(tmp_path, request)
     value = await generator.__anext__()
     try:
         yield value

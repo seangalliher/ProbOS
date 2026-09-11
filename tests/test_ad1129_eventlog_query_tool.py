@@ -12,7 +12,13 @@ from typing import Any, AsyncIterator
 import pytest
 
 import probos.substrate.event_log as event_log_module
-from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+from probos.cognitive.agentic_dispatch import (
+    AgenticIdentity,
+    AgenticIdentityUnresolved,
+    WorkItemAgenticExecutor,
+    _resolve_agentic_identity,
+    resolve_agentic_identity,
+)
 from probos.cognitive.engineering_officer import EngineeringAgent
 from probos.cognitive.swe_harness.tool_call import (
     TextBlock,
@@ -21,6 +27,7 @@ from probos.cognitive.swe_harness.tool_call import (
     ToolUseBlock,
 )
 from probos.consensus.trust import TrustNetwork
+from probos.crew_profile import Rank
 from probos.protocols import (
     EventLogProtocol,
     EventLogQueryAudit,
@@ -1570,6 +1577,138 @@ async def test_work_item_agentic_executor_uses_61_49_result_in_later_turn(
 
 
 @pytest.mark.asyncio
+async def test_resolve_agentic_identity_returns_authority_without_crew_lifecycle_policy() -> None:
+    agent = EngineeringAgent(agent_id="laforge-1", llm_client=_NoCallLLM(), runtime=None)
+    registry = AgentRegistry()
+    await registry.register(agent)
+    assert agent.is_alive is False
+    trust = TrustNetwork()
+    trust.record_outcome(agent.id, True)
+    ontology = _EngineeringOntology()
+
+    identity = resolve_agentic_identity(
+        agent_id=agent.id, agent_registry=registry, ontology=ontology, trust_network=trust,
+    )
+
+    assert identity == AgenticIdentity(
+        agent.id, "engineering_officer", "engineering",
+        Rank.from_trust(trust.get_score(agent.id)).value,
+    )
+    assert _resolve_agentic_identity(
+        runtime=SimpleNamespace(registry=registry, ontology=ontology, trust_network=trust),
+        tool_registry=None, agent_id=agent.id,
+        fallback_department="medical", fallback_rank="captain",
+    ) == (identity.department, identity.rank)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("services", [
+    (False, False, False), (True, False, False), (False, True, False),
+    (False, False, True), (True, True, False), (True, False, True),
+    (False, True, True),
+])
+async def test_resolve_agentic_identity_missing_services_fail_closed(
+    services: tuple[bool, bool, bool],
+) -> None:
+    agent = EngineeringAgent(agent_id="laforge-1", llm_client=_NoCallLLM(), runtime=None)
+    registry = AgentRegistry()
+    await registry.register(agent)
+    runtime = SimpleNamespace(
+        registry=registry if services[0] else None,
+        ontology=_EngineeringOntology() if services[1] else None,
+        trust_network=TrustNetwork() if services[2] else None,
+    )
+
+    with pytest.raises(AgenticIdentityUnresolved, match="^agentic_identity_unresolved$"):
+        resolve_agentic_identity(
+            agent_id=agent.id, agent_registry=runtime.registry,
+            ontology=runtime.ontology, trust_network=runtime.trust_network,
+        )
+    if any(services):
+        with pytest.raises(AgenticIdentityUnresolved, match="^agentic_identity_unresolved$"):
+            _resolve_agentic_identity(
+                runtime=runtime, tool_registry=None, agent_id=agent.id,
+                fallback_department="engineering", fallback_rank="senior_officer",
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("department", [None, "", "science"])
+async def test_resolve_agentic_identity_preserves_department_source_and_fallback(
+    department: str | None,
+) -> None:
+    class _DepartmentOntology:
+        def get_agent_department(self, agent_type: str) -> str | None:
+            return department
+
+    agent = EngineeringAgent(agent_id="laforge-1", llm_client=_NoCallLLM(), runtime=None)
+    registry = AgentRegistry()
+    await registry.register(agent)
+
+    identity = resolve_agentic_identity(
+        agent_id=agent.id, agent_registry=registry,
+        ontology=_DepartmentOntology(), trust_network=TrustNetwork(),
+    )
+
+    assert identity.department == (department or "engineering")
+    assert identity.rank == "lieutenant"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [
+    ("id", None), ("id", 42), ("id", "different-agent"),
+    ("agent_type", None), ("agent_type", 42), ("agent_type", ""),
+    ("agent_type", "summarizer"),
+])
+async def test_resolve_agentic_identity_rejects_malformed_registered_fields(
+    field: str, value: Any,
+) -> None:
+    agent = EngineeringAgent(agent_id="laforge-1", llm_client=_NoCallLLM(), runtime=None)
+    registry = AgentRegistry()
+    await registry.register(agent)
+    setattr(agent, field, value)
+
+    with pytest.raises(AgenticIdentityUnresolved, match="^agentic_identity_unresolved$"):
+        resolve_agentic_identity(
+            agent_id="laforge-1", agent_registry=registry,
+            ontology=_EngineeringOntology(), trust_network=TrustNetwork(),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_id", [None, "", 42, "missing"])
+async def test_resolve_agentic_identity_invalid_or_missing_id_has_legacy_runtime_error(
+    agent_id: Any,
+) -> None:
+    with pytest.raises(RuntimeError, match="^agentic_identity_unresolved$") as error:
+        resolve_agentic_identity(
+            agent_id=agent_id, agent_registry=AgentRegistry(),
+            ontology=_EngineeringOntology(), trust_network=TrustNetwork(),
+        )
+    assert type(error.value) is AgenticIdentityUnresolved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("department", [42, False, ["engineering"]])
+async def test_resolve_agentic_identity_malformed_department_does_not_use_fallback(
+    department: Any,
+) -> None:
+    class _MalformedOntology:
+        def get_agent_department(self, agent_type: str) -> str | None:
+            return department
+
+    agent = EngineeringAgent(agent_id="laforge-1", llm_client=_NoCallLLM(), runtime=None)
+    registry = AgentRegistry()
+    await registry.register(agent)
+
+    with pytest.raises(AgenticIdentityUnresolved, match="^agentic_identity_unresolved$"):
+        resolve_agentic_identity(
+            agent_id=agent.id, agent_registry=registry,
+            ontology=_MalformedOntology(), trust_network=TrustNetwork(),
+        )
+
+
+@pytest.mark.asyncio
 async def test_agentic_identity_failures_precede_discovery_and_invocation(
     event_log: EventLog,
 ) -> None:
@@ -1655,9 +1794,16 @@ async def test_agentic_identity_failures_precede_discovery_and_invocation(
         ]
 
         for runtime, agent_id in scenarios:
+            with pytest.raises(AgenticIdentityUnresolved, match="^agentic_identity_unresolved$"):
+                resolve_agentic_identity(
+                    agent_id=agent_id,
+                    agent_registry=getattr(runtime, "registry", None),
+                    ontology=getattr(runtime, "ontology", None),
+                    trust_network=getattr(runtime, "trust_network", None),
+                )
             executor = WorkItemAgenticExecutor(llm_client=no_call_llm)
             with pytest.raises(
-                RuntimeError,
+                AgenticIdentityUnresolved,
                 match="^agentic_identity_unresolved$",
             ):
                 await executor.run(
@@ -1665,6 +1811,8 @@ async def test_agentic_identity_failures_precede_discovery_and_invocation(
                     instructions="Do not run.",
                     task_text="Do not discover tools.",
                     runtime=runtime,
+                    department="engineering",
+                    rank="senior_officer",
                 )
         assert no_call_llm.requests == []
     finally:

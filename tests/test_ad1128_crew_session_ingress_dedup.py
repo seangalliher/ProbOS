@@ -38,6 +38,7 @@ from probos.workforce import (
     WorkItem,
     WorkItemStore,
 )
+from tests.test_ad859_crew_executor import native_workers
 
 
 class _NoCallRegistry:
@@ -1909,6 +1910,948 @@ async def test_agent_created_session_has_truthful_provenance(
     assert session.facilitator_id == "agent-origin"
     assert session.owner_ids == ("agent-origin",)
     assert parent is not None and parent.created_by == "agent-origin"
+
+
+def _native_service(harness: _Harness, workers: Any) -> CrewSessionService:
+    return CrewSessionService(
+        work_item_store=harness.work,
+        chat_thread_store=harness.threads,
+        registry=workers.registry,
+        ontology=workers.ontology,
+        trust_network=workers.trust,
+        worker_resolver=workers.resolver,
+        require_worker_eligibility=True,
+        config=AgenticDispatchConfig(orchestrator_enabled=True),
+        decomposer=harness.decomposer,
+        compute_similarity=harness.scorer,
+        admission_port=harness.admission_port,
+        clock=harness.clock,
+    )
+
+
+async def _native_executing_session(
+    harness: _Harness, workers: Any, *, policy: str = "adopted_v1", planned: bool = False,
+) -> tuple[WorkItem, Any, CrewSessionContract, CrewRecoveryContract, WorkItem]:
+    from probos.cognitive.crew_session import _build_adopted_recovery_plan
+
+    harness.service = _native_service(harness, workers)
+    parent, room, session = await _create_bound_session(
+        harness, owner_ids=["facilitator-1"],
+    )
+    if policy == "derived_v1" or planned:
+        plan, inserts = _build_derived_recovery_plan(
+            parent.id,
+            [WorkItemSpec(
+                spec_id="analysis", title="Analyze the handover",
+                description="Produce the bounded handover", capability="analysis",
+                agent="builder-1",
+            )],
+            created_by="facilitator-1",
+        )
+        installed, children = await harness.service.install_recovery_plan(
+            parent.id, expected_session=session, expected_recovery=None,
+            plan=plan, children=inserts,
+        )
+        if planned:
+            assert installed.phase == "planned" and session.state == "discussing"
+            return parent, room, session, installed, children[0]
+        values = installed.model_dump(mode="json")
+        values["phase"] = "executing"
+        recovery = CrewRecoveryContract.model_validate(values)
+        executing = await harness.service.transition_session(
+            parent.id, "executing", expected_revision=session.revision,
+            expected_recovery=installed, recovery=recovery,
+        )
+        return parent, room, executing, recovery, children[0]
+    executing = await harness.service.transition_session(
+        parent.id, "executing", expected_revision=session.revision,
+    )
+    child = await harness.work.create_work_item(
+        title="Analyze the handover", description="Produce the bounded handover",
+        work_type="task", parent_id=parent.id, assigned_to="builder-1",
+        metadata={"spec_id": "analysis", "capability": "analysis"},
+    )
+    plan = _build_adopted_recovery_plan(parent.id, (child,))
+    recovery = await harness.service.adopt_recovery_plan(
+        parent.id, expected_session=executing, expected_recovery=None,
+        plan=plan, expected_children=(child,),
+    )
+    return parent, room, executing, recovery, child
+
+
+@pytest.mark.parametrize("restore", ["same_worker", "lower_alternative"])
+@pytest.mark.parametrize("policy,planned,cancel_at", [
+    ("adopted_v1", False, None), ("derived_v1", False, None),
+    ("derived_v1", True, None), ("derived_v1", True, "before_commit"),
+    ("derived_v1", True, "after_commit"),
+])
+async def test_native_unavailable_restart_explicit_retry_executes_once(
+    harness: _Harness, native_workers: Any, tmp_path: Path, restore: str, policy: str,
+    planned: bool, cancel_at: str | None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from probos.attachments.filesystem_store import FilesystemAttachmentStore
+    from probos.cognitive.crew_delegation import CrewDelegator
+    from probos.cognitive.crew_executor import CrewTaskExecutor, is_untouched_crew_child
+    from probos.cognitive.crew_orchestrator import CrewOrchestrator
+    from probos.config import SystemConfig
+    from tests.test_ad859_crew_executor import _FakeAgenticExecutor
+
+    parent, room, executing, recovery, child = await _native_executing_session(
+        harness, native_workers, policy=policy, planned=planned,
+    )
+    if planned:
+        await _park_worker_unavailable(harness.service, parent.id)
+    assert native_workers.resolver.resolve(WorkItemSpec(
+        spec_id="analysis", title="Analysis", capability="analysis",
+    )).agent_id == "builder-1"
+    await native_workers.registry.get("builder-1").stop()
+    await native_workers.registry.get("builder-2").stop()
+    assert native_workers.resolver.resolve(WorkItemSpec(
+        spec_id="analysis", title="Analysis", capability="analysis",
+    )).agent_id is None
+    agentic = _FakeAgenticExecutor(trace_ref=None)
+    runtime = SimpleNamespace(chat_thread_store=harness.threads)
+
+    class _FinalizationBoundary:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.entered = asyncio.Event()
+
+        async def resume(self, parent_id: str) -> Any:
+            self.calls.append(parent_id)
+            self.entered.set()
+            await asyncio.Event().wait()
+
+    boundary = _FinalizationBoundary()
+    config = SystemConfig()
+    config.agentic_dispatch.orchestrator_enabled = True
+
+    def owner() -> CrewOrchestrator:
+        executor = CrewTaskExecutor(
+            work_item_store=harness.work, agent_registry=native_workers.registry,
+            agentic_executor=agentic, runtime=runtime,
+            crew_session_service=harness.service,
+            eligibility_resolver=native_workers.resolver,
+            attachment_store=FilesystemAttachmentStore(tmp_path / "retry-attachments"),
+        )
+        return CrewOrchestrator(
+            assignment_resolver=native_workers.resolver,
+            eligibility_resolver=native_workers.resolver,
+            delegator=CrewDelegator(
+                ontology=native_workers.ontology, order_manager=None,
+                agent_registry=native_workers.registry,
+            ),
+            crew_executor=executor, verifier=object(), synthesizer=object(),
+            work_item_store=harness.work, runtime=runtime, config=config,
+            crew_session_service=harness.service, crew_session_finalizer=boundary,
+        )
+
+    first = owner()
+    second = owner()
+    try:
+        await first.start()
+        await first.schedule(parent.id)
+        blocked = await harness.service.get_session(parent.id)
+        assert blocked.state == "blocked_needs_captain"
+        assert blocked.previous_state == ("discussing" if planned else "executing")
+        assert blocked.blocked_reason == "crew_worker_unavailable"
+        parked_recovery = await harness.service.get_recovery(parent.id)
+        assert parked_recovery.phase == ("planned" if planned else "executing")
+        assert parked_recovery.last_error_code == "crew_worker_unavailable"
+        assert parked_recovery.plan == recovery.plan
+        untouched = await harness.work.get_work_item(child.id)
+        assert is_untouched_crew_child(
+            untouched, initial_status=harness.work.work_type_registry.get_initial_status(child.work_type),
+        )
+        assert untouched.metadata == child.metadata
+        assert agentic.calls == [] and boundary.calls == []
+        await first.stop()
+        await second.start()
+        await second.schedule(parent.id)
+        assert agentic.calls == []
+        harness.service.bind_scheduler(second.schedule)
+        request = dict(
+            principal=harness.service.captain_principal(), goal=blocked.goal,
+            success_criteria=list(blocked.success_criteria),
+            expected_deliverable=blocked.expected_deliverable,
+            requested_thread_id=room.id, retry_blocked=True,
+        )
+        with pytest.raises(ValueError, match="crew_worker_unavailable"):
+            await harness.service.open_or_resume(**request)
+        assert (await harness.service.get_session(parent.id)) == blocked
+        worker_id = "builder-1" if restore == "same_worker" else "builder-2"
+        await native_workers.registry.get(worker_id).start()
+        if cancel_at is not None:
+            before_retry = await harness.work.get_work_item(parent.id)
+            before_children = await harness.work.list_work_items(parent_id=parent.id)
+            merge = harness.work.merge_work_item_metadata
+            entered = asyncio.Event()
+            attempts: list[str] = []
+            committed: list[WorkItem] = []
+
+            async def pause_retry(
+                work_item_id: str, patch: dict[str, Any], **kwargs: Any,
+            ) -> Any:
+                if kwargs.get("source") != "crew_session_ingress_resume":
+                    return await merge(work_item_id, patch, **kwargs)
+                assert kwargs.get("retry_barrier") is not None
+                assert patch["crew_session"]["state"] == "discussing"
+                attempts.append(work_item_id)
+                if cancel_at == "after_commit":
+                    result = await merge(work_item_id, patch, **kwargs)
+                    assert result is not None and result.status == "open"
+                    committed.append(result)
+                entered.set()
+                await asyncio.Event().wait()
+
+            with monkeypatch.context() as scoped:
+                scoped.setattr(harness.work, "merge_work_item_metadata", pause_retry)
+                retry_task = asyncio.create_task(harness.service.open_or_resume(**request))
+                try:
+                    await asyncio.wait_for(entered.wait(), timeout=5)
+                    assert attempts == [parent.id]
+                    assert len(committed) == (1 if cancel_at == "after_commit" else 0)
+                    retry_task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await retry_task
+                finally:
+                    if not retry_task.done():
+                        retry_task.cancel()
+                    await asyncio.gather(retry_task, return_exceptions=True)
+            retained_parent = await harness.work.get_work_item(parent.id)
+            assert retained_parent == (committed[0] if committed else before_retry)
+            assert await harness.work.list_work_items(parent_id=parent.id) == before_children
+            retained_recovery = await harness.service.get_recovery(parent.id)
+            assert retained_recovery.phase == "planned" and retained_recovery.plan == recovery.plan
+            assert agentic.calls == [] and boundary.calls == []
+            candidates = await harness.work.list_crew_session_recovery_candidates(limit=10)
+            assert (parent.id in {candidate.id for candidate in candidates}) == bool(committed)
+            await second.stop()
+            harness.service = _native_service(harness, native_workers)
+            second = owner()
+            harness.service.bind_scheduler(second.schedule)
+            request["principal"] = harness.service.captain_principal()
+            await second.start()
+        if cancel_at != "after_commit":
+            resumed = await harness.service.open_or_resume(**request)
+            assert resumed.parent_id == parent.id and resumed.thread_id == room.id
+            assert resumed.state == ("discussing" if planned else "executing")
+        await asyncio.wait_for(boundary.entered.wait(), timeout=5)
+        current = await harness.work.get_work_item(child.id)
+        assert current.id == child.id and current.depends_on == child.depends_on
+        assert current.assigned_to == worker_id and current.status == "done"
+        assert len(agentic.calls) == 1
+        assert agentic.calls[0].agent_id == worker_id
+        assert worker_id not in harness.threads.get_thread(room.id).participants
+        assert (await harness.service.get_recovery(parent.id)).plan == recovery.plan
+        assert boundary.calls == [parent.id]
+        duplicate = await harness.service.open_or_resume(**{**request, "retry_blocked": False})
+        assert duplicate.parent_id == parent.id
+        assert len(agentic.calls) == 1
+        assert len(await harness.work.list_work_items(parent_id=parent.id)) == 1
+        with pytest.raises(ValueError, match="retry_not_authorized"):
+            await harness.service.validate_worker_admission(
+                parent.id, allow_reassignment=True, require_untouched=True,
+            )
+    finally:
+        await first.stop()
+        await second.stop()
+
+
+@pytest.mark.parametrize("loss", ["removed", "inactive", "replaced"])
+async def test_native_captain_selection_is_revalidated_after_decomposition(
+    harness: _Harness, native_workers: Any, loss: str,
+) -> None:
+    from tests.test_ad864_crew_assignment import _CrewAgent
+
+    decomposer = _BlockingDecomposer()
+    harness.decomposer = decomposer
+    service = _native_service(harness, native_workers)
+    service.bind_scheduler(harness.schedule)
+    selected = native_workers.registry.get("builder-1")
+    task = asyncio.create_task(service.open_or_resume(
+        principal=service.captain_principal(), goal="Analyze the handover",
+        success_criteria=["Complete"], expected_deliverable="Report",
+        facilitator_id="facilitator-1", owner_ids=[selected.id],
+    ))
+    try:
+        assert await asyncio.to_thread(decomposer.entered.wait, 5.0)
+        if loss == "inactive":
+            await selected.stop()
+        else:
+            await native_workers.registry.unregister(selected.id)
+            if loss == "replaced":
+                replacement = _CrewAgent(agent_id=selected.id)
+                replacement.agent_type = "builder"
+                native_workers.agents.append(replacement)
+                await replacement.start()
+                await native_workers.registry.register(replacement)
+                assert native_workers.resolver.check_eligibility(selected.id).identity is not None
+        decomposer.release.set()
+        with pytest.raises(ValueError, match="crew_session_(owner|worker)_"):
+            await task
+        assert await harness.work.list_work_items(work_type="crew_session") == []
+        assert harness.schedule.parent_ids == []
+    finally:
+        decomposer.release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("loss", [
+    "owner_inactive", "owner_removed", "owner_replaced", "facilitator_inactive",
+    "facilitator_removed", "facilitator_replaced", "principal_rank", "principal_replaced",
+])
+async def test_native_owner_loss_after_provisioning_records_recoverable_block(
+    harness: _Harness, native_workers: Any, monkeypatch: pytest.MonkeyPatch,
+    loss: str,
+) -> None:
+    from tests.test_ad864_crew_assignment import _CrewAgent
+
+    harness.decomposer = _SpecDecomposer([
+        WorkItemSpec(spec_id="analysis", title="Analyze handover", capability="analysis"),
+    ])
+    service = _native_service(harness, native_workers)
+    service.bind_scheduler(harness.schedule)
+    selected = native_workers.registry.get(
+        "facilitator-1" if loss.startswith("facilitator") else "builder-1",
+    )
+    assert selected is not None and selected.is_alive
+    principal = (
+        service.agent_principal(selected.id) if loss.startswith("principal")
+        else service.captain_principal()
+    )
+    continue_provisioning = service._continue_provisioning
+    completed: list[tuple[WorkItem, list[WorkItem]]] = []
+
+    async def stop_owner_after_provisioning(*args: Any, **kwargs: Any) -> Any:
+        result, completed_parent = await continue_provisioning(*args, **kwargs)
+        parent = await harness.work.get_work_item(result.parent_id)
+        assert parent is not None
+        assert completed_parent == parent
+        assert completed_parent is not parent
+        assert "crew_provisioning" not in parent.metadata
+        assert "crew_session" in parent.metadata
+        assert parent.status == "open"
+        assert parent.metadata["crew_session"]["state"] == "discussing"
+        assert parent.metadata["crew_recovery"]["phase"] == "planned"
+        assert result.scheduled is False
+        children = await harness.work.list_work_items(parent_id=parent.id)
+        assert children
+        completed.append((parent, children))
+        if loss.endswith("removed"):
+            await native_workers.registry.unregister(selected.id)
+            assert native_workers.registry.get(selected.id) is None
+        elif loss.endswith("replaced"):
+            await native_workers.registry.unregister(selected.id)
+            replacement = _CrewAgent(agent_id=selected.id)
+            replacement.agent_type = selected.agent_type
+            native_workers.agents.append(replacement)
+            await replacement.start()
+            await native_workers.registry.register(replacement)
+            assert native_workers.registry.get(selected.id) is not selected
+            assert native_workers.resolver.check_eligibility(selected.id).identity is not None
+        elif loss == "principal_rank":
+            native_workers.trust.remove(selected.id)
+            native_workers.trust.create_with_prior(selected.id, 1.0, 3.0)
+            assert native_workers.trust.get_score(selected.id) < 0.4
+        else:
+            await selected.stop()
+            assert not selected.is_alive
+        return result, completed_parent
+
+    monkeypatch.setattr(service, "_continue_provisioning", stop_owner_after_provisioning)
+    with pytest.raises(ValueError, match="^crew_session_(worker_unavailable|owner_invalid|owner_identity_changed|agent_rank_insufficient|agent_identity_changed)$"):
+        await service.open_or_resume(
+            principal=principal, goal="Analyze the handover",
+            success_criteria=["Complete"], expected_deliverable="Report",
+            facilitator_id=selected.id if loss.startswith("principal") else "facilitator-1",
+            owner_ids=[selected.id],
+        )
+
+    assert len(completed) == 1
+    original_parent, original_children = completed[0]
+    assert harness.schedule.parent_ids == []
+    session = await service.get_session(original_parent.id)
+    assert session is not None
+    assert session.state == "blocked_needs_captain"
+    assert session.previous_state == "discussing"
+    assert session.blocked_reason == "crew_worker_unavailable"
+    recovery = await service.get_recovery(original_parent.id)
+    assert recovery is not None and recovery.phase == "planned"
+    assert recovery.last_error_code == "crew_worker_unavailable"
+    assert recovery.plan.model_dump(mode="json") == original_parent.metadata["crew_recovery"]["plan"]
+    assert await harness.work.list_work_items(parent_id=original_parent.id) == original_children
+    if loss.endswith("replaced"):
+        await native_workers.registry.unregister(selected.id)
+    if loss.endswith(("removed", "replaced")):
+        await native_workers.registry.register(selected)
+    elif loss == "principal_rank":
+        native_workers.trust.remove(selected.id)
+        native_workers.trust.create_with_prior(selected.id, 6.0, 4.0)
+    else:
+        await selected.start()
+    assert native_workers.resolver.check_eligibility(selected.id).identity is not None
+    request = dict(
+        principal=service.captain_principal(), goal=session.goal,
+        success_criteria=list(session.success_criteria),
+        expected_deliverable=session.expected_deliverable,
+        requested_thread_id=session.thread_id,
+    )
+    duplicate = await service.open_or_resume(**request)
+    assert duplicate.disposition == "blocked" and duplicate.scheduled is False
+    assert harness.schedule.parent_ids == []
+    resumed = await service.open_or_resume(**request, retry_blocked=True)
+    assert resumed.parent_id == original_parent.id and resumed.thread_id == session.thread_id
+    assert resumed.state == "discussing" and resumed.scheduled is True
+    assert harness.schedule.parent_ids == [original_parent.id]
+    assert (await service.get_recovery(original_parent.id)).plan == recovery.plan
+    assert await harness.work.list_work_items(parent_id=original_parent.id) == original_children
+
+
+@pytest.mark.parametrize("interleave", [
+    "parent_revision", "parent_failed", "child_admitted", "child_marker",
+    "cancel_completed", "cancel_block",
+])
+async def test_native_postprovision_failure_preserves_concurrent_authority(
+    harness: _Harness, native_workers: Any, monkeypatch: pytest.MonkeyPatch,
+    interleave: str,
+) -> None:
+    from probos.workforce import WorkItemRetryConflict
+
+    harness.decomposer = _SpecDecomposer([
+        WorkItemSpec(spec_id="analysis", title="Analyze handover", capability="analysis", agent="builder-1"),
+    ])
+    service = _native_service(harness, native_workers)
+    service.bind_scheduler(harness.schedule)
+    selected = native_workers.registry.get("builder-1")
+    assert selected is not None and selected.is_alive
+    continue_provisioning = service._continue_provisioning
+    merge = harness.work.merge_work_item_metadata
+    observations: list[tuple[WorkItem, WorkItem]] = []
+    competing_parents: list[WorkItem] = []
+    changed_children: list[WorkItem] = []
+    block_attempts: list[str] = []
+
+    async def interleave_completed(*args: Any, **kwargs: Any) -> Any:
+        result, completed_parent = await continue_provisioning(*args, **kwargs)
+        children = await harness.work.list_work_items(parent_id=result.parent_id)
+        assert len(children) == 1 and children[0].status == "open"
+        assert completed_parent.status == "open"
+        assert "crew_provisioning" not in completed_parent.metadata
+        observations.append((completed_parent, children[0]))
+        if interleave == "cancel_completed":
+            raise asyncio.CancelledError("completed provisioning cancelled")
+        await selected.stop()
+        assert not selected.is_alive
+        return result, completed_parent
+
+    async def interleave_block(
+        work_item_id: str, patch: dict[str, Any], **kwargs: Any,
+    ) -> Any:
+        if kwargs.get("source") == "crew_session_retry_failure":
+            assert len(observations) == 1
+            parent, child = observations[0]
+            assert kwargs.get("retry_barrier") is not None
+            block_attempts.append(work_item_id)
+            if interleave == "cancel_block":
+                raise asyncio.CancelledError("guarded block cancelled")
+            if interleave.startswith("parent"):
+                session = await service.get_session(parent.id)
+                assert session is not None and session.state == "discussing"
+                if interleave == "parent_failed":
+                    recovery = await service.get_recovery(parent.id)
+                    assert recovery is not None and recovery.phase == "planned"
+                    await service.transition_session(
+                        parent.id, "failed", expected_revision=session.revision,
+                        last_result_summary="Competing failure",
+                        expected_recovery=recovery, recovery=recovery,
+                    )
+                else:
+                    values = session.model_dump(mode="json")
+                    values["revision"] += 1
+                    await merge(
+                        parent.id, {"crew_session": values},
+                        expected={"crew_session": session.model_dump(mode="json")},
+                        expected_status="open", source="competing_parent_revision",
+                    )
+                competing = await harness.work.get_work_item(parent.id)
+                assert competing is not None and competing != parent
+                competing_parents.append(competing)
+            else:
+                if interleave == "child_admitted":
+                    assigned = await harness.work.compare_and_set_work_item_assignment(
+                        child.id, new_assigned_to=selected.id, expected_status=child.status,
+                        expected_parent_id=parent.id, metadata=child.metadata,
+                        expected_assigned_to=child.assigned_to,
+                        expected_metadata=child.metadata, expected_depends_on=child.depends_on,
+                    )
+                    assert assigned is not None and assigned.assigned_to == selected.id
+                    admitted = await merge(
+                        child.id, {}, expected_status=child.status,
+                        expected_assigned_to_exact=selected.id,
+                        new_status="in_progress", source="crew_executor_admission",
+                    )
+                    assert admitted is not None and admitted.status == "in_progress"
+                else:
+                    assert await merge(child.id, {"crew_execution": None})
+                changed = await harness.work.get_work_item(child.id)
+                assert changed is not None and changed != child
+                changed_children.append(changed)
+        return await merge(work_item_id, patch, **kwargs)
+
+    monkeypatch.setattr(service, "_continue_provisioning", interleave_completed)
+    monkeypatch.setattr(harness.work, "merge_work_item_metadata", interleave_block)
+    error = asyncio.CancelledError if interleave.startswith("cancel") else WorkItemRetryConflict
+    with pytest.raises(error):
+        await service.open_or_resume(
+            principal=service.captain_principal(), goal="Analyze the handover",
+            success_criteria=["Complete"], expected_deliverable="Report",
+            facilitator_id="facilitator-1", owner_ids=[selected.id],
+        )
+    assert len(observations) == 1
+    parent, child = observations[0]
+    assert harness.schedule.parent_ids == []
+    assert block_attempts == ([] if interleave == "cancel_completed" else [parent.id])
+    current = await harness.work.get_work_item(parent.id)
+    retained = await harness.work.get_work_item(child.id)
+    assert current == (competing_parents[0] if competing_parents else parent)
+    assert retained == (changed_children[0] if changed_children else child)
+    assert current.metadata["crew_recovery"]["plan"] == parent.metadata["crew_recovery"]["plan"]
+    if interleave.startswith("cancel"):
+        candidates = await harness.work.list_crew_session_recovery_candidates(limit=10)
+        assert parent.id in {candidate.id for candidate in candidates}
+        assert (await service.get_recovery(parent.id)).phase == "planned"
+
+
+async def test_native_worker_binding_and_unwired_admission_fail_closed(
+    harness: _Harness, native_workers: Any,
+) -> None:
+    service = CrewSessionService(
+        work_item_store=harness.work, chat_thread_store=harness.threads,
+        require_worker_eligibility=True,
+    )
+    with pytest.raises(ValueError, match="worker_eligibility_unwired"):
+        await service.validate_worker_admission("missing-parent")
+    service.bind_worker_resolver(native_workers.resolver)
+    assert service.worker_eligibility is native_workers.resolver
+    with pytest.raises(ValueError, match="worker_binding_invalid"):
+        service.bind_worker_resolver(native_workers.resolver)
+    with pytest.raises(ValueError, match="not_initialized"):
+        await service.validate_worker_admission("missing-parent")
+
+
+async def _park_worker_unavailable(
+    service: CrewSessionService, parent_id: str,
+) -> CrewSessionContract:
+    session = await service.get_session(parent_id)
+    recovery = await service.get_recovery(parent_id)
+    assert session is not None and recovery is not None
+    values = recovery.model_dump(mode="json")
+    values["last_error_code"] = "crew_worker_unavailable"
+    return await service.transition_session(
+        parent_id, "blocked_needs_captain", expected_revision=session.revision,
+        blocked_reason="crew_worker_unavailable", expected_recovery=recovery,
+        recovery=CrewRecoveryContract.model_validate(values),
+    )
+
+
+@pytest.mark.parametrize("history", ["execution_exception", "identity_loss", "completed", "in_progress"])
+async def test_native_retry_rejects_zero_token_attempted_or_ambiguous_children(
+    harness: _Harness, native_workers: Any, tmp_path: Path, history: str,
+) -> None:
+    from probos.attachments.filesystem_store import FilesystemAttachmentStore
+    from probos.cognitive.agentic_dispatch import AgenticIdentityUnresolved, WorkItemAgenticOutcome
+    from probos.cognitive.crew_executor import CrewTaskExecutor
+
+    parent, room, _session, recovery, child = await _native_executing_session(harness, native_workers)
+    harness.service.bind_scheduler(harness.schedule)
+
+    class _CountingExecutor:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, **kwargs: Any) -> WorkItemAgenticOutcome:
+            self.calls += 1
+            if history == "execution_exception":
+                raise RuntimeError("historical failure before token reporting")
+            if history == "identity_loss":
+                raise AgenticIdentityUnresolved()
+            return WorkItemAgenticOutcome(final_text="Completed evidence", stopped_reason="complete")
+
+    agentic = _CountingExecutor()
+    executor = CrewTaskExecutor(
+        work_item_store=harness.work, agent_registry=native_workers.registry,
+        agentic_executor=agentic, runtime=SimpleNamespace(chat_thread_store=harness.threads),
+        crew_session_service=harness.service,
+        attachment_store=FilesystemAttachmentStore(tmp_path / "historical-attachments"),
+    )
+    if history == "in_progress":
+        assert await harness.work.transition_work_item(child.id, "in_progress")
+    else:
+        initial = await executor.resume(parent.id)
+        assert len(initial) == 1 and agentic.calls == 1
+        reconstructed = await executor.resume(parent.id)
+        assert agentic.calls == 1
+        assert reconstructed[0].stopped_reason == initial[0].stopped_reason
+    before = await harness.work.get_work_item(child.id)
+    assert before.actual_tokens == 0
+    blocked = await _park_worker_unavailable(harness.service, parent.id)
+    with pytest.raises(ValueError, match="crew_session_retry_not_authorized"):
+        await harness.service.open_or_resume(
+            principal=harness.service.captain_principal(), goal=blocked.goal,
+            success_criteria=list(blocked.success_criteria),
+            expected_deliverable=blocked.expected_deliverable,
+            requested_thread_id=room.id, retry_blocked=True,
+        )
+    assert (await harness.service.get_session(parent.id)) == blocked
+    after = await harness.work.get_work_item(child.id)
+    assert after.status == before.status and after.metadata == before.metadata
+    assert (await harness.service.get_recovery(parent.id)).plan == recovery.plan
+    assert agentic.calls == (0 if history == "in_progress" else 1)
+    assert harness.schedule.parent_ids == []
+
+
+@pytest.mark.parametrize("planned", [False, True])
+async def test_native_retry_eligibility_loss_during_transition_remains_blocked(
+    harness: _Harness, native_workers: Any, monkeypatch: pytest.MonkeyPatch,
+    planned: bool,
+) -> None:
+    parent, room, _session, recovery, child = await _native_executing_session(harness, native_workers, planned=planned)
+    harness.service.bind_scheduler(harness.schedule)
+    blocked = await _park_worker_unavailable(harness.service, parent.id)
+    merge = harness.work.merge_work_item_metadata
+    transitions = []
+
+    async def lose_workers(work_item_id: str, patch: dict[str, Any], **kwargs: Any) -> Any:
+        result = await merge(work_item_id, patch, **kwargs)
+        if kwargs.get("source") == "crew_session_ingress_resume":
+            assert result is not None and result.status == ("open" if planned else "in_progress")
+            transitions.append(work_item_id)
+            await native_workers.registry.get("builder-1").stop()
+            await native_workers.registry.get("builder-2").stop()
+        return result
+
+    monkeypatch.setattr(harness.work, "merge_work_item_metadata", lose_workers)
+    with pytest.raises(ValueError, match="crew_worker_unavailable"):
+        await harness.service.open_or_resume(
+            principal=harness.service.captain_principal(), goal=blocked.goal,
+            success_criteria=list(blocked.success_criteria),
+            expected_deliverable=blocked.expected_deliverable,
+            requested_thread_id=room.id, retry_blocked=True,
+        )
+    current = await harness.service.get_session(parent.id)
+    assert transitions == [parent.id]
+    assert current.state == "blocked_needs_captain"
+    assert current.blocked_reason == "crew_worker_unavailable"
+    assert (await harness.work.get_work_item(child.id)).status == child.status
+    assert (await harness.service.get_recovery(parent.id)).plan == recovery.plan
+    assert harness.schedule.parent_ids == []
+
+
+@pytest.mark.parametrize("planned", [False, True])
+async def test_native_retry_child_change_before_parent_commit_is_rejected(
+    harness: _Harness, native_workers: Any, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, planned: bool,
+) -> None:
+    parent, room, _session, recovery, child = await _native_executing_session(harness, native_workers, planned=planned)
+    harness.service.bind_scheduler(harness.schedule)
+    blocked = await _park_worker_unavailable(harness.service, parent.id)
+    independent = WorkItemStore(
+        db_path=str(tmp_path / "workforce-real.db"),
+        tick_interval=1_000,
+        connection_factory=SQLiteConnectionFactory(),
+    )
+    await independent.start()
+    merge = harness.work.merge_work_item_metadata
+    attempted_resumes: list[str] = []
+    committed_resumes: list[str] = []
+    committed_mutations: list[str] = []
+    request = dict(
+        principal=harness.service.captain_principal(), goal=blocked.goal,
+        success_criteria=list(blocked.success_criteria),
+        expected_deliverable=blocked.expected_deliverable,
+        requested_thread_id=room.id, retry_blocked=True,
+    )
+
+    async def admit_before_merge(
+        work_item_id: str, patch: dict[str, Any], **kwargs: Any,
+    ) -> Any:
+        if kwargs.get("source") != "crew_session_ingress_resume":
+            return await merge(work_item_id, patch, **kwargs)
+        assert work_item_id == parent.id
+        assert patch["crew_session"]["state"] == ("discussing" if planned else "executing")
+        attempted_resumes.append(work_item_id)
+        assert attempted_resumes == [parent.id]
+        before = await independent.get_work_item(parent.id)
+        assert before is not None
+        assert before.metadata["crew_session"] == blocked.model_dump(mode="json")
+        assert await independent.transition_work_item(child.id, "in_progress")
+        admitted = await harness.work.get_work_item(child.id)
+        assert admitted is not None and admitted.status == "in_progress"
+        assert admitted.metadata == child.metadata
+        committed_mutations.append(child.id)
+        try:
+            return await merge(work_item_id, patch, **kwargs)
+        finally:
+            durable = await independent.get_work_item(parent.id)
+            assert durable is not None
+            if durable.metadata["crew_session"] == patch["crew_session"]:
+                assert durable.status == ("open" if planned else "in_progress")
+                committed_resumes.append(parent.id)
+
+    try:
+        monkeypatch.setattr(harness.work, "merge_work_item_metadata", admit_before_merge)
+        retry_error: ValueError | None = None
+        try:
+            await harness.service.open_or_resume(**request)
+        except ValueError as exc:
+            retry_error = exc
+        assert attempted_resumes == [parent.id]
+        assert committed_mutations == [child.id]
+        assert committed_resumes == [], "parent executing resume committed after child admission"
+        assert retry_error is not None
+        assert harness.schedule.parent_ids == []
+        retained = await independent.get_work_item(child.id)
+        assert retained is not None and retained.status == "in_progress"
+        assert retained.metadata == child.metadata
+        assert retained.assigned_to == child.assigned_to
+        assert retained.depends_on == child.depends_on
+        assert retained.verification == child.verification
+        assert retained.actual_tokens == child.actual_tokens
+        current = await independent.get_work_item(parent.id)
+        assert current is not None
+        assert current.metadata["crew_session"]["state"] == "blocked_needs_captain"
+        assert current.metadata["crew_session"]["blocked_reason"] == "crew_worker_identity_lost"
+        assert current.metadata["crew_recovery"]["last_error_code"] == "crew_worker_identity_lost"
+        assert (await harness.service.get_recovery(parent.id)).plan == recovery.plan
+        with pytest.raises(ValueError, match="^crew_session_retry_not_authorized$"):
+            await harness.service.open_or_resume(**request)
+        assert attempted_resumes == [parent.id] and committed_resumes == []
+        assert committed_mutations == [child.id] and harness.schedule.parent_ids == []
+        assert await independent.get_work_item(child.id) == retained
+    finally:
+        await independent.stop()
+
+
+@pytest.mark.parametrize("child_change", ["admitted", "execution_marker"])
+@pytest.mark.parametrize("planned", [False, True])
+async def test_native_retry_child_change_during_transition_is_not_retryable(
+    harness: _Harness, native_workers: Any, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, child_change: str, planned: bool,
+) -> None:
+    parent, room, _session, recovery, child = await _native_executing_session(harness, native_workers, planned=planned)
+    harness.service.bind_scheduler(harness.schedule)
+    blocked = await _park_worker_unavailable(harness.service, parent.id)
+    independent = WorkItemStore(
+        db_path=str(tmp_path / "workforce-real.db"),
+        tick_interval=1_000,
+        connection_factory=SQLiteConnectionFactory(),
+    )
+    await independent.start()
+    merge = harness.work.merge_work_item_metadata
+    observed_transitions: list[str] = []
+    committed_mutations: list[str] = []
+    expected_error = (
+        "crew_session_retry_not_authorized"
+        if child_change == "admitted"
+        else "crew_recovery_plan_runtime_invalid"
+    )
+    expected_reason = (
+        "crew_worker_identity_lost"
+        if child_change == "admitted"
+        else "crew_recovery_plan_runtime_invalid"
+    )
+    request = dict(
+        principal=harness.service.captain_principal(), goal=blocked.goal,
+        success_criteria=list(blocked.success_criteria),
+        expected_deliverable=blocked.expected_deliverable,
+        requested_thread_id=room.id, retry_blocked=True,
+    )
+
+    async def change_child(work_item_id: str, patch: dict[str, Any], **kwargs: Any) -> Any:
+        result = await merge(work_item_id, patch, **kwargs)
+        if kwargs.get("source") == "crew_session_ingress_resume":
+            assert result is not None and result.status == ("open" if planned else "in_progress")
+            durable = await independent.get_work_item(parent.id)
+            assert durable is not None
+            assert durable.metadata["crew_session"] == patch["crew_session"]
+            observed_transitions.append(work_item_id)
+            if child_change == "admitted":
+                assert await independent.transition_work_item(child.id, "in_progress")
+            else:
+                updated = await independent.merge_work_item_metadata(child.id, {"crew_execution": None})
+                assert updated is not None and "crew_execution" in updated.metadata
+            mutated = await harness.work.get_work_item(child.id)
+            assert mutated is not None
+            if child_change == "admitted":
+                assert mutated.status == "in_progress" and mutated.metadata == child.metadata
+            else:
+                assert mutated.status == child.status
+                assert mutated.metadata == {**child.metadata, "crew_execution": None}
+            committed_mutations.append(child.id)
+        return result
+
+    try:
+        monkeypatch.setattr(harness.work, "merge_work_item_metadata", change_child)
+        with pytest.raises(ValueError, match=f"^{expected_error}$"):
+            await harness.service.open_or_resume(**request)
+        assert observed_transitions == [parent.id]
+        assert committed_mutations == [child.id]
+        assert harness.schedule.parent_ids == []
+        current = await independent.get_work_item(parent.id)
+        retained = await independent.get_work_item(child.id)
+        assert current is not None and retained is not None
+        assert retained.assigned_to == child.assigned_to and retained.depends_on == child.depends_on
+        assert retained.verification == child.verification
+        assert retained.actual_tokens == child.actual_tokens
+        if child_change == "admitted":
+            assert retained.status == "in_progress" and retained.metadata == child.metadata
+            assert (await harness.service.get_recovery(parent.id)).plan == recovery.plan
+        else:
+            assert retained.status == child.status
+            assert retained.metadata == {**child.metadata, "crew_execution": None}
+            with pytest.raises(ValueError, match="^crew_recovery_plan_runtime_invalid$"):
+                await harness.service.get_recovery(parent.id)
+        assert current.metadata["crew_session"]["state"] == "blocked_needs_captain"
+        assert current.metadata["crew_session"]["blocked_reason"] == expected_reason
+        assert current.metadata["crew_recovery"]["last_error_code"] == expected_reason
+        assert current.metadata["crew_recovery"]["plan"] == recovery.model_dump(mode="json")["plan"]
+        with pytest.raises(ValueError, match=f"^{expected_error}$"):
+            await harness.service.open_or_resume(**request)
+        assert observed_transitions == [parent.id] and harness.schedule.parent_ids == []
+        assert committed_mutations == [child.id]
+        assert await independent.get_work_item(child.id) == retained
+    finally:
+        await independent.stop()
+
+
+@pytest.mark.parametrize("competing_state", ["executing", "failed"])
+async def test_native_retry_failure_does_not_overwrite_competing_parent(
+    harness: _Harness, native_workers: Any, monkeypatch: pytest.MonkeyPatch,
+    competing_state: str,
+) -> None:
+    from probos.cognitive.crew_session import CrewSessionContract
+    from probos.workforce import WorkItemRetryConflict
+
+    parent, room, _session, recovery, child = await _native_executing_session(harness, native_workers)
+    harness.service.bind_scheduler(harness.schedule)
+    blocked = await _park_worker_unavailable(harness.service, parent.id)
+    merge = harness.work.merge_work_item_metadata
+    resumed: list[str] = []
+    mutated: list[str] = []
+    competing: list[WorkItem] = []
+    guarded_failures: list[str] = []
+
+    async def compete(work_item_id: str, patch: dict[str, Any], **kwargs: Any) -> Any:
+        source = kwargs.get("source")
+        if source == "crew_session_retry_failure":
+            assert kwargs.get("retry_barrier") is not None
+            assert patch["crew_session"]["blocked_reason"] == "crew_recovery_plan_runtime_invalid"
+            guarded_failures.append(work_item_id)
+            current = await harness.work.get_work_item(parent.id)
+            assert current is not None
+            values = dict(current.metadata["crew_session"])
+            values["revision"] += 1
+            if competing_state == "failed":
+                values.update({
+                    "state": "failed", "previous_state": "executing",
+                    "completed_at": values["transitioned_at"],
+                })
+            contract = CrewSessionContract.model_validate(values)
+            updated = await merge(
+                parent.id, {"crew_session": contract.model_dump(mode="json")},
+                expected={"crew_session": current.metadata["crew_session"]},
+                expected_status="in_progress",
+                new_status="failed" if competing_state == "failed" else "in_progress",
+                source="competing_parent_revision",
+            )
+            assert updated is not None
+            competing.append(updated)
+        result = await merge(work_item_id, patch, **kwargs)
+        if source == "crew_session_ingress_resume":
+            assert result is not None and result.status == "in_progress"
+            resumed.append(work_item_id)
+            changed = await merge(child.id, {"crew_execution": None})
+            assert changed is not None and changed.metadata == {**child.metadata, "crew_execution": None}
+            mutated.append(child.id)
+        return result
+
+    monkeypatch.setattr(harness.work, "merge_work_item_metadata", compete)
+    with pytest.raises(WorkItemRetryConflict):
+        await harness.service.open_or_resume(
+            principal=harness.service.captain_principal(), goal=blocked.goal,
+            success_criteria=list(blocked.success_criteria),
+            expected_deliverable=blocked.expected_deliverable,
+            requested_thread_id=room.id, retry_blocked=True,
+        )
+    assert resumed == [parent.id] and mutated == [child.id]
+    assert guarded_failures == [parent.id] and len(competing) == 1
+    assert harness.schedule.parent_ids == []
+    assert await harness.work.get_work_item(parent.id) == competing[0]
+    retained = await harness.work.get_work_item(child.id)
+    assert retained is not None and retained.metadata == {**child.metadata, "crew_execution": None}
+    assert retained.assigned_to == child.assigned_to and retained.depends_on == child.depends_on
+    assert retained.verification == child.verification and retained.actual_tokens == child.actual_tokens
+    assert competing[0].metadata["crew_recovery"]["plan"] == recovery.model_dump(mode="json")["plan"]
+    assert (await harness.service.get_session(parent.id)).state == competing_state
+    with pytest.raises(ValueError, match="^crew_recovery_plan_runtime_invalid$"):
+        await harness.service.get_recovery(parent.id)
+
+
+@pytest.mark.parametrize("miss", ["conflict", "missing"])
+async def test_native_reassignment_cas_miss_parks_without_execution(
+    harness: _Harness, native_workers: Any, monkeypatch: pytest.MonkeyPatch, miss: str,
+) -> None:
+    from probos.cognitive.crew_delegation import CrewDelegator
+    from probos.cognitive.crew_orchestrator import CrewOrchestrator
+    from probos.config import SystemConfig
+
+    parent, _room, _session, recovery, child = await _native_executing_session(harness, native_workers)
+    await native_workers.registry.get("builder-1").stop()
+    comparisons = []
+
+    async def miss_assignment(work_item_id: str, **kwargs: Any) -> WorkItem | None:
+        comparisons.append((work_item_id, kwargs))
+        if miss == "conflict":
+            raise ValueError("work_item_assignment_conflict")
+        return None
+
+    class _NoExecution:
+        async def resume(self, parent_id: str) -> Any:
+            raise AssertionError("CAS miss must precede child executor entry")
+
+    monkeypatch.setattr(harness.work, "compare_and_set_work_item_assignment", miss_assignment)
+    config = SystemConfig()
+    config.agentic_dispatch.orchestrator_enabled = True
+    owner = CrewOrchestrator(
+        assignment_resolver=native_workers.resolver,
+        delegator=CrewDelegator(
+            ontology=native_workers.ontology, order_manager=None,
+            agent_registry=native_workers.registry,
+        ),
+        crew_executor=_NoExecution(), verifier=object(), synthesizer=object(),
+        work_item_store=harness.work, runtime=SimpleNamespace(), config=config,
+        crew_session_service=harness.service,
+    )
+    try:
+        await owner.start()
+        await owner.schedule(parent.id)
+        assert len(comparisons) == 1
+        child_id, expected = comparisons[0]
+        assert child_id == child.id
+        assert expected["expected_parent_id"] == parent.id
+        assert expected["expected_assigned_to"] == "builder-1"
+        assert expected["expected_status"] == child.status
+        assert expected["expected_depends_on"] == child.depends_on
+        assert expected["expected_metadata"] == child.metadata
+        assert expected["new_assigned_to"] == "builder-2"
+        assert (await harness.service.get_session(parent.id)).blocked_reason == "crew_worker_unavailable"
+        assert (await harness.work.get_work_item(child.id)).metadata == child.metadata
+        assert (await harness.service.get_recovery(parent.id)).plan == recovery.plan
+    finally:
+        await owner.stop()
 
 
 async def test_blocked_explicit_captain_retry_restores_executing(
