@@ -23,6 +23,12 @@ from probos.cognitive.llm_client import MockLLMClient
 from probos.config import SystemConfig
 from probos.runtime import ProbOSRuntime
 
+from tests.test_ad1131_crew_session_delivery_metrics import (
+    _Harness as _NotificationHarness,
+    _make_outcome,
+    harness as notification_delivery_harness,
+)
+
 
 # ------------------------------------------------------------------
 # Fixtures
@@ -48,6 +54,189 @@ async def runtime_no_utility(tmp_path):
     await rt.start()
     yield rt
     await rt.stop()
+
+
+@pytest.fixture
+def notification_context_api():
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+
+    from probos.routers import system
+    from probos.routers.deps import get_runtime
+
+    app = FastAPI()
+    app.include_router(system.router)
+    runtime = SimpleNamespace(config=SystemConfig())
+    app.dependency_overrides[get_runtime] = lambda: runtime
+    return app, runtime
+
+
+@pytest.mark.parametrize("notification_id", ["short", "A" * 64, "a" * 65])
+async def test_notification_context_input_validation(notification_context_api, notification_id):
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime = notification_context_api
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/notifications/{notification_id}/context")
+    assert response.status_code == 422
+    assert response.json() == {"detail": "notification_context_id_invalid"}
+    assert response.headers["cache-control"] == "no-store"
+
+
+async def test_notification_context_unavailable_default_auth_off(notification_context_api):
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime = notification_context_api
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/notifications/{'a' * 64}/context")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "notification_context_unavailable"}
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("authorization", [None, "Bearer wrong", "Bearer correct"])
+async def test_notification_context_auth_before_lookup(notification_context_api, authorization):
+    from httpx import ASGITransport, AsyncClient
+
+    app, runtime = notification_context_api
+    runtime.config.auth.crew_scope_token = "correct"
+    headers = {} if authorization is None else {"Authorization": authorization}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/notifications/{'a' * 64}/context", headers=headers)
+    assert response.status_code == (503 if authorization == "Bearer correct" else 401)
+    assert set(response.json()) == {"detail"}
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.fixture
+async def persisted_notification_context(
+    notification_context_api: Any,
+    notification_delivery_harness: _NotificationHarness,
+) -> Any:
+    app, runtime = notification_context_api
+    harness = notification_delivery_harness
+    case = await _make_outcome(harness, "failed")
+    assert await harness.delivery.on_status_changed(case.event) == 1
+    assert len(harness.queue.snapshot()) == 1
+    runtime.work_item_store = harness.work
+    runtime.crew_session_service = harness.service
+    runtime.chat_thread_store = harness.threads
+    runtime.notification_queue = harness.queue
+    return app, runtime, harness, case
+
+
+@pytest.mark.parametrize(
+    ("configured", "authorization", "expected_status"),
+    [(False, None, 200), (True, None, 401), (True, "Bearer wrong", 401),
+     (True, "Bearer correct", 200)],
+)
+async def test_notification_context_valid_persisted_context_and_auth(
+    persisted_notification_context: Any,
+    configured: bool,
+    authorization: str | None,
+    expected_status: int,
+) -> None:
+    import copy
+
+    from httpx import ASGITransport, AsyncClient
+
+    from probos.crew_session_live import load_crew_session_projection
+
+    app, runtime, harness, case = persisted_notification_context
+    assert not runtime.config.agentic_dispatch.orchestrator_enabled
+    if configured:
+        runtime.config.auth.crew_scope_token = "correct"
+    notification = harness.queue.snapshot()[0]
+    parent = await harness.work.get_work_item(case.contract.task_id)
+    loaded = await load_crew_session_projection(
+        case.contract.task_id, crew_session_service=harness.service,
+        work_item_store=harness.work,
+    )
+    assert loaded is not None
+    entry = await harness.work.get_crew_session_delivery(notification["id"])
+    messages = harness.threads.list_messages(case.thread.id)
+    events = copy.deepcopy(harness.notification_events)
+    harness.connection.queries.clear()
+    headers = {} if authorization is None else {"Authorization": authorization}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            f"/api/notifications/{notification['id']}/context", headers=headers,
+        )
+    assert response.status_code == expected_status
+    assert response.headers["cache-control"] == "no-store"
+    if expected_status == 401:
+        assert set(response.json()) == {"detail"}
+        assert harness.connection.queries == []
+    else:
+        assert response.json() == {
+            "kind": "crew_session", "notification_id": notification["id"],
+            "delivery_revision": case.contract.revision,
+            "thread": harness.threads.get_thread(case.thread.id).to_dict(),
+            "session": loaded.detail.to_wire(),
+        }
+        assert harness.connection.queries
+        assert all(sql.lstrip().upper().startswith("SELECT")
+                   for sql, _parameters in harness.connection.queries)
+    assert await harness.work.get_work_item(case.contract.task_id) == parent
+    assert await harness.work.get_crew_session_delivery(notification["id"]) == entry
+    assert harness.threads.list_messages(case.thread.id) == messages
+    assert harness.notification_events == events
+    assert harness.queue.snapshot() == [notification]
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_status", "detail"),
+    [
+        ("unknown", 404, "not_found"), ("deleted", 404, "not_found"),
+        ("archived", 410, "archived"), ("mismatch", 409, "conflict"),
+        ("corrupt", 409, "conflict"), ("unavailable", 503, "unavailable"),
+        ("missing_service", 503, "unavailable"),
+    ],
+)
+async def test_notification_context_persisted_error_boundaries(
+    persisted_notification_context: Any,
+    failure: str,
+    expected_status: int,
+    detail: str,
+) -> None:
+    import copy
+
+    from httpx import ASGITransport, AsyncClient
+
+    app, runtime, harness, case = persisted_notification_context
+    notification_id = harness.queue.snapshot()[0]["id"]
+    if failure == "unknown":
+        assert notification_id != "a" * 64
+        notification_id = "a" * 64
+    elif failure == "deleted":
+        harness.threads.delete_thread(case.thread.id)
+    elif failure == "archived":
+        harness.threads.update_thread(case.thread.id, archived=True)
+    elif failure == "mismatch":
+        harness.threads.update_thread(case.thread.id, task_id="other-parent")
+    elif failure == "corrupt":
+        await harness.connection.execute(
+            "UPDATE crew_delivery_outbox SET payload_json = ? WHERE delivery_id = ?",
+            ("{}", notification_id),
+        )
+        await harness.connection.commit()
+    elif failure == "unavailable":
+        await harness.work.stop()
+    elif failure == "missing_service":
+        runtime.crew_session_service = None
+    events = copy.deepcopy(harness.notification_events)
+    snapshot = harness.queue.snapshot()
+    harness.connection.queries.clear()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/notifications/{notification_id}/context")
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": f"notification_context_{detail}"}
+    assert response.headers["cache-control"] == "no-store"
+    assert all(sql.lstrip().upper().startswith("SELECT")
+               for sql, _parameters in harness.connection.queries)
+    assert harness.notification_events == events
+    assert harness.queue.snapshot() == snapshot
 
 
 # ------------------------------------------------------------------

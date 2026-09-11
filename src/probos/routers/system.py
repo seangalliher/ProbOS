@@ -14,9 +14,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from probos.api_models import ShutdownRequest
+from probos.crew_session_live import LoadedCrewSessionProjection, load_crew_session_projection
+from probos.crew_session_projection import CrewSessionProjectionError
 from probos.events import OSActivityEvent
 from probos.mesh.intent import IntentAuthorizationDenied
+from probos.notification_context import NotificationContextError, NotificationContextResolver
 from probos.proactive import build_proactive_status_snapshot
+from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime, get_task_tracker
 from probos.types import IntentMessage
 
@@ -409,6 +413,59 @@ async def update_communications_settings(body: dict, runtime: Any = Depends(get_
             raise HTTPException(status_code=400, detail=f"Invalid rank. Must be one of: {valid_ranks}")
         runtime.config.communications.recreation_min_rank = rank_val
     return await get_communications_settings(runtime=runtime)
+
+
+@router.get("/notifications/{notification_id}/context")
+async def notification_context(
+    notification_id: str,
+    request: Request,
+    runtime: Any = Depends(get_runtime),
+) -> JSONResponse:
+    """Resolve an exact durable delivery without acknowledging or executing it."""
+    headers = {"Cache-Control": "no-store"}
+    try:
+        await require_crew_scope(
+            request=request,
+            authorization=request.headers.get("authorization"),
+            runtime=runtime,
+        )
+    except HTTPException as exc:
+        exc.headers = {**(exc.headers or {}), **headers}
+        raise
+
+    work = getattr(runtime, "work_item_store", None)
+    service = getattr(runtime, "crew_session_service", None)
+
+    async def load_current(parent_id: str) -> LoadedCrewSessionProjection | None:
+        if await work.get_work_item(parent_id) is None:
+            return None
+        if await service.get_session(parent_id) is None:
+            return None
+        try:
+            return await load_crew_session_projection(
+                parent_id,
+                crew_session_service=service,
+                work_item_store=work,
+            )
+        except CrewSessionProjectionError:
+            if await work.get_work_item(parent_id) is None:
+                return None
+            if await service.get_session(parent_id) is None:
+                return None
+            raise
+
+    resolver = NotificationContextResolver(
+        delivery_store=work,
+        thread_store=getattr(runtime, "chat_thread_store", None),
+        load_projection=load_current if work is not None and service is not None else None,
+    )
+    try:
+        context = await resolver.resolve(notification_id)
+    except NotificationContextError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.detail, headers=headers,
+        ) from exc
+    return JSONResponse(context, headers=headers)
 
 
 @router.post("/notifications/{notification_id}/ack")

@@ -311,6 +311,24 @@ export function approvalKey(queue: PendingApproval['queue'], id: string): string
   return `${queue}${APPROVAL_KEY_SEP}${id}`;
 }
 
+export interface ComposerDraft {
+  text: string;
+  attachments: import('./types').ChatAttachment[];
+  pendingUploads: number;
+  error: string | null;
+}
+
+export interface NotificationNavigation {
+  requestId: symbol;
+  generation: string | null;
+  destination: {
+    hostId: string;
+    threadId: string;
+    parentId: string;
+    updated: boolean;
+  } | null;
+}
+
 export interface HXIState {
   // Data
   agents: Map<string, Agent>;
@@ -380,6 +398,8 @@ export interface HXIState {
   // binding. ``openAgentProfile`` (a roster/1:1 open) clears it back to null,
   // re-resolving the profile to the agent's 1:1 default.
   activeProfileThreadId: string | null;
+  notificationNavigation: NotificationNavigation | null;
+  setNotificationNavigation: (request: NotificationNavigation | null) => void;
   profilePanelPos: { x: number; y: number };
   // AD-940: the floating CHATS panel's drag position (GamePanel / profilePanelPos
   // pattern). Init matches its prior fixed on-screen origin so nothing jumps.
@@ -523,6 +543,8 @@ export interface HXIState {
   // (and any future "insert text" affordance) write here; ProfileChatTab
   // consumes the value, hydrates its local input state, and clears it.
   chatDrafts: Record<string, string>;
+  composerDrafts: ReadonlyMap<string, ComposerDraft>;
+  updateComposerDraft: (owner: string, update: (draft: ComposerDraft) => ComposerDraft) => void;
 
   // Audio state
   soundEnabled: boolean;
@@ -1337,6 +1359,8 @@ export const useStore = create<HXIState>((set, get) => ({
   activeProfileAgent: null,
   // AD-937: no group override at boot; set only by openGroupChatThread.
   activeProfileThreadId: null,
+  notificationNavigation: null,
+  setNotificationNavigation: (request) => set({ notificationNavigation: request }),
   profilePanelPos: { x: 100, y: 100 },
   // AD-940: match the CHATS panel's prior fixed origin (left:60 / top:60) so
   // enabling drag does not visually move it on first render.
@@ -1461,6 +1485,18 @@ export const useStore = create<HXIState>((set, get) => ({
   pendingRequests: 0,
   pendingChar: '',
   chatDrafts: {},
+  composerDrafts: new Map(),
+  updateComposerDraft: (owner, update) => {
+    if (!owner) return;
+    set((state) => {
+      const drafts = new Map(state.composerDrafts);
+      const current = drafts.get(owner) ?? {
+        text: '', attachments: [], pendingUploads: 0, error: null,
+      };
+      drafts.set(owner, update(current));
+      return { composerDrafts: drafts };
+    });
+  },
   soundEnabled: false,
   voiceEnabled: false,
   // AD-949: call audio ON by default — combined with the hook's meetingActive
@@ -1533,6 +1569,7 @@ export const useStore = create<HXIState>((set, get) => ({
   },
   // Agent Profile Panel actions (AD-406)
   openAgentProfile: (agentId) => set({
+    notificationNavigation: null,
     activeProfileAgent: agentId,
     // AD-937: a roster/1:1 open clears any group override so the profile
     // re-resolves to the agent's 1:1 default (the unreachable-1:1 fix).
@@ -1543,6 +1580,7 @@ export const useStore = create<HXIState>((set, get) => ({
   // group is addressable WITHOUT clobbering the host's single ``threadIdByAgent``
   // 1:1 slot. Mirrors openAgentProfile's body otherwise (dismiss tooltip).
   openGroupChatThread: (hostId, threadId) => set({
+    notificationNavigation: null,
     activeProfileAgent: hostId,
     activeProfileThreadId: threadId,
     pinnedAgent: null,
@@ -1552,7 +1590,7 @@ export const useStore = create<HXIState>((set, get) => ({
   // participants, so nulling only activeProfileAgent leaves an agent-created
   // group chat open (the close ✕ appears to do nothing). A 1:1 keyed on
   // activeProfileAgent is unaffected (its threadId override is already null).
-  closeAgentProfile: () => set({ activeProfileAgent: null, activeProfileThreadId: null }),
+  closeAgentProfile: () => set({ activeProfileAgent: null, activeProfileThreadId: null, notificationNavigation: null }),
   // AD-513: Crew Manifest actions
   openCrewManifest: async () => {
     set({ crewManifestOpen: true });
@@ -1837,7 +1875,7 @@ export const useStore = create<HXIState>((set, get) => ({
     // Clear the group-thread override too (AD-954a): the group surface renders
     // from activeProfileThreadId, so it must be nulled to actually minimize a
     // group chat (same root cause as the closeAgentProfile fix).
-    set({ activeProfileAgent: null, activeProfileThreadId: null, agentConversations: convs });
+    set({ activeProfileAgent: null, activeProfileThreadId: null, agentConversations: convs, notificationNavigation: null });
   },
   addAgentMessage: (agentId, role, text, opts) => {
     const convs = new Map(get().agentConversations);

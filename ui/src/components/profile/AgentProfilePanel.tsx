@@ -34,6 +34,13 @@ const DEPT_COLORS: Record<string, string> = {
   bridge: '#d0a030',
 };
 
+function readViewport(): { w: number; h: number } {
+  return {
+    w: Number.isFinite(window.innerWidth) ? Math.max(0, window.innerWidth) : 0,
+    h: Number.isFinite(window.innerHeight) ? Math.max(0, window.innerHeight) : 0,
+  };
+}
+
 export function AgentProfilePanel() {
   const activeProfileAgent = useStore((s) => s.activeProfileAgent);
   const agents = useStore((s) => s.agents);
@@ -70,16 +77,26 @@ export function AgentProfilePanel() {
     : activeProfileAgent;
 
   const [activeTab, setActiveTab] = useState<ProfileTab>('chat');
+  const notificationNavigation = useStore(state => state.notificationNavigation);
+  const liveGeneration = useStore(state => state.liveGeneration);
+  useEffect(() => {
+    const destination = notificationNavigation?.destination;
+    if (destination && notificationNavigation.generation === liveGeneration
+      && destination.threadId === activeProfileThreadId && destination.hostId === agentId) {
+      setActiveTab('chat');
+    }
+  }, [notificationNavigation, liveGeneration, activeProfileThreadId, agentId]);
   const [profileData, setProfileData] = useState<AgentProfileData | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   // Resizable panel state — persisted in localStorage so the captain's
   // preferred chat-window size survives reloads.
-  const [size, setSize] = useState(() => {
+  const [size, setSize] = useState<{ w: number; h: number }>(() => {
     try {
       const stored = localStorage.getItem('hxi_profile_panel_size');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (typeof parsed.w === 'number' && typeof parsed.h === 'number') return parsed;
+        if (parsed && Number.isFinite(parsed.w) && parsed.w > 0
+          && Number.isFinite(parsed.h) && parsed.h > 0) return { w: parsed.w, h: parsed.h };
       }
     } catch (_e) { /* fall through to default */ }
     return { w: 420, h: 580 };
@@ -87,8 +104,18 @@ export function AgentProfilePanel() {
   useEffect(() => {
     localStorage.setItem('hxi_profile_panel_size', JSON.stringify(size));
   }, [size]);
+  const [viewport, setViewport] = useState(readViewport);
+  useEffect(() => {
+    const onResize = () => setViewport(readViewport());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const width = Math.min(size.w, viewport.w);
+  const height = Math.min(size.h, viewport.h);
+  const left = Math.max(0, Math.min(viewport.w - width, Number.isFinite(pos.x) ? pos.x : 0));
+  const top = Math.max(0, Math.min(viewport.h - height, Number.isFinite(pos.y) ? pos.y : 0));
   const [isResizing, setIsResizing] = useState(false);
-  const resizeStart = useRef({ x: 0, y: 0, w: 420, h: 580 });
+  const resizeStart = useRef({ x: 0, y: 0, w: 420, h: 580, left: 0, top: 0 });
   // AD-721: avatar popout state.
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [avatarsEnabled, setAvatarsEnabled] = useState(false);
@@ -149,14 +176,14 @@ export function AgentProfilePanel() {
   // Drag handlers
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     setIsDragging(true);
-    dragOffset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
-  }, [pos]);
+    dragOffset.current = { x: e.clientX - left, y: e.clientY - top };
+  }, [left, top]);
 
   useEffect(() => {
     if (!isDragging) return;
     const onMove = (e: MouseEvent) => {
-      const newX = Math.max(0, Math.min(window.innerWidth - 420, e.clientX - dragOffset.current.x));
-      const newY = Math.max(0, Math.min(window.innerHeight - 100, e.clientY - dragOffset.current.y));
+      const newX = Math.max(0, Math.min(viewport.w - width, e.clientX - dragOffset.current.x));
+      const newY = Math.max(0, Math.min(viewport.h - height, e.clientY - dragOffset.current.y));
       useStore.getState().setProfilePanelPos({ x: newX, y: newY });
     };
     const onUp = () => setIsDragging(false);
@@ -166,23 +193,26 @@ export function AgentProfilePanel() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [isDragging]);
+  }, [isDragging, viewport.w, viewport.h, width, height]);
 
   // Resize handlers — bottom-right corner drags to resize.
   const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
     setIsResizing(true);
-    resizeStart.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h };
+    resizeStart.current = { x: e.clientX, y: e.clientY, w: width, h: height, left, top };
+    useStore.getState().setProfilePanelPos({ x: left, y: top });
     e.preventDefault();
     e.stopPropagation();
-  }, [size]);
+  }, [width, height, left, top]);
 
   useEffect(() => {
     if (!isResizing) return;
     const onMove = (e: MouseEvent) => {
       const dw = e.clientX - resizeStart.current.x;
       const dh = e.clientY - resizeStart.current.y;
-      const nw = Math.max(320, Math.min(window.innerWidth - 40, resizeStart.current.w + dw));
-      const nh = Math.max(360, Math.min(window.innerHeight - 40, resizeStart.current.h + dh));
+      const availableWidth = Math.max(0, viewport.w - resizeStart.current.left);
+      const availableHeight = Math.max(0, viewport.h - resizeStart.current.top);
+      const nw = Math.min(availableWidth, Math.max(320, resizeStart.current.w + dw));
+      const nh = Math.min(availableHeight, Math.max(360, resizeStart.current.h + dh));
       setSize({ w: nw, h: nh });
     };
     const onUp = () => setIsResizing(false);
@@ -192,7 +222,7 @@ export function AgentProfilePanel() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [isResizing]);
+  }, [isResizing, viewport.w, viewport.h]);
 
   if (!agentId || !agent) return null;
 
@@ -226,16 +256,17 @@ export function AgentProfilePanel() {
     <div
       style={{
         position: 'fixed',
-        left: pos.x,
-        top: pos.y,
-        width: size.w,
-        height: size.h,
+        left,
+        top,
+        width,
+        height,
+        boxSizing: 'border-box',
         background: 'rgba(10, 10, 18, 0.92)',
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
         border: '1px solid rgba(240, 176, 96, 0.2)',
         borderRadius: 12,
-        zIndex: 25,
+        zIndex: 27,
         display: 'flex',
         flexDirection: 'column',
         fontFamily: "'JetBrains Mono', monospace",
@@ -527,7 +558,10 @@ export function AgentProfilePanel() {
         {visibleTabs.map(({ key, label }) => (
           <button
             key={key}
-            onClick={() => setActiveTab(key)}
+            onClick={() => {
+              useStore.getState().setNotificationNavigation(null);
+              setActiveTab(key);
+            }}
             style={{
               flex: 1,
               background: 'none',

@@ -16,12 +16,18 @@ from probos.cognitive.crew_session import (
     CrewSynthesisMetadata,
 )
 from probos.config import SystemConfig
+from probos.crew_session_delivery import (
+    CrewSessionDeliveryOutboxEntry,
+    build_crew_session_delivery_record,
+)
+from probos.crew_session_live import load_crew_session_projection
 from probos.crew_session_projection import (
     CREW_SESSION_PROJECTION_ERROR,
     build_crew_session_detail,
     build_crew_session_summary,
 )
 from probos.routers import crew_tasks as crew_tasks_router
+from probos.notification_context import NotificationContextError, NotificationContextResolver
 from probos.routers import threads as threads_router
 from probos.routers.deps import get_runtime
 from probos.storage.sqlite_factory import SQLiteConnectionFactory
@@ -238,6 +244,205 @@ async def _crew_parent(
     )
     harness.service.sessions[parent.id] = contract
     return parent, contract
+
+
+@pytest.mark.parametrize(
+    ("change", "expected_status"),
+    [
+        ("unchanged", 200), ("completed", 200), ("blocked", 200),
+        ("newer", 200), ("older", 409), ("outcome", 409),
+        ("origin", 409), ("originator", 409), ("session_thread", 409),
+        ("thread_task", 409), ("archived", 410), ("deleted", 404),
+        ("archive_during_load", 410), ("delete_during_load", 404),
+        ("rebind_during_load", 409), ("missing_projection", 404),
+    ],
+)
+async def test_notification_context_current_correlation(
+    api_harness: _Harness, change: str, expected_status: int,
+) -> None:
+    thread = api_harness.threads.create_thread(
+        title="Current room", participants=["facilitator-1"], task_id="context-parent",
+    )
+    state = {"completed": "done", "blocked": "blocked_needs_captain"}.get(change, "failed")
+    parent, session = await _crew_parent(
+        api_harness, parent_id="context-parent", state=state, thread_id=thread.id,
+        metadata={"crew_synth": _synthesis().model_dump(mode="json")} if state == "done" else None,
+    )
+    record = build_crew_session_delivery_record(session)
+    assert record.outcome == state
+    assert record.session_revision == session.revision == 3
+
+    class _DeliveryReader:
+        async def get_crew_session_delivery(
+            self, delivery_id: str,
+        ) -> CrewSessionDeliveryOutboxEntry | None:
+            assert delivery_id == record.delivery_id
+            return CrewSessionDeliveryOutboxEntry(
+                record=record, delivered=True, created_at=140.0, delivered_at=141.0,
+            )
+
+    updates: dict[str, Any] = {
+        "newer": {"revision": 4}, "older": {"revision": 2},
+        "outcome": {"state": "discussing", "completed_at": None},
+        "origin": {"origin": "agent", "originator_id": "facilitator-1"},
+        "originator": {"originator_id": "other-agent"},
+        "session_thread": {"thread_id": "other-room"},
+    }.get(change, {})
+    api_harness.service.sessions[parent.id] = session.model_copy(update=updates)
+    if change == "thread_task":
+        api_harness.threads.update_thread(thread.id, task_id="other-parent")
+    elif change == "archived":
+        api_harness.threads.update_thread(thread.id, archived=True)
+    elif change == "deleted":
+        api_harness.threads.delete_thread(thread.id)
+
+    async def load_current(parent_id: str) -> Any:
+        if change == "missing_projection":
+            return None
+        loaded = await load_crew_session_projection(
+            parent_id, crew_session_service=api_harness.service,
+            work_item_store=api_harness.work,
+        )
+        if change == "archive_during_load":
+            api_harness.threads.update_thread(thread.id, archived=True)
+        elif change == "delete_during_load":
+            api_harness.threads.delete_thread(thread.id)
+        elif change == "rebind_during_load":
+            api_harness.threads.update_thread(thread.id, task_id="other-parent")
+        return loaded
+
+    resolver = NotificationContextResolver(
+        delivery_store=_DeliveryReader(), thread_store=api_harness.threads,
+        load_projection=load_current,
+    )
+    if expected_status != 200:
+        with pytest.raises(NotificationContextError) as caught:
+            await resolver.resolve(record.delivery_id)
+        assert caught.value.status_code == expected_status
+    else:
+        result = await resolver.resolve(record.delivery_id)
+        assert set(result) == {"kind", "notification_id", "delivery_revision", "thread", "session"}
+        assert result["thread"] == thread.to_dict()
+        assert set(result["session"]) == _DETAIL_KEYS
+        assert result["session"]["revision"] == (4 if change == "newer" else 3)
+        assert result["session"]["state"] == state
+        assert result["delivery_revision"] == 3
+        if state == "done":
+            assert result["session"]["result"] == {
+                "artifact_id": "artifact-final", "content_hash": _SHA_B,
+                "result_ref": _SHA_A, "evidence_refs": [_SHA_A],
+            }
+            assert result["session"]["verification"] == {
+                "verifier_agent_id": "verifier-1", "confidence": 0.93,
+                "critique": "All criteria are satisfied.", "accepted_count": 2,
+                "total_count": 2, "convergence_rounds": 2,
+            }
+    assert api_harness.service.open_calls == 0
+
+
+class _NotificationIdSubclass(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    "notification_id", [None, 1, "", "A" * 64, "a" * 65, _NotificationIdSubclass(_SHA_A)],
+)
+async def test_notification_context_invalid_id_precedes_dependency_reads(
+    notification_id: Any,
+) -> None:
+    resolver = NotificationContextResolver(
+        delivery_store=None, thread_store=None, load_projection=None,
+    )
+    with pytest.raises(NotificationContextError) as caught:
+        await resolver.resolve(notification_id)
+    assert caught.value.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_status"),
+    [
+        ("unknown", 404), ("invalid_entry", 409), ("invalid_record", 409),
+        ("entry_subclass", 409), ("record_subclass", 409),
+        ("wrong_identity", 409), ("corrupt", 409), ("storage", 503),
+        ("thread", 503), ("projection", 503),
+        ("missing_store", 503), ("missing_threads", 503), ("missing_loader", 503),
+    ],
+)
+async def test_notification_context_dependency_failures_are_closed(
+    failure: str, expected_status: int,
+) -> None:
+    session = _session(task_id="context-parent", thread_id="context-room", state="failed")
+    record = build_crew_session_delivery_record(session)
+    calls: list[str] = []
+
+    class _EntrySubclass(CrewSessionDeliveryOutboxEntry):
+        pass
+
+    class _RecordSubclass(type(record)):
+        pass
+
+    class _DeliveryReader:
+        async def get_crew_session_delivery(
+            self, delivery_id: str,
+        ) -> CrewSessionDeliveryOutboxEntry | None:
+            calls.append("delivery")
+            assert delivery_id == record.delivery_id
+            if failure == "unknown":
+                return None
+            if failure == "invalid_entry":
+                return SimpleNamespace(record=record)
+            if failure == "corrupt":
+                raise ValueError("crew_delivery_outbox_corrupt")
+            if failure == "storage":
+                raise OSError("storage unavailable")
+            candidate = record
+            if failure == "invalid_record":
+                candidate = SimpleNamespace(**record.to_payload())
+            elif failure == "record_subclass":
+                candidate = _RecordSubclass(**record.to_payload())
+            elif failure == "wrong_identity":
+                candidate = build_crew_session_delivery_record(
+                    session.model_copy(update={"revision": 4}),
+                )
+            entry_type = _EntrySubclass if failure == "entry_subclass" else CrewSessionDeliveryOutboxEntry
+            return entry_type(
+                record=candidate, delivered=True, created_at=140.0, delivered_at=141.0,
+            )
+
+    class _ThreadReader:
+        def get_thread(self, thread_id: str) -> Any:
+            from probos.threads import ChatThread
+
+            calls.append("thread")
+            assert thread_id == "context-room"
+            if failure == "thread":
+                raise OSError("threads unavailable")
+            return ChatThread(
+                id=thread_id, title="Current room", participants=["facilitator-1"],
+                task_id="context-parent", created_at=100.0, last_active_at=140.0,
+            )
+
+    async def load_current(parent_id: str) -> Any:
+        calls.append("projection")
+        assert parent_id == "context-parent"
+        raise OSError("projection unavailable")
+
+    resolver = NotificationContextResolver(
+        delivery_store=None if failure == "missing_store" else _DeliveryReader(),
+        thread_store=None if failure == "missing_threads" else _ThreadReader(),
+        load_projection=None if failure == "missing_loader" else load_current,
+    )
+    with pytest.raises(NotificationContextError) as caught:
+        await resolver.resolve(record.delivery_id)
+    assert caught.value.status_code == expected_status
+    if failure.startswith("missing_"):
+        assert calls == []
+    elif failure == "projection":
+        assert calls == ["delivery", "thread", "projection"]
+    elif failure == "thread":
+        assert calls == ["delivery", "thread"]
+    else:
+        assert calls == ["delivery"]
 
 
 @pytest.mark.parametrize(

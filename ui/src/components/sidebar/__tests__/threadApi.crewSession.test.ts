@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchCrewTaskDetail, fetchRoomSummaries, repairRoomSummaries } from '../threadApi';
+import { fetchCrewTaskDetail, fetchNotificationContext, fetchRoomSummaries, repairRoomSummaries } from '../threadApi';
 import type {
   CrewSessionDetailProjection,
   CrewSessionSummaryProjection,
@@ -147,6 +147,130 @@ function response(body: unknown, status = 200): Response {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+function notificationContext(state: CrewSessionDetailProjection['state'] = 'done') {
+  const completed = detail();
+  const session: CrewSessionDetailProjection = state === 'done' ? completed : {
+    ...completed, state, result: null, verification: null,
+    timestamps: {
+      ...completed.timestamps, verified_at: null,
+      completed_at: state === 'failed' ? 3 : null,
+      started_at: state === 'discussing' ? null : 2,
+      first_result_at: state === 'verifying' ? 2.5 : null,
+    },
+    progress: { total: 1, done: 0, failed: state === 'failed' ? 1 : 0, active: state === 'executing' ? 1 : 0, active_child: null },
+    blocker: state === 'blocked_needs_captain'
+      ? { reason: 'Approval needed', since: 3, duration_seconds: 0, action: 'retry_start_work' }
+      : null,
+  };
+  return {
+    kind: 'crew_session', notification_id: SHA_A, delivery_revision: 1,
+    thread: {
+      id: 'thread-1', task_id: 'parent-1', title: 'Room', participants: ['facilitator-1'],
+      project_id: null, pinned: false, archived: false, personality_override: null,
+      workspace_root: null, created_at: 1, last_active_at: 3, preprompt: null,
+      model: null, metadata: {},
+    },
+    session,
+  };
+}
+
+describe('notification context transport', () => {
+  it('accepts current correlated context and restricts the request to same origin without redirects', async () => {
+    const context = notificationContext();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(context)));
+    expect(await fetchNotificationContext(SHA_A)).toEqual({ kind: 'success', context });
+    expect(fetch).toHaveBeenCalledWith(`/api/notifications/${SHA_A}/context`, {
+      method: 'GET', mode: 'same-origin', redirect: 'error', cache: 'no-store', headers: {}, signal: undefined,
+    });
+  });
+
+  it('accepts completed context at the exact delivery revision', async () => {
+    const context = notificationContext();
+    context.delivery_revision = context.session.revision;
+    expect(context.session.state).toBe('done');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response({ session: context.session }))
+      .mockResolvedValueOnce(response(context)));
+    expect(await fetchCrewTaskDetail(context.session.task_id)).toEqual({
+      kind: 'success', response: { session: context.session },
+    });
+    expect(await fetchNotificationContext(SHA_A)).toEqual({ kind: 'success', context });
+    expect(fetch).toHaveBeenLastCalledWith(`/api/notifications/${SHA_A}/context`, expect.objectContaining({
+      method: 'GET', mode: 'same-origin', redirect: 'error',
+    }));
+  });
+
+  for (const state of ['done', 'failed', 'blocked_needs_captain', 'discussing', 'executing', 'verifying'] as const) {
+    it.each(['equal', 'stale', 'newer'] as const)(`validates ${state} context at %s revision without rejecting its detail shape`, async relation => {
+      const context = notificationContext(state);
+      context.delivery_revision = relation === 'stale' ? 3 : relation === 'equal' ? 2 : 1;
+      expect(context.session.revision).toBe(2);
+      expect(context.delivery_revision).toBe(relation === 'stale' ? 3 : relation === 'equal' ? 2 : 1);
+      vi.stubGlobal('fetch', vi.fn()
+        .mockResolvedValueOnce(response({ session: context.session }))
+        .mockResolvedValueOnce(response(context)));
+      expect(await fetchCrewTaskDetail(context.session.task_id)).toEqual({
+        kind: 'success', response: { session: context.session },
+      });
+      const deliverable = ['done', 'failed', 'blocked_needs_captain'].includes(state);
+      const accepted = relation === 'newer' || (relation === 'equal' && deliverable);
+      expect(await fetchNotificationContext(SHA_A)).toEqual(accepted
+        ? { kind: 'success', context }
+        : { kind: 'error', status: 200 });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+  }
+
+  it('forwards the page token only on context reads', async () => {
+    const previous = window.location.href;
+    window.history.replaceState(null, '', '?token=secret%20value');
+    try {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(notificationContext())));
+      await fetchNotificationContext(SHA_A);
+      await fetchCrewTaskDetail('parent-1');
+      expect(fetch).toHaveBeenNthCalledWith(1, `/api/notifications/${SHA_A}/context`, expect.objectContaining({
+        headers: { Authorization: 'Bearer secret value' },
+      }));
+      expect(fetch).toHaveBeenNthCalledWith(2, '/api/crew-tasks/parent-1');
+    } finally {
+      window.history.replaceState(null, '', previous);
+    }
+  });
+
+  it.each(['', 'n1', 'A'.repeat(64), 'https://example.com', '../accept'])('rejects invalid ID %s without fetching', async id => {
+    vi.stubGlobal('fetch', vi.fn());
+    expect(await fetchNotificationContext(id)).toEqual({ kind: 'error', status: 422 });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { action_url: 'https://example.com' }, { command: 'retry_start_work' },
+    { notification_id: SHA_B }, { delivery_revision: 3 }, { delivery_revision: -1 },
+    { session: { ...detail(), thread_id: 'other' } },
+    { session: { ...detail(), task_id: 'other' } },
+    { delivery_revision: 2, session: { ...detail(), revision: 1 } },
+    { session: { ...detail(), extra: true } },
+    { thread: { ...notificationContext().thread, archived: true } },
+    { thread: { ...notificationContext().thread, task_id: null } },
+    { thread: { ...notificationContext().thread, participants: [''] } },
+  ])('rejects malformed or uncorrelated context %j', async override => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ ...notificationContext(), ...override })));
+    expect(await fetchNotificationContext(SHA_A)).toEqual({ kind: 'error', status: 200 });
+  });
+
+  it.each([401, 404, 409, 410, 503])('preserves unavailable status %s', async status => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({}, status)));
+    expect(await fetchNotificationContext(SHA_A)).toEqual({ kind: 'error', status });
+  });
+
+  it('reports network failure and rejects redirected success', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ ...response(notificationContext()), redirected: true }));
+    expect(await fetchNotificationContext(SHA_A)).toEqual({ kind: 'error', status: null });
+    expect(await fetchNotificationContext(SHA_A)).toEqual({ kind: 'error', status: 200 });
+  });
 });
 
 describe('AD-1132 threadApi CrewSession contracts', () => {

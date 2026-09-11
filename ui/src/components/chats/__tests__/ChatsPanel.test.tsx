@@ -7,9 +7,10 @@
 // real-fixture style, no MagicMock at the store boundary. Includes the HXI
 // no-emoji guard. Test #1 FLIPS the AD-919 contract: 1:1s are now INCLUDED.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, within, type RenderResult } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, waitFor, within, type RenderResult } from '@testing-library/react';
 import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
-import type { Agent, CrewSessionSummaryProjection, RoomSummary } from '../../../store/types';
+import type { Agent, CrewSessionSummaryProjection, RoomSummary, WSEvent } from '../../../store/types';
+import notificationFixture from '../../../../e2e/fixtures/notification-navigation.json';
 
 vi.mock('../../sidebar/threadApi', () => ({
   listThreads: vi.fn(),
@@ -120,9 +121,71 @@ afterEach(() => {
     roomSummariesByThread: new Map(),
   });
   vi.clearAllMocks();
+  useStore.setState({ notifications: null, liveGeneration: null, liveSequence: 0 });
 });
 
 describe('AD-931 ChatsPanel', () => {
+  it('keeps failed rooms and synthetic blocked work discoverable after notification acknowledgement and pruning', async () => {
+    const failedRoom = notificationFixture.context.thread;
+    const failedSummary = notificationFixture.summaries.summaries[failedRoom.id as 'notification-navigation-1'] as RoomSummary;
+    if (!('session' in failedSummary) || !failedSummary.session) {
+      throw new Error('Producer fixture must contain a crew session summary');
+    }
+    const blocked: CrewSessionSummaryProjection = {
+      ...failedSummary.session,
+      task_id: 'task-1', thread_id: 't1', goal: 'Synthetic blocked retention case',
+      state: 'blocked_needs_captain', facilitator_id: 'mccoy', owner_ids: ['mccoy', 'scotty'],
+      blocker: { reason: 'Choose route', since: 10, duration_seconds: 30 }, needs_attention: true,
+    };
+    const summaries: Record<string, RoomSummary> = {
+      [failedRoom.id]: failedSummary,
+      t1: { outputs: 0, steps_total: 0, steps_done: 0, topic: blocked.goal, session: blocked },
+    };
+    useStore.setState({ liveGeneration: null, liveSequence: 0, notifications: null });
+    await renderOpen([...ALL, failedRoom], [
+      ...AGENTS,
+      ...failedRoom.participants.map(id => mkAgent({ id, callsign: id })),
+    ], summaries);
+    const dispatch = (type: string, data: Record<string, unknown>, sequence: number): void => {
+      const event: WSEvent = { type, data, timestamp: 200 + sequence, stream: { generation: 'a'.repeat(32), sequence } };
+      act(() => useStore.getState().handleEvent(event));
+    };
+    dispatch('state_snapshot', {
+      agents: [...AGENTS, ...failedRoom.participants.map(id => mkAgent({ id, callsign: id }))]
+        .map(agent => ({ ...agent, agent_type: agent.agentType, display_name: agent.displayName })),
+      connections: [], pools: [], system_mode: 'active', tc_n: 0, routing_entropy: 0,
+      notifications: notificationFixture.event.data.notifications,
+    }, 0);
+    await screen.findByTestId(`room-session-${failedRoom.id}`);
+    expect(useStore.getState().notifications).toHaveLength(1);
+    const sessionsBefore = new Map(useStore.getState().crewSessionSummariesByThread);
+    const acknowledged = { ...notificationFixture.event.data.notification, acknowledged: true };
+    dispatch('notification_ack', { notifications: [acknowledged], unread_count: 0 }, 1);
+    expect(useStore.getState().notifications).toEqual([acknowledged]);
+    expect(screen.getByTestId(`room-session-${failedRoom.id}`)).toHaveTextContent('failed');
+
+    const syntheticRetained = Array.from({ length: 50 }, (_, index) => ({
+      ...acknowledged, id: `synthetic-retained-${index}`, title: `Retained ${index}`,
+    }));
+    dispatch('notification_snapshot', {
+      notifications: [acknowledged, ...syntheticRetained], unread_count: 0,
+    }, 2);
+    expect(useStore.getState().notifications).toHaveLength(51);
+    dispatch('notification_ack', { notifications: syntheticRetained, unread_count: 0 }, 3);
+    expect(useStore.getState().notifications).toHaveLength(50);
+    expect(useStore.getState().notifications?.some(item => item.id === acknowledged.id)).toBe(false);
+    expect(screen.getByTestId(`room-session-${failedRoom.id}`)).toHaveTextContent('failed');
+    expect(screen.getByTestId(`room-session-${failedRoom.id}`)).toHaveTextContent(
+      notificationFixture.context.session.last_result_summary,
+    );
+    fireEvent.click(screen.getByTestId('rooms-filter-needs'));
+    expect(screen.getByTestId('chat-row-t1')).toHaveAttribute('data-needs-attention', 'true');
+    expect(screen.getByTestId('room-session-t1')).toHaveTextContent('blocked_needs_captain');
+    expect(useStore.getState().crewSessionSummariesByThread).toEqual(sessionsBefore);
+    expect(useStore.getState().activeProfileThreadId).toBeNull();
+    expect(addParticipant).not.toHaveBeenCalled();
+  });
+
   it('updates live room fields from the authoritative store map without reopen', async () => {
     await renderOpen();
     const liveSummary: RoomSummary = {

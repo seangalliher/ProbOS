@@ -129,7 +129,7 @@ type NetworkOptions = {
   }>>;
 };
 
-function installNetwork(options: NetworkOptions): ReturnType<typeof vi.fn> {
+function installNetwork(options: NetworkOptions): ReturnType<typeof vi.fn<typeof fetch>> {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
@@ -201,6 +201,8 @@ function seed(threadRows: AD791aChatThreadView[]): void {
     callAudioEnabled: true,
     typingAgent: null,
     chatDrafts: {},
+    composerDrafts: new Map(),
+    notificationNavigation: null,
     liveGeneration: null,
     liveSequence: 0,
     liveRepairEpoch: 0,
@@ -222,6 +224,104 @@ afterEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   seed([]);
+});
+
+describe('issue1373 room-owned composers and notification focus', () => {
+  it.each(['host', 'peer'])('restores text and attachments after switching to %s and remounting', async (nextHost) => {
+    seed([thread('t1', null), thread('t2', null)]);
+    const baseFetch = installNetwork({ details: {} });
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/chat/attachments/multipart') {
+        return Promise.resolve(json({ attachment_id: SHA_A, url: '/attachment', sha256: SHA_A, mime: 'text/plain', size_bytes: 5 }));
+      }
+      return baseFetch(input, init);
+    }));
+    const view = render(<ProfileChatTab agentId="host" threadId="t1" />);
+    fireEvent.change(screen.getByPlaceholderText('Message...'), { target: { value: 'First unsent message' } });
+    const picker = view.container.querySelector('input[type="file"]');
+    expect(picker).not.toBeNull();
+    fireEvent.change(picker!, { target: { files: [new File(['draft'], 'draft.txt', { type: 'text/plain' })] } });
+    expect(await screen.findByText('draft.txt')).toBeVisible();
+
+    view.rerender(<ProfileChatTab agentId={nextHost} threadId="t2" />);
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('');
+    expect(screen.queryByText('draft.txt')).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText('Message...'), { target: { value: 'Second unsent message' } });
+    view.unmount();
+    const returned = render(<ProfileChatTab agentId="host" threadId="t1" />);
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('First unsent message');
+    expect(screen.getByText('draft.txt')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'remove attachment' }));
+    expect(screen.queryByText('draft.txt')).toBeNull();
+    returned.rerender(<ProfileChatTab agentId={nextHost} threadId="t2" />);
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('Second unsent message');
+  });
+
+  it.each([200, 500])('keeps late upload completion (%s) with its unmounted owner', async (status) => {
+    seed([thread('t1', null), thread('t2', null)]);
+    const baseFetch = installNetwork({ details: {} });
+    let finishUpload: ((response: Response) => void) | undefined;
+    const network = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/chat/attachments/multipart') {
+        return new Promise<Response>(resolve => { finishUpload = resolve; });
+      }
+      return baseFetch(input, init);
+    });
+    vi.stubGlobal('fetch', network);
+    const first = render(<ProfileChatTab agentId="host" threadId="t1" />);
+    const picker = first.container.querySelector('input[type="file"]');
+    expect(picker).not.toBeNull();
+    fireEvent.change(picker!, { target: { files: [new File(['late'], 'late.txt', { type: 'text/plain' })] } });
+    expect(finishUpload).toBeTypeOf('function');
+    expect(screen.getByText('Uploading attachments...')).toBeVisible();
+    first.unmount();
+    const second = render(<ProfileChatTab agentId="peer" threadId="t2" />);
+    await act(async () => {
+      finishUpload!(json(status === 200
+        ? { attachment_id: SHA_A, url: '/attachment', sha256: SHA_A, mime: 'text/plain', size_bytes: 4 }
+        : { error: 'Upload rejected' }, status));
+    });
+    expect(screen.queryByText('late.txt')).toBeNull();
+    expect(screen.queryByText('Upload failed: Upload rejected')).toBeNull();
+    expect(screen.queryByText('Uploading attachments...')).toBeNull();
+    expect(useStore.getState().composerDrafts.get('thread:t1')?.pendingUploads).toBe(0);
+    second.rerender(<ProfileChatTab agentId="host" threadId="t1" />);
+    expect(await screen.findByText(status === 200 ? 'late.txt' : 'Upload failed: Upload rejected')).toBeVisible();
+    expect(network.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+  });
+
+  it('keeps the pre-thread agent draft separate and preserves insertion semantics', () => {
+    seed([thread('t1', null)]);
+    installNetwork({ details: {} });
+    const view = render(<ProfileChatTab agentId="host" />);
+    fireEvent.change(screen.getByPlaceholderText('Message...'), { target: { value: 'Before thread creation' } });
+    view.rerender(<ProfileChatTab agentId="host" threadId="t1" />);
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('');
+    act(() => useStore.getState().setChatDraft('host', 'Inserted text'));
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('Inserted text');
+    expect(useStore.getState().chatDrafts.host).toBeUndefined();
+    view.rerender(<ProfileChatTab agentId="host" />);
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('Before thread creation');
+  });
+
+  it('focuses the hydrated matching session and announces updated state without writes', async () => {
+    const detail = projection('p1', 't1', 'blocked_needs_captain');
+    seed([thread('t1', 'p1')]);
+    const network = installNetwork({ details: { p1: detail } });
+    const state = useStore.getState();
+    state.hydrateCrewSession('p1', detail);
+    state.openGroupChatThread('host', 't1');
+    state.setNotificationNavigation({
+      requestId: Symbol('notification'), generation: null,
+      destination: { hostId: 'host', threadId: 't1', parentId: 'p1', updated: true },
+    });
+    render(<ProfileChatTab agentId="host" threadId="t1" />);
+    expect(await screen.findByText('Room context updated since this notification. Showing current session state.')).toBeVisible();
+    expect(document.activeElement?.getAttribute('tabindex')).toBe('-1');
+    expect(document.activeElement?.textContent).toContain(detail.goal);
+    expect(useStore.getState().notificationNavigation).toBeNull();
+    expect(network.mock.calls.filter(([, init]) => ['POST', 'PATCH', 'DELETE'].includes(init?.method ?? 'GET'))).toEqual([]);
+  });
 });
 
 describe('AD-1132 ProfileChatTab CrewSession integration', () => {
@@ -372,6 +472,30 @@ describe('AD-1132 ProfileChatTab CrewSession integration', () => {
     expect(screen.queryByRole('button', { name: 'Retry blocked CrewSession work' })).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(fetchMock.mock.calls.filter(([, init]) => ['POST', 'PATCH', 'DELETE'].includes(String(init?.method ?? 'GET')))).toEqual([]);
+  });
+
+  it.each([
+    'crew_worker_unavailable', 'child_execution_interrupted', 'recovery_retry_exhausted',
+  ])('shows recovery for synthetic blocked context %s without executing it', async (reason) => {
+    const room = thread('t1', 'p1');
+    const blocked = projection('p1', 't1', 'blocked_needs_captain', reason);
+    seed([room]);
+    const fetchMock = installNetwork({ details: { p1: blocked } });
+    render(<ProfileChatTab agentId="host" threadId="t1" />);
+
+    const panel = await screen.findByTestId('crew-collaboration-panel');
+    await waitFor(() => expect(panel).toHaveAttribute('aria-busy', 'false'));
+    expect(panel).toHaveAttribute('data-state', 'blocked_needs_captain');
+    expect(screen.getByTestId('crew-session-blocker')).toHaveTextContent('Captain action required');
+    const recovery = screen.getByRole('button', { name: 'Retry blocked CrewSession work' });
+    expect(recovery).toBeVisible();
+    expect(recovery).toBeEnabled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(useStore.getState().crewSessionsByParent.get('p1')).toEqual(blocked);
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/crew-tasks/p1')).toBe(true);
+    expect(fetchMock.mock.calls.filter(([, init]) =>
+      ['POST', 'PATCH', 'PUT', 'DELETE'].includes(init?.method ?? 'GET'),
+    )).toEqual([]);
   });
 
   it('focuses the owned session band after a successful blocked retry removes its trigger', async () => {
