@@ -380,7 +380,7 @@ export interface NotificationView {
     intent?: string;
     params?: Record<string, unknown>;
     target_agent_id?: string;
-  };
+  } | null;
   created_at: number;
   acknowledged: boolean;
 }

@@ -142,6 +142,80 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('#1373 Bridge pointer controls', () => {
+  it('stacks the open panel above its actual invisible toggle and closes without mutation', async () => {
+    const user = userEvent.setup();
+    const originalState = useStore.getState();
+    try {
+      mountApprovalsRoute();
+      const toggle = await screen.findByRole('button', { name: /^BRIDGE/ });
+      await user.click(toggle);
+      expect(useStore.getState().bridgeOpen).toBe(true);
+      expect(getComputedStyle(toggle).opacity).toBe('0');
+      const header = screen.getByText('Bridge', { selector: 'span' });
+      const panel = header.parentElement!.parentElement!;
+      expect(getComputedStyle(panel).pointerEvents).toBe('auto');
+      expect(Number(getComputedStyle(panel).zIndex))
+        .toBeGreaterThan(Number(getComputedStyle(toggle).zIndex));
+      const close = within(panel).getByRole('button', { name: 'Close Bridge' });
+      expect(close).toHaveAttribute('type', 'button');
+      expect(close).toHaveAttribute('data-hxi-focus');
+      const beforeClose = useStore.getState();
+      await user.click(close);
+      expect(useStore.getState().bridgeOpen).toBe(false);
+      expect(getComputedStyle(panel).pointerEvents).toBe('none');
+      expect(useStore.getState().activeProfileThreadId).toBe(beforeClose.activeProfileThreadId);
+      expect(useStore.getState().notificationNavigation).toBe(beforeClose.notificationNavigation);
+      expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([, options]) => options?.method === 'POST',
+      )).toEqual([]);
+      await user.click(toggle);
+      expect(useStore.getState().bridgeOpen).toBe(true);
+    } finally {
+      cleanup();
+      useStore.setState(originalState, true);
+    }
+  });
+
+  it('names the actual close control and calls only onClose', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<BridgePanel open={true} onClose={onClose} />);
+    await user.click(screen.getByRole('button', { name: 'Close Bridge' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([, options]) => options?.method === 'POST',
+    )).toEqual([]);
+  });
+
+  it('posts only ack-all for unread notifications and hides the action when none are unread', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const originalState = useStore.getState();
+    try {
+      useStore.setState({ notifications: [{
+        id: 'layout-notification', agent_id: 'engineering-3', agent_type: 'builder', department: 'engineering',
+        notification_type: 'info', title: 'Layout notification', detail: '',
+        action_url: '', created_at: NOW_S, acknowledged: false,
+      }] });
+      const mounted = render(<BridgePanel open={true} onClose={onClose} />);
+      await user.click(screen.getByRole('button', { name: 'Mark all read' }));
+      expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([, options]) => options?.method === 'POST',
+      )).toEqual([['/api/notifications/ack-all', { method: 'POST' }]]);
+      expect(onClose).not.toHaveBeenCalled();
+      expect(useStore.getState().notifications?.[0].acknowledged).toBe(false);
+      mounted.unmount();
+      useStore.setState({ notifications: [] });
+      render(<BridgePanel open={true} onClose={onClose} />);
+      expect(screen.queryByRole('button', { name: 'Mark all read' })).toBeNull();
+    } finally {
+      cleanup();
+      useStore.setState(originalState, true);
+    }
+  });
+});
+
 describe('BF-724 the approvals route is operable from the keyboard', () => {
   it('tabs from BRIDGE to a pending approval, opens the centre and approves — no pointer at all', async () => {
     const user = userEvent.setup();

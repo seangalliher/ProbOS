@@ -51,6 +51,36 @@ _SHA_A = "a" * 64
 _CASE_IDS = itertools.count(1)
 
 
+@pytest.mark.parametrize("acknowledge_all", [False, True])
+def test_acknowledgement_emits_pruned_snapshot(acknowledge_all: bool) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    queue = NotificationQueue(on_event=lambda kind, data: events.append((kind, data)))
+    notifications = [
+        queue.notify("operations", "operations_officer", "operations", str(index))
+        for index in range(51)
+    ]
+    for index, notification in enumerate(notifications):
+        notification.created_at = float(index)
+    if acknowledge_all:
+        assert queue.acknowledge_all() == 51
+    else:
+        for notification in notifications:
+            assert queue.acknowledge(notification.id)
+    assert queue.count == 50
+    assert queue.unread_count() == 0
+    assert queue.get(notifications[0].id) is None
+    assert {item["id"] for item in queue.snapshot()} == {
+        notification.id for notification in notifications[1:]
+    }
+    assert events[-1][0] == (
+        EventType.NOTIFICATION_SNAPSHOT if acknowledge_all else EventType.NOTIFICATION_ACK
+    )
+    assert events[-1][1]["notifications"] == queue.snapshot()
+    assert events[-1][1]["unread_count"] == 0
+    assert queue.acknowledge_all() == 0
+    assert not queue.acknowledge("missing")
+
+
 class _ManualClock:
     def __init__(self, now: float = 100.0) -> None:
         self.now = now
@@ -360,7 +390,7 @@ class _OutcomeCase:
 
 
 @pytest.fixture
-async def harness(tmp_path: Path) -> Any:
+async def harness(tmp_path: Path, request: pytest.FixtureRequest) -> Any:
     work_path = str(tmp_path / "workforce.db")
     events = _RuntimeEnvelopeRecorder()
     connection_factory = _RecordingConnectionFactory()
@@ -378,7 +408,15 @@ async def harness(tmp_path: Path) -> Any:
             (event_type, copy.deepcopy(data)),
         ),
     )
-    threads = ChatThreadStore(tmp_path / "threads.db")
+    service_clock = _ManualClock()
+    if getattr(request, "param", None) == "notification-navigation":
+        thread_ids = itertools.count(1)
+        threads = ChatThreadStore(
+            tmp_path / "threads.db", clock=service_clock,
+            id_factory=lambda: f"notification-navigation-{next(thread_ids)}",
+        )
+    else:
+        threads = ChatThreadStore(tmp_path / "threads.db")
     admission = work.claim_crew_session_admission_port()
     registry = AgentRegistry()
     for agent_id in ("facilitator-metrics", "producer-metrics"):
@@ -395,7 +433,6 @@ async def harness(tmp_path: Path) -> Any:
         task.add_done_callback(scheduled_tasks.discard)
         return task
 
-    service_clock = _ManualClock()
     service = CrewSessionService(
         work_item_store=work,
         chat_thread_store=threads,
@@ -454,6 +491,7 @@ def _status_event(
 async def _new_session(
     value: _Harness,
     *,
+    case_id: str | None = None,
     origin: str = "captain",
     originator_id: str = "captain",
     facilitator_id: str | None = None,
@@ -462,7 +500,7 @@ async def _new_session(
     expected_deliverable: str = "A verified report",
     owner_ids: list[str] | None = None,
 ) -> tuple[CrewSessionService, CrewSessionContract, ChatThread]:
-    index = next(_CASE_IDS)
+    index = case_id if case_id is not None else next(_CASE_IDS)
     session_id = f"session-{index}"
     facilitator = facilitator_id or f"facilitator-{index}"
     created_by = "captain" if origin == "captain" else originator_id
@@ -502,6 +540,7 @@ async def _make_outcome(
     value: _Harness,
     outcome: str,
     *,
+    case_id: str | None = None,
     origin: str = "captain",
     originator_id: str = "captain",
     facilitator_id: str | None = None,
@@ -516,6 +555,7 @@ async def _make_outcome(
 ) -> _OutcomeCase:
     service, contract, thread = await _new_session(
         value,
+        case_id=case_id,
         origin=origin,
         originator_id=originator_id,
         facilitator_id=facilitator_id,
@@ -1472,6 +1512,204 @@ async def test_exact_delivery_reread_rejects_bool_alias_corruption(
 
     with pytest.raises(ValueError, match="crew_delivery_outbox_corrupt"):
         await _exact_delivery(harness.work, pending[0].record)
+
+
+@pytest.mark.parametrize("delivered", [False, True])
+async def test_get_crew_session_delivery_exact_read_survives_reopen(
+    harness: _Harness, delivered: bool,
+) -> None:
+    case = await _make_outcome(harness, "failed")
+    pending = await harness.work.list_pending_crew_session_deliveries(limit=2)
+    assert len(pending) == 1
+    record = pending[0].record
+    if delivered:
+        assert await harness.delivery.on_status_changed(case.event) == 1
+    before = await _exact_delivery(harness.work, record)
+    harness.connection.queries.clear()
+    assert await harness.work.get_crew_session_delivery(record.delivery_id) == before
+    assert len(harness.connection.queries) == 1
+    query, parameters = harness.connection.queries[0]
+    assert "WHERE delivery_id = ?" in query
+    assert parameters == (record.delivery_id,)
+    assert before.delivered is delivered
+    await harness.work.stop()
+    with pytest.raises(RuntimeError, match="crew_delivery_outbox_unavailable"):
+        await harness.work.get_crew_session_delivery(record.delivery_id)
+    await harness.work.start()
+    assert await harness.work.get_crew_session_delivery(record.delivery_id) == before
+
+
+class _DeliveryIdSubclass(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    "delivery_id", ["", "a" * 63, "A" * 64, "g" * 64, None, 1, _DeliveryIdSubclass(_SHA_A)],
+)
+async def test_get_crew_session_delivery_invalid_identity_rejected(
+    harness: _Harness, delivery_id: Any,
+) -> None:
+    with pytest.raises(ValueError, match="crew_delivery_outbox_identity_invalid"):
+        await harness.work.get_crew_session_delivery(delivery_id)
+
+
+async def test_get_crew_session_delivery_absent_returns_none(harness: _Harness) -> None:
+    assert await harness.work.get_crew_session_delivery(_SHA_A) is None
+
+
+@pytest.mark.parametrize(
+    "corruption", ["payload", "column", "revision", "outcome", "occurred_at"],
+)
+async def test_get_crew_session_delivery_corruption_rejected(
+    harness: _Harness, corruption: str,
+) -> None:
+    await _make_outcome(harness, "failed")
+    pending = await harness.work.list_pending_crew_session_deliveries(limit=2)
+    assert len(pending) == 1
+    record = pending[0].record
+    if corruption == "payload":
+        await harness.connection.execute(
+            "UPDATE crew_delivery_outbox SET payload_json = ? WHERE delivery_id = ?",
+            ("{}", record.delivery_id),
+        )
+    elif corruption == "column":
+        await harness.connection.execute(
+            "UPDATE crew_delivery_outbox SET session_id = ? WHERE delivery_id = ?",
+            ("other-parent", record.delivery_id),
+        )
+    elif corruption == "revision":
+        await harness.connection.execute(
+            "UPDATE crew_delivery_outbox SET session_revision = ? WHERE delivery_id = ?",
+            (record.session_revision + 1, record.delivery_id),
+        )
+    elif corruption == "outcome":
+        await harness.connection.execute(
+            "UPDATE crew_delivery_outbox SET outcome = ? WHERE delivery_id = ?",
+            ("done", record.delivery_id),
+        )
+    else:
+        await harness.connection.execute(
+            "UPDATE crew_delivery_outbox SET occurred_at = ? WHERE delivery_id = ?",
+            (record.occurred_at + 1.0, record.delivery_id),
+        )
+    await harness.connection.commit()
+    with pytest.raises(ValueError, match="crew_delivery_outbox_corrupt"):
+        await harness.work.get_crew_session_delivery(record.delivery_id)
+
+
+@pytest.mark.parametrize("harness", ["notification-navigation"], indirect=True)
+async def test_notification_context_real_failure_delivery_route_is_read_only(
+    harness: _Harness,
+) -> None:
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from probos.routers import system, threads
+    from probos.routers.deps import get_runtime
+
+    case = await _make_outcome(
+        harness, "failed", case_id="notification-navigation",
+        facilitator_id="facilitator-metrics",
+        owner_ids=["facilitator-metrics", "producer-metrics"],
+        summary="The navigation report could not be verified.",
+    )
+    assert await harness.delivery.on_status_changed(case.event) == 1
+    assert len(harness.notification_events) == 1
+    assert harness.notification_events[0][0] == EventType.NOTIFICATION
+    notification = harness.queue.snapshot()[0]
+    assert notification["notification_type"] == "error"
+    delivery_id = notification["id"]
+    entry = await harness.work.get_crew_session_delivery(delivery_id)
+    parent = await harness.work.get_work_item(case.contract.task_id)
+    messages = harness.threads.list_messages(case.thread.id)
+    events = copy.deepcopy(harness.notification_events)
+    app = FastAPI()
+    app.include_router(system.router)
+    app.include_router(threads.router)
+    runtime = SimpleNamespace(
+        config=SystemConfig(), work_item_store=harness.work,
+        crew_session_service=harness.service, chat_thread_store=harness.threads,
+    )
+    app.dependency_overrides[get_runtime] = lambda: runtime
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+    ) as client:
+        response = await client.get(f"/api/notifications/{delivery_id}/context")
+        rooms_response = await client.get("/api/threads")
+        summaries_response = await client.get("/api/threads/summaries")
+        messages_response = await client.get(f"/api/threads/{case.thread.id}/messages")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert set(body) == {"kind", "notification_id", "delivery_revision", "thread", "session"}
+    assert body["notification_id"] == delivery_id
+    assert body["thread"] == harness.threads.get_thread(case.thread.id).to_dict()
+    assert body["session"]["task_id"] == case.contract.task_id
+    assert body["session"]["state"] == "failed"
+    assert body["session"]["revision"] == body["delivery_revision"]
+    assert await harness.work.get_crew_session_delivery(delivery_id) == entry
+    assert await harness.work.get_work_item(case.contract.task_id) == parent
+    assert harness.threads.list_messages(case.thread.id) == messages
+    assert harness.notification_events == events
+    assert harness.queue.snapshot() == [notification]
+    assert rooms_response.status_code == 200
+    assert summaries_response.status_code == 200
+    assert messages_response.status_code == 200
+    rooms = rooms_response.json()
+    summaries = summaries_response.json()
+    assert rooms == {"threads": [body["thread"]]}
+    assert summaries["summaries"][case.thread.id]["session"]["state"] == "failed"
+    assert summaries["summaries"][case.thread.id]["session"]["task_id"] == case.contract.task_id
+    assert messages_response.json()["messages"] == [message.to_dict() for message in messages]
+    produced = {
+        "event": {"type": events[0][0], "data": events[0][1]},
+        "context": body,
+        "rooms": rooms,
+        "summaries": summaries,
+        "messages": messages_response.json(),
+    }
+    assert entry is not None
+    assert harness.queue.acknowledge(delivery_id)
+    assert harness.queue.notify_once(entry.record).acknowledged
+    assert await harness.delivery.on_status_changed(case.event) == 0
+    for index in range(51):
+        retained = harness.queue.notify(
+            "operations", "operations_officer", "operations", f"History {index}",
+        )
+        retained.created_at = 200.0 + index
+    assert harness.queue.acknowledge_all() == 51
+    assert harness.queue.count == 50
+    assert harness.queue.get(delivery_id) is None
+    retained_events = copy.deepcopy(harness.notification_events)
+    retained_snapshot = harness.queue.snapshot()
+    assert retained_events[-1][1]["notifications"] == retained_snapshot
+    await harness.work.stop()
+    await harness.work.start()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+    ) as client:
+        reopened = await client.get(f"/api/notifications/{delivery_id}/context")
+        retained_rooms = await client.get("/api/threads")
+        retained_summaries = await client.get("/api/threads/summaries")
+    assert reopened.status_code == 200
+    assert reopened.json() == body
+    assert retained_rooms.json() == rooms
+    assert retained_summaries.json() == summaries
+    assert harness.queue.get(delivery_id) is None
+    assert harness.queue.snapshot() == retained_snapshot
+    assert harness.notification_events == retained_events
+    assert await harness.work.get_work_item(case.contract.task_id) == parent
+    assert await harness.work.get_crew_session_delivery(delivery_id) == entry
+    assert harness.threads.list_messages(case.thread.id) == messages
+    fixture_path = (
+        Path(__file__).resolve().parents[1]
+        / "ui/e2e/fixtures/notification-navigation.json"
+    )
+    assert fixture_path.is_file(), (
+        "Worker must bank the deterministic producer fixture, then rerun this test:\n"
+        + json.dumps(produced, indent=2, sort_keys=True, allow_nan=False)
+    )
+    assert json.loads(fixture_path.read_text(encoding="utf-8")) == produced
 
 
 async def test_sensitive_contract_content_never_reaches_delivery_surfaces(

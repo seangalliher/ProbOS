@@ -1,0 +1,119 @@
+{
+  "context": {
+    "delivery_revision": 2,
+    "kind": "crew_session",
+    "notification_id": "14874e3e7b2cd7655d7641211d634988ea5c27aca7fcfbe2209770aadc74e634",
+    "session": {
+      "blocker": null,
+      "duplicate_resume_count": 0,
+      "expected_deliverable": "A verified report",
+      "facilitator_id": "facilitator-metrics",
+      "goal": "Deliver the requested result",
+      "last_result_summary": "The navigation report could not be verified.",
+      "origin": "captain",
+      "originator_id": "captain",
+      "owner_ids": ["facilitator-metrics", "producer-metrics"],
+      "progress": {"active": 0, "active_child": null, "done": 0, "failed": 0, "total": 0},
+      "result": null,
+      "revision": 2,
+      "state": "failed",
+      "success_criteria": ["The result is verified"],
+      "task_id": "session-notification-navigation",
+      "thread_id": "notification-navigation-1",
+      "timestamps": {
+        "completed_at": 120.0,
+        "created_at": 100.0,
+        "first_result_at": 120.0,
+        "started_at": null,
+        "transitioned_at": 120.0,
+        "verified_at": null
+      },
+      "verification": null
+    },
+    "thread": {
+      "archived": false,
+      "created_at": 100.0,
+      "id": "notification-navigation-1",
+      "last_active_at": 100.0,
+      "metadata": {},
+      "model": null,
+      "participants": ["facilitator-metrics", "producer-metrics"],
+      "personality_override": null,
+      "pinned": false,
+      "preprompt": null,
+      "project_id": null,
+      "task_id": "session-notification-navigation",
+      "title": "Crew room notification-navigation",
+      "workspace_root": null
+    }
+  },
+  "event": {
+    "data": {
+      "notification": {
+        "acknowledged": false,
+        "action_url": "thread:notification-navigation-1",
+        "agent_id": "facilitator-metrics",
+        "agent_type": "crew_session",
+        "created_at": 120.0,
+        "department": "operations",
+        "detail": "Open the existing crew room for details.",
+        "id": "14874e3e7b2cd7655d7641211d634988ea5c27aca7fcfbe2209770aadc74e634",
+        "notification_type": "error",
+        "suggested_action": null,
+        "title": "Crew session failed"
+      },
+      "notifications": [{
+        "acknowledged": false,
+        "action_url": "thread:notification-navigation-1",
+        "agent_id": "facilitator-metrics",
+        "agent_type": "crew_session",
+        "created_at": 120.0,
+        "department": "operations",
+        "detail": "Open the existing crew room for details.",
+        "id": "14874e3e7b2cd7655d7641211d634988ea5c27aca7fcfbe2209770aadc74e634",
+        "notification_type": "error",
+        "suggested_action": null,
+        "title": "Crew session failed"
+      }],
+      "unread_count": 1
+    },
+    "type": "notification"
+  },
+  "messages": {"messages": [], "thread_id": "notification-navigation-1"},
+  "rooms": {"threads": [{
+    "archived": false,
+    "created_at": 100.0,
+    "id": "notification-navigation-1",
+    "last_active_at": 100.0,
+    "metadata": {},
+    "model": null,
+    "participants": ["facilitator-metrics", "producer-metrics"],
+    "personality_override": null,
+    "pinned": false,
+    "preprompt": null,
+    "project_id": null,
+    "task_id": "session-notification-navigation",
+    "title": "Crew room notification-navigation",
+    "workspace_root": null
+  }]},
+  "summaries": {"summaries": {"notification-navigation-1": {
+    "outputs": 0,
+    "session": {
+      "blocker": null,
+      "facilitator_id": "facilitator-metrics",
+      "goal": "Deliver the requested result",
+      "last_result_summary": "The navigation report could not be verified.",
+      "needs_attention": false,
+      "owner_ids": ["facilitator-metrics", "producer-metrics"],
+      "progress": {"active": 0, "done": 0, "failed": 0, "total": 0},
+      "result_artifact_id": null,
+      "state": "failed",
+      "task_id": "session-notification-navigation",
+      "thread_id": "notification-navigation-1",
+      "verified_at": null
+    },
+    "steps_done": 0,
+    "steps_total": 0,
+    "topic": "Deliver the requested result"
+  }}}
+}

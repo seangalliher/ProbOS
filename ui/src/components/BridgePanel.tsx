@@ -366,7 +366,7 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
       backdropFilter: 'blur(16px)',
       WebkitBackdropFilter: 'blur(16px)',
       borderLeft: '1px solid rgba(240, 176, 96, 0.15)',
-      zIndex: 20,
+      zIndex: 26,
       transform: open ? 'translateX(0)' : 'translateX(100%)',
       transition: 'transform 0.25s ease-out',
       display: 'flex',
@@ -406,6 +406,9 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
             </button>
           )}
           <button
+            type="button"
+            aria-label="Close Bridge"
+            data-hxi-focus=""
             onClick={onClose}
             style={{
               background: 'none', border: 'none', color: '#888',

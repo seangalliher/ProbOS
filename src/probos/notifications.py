@@ -144,8 +144,8 @@ class NotificationQueue:
         if not n:
             return False
         n.acknowledged = True
-        self._emit(EventType.NOTIFICATION_ACK, n)
         self._prune_acknowledged()
+        self._emit(EventType.NOTIFICATION_ACK, n)
         return True
 
     def acknowledge_all(self) -> int:
@@ -154,9 +154,9 @@ class NotificationQueue:
             if not n.acknowledged:
                 n.acknowledged = True
                 count += 1
+        self._prune_acknowledged()
         if count > 0:
             self._emit_snapshot()
-        self._prune_acknowledged()
         return count
 
     @property

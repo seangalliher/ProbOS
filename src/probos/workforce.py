@@ -4364,6 +4364,28 @@ class WorkItemStore(EventEmitterMixin):
                 return False
         return True
 
+    async def get_crew_session_delivery(
+        self,
+        delivery_id: str,
+    ) -> CrewSessionDeliveryOutboxEntry | None:
+        """Read one validated delivery, including already delivered records."""
+        if (
+            type(delivery_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", delivery_id) is None
+        ):
+            raise ValueError("crew_delivery_outbox_identity_invalid")
+        async with self._work_item_row_write_lock:
+            if self._db is None:
+                raise RuntimeError("crew_delivery_outbox_unavailable")
+            cursor = await self._db.execute(
+                "SELECT delivery_id, session_id, session_revision, outcome, "
+                "occurred_at, payload_json, delivered, created_at, delivered_at "
+                "FROM crew_delivery_outbox WHERE delivery_id = ?",
+                (delivery_id,),
+            )
+            row = await cursor.fetchone()
+        return None if row is None else _crew_delivery_entry_from_row(row)
+
     async def list_pending_crew_session_deliveries(
         self,
         *,

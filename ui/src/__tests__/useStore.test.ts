@@ -1,6 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { act, cleanup, renderHook } from '@testing-library/react';
 import { useStore, computeLayout } from '../store/useStore';
-import type { Agent, WSEvent } from '../store/types';
+import type { Agent, NotificationView, WSEvent } from '../store/types';
+import notificationFixture from '../../e2e/fixtures/notification-navigation.json';
+
+afterEach(cleanup);
 
 const GENERATION = 'a'.repeat(32);
 let nextLiveSequence = 0;
@@ -55,12 +59,135 @@ beforeEach(() => {
     liveCrewOwnerParentId: null,
     liveRailOwner: null,
     notifications: null,
+    notificationNavigation: null,
+    composerDrafts: new Map(),
+    chatDrafts: {},
   });
   // Clear localStorage
   localStorage.clear();
 });
 
 describe('useStore', () => {
+  describe('mounted notification stream retention', () => {
+    it('replaces acknowledged history without resurrecting it from duplicate or retired frames', () => {
+      const notification = notificationFixture.event.data.notification as NotificationView;
+      const { result } = renderHook(() => useStore(state => state.notifications));
+      act(() => {
+        installSnapshot();
+        useStore.getState().handleEvent(frame(notificationFixture.event.type, notificationFixture.event.data));
+      });
+      expect(result.current).toEqual([notification]);
+      expect(result.current?.filter(item => !item.acknowledged)).toHaveLength(1);
+
+      const duplicate = frame(notificationFixture.event.type, notificationFixture.event.data);
+      act(() => {
+        useStore.getState().handleEvent(duplicate);
+        useStore.getState().handleEvent(duplicate);
+      });
+      expect(result.current).toEqual([notification]);
+
+      const acknowledged = { ...notification, acknowledged: true };
+      act(() => useStore.getState().handleEvent(frame('notification_ack', {
+        notifications: [acknowledged], unread_count: 0,
+      })));
+      expect(result.current).toEqual([acknowledged]);
+      act(() => useStore.getState().handleEvent(duplicate));
+      expect(result.current).toEqual([acknowledged]);
+
+      const syntheticHistory = Array.from({ length: 51 }, (_, index) => ({
+        ...acknowledged, id: `synthetic-history-${index}`, title: `History ${index}`,
+      }));
+      act(() => useStore.getState().handleEvent(frame('notification_snapshot', {
+        notifications: [acknowledged, ...syntheticHistory], unread_count: 0,
+      })));
+      expect(result.current).toHaveLength(52);
+      const retained = syntheticHistory.slice(-50);
+      act(() => useStore.getState().handleEvent(frame('notification_ack', {
+        notifications: retained, unread_count: 0,
+      })));
+      expect(result.current).toEqual(retained);
+      expect(result.current?.some(item => item.id === notification.id)).toBe(false);
+
+      const retiredFrame = frame(notificationFixture.event.type, notificationFixture.event.data);
+      act(() => useStore.getState().handleEvent({
+        type: 'state_snapshot',
+        data: {
+          agents: [], connections: [], pools: [], system_mode: 'active',
+          tc_n: 0, routing_entropy: 0, notifications: retained,
+        },
+        timestamp: 200,
+        stream: { generation: 'b'.repeat(32), sequence: 0 },
+      }));
+      expect(useStore.getState().liveGeneration).toBe('b'.repeat(32));
+      expect(result.current).toEqual(retained);
+      act(() => useStore.getState().handleEvent(retiredFrame));
+      expect(result.current).toEqual(retained);
+      act(() => useStore.getState().handleEvent({
+        type: 'notification_snapshot', data: { notifications: [], unread_count: 0 },
+        timestamp: 201, stream: { generation: 'b'.repeat(32), sequence: 1 },
+      }));
+      expect(result.current).toBeNull();
+    });
+
+    it('hydrates initial unread notifications through the mounted snapshot selector', () => {
+      const { result } = renderHook(() => useStore(state => state.notifications));
+      act(() => useStore.getState().handleEvent(frame('state_snapshot', {
+        agents: [], connections: [], pools: [], system_mode: 'active',
+        tc_n: 0, routing_entropy: 0,
+        notifications: notificationFixture.event.data.notifications,
+      })));
+      expect(result.current).toEqual(notificationFixture.event.data.notifications);
+      expect(result.current?.filter(item => !item.acknowledged)).toHaveLength(1);
+    });
+  });
+
+  describe('notification navigation and composer ownership', () => {
+    it('keeps agent fallback and room drafts separate without persistence', () => {
+      const state = useStore.getState();
+      const beforeStorage = { ...localStorage };
+      state.updateComposerDraft('agent:host', draft => ({ ...draft, text: 'Before a room exists' }));
+      state.updateComposerDraft('thread:one', draft => ({ ...draft, text: 'First room' }));
+      state.updateComposerDraft('thread:two', draft => ({ ...draft, text: 'Second room' }));
+      state.openGroupChatThread('host', 'two');
+      expect(useStore.getState().composerDrafts.get('thread:one')?.text).toBe('First room');
+      expect(useStore.getState().composerDrafts.get('thread:two')?.text).toBe('Second room');
+      expect(useStore.getState().composerDrafts.get('agent:host')?.text).toBe('Before a room exists');
+      expect({ ...localStorage }).toEqual(beforeStorage);
+    });
+
+    it('keeps empty drafts and ignores an empty owner', () => {
+      const state = useStore.getState();
+      state.updateComposerDraft('', draft => ({ ...draft, text: 'Invalid owner' }));
+      expect(useStore.getState().composerDrafts.size).toBe(0);
+      state.updateComposerDraft('thread:one', draft => draft);
+      expect(useStore.getState().composerDrafts.get('thread:one')).toEqual({
+        text: '', attachments: [], pendingUploads: 0, error: null,
+      });
+    });
+
+    it('consumes the insertion inbox independently of saved room state', () => {
+      const state = useStore.getState();
+      state.updateComposerDraft('thread:one', draft => ({ ...draft, text: 'Saved room text' }));
+      state.setChatDraft('host', 'Insert this');
+      expect(state.consumeChatDraft('host')).toBe('Insert this');
+      expect(state.consumeChatDraft('host')).toBe('');
+      expect(useStore.getState().composerDrafts.get('thread:one')?.text).toBe('Saved room text');
+    });
+
+    it.each(['open', 'group', 'close', 'minimize'] as const)('invalidates a notification marker on %s', (navigation) => {
+      const state = useStore.getState();
+      state.openAgentProfile('host');
+      const marker = { requestId: Symbol('test'), generation: null, destination: null };
+      state.setNotificationNavigation(marker);
+      expect(useStore.getState().notificationNavigation).toBe(marker);
+      if (navigation === 'open') state.openAgentProfile('host');
+      if (navigation === 'group') state.openGroupChatThread('host', 'room');
+      if (navigation === 'close') state.closeAgentProfile();
+      if (navigation === 'minimize') state.minimizeAgentProfile();
+      expect(useStore.getState().notificationNavigation).toBeNull();
+    });
+  });
+
   describe('addChatMessage', () => {
     it('adds a user message to chat history', () => {
       useStore.getState().addChatMessage('user', 'Hello');

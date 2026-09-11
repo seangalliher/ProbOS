@@ -242,14 +242,35 @@ const PTT_TTS_WATCHDOG_MS = 45000;
 // counter is enough because the key never leaves the document.
 let _speechOwnerSeq = 0;
 
+const EMPTY_COMPOSER_ATTACHMENTS: ChatAttachment[] = [];
+
 export function ProfileChatTab({ agentId, threadId }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
+  const activeThreadId = useStore((state) =>
+    resolveProfileThreadId(threadId, state.activeProfileThreadId, state.threadIdByAgent, agentId),
+  );
+  const composerOwner = activeThreadId ? `thread:${activeThreadId}` : `agent:${agentId}`;
+  const composerDraft = useStore(state => state.composerDrafts.get(composerOwner));
+  const input = composerDraft?.text ?? '';
+  const pendingAttachments = composerDraft?.attachments ?? EMPTY_COMPOSER_ATTACHMENTS;
+  const attachError = composerDraft?.error ?? null;
+  const pendingUploads = composerDraft?.pendingUploads ?? 0;
+  const setInput = useCallback((text: string): void => {
+    useStore.getState().updateComposerDraft(composerOwner, draft => ({ ...draft, text }));
+  }, [composerOwner]);
+  const setPendingAttachments = useCallback((update: React.SetStateAction<ChatAttachment[]>): void => {
+    useStore.getState().updateComposerDraft(composerOwner, draft => ({
+      ...draft, attachments: typeof update === 'function' ? update(draft.attachments) : update,
+    }));
+  }, [composerOwner]);
+  const setAttachError = useCallback((error: string | null): void => {
+    useStore.getState().updateComposerDraft(composerOwner, draft => ({ ...draft, error }));
+  }, [composerOwner]);
   const speechOwnerRef = useRef<string | null>(null);
   if (speechOwnerRef.current === null) {
     speechOwnerRef.current = `profile-chat-${++_speechOwnerSeq}`;
   }
   const speechOwner = speechOwnerRef.current;
-  const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [listening, setListening] = useState(false);
   // BF-294b — real-time amplitude meter for MicIndicator (0..1, smoothed
@@ -333,8 +354,6 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       setProcessing(false);
     };
   }, []);
-  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
-  const [attachError, setAttachError] = useState<string | null>(null);
   const [screenMode, setScreenMode] = useState<ScreenMode>(() => loadScreenMode(agentId));
   const [screenMenuOpen, setScreenMenuOpen] = useState(false);
   const [screenShareInFlight, setScreenShareInFlight] = useState(false);
@@ -620,9 +639,6 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // per-agent default in threadIdByAgent).
   // AD-937: 3-way precedence — prop > group override > per-agent 1:1 — so a
   // group opened via the override is addressed without touching threadIdByAgent.
-  const activeThreadId = useStore((s) =>
-    resolveProfileThreadId(threadId, s.activeProfileThreadId, s.threadIdByAgent, agentId),
-  );
   const liveThreadRefresh = useStore((s) => s.liveThreadRefresh);
   const liveRepairEpoch = useStore((s) => s.liveRepairEpoch);
   const transcriptRequestRef = useRef(0);
@@ -850,6 +866,42 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     ? boundCrewSession.parentId
     : null;
   const crewPanelParentId = workspaceThread?.task_id ?? boundCrewParentId;
+  const notificationNavigation = useStore(state => state.notificationNavigation);
+  const notificationGeneration = useStore(state => state.liveGeneration);
+  const [notificationAnnouncement, setNotificationAnnouncement] = useState<{
+    threadId: string; generation: string | null; text: string;
+  } | null>(null);
+  useEffect(() => {
+    const request = notificationNavigation;
+    const destination = request?.destination;
+    if (!request || !destination || destination.threadId !== activeThreadId
+      || destination.parentId !== crewPanelParentId || destination.hostId !== agentId
+      || request.generation !== notificationGeneration) return;
+    let cancelled = false;
+    const focus = (): void => {
+      const current = useStore.getState();
+      if (cancelled || current.notificationNavigation !== request
+        || current.liveGeneration !== request.generation
+        || current.activeProfileThreadId !== destination.threadId
+        || current.activeProfileAgent !== destination.hostId) return;
+      const band = crewSessionBandRef.current;
+      if (!band?.isConnected) return;
+      band.focus();
+      setNotificationAnnouncement({
+        threadId: destination.threadId, generation: request.generation,
+        text: destination.updated
+          ? 'Room context updated since this notification. Showing current session state.'
+          : 'Notification room context opened. Showing current session state.',
+      });
+      current.setNotificationNavigation(null);
+    };
+    const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(focus) : null;
+    if (frame === null) queueMicrotask(focus);
+    return () => {
+      cancelled = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [notificationNavigation, notificationGeneration, activeThreadId, crewPanelParentId, agentId]);
   const visibleCrewRetryCommand = crewRetryCommand?.threadId === activeThreadId
     ? crewRetryCommand
     : null;
@@ -1330,7 +1382,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         try { el.setSelectionRange(text.length, text.length); } catch { /* ignore */ }
       }
     });
-  }, [agentId, pendingDraft, consumeChatDraft]);
+  }, [agentId, pendingDraft, consumeChatDraft, setInput]);
 
   // AD-718: Fetch per-agent voice profile (Tier-2 log-and-degrade on failure).
   // Refetches when ProfileInfoTab dispatches `voice-profile-updated` for this agent.
@@ -1696,7 +1748,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     } finally {
       setSending(false);
     }
-  }, [agentId, threadId, sending, seedMemories, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId, isOutputAudioEnabledNow, isCallLiveNow, speechOwner]);
+  }, [agentId, threadId, sending, seedMemories, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId, isOutputAudioEnabledNow, isCallLiveNow, speechOwner, setInput, setPendingAttachments]);
 
   // AD-985: keep the send ref current so the meeting open-mic's
   // ``submitTranscript`` routes through the live group-fan-out path.
@@ -1908,10 +1960,14 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   };
 
   async function uploadAttachment(file: File): Promise<void> {
+    const uploadOwner = composerOwner;
     if (file.size > MAX_ATTACHMENT_BYTES) {
       setAttachError(`Too large: ${file.name} (${file.size} bytes)`);
       return;
     }
+    useStore.getState().updateComposerDraft(uploadOwner, draft => ({
+      ...draft, pendingUploads: draft.pendingUploads + 1,
+    }));
     try {
       const fd = new FormData();
       fd.append('file', file, file.name);
@@ -1927,6 +1983,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       setAttachError(null);
     } catch (err) {
       setAttachError(`Upload error: ${(err as Error).message}`);
+    } finally {
+      useStore.getState().updateComposerDraft(uploadOwner, draft => ({
+        ...draft, pendingUploads: Math.max(0, draft.pendingUploads - 1),
+      }));
     }
   }
 
@@ -1999,6 +2059,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       {/* AD-917: in-chat group controls (rename / participants / add). Renders
           nothing until a thread exists. Mounted above the message list. */}
       {activeThreadId && <GroupChatHeader threadId={activeThreadId} />}
+      {notificationAnnouncement && notificationAnnouncement.threadId === activeThreadId
+        && notificationAnnouncement.generation === notificationGeneration && (
+        <div role="status" style={{ padding: '6px 12px', color: '#bbb', fontSize: 11, overflowWrap: 'anywhere' }}>
+          {notificationAnnouncement.text}
+        </div>
+      )}
       {/* AD-932: discoverable "+ Add people" on a fresh/empty 1:1 (no thread
           yet). Mutually exclusive with GroupChatHeader; materializes the thread
           so the header (+ its picker) takes over on the next render. */}
@@ -2099,6 +2165,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       )}
 
       {/* Attachment chips */}
+      {pendingUploads > 0 && (
+        <div role="status" style={{ padding: '6px 12px', color: '#bbb', fontSize: 11 }}>Uploading attachments...</div>
+      )}
       {(pendingAttachments.length > 0 || attachError) && (
         <div style={{
           padding: '4px 12px',

@@ -39,6 +39,80 @@ export interface ListThreadsOptions {
   limit?: number;
 }
 
+export interface NotificationContext {
+  kind: 'crew_session';
+  notification_id: string;
+  delivery_revision: number;
+  thread: AD791aChatThreadView;
+  session: CrewSessionDetailProjection;
+}
+
+export type NotificationContextOutcome =
+  | { kind: 'success'; context: NotificationContext }
+  | { kind: 'error'; status: number | null };
+
+function isContextIdentifier(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256
+    && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function isNotificationContext(value: unknown, notificationId: string): value is NotificationContext {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    'kind', 'notification_id', 'delivery_revision', 'thread', 'session',
+  ]) || value.kind !== 'crew_session' || value.notification_id !== notificationId
+    || !Number.isSafeInteger(value.delivery_revision) || (value.delivery_revision as number) < 0
+    || !isCrewSessionDetailProjection(value.session)) return false;
+  const { thread, session } = value;
+  if (!isRecord(thread) || !hasExactKeys(thread, [
+    'id', 'title', 'participants', 'project_id', 'task_id', 'pinned', 'archived',
+    'personality_override', 'workspace_root', 'created_at', 'last_active_at',
+    'preprompt', 'model', 'metadata',
+  ])) return false;
+  return isContextIdentifier(thread.id)
+    && isContextIdentifier(thread.task_id)
+    && typeof thread.title === 'string'
+    && isStringArray(thread.participants)
+    && thread.participants.every(isContextIdentifier)
+    && new Set(thread.participants).size === thread.participants.length
+    && isNullableString(thread.project_id)
+    && typeof thread.pinned === 'boolean' && thread.archived === false
+    && isNullableString(thread.personality_override)
+    && isNullableString(thread.workspace_root)
+    && isNullableString(thread.preprompt) && isNullableString(thread.model)
+    && isRecord(thread.metadata)
+    && isFiniteNumber(thread.created_at) && isFiniteNumber(thread.last_active_at)
+    && thread.id === session.thread_id && thread.task_id === session.task_id
+    && isContextIdentifier(session.originator_id)
+    && isContextIdentifier(session.facilitator_id)
+    && session.owner_ids.every(isContextIdentifier)
+    && Number.isSafeInteger(session.revision)
+    && session.revision >= (value.delivery_revision as number)
+    && (session.revision > (value.delivery_revision as number)
+      || session.state === 'done' || session.state === 'failed' || session.state === 'blocked_needs_captain');
+}
+
+export async function fetchNotificationContext(
+  notificationId: string, signal?: AbortSignal,
+): Promise<NotificationContextOutcome> {
+  if (typeof notificationId !== 'string' || !/^[0-9a-f]{64}$/.test(notificationId)) {
+    return { kind: 'error', status: 422 };
+  }
+  try {
+    const token = new URLSearchParams(window.location.search).get('token');
+    const response = await fetch(`/api/notifications/${encodeURIComponent(notificationId)}/context`, {
+      method: 'GET', mode: 'same-origin', redirect: 'error', cache: 'no-store',
+      headers: token ? { Authorization: `Bearer ${token}` } : {}, signal,
+    });
+    if (!response.ok || response.redirected) return { kind: 'error', status: response.status };
+    const context: unknown = await response.json();
+    return isNotificationContext(context, notificationId)
+      ? { kind: 'success', context }
+      : { kind: 'error', status: response.status };
+  } catch {
+    return { kind: 'error', status: null };
+  }
+}
+
 export async function listThreads(opts: ListThreadsOptions = {}): Promise<AD791aChatThreadView[]> {
   const includeArchived = opts.includeArchived ?? false;
   const limit = opts.limit ?? 100;
