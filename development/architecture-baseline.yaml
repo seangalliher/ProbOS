@@ -1,0 +1,1180 @@
+# AD-1270b architecture fitness baseline. Reviewed rows only.
+# Regenerate the row set with:
+#   python scripts/check_architecture_principles.py --update-baseline
+# then review every added row: a blank owner/rationale/review_by fails
+# --check on purpose. Magnitudes are deliberately absent -- storing a
+# line count here would rewrite this file on every edit.
+schema_version: 1
+baseline_id: ad-1270b-architecture-fitness-v1
+owner: AD-1270b
+tracking_issue: 1324
+source_commit: a9bc216b5fde8128d6bcf1365a7e836db54f203f
+layers:
+  substrate: 0
+  mesh: 1
+  consensus: 2
+  cognitive: 3
+  experience: 4
+gating_categories:
+- srp-size
+- layer-import
+- db-connect
+- unowned-task
+report_only_categories:
+  private-access:
+    reason: 1,129 broad candidates, 502 of them dunder attributes and the top receivers builtin calls; the program requires classification before gating.
+    promotion: the narrowed predicate (no dunders, no builtin receivers, 584 today) is classified and its reviewed rows frozen
+    owner: AD-1270b
+  source-text-tests:
+    reason: 223 sites across 120 test files are unclassified; freezing them under a schema whose rows mean 'reviewed' would be false.
+    promotion: 'every row carries classification: invariant|replace-with-behavioral, then the delta gates'
+    owner: AD-1270b
+violations:
+- category: db-connect
+  key: probos.__main__::_cmd_reset
+  callee: sqlite3.connect
+  count: 2
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.artifacts::ArtifactStore._connect
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.cognitive.activation_tracker::ActivationTracker.start
+  callee: aiosqlite.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.cognitive.circuit_breaker_history_store::CircuitBreakerHistoryStore._ensure_open
+  callee: aiosqlite.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.cognitive.clinical_audit_store::ClinicalAuditStore._ensure_open
+  callee: aiosqlite.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.cognitive.episodic::EpisodicMemory.start
+  callee: aiosqlite.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.cognitive.participant_index::ParticipantIndex.start
+  callee: aiosqlite.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.cognitive.schema_versions::SchemaVersionStore.start
+  callee: aiosqlite.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.crew_profile::ProfileStore._init_db
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.directive_store::DirectiveStore.__init__
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.infrastructure.backup::BackupService._backup_one
+  callee: sqlite3.connect
+  count: 2
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.infrastructure.backup::BackupService._integrity_check
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.knowledge.rejection_cache::SQLiteRejectionCache.start
+  callee: aiosqlite.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.knowledge.semantic_store::_SQLiteBackend.__init__
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.maintenance.rebuild_episodic::_open_wardroom_readonly
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.perception.wm_store::WorkingMemoryStore.__init__
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.perception.wm_store::WorkingMemoryStore.append
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.perception.wm_store::WorkingMemoryStore.clear_for_agent
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.perception.wm_store::WorkingMemoryStore.load_for_agent
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.security.audit_log::AuditLog._ensure_schema._create
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.security.audit_log::AuditLog._insert_entry._insert
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.security.audit_log::AuditLog._prune_expired._prune
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.security.audit_log::AuditLog.mark_deleted._mark
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.security.audit_log::AuditLog.query._query
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.security.pairing.store::PairingRegistry._connect
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.service_profile::ServiceProfileStore.__init__
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.storage.sqlite_factory::SQLiteConnectionFactory.connect
+  callee: aiosqlite.connect
+  count: 1
+  disposition: approved
+  owner: AD-1256
+  rationale: The ConnectionFactory implementation itself; this is the adapter every other store is meant to route through.
+  review_by: n/a - approved connection adapter
+- category: db-connect
+  key: probos.task_sessions::TaskSessionStore._connect
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.threads::ChatThreadStore._connect
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: db-connect
+  key: probos.threads::ProjectStore._connect
+  callee: sqlite3.connect
+  count: 1
+  disposition: debt
+  owner: AD-1256
+  rationale: Direct connection outside the approved ConnectionFactory adapter; AD-1256 owns the store registry that replaces it.
+  review_by: AD-1256 store registry completion
+- category: srp-size
+  key: probos.agent_onboarding::AgentOnboardingService
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.agents.code_runner::CodeRunnerAgent
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.agents.http_fetch::HttpFetchAgent
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.agents.introspect::IntrospectionAgent
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.agents.red_team::RedTeamAgent
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.attachments.filesystem_store::FilesystemAttachmentStore
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.boot_camp::BootCampCoordinator
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.bridge_alerts::BridgeAlertService
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.agent_working_memory::AgentWorkingMemory
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.agentic_dispatch::WorkItemAgenticExecutor
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.architect::ArchitectAgent
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.attention_faculty::AttentionFaculty
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.behavioral_metrics::BehavioralMetricsEngine
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.builder::SoftwareEngineerAgent
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.circuit_breaker::CognitiveCircuitBreaker
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.codebase_index::CodebaseIndex
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.cognitive_agent::CognitiveAgent
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270d
+  rationale: Material god object; AD-1270d owns decomposition into a turn facade.
+  review_by: AD-1270d3 completion
+- category: srp-size
+  key: probos.cognitive.copilot_adapter::CopilotBuilderAdapter
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.counselor::CounselorAgent
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.crew_executor::CrewTaskExecutor
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.crew_finalizer::CrewSessionFinalizer
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.crew_orchestrator::CrewOrchestrator
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.crew_session::CrewSessionContract
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.crew_session::CrewSessionService
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.crew_session::_WorkItemStoreProtocol
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.crew_synth::CrewSynthesizer
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.crew_verifier::SubtaskVerifier
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.dm.reply_pipeline::DmReplyPipeline
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.dm_sanity_gate::DmSanityGate
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.dreaming::DreamingEngine
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.emergent_detector::EmergentDetector
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.episodic::EpisodicMemory
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.episodic_mock::MockEpisodicMemory
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.evidence_collector::EvidenceCollector
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.journal::CognitiveJournal
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.llm_client::MockLLMClient
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.llm_client::OpenAICompatibleClient
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.mcp_workbench::MCPWorkbench
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.oracle_service::OracleService
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.procedure_store::ProcedureStore
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.self_improvement.evolution_store::EvolutionStore
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.self_mod::SelfModificationPipeline
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.skill_catalog::CognitiveSkillCatalog
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.sub_task::SubTaskExecutor
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.cognitive.swe_harness.agentic_loop::AgenticLoop
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.consensus.trust::TrustNetwork
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.consultation.workspace::ConsultationWorkspace
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.events::EventType
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.experience.renderer::ExecutionRenderer
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.experience.shell::ProbOSShell
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.federation.bridge::FederationBridge
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.federation.telemetry_relay::FederationTelemetryRelay
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.holodeck.chamber::BirthChamber
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.identity::AgentIdentityRegistry
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.infrastructure.backup::BackupService
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.initiative::InitiativeEngine
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.knowledge.records_store::RecordsStore
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.knowledge.semantic::SemanticKnowledgeLayer
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.knowledge.store::KnowledgeStore
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.mesh.intent::IntentBus
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.mesh.nats_bus::MockNATSBus
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.mesh.nats_bus::NATSBus
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.mesh.routing::HebbianRouter
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.ontology.billet_registry::BilletRegistry
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.ontology.departments::DepartmentService
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.ontology.service::VesselOntologyService
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.perception.consumer::VisionConsumer
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.perception.mode_controller::PerceptionModeController
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.persistent_tasks::PersistentTaskStore
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.proactive::ProactiveCognitiveLoop
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.runtime::ProbOSRuntime
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270c
+  rationale: Material god object; AD-1270c owns runtime service extraction.
+  review_by: AD-1270c3 completion
+- category: srp-size
+  key: probos.security.audit::AuditLog
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.sif::StructuralIntegrityField
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.skill_framework::AgentSkillService
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.sop.runtime::BillRuntime
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.substrate.agent::BaseAgent
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.substrate.event_log::EventLog
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.substrate.pool::ResourcePool
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.substrate.pool_group::PoolGroupRegistry
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.threads::ChatThreadStore
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.tools.browser.session::BrowserSession
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.tools.browser.tool::BrowserTool
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.tools.code_execution_tool::CodeExecutionTool
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.tools.publish_finding_tool::PublishFindingTool
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.tools.registry::ToolRegistry
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.ward_room.messages::MessageStore
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.ward_room.service::WardRoomService
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.ward_room.threads::ThreadManager
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.ward_room_router::WardRoomRouter
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.warm_boot::WarmBootService
+  triggers:
+  - lines
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.workforce::WorkItemStore
+  triggers:
+  - lines
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: srp-size
+  key: probos.ws_event_stream::WSEventStreamHub
+  triggers:
+  - methods
+  disposition: debt
+  owner: AD-1270h
+  rationale: Crosses the repository's stated SRP review trigger. No decomposition AD owns this class yet; frozen so a new oversized class cannot land unreviewed.
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.cognitive.builder::decompose_blueprint
+  callee: asyncio.create_task
+  count: 5
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.cognitive.builder::transporter_build._EventEmitter._emit_event
+  callee: asyncio.create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.cognitive.builder::transporter_build._EventEmitter.emit_event
+  callee: asyncio.create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.cognitive.cognitive_agent::CognitiveAgent._run_cognitive_lifecycle
+  callee: asyncio.create_task
+  count: 2
+  disposition: debt
+  owner: AD-1270d
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270d3 completion
+- category: unowned-task
+  key: probos.cognitive.episodic::EpisodicMemory._force_update
+  callee: loop.create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.credential_store::CredentialStore._log_access
+  callee: loop.create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.dream_adapter::DreamAdapter.on_post_dream
+  callee: loop.create_task
+  count: 6
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.proactive::ProactiveCognitiveLoop._persist_cooldowns
+  callee: loop.create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.routers.chat::_run_selfmod
+  callee: asyncio.create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.runtime::ProbOSRuntime._run_qa_for_designed_agent
+  callee: asyncio.create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270c
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270c3 completion
+- category: unowned-task
+  key: probos.runtime::ProbOSRuntime.process_natural_language
+  callee: asyncio.create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270c
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270c3 completion
+- category: unowned-task
+  key: probos.runtime::ProbOSRuntime.submit_intent_with_consensus
+  callee: asyncio.create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270c
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270c3 completion
+- category: unowned-task
+  key: probos.startup.communication::init_communication
+  callee: asyncio.get_event_loop().create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.startup.communication::init_communication._ward_room_emit
+  callee: asyncio.create_task
+  count: 1
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout
+- category: unowned-task
+  key: probos.startup.dreaming::init_dreaming
+  callee: loop.create_task
+  count: 2
+  disposition: debt
+  owner: AD-1270h
+  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
+  review_by: AD-1270h closeout

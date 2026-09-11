@@ -1,0 +1,3397 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/platform-maturity-program/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>AD-1270 — Platform Maturity Program - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ad-1270-platform-maturity-program" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AD-1270 — Platform Maturity Program
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-now" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why Now
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Why Now">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#updated-engineering-baseline-2026-08-30" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Updated engineering baseline — 2026-08-30
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#engineering-principle-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Engineering-principle assessment
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#program-outcomes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Program Outcomes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture Principles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD Map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#completion-and-safety-prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Completion and Safety Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-1270a-capability-truth-ledger-and-activation-receipts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270a — Capability Truth Ledger and Activation Receipts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AD-1270a — Capability Truth Ledger and Activation Receipts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decision_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#initial-p0-subsystems" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Initial P0 Subsystems
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-not-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do Not Build
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-1270b-distributed-seam-contract-catalog-and-crossing-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270b — Distributed Seam Contract Catalog and Crossing Tests
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AD-1270b — Distributed Seam Contract Catalog and Crossing Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problem_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decision_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p0-seam-authority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0 Seam Authority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#acceptance_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-not-build_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do Not Build
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-1270f-fail-broad-impact-selection-and-balanced-full-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270f — Fail-Broad Impact Selection and Balanced Full Gate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AD-1270f — Fail-Broad Impact Selection and Balanced Full Gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problem_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decision_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#acceptance_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-not-build_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do Not Build
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-1270e1e2e3-configuration-domains-with-stable-public-imports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270e1/e2/e3 — Configuration Domains With Stable Public Imports
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AD-1270e1/e2/e3 — Configuration Domains With Stable Public Imports">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problem_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decision_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1270e1-stable-facade-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270e1 — Stable Facade Contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1270e2-leaf-domain-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270e2 — Leaf-Domain Extraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1270e3-root-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270e3 — Root Extraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#acceptance_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-not-build_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do Not Build
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-1256-store-registry-and-shared-storage-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1256 — Store Registry and Shared Storage Lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AD-1256 — Store Registry and Shared Storage Lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#existing-owner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Existing Owner
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#program-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Program Integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#program-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Program Acceptance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-1270c1c2c3-runtime-composition-and-lifecycle-decomposition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270c1/c2/c3 — Runtime Composition and Lifecycle Decomposition
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AD-1270c1/c2/c3 — Runtime Composition and Lifecycle Decomposition">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problem_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1270c1-finalization-feature-bundles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270c1 — Finalization Feature Bundles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1270c2-explicit-lifecycle-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270c2 — Explicit Lifecycle Ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1270c3-runtime-service-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270c3 — Runtime Service Extraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#acceptance_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-not-build_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do Not Build
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-1270d1d2d3-cognitiveagent-as-a-turn-facade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270d1/d2/d3 — CognitiveAgent as a Turn Facade
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AD-1270d1/d2/d3 — CognitiveAgent as a Turn Facade">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problem_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1270d1-prompt-and-sensorium-composition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270d1 — Prompt and Sensorium Composition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1270d2-turn-effects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270d2 — Turn Effects
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1270d3-turn-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270d3 — Turn Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#acceptance_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-not-build_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do Not Build
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-1265-ad-1266-verified-recovery-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1265 / AD-1266 — Verified Recovery Loop
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-1270g-executable-capability-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270g — Executable Capability Documentation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AD-1270g — Executable Capability Documentation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#problem_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decision_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#acceptance_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-not-build_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do Not Build
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ad-1270h-platform-maturity-closeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1270h — Platform Maturity Closeout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#delivery-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivery Plan
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="ad-1270-platform-maturity-program">AD-1270 — Platform Maturity Program<a class="headerlink" href="#ad-1270-platform-maturity-program" title="Permanent link">&para;</a></h1>
+<p><strong>Status:</strong> Active — Captain approved execution on 2026-08-30
+<strong>Date:</strong> 2026-08-25
+<strong>Scope:</strong> OSS runtime architecture, verification, and truthful product surface
+<strong>Tracking model:</strong> one program with independently buildable sub-ADs
+<strong>Tracking issue:</strong> <a href="https://github.com/seangalliher/ProbOS/issues/1324">#1324</a></p>
+<p><strong>Readiness context:</strong> <a href="../nooplex-readiness/">Nooplex Readiness Map</a>. AD-1270 owns Tier A only; secure multi-mesh, Core Fabric, and emergence research have separate evidence gates.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>ProbOS will convert its strongest subsystems from individually implemented mechanisms into a continuously exercised, contract-checked, modular, and truthfully documented platform.</p>
+<p>This is one dependency-ordered architecture program, not an invitation to file a separate issue for every structural observation. The program reuses existing decisions and reserved prompt owners where ownership already exists:</p>
+<table>
+<thead>
+<tr>
+<th>Existing or reserved owner</th>
+<th>Ownership retained here</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AD-1184 / #1120</td>
+<td>Reconciled lifecycle ledger; already shipped</td>
+</tr>
+<tr>
+<td>AD-1185 / #1121</td>
+<td>Supported <code>SystemConfig</code> profiles and flag dependency contract; already shipped</td>
+</tr>
+<tr>
+<td>AD-1186 / #1123</td>
+<td>Ship Trials release catalog and policy</td>
+</tr>
+<tr>
+<td>AD-1256 / #1302</td>
+<td>Store registry and shared storage lifecycle</td>
+</tr>
+<tr>
+<td>AD-1265 prompt reservation</td>
+<td>Self-sufficient scheduled snapshots and verification</td>
+</tr>
+<tr>
+<td>AD-1266 prompt reservation</td>
+<td>Point-in-time all-or-nothing restore</td>
+</tr>
+</tbody>
+</table>
+<p>AD-1270 adds the missing connective architecture around those owners: capability truth, seam contracts, behavior-preserving decomposition, trustworthy impact selection, executable documentation, and a no-code program closeout.</p>
+<p><strong>Allocation status:</strong> GitHub issue #1324 authoritatively allocates AD-1270.
+The generated ledger is a reconciliation view, not the authority for the next
+free number. Before any new AD is proposed, enumerate Git subjects, GitHub issue
+titles in all states, and in-flight <code>prompts/ad-*.md</code> reservations as required
+by <code>.github/copilot-instructions.md</code>. This program assigns no new top-level AD.
+The older prompt-only reservations AD-1262 through AD-1269 remain reserved for
+collision avoidance until anchored in an allocation authority or explicitly
+superseded/retired.</p>
+<h2 id="why-now">Why Now<a class="headerlink" href="#why-now" title="Permanent link">&para;</a></h2>
+<p>Measured on 2026-08-25:</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th style="text-align: right;">Baseline</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Production Python</td>
+<td style="text-align: right;">903 files / 325,497 raw lines</td>
+</tr>
+<tr>
+<td>Python tests</td>
+<td style="text-align: right;">1,376 files / 468,186 raw lines</td>
+</tr>
+<tr>
+<td>UI TypeScript/TSX</td>
+<td style="text-align: right;">579 files / 110,391 raw lines</td>
+</tr>
+<tr>
+<td>Normalized source + tests</td>
+<td style="text-align: right;">908,196 raw lines</td>
+</tr>
+<tr>
+<td>API route declarations</td>
+<td style="text-align: right;">432</td>
+</tr>
+<tr>
+<td>Intent descriptor sites</td>
+<td style="text-align: right;">119</td>
+</tr>
+<tr>
+<td>Durable databases declared by AD-1256 audit</td>
+<td style="text-align: right;">59</td>
+</tr>
+<tr>
+<td>Direct SQLite connect sites</td>
+<td style="text-align: right;">34 across 23 files</td>
+</tr>
+<tr>
+<td>Latest frozen Python gate</td>
+<td style="text-align: right;">24,533 passed / 27 skipped in 15:54</td>
+</tr>
+<tr>
+<td><code>cognitive_agent.py</code></td>
+<td style="text-align: right;">approximately 11,400 raw lines</td>
+</tr>
+<tr>
+<td><code>config.py</code></td>
+<td style="text-align: right;">approximately 7,600 raw lines</td>
+</tr>
+<tr>
+<td><code>runtime.py</code></td>
+<td style="text-align: right;">approximately 6,100 raw lines</td>
+</tr>
+<tr>
+<td><code>startup/finalize.py</code></td>
+<td style="text-align: right;">approximately 5,900 raw lines</td>
+</tr>
+</tbody>
+</table>
+<p>The recurring defect is now named in <code>DECISIONS.md</code>: a mechanism is built and tested, but the real caller never supplies what its consumer needs. Larger modules and distributed lifecycle ownership make that failure easier to create and harder to see. The response is not a rewrite. It is explicit truth, executable contracts, bounded extraction, and evidence-driven validation.</p>
+<h3 id="updated-engineering-baseline-2026-08-30">Updated engineering baseline — 2026-08-30<a class="headerlink" href="#updated-engineering-baseline-2026-08-30" title="Permanent link">&para;</a></h3>
+<p>The versioned <a href="../platform-maturity-baseline-2026-08-30/">2026-08-30 baseline</a>
+pins commit, host, toolchain, parser rules, artifact hashes, and limitations.
+It found 38 qualifying completed legacy gate artifacts totaling 38,093 seconds;
+16 red artifacts consumed 16,508 seconds. A recent 25,440-test green gate still
+completed in 15:54, matching the earlier 24,533-test baseline. This supports a
+narrow conclusion: repeated late discovery is a major measured cost; the data
+does not prove every retry was architecturally caused.</p>
+<p>The committed-tree source audit at <code>bf6c998</code> measured:</p>
+<table>
+<thead>
+<tr>
+<th>Principle signal</th>
+<th style="text-align: right;">Current baseline</th>
+<th>Program interpretation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Production Python files</td>
+<td style="text-align: right;">908</td>
+<td>Scale makes implicit ownership unaffordable</td>
+</tr>
+<tr>
+<td>Classes over the ~500-line SRP review threshold</td>
+<td style="text-align: right;">66</td>
+<td>Triage signal; each needs an owner or documented exception</td>
+</tr>
+<tr>
+<td>Classes over the ~15-method SRP review threshold</td>
+<td style="text-align: right;">77</td>
+<td>Triage signal; not every method count is itself a defect</td>
+</tr>
+<tr>
+<td>Largest class</td>
+<td style="text-align: right;"><code>CognitiveAgent</code>: 10,598 body lines / 189 methods</td>
+<td>Material god object; AD-1270d owns decomposition</td>
+</tr>
+<tr>
+<td>Next largest facade</td>
+<td style="text-align: right;"><code>ProbOSRuntime</code>: 5,967 body lines / 107 methods</td>
+<td>Material god object; AD-1270c owns decomposition</td>
+</tr>
+<tr>
+<td>Concrete <code>ProbOSRuntime</code> reference files</td>
+<td style="text-align: right;">60</td>
+<td>Some are type-only/facade consumers; lower-layer concrete dependence must fall</td>
+</tr>
+<tr>
+<td>Explicit <code>probos.protocols</code> import files</td>
+<td style="text-align: right;">37</td>
+<td>Useful substrate exists, but interface segregation is incomplete</td>
+</tr>
+<tr>
+<td>External private-member candidates</td>
+<td style="text-align: right;">1,110</td>
+<td>Broad AST heuristic containing false positives; AD-1270b must classify before gating</td>
+</tr>
+<tr>
+<td>Direct SQLite connect sites</td>
+<td style="text-align: right;">30</td>
+<td>AST heuristic; includes approved adapter/CLI candidates; AD-1256 owns classification</td>
+</tr>
+<tr>
+<td>Task-creation calls</td>
+<td style="text-align: right;">180</td>
+<td>Broad candidate set, including same-named domain methods</td>
+</tr>
+<tr>
+<td>Bare-expression task-creation candidates</td>
+<td style="text-align: right;">26</td>
+<td>Requires ownership/cancellation analysis; no positive ownership claim follows</td>
+</tr>
+<tr>
+<td>Verified lower-to-higher layer violations</td>
+<td style="text-align: right;">Not established</td>
+<td>Two initial candidates were allowed <code>TYPE_CHECKING</code> + DI edges; naive package ranking rejected</td>
+</tr>
+</tbody>
+</table>
+<p>The audit is a prioritization baseline, not a violation ledger. AD-1270b must
+replace broad lexical/AST candidate sets with deterministic domain-aware
+classifiers before any count can fail a build. Type-only facade references,
+approved adapters, generated compatibility surfaces, and cohesive large data
+models may be justified. Size alone never proves successful extraction.</p>
+<h3 id="engineering-principle-assessment">Engineering-principle assessment<a class="headerlink" href="#engineering-principle-assessment" title="Permanent link">&para;</a></h3>
+<p>The principles are still actively used in review, but present compliance is
+mixed rather than complete:</p>
+<ul>
+<li><strong>Single Responsibility:</strong> materially violated in the central runtime,
+    cognitive, startup, workforce, and memory owners listed above.</li>
+<li><strong>Open/Closed and Law of Demeter:</strong> materially degraded by external private
+    access. AD-1270c/d must replace each migrated access with a public narrow API;
+    moving the same reach-through into another file does not count.</li>
+<li><strong>Interface Segregation and Dependency Inversion:</strong> established by
+    <code>probos.protocols</code>, constructor-injected newer services, and connection
+    factories, but not consistently adopted. Extracted services may not accept a
+    concrete <code>ProbOSRuntime</code> merely to recreate a service locator.</li>
+<li><strong>Liskov and typed contracts:</strong> generally strong where Protocols, frozen
+    dataclasses, and exact wire contracts are used. Compatibility-facade tests
+    remain mandatory during extraction.</li>
+<li><strong>Layer discipline:</strong> no verified violation follows from the current audit.
+    The first two candidates are allowed type-only injected dependencies; a
+    domain-aware import rule remains required.</li>
+<li><strong>Async discipline:</strong> ownership remains unproven for 26 bare-expression
+    candidates. AD-1270b must classify retained references, callbacks, and
+    cancellation/drain behavior instead of equating syntax with ownership.</li>
+<li><strong>Cloud-ready storage:</strong> incomplete. New stores must use <code>ConnectionFactory</code>;
+    existing direct connects are an AD-1256 migration denominator.</li>
+<li><strong>Configuration discipline:</strong> Pydantic remains the authority, but the
+    7,741-line compatibility surface makes routine changes high-blast-radius;
+    AD-1270e preserves the public import while moving domain ownership.</li>
+</ul>
+<p>No AD-1270 sub-decision is complete merely because files became smaller. It
+must reduce one of the measured coupling/ownership denominators without adding
+a new violation elsewhere.</p>
+<h2 id="program-outcomes">Program Outcomes<a class="headerlink" href="#program-outcomes" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Every advertised subsystem has a machine-readable owner, activation state, exercise evidence, and health evidence.</li>
+<li>Every active Tier A P0 cross-layer value in the canonical manifest is proven through its real producer and real consumer.</li>
+<li>Runtime and cognitive orchestration become compatibility facades over bounded services.</li>
+<li>Configuration retains one stable public import surface while domain models gain clear ownership.</li>
+<li>Every durable store has declared lifecycle, criticality, retention, and backup disposition through AD-1256.</li>
+<li>Fast validation uses a fail-broad impact graph; release validation still runs every collected test exactly once.</li>
+<li>Volatile README facts are generated from executable evidence.</li>
+<li>AD-1186 Ship Trials prove the supported product rather than an everything-on laboratory configuration.</li>
+</ol>
+<h2 id="architecture-principles">Architecture Principles<a class="headerlink" href="#architecture-principles" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Truth dimensions are orthogonal.</strong> Present, configured, advertised, activated, exercised, and healthy are not synonyms.</li>
+<li><strong>A seam test crosses the seam.</strong> A producer unit test plus a consumer unit test is not integration evidence.</li>
+<li><strong>Facades preserve compatibility.</strong> Public methods, attributes, imports, defaults, and extension hooks remain while ownership moves behind them.</li>
+<li><strong>Selection accelerates; it does not authorize release.</strong> Impact-selected tests may shorten feedback but never replace the frozen full gate.</li>
+<li><strong>Storage registration does not centralize queries.</strong> AD-1256 owns lifecycle metadata and connection creation, not domain SQL.</li>
+<li><strong>Documentation derives facts.</strong> Narrative remains human-authored; volatile counts and capability states come from executable authorities.</li>
+<li><strong>Residual risk is explicit.</strong> Completion means fit for intended purpose with no unresolved Critical or High defect, not perfection.</li>
+</ul>
+<h2 id="ad-map">AD Map<a class="headerlink" href="#ad-map" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>AD</th>
+<th>Decision</th>
+<th>Primary result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AD-1270a</td>
+<td>Capability Truth Ledger and Activation Receipts</td>
+<td>A subsystem cannot read healthy merely because it was constructed</td>
+</tr>
+<tr>
+<td>AD-1270b</td>
+<td>Distributed Seam Contract Catalog and Crossing Tests</td>
+<td>P0 producer-to-consumer contracts have executable proof</td>
+</tr>
+<tr>
+<td>AD-1270f</td>
+<td>Fail-Broad Impact Selection and Balanced Full Gate</td>
+<td>Fast feedback without false confidence or skipped release evidence</td>
+</tr>
+<tr>
+<td>AD-1270e1</td>
+<td>Stable Configuration Facade Contract</td>
+<td>Existing imports, defaults, aliases, schema, and dump order are frozen before movement</td>
+</tr>
+<tr>
+<td>AD-1270e2</td>
+<td>Configuration Leaf-Domain Extraction</td>
+<td>Leaf config models move by domain behind compatibility re-exports</td>
+</tr>
+<tr>
+<td>AD-1270e3</td>
+<td><code>SystemConfig</code> Root Extraction</td>
+<td>Root composition moves last with exact compatibility</td>
+</tr>
+<tr>
+<td>AD-1256</td>
+<td>Store Registry and Shared Storage Lifecycle</td>
+<td>Existing storage decision supplies ownership, criticality, retention, and connection lifecycle</td>
+</tr>
+<tr>
+<td>AD-1270c1</td>
+<td>Finalization Feature Bundles</td>
+<td><code>finalize.py</code> becomes an ordered facade over cohesive feature bundles</td>
+</tr>
+<tr>
+<td>AD-1270c2</td>
+<td>Explicit Lifecycle Ownership</td>
+<td>Start/stop ownership is registered once and unwound in reverse order</td>
+</tr>
+<tr>
+<td>AD-1270c3</td>
+<td>Runtime Service Extraction</td>
+<td><code>ProbOSRuntime</code> delegates behavior while preserving its public API</td>
+</tr>
+<tr>
+<td>AD-1270d1</td>
+<td>Prompt and Sensorium Composition Service</td>
+<td>Prompt assembly moves behind agent-owned hooks with byte parity</td>
+</tr>
+<tr>
+<td>AD-1270d2</td>
+<td>Turn Effects Service</td>
+<td>Episode, event, trust, Hebbian, and outcome writes become exactly-once owned effects</td>
+</tr>
+<tr>
+<td>AD-1270d3</td>
+<td>Cognitive Turn Pipeline</td>
+<td>Stage order and early-return semantics become explicit and testable</td>
+</tr>
+<tr>
+<td>AD-1265</td>
+<td>Self-Sufficient Snapshot</td>
+<td>Every promoted snapshot is independently verifiable</td>
+</tr>
+<tr>
+<td>AD-1266</td>
+<td>Point-in-Time Restore</td>
+<td>Snapshot/restore/reboot/read closes the storage recovery loop</td>
+</tr>
+<tr>
+<td>AD-1270g</td>
+<td>Executable Capability Documentation</td>
+<td>README factual blocks cannot silently drift</td>
+</tr>
+<tr>
+<td>AD-1270h</td>
+<td>Platform Maturity Closeout</td>
+<td>No-code evidence aggregation after AD-1186 Ship Trials</td>
+</tr>
+</tbody>
+</table>
+<h2 id="completion-and-safety-prerequisites">Completion and Safety Prerequisites<a class="headerlink" href="#completion-and-safety-prerequisites" title="Permanent link">&para;</a></h2>
+<p>The graph below describes prerequisites for completing each decision. The delivery waves later in this document describe the chosen execution order. AD-1270a may ship its shadow inventory before AD-1185, but it cannot meet its supported-profile exercise acceptance criteria until AD-1185 exists.</p>
+<pre class="mermaid"><code>flowchart LR
+    L[AD-1184 Ledger shipped] --&gt; F0[AD-1270f Slice 0 Gate foundation]
+    L --&gt; A0[AD-1270a Shadow inventory]
+    F0 --&gt; B0[AD-1270b Initial manifest and fitness guard]
+    A0 --&gt; B0
+    B0 --&gt; F1[AD-1270f Selector shadow evidence]
+
+    F1 --&gt; P[AD-1185 Supported profile]
+    F1 --&gt; E1[AD-1270e1 Config facade baseline]
+    F1 --&gt; S[AD-1256 Storage foundation]
+    P --&gt; A1[AD-1270a Supported-profile exercise]
+    A0 --&gt; A1
+
+    E1 --&gt; E2[AD-1270e2 Leaf config domains]
+    E2 --&gt; E3[AD-1270e3 SystemConfig root]
+
+    E3 --&gt; C1[AD-1270c1 Finalization bundles]
+    C1 --&gt; C2[AD-1270c2 Lifecycle ownership]
+    S --&gt; C2
+    C2 --&gt; C3[AD-1270c3 Runtime services]
+
+    B0 --&gt; D1[AD-1270d1 Prompt and sensorium]
+    D1 --&gt; D2[AD-1270d2 Turn effects]
+    D2 --&gt; D3[AD-1270d3 Turn pipeline]
+
+    SNAP[AD-1265 Snapshot]
+    SNAP --&gt; REST[AD-1266 Restore]
+
+    TRACE[AD-1152 Trace correlation] --&gt; B1[AD-1270b Final Tier A crossings]
+    EVENT[AD-1195 Event meaning] --&gt; B1
+    REST --&gt; B1
+    C3 --&gt; B1
+    D3 --&gt; B1
+    A1 --&gt; B1
+
+    A1 --&gt; G[AD-1270g Executable README]
+    P --&gt; G
+
+    A1 --&gt; T[AD-1186 Ship Trials]
+    B1 --&gt; T
+    F1 --&gt; T
+    P --&gt; T
+    E3 --&gt; T
+    S --&gt; T
+    C3 --&gt; T
+    D3 --&gt; T
+    REST --&gt; T
+    G --&gt; T
+    SEC[No unresolved Critical or High security/governance defect] --&gt; T
+    VALID[Skipped, absent-data, or judge-unavailable is non-passing] --&gt; T
+    T --&gt; H[AD-1270h Closeout]</code></pre>
+<p>Tier B federation work remains owned by AD-1196 through AD-1198 and #1140. It
+does not gate Tier A and is intentionally absent from this completion graph.</p>
+<hr />
+<h2 id="ad-1270a-capability-truth-ledger-and-activation-receipts">AD-1270a — Capability Truth Ledger and Activation Receipts<a class="headerlink" href="#ad-1270a-capability-truth-ledger-and-activation-receipts" title="Permanent link">&para;</a></h2>
+<h3 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h3>
+<p>ProbOS currently has several incompatible meanings for “available.” A class may exist, a flag may be enabled, a tool may be advertised, and a runtime may report a default healthy state without any production request having exercised the path. This is the root of the “built, tested, inert” defect family.</p>
+<h3 id="decision_1">Decision<a class="headerlink" href="#decision_1" title="Permanent link">&para;</a></h3>
+<p>Add a read-only maturity ledger with orthogonal fields:</p>
+<ul>
+<li><code>present</code>: implementation/import exists;</li>
+<li><code>configured</code>: the selected profile requests it;</li>
+<li><code>advertised</code>: a user or agent can discover it;</li>
+<li><code>activated</code>: startup successfully wired a production owner;</li>
+<li><code>exercise.attempts</code>, <code>last_success</code>, <code>last_failure</code>;</li>
+<li><code>health.state</code>, <code>observed_at</code>, <code>source</code>;</li>
+<li><code>live</code>: derived from the preceding evidence, never stored directly.</li>
+</ul>
+<p>No exercise sample means health is <code>unknown</code>, not <code>available</code>.</p>
+<h3 id="ownership">Ownership<a class="headerlink" href="#ownership" title="Permanent link">&para;</a></h3>
+<ul>
+<li>New leaf package: <code>src/probos/maturity/model.py</code>, <code>registry.py</code>, <code>report.py</code>.</li>
+<li>Declarations and probes remain beside the subsystem that owns them.</li>
+<li>Reuse <code>routers.tools.list_capability_catalog</code>, runtime status projection, event markers, and Doctor checks; do not create another capability registry or health engine.</li>
+</ul>
+<h3 id="migration">Migration<a class="headerlink" href="#migration" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Inventory-only shadow report with no API or routing effect.</li>
+<li>Add activation receipts at startup ownership points.</li>
+<li>Add exercise receipts at real ingress/consumer completion points.</li>
+<li>Exercise P0 capabilities through the AD-1185 supported profile.</li>
+<li>Expose a bounded read-only report for Doctor, CI, and documentation generation.</li>
+</ol>
+<p>Steps 1–3 may land before AD-1185. Steps 4–5 and this AD's final acceptance require the versioned AD-1185 supported profile; an inventory over an ad hoc local configuration is not product evidence.</p>
+<h3 id="initial-p0-subsystems">Initial P0 Subsystems<a class="headerlink" href="#initial-p0-subsystems" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Natural-language request to completed intent DAG.</li>
+<li>Governed tool invocation and refusal.</li>
+<li>Approval to fulfilment to resumed turn.</li>
+<li>CrewSession create, execute, verify, deliver, and recover.</li>
+<li>Episodic store and recall.</li>
+<li>Self-modification validation and warm restore.</li>
+<li>Snapshot verification and restore once AD-1265/1266 land.</li>
+</ul>
+<p>Authenticated federation is Tier B evidence owned by #1140, not a Tier A P0
+capability. Its stable seam ID is retained in the manifest as non-gating.</p>
+<h3 id="acceptance">Acceptance<a class="headerlink" href="#acceptance" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Every supported-profile advertised capability has one owner and one evidence source.</li>
+<li>Disabled, activated-but-unexercised, successful, failed, and degraded states are tested.</li>
+<li>No subsystem reports healthy solely because its object was constructed.</li>
+<li>A supported-profile smoke run produces an activation report with zero unexplained advertised-but-unactivated P0 capabilities.</li>
+<li>The ledger is observation-only and changes no routing, permission, trust, or startup decision.</li>
+</ul>
+<h3 id="do-not-build">Do Not Build<a class="headerlink" href="#do-not-build" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A second runtime registry, a second health model, or a general telemetry warehouse.</li>
+<li>Auto-enabling features from ledger state.</li>
+<li>A mutable operator API in this AD.</li>
+</ul>
+<hr />
+<h2 id="ad-1270b-distributed-seam-contract-catalog-and-crossing-tests">AD-1270b — Distributed Seam Contract Catalog and Crossing Tests<a class="headerlink" href="#ad-1270b-distributed-seam-contract-catalog-and-crossing-tests" title="Permanent link">&para;</a></h2>
+<h3 id="problem_1">Problem<a class="headerlink" href="#problem_1" title="Permanent link">&para;</a></h3>
+<p>ProbOS repeatedly proves producers and consumers independently while allowing the value crossing between them to be absent, malformed, stale, misordered, or interpreted differently.</p>
+<h3 id="decision_2">Decision<a class="headerlink" href="#decision_2" title="Permanent link">&para;</a></h3>
+<p>Create domain-split metadata under <code>docs/development/seams/*.yaml</code>, checked by <code>scripts/check_seam_contracts.py</code>. The catalog is documentation and test discovery metadata, not runtime orchestration.</p>
+<p>The canonical P0 denominator is
+<a href="../seams/p0-manifest.yaml"><code>docs/development/seams/p0-manifest.yaml</code></a>. “100%”
+means every active Tier A ID resolves to one contract and one collecting
+production-crossing test. Adding an ID is explicit; removing one moves it to
+the manifest's tombstones with rationale, replacement, decision, and date.
+GitHub #1324 links this manifest and does not maintain a competing list.</p>
+<p>Each contract records:</p>
+<ul>
+<li>owning domain and severity tier;</li>
+<li>producer symbol or trigger;</li>
+<li>carrier type and version;</li>
+<li>consumer symbol;</li>
+<li>acceptance and rejection rules;</li>
+<li>ordering and idempotency requirements;</li>
+<li>failure policy;</li>
+<li>production-crossing test node ID;</li>
+<li>runtime evidence marker where applicable.</li>
+</ul>
+<p>Typed carrier classes stay in the lowest shared code layer. The catalog does not dispatch, validate production traffic, or own lifecycle.</p>
+<p>AD-1270b is delivered as independently accepted slices, never one repository-
+wide implementation wave:</p>
+<ol>
+<li><strong>Seam manifest slice:</strong> schema, stable IDs, tombstone rules, symbol/test
+    resolution, and one crossing-test family per later bounded build.
+    <strong>Shipped 2026-09-02</strong> as <code>scripts/check_seam_contracts.py</code>.</li>
+<li><strong>Architecture fitness slice:</strong> versioned baseline and
+    <code>scripts/check_architecture_principles.py</code>, with explicit reviewed exceptions
+    rather than hidden thresholds.
+    <strong>Shipped 2026-09-02.</strong> <code>docs/development/architecture-baseline.yaml</code> freezes
+    138 reviewed rows; <code>srp-size</code>, <code>layer-import</code>, <code>db-connect</code> and
+    <code>unowned-task</code> gate by symmetric difference, while <code>private-access</code> and
+    <code>source-text-tests</code> ship report-only with the promotion conditions recorded
+    in the baseline. <code>cross_layer_analysis.py</code> is superseded by it.</li>
+<li><strong>Final Tier A crossing closeout:</strong> after recovery, runtime/cognitive
+    decomposition, trace correlation, event meaning, and supported-profile
+    exercise exist, fill every active Tier A test node and prove collection.</li>
+</ol>
+<p>The architecture fitness slice reports:</p>
+<ul>
+<li>classes crossing the repository's ~500-line or ~15-method SRP review trigger;</li>
+<li>external private-member reach-through and concrete-runtime dependencies below
+    approved facade/composition boundaries;</li>
+<li>lower-to-higher layer imports;</li>
+<li>direct database connections outside approved connection adapters;</li>
+<li>unowned <code>asyncio.create_task</code> calls;</li>
+<li>source-text contract tests, classified as architectural/security invariants
+    or candidates for behavioral replacement.</li>
+</ul>
+<p>The first version classifies the broad candidates in the baseline report,
+freezes only reviewed violations/exceptions, and rejects <strong>new</strong> violations.
+Each decomposition slice must reduce its relevant denominator. Existing debt is
+not grandfathered as compliant and may not be copied into a new module.</p>
+<h3 id="p0-seam-authority">P0 Seam Authority<a class="headerlink" href="#p0-seam-authority" title="Permanent link">&para;</a></h3>
+<p>The stable IDs and Tier A/Tier B boundary live only in the canonical manifest.
+Missing test IDs, skipped collection, absent data, and unavailable judges are
+non-passing. The manifest begins with seven Tier A IDs and one non-gating Tier B
+federation ID; denominator changes follow its tombstone rule.</p>
+<h3 id="acceptance_1">Acceptance<a class="headerlink" href="#acceptance_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Catalog symbols resolve against the live tree.</li>
+<li>Test node IDs collect and pass.</li>
+<li>Every P0 test enters through the real producer and observes the real consumer.</li>
+<li>Endpoint-only or fake-only pairs do not qualify as crossing evidence.</li>
+<li>New P0 cross-layer features cannot merge without a seam entry and crossing test.</li>
+<li>The seam and architecture-fitness slices each have their own focused tests,
+    review, commit, and acceptance record.</li>
+<li>The architecture fitness check is deterministic on Windows and Linux, rejects
+    an injected violation in each category, and emits a machine-readable report.</li>
+<li>New violations fail immediately; reductions update the reviewed baseline in
+    the same commit, while exceptions require rationale, owner, and expiry/removal
+    condition.</li>
+<li>No central code object imports or executes the catalog.</li>
+</ul>
+<h3 id="do-not-build_1">Do Not Build<a class="headerlink" href="#do-not-build_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A universal runtime message bus schema.</li>
+<li>A replacement for domain protocols or Pydantic models.</li>
+<li>A source-text regex that mistakes comments for behavior.</li>
+</ul>
+<hr />
+<h2 id="ad-1270f-fail-broad-impact-selection-and-balanced-full-gate">AD-1270f — Fail-Broad Impact Selection and Balanced Full Gate<a class="headerlink" href="#ad-1270f-fail-broad-impact-selection-and-balanced-full-gate" title="Permanent link">&para;</a></h2>
+<h3 id="problem_2">Problem<a class="headerlink" href="#problem_2" title="Permanent link">&para;</a></h3>
+<p>The full Python gate is approximately 16 minutes and contains more than 24,500 passing tests. Running it after every small issue limits throughput, while filename-only selection cannot see fixtures, dynamic imports, indirect consumers, or seam contracts.</p>
+<h3 id="decision_3">Decision<a class="headerlink" href="#decision_3" title="Permanent link">&para;</a></h3>
+<p>Begin with <strong>Slice 0 — gate economy foundation</strong>, before impact selection:</p>
+<ul>
+<li>one canonical gate wrapper runs deterministic generated-reference and
+    structural preflight checks before pytest;</li>
+<li>preflight-only may inspect a staged candidate, while a full gate requires a
+    reviewed local commit and refuses an index that differs from <code>HEAD</code>;</li>
+<li>it refuses overlapping gates, unstaged/uncommittable code, mutation backups,
+    hidden collection selectors, a changing tree, and a worktree whose imports
+    or pytest runner resolve to another checkout;</li>
+<li>it preserves distinct wrapper, preflight, and pytest exit codes;</li>
+<li>every attempt writes unique log, JUnit, phase-duration, tree-snapshot, and
+    manifest artifacts;</li>
+<li>full success emits a caller-named atomic receipt binding the committed tree
+    to hashed manifest/JUnit evidence, and an external janitor removes the
+    linked worktree even if the wrapper is killed;</li>
+<li>local release-advancement instructions use the wrapper; the orchestrator
+    validates its receipt through advancement and explicitly pushes and
+    verifies the configured branch ref; direct pytest output cannot authorize
+    local release advancement, push, or issue closure;</li>
+<li>focused, diagnostic, installation, historical-prompt, and CI tests may remain
+    direct pytest invocations because they are not local release authority.</li>
+</ul>
+<p>Slice 0 is complete only after focused wrapper/consumer tests, an isolated
+worktree preflight, adversarial review, and one green canonical full gate. It
+does not close AD-1270f; it creates trustworthy evidence for the selector and
+balanced-gate work below.</p>
+<p>Build <code>scripts/select_tests.py</code> as an acceleration tool, never as release authority. It combines:</p>
+<ul>
+<li>per-test coverage contexts from a known-green full run;</li>
+<li>transitive static imports;</li>
+<li>changed test files and shared fixtures;</li>
+<li>AD-1270b seam tests;</li>
+<li>explicit blast-radius rules for architectural files.</li>
+</ul>
+<p>The selector fails broad to the full gate for unknown modules, stale/missing maps, dynamic imports it cannot resolve, deletions/renames, or changes to runtime/startup, config root, protocols, events, <code>conftest.py</code>, pytest configuration, dependency manifests, or the selector itself.</p>
+<p>The frozen release gate remains mandatory. Its complete collected node set is duration-balanced across workers/shards, with union equality and duplicate detection.</p>
+<p>Evidence uses immutable manifests:</p>
+<ul>
+<li>a representative historical BF corpus is predeclared before scoring and pins each change/commit, expected affected test nodes, and content hash;</li>
+<li>each shadow run pins the changed paths, unique tree fingerprint, selector result, full collected-node result, and selector/map version;</li>
+<li>performance runs pin OS, Python, pytest, xdist, physical-core count, commit, and complete node-manifest hash;</li>
+<li>every canonical wrapper attempt is retained. Late-discovery rate is computed
+    over unique source-changing tree fingerprints; retries of an identical tree
+    remain visible as cost but cannot pad the pass/fail sample;</li>
+<li>old/new runner benchmarks execute the same final commit and node-manifest hash.</li>
+</ul>
+<p>Measurement series use <strong>fixed enrollment</strong> declared before observation:</p>
+<ul>
+<li>selector shadow evidence is the first 20 eligible unique trees represented by source-changing tree
+    fingerprints after the checker/corpus commit and recorded UTC cutoff;</li>
+<li>leaf feedback uses the predeclared 20-case representative corpus, with no
+    substitutions after its manifest hash is committed;</li>
+<li>canonical red-rate evidence is the first 20 eligible unique source-changing
+    tree fingerprints after the wrapper rollout commit and recorded UTC cutoff;</li>
+<li>every attempt, including same-tree retries and invalid attempts, remains in
+    the artifact ledger; invalidation reasons are a closed vocabulary declared by
+    the wrapper schema before enrollment starts;</li>
+<li>extending, restarting, or excluding a series requires a Captain-ratified
+    decision recorded before the replacement series runs.</li>
+</ul>
+<h3 id="acceptance_2">Acceptance<a class="headerlink" href="#acceptance_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Canonical preflight completes in under 90 seconds on the pinned reference
+    host when generated artifacts are current and no staged prompt requires the
+    phantom-API scan.</li>
+<li>A failed preflight starts no full pytest process; overlapping and changing
+    trees fail closed; wrapper artifacts cannot overwrite a prior attempt.</li>
+<li>No maintained local release workflow advances, pushes, or closes from direct
+    <code>pytest tests/</code> output; only a validated canonical receipt is release
+    authority. Focused/diagnostic documentation and CI may retain direct pytest
+    commands while runner sharding is evaluated from manifested duration data.</li>
+<li>Zero misses over the predeclared historical BF mutation corpus and the first
+    20 eligible unique-tree shadow comparisons after the fixed cutoff.</li>
+<li>Selected leaf-change feedback p95 is under 90 seconds over every run in a
+    predeclared representative 20-case corpus on one pinned reference-host
+    fingerprint; cases may not be replaced after measurement starts.</li>
+<li>Complete-gate critical path is at most 75% of the same-runner baseline, target &lt;=12 minutes from the 16-minute baseline.</li>
+<li>Every collected node runs exactly once; no skip, deselection, timeout weakening, or semantic change is used to meet the target.</li>
+<li>Any uncertainty selects more tests, never fewer.</li>
+</ul>
+<h3 id="do-not-build_2">Do Not Build<a class="headerlink" href="#do-not-build_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A selector that permits merge, push, or issue closure without the required frozen full gate.</li>
+<li>Test prioritization based only on filenames or historical pass frequency.</li>
+<li>Quarantine or deletion of slow tests as a performance strategy.</li>
+</ul>
+<hr />
+<h2 id="ad-1270e1e2e3-configuration-domains-with-stable-public-imports">AD-1270e1/e2/e3 — Configuration Domains With Stable Public Imports<a class="headerlink" href="#ad-1270e1e2e3-configuration-domains-with-stable-public-imports" title="Permanent link">&para;</a></h2>
+<h3 id="problem_3">Problem<a class="headerlink" href="#problem_3" title="Permanent link">&para;</a></h3>
+<p><code>config.py</code> owns hundreds of models and a very large root contract. More than 600 source/test files import <code>probos.config</code>, so a direct split would create a compatibility migration larger than the problem.</p>
+<h3 id="decision_4">Decision<a class="headerlink" href="#decision_4" title="Permanent link">&para;</a></h3>
+<p>Reuse AD-1185 as the supported-profile authority. Introduce <code>src/probos/config_models/</code> while keeping <code>probos.config</code> as the permanent compatibility facade and <code>load_config</code> entry point.</p>
+<h3 id="ad-1270e1-stable-facade-contract">AD-1270e1 — Stable Facade Contract<a class="headerlink" href="#ad-1270e1-stable-facade-contract" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Record every public config symbol, default, alias, validator outcome, schema, field order, and import identity required by consumers.</li>
+<li>Add default-config and tracked-YAML <code>model_dump()</code> golden parity.</li>
+<li>Add normalized JSON-schema parity and mutable-default independence checks.</li>
+<li>No model moves in e1.</li>
+</ul>
+<h3 id="ad-1270e2-leaf-domain-extraction">AD-1270e2 — Leaf-Domain Extraction<a class="headerlink" href="#ad-1270e2-leaf-domain-extraction" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Move leaf models in bounded batches into <code>config_models/{core,cognition,experience,integrations,operations}.py</code>.</li>
+<li>Re-export each class from <code>probos.config</code> before moving the next batch.</li>
+<li>Run focused importer/config tests and the affected supported-profile smoke after each batch.</li>
+</ul>
+<h3 id="ad-1270e3-root-extraction">AD-1270e3 — Root Extraction<a class="headerlink" href="#ad-1270e3-root-extraction" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Move <code>SystemConfig</code> composition into <code>config_models/root.py</code> last.</li>
+<li>Preserve all field names, order, defaults, aliases, validators, environment overrides, and serialized shape.</li>
+<li>Leave <code>config.py</code> as a thin permanent facade with no domain model bodies.</li>
+</ul>
+<h3 id="acceptance_3">Acceptance<a class="headerlink" href="#acceptance_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Zero removed public imports.</li>
+<li>Minimal and supported profiles parse and boot unchanged.</li>
+<li>Default and tracked-YAML dumps are byte-equivalent after normalization.</li>
+<li>Commercial overlay imports remain valid.</li>
+<li>No edit to <code>config/system.yaml</code> is needed to complete the extraction.</li>
+</ul>
+<h3 id="do-not-build_3">Do Not Build<a class="headerlink" href="#do-not-build_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A new configuration format, flag cleanup, default change, or “everything on” profile.</li>
+<li>A one-commit move of all models.</li>
+</ul>
+<hr />
+<h2 id="ad-1256-store-registry-and-shared-storage-lifecycle">AD-1256 — Store Registry and Shared Storage Lifecycle<a class="headerlink" href="#ad-1256-store-registry-and-shared-storage-lifecycle" title="Permanent link">&para;</a></h2>
+<h3 id="existing-owner">Existing Owner<a class="headerlink" href="#existing-owner" title="Permanent link">&para;</a></h3>
+<p>AD-1256 / #1302 remains the storage decision. AD-1270 does not renumber or replace it.</p>
+<h3 id="program-integration">Program Integration<a class="headerlink" href="#program-integration" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add metadata-only <code>StoreDescriptor</code> declarations using the existing <code>ConnectionFactory</code> seam.</li>
+<li>Required fields: owner, roots/paths, criticality, lifecycle owner, retention policy, backup disposition, restore disposition, and reconstruction method where excluded.</li>
+<li>Begin in inventory-only shadow mode.</li>
+<li>Register the hand-maintained shutdown sidecars first.</li>
+<li>Require every new store to register immediately.</li>
+<li>Migrate existing stores one startup phase at a time; preserve constructor <code>db_path</code> and <code>connection_factory</code> compatibility until ownership transfers atomically.</li>
+<li>The registry owns lifecycle metadata and connection creation, not domain queries or one giant database.</li>
+</ul>
+<h3 id="program-acceptance">Program Acceptance<a class="headerlink" href="#program-acceptance" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Every durable store has one lifecycle owner and an explicit backup/retention disposition.</li>
+<li>No duplicate close and no startup path that makes an optional store boot-critical by accident.</li>
+<li>AD-1265 may consume registry metadata when present but retains filesystem discovery as a fail-safe until migration is complete.</li>
+<li>AD-1266 restores only the declared point-in-time unit and leaves excluded stores untouched.</li>
+</ul>
+<hr />
+<h2 id="ad-1270c1c2c3-runtime-composition-and-lifecycle-decomposition">AD-1270c1/c2/c3 — Runtime Composition and Lifecycle Decomposition<a class="headerlink" href="#ad-1270c1c2c3-runtime-composition-and-lifecycle-decomposition" title="Permanent link">&para;</a></h2>
+<h3 id="problem_4">Problem<a class="headerlink" href="#problem_4" title="Permanent link">&para;</a></h3>
+<p><code>runtime.py</code> and <code>startup/finalize.py</code> both act as composition roots and behavioral owners. This obscures startup order, creates hand-maintained shutdown lists, and makes unrelated features share a high-blast-radius file.</p>
+<h3 id="ad-1270c1-finalization-feature-bundles">AD-1270c1 — Finalization Feature Bundles<a class="headerlink" href="#ad-1270c1-finalization-feature-bundles" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Move cohesive <code>_wire_*</code> bodies into <code>startup/features/{crew,cognition,integrations,governance,experience}.py</code>.</li>
+<li>Keep <code>finalize_startup()</code> as the ordered compatibility facade returning the existing typed result.</li>
+<li>Preserve startup order, public runtime attributes, log/event order, and feature flags.</li>
+<li>No service extraction from <code>ProbOSRuntime</code> yet.</li>
+<li>Migrate and gate exactly one feature bundle at a time; no build may move all five domains together.</li>
+</ul>
+<h3 id="ad-1270c2-explicit-lifecycle-ownership">AD-1270c2 — Explicit Lifecycle Ownership<a class="headerlink" href="#ad-1270c2-explicit-lifecycle-ownership" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add <code>startup/lifecycle.py</code> with typed start/stop registrations and reverse-order shutdown.</li>
+<li>AD-1256 owns store registrations.</li>
+<li>New services use lifecycle ownership immediately; existing services migrate one phase at a time.</li>
+<li>Keep each legacy shutdown entry until the corresponding service proves exactly one owner.</li>
+</ul>
+<h3 id="ad-1270c3-runtime-service-extraction">AD-1270c3 — Runtime Service Extraction<a class="headerlink" href="#ad-1270c3-runtime-service-extraction" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Extract natural-language processing/DAG execution, governed intent submission, and status projection into constructor-injected services.</li>
+<li>Preserve every public <code>ProbOSRuntime</code> method and attribute as a delegating compatibility API.</li>
+<li><code>runtime.start()</code> may orchestrate startup phases but may not construct feature internals after completion.</li>
+<li>Move one service family per independently reviewed build, with facade parity and crossing evidence before the next family moves.</li>
+</ul>
+<h3 id="acceptance_4">Acceptance<a class="headerlink" href="#acceptance_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A real runtime boots the AD-1185 supported profile, executes a real <code>read_file</code> path, reports status, and stops with no leaked lifecycle owners.</li>
+<li>Startup cancellation and partial failure unwind only successfully started owners, once, in reverse order.</li>
+<li>Existing extension hooks and commercial overlay wiring remain valid.</li>
+<li><code>finalize.py</code> contains ordering and compatibility only, not feature constructors.</li>
+<li>Runtime public API and startup event ordering remain stable.</li>
+</ul>
+<h3 id="do-not-build_4">Do Not Build<a class="headerlink" href="#do-not-build_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A new global service locator, dependency-injection framework, or repository split.</li>
+<li>Private-member access from extracted services.</li>
+<li>A big-bang runtime rewrite.</li>
+</ul>
+<hr />
+<h2 id="ad-1270d1d2d3-cognitiveagent-as-a-turn-facade">AD-1270d1/d2/d3 — <code>CognitiveAgent</code> as a Turn Facade<a class="headerlink" href="#ad-1270d1d2d3-cognitiveagent-as-a-turn-facade" title="Permanent link">&para;</a></h2>
+<h3 id="problem_5">Problem<a class="headerlink" href="#problem_5" title="Permanent link">&para;</a></h3>
+<p><code>CognitiveAgent</code> combines prompt assembly, sensorium, lifecycle control, tool-loop orchestration, reply processing, and learning effects. Subclasses rely on dynamic hooks, so naive extraction can silently bypass behavior even when tests stay green.</p>
+<h3 id="ad-1270d1-prompt-and-sensorium-composition">AD-1270d1 — Prompt and Sensorium Composition<a class="headerlink" href="#ad-1270d1-prompt-and-sensorium-composition" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Extract default prompt and context assembly into <code>cognitive/prompt_composer.py</code> and <code>cognitive/sensorium.py</code>.</li>
+<li>Reuse existing context assembly primitives.</li>
+<li>Collaborators invoke extension hooks through the agent instance; they do not copy hook logic.</li>
+<li>Preserve exact default prompt bytes and LLM call count.</li>
+</ul>
+<h3 id="ad-1270d2-turn-effects">AD-1270d2 — Turn Effects<a class="headerlink" href="#ad-1270d2-turn-effects" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Extract episode, event, trust, Hebbian, workflow-cache, and outcome writes into <code>cognitive/turn_effects.py</code>.</li>
+<li>Give each effect an explicit exactly-once owner and idempotency key where persistence can retry.</li>
+<li>Preserve cancellation propagation and existing fail/log/degrade tiers.</li>
+<li>Migrate one effect family per independently reviewed build; episode, event, trust, Hebbian, workflow-cache, and outcome ownership do not move as one sweep.</li>
+</ul>
+<h3 id="ad-1270d3-turn-pipeline">AD-1270d3 — Turn Pipeline<a class="headerlink" href="#ad-1270d3-turn-pipeline" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add <code>cognitive/turn_pipeline.py</code> with explicit stages and early-return semantics.</li>
+<li><code>CognitiveAgent._run_cognitive_lifecycle()</code> delegates to the pipeline while public lifecycle methods and <code>_conversational_*</code> hooks remain on the agent.</li>
+<li>Do not change <code>CognitiveSpine</code>, <code>DmReplyPipeline</code>, <code>IntentResult</code>, or generated-subclass contracts.</li>
+</ul>
+<h3 id="acceptance_5">Acceptance<a class="headerlink" href="#acceptance_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>One real built-in subclass and one generated-style subclass complete a production-faithful turn.</li>
+<li>Default prompt bytes, await order, early returns, cancellation, metadata, and LLM call count remain unchanged.</li>
+<li>Episode, conclusion, event, trust, and Hebbian effects occur exactly once on success and retain existing failure semantics.</li>
+<li>AD-1270b crossing tests cover tool result -&gt; reply -&gt; episode and correction -&gt; patch -&gt; retry -&gt; learning.</li>
+</ul>
+<h3 id="do-not-build_5">Do Not Build<a class="headerlink" href="#do-not-build_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A new agent lifecycle or a second reply pipeline.</li>
+<li>Procedural behavior that bypasses instructions-first cognitive agents.</li>
+<li>Direct calls to extracted helpers that bypass subclass hooks.</li>
+</ul>
+<hr />
+<h2 id="ad-1265-ad-1266-verified-recovery-loop">AD-1265 / AD-1266 — Verified Recovery Loop<a class="headerlink" href="#ad-1265-ad-1266-verified-recovery-loop" title="Permanent link">&para;</a></h2>
+<p>These decisions already have ready prompts and remain independently buildable. The maturity program adds one integration requirement:</p>
+<blockquote>
+<p>A supported-profile runtime must write representative critical rows, create and verify a promoted snapshot, restore it into a point-in-time tree, reboot, and read the restored state through normal production connection paths.</p>
+</blockquote>
+<p>AD-1265 remains responsible for snapshot scheduling, self-sufficiency, promotion, digest verification, and declared exclusions. AD-1266 remains responsible for all-or-nothing restore, sidecar handling, move-aside rollback, and live-runtime refusal.</p>
+<p>Before build, refresh stale BF numbering in the prompt headers against live GitHub. Do not change their storage semantics to fit this program.</p>
+<hr />
+<h2 id="ad-1270g-executable-capability-documentation">AD-1270g — Executable Capability Documentation<a class="headerlink" href="#ad-1270g-executable-capability-documentation" title="Permanent link">&para;</a></h2>
+<h3 id="problem_6">Problem<a class="headerlink" href="#problem_6" title="Permanent link">&para;</a></h3>
+<p>README currently carries volatile facts such as agent counts, test counts, phase status, and module sizes that have diverged substantially from the live system. It also describes scheduling more centrally than the ratified AD-1231 hybrid boundary.</p>
+<h3 id="decision_5">Decision<a class="headerlink" href="#decision_5" title="Permanent link">&para;</a></h3>
+<p>Add <code>scripts/gen_readme_facts.py --check</code>, following the existing config-reference generator pattern. Generate only bounded factual blocks; narrative prose remains human-owned.</p>
+<p>Create a versioned README fact inventory as the denominator. Every in-scope volatile claim records its source span, authority, and disposition (<code>generated</code> or a justified stable exemption). In scope: counts, current phase/status, module-size statements, capability availability, supported-profile contents, and command inventories. A structured Markdown check reports any new candidate claim that is absent from the inventory.</p>
+<p>Inputs:</p>
+<ul>
+<li>AD-1270a capability truth report;</li>
+<li>AD-1185 supported profile;</li>
+<li>CLI parser and slash-command registry;</li>
+<li>agent/pool/intent declarations;</li>
+<li>current test collection and release gate artifact;</li>
+<li>repository paths verified at generation time.</li>
+</ul>
+<p>Coordinate rather than duplicate:</p>
+<ul>
+<li>AD-1137 owns Quick Start execution and onboarding stability.</li>
+<li>AD-1183 owns dated competitive claims.</li>
+<li>AD-1184 owns lifecycle-number reconciliation.</li>
+<li>The <a href="../nooplex-readiness/">Nooplex Readiness Map</a> owns maturity terminology and permitted Nooplex claims.</li>
+</ul>
+<h3 id="acceptance_6">Acceptance<a class="headerlink" href="#acceptance_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Generator is deterministic and idempotent on Windows and Linux.</li>
+<li><code>--check</code> is hermetic and runs in the ordinary test suite.</li>
+<li>Every generated capability row resolves to an owner and evidence in AD-1270a.</li>
+<li>Every documented command parses; every linked local path exists.</li>
+<li>Every in-scope volatile claim appears in the versioned inventory.</li>
+<li>Zero in-scope volatile claim remains manually maintained outside generated blocks; stable exemptions may not depend on runtime-derived counts or current status.</li>
+<li>README scheduling language matches AD-1231: agents choose cognitive work; deterministic services own durable workflow time.</li>
+<li>README and <code>docs/architecture/federation.md</code> use the readiness map's claim vocabulary: experimental federation is not described as a completed Nooplex Core.</li>
+</ul>
+<h3 id="do-not-build_6">Do Not Build<a class="headerlink" href="#do-not-build_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Whole-file README generation.</li>
+<li>Marketing copy derived from runtime state.</li>
+<li>Network-dependent documentation checks.</li>
+</ul>
+<hr />
+<h2 id="ad-1270h-platform-maturity-closeout">AD-1270h — Platform Maturity Closeout<a class="headerlink" href="#ad-1270h-platform-maturity-closeout" title="Permanent link">&para;</a></h2>
+<p>AD-1270h creates no evaluator and no new runtime behavior. It is a closure record that assembles immutable artifacts into AD-1186 Ship Trials:</p>
+<ul>
+<li>commit and supported-profile hashes;</li>
+<li>capability truth report;</li>
+<li>P0 seam-contract results;</li>
+<li>lifecycle-owner report;</li>
+<li>store inventory and backup dispositions;</li>
+<li>snapshot/restore/reboot/read drill;</li>
+<li>complete collected-test manifest and gate duration;</li>
+<li>AD-1152 correlated run/tool evidence and AD-1195 durable event-semantics report;</li>
+<li>supported-profile latency, error, and bounded-resource evidence;</li>
+<li>security/governance residual-risk register with zero unresolved Critical or High defect;</li>
+<li>non-vacuous Ship Trials evidence proving skipped, absent-data, and judge-unavailable outcomes did not pass;</li>
+<li>README fact check;</li>
+<li>Ship Trials result and residual-risk register.</li>
+</ul>
+<p>AD-1186 remains the release evaluator. AD-1270h closes only when the evidence set is complete and the supported-profile Ship Trials pass.</p>
+<hr />
+<h2 id="delivery-plan">Delivery Plan<a class="headerlink" href="#delivery-plan" title="Permanent link">&para;</a></h2>
+<h1 id="1324-is-a-coordination-only-completion-epic-never-a-substitute-for-bounded">1324 is a coordination-only completion epic, never a substitute for bounded<a class="headerlink" href="#1324-is-a-coordination-only-completion-epic-never-a-substitute-for-bounded" title="Permanent link">&para;</a></h1>
+<p>WIP. The Captain activated Delegated AD Execution Mode on 2026-09-01 for the
+existing open issue queue and the already-versioned incomplete slices in this
+plan. Implementation remains one issue (or at most three tightly coupled
+issues), but the agent may now sequence the remaining AD-1270 slices by this
+plan's dependency graph and make in-envelope reversible decisions without
+separate Captain admission. This delegation does not waive acceptance evidence,
+compatibility, adversarial review, canonical-gate receipts, repository-boundary
+rules, or the hard escalation boundaries in <code>.github/copilot-instructions.md</code>.</p>
+<h3 id="wave-0-authority">Wave 0 — Authority<a class="headerlink" href="#wave-0-authority" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Confirm AD-1184 generated ledger is current and includes AD-1270 plus all pre-existing reservations.</li>
+<li>Treat the generated ledger as a reconciliation view. Any new allocation uses
+    the required Git-subject, all-state GitHub-title, and prompt-reservation
+    enumeration; this plan assigns no next-free number.</li>
+<li>Reconcile prompt-only AD-1262 through AD-1269 into a ledger authority or explicitly supersede/retire them; until then Wave 0 remains open even though AD-1270 itself is authoritatively allocated by #1324.</li>
+<li>Create one GitHub epic for this program; track sub-ADs as checkboxes rather than separate issues until a sub-AD enters implementation.</li>
+</ul>
+<h3 id="wave-1-truth-and-guardrails">Wave 1 — Truth and Guardrails<a class="headerlink" href="#wave-1-truth-and-guardrails" title="Permanent link">&para;</a></h3>
+<ul>
+<li>AD-1270f Slice 0 canonical preflight/gate wrapper and timing manifest.</li>
+<li><strong>AD-1270a capability truth shadow report — migration step 1 DELIVERED (inventory only).</strong>
+    <code>src/probos/maturity/</code> resolves eight declarations against three distinct
+    authorities (import system / <code>SystemConfig</code> / <code>list_capability_catalog</code>) and
+    renders <code>docs/development/capability-truth-inventory.md</code> via a <code>--check</code>-able
+    generator. Observation only: zero production call sites changed, and nothing
+    reads a row to make a decision. <strong>Migration steps 2-5 remain open</strong> — activation
+    receipts (step 2), exercise receipts (step 3), Doctor reuse and a live-runtime
+    projection (step 5) have no producer yet, so <code>advertised</code>, <code>activated</code>,
+    <code>exercise</code> and <code>health</code> are honestly <code>unknown</code> and no row can evaluate <code>live</code>.</li>
+<li>AD-1270b seam-manifest slice.</li>
+<li>AD-1270b architecture-fitness slice.</li>
+<li>AD-1270b crossing tests, one P0 family per bounded build.</li>
+<li>AD-1270f selector in shadow mode plus balanced full-gate manifest.</li>
+</ul>
+<p>Exit: unsupported activation claims become visible; selection has demonstrated zero misses but does not yet change required gates.</p>
+<h3 id="wave-2-supported-product-and-foundations">Wave 2 — Supported Product and Foundations<a class="headerlink" href="#wave-2-supported-product-and-foundations" title="Permanent link">&para;</a></h3>
+<ul>
+<li>AD-1185 supported profile. <strong>Delivered 2026-09-02</strong> — <code>config/profiles/{minimal,supported,experimental-approval-standing-rules}.yaml</code>, the validating loader <code>probos.config_profiles</code>, the reviewed manifest <code>docs/development/config-profiles.yaml</code> (32 classified / 170 frozen / 202 default-OFF), the <code>config-profiles</code> preflight phase, and a CI boot smoke that starts a real runtime from the supported profile and executes a real <code>read_file</code> offline.</li>
+<li>AD-1270e1 config compatibility baseline.</li>
+<li>AD-1256 inventory-only store registry and lifecycle metadata.</li>
+</ul>
+<p>Exit: one supported product configuration boots; config and storage migrations have frozen compatibility contracts.</p>
+<h3 id="wave-3-behavior-preserving-decomposition">Wave 3 — Behavior-Preserving Decomposition<a class="headerlink" href="#wave-3-behavior-preserving-decomposition" title="Permanent link">&para;</a></h3>
+<ul>
+<li>AD-1270c1 -&gt; c2 -&gt; c3 in separate bounded builds, with one feature bundle, lifecycle-owner batch, or runtime service family moved per build.</li>
+<li>AD-1270d1 -&gt; d2 -&gt; d3 in separate bounded builds, with one prompt/sensorium slice or effect family moved per build.</li>
+<li>AD-1270e2/e3 by domain batches, not one sweep.</li>
+</ul>
+<p>Exit: central files are facades over owned services; no public API or default behavior changed.</p>
+<h3 id="wave-4-recovery">Wave 4 — Recovery<a class="headerlink" href="#wave-4-recovery" title="Permanent link">&para;</a></h3>
+<ul>
+<li>AD-1265 snapshot and verification.</li>
+<li>AD-1266 restore.</li>
+<li>Supported-profile snapshot/restore/reboot/read drill.</li>
+</ul>
+<p>Exit: every critical store is included or explicitly excluded with evidence, and recovery is executable rather than aspirational.</p>
+<h3 id="wave-5-product-truth-and-release">Wave 5 — Product Truth and Release<a class="headerlink" href="#wave-5-product-truth-and-release" title="Permanent link">&para;</a></h3>
+<ul>
+<li>AD-1270g executable README facts.</li>
+<li>AD-1186 Ship Trials.</li>
+<li>AD-1270h no-code closeout.</li>
+</ul>
+<p>Exit: the product description, supported configuration, live exercise evidence, and release policy agree.</p>
+<h2 id="program-metrics">Program Metrics<a class="headerlink" href="#program-metrics" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th style="text-align: right;">Baseline</th>
+<th style="text-align: right;">Target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P0 advertised capabilities with activation + exercise owner</td>
+<td style="text-align: right;">not centrally measurable</td>
+<td style="text-align: right;">100%</td>
+</tr>
+<tr>
+<td>Active Tier A P0 seams with production-crossing tests</td>
+<td style="text-align: right;">not centrally measurable</td>
+<td style="text-align: right;">100%</td>
+</tr>
+<tr>
+<td>Impact-selector shadow misses</td>
+<td style="text-align: right;">unknown</td>
+<td style="text-align: right;">0 over versioned historical corpus + 20 manifested shadow runs</td>
+</tr>
+<tr>
+<td>Leaf-change feedback p95</td>
+<td style="text-align: right;">full gate often used</td>
+<td style="text-align: right;">&lt;90 seconds over 20 valid runs on one pinned host fingerprint</td>
+</tr>
+<tr>
+<td>Frozen full-gate critical path</td>
+<td style="text-align: right;">15:54</td>
+<td style="text-align: right;">&lt;=12:00 on same host fingerprint, same node-manifest hash</td>
+</tr>
+<tr>
+<td>Legacy full-gate artifact observation</td>
+<td style="text-align: right;">16 / 38 red; 16,508 / 38,093 seconds red</td>
+<td style="text-align: right;">Context only; not an acceptance series</td>
+</tr>
+<tr>
+<td>Canonical full-gate late-discovery rate</td>
+<td style="text-align: right;">Not yet measured</td>
+<td style="text-align: right;">&lt;10% over the first 20 eligible unique source-changing tree fingerprints after the fixed cutoff</td>
+</tr>
+<tr>
+<td>Canonical full-gate time spent red</td>
+<td style="text-align: right;">Not yet measured</td>
+<td style="text-align: right;">&lt;10% of all canonical broad-gate minutes; identical-tree retries remain visible</td>
+</tr>
+<tr>
+<td>Classes above SRP review thresholds</td>
+<td style="text-align: right;">66 by body lines; 77 by method count</td>
+<td style="text-align: right;">Zero unexplained; named central owners become bounded facades</td>
+</tr>
+<tr>
+<td>External private-member candidates</td>
+<td style="text-align: right;">1,110 broad candidates</td>
+<td style="text-align: right;">Classify first; then zero new reviewed violations and per-domain reduction</td>
+</tr>
+<tr>
+<td>Verified lower-to-higher layer imports</td>
+<td style="text-align: right;">Not established</td>
+<td style="text-align: right;">0 after domain-aware classification</td>
+</tr>
+<tr>
+<td>Bare-expression task-creation candidates</td>
+<td style="text-align: right;">26</td>
+<td style="text-align: right;">Classify ownership/cancellation; zero verified unowned tasks</td>
+</tr>
+<tr>
+<td>Direct SQLite connect sites</td>
+<td style="text-align: right;">30 broad candidates</td>
+<td style="text-align: right;">0 outside approved adapters/explicit maintenance boundaries after AD-1256</td>
+</tr>
+<tr>
+<td>Durable stores with owner/criticality/retention/backup disposition</td>
+<td style="text-align: right;">incomplete</td>
+<td style="text-align: right;">100%</td>
+</tr>
+<tr>
+<td>Public config imports removed</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>README volatile facts checked from authorities</td>
+<td style="text-align: right;">0%</td>
+<td style="text-align: right;">100% of versioned in-scope fact inventory</td>
+</tr>
+<tr>
+<td>Unresolved Critical/High program defects at close</td>
+<td style="text-align: right;">unknown</td>
+<td style="text-align: right;">0</td>
+</tr>
+</tbody>
+</table>
+<p>Module line count is a diagnostic, not the acceptance criterion. Extraction is successful when ownership, blast radius, and contracts improve without changing behavior; a smaller file that merely moves a god object elsewhere does not pass.</p>
+<h2 id="program-definition-of-done">Program Definition of Done<a class="headerlink" href="#program-definition-of-done" title="Permanent link">&para;</a></h2>
+<p>The program is done when:</p>
+<ul>
+<li>every supported-profile advertised P0 subsystem has independent advertisement, activation, exercise, and health evidence;</li>
+<li>every active Tier A P0 seam in the canonical manifest has a production-crossing test;</li>
+<li>runtime, finalization, cognitive turn processing, and configuration retain their public APIs while domain behavior is owned behind bounded facades;</li>
+<li>every durable store has one lifecycle owner and declared criticality, retention, backup, and restore disposition;</li>
+<li>snapshot/restore/reboot/read succeeds through normal production paths;</li>
+<li>impact selection has zero observed shadow misses and the complete release gate still executes every collected test exactly once;</li>
+<li>README factual blocks pass <code>--check</code> and every capability claim resolves to evidence;</li>
+<li>AD-1186 Ship Trials pass on the supported profile;</li>
+<li>scoped Diff Reviewer review finds no unresolved Critical or High defect.</li>
+<li>an automated architecture fitness report classifies the broad 2026-08-30
+    candidates, freezes reviewed violations/exceptions, and rejects new
+    SRP-threshold classes, external private reach-through, lower-to-higher
+    imports, unowned tasks, and direct database connections;</li>
+<li><code>CognitiveAgent</code>, <code>ProbOSRuntime</code>, <code>startup/finalize.py</code>, and <code>config.py</code> meet
+    their explicit facade/extraction acceptance criteria. They cannot use a
+    generic exception; changing this named scope requires a Captain-ratified
+    decision recorded in <code>DECISIONS.md</code> and #1324;</li>
+<li><strong>Named god-object non-exception rule:</strong> none of those four owners may be
+    marked complete through an architecture-fitness allowlist or size waiver;
+    completion requires the planned compatibility-facade extraction or a
+    Captain-ratified change to this program's scope.</li>
+<li>AD-1152 trace correlation and AD-1195 durable event meaning cover P0 paths;</li>
+<li>supported capabilities have no unresolved Critical or High security or
+    governance defect, and skipped/absent-data/judge-unavailable Ship Trials
+    remain non-passing;</li>
+<li>no maintained developer/agent workflow bypasses the canonical local broad
+    gate, and the measured red-gate and feedback targets hold over the required
+    consecutive-run windows.</li>
+</ul>
+<p>Done means fit for intended purpose with understood and acceptable residual risk. It does not mean that no further improvement can be found.</p>
+<h2 id="risks-and-controls">Risks and Controls<a class="headerlink" href="#risks-and-controls" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Control</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Maturity ledger becomes another source of truth</td>
+<td>Derive from owners and receipts; no behavior authority</td>
+</tr>
+<tr>
+<td>Seam catalog becomes a central god object</td>
+<td>Domain-split metadata; runtime never imports it</td>
+</tr>
+<tr>
+<td>Lifecycle migration double-stops services</td>
+<td>One-owner transfer per service with legacy entry retained until proof</td>
+</tr>
+<tr>
+<td>Cognitive extraction bypasses subclass hooks</td>
+<td>Call hooks through agent; real subclass crossing tests</td>
+</tr>
+<tr>
+<td>Config split breaks imports or field order</td>
+<td>Permanent facade; e1 baselines before movement</td>
+</tr>
+<tr>
+<td>Impact selector misses dynamic consumers</td>
+<td>Fail-broad rules; shadow evidence; full release gate remains mandatory</td>
+</tr>
+<tr>
+<td>Storage registry turns into query centralization</td>
+<td>Metadata/lifecycle only; domain SQL remains local</td>
+</tr>
+<tr>
+<td>Generated docs erase useful explanation</td>
+<td>Generate facts only; narrative remains human-owned</td>
+</tr>
+<tr>
+<td>Program stalls feature delivery</td>
+<td>Each sub-AD is bounded; no big-bang branch; stop after each measurable outcome</td>
+</tr>
+</tbody>
+</table>
+<h2 id="explicit-non-goals">Explicit Non-Goals<a class="headerlink" href="#explicit-non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Splitting ProbOS into multiple repositories.</li>
+<li>Replacing SQLite with Postgres or consolidating the 59 databases.</li>
+<li>Rewriting the agent lifecycle, intent bus, consensus engine, or HXI.</li>
+<li>Enabling every default-OFF feature.</li>
+<li>Achieving zero open issues before feature work continues.</li>
+<li>Using line-count reduction as a substitute for architectural ownership.</li>
+<li>Creating a new issue for every seam or residual observation.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
