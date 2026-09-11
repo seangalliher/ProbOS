@@ -31,12 +31,14 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable
 
+from probos.cognitive.agentic_dispatch import AgenticIdentityUnresolved
 from probos.crew_utils import CREW_EXECUTION_KEYS, is_crew_agent
 from probos.events import EventType
 
 if TYPE_CHECKING:
     from probos.attachments.store import AttachmentStore
     from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+    from probos.cognitive.crew_assignment import CrewWorkerEligibilityResolver
     from probos.cognitive.crew_session import CrewSessionService
     from probos.substrate.registry import AgentRegistry
     from probos.threads import ChatThread
@@ -55,6 +57,7 @@ _STOPPED_REASONS = frozenset(
         "max_iterations",
         "token_budget",
         "execution_exception",
+        "crew_worker_identity_lost",
         "unassigned",
         "agent_unresolvable",
         "dependency_blocked",
@@ -1016,6 +1019,7 @@ def _build_execution_evidence(
         "max_iterations": "failed",
         "token_budget": "failed",
         "execution_exception": "failed",
+        "crew_worker_identity_lost": "failed",
         "unassigned": "blocked",
         "agent_unresolvable": "blocked",
         "dependency_blocked": "blocked",
@@ -1089,6 +1093,25 @@ class SubtaskResult:
     blocked_dependency_ids: list[str] = field(default_factory=list)
 
 
+class CrewWorkerUnavailable(ValueError):
+    """Execution admission was rejected before any child state was changed."""
+
+
+def is_untouched_crew_child(child: WorkItem, *, initial_status: str) -> bool:
+    """Require initial state and absent execution and verification evidence."""
+    return (
+        child.status == initial_status
+        and child.verification == {}
+        and type(child.metadata) is dict
+        and not any(
+            key in child.metadata
+            for key in (
+                "crew_execution", "crew_execution_output", "crew_verification_recovery",
+            )
+        )
+    )
+
+
 class CrewTaskExecutor:
     """Drive a parent's child sub-tasks with dependency-gated bounded fan-out."""
 
@@ -1102,6 +1125,7 @@ class CrewTaskExecutor:
         max_parallel_subtasks: int = 3,
         emit_fn: Callable[[EventType, dict[str, Any]], None] | None = None,
         crew_session_service: CrewSessionService | None = None,
+        eligibility_resolver: CrewWorkerEligibilityResolver | None = None,
         attachment_store: AttachmentStore | None = None,
         oracle: Any = None,
         crew_sigma_context_enabled: bool = False,
@@ -1125,6 +1149,11 @@ class CrewTaskExecutor:
         # just cannot publish lifecycle events.
         self._emit_fn = emit_fn
         self._crew_session_service = crew_session_service
+        self._eligibility_resolver = (
+            eligibility_resolver
+            if eligibility_resolver is not None
+            else getattr(crew_session_service, "worker_eligibility", None)
+        )
         self._attachment_store = (
             attachment_store
             if attachment_store is not None
@@ -1290,6 +1319,11 @@ class CrewTaskExecutor:
         pending: set[str] = set(by_id).difference(results)
         sem = asyncio.Semaphore(self._max_parallel)
         tasks: set[asyncio.Task[SubtaskResult]] = set()
+        admission_closed = False
+
+        for child in children:
+            if child.id in pending:
+                self._require_eligible(child.assigned_to)
 
         for child in children:
             try:
@@ -1324,8 +1358,15 @@ class CrewTaskExecutor:
                 self._emit_subtask_completed(parent_id, result)
 
         async def _guarded(child: WorkItem) -> SubtaskResult:
+            nonlocal admission_closed
             async with sem:
-                return await self._run_child(parent_id, child, thread_id)
+                if admission_closed:
+                    raise CrewWorkerUnavailable("crew_worker_unavailable")
+                try:
+                    return await self._run_child(parent_id, child, thread_id)
+                except CrewWorkerUnavailable:
+                    admission_closed = True
+                    raise
 
         try:
             while pending or tasks:
@@ -1379,6 +1420,10 @@ class CrewTaskExecutor:
                     if result.status == "done":
                         done_ids.add(result.work_item_id)
                     self._emit_subtask_completed(parent_id, result)
+        except CrewWorkerUnavailable:
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         finally:
             held = tuple(tasks)
             for task in held:
@@ -1396,17 +1441,10 @@ class CrewTaskExecutor:
         thread_id: str,
     ) -> SubtaskResult | None:
         metadata = child.metadata if type(child.metadata) is dict else {}
-        execution = metadata.get("crew_execution")
-        output_ref = metadata.get("crew_execution_output")
         initial_status = self._store.work_type_registry.get_initial_status(
             child.work_type,
         )
-        if (
-            child.status == initial_status
-            and execution is None
-            and output_ref is None
-            and child.verification == {}
-        ):
+        if is_untouched_crew_child(child, initial_status=initial_status):
             return None
         if child.status == "in_progress":
             return self._interrupted_result(child, "child_execution_interrupted")
@@ -1780,7 +1818,28 @@ class CrewTaskExecutor:
                 settings["token_budget"] = configured_budget - spent
             kwargs = dict(base_kwargs)
             kwargs["task_text"] = current_task_text
-            outcome = await self._executor.run(**kwargs, **settings)
+            try:
+                self._require_eligible(agent.id, expected_agent=agent)
+                next_outcome = await self._executor.run(**kwargs, **settings)
+            except (CrewWorkerUnavailable, AgenticIdentityUnresolved):
+                if self._eligibility_resolver is None:
+                    raise
+                logger.warning(
+                    "Crew child %s lost its execution identity after admission; "
+                    "retaining prior evidence and stopping for review",
+                    child_id,
+                    exc_info=True,
+                )
+                from probos.cognitive.agentic_dispatch import WorkItemAgenticOutcome
+
+                return WorkItemAgenticOutcome(
+                    final_text=getattr(outcome, "final_text", ""),
+                    stopped_reason="crew_worker_identity_lost",
+                    tool_trace_ref=getattr(outcome, "tool_trace_ref", None),
+                    total_tokens=spent,
+                    artifact_refs=list(getattr(outcome, "artifact_refs", [])),
+                )
+            outcome = next_outcome
             spent += _bounded_spend(getattr(outcome, "total_tokens", 0))
 
             if iteration >= max_outer:
@@ -1906,6 +1965,19 @@ class CrewTaskExecutor:
 
         return outcome
 
+    def _require_eligible(
+        self, agent_id: str | None, *, expected_agent: Any | None = None,
+    ) -> None:
+        if self._eligibility_resolver is not None and (
+            agent_id is None
+            or self._eligibility_resolver.check_eligibility(agent_id).identity is None
+            or (
+                expected_agent is not None
+                and self._registry.get(agent_id) is not expected_agent
+            )
+        ):
+            raise CrewWorkerUnavailable("crew_worker_unavailable")
+
     async def _run_child(
         self,
         parent_id: str,
@@ -1913,6 +1985,13 @@ class CrewTaskExecutor:
         thread_id: str,
     ) -> SubtaskResult:
         """Run a single child through the AD-859a executor and collect its result."""
+        self._require_eligible(child.assigned_to)
+        if self._eligibility_resolver is not None and not is_untouched_crew_child(
+            child,
+            initial_status=self._store.work_type_registry.get_initial_status(child.work_type),
+        ):
+            raise ValueError("crew_session_child_not_untouched")
+        selected_agent = self._registry.get(child.assigned_to)
         started_at = time.time()
         spec_id = str(child.metadata.get("spec_id", child.id))
         child_id = _bounded_id(child.id)
@@ -1926,6 +2005,11 @@ class CrewTaskExecutor:
             active_child = await self._store.merge_work_item_metadata(
                 child_id,
                 {},
+                expected=dict(child.metadata),
+                expected_absent_keys=(
+                    frozenset({"crew_execution", "crew_execution_output", "crew_verification_recovery"})
+                    if self._eligibility_resolver is not None else frozenset()
+                ),
                 expected_work_type=child.work_type,
                 expected_status=admission_status,
                 expected_assigned_to_exact=expected_assigned_to,
@@ -2016,6 +2100,25 @@ class CrewTaskExecutor:
 
         assigned_to = _bounded_id(active_child.assigned_to)
         agent = self._registry.get(assigned_to)
+        if self._eligibility_resolver is not None:
+            try:
+                self._require_eligible(assigned_to, expected_agent=selected_agent)
+            except CrewWorkerUnavailable:
+                return await self._persist_terminal_result(
+                    parent_id=parent_id,
+                    child=active_child,
+                    thread_id=thread_id,
+                    status="failed",
+                    stopped_reason="crew_worker_identity_lost",
+                    output="",
+                    tool_trace_ref=None,
+                    actual_tokens=0,
+                    artifact_refs=[],
+                    started_at=started_at,
+                    finished_at=max(started_at, time.time()),
+                    blocked_dependency_ids=[],
+                    expected_status="in_progress",
+                )
         if agent is None:
             logger.warning(
                 "Crew child %s has no resolvable authoritatively assigned agent "
@@ -2087,7 +2190,9 @@ class CrewTaskExecutor:
             status = "failed"
             stopped_reason = (
                 outcome.stopped_reason
-                if outcome.stopped_reason in {"error", "max_iterations", "token_budget"}
+                if outcome.stopped_reason in {
+                    "error", "max_iterations", "token_budget", "crew_worker_identity_lost",
+                }
                 else "error"
             )
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import json
 import time
 from typing import Any, Iterable, Sequence
 from unittest.mock import MagicMock
@@ -26,6 +28,8 @@ from probos.workforce import (
     ResourceRequirement,
     ResourceType,
     WorkItem,
+    WorkItemRetryBarrier,
+    WorkItemRetryConflict,
     WorkItemStatus,
     WorkItemStore,
 )
@@ -144,6 +148,31 @@ class _RecordingConnectionFactory:
         return connection
 
 
+class _RetryGateConnection(_RecordingConnection):
+    def __init__(self, delegate: DatabaseConnection) -> None:
+        super().__init__(delegate)
+        self.pause_parent = False
+        self.parent_waiting = asyncio.Event()
+        self.release_parent = asyncio.Event()
+        self.child_attempted = asyncio.Event()
+
+    async def execute(self, sql: str, parameters: Sequence[Any] = ()) -> Any:
+        if sql.startswith("UPDATE work_items SET") and parameters:
+            if parameters[-1] == "retry-parent" and self.pause_parent:
+                self.parent_waiting.set()
+                await self.release_parent.wait()
+            if parameters[-1] == "retry-child":
+                self.child_attempted.set()
+        return await super().execute(sql, parameters)
+
+
+class _RetryGateFactory(_RecordingConnectionFactory):
+    async def connect(self, db_path: str) -> DatabaseConnection:
+        connection = _RetryGateConnection(await self._delegate.connect(db_path))
+        self.connection = connection
+        return connection
+
+
 async def _create_crew_session_parent(
     admission: CrewSessionAdmissionPort,
     *,
@@ -165,6 +194,313 @@ async def _create_crew_session_parent(
 # ---------------------------------------------------------------------------
 # TestWSVisibleWorkItems
 # ---------------------------------------------------------------------------
+
+async def _retry_store_rows(
+    store: WorkItemStore, phase: str = "executing",
+) -> tuple[WorkItem, WorkItem]:
+    parent = await _create_crew_session_parent(
+        store.claim_crew_session_admission_port(), parent_id="retry-parent", created_at=300.0,
+    )
+    assert await store.merge_work_item_metadata(parent.id, {}, new_status="open")
+    if phase == "executing":
+        assert await store.merge_work_item_metadata(parent.id, {}, new_status="in_progress")
+    child = await store.create_work_item(
+        id="retry-child", title="Native child", work_type="task", parent_id=parent.id,
+    )
+    parent = await store.merge_work_item_metadata(
+        parent.id,
+        {
+            "crew_session": {
+                "task_id": parent.id, "thread_id": "retry-room",
+                "facilitator_id": parent.assigned_to, "revision": 1,
+                "state": "blocked_needs_captain",
+                "previous_state": "discussing" if phase == "planned" else "executing",
+                "blocked_reason": "crew_worker_unavailable",
+                "last_result_summary": "", "first_result_at": None,
+            },
+            "crew_recovery": {
+                "phase": phase, "last_error_code": "crew_worker_unavailable",
+                "plan": {"child_id": child.id}, "interrupted_child_ids": [],
+            },
+            "retained": {"value": 1},
+        },
+        new_status="blocked",
+    )
+    assert parent is not None and parent.status == "blocked"
+    assert child.status == store.work_type_registry.get_initial_status(child.work_type)
+    return parent, child
+
+
+def _retry_store_patch(parent: WorkItem) -> dict[str, Any]:
+    patch = json.loads(json.dumps({
+        key: parent.metadata[key] for key in ("crew_session", "crew_recovery")
+    }))
+    patch["crew_session"].update({
+        "revision": parent.metadata["crew_session"]["revision"] + 1,
+        "state": parent.metadata["crew_session"]["previous_state"],
+        "previous_state": "blocked_needs_captain",
+        "blocked_reason": None,
+    })
+    patch["crew_recovery"]["last_error_code"] = None
+    return patch
+
+
+async def _retry_store_merge(
+    store: WorkItemStore, parent: WorkItem, barrier: WorkItemRetryBarrier,
+) -> WorkItem | None:
+    return await store.merge_work_item_metadata(
+        parent.id, _retry_store_patch(parent), retry_barrier=barrier,
+        new_status="open" if parent.metadata["crew_recovery"]["phase"] == "planned" else "in_progress",
+        source="crew_session_ingress_resume",
+    )
+
+
+@pytest.mark.parametrize("phase", ["executing", "planned"])
+class TestNativeRetryBarrier:
+    @pytest.mark.parametrize("invalid", [
+        "phase_type", "phase_unknown", "phase_crossed", "target_crossed",
+        "status_crossed", "provisioning",
+    ])
+    async def test_phase_pairs_reject_mismatches_without_effects(self, store, mock_emit, phase, invalid):
+        parent, child = await _retry_store_rows(store, phase)
+        original = await store.get_work_item(parent.id)
+        patch = _retry_store_patch(parent)
+        target_status = "open" if phase == "planned" else "in_progress"
+        if invalid == "phase_type":
+            parent.metadata["crew_recovery"]["phase"] = []
+        elif invalid == "phase_unknown":
+            parent.metadata["crew_recovery"]["phase"] = "unplanned"
+        elif invalid == "phase_crossed":
+            parent.metadata["crew_recovery"]["phase"] = "executing" if phase == "planned" else "planned"
+            patch["crew_recovery"]["phase"] = parent.metadata["crew_recovery"]["phase"]
+        elif invalid == "target_crossed":
+            patch["crew_session"]["state"] = "executing" if phase == "planned" else "discussing"
+        elif invalid == "status_crossed":
+            target_status = "in_progress" if phase == "planned" else "open"
+        else:
+            parent.metadata["crew_provisioning"] = None
+        barrier = WorkItemRetryBarrier(parent, (child,))
+        mock_emit.reset_mock()
+        with pytest.raises(ValueError, match="^work_item_retry_barrier_invalid$"):
+            await store.merge_work_item_metadata(
+                parent.id, patch, retry_barrier=barrier,
+                new_status=target_status, source="crew_session_ingress_resume",
+            )
+        assert await store.get_work_item(parent.id) == original
+        assert await store.get_work_item(child.id) == child
+        assert mock_emit.call_count == 0
+
+    async def test_unassigned_child_detached_proof_commits_once(self, store, mock_emit, phase):
+        parent, child = await _retry_store_rows(store, phase)
+        barrier = WorkItemRetryBarrier(parent, (child,))
+        assert child.assigned_to is None
+        child.metadata["caller_mutation"] = True
+        parent.metadata["retained"]["value"] = 2
+        assert json.loads(barrier.parent_metadata)["retained"] == {"value": 1}
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            barrier.mode = "observed"
+        mock_emit.reset_mock()
+        resumed = await _retry_store_merge(store, parent, barrier)
+        assert resumed is not None and resumed.status == ("open" if phase == "planned" else "in_progress")
+        assert resumed.metadata["retained"] == {"value": 1}
+        assert mock_emit.call_count == 2
+        assert (await store.get_work_item(child.id)).metadata == {}
+        with pytest.raises(WorkItemRetryConflict):
+            await _retry_store_merge(store, parent, barrier)
+        assert mock_emit.call_count == 2
+
+    @pytest.mark.parametrize("field,value", [
+        ("assigned_to", "other-worker"), ("status", "in_progress"),
+        ("depends_on", ["other-child"]), ("verification", {"accepted": True}),
+        ("metadata", {"crew_execution": None}),
+        ("metadata", {"crew_execution_output": None}),
+        ("metadata", {"crew_verification_recovery": None}),
+        ("metadata", {"new": 1}), ("actual_tokens", 1),
+    ])
+    async def test_child_drift_conflicts_without_parent_effects(self, store, mock_emit, field, value, phase):
+        parent, child = await _retry_store_rows(store, phase)
+        barrier = WorkItemRetryBarrier(parent, (child,))
+        changed = await store.update_work_item(child.id, **{field: value})
+        assert changed is not None and getattr(changed, field) == value
+        mock_emit.reset_mock()
+        with pytest.raises(WorkItemRetryConflict):
+            await _retry_store_merge(store, parent, barrier)
+        assert await store.get_work_item(parent.id) == parent
+        assert await store.get_work_item(child.id) == changed
+        assert mock_emit.call_count == 0
+
+    @pytest.mark.parametrize("change", ["add", "remove", "numeric_type", "missing_child", "extra_child", "missing_parent"])
+    async def test_exact_parent_and_complete_children(self, store, mock_emit, change, phase):
+        parent, child = await _retry_store_rows(store, phase)
+        barrier = WorkItemRetryBarrier(parent, (child,))
+        if change in {"add", "remove", "numeric_type"}:
+            metadata = json.loads(json.dumps(parent.metadata))
+            if change == "add":
+                metadata["extra"] = None
+            elif change == "remove":
+                del metadata["retained"]
+            else:
+                metadata["retained"]["value"] = True
+            barrier = WorkItemRetryBarrier(dataclasses.replace(parent, metadata=metadata), (child,))
+        elif change == "missing_child":
+            assert await store.delete_work_item(child.id)
+        elif change == "extra_child":
+            await store.create_work_item(id="extra-child", title="Extra", parent_id=parent.id)
+        else:
+            metadata = json.loads(json.dumps(parent.metadata))
+            metadata["crew_session"]["task_id"] = "missing-parent"
+            parent = dataclasses.replace(parent, id="missing-parent", metadata=metadata)
+            barrier = WorkItemRetryBarrier(parent, (dataclasses.replace(child, parent_id=parent.id),))
+        before = await store.get_work_item(parent.id)
+        mock_emit.reset_mock()
+        with pytest.raises(WorkItemRetryConflict):
+            await _retry_store_merge(store, parent, barrier)
+        assert await store.get_work_item(parent.id) == before
+        assert mock_emit.call_count == 0
+
+    @pytest.mark.parametrize("field,value", [
+        ("status", "in_progress"), ("status", "invented"),
+        ("work_type", "unregistered"), ("verification", {"value": None}),
+        ("metadata", {"crew_execution": None}),
+        ("metadata", {"crew_execution_output": None}),
+        ("metadata", {"crew_verification_recovery": None}),
+    ])
+    async def test_matching_evidence_must_still_be_untouched(self, store, field, value, phase):
+        parent, child = await _retry_store_rows(store, phase)
+        changed = await store.update_work_item(child.id, **{field: value})
+        assert changed is not None and getattr(changed, field) == value
+        barrier = WorkItemRetryBarrier(parent, (changed,))
+        with pytest.raises(WorkItemRetryConflict):
+            await _retry_store_merge(store, parent, barrier)
+        assert await store.get_work_item(parent.id) == parent
+
+    @pytest.mark.parametrize("invalid", ["empty", "duplicate", "list", "wrong_parent", "bool_tokens", "metadata_type", "oversized", "mode"])
+    async def test_invalid_inputs_rejected_before_write(self, store, invalid, phase):
+        parent, child = await _retry_store_rows(store, phase)
+        children = (child,)
+        mode = "untouched"
+        if invalid == "empty":
+            children = ()
+        elif invalid == "duplicate":
+            children = (child, child)
+        elif invalid == "list":
+            children = [child]
+        elif invalid == "wrong_parent":
+            child.parent_id = "another-parent"
+        elif invalid == "bool_tokens":
+            child.actual_tokens = True
+        elif invalid == "metadata_type":
+            child.metadata = []
+        elif invalid == "oversized":
+            child.metadata = {"payload": "x" * 1_048_577}
+        else:
+            mode = "reset"
+        with pytest.raises(ValueError):
+            WorkItemRetryBarrier(parent, children, mode=mode)
+        assert (await store.get_work_item(parent.id)).status == "blocked"
+
+    @pytest.mark.parametrize("missing", [False, True])
+    async def test_observed_mode_records_evidence_without_authorizing_retry(self, store, missing, phase):
+        parent, child = await _retry_store_rows(store, phase)
+        if missing:
+            assert await store.delete_work_item(child.id)
+            children = ()
+        else:
+            child = await store.merge_work_item_metadata(child.id, {"crew_execution": None})
+            children = (child,)
+        barrier = WorkItemRetryBarrier(parent, children, mode="observed")
+        with pytest.raises(ValueError, match="work_item_retry_barrier_invalid"):
+            await _retry_store_merge(store, parent, barrier)
+        patch = _retry_store_patch(parent)
+        patch["crew_session"].update({
+            "state": "blocked_needs_captain",
+            "previous_state": "discussing" if phase == "planned" else "executing",
+            "blocked_reason": "crew_recovery_plan_runtime_invalid",
+        })
+        patch["crew_recovery"]["last_error_code"] = "crew_recovery_plan_runtime_invalid"
+        updated = await store.merge_work_item_metadata(
+            parent.id, patch, retry_barrier=barrier, new_status="blocked",
+            source="crew_session_retry_failure",
+        )
+        assert updated is not None
+        assert updated.metadata["crew_session"]["blocked_reason"] == "crew_recovery_plan_runtime_invalid"
+        if not missing:
+            assert (await store.get_work_item(child.id)).metadata == {"crew_execution": None}
+
+    @pytest.mark.parametrize("fault", ["cancel", "write_error"])
+    async def test_failed_transaction_rolls_back_and_releases_lock(self, store, mock_emit, monkeypatch, fault, phase):
+        parent, child = await _retry_store_rows(store, phase)
+        barrier = WorkItemRetryBarrier(parent, (child,))
+        original = store.get_work_item
+        reads = 0
+
+        async def interrupt(work_item_id: str) -> WorkItem | None:
+            nonlocal reads
+            if work_item_id == parent.id:
+                reads += 1
+                if reads == 3:
+                    if fault == "cancel":
+                        raise asyncio.CancelledError()
+                    raise RuntimeError("injected transaction failure")
+            return await original(work_item_id)
+
+        monkeypatch.setattr(store, "get_work_item", interrupt)
+        mock_emit.reset_mock()
+        with pytest.raises(asyncio.CancelledError if fault == "cancel" else RuntimeError):
+            await _retry_store_merge(store, parent, barrier)
+        assert reads == 3
+        assert await original(parent.id) == parent
+        assert mock_emit.call_count == 0
+        monkeypatch.setattr(store, "get_work_item", original)
+        assert (await _retry_store_merge(store, parent, barrier)).status == ("open" if phase == "planned" else "in_progress")
+
+    async def test_independent_writer_waits_between_proof_and_commit(self, tmp_path, phase):
+        owner_factory = _RetryGateFactory()
+        writer_factory = _RetryGateFactory()
+        db_path = str(tmp_path / "retry-transaction.db")
+        owner = WorkItemStore(db_path=db_path, connection_factory=owner_factory, tick_interval=1_000)
+        independent = WorkItemStore(db_path=db_path, connection_factory=writer_factory, tick_interval=1_000)
+        tasks: list[asyncio.Task[Any]] = []
+        await owner.start()
+        await independent.start()
+        owner_connection = owner_factory.connection
+        writer_connection = writer_factory.connection
+        assert isinstance(owner_connection, _RetryGateConnection)
+        assert isinstance(writer_connection, _RetryGateConnection)
+        try:
+            parent, child = await _retry_store_rows(owner, phase)
+            barrier = WorkItemRetryBarrier(parent, (child,))
+            owner_connection.queries.clear()
+            owner_connection.pause_parent = True
+            resume = asyncio.create_task(_retry_store_merge(owner, parent, barrier))
+            tasks.append(resume)
+            await asyncio.wait_for(owner_connection.parent_waiting.wait(), timeout=2)
+            assert any(sql == "BEGIN IMMEDIATE" for sql, _parameters in owner_connection.queries)
+            assert any("WHERE parent_id = ?" in sql for sql, _parameters in owner_connection.queries)
+            assert (await independent.get_work_item(parent.id)).status == "blocked"
+            writer = asyncio.create_task(independent.merge_work_item_metadata(
+                child.id, {"crew_execution": None},
+            ))
+            tasks.append(writer)
+            await asyncio.wait_for(writer_connection.child_attempted.wait(), timeout=2)
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(writer), timeout=0.05)
+            assert not resume.done() and not writer.done()
+            owner_connection.release_parent.set()
+            resumed, mutated = await asyncio.wait_for(asyncio.gather(resume, writer), timeout=5)
+            assert resumed is not None and resumed.status == ("open" if phase == "planned" else "in_progress")
+            assert mutated is not None and mutated.metadata == {"crew_execution": None}
+            assert (await owner.get_work_item(child.id)).metadata == mutated.metadata
+            assert (await independent.get_work_item(parent.id)).metadata["crew_session"]["state"] == ("discussing" if phase == "planned" else "executing")
+        finally:
+            owner_connection.release_parent.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await independent.stop()
+            await owner.stop()
+
 
 class TestWSVisibleWorkItems:
     @pytest.mark.asyncio

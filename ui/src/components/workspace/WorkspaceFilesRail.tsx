@@ -47,6 +47,42 @@ const AMBER = '#f0b060';
 const DIM = '#666680';
 const STORAGE_KEY = 'probos.workspaceFiles.collapsed';
 
+function startWorkErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : 'Start Work failed';
+  switch (message) {
+    case 'crew_session_worker_unavailable':
+      return 'No eligible worker is available. Refresh the session and retry when a worker is available; eligibility will be checked again.';
+    case 'crew_session_worker_eligibility_unwired':
+      return 'Worker eligibility checks are unavailable. Ask the Captain to restore the crew execution service before retrying.';
+    case 'crew_session_agent_identity_changed':
+    case 'crew_session_owner_identity_changed':
+      return 'The selected worker identity has changed. Refresh the session before requesting work again.';
+    case 'crew_session_retry_not_authorized':
+      return 'Retry is not authorized for the current session. Refresh its state; execution evidence may need review before work can continue.';
+    case 'crew_worker_identity_lost':
+      return 'Worker identity was lost after work began. Execution evidence must be reviewed before work can continue.';
+    case 'crew_recovery_plan_runtime_invalid':
+    case 'crew_recovery_plan_integrity_invalid':
+    case 'crew_recovery_plan_semantic_invalid':
+    case 'crew_recovery_plan_missing':
+    case 'crew_recovery_plan_children_invalid':
+    case 'crew_recovery_plan_child_id_conflict':
+    case 'crew_recovery_plan_version_invalid':
+    case 'crew_recovery_plan_phase_invalid':
+    case 'crew_recovery_phase_ref_invalid':
+    case 'crew_recovery_version_invalid':
+    case 'crew_recovery_error_code_invalid':
+    case 'crew_recovery_attempt_count_invalid':
+    case 'crew_recovery_retry_count_invalid':
+    case 'crew_recovery_interrupted_children_invalid':
+    case 'crew_recovery_backoff_invalid':
+    case 'crew_recovery_too_large':
+      return 'Recovery records could not be validated. Execution evidence must be reviewed before work can continue.';
+    default:
+      return message.slice(0, 256);
+  }
+}
+
 function loadCollapsedFromStorage(): boolean | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -360,6 +396,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
       || retryCommand.threadId !== threadId
       || retryCommand.projection.thread_id !== threadId
       || retryCommand.parentId !== retryCommand.projection.task_id
+      || (effectiveTaskId !== null && effectiveTaskId !== retryCommand.parentId)
       || !retryCommand.opener.isConnected
       || retryCommand.requestId <= lastRetryRequestRef.current
     ) return;
@@ -377,7 +414,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     setRetryBlocked(true);
     setStartError('');
     setStartDialogOpen(true);
-  }, [retryCommand, threadId]);
+  }, [effectiveTaskId, retryCommand, threadId]);
 
   const criteriaValues = startCriteria
     .split('\n')
@@ -470,8 +507,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
       if (!blockedRetryOriginRef.current) restoreStartOpener();
     } catch (error) {
       if (startGenerationRef.current !== generation || !ownsRoom(roomToken)) return;
-      const message = error instanceof Error ? error.message : 'Start Work failed';
-      setStartError(message.slice(0, 256));
+      setStartError(startWorkErrorMessage(error));
     } finally {
       if (startGenerationRef.current === generation && ownsRoom(roomToken)) {
         startSubmittingRef.current = false;

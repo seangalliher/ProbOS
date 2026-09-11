@@ -8,8 +8,11 @@ tracks concurrency, and can be told to "fail" specific children.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -211,6 +214,254 @@ def _make_executor(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def native_workers(tmp_path: Path) -> Any:
+    from probos.cognitive.crew_assignment import CrewAssignmentResolver
+    from probos.consensus.trust import TrustNetwork
+    from probos.ontology import VesselOntologyService
+    from tests.test_ad864_crew_assignment import _capability_registry, _make_registry
+
+    ontology_path = tmp_path / "worker-ontology"
+    shutil.copytree(Path(__file__).resolve().parents[1] / "config" / "ontology", ontology_path)
+    data_path = tmp_path / "worker-data"
+    data_path.mkdir()
+    ontology = VesselOntologyService(ontology_path, data_dir=data_path)
+    await ontology.initialize()
+    registry = await _make_registry([
+        ("architect", "facilitator-1"),
+        ("builder", "builder-1"),
+        ("builder", "builder-2"),
+    ])
+    agents = registry.all()
+    trust = TrustNetwork()
+    for _ in range(3):
+        trust.record_outcome("builder-1", True)
+    capabilities = _capability_registry({
+        "builder-1": ["analysis"], "builder-2": ["analysis"],
+    })
+    resolver = CrewAssignmentResolver(
+        capability_registry=capabilities,
+        ontology=ontology,
+        trust_network=trust,
+        agent_registry=registry,
+    )
+    try:
+        for agent in agents:
+            await agent.start()
+            assert agent.is_alive
+            assert resolver.check_eligibility(agent.id).identity is not None
+        yield SimpleNamespace(
+            registry=registry, ontology=ontology, trust=trust,
+            capabilities=capabilities, resolver=resolver, agents=agents,
+        )
+    finally:
+        for agent in agents:
+            await agent.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loss", ["removed", "inactive", "unresolved"])
+async def test_native_worker_loss_before_admission_leaves_child_untouched(
+    store: WorkItemStore, native_workers: Any, loss: str,
+) -> None:
+    from probos.cognitive.crew_executor import CrewWorkerUnavailable, is_untouched_crew_child
+
+    parent = await store.create_work_item(title="parent", work_type="work_order")
+    child = await _make_child(
+        store, parent_id=parent.id, title="analysis", assigned_to="builder-1", spec_id="spec-a",
+    )
+    worker = native_workers.registry.get("builder-1")
+    assert native_workers.resolver.check_eligibility(worker.id).identity is not None
+    if loss == "removed":
+        await native_workers.registry.unregister(worker.id)
+    elif loss == "inactive":
+        await worker.stop()
+    else:
+        worker.agent_type = "summarizer"
+    agentic = _FakeAgenticExecutor()
+    executor = CrewTaskExecutor(
+        work_item_store=store, agent_registry=native_workers.registry,
+        eligibility_resolver=native_workers.resolver, agentic_executor=agentic,
+        runtime=object(),
+    )
+    with pytest.raises(CrewWorkerUnavailable, match="^crew_worker_unavailable$"):
+        await executor.run(parent.id)
+    current = await store.get_work_item(child.id)
+    assert current is not None
+    assert is_untouched_crew_child(
+        current, initial_status=store.work_type_registry.get_initial_status(child.work_type),
+    )
+    assert current.metadata == child.metadata
+    assert agentic.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loss", ["removed", "replaced"])
+async def test_native_worker_loss_after_admission_is_terminal_before_augmentation(
+    store: WorkItemStore, native_workers: Any, monkeypatch: pytest.MonkeyPatch, loss: str,
+) -> None:
+    from tests.test_ad864_crew_assignment import _CrewAgent
+
+    parent = await store.create_work_item(title="parent", work_type="work_order")
+    child = await _make_child(
+        store, parent_id=parent.id, title="analysis", assigned_to="builder-1", spec_id="spec-a",
+    )
+    merge = store.merge_work_item_metadata
+    admission_calls = []
+
+    async def lose_worker(work_item_id: str, patch: dict[str, Any], **kwargs: Any) -> Any:
+        result = await merge(work_item_id, patch, **kwargs)
+        if kwargs.get("source") == "crew_executor_admission":
+            assert result is not None and result.status == "in_progress"
+            admission_calls.append(work_item_id)
+            await native_workers.registry.unregister("builder-1")
+            if loss == "replaced":
+                replacement = _CrewAgent(agent_id="builder-1")
+                replacement.agent_type = "builder"
+                native_workers.agents.append(replacement)
+                await replacement.start()
+                await native_workers.registry.register(replacement)
+                assert native_workers.resolver.check_eligibility("builder-1").identity is not None
+        return result
+
+    monkeypatch.setattr(store, "merge_work_item_metadata", lose_worker)
+    agentic = _FakeAgenticExecutor()
+    executor = CrewTaskExecutor(
+        work_item_store=store, agent_registry=native_workers.registry,
+        eligibility_resolver=native_workers.resolver, agentic_executor=agentic,
+        runtime=object(),
+    )
+    result = (await executor.run(parent.id))[0]
+    assert admission_calls == [child.id]
+    assert agentic.calls == []
+    assert result.status == "failed"
+    assert result.stopped_reason == "crew_worker_identity_lost"
+    current = await store.get_work_item(child.id)
+    assert current.status == "failed"
+    assert current.metadata["crew_execution"]["stopped_reason"] == "crew_worker_identity_lost"
+
+
+@pytest.mark.asyncio
+async def test_native_outer_loop_identity_loss_retains_previous_evidence(
+    store: WorkItemStore, native_workers: Any,
+) -> None:
+    parent = await store.create_work_item(title="parent", work_type="work_order")
+    child = await _make_child(
+        store, parent_id=parent.id, title="analysis", assigned_to="builder-1", spec_id="spec-a",
+    )
+
+    class _LosingExecutor:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, **kwargs: Any) -> WorkItemAgenticOutcome:
+            self.calls += 1
+            assert kwargs["agent_id"] == "builder-1"
+            await native_workers.registry.get("builder-1").stop()
+            return WorkItemAgenticOutcome(
+                final_text="Evidence from the first pass", stopped_reason="max_iterations",
+                total_tokens=17, tool_trace_ref="d" * 64,
+            )
+
+    agentic = _LosingExecutor()
+    executor = CrewTaskExecutor(
+        work_item_store=store, agent_registry=native_workers.registry,
+        eligibility_resolver=native_workers.resolver, agentic_executor=agentic,
+        runtime=object(), crew_loop_until_done_enabled=True,
+        crew_loop_until_done_max_iterations=2,
+    )
+    result = (await executor.run(parent.id))[0]
+    assert agentic.calls == 1
+    assert result.stopped_reason == "crew_worker_identity_lost"
+    current = await store.get_work_item(child.id)
+    evidence = current.metadata["crew_execution"]
+    assert evidence["output_summary"] == "Evidence from the first pass"
+    assert evidence["tokens_used"] == 17
+    assert evidence["tool_trace_ref"] == "d" * 64
+    assert current.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_pre_admission_loss_drains_admitted_sibling_without_erasing_output(
+    store: WorkItemStore, native_workers: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from probos.cognitive.crew_executor import CrewWorkerUnavailable, is_untouched_crew_child
+
+    parent = await store.create_work_item(title="parent", work_type="work_order")
+    admitted = await _make_child(
+        store, parent_id=parent.id, title="admitted", assigned_to="builder-1", spec_id="spec-a",
+    )
+    untouched = await _make_child(
+        store, parent_id=parent.id, title="untouched", assigned_to="builder-2", spec_id="spec-b",
+    )
+    entered = asyncio.Event()
+    rejected = asyncio.Event()
+    release = asyncio.Event()
+
+    class _HeldExecutor:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def run(self, **kwargs: Any) -> WorkItemAgenticOutcome:
+            self.calls.append(kwargs["agent_id"])
+            entered.set()
+            await release.wait()
+            return WorkItemAgenticOutcome(
+                final_text="Retained admitted output", stopped_reason="complete", total_tokens=9,
+            )
+
+    agentic = _HeldExecutor()
+    executor = CrewTaskExecutor(
+        work_item_store=store, agent_registry=native_workers.registry,
+        eligibility_resolver=native_workers.resolver, agentic_executor=agentic,
+        runtime=object(), max_parallel_subtasks=2,
+    )
+    run_child = executor._run_child
+
+    async def lose_second(parent_id: str, child: Any, thread_id: str) -> SubtaskResult:
+        if child.id == untouched.id:
+            await entered.wait()
+            await native_workers.registry.get("builder-2").stop()
+            rejected.set()
+        return await run_child(parent_id, child, thread_id)
+
+    monkeypatch.setattr(executor, "_run_child", lose_second)
+    task = asyncio.create_task(executor.run(parent.id))
+    try:
+        await asyncio.wait_for(rejected.wait(), timeout=5)
+        assert not task.done()
+        release.set()
+        with pytest.raises(CrewWorkerUnavailable):
+            await task
+        assert agentic.calls == ["builder-1"]
+        completed = await store.get_work_item(admitted.id)
+        assert completed.status == "done"
+        assert completed.metadata["crew_execution"]["output_summary"] == "Retained admitted output"
+        assert completed.actual_tokens == 9
+        pending = await store.get_work_item(untouched.id)
+        assert is_untouched_crew_child(
+            pending, initial_status=store.work_type_registry.get_initial_status(pending.work_type),
+        )
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("marker", ["crew_execution", "crew_execution_output", "crew_verification_recovery"])
+async def test_null_execution_marker_is_not_untouched(store: WorkItemStore, marker: str) -> None:
+    from dataclasses import replace
+    from probos.cognitive.crew_executor import is_untouched_crew_child
+
+    child = await store.create_work_item(title="initial", work_type="task")
+    initial = store.work_type_registry.get_initial_status(child.work_type)
+    assert is_untouched_crew_child(child, initial_status=initial)
+    marked = replace(child, metadata={marker: None})
+    assert not is_untouched_crew_child(marked, initial_status=initial)
 
 
 @pytest.mark.asyncio

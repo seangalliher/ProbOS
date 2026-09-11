@@ -60,13 +60,14 @@ import weakref
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from probos.cognitive.crew_executor import CrewWorkerUnavailable, is_untouched_crew_child
 from probos.cognitive.crew_synth import SynthesisResult
 from probos.cognitive.crew_verifier import ConvergenceOutcome
 from probos.consultation.dispatch import WorkItemSpec
 from probos.events import EventType
 
 if TYPE_CHECKING:  # pragma: no cover - type-only imports
-    from probos.cognitive.crew_assignment import CrewAssignmentResolver
+    from probos.cognitive.crew_assignment import CrewAssignmentResolver, CrewWorkerEligibilityResolver
     from probos.cognitive.crew_delegation import CrewDelegator
     from probos.cognitive.crew_executor import CrewTaskExecutor, SubtaskResult
     from probos.cognitive.crew_finalizer import CrewSessionFinalizer
@@ -104,6 +105,7 @@ class CrewOrchestrator:
         decomposer: Any = None,
         crew_session_finalizer: "CrewSessionFinalizer | None" = None,
         crew_session_service: "CrewSessionService | None" = None,
+        eligibility_resolver: CrewWorkerEligibilityResolver | None = None,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
@@ -122,6 +124,11 @@ class CrewOrchestrator:
         self._decomposer = decomposer
         self._crew_session_finalizer = crew_session_finalizer
         self._crew_session_service = crew_session_service
+        self._eligibility_resolver = (
+            eligibility_resolver
+            if eligibility_resolver is not None
+            else getattr(crew_session_service, "worker_eligibility", None)
+        )
         self._clock = clock
         self._sleep = sleep
         dispatch_config = getattr(config, "agentic_dispatch", None)
@@ -455,8 +462,43 @@ class CrewOrchestrator:
         if session.state == "executing":
             if recovery.phase != "executing":
                 raise ValueError("crew_recovery_phase_state_conflict")
-            await self._assign_untouched_session_children(parent_id)
-            results = await self._crew_executor.resume(parent_id)
+            try:
+                await service.validate_worker_admission(parent_id, allow_reassignment=True)
+                await self._assign_untouched_session_children(parent_id)
+                await service.validate_worker_admission(parent_id)
+                results = await self._crew_executor.resume(parent_id)
+            except CrewWorkerUnavailable:
+                children = await self._work_item_store.list_work_items(
+                    parent_id=parent_id, limit=1001,
+                )
+                untouched = bool(children) and len(children) <= 1000 and all(
+                    is_untouched_crew_child(
+                        child,
+                        initial_status=self._work_item_store.work_type_registry.get_initial_status(
+                            child.work_type,
+                        ),
+                    )
+                    for child in children
+                )
+                logger.warning(
+                    "Crew parent %s lost worker eligibility; child tasks are drained "
+                    "and the parent is parked for %s",
+                    parent_id,
+                    "Captain retry" if untouched else "execution evidence review",
+                )
+                return await self._transition_recovery_terminal(
+                    session,
+                    recovery,
+                    state="blocked_needs_captain",
+                    code="crew_worker_unavailable" if untouched else "crew_worker_identity_lost",
+                )
+            if any(result.stopped_reason == "crew_worker_identity_lost" for result in results):
+                return await self._transition_recovery_terminal(
+                    session,
+                    recovery,
+                    state="blocked_needs_captain",
+                    code="crew_worker_identity_lost",
+                )
             failed = next(
                 (result for result in results if result.status == "failed"),
                 None,
@@ -646,21 +688,16 @@ class CrewOrchestrator:
             raise ValueError("crew_recovery_plan_children_invalid")
         for child in children:
             metadata = child.metadata if type(child.metadata) is dict else {}
-            if (
-                child.assigned_to is not None
-                or child.status
-                != self._work_item_store.work_type_registry.get_initial_status(
+            if not is_untouched_crew_child(
+                child,
+                initial_status=self._work_item_store.work_type_registry.get_initial_status(
                     child.work_type,
-                )
-                or child.verification
-                or any(
-                    key in metadata
-                    for key in (
-                        "crew_execution",
-                        "crew_execution_output",
-                        "crew_verification_recovery",
-                    )
-                )
+                ),
+            ):
+                continue
+            if child.assigned_to is not None and (
+                self._eligibility_resolver is None
+                or self._eligibility_resolver.check_eligibility(child.assigned_to).identity is not None
             ):
                 continue
             decision = self._assignment_resolver.resolve(self._spec_view(child))
@@ -676,19 +713,26 @@ class CrewOrchestrator:
                 "assigned_capability": decision.capability,
                 "assigned_department": decision.department,
             })
-            await self._await_recovery_boundary(
-                self._work_item_store.compare_and_set_work_item_assignment(
-                    child.id,
-                    expected_parent_id=parent_id,
-                    expected_status=child.status,
-                    expected_assigned_to=None,
-                    expected_depends_on=list(child.depends_on),
-                    expected_metadata=metadata,
-                    new_assigned_to=delegation.worker_agent_id,
-                    metadata=assigned_metadata,
-                ),
-                boundary="assignment_store",
-            )
+            try:
+                assigned = await self._await_recovery_boundary(
+                    self._work_item_store.compare_and_set_work_item_assignment(
+                        child.id,
+                        expected_parent_id=parent_id,
+                        expected_status=child.status,
+                        expected_assigned_to=child.assigned_to,
+                        expected_depends_on=list(child.depends_on),
+                        expected_metadata=metadata,
+                        new_assigned_to=delegation.worker_agent_id,
+                        metadata=assigned_metadata,
+                    ),
+                    boundary="assignment_store",
+                )
+            except ValueError as exc:
+                if str(exc) != "work_item_assignment_conflict":
+                    raise
+                raise CrewWorkerUnavailable("crew_worker_unavailable") from exc
+            if assigned is None and self._eligibility_resolver is not None:
+                raise CrewWorkerUnavailable("crew_worker_unavailable")
 
     async def _run_recovery_loop(self, parent_id: str) -> SynthesisResult:
         while True:

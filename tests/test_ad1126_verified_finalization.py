@@ -8,6 +8,7 @@ import importlib.util
 import inspect
 import itertools
 import json
+import shutil
 import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
@@ -15,7 +16,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
+from fastapi import FastAPI
 from pydantic import ValidationError
 
 from probos.artifacts import Artifact, ArtifactStore
@@ -663,7 +666,7 @@ class _Stores:
 
 
 @pytest.fixture
-async def stores(tmp_path: Path) -> Any:
+async def stores(tmp_path: Path, request: pytest.FixtureRequest) -> Any:
     events = _EventRecorder()
     connection_factory = _ControlledConnectionFactory()
     work = WorkItemStore(
@@ -674,7 +677,11 @@ async def stores(tmp_path: Path) -> Any:
     )
     await work.start()
     assert connection_factory.connection is not None
-    admission_port = work.claim_crew_session_admission_port()
+    admission_port = (
+        work.claim_crew_session_admission_port()
+        if getattr(request, "param", True)
+        else None
+    )
     try:
         yield _Stores(
             work=work,
@@ -1082,6 +1089,360 @@ async def _accepted_finalization(
         "synth_llm": active_synth,
         "executor": active_executor,
     }
+
+
+@pytest.mark.parametrize("stores", [False], indirect=True)
+@pytest.mark.parametrize("restore_worker", [False, True], ids=["eligible", "explicit-retry"])
+async def test_start_work_e2e_selects_eligible_helper_and_publishes_verified_result(
+    stores: _Stores,
+    tmp_path: Path,
+    restore_worker: bool,
+) -> None:
+    from probos.cognitive.agentic_dispatch import (
+        AgenticIdentityUnresolved,
+        resolve_agentic_identity,
+    )
+    from probos.cognitive.crew_assignment import CrewAssignmentResolver
+    from probos.consensus.trust import TrustNetwork
+    from probos.consultation.dispatch import WorkItemSpec
+    from probos.mesh.capability import CapabilityRegistry
+    from probos.ontology import VesselOntologyService
+    from probos.routers import artifacts, chat, crew_tasks, threads
+    from probos.routers.deps import get_runtime
+    from probos.startup.finalize import _wire_crew_session_service
+    from probos.substrate.agent import BaseAgent
+    from probos.substrate.registry import AgentRegistry
+    from probos.types import CapabilityDescriptor
+
+    class _StartWorkAgent(BaseAgent):
+        instructions = "Produce the requested synthetic handover without tools."
+
+        async def perceive(self, intent: dict[str, Any]) -> Any:
+            return None
+
+        async def decide(self, observation: Any) -> Any:
+            return None
+
+        async def act(self, plan: Any) -> Any:
+            return None
+
+        async def report(self, result: Any) -> dict[str, Any]:
+            return {}
+
+    source_root = Path(__file__).resolve().parents[1]
+    assert Path(inspect.getfile(threads.start_thread_work)).resolve() == (
+        source_root / "src/probos/routers/threads.py"
+    ).resolve()
+    assert Path(inspect.getfile(WorkItemAgenticExecutor)).resolve() == (
+        source_root / "src/probos/cognitive/agentic_dispatch.py"
+    ).resolve()
+    assert stores.admission_port is None
+    ontology_dir = tmp_path / "ontology"
+    shutil.copytree(source_root / "config/ontology", ontology_dir)
+    ontology_data = tmp_path / "ontology-data"
+    ontology_data.mkdir()
+    ontology = VesselOntologyService(ontology_dir, data_dir=ontology_data)
+    await ontology.initialize()
+    registry = AgentRegistry()
+    trust = TrustNetwork()
+    capabilities = CapabilityRegistry(semantic_matching=False)
+    agents: list[BaseAgent] = []
+    orchestrator: CrewOrchestrator | None = None
+    child_entered = asyncio.Event()
+    release_child = asyncio.Event()
+    child_text = "Synthetic handover: pump inspection complete; next watch checks valve A."
+    final_text = "# Handover\n\nPump inspection complete. Next watch checks valve A."
+    spec = WorkItemSpec(
+        spec_id="handover-summary",
+        title="Summarize the synthetic handover",
+        description=child_text,
+        capability="summarize",
+        expected_output="Report the completed inspection and the next watch action.",
+    )
+
+    async def child_response(request: LLMRequest) -> LLMResponse:
+        assert "synthetic handover" in request.prompt.lower()
+        assert _StartWorkAgent.instructions in request.system_prompt
+        child_entered.set()
+        await release_child.wait()
+        return LLMResponse(content=child_text, tokens_used=7)
+
+    accepted = json.dumps({
+        "accepted": True,
+        "confidence": 0.98,
+        "critique": "The inspection and next watch action match the synthetic handover.",
+    })
+    llm = _ScriptedLLM([
+        LLMResponse(content=json.dumps([{
+            "spec_id": spec.spec_id,
+            "title": spec.title,
+            "description": spec.description,
+            "depends_on": [],
+            "expected_output": spec.expected_output,
+            "capability": spec.capability,
+            "department": None,
+        }]), tokens_used=3),
+        child_response,
+        LLMResponse(content=accepted, tokens_used=3),
+        LLMResponse(content=final_text, tokens_used=5),
+        LLMResponse(content=accepted, tokens_used=3),
+    ])
+    config = _config(tmp_path)
+    config.attachments.attachments_dir = str(tmp_path / "attachments")
+    tool_registry = ToolRegistry()
+    permissions = ToolPermissionStore()
+    tool_registry.set_permission_store(permissions)
+    runtime = SimpleNamespace(
+        config=config,
+        work_item_store=stores.work,
+        chat_thread_store=stores.chat,
+        artifact_store=stores.artifacts,
+        attachment_store=stores.attachments,
+        registry=registry,
+        capability_registry=capabilities,
+        ontology=ontology,
+        trust_network=trust,
+        llm_client=llm,
+        tool_registry=tool_registry,
+        tool_permission_store=permissions,
+        emit_event=stores.events,
+        order_manager=None,
+        episodic_memory=None,
+    )
+    try:
+        for agent_type, agent_id in [
+            ("operations_officer", "facilitator-e2e"),
+            ("security_officer", "reviewer-e2e"),
+            ("summarizer", "summary-e2e"),
+            ("builder", "builder-e2e"),
+        ]:
+            agent = _StartWorkAgent(agent_id=agent_id)
+            agent.agent_type = agent_type
+            agents.append(agent)
+            await registry.register(agent)
+            await agent.start()
+            assert agent.is_alive is True
+        worker = registry.get("builder-e2e")
+        assert worker is not None
+        for agent_id in ("summary-e2e", worker.id):
+            capabilities.register(agent_id, [CapabilityDescriptor(can="summarize")])
+        for _ in range(6):
+            trust.record_outcome("summary-e2e", True)
+        matches = capabilities.query("summarize", trust_scores=trust.all_scores())
+        assert [match.agent_id for match in matches] == ["summary-e2e", worker.id]
+        assert matches[0].score > matches[1].score
+        with pytest.raises(AgenticIdentityUnresolved):
+            resolve_agentic_identity(
+                agent_id="summary-e2e",
+                agent_registry=registry,
+                ontology=ontology,
+                trust_network=trust,
+            )
+        identity = resolve_agentic_identity(
+            agent_id=worker.id,
+            agent_registry=registry,
+            ontology=ontology,
+            trust_network=trust,
+        )
+        assert identity.agent_id == worker.id
+        assert identity.department == "engineering"
+        resolver = CrewAssignmentResolver(
+            capability_registry=capabilities,
+            ontology=ontology,
+            trust_network=trust,
+            agent_registry=registry,
+        )
+        assert resolver.resolve(spec).agent_id == worker.id
+        room = stores.chat.create_thread(
+            title="Synthetic handover",
+            participants=["facilitator-e2e", "reviewer-e2e"],
+        )
+        assert worker.id not in room.participants
+        assert _wire_crew_session_service(runtime=runtime, config=config) is True
+        assert isinstance(runtime.crew_session_service, CrewSessionService)
+        assert _wire_crew_orchestrator(runtime=runtime, config=config) is True
+        orchestrator = runtime.crew_orchestrator
+        assert isinstance(orchestrator, CrewOrchestrator)
+        await orchestrator.start()
+        service = runtime.crew_session_service
+
+        async def wait_for_state(parent_id: str, expected: str) -> CrewSessionContract:
+            async with asyncio.timeout(15):
+                while True:
+                    current = await service.get_session(parent_id)
+                    assert current is not None
+                    if current.state == expected:
+                        return current
+                    assert current.state not in {"done", "failed", "blocked_needs_captain"}, (
+                        current.model_dump(mode="json")
+                    )
+                    await asyncio.sleep(0.01)
+
+        app = FastAPI()
+        for router in (threads.router, crew_tasks.router, artifacts.router, chat.router):
+            app.include_router(router)
+        app.dependency_overrides[get_runtime] = lambda: runtime
+        assert any(
+            getattr(route, "endpoint", None) is threads.start_thread_work
+            for route in app.routes
+        )
+        body = {
+            "goal": "Prepare a synthetic handover summary",
+            "success_criteria": ["Include the completed inspection and next watch action"],
+            "expected_deliverable": "A verified Markdown handover",
+            "facilitator_id": "facilitator-e2e",
+            "owner_ids": ["facilitator-e2e", "reviewer-e2e"],
+        }
+        if restore_worker:
+            await worker.stop()
+            assert worker.is_alive is False
+            assert resolver.resolve(spec).agent_id is None
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            opened = await client.post(f"/api/threads/{room.id}/start-work", json=body)
+            assert opened.status_code == 200, opened.text
+            admission = opened.json()
+            assert admission["scheduled"] is True
+            assert admission["thread_id"] == room.id
+            parent_id = admission["parent_id"]
+            original_plan = None
+            if restore_worker:
+                blocked = await wait_for_state(parent_id, "blocked_needs_captain")
+                assert blocked.blocked_reason == "crew_worker_unavailable"
+                recovery = await service.get_recovery(parent_id)
+                assert recovery is not None and recovery.plan is not None
+                assert recovery.phase == "executing"
+                assert recovery.last_error_code == "crew_worker_unavailable"
+                original_plan = recovery.plan
+                assert len(original_plan.children) == 1
+                untouched = await stores.work.get_work_item(original_plan.children[0].child_id)
+                assert untouched is not None
+                assert untouched.status in {"open", "draft"}
+                assert untouched.verification == {}
+                assert untouched.actual_tokens == 0
+                assert all(key not in untouched.metadata for key in (
+                    "crew_execution", "crew_execution_output", "crew_verification_recovery",
+                ))
+                assert child_entered.is_set() is False
+                assert len(llm.requests) == 1
+                assert stores.artifacts.list_thread_latest(room.id) == []
+                blocked_response = await client.get(f"/api/crew-tasks/{parent_id}")
+                assert blocked_response.status_code == 200
+                blocked_detail = blocked_response.json()["session"]
+                assert blocked_detail["blocker"]["reason"] == "crew_worker_unavailable"
+                assert blocked_detail["blocker"]["action"] == "retry_start_work"
+                assert blocked_detail["result"] is None
+                assert blocked_detail["verification"] is None
+
+                await worker.start()
+                assert worker.is_alive is True
+                assert resolver.resolve(spec).agent_id == worker.id
+                assert (await service.get_session(parent_id)).state == "blocked_needs_captain"
+                assert len(llm.requests) == 1
+                retried = await client.post(
+                    f"/api/threads/{room.id}/start-work", json={**body, "retry_blocked": True},
+                )
+                assert retried.status_code == 200, retried.text
+                assert retried.json()["parent_id"] == parent_id
+                assert retried.json()["thread_id"] == room.id
+                assert retried.json()["scheduled"] is True
+
+            await asyncio.wait_for(child_entered.wait(), timeout=15)
+            recovery = await service.get_recovery(parent_id)
+            assert recovery is not None and recovery.plan is not None
+            if original_plan is not None:
+                assert recovery.plan == original_plan
+            original_plan = recovery.plan
+            assert len(original_plan.children) == 1
+            planned_child = original_plan.children[0]
+            assert planned_child.spec_id == spec.spec_id
+            child_id = planned_child.child_id
+            active_child = await stores.work.get_work_item(child_id)
+            assert active_child is not None
+            assert active_child.parent_id == parent_id
+            assert active_child.assigned_to == worker.id
+            assert active_child.depends_on == []
+            assert active_child.metadata["spec_id"] == spec.spec_id
+            active_response = await client.get(f"/api/crew-tasks/{parent_id}")
+            assert active_response.status_code == 200
+            active_detail = active_response.json()["session"]
+            assert active_detail["progress"]["active_child"]["id"] == child_id
+            assert active_detail["progress"]["active_child"]["owner_id"] == worker.id
+            assert active_detail["result"] is None
+            assert active_detail["verification"] is None
+            release_child.set()
+            completed = await wait_for_state(parent_id, "done")
+
+            assert len(llm.requests) == 5
+            assert llm.responses == []
+            assert "planning decomposer" in llm.requests[0].system_prompt
+            assert "adversarial verifier" in llm.requests[2].system_prompt
+            assert child_text in llm.requests[2].prompt
+            assert "server-selected facilitator" in llm.requests[3].system_prompt
+            assert child_text in llm.requests[3].prompt
+            assert "adversarial verifier" in llm.requests[4].system_prompt
+            assert final_text in llm.requests[4].prompt
+            finished_child = await stores.work.get_work_item(child_id)
+            assert finished_child is not None and finished_child.status == "done"
+            assert finished_child.assigned_to == worker.id
+            assert finished_child.depends_on == active_child.depends_on
+            assert finished_child.verification["accepted"] is True
+            assert finished_child.verification["producer_agent_id"] == worker.id
+            assert finished_child.metadata["crew_execution"]["assigned_to"] == worker.id
+            assert (await service.get_recovery(parent_id)).plan == original_plan
+            assert completed.thread_id == room.id
+            assert completed.facilitator_id == "facilitator-e2e"
+            assert set(completed.owner_ids) == set(room.participants)
+            assert stores.chat.get_thread(room.id).participants == room.participants
+            assert stores.chat.get_thread(room.id).task_id == parent_id
+            assert {item.id for item in await stores.work.list_work_items(limit=10)} == {
+                parent_id, child_id,
+            }
+
+            published = stores.artifacts.list_versions(thread_id=room.id, name="crew-result.md")
+            assert len(published) == 1
+            artifact = published[0]
+            assert artifact.id == completed.result_artifact_id
+            assert artifact.content_hash == hashlib.sha256(final_text.encode()).hexdigest()
+            metadata_response = await client.get(f"/api/artifacts/{artifact.id}")
+            assert metadata_response.status_code == 200
+            assert metadata_response.json()["content_hash"] == artifact.content_hash
+            content_response = await client.get(f"/api/artifacts/{artifact.id}/content")
+            assert content_response.status_code == 200
+            assert content_response.content == final_text.encode()
+            assert hashlib.sha256(content_response.content).hexdigest() == artifact.content_hash
+            assert content_response.headers["content-type"].startswith("text/markdown")
+            provenance_response = await client.get(
+                f"/api/chat/attachments/{completed.result_ref}",
+            )
+            assert provenance_response.status_code == 200
+            assert hashlib.sha256(provenance_response.content).hexdigest() == completed.result_ref
+            provenance = provenance_response.json()
+            assert provenance["parent_id"] == parent_id
+            assert provenance["thread_id"] == room.id
+            assert provenance["origin"] == "crew_session_finalizer"
+            assert [entry["work_item_id"] for entry in provenance["children"]] == [child_id]
+            assert provenance["final_verification"]["accepted"] is True
+            assert provenance["final_verification"]["verifier_agent_id"] not in {
+                worker.id, completed.facilitator_id,
+            }
+            assert provenance["result_artifact"]["artifact_id"] == artifact.id
+            assert provenance["result_artifact"]["content_hash"] == artifact.content_hash
+            done_response = await client.get(f"/api/crew-tasks/{parent_id}")
+            assert done_response.status_code == 200
+            done_detail = done_response.json()["session"]
+            assert done_detail["state"] == "done"
+            assert done_detail["progress"]["total"] == done_detail["progress"]["done"] == 1
+            assert done_detail["result"]["artifact_id"] == artifact.id
+            assert done_detail["verification"] is not None
+            assert done_detail["blocker"] is None
+    finally:
+        release_child.set()
+        if orchestrator is not None:
+            await orchestrator.stop()
+        for agent in reversed(agents):
+            await agent.stop()
 
 
 async def test_refuted_child_reruns_with_real_tool_result_then_publishes_verified_room_result(
@@ -5617,6 +5978,7 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
         "adopt_recovery_plan",
         "agent_principal",
         "bind_scheduler",
+        "bind_worker_resolver",
         "captain_principal",
         "compare_and_set_recovery",
         "fail_verified_outcome",
@@ -5629,8 +5991,11 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
         "publish_verified_result",
         "repair_provisioning",
         "transition_session",
+        "validate_worker_admission",
     }
     for owner, method_name in (
+        (CrewSessionService, "bind_worker_resolver"),
+        (CrewSessionService, "validate_worker_admission"),
         (CrewSessionService, "metrics"),
         (CrewSessionService, "publish_verified_result"),
         (SubtaskVerifier, "verify_for_session"),

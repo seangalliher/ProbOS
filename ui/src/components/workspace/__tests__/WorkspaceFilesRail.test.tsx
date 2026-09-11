@@ -103,7 +103,7 @@ function sessionProjection(
       active_child: { id: 'child-1', title: 'Prepare evidence', status: 'in_progress', owner_id: 'owner-2' },
     },
     last_result_summary: '',
-    blocker: blocked ? { reason: 'Captain approval required', since: 2, duration_seconds: 60, action: 'retry_start_work' } : null,
+    blocker: blocked ? { reason: 'crew_worker_unavailable', since: 2, duration_seconds: 60, action: 'retry_start_work' } : null,
     result: null,
     verification: null,
     duplicate_resume_count: 0,
@@ -583,6 +583,115 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     await waitFor(() => expect(opener).toHaveFocus());
   });
 
+  it.each([
+    ['crew_session_worker_unavailable', 'No eligible worker is available.'],
+    ['crew_session_worker_eligibility_unwired', 'Worker eligibility checks are unavailable.'],
+    ['crew_session_agent_identity_changed', 'The selected worker identity has changed.'],
+    ['crew_session_owner_identity_changed', 'The selected worker identity has changed.'],
+    ['crew_session_retry_not_authorized', 'Retry is not authorized for the current session.'],
+    ['crew_worker_identity_lost', 'Execution evidence must be reviewed'],
+    ...[
+      'crew_recovery_plan_runtime_invalid', 'crew_recovery_plan_integrity_invalid',
+      'crew_recovery_plan_semantic_invalid', 'crew_recovery_plan_missing',
+      'crew_recovery_plan_children_invalid', 'crew_recovery_plan_child_id_conflict',
+      'crew_recovery_plan_version_invalid', 'crew_recovery_plan_phase_invalid',
+      'crew_recovery_phase_ref_invalid', 'crew_recovery_version_invalid',
+      'crew_recovery_error_code_invalid', 'crew_recovery_attempt_count_invalid',
+      'crew_recovery_retry_count_invalid', 'crew_recovery_interrupted_children_invalid',
+      'crew_recovery_backoff_invalid', 'crew_recovery_too_large',
+    ].map(code => [code, 'Execution evidence must be reviewed']),
+  ])('maps exact API detail %s to bounded guidance', async (code, expected) => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false, status: 422, json: async () => ({ detail: code }),
+    } as Response);
+    const onSessionBound = vi.fn();
+    render(<WorkspaceFilesRail threadId="t1" onSessionBound={onSessionBound} />);
+    openStartWorkDialog();
+    fillValidStartWorkForm();
+    fireEvent.click(screen.getByTestId('workspace-start-work-confirm'));
+
+    const error = await screen.findByTestId('workspace-start-work-error');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith('/api/threads/t1/start-work', expect.objectContaining({ method: 'POST' }));
+    expect(error).toHaveTextContent(expected);
+    expect(error.textContent).not.toContain(code);
+    expect(error.textContent!.length).toBeLessThanOrEqual(256);
+    expect(screen.getByTestId('workspace-start-work-goal')).toHaveValue('Prepare the readiness report');
+    expect(onSessionBound).not.toHaveBeenCalled();
+    expect(useStore.getState().crewSessionsByParent.size).toBe(0);
+  });
+
+  it.each([
+    'unrecognized_error',
+    'prefix crew_session_worker_unavailable',
+    'crew_session_worker_unavailable_extra',
+    'crew_session_worker_unavailable: detail',
+    'crew_recovery_unrecognized_integrity',
+    'x'.repeat(300),
+  ])('preserves the bounded fallback for non-exact detail %s', async (detail) => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false, status: 409, json: async () => ({ detail }),
+    } as Response);
+    render(<WorkspaceFilesRail threadId="t1" />);
+    openStartWorkDialog();
+    fillValidStartWorkForm();
+    fireEvent.click(screen.getByTestId('workspace-start-work-confirm'));
+    expect((await screen.findByTestId('workspace-start-work-error')).textContent).toBe(detail.slice(0, 256));
+  });
+
+  it('retains the API status fallback when detail is not a string', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false, status: 422, json: async () => ({ detail: { code: 'crew_session_worker_unavailable' } }),
+    } as Response);
+    render(<WorkspaceFilesRail threadId="t1" />);
+    openStartWorkDialog();
+    fillValidStartWorkForm();
+    fireEvent.click(screen.getByTestId('workspace-start-work-confirm'));
+    expect(await screen.findByTestId('workspace-start-work-error')).toHaveTextContent('Start Work failed (422)');
+  });
+
+  it('retains the generic fallback for a non-Error rejection', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    vi.mocked(fetch).mockRejectedValue(null);
+    render(<WorkspaceFilesRail threadId="t1" />);
+    openStartWorkDialog();
+    fillValidStartWorkForm();
+    fireEvent.click(screen.getByTestId('workspace-start-work-confirm'));
+    expect(await screen.findByTestId('workspace-start-work-error')).toHaveTextContent('Start Work failed');
+  });
+
+  it('does not let a previous room error overwrite the current room error', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    let resolveOld!: (response: Response) => void;
+    vi.mocked(fetch)
+      .mockImplementationOnce(() => new Promise<Response>(resolve => { resolveOld = resolve; }))
+      .mockResolvedValueOnce({
+        ok: false, status: 409, json: async () => ({ detail: 'crew_session_retry_not_authorized' }),
+      } as Response);
+    const view = render(<WorkspaceFilesRail threadId="room-1" />);
+    openStartWorkDialog();
+    fillValidStartWorkForm();
+    fireEvent.click(screen.getByTestId('workspace-start-work-confirm'));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(resolveOld).toBeTypeOf('function');
+
+    view.rerender(<WorkspaceFilesRail threadId="room-2" />);
+    openStartWorkDialog();
+    fillValidStartWorkForm();
+    fireEvent.click(screen.getByTestId('workspace-start-work-confirm'));
+    expect(await screen.findByTestId('workspace-start-work-error')).toHaveTextContent('Retry is not authorized for the current session.');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await act(async () => resolveOld({
+      ok: false, status: 422, json: async () => ({ detail: 'crew_worker_identity_lost' }),
+    } as Response));
+    expect(screen.getByTestId('workspace-start-work-error')).toHaveTextContent('Retry is not authorized for the current session.');
+    expect(screen.queryByText(/Worker identity was lost/)).toBeNull();
+    expect(screen.getByTestId('workspace-start-work-confirm')).toBeEnabled();
+  });
+
   it('ignores a Start Work response resolved in the same act as a room switch', async () => {
     localStorage.setItem('probos.workspaceFiles.collapsed', '0');
     let resolveRequest: ((value: Response) => void) | undefined;
@@ -667,6 +776,98 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     fireEvent.click(screen.getByTestId('workspace-start-work-cancel'));
     await waitFor(() => expect(opener).toHaveFocus());
     opener.remove();
+  });
+
+  it.each([
+    { name: 'command room', commandThread: 'other-room', projectionThread: 't1', projectionParent: 'blocked-parent', taskId: 'blocked-parent' },
+    { name: 'projection room', commandThread: 't1', projectionThread: 'other-room', projectionParent: 'blocked-parent', taskId: 'blocked-parent' },
+    { name: 'projection task', commandThread: 't1', projectionThread: 't1', projectionParent: 'other-parent', taskId: 'blocked-parent' },
+    { name: 'bound task', commandThread: 't1', projectionThread: 't1', projectionParent: 'blocked-parent', taskId: 'other-parent' },
+  ])('ignores a retry command with a mismatched $name', async ({ commandThread, projectionThread, projectionParent, taskId }) => {
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    try {
+      const retryCommand: CrewSessionRetryCommand = {
+        requestId: 1,
+        parentId: 'blocked-parent',
+        threadId: commandThread,
+        projection: sessionProjection(projectionParent, projectionThread, 'blocked_needs_captain'),
+        opener,
+      };
+      render(<WorkspaceFilesRail threadId="t1" taskId={taskId} retryCommand={retryCommand} />);
+      await act(async () => {});
+      expect(opener.isConnected).toBe(true);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(screen.getByTestId('workspace-files-rail')).toHaveAttribute('data-collapsed', 'true');
+      expect(fetch).not.toHaveBeenCalled();
+      expect(useStore.getState().crewSessionsByParent.size).toBe(0);
+    } finally {
+      opener.remove();
+    }
+  });
+
+  it('submits an owned unavailable-worker retry only once while pending', async () => {
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    try {
+      let resolveRequest!: (response: Response) => void;
+      vi.mocked(fetch).mockImplementation(() => new Promise<Response>(resolve => { resolveRequest = resolve; }));
+      const retryCommand: CrewSessionRetryCommand = {
+        requestId: 1,
+        parentId: 'blocked-parent',
+        threadId: 't1',
+        projection: sessionProjection('blocked-parent', 't1', 'blocked_needs_captain'),
+        opener,
+      };
+      const onSessionBound = vi.fn();
+      const view = render(<WorkspaceFilesRail threadId="t1" taskId="blocked-parent" retryCommand={retryCommand} onSessionBound={onSessionBound} />);
+      const confirm = await screen.findByTestId('workspace-start-work-confirm');
+      expect(confirm).toBeEnabled();
+      expect(fetch).not.toHaveBeenCalled();
+      const form = confirm.closest('form');
+      expect(form).not.toBeNull();
+      act(() => {
+        fireEvent.click(confirm);
+        fireEvent.click(confirm);
+        fireEvent.submit(form!);
+      });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(confirm).toBeDisabled();
+      expect(fetch).toHaveBeenCalledWith('/api/threads/t1/start-work', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goal: retryCommand.projection.goal,
+          success_criteria: retryCommand.projection.success_criteria,
+          expected_deliverable: retryCommand.projection.expected_deliverable,
+          retry_blocked: true,
+        }),
+      });
+      const result = startWorkResult('blocked-parent', 't1', 'executing', 'resumed');
+      await act(async () => resolveRequest({ ok: true, json: async () => result } as Response));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(onSessionBound).toHaveBeenCalledExactlyOnceWith(result);
+      expect(useStore.getState().crewSessionsByParent.get('blocked-parent')).toEqual(result.session);
+      view.rerender(<WorkspaceFilesRail threadId="t1" taskId="blocked-parent" retryCommand={{ ...retryCommand }} onSessionBound={onSessionBound} />);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText('Verified result')).toBeNull();
+    } finally {
+      opener.remove();
+    }
+  });
+
+  it('keeps missing result artifact metadata unavailable without opening a preview', async () => {
+    vi.mocked(fetchThreadArtifacts).mockResolvedValue([]);
+    vi.mocked(fetchArtifactMetadata).mockResolvedValue(null);
+    const command: CrewSessionArtifactCommand = {
+      requestId: 1, parentId: 'parent-1', threadId: 't1', artifactId: 'missing-result',
+    };
+    render(<WorkspaceFilesRail threadId="t1" taskId="parent-1" artifactCommand={command} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('metadata could not be loaded');
+    expect(fetchArtifactMetadata).toHaveBeenCalledExactlyOnceWith('missing-result');
+    expect(screen.queryByTestId('workspace-files-preview')).toBeNull();
+    expect(screen.queryByText('Verified result')).toBeNull();
   });
 
   it('owned artifact command prefers local metadata and opens the existing viewer', async () => {

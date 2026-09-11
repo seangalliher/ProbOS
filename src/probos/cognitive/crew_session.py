@@ -12,11 +12,12 @@ import secrets
 import time
 import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
+from probos.cognitive.crew_assignment import CrewWorkerEligibilityResolver
 from probos.crew_session_delivery import (
     CrewSessionDeliveryOutcome,
     CrewSessionDeliveryRecord,
@@ -26,15 +27,19 @@ from probos.crew_session_delivery import (
 # used to be declared. `crew_utils` is now its one home -- see the rationale
 # there.
 from probos.crew_utils import CREW_EXECUTION_KEYS  # noqa: F401
+from probos.workforce import WorkItemRetryBarrier, WorkItemRetryConflict
 
 if TYPE_CHECKING:
+    from probos.cognitive.crew_assignment import AssignmentDecision
     from probos.cognitive.crew_synth import SynthesisResult
+    from probos.consultation.dispatch import WorkItemSpec
     from probos.threads import ChatThread
     from probos.workforce import (
         CrewSessionAdmissionPort,
         CrewSessionParentReservation,
         WorkItem,
         WorkItemPlanInsert,
+        WorkTypeRegistry,
     )
 
 logger = logging.getLogger(__name__)
@@ -2054,6 +2059,8 @@ def _validate_session_recovery_invariant(
 
 
 class _WorkItemStoreProtocol(Protocol):
+    work_type_registry: WorkTypeRegistry
+
     async def create_work_item(self, **kwargs: Any) -> WorkItem: ...
 
     async def get_work_item(self, work_item_id: str) -> WorkItem | None: ...
@@ -2128,6 +2135,7 @@ class _WorkItemStoreProtocol(Protocol):
         expected_assigned_to: str | None = None,
         new_status: str | None = None,
         crew_session_delivery: CrewSessionDeliveryRecord | None = None,
+        retry_barrier: WorkItemRetryBarrier | None = None,
         source: str = "system",
     ) -> WorkItem | None: ...
 
@@ -2253,6 +2261,10 @@ class _ChatThreadStoreProtocol(Protocol):
     ) -> bool: ...
 
 
+class CrewSessionWorkerResolver(CrewWorkerEligibilityResolver, Protocol):
+    def resolve(self, spec: WorkItemSpec) -> AssignmentDecision: ...
+
+
 class CrewSessionService:
     """Validate and persist one durable CrewSession contract per parent."""
 
@@ -2268,6 +2280,8 @@ class CrewSessionService:
         compute_similarity: Callable[[str, str], float] | None = None,
         decomposer: Any | None = None,
         admission_port: CrewSessionAdmissionPort | None = None,
+        worker_resolver: CrewSessionWorkerResolver | None = None,
+        require_worker_eligibility: bool = False,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._work_items = work_item_store
@@ -2279,6 +2293,8 @@ class CrewSessionService:
         self._compute_similarity = compute_similarity
         self._decomposer = decomposer
         self._admission_port = admission_port
+        self._worker_resolver = worker_resolver
+        self._require_worker_eligibility = require_worker_eligibility
         self._clock = clock
         self._principal_authority = object()
         self._admission_lock = asyncio.Lock()
@@ -2308,6 +2324,93 @@ class CrewSessionService:
         if not callable(schedule) or self._schedule is not None:
             raise ValueError("crew_session_scheduler_binding_invalid")
         self._schedule = schedule
+
+    def bind_worker_resolver(self, resolver: CrewSessionWorkerResolver) -> None:
+        """Bind the same assignment authority before native scheduling opens."""
+        if self._worker_resolver is not None or resolver is None:
+            raise ValueError("crew_session_worker_binding_invalid")
+        self._worker_resolver = resolver
+
+    @property
+    def worker_eligibility(self) -> CrewWorkerEligibilityResolver | None:
+        """Expose the bound eligibility authority without a native fallback."""
+        if self._worker_resolver is None and self._require_worker_eligibility:
+            raise ValueError("crew_session_worker_eligibility_unwired")
+        return self._worker_resolver
+
+    async def validate_worker_admission(
+        self,
+        parent_id: str,
+        *,
+        allow_reassignment: bool = False,
+        require_untouched: bool = False,
+    ) -> tuple[WorkItem, ...]:
+        """Validate the current room, plan, selected crew and child workers."""
+        from probos.cognitive.crew_executor import (
+            CrewWorkerUnavailable,
+            is_untouched_crew_child,
+        )
+        from probos.consultation.dispatch import WorkItemSpec
+
+        resolver = self._worker_resolver
+        if resolver is None:
+            if self._require_worker_eligibility or require_untouched:
+                raise ValueError("crew_session_worker_eligibility_unwired")
+            return ()
+        session = await self.get_session(parent_id)
+        if session is None:
+            raise ValueError("crew_session_not_initialized")
+        crew_ids = set(session.owner_ids) | {session.facilitator_id}
+        if session.origin == "agent":
+            crew_ids.add(session.originator_id)
+        try:
+            identities = {
+                crew_id: self._validate_live_crew_id(crew_id) for crew_id in crew_ids
+            }
+        except ValueError as exc:
+            raise CrewWorkerUnavailable("crew_worker_unavailable") from exc
+        recovery = await self.get_recovery(parent_id)
+        if recovery is None or recovery.plan is None:
+            raise ValueError("crew_recovery_plan_missing")
+        children = await self._validate_recovery_context(parent_id, recovery)
+        try:
+            for crew_id, expected in identities.items():
+                if self._validate_live_crew_id(crew_id) is not expected:
+                    raise ValueError("crew_session_owner_identity_changed")
+            if session.origin == "agent":
+                self._validate_live_origin_agent(session.originator_id)
+        except ValueError as exc:
+            raise CrewWorkerUnavailable("crew_worker_unavailable") from exc
+        for child in children:
+            untouched = is_untouched_crew_child(
+                child,
+                initial_status=self._work_items.work_type_registry.get_initial_status(
+                    child.work_type,
+                ),
+            )
+            if require_untouched and not untouched:
+                raise ValueError("crew_session_retry_not_authorized")
+            if not untouched:
+                continue
+            if child.assigned_to and resolver.check_eligibility(child.assigned_to).identity:
+                continue
+            candidate_id = None
+            if allow_reassignment:
+                metadata = child.metadata
+                candidate_id = resolver.resolve(WorkItemSpec(
+                    spec_id=metadata.get("spec_id", child.id),
+                    title=child.title,
+                    description=child.description,
+                    work_type=child.work_type,
+                    priority=child.priority,
+                    metadata=dict(metadata),
+                    expected_output=metadata.get("expected_output"),
+                    capability=metadata.get("capability"),
+                    department=metadata.get("department"),
+                )).agent_id
+            if not candidate_id or resolver.check_eligibility(candidate_id).identity is None:
+                raise CrewWorkerUnavailable("crew_worker_unavailable")
+        return children
 
     async def open_or_resume(
         self,
@@ -2400,10 +2503,11 @@ class CrewSessionService:
                 for participant_id in room.participants:
                     try:
                         participant_key = _normalize_id(participant_id)
-                        self._validate_live_crew_id(participant_key)
+                        participant_identity = self._validate_live_crew_id(participant_key)
                     except ValueError:
                         continue
                     effective_facilitator = participant_key
+                    requested_crew_identities.setdefault(participant_key, participant_identity)
                     break
             if effective_facilitator is None:
                 raise ValueError("crew_session_facilitator_required")
@@ -2553,6 +2657,9 @@ class CrewSessionService:
                     parent,
                     marker,
                     adopted_room_snapshot=adopted_room_snapshot,
+                    principal=principal,
+                    agent_identity=agent_identity,
+                    requested_crew_identities=requested_crew_identities,
                 )
 
     async def repair_provisioning(self, *, limit: int) -> tuple[str, ...]:
@@ -2709,13 +2816,26 @@ class CrewSessionService:
         marker: CrewSessionProvisioningContract,
         *,
         adopted_room_snapshot: dict[str, Any] | None,
+        principal: CrewSessionPrincipal,
+        agent_identity: Any | None,
+        requested_crew_identities: dict[str, Any],
     ) -> CrewSessionOpenResult:
         try:
-            return await self._continue_provisioning(
+            self._revalidate_principal(principal, agent_identity)
+            self._revalidate_agent_crew(principal, requested_crew_identities)
+            result, completed_parent = await self._continue_provisioning(
                 parent.id,
                 marker,
-                schedule=True,
+                schedule=False,
             )
+            try:
+                self._revalidate_principal(principal, agent_identity)
+                self._revalidate_agent_crew(principal, requested_crew_identities)
+            except ValueError:
+                await self._record_native_retry_failure(completed_parent)
+                raise
+            self._schedule_parent(parent.id)
+            return replace(result, scheduled=True)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -2782,7 +2902,7 @@ class CrewSessionService:
         marker: CrewSessionProvisioningContract,
         *,
         schedule: bool,
-    ) -> CrewSessionOpenResult:
+    ) -> tuple[CrewSessionOpenResult, WorkItem]:
         try:
             return await self._continue_provisioning_inner(
                 parent_id,
@@ -2802,7 +2922,7 @@ class CrewSessionService:
         marker: CrewSessionProvisioningContract,
         *,
         schedule: bool,
-    ) -> CrewSessionOpenResult:
+    ) -> tuple[CrewSessionOpenResult, WorkItem]:
         current_marker = marker
         parent = await self._require_provisioning_parent(parent_id, current_marker)
         room = await self._ensure_provisioning_room(parent.id, current_marker)
@@ -2927,7 +3047,7 @@ class CrewSessionService:
         if schedule:
             self._schedule_parent(parent.id)
             scheduled = True
-        return CrewSessionOpenResult(
+        result = CrewSessionOpenResult(
             disposition="created",
             parent_id=parent.id,
             thread_id=authoritative_session.thread_id,
@@ -2937,6 +3057,7 @@ class CrewSessionService:
             duplicate_resume_count=authoritative_session.duplicate_resume_count,
             scheduled=scheduled,
         )
+        return result, replace(cleared, metadata=json.loads(json.dumps(cleared.metadata)))
 
     async def _require_provisioning_parent(
         self,
@@ -3389,6 +3510,7 @@ class CrewSessionService:
         agent = self._registry.get(agent_id)
         if agent is None or not is_crew_agent(agent, self._ontology):
             raise ValueError("crew_session_agent_invalid")
+        self._validate_worker_eligibility(agent_id)
         score = self._trust_network.get_score(agent_id)
         if type(score) is not float or not math.isfinite(score):
             raise ValueError("crew_session_agent_trust_invalid")
@@ -3413,8 +3535,6 @@ class CrewSessionService:
         principal: CrewSessionPrincipal,
         expected: dict[str, Any],
     ) -> None:
-        if principal.origin != "agent":
-            return
         for crew_id, expected_agent in expected.items():
             if self._validate_live_crew_id(crew_id) is not expected_agent:
                 raise ValueError("crew_session_owner_identity_changed")
@@ -3427,7 +3547,16 @@ class CrewSessionService:
         agent = self._registry.get(agent_id)
         if agent is None or not is_crew_agent(agent, self._ontology):
             raise ValueError("crew_session_owner_invalid")
+        self._validate_worker_eligibility(agent_id)
         return agent
+
+    def _validate_worker_eligibility(self, agent_id: str) -> None:
+        if self._worker_resolver is None:
+            if self._require_worker_eligibility:
+                raise ValueError("crew_session_worker_eligibility_unwired")
+            return
+        if self._worker_resolver.check_eligibility(agent_id).identity is None:
+            raise ValueError("crew_session_worker_unavailable")
 
     async def _find_equivalent(
         self,
@@ -3634,32 +3763,64 @@ class CrewSessionService:
             }
         self._revalidate_principal(principal, agent_identity)
         self._revalidate_agent_crew(principal, requested_crew_identities)
-        updated = await self._work_items.merge_work_item_metadata(
-            parent.id,
-            patch,
-            expected=expected,
-            expected_absent_keys=expected_absent,
-            expected_work_type="crew_session",
-            expected_status=_STATUS_PROJECTION[current.state],
-            expected_assigned_to=current.facilitator_id,
-            new_status=target_status,
-            source="crew_session_ingress_resume",
-        )
+        retry_barrier = None
+        if retry_blocked and current.blocked_reason == "crew_worker_unavailable":
+            validated_children = await self.validate_worker_admission(
+                parent.id, allow_reassignment=True, require_untouched=True,
+            )
+            self._revalidate_principal(principal, agent_identity)
+            self._revalidate_agent_crew(principal, requested_crew_identities)
+            retry_barrier = WorkItemRetryBarrier(
+                parent, tuple(sorted(validated_children, key=lambda child: child.id)),
+            )
+        merge_kwargs: dict[str, Any] = {}
+        if retry_barrier is not None:
+            merge_kwargs["retry_barrier"] = retry_barrier
+        try:
+            updated = await self._work_items.merge_work_item_metadata(
+                parent.id,
+                patch,
+                expected=expected,
+                expected_absent_keys=expected_absent,
+                expected_work_type="crew_session",
+                expected_status=_STATUS_PROJECTION[current.state],
+                expected_assigned_to=current.facilitator_id,
+                new_status=target_status,
+                source="crew_session_ingress_resume",
+                **merge_kwargs,
+            )
+        except WorkItemRetryConflict:
+            if retry_barrier is not None:
+                await self._record_native_retry_failure(parent)
+            raise
         if updated is None:
             raise ValueError("crew_session_resume_failed")
         authoritative = self._parse_contract(
             updated.metadata.get("crew_session"),
         )
-        await self._validate_loaded(updated, authoritative)
-        room = await _run_held_to_thread(
-            self._threads.add_crew_session_participants,
-            authoritative.thread_id,
-            task_id=parent.id,
-            participant_ids=authoritative.owner_ids,
-            name=f"crew-ingress-participants:{parent.id}",
-        )
-        if room is None:
-            raise ValueError("crew_session_thread_not_found")
+        try:
+            await self._validate_loaded(updated, authoritative)
+            room = await _run_held_to_thread(
+                self._threads.add_crew_session_participants,
+                authoritative.thread_id,
+                task_id=parent.id,
+                participant_ids=authoritative.owner_ids,
+                name=f"crew-ingress-participants:{parent.id}",
+            )
+            if room is None:
+                raise ValueError("crew_session_thread_not_found")
+            self._revalidate_principal(principal, agent_identity)
+            self._revalidate_agent_crew(principal, requested_crew_identities)
+            if retry_blocked and current.blocked_reason == "crew_worker_unavailable":
+                await self.validate_worker_admission(
+                    parent.id, allow_reassignment=True, require_untouched=True,
+                )
+                self._revalidate_principal(principal, agent_identity)
+                self._revalidate_agent_crew(principal, requested_crew_identities)
+        except ValueError:
+            if retry_barrier is not None:
+                await self._record_native_retry_failure(updated)
+            raise
         blocked = authoritative.state == "blocked_needs_captain"
         scheduled = False
         if not blocked:
@@ -3676,6 +3837,120 @@ class CrewSessionService:
             scheduled=scheduled,
         )
 
+    async def _record_native_retry_failure(self, expected_parent: WorkItem) -> None:
+        from probos.cognitive.crew_executor import is_untouched_crew_child
+
+        parent = await self._work_items.get_work_item(expected_parent.id)
+        if (
+            parent is None
+            or parent.status != expected_parent.status
+            or parent.assigned_to != expected_parent.assigned_to
+            or not _json_values_exactly_equal(parent.metadata, expected_parent.metadata)
+        ):
+            raise WorkItemRetryConflict()
+        current = self._parse_contract(parent.metadata.get("crew_session"))
+        await self._validate_loaded(parent, current)
+        recovery = self._parse_recovery(parent.metadata.get("crew_recovery"))
+        previous_state = (
+            current.previous_state if current.state == "blocked_needs_captain"
+            else current.state
+        )
+        if (
+            (previous_state, recovery.phase) not in {
+                ("discussing", "planned"), ("executing", "executing"),
+            }
+            or recovery.plan is None
+            or "crew_provisioning" in parent.metadata
+            or current.state not in {"discussing", "executing", "blocked_needs_captain"}
+            or current.state == "blocked_needs_captain"
+            and current.blocked_reason != "crew_worker_unavailable"
+        ):
+            raise ValueError("crew_session_retry_not_authorized")
+        children = tuple(sorted(
+            await self._work_items.list_work_items(
+                parent_id=parent.id, limit=_MAX_RECOVERY_CHILDREN + 1,
+            ),
+            key=lambda child: child.id,
+        ))
+        if len(children) > _MAX_RECOVERY_CHILDREN:
+            raise ValueError("crew_recovery_plan_integrity_invalid")
+        reason = "crew_worker_identity_lost"
+        mode: Literal["untouched", "observed"] = "observed"
+        try:
+            _validate_contextual_recovery_plan(parent.id, recovery.plan, children)
+        except ValueError as exc:
+            code = str(exc)
+            reason = (
+                code if _RECOVERY_ERROR_RE.fullmatch(code) and code.startswith("crew_recovery_")
+                else "crew_recovery_plan_integrity_invalid"
+            )
+        else:
+            definitions = [self._work_items.work_type_registry.get(child.work_type) for child in children]
+            invalid_status = any(
+                definition is None or child.status not in (
+                    {definition.initial_status}
+                    | set(definition.terminal_statuses)
+                    | {edge.from_status for edge in definition.valid_transitions}
+                    | {edge.to_status for edge in definition.valid_transitions}
+                )
+                for child, definition in zip(children, definitions)
+            )
+            if invalid_status:
+                reason = "crew_recovery_plan_runtime_invalid"
+            elif all(
+                is_untouched_crew_child(
+                    child,
+                    initial_status=self._work_items.work_type_registry.get_initial_status(child.work_type),
+                )
+                for child in children
+            ):
+                reason = "crew_worker_unavailable"
+                mode = "untouched"
+        barrier = WorkItemRetryBarrier(parent, children, mode=mode)
+        now = self._server_time(
+            current.created_at, current.transitioned_at, current.started_at,
+            current.first_result_at, current.blocked_since,
+        )
+        values = current.model_dump(mode="json")
+        values.update({
+            "revision": current.revision + 1,
+            "state": "blocked_needs_captain",
+            "previous_state": previous_state,
+            "blocked_reason": reason,
+            "last_result_summary": (
+                "No eligible worker is available. Retry after worker availability is restored."
+                if mode == "untouched" else
+                "Retry stopped because child execution evidence changed. Review the retained work before continuing."
+            ),
+        })
+        if current.first_result_at is None:
+            values["first_result_at"] = now
+        if current.state != "blocked_needs_captain":
+            values["transitioned_at"] = now
+            values["blocked_since"] = now
+        contract = self._validate_contract(values)
+        recovery_values = recovery.model_dump(mode="json")
+        recovery_values["last_error_code"] = reason
+        checkpoint = self._validate_recovery(recovery_values)
+        _validate_session_recovery_invariant(contract, checkpoint)
+        updated = await self._work_items.merge_work_item_metadata(
+            parent.id,
+            {"crew_session": contract.model_dump(mode="json"), "crew_recovery": checkpoint.model_dump(mode="json")},
+            expected_work_type="crew_session",
+            expected_status=parent.status,
+            expected_assigned_to=current.facilitator_id,
+            new_status="blocked",
+            retry_barrier=barrier,
+            crew_session_delivery=build_crew_session_delivery_record(contract),
+            source="crew_session_retry_failure",
+        )
+        if updated is None:
+            raise ValueError("crew_session_transition_failed")
+        logger.info(
+            "Crew session parent=%s retry stopped with reason=%s revision=%d; child evidence retained for review",
+            parent.id, reason, contract.revision,
+        )
+
     async def _authorize_blocked_retry(
         self,
         session: CrewSessionContract,
@@ -3687,7 +3962,22 @@ class CrewSessionService:
             or recovery is None
         ):
             raise ValueError("crew_session_retry_not_authorized")
-        if session.blocked_reason == "child_execution_interrupted":
+        if session.blocked_reason == "crew_worker_unavailable":
+            valid = (
+                (previous, recovery.phase) in {
+                    ("discussing", "planned"), ("executing", "executing"),
+                }
+                and recovery.last_error_code == "crew_worker_unavailable"
+                and not recovery.interrupted_child_ids
+            )
+            if valid:
+                parent = await self._work_items.get_work_item(session.task_id)
+                if parent is None or "crew_provisioning" in parent.metadata:
+                    raise ValueError("crew_session_retry_not_authorized")
+                await self.validate_worker_admission(
+                    session.task_id, allow_reassignment=True, require_untouched=True,
+                )
+        elif session.blocked_reason == "child_execution_interrupted":
             children = await self._validate_recovery_context(
                 session.task_id,
                 recovery,

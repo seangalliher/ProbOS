@@ -70,6 +70,7 @@ function projection(
   parentId: string,
   threadId: string,
   state: CrewSessionState,
+  blockerReason: string = 'crew_worker_unavailable',
 ): CrewSessionDetailProjection {
   const done = state === 'done';
   const blocked = state === 'blocked_needs_captain';
@@ -88,14 +89,14 @@ function projection(
     timestamps: {
       created_at: 1,
       transitioned_at: 3,
-      started_at: done ? 2 : null,
+      started_at: done || blocked ? 2 : null,
       first_result_at: done ? 2.5 : null,
       verified_at: done ? 3 : null,
       completed_at: done ? 3 : null,
     },
-    progress: { total: 1, done: done ? 1 : 0, failed: 0, active: done ? 0 : 1, active_child: done ? null : { id: 'child', title: 'Active child', status: 'in_progress', owner_id: 'peer' } },
+    progress: { total: 1, done: done ? 1 : 0, failed: 0, active: done ? 0 : 1, active_child: done ? null : { id: 'child', title: 'Active child', status: blocked ? 'open' : 'in_progress', owner_id: 'peer' } },
     last_result_summary: done ? 'Verified' : '',
-    blocker: blocked ? { reason: 'Captain approval required', since: 3, duration_seconds: 60, action: 'retry_start_work' } : null,
+    blocker: blocked ? { reason: blockerReason, since: 3, duration_seconds: 60, action: 'retry_start_work' } : null,
     result: done ? { artifact_id: 'artifact-1', content_hash: SHA_B, result_ref: SHA_A, evidence_refs: [SHA_A] } : null,
     verification: done ? { verifier_agent_id: 'peer', confidence: 0.9, critique: 'Accepted', accepted_count: 1, total_count: 1, convergence_rounds: 1 } : null,
     duplicate_resume_count: 0,
@@ -342,6 +343,37 @@ describe('AD-1132 ProfileChatTab CrewSession integration', () => {
     expect(fetchMock.mock.calls.filter(([, init]) => ['POST', 'PATCH', 'DELETE'].includes(String(init?.method ?? 'GET')))).toEqual([]);
   });
 
+  it.each([
+    'Captain approval required',
+    'crew_worker_identity_lost',
+    'crew_recovery_plan_runtime_invalid',
+    'crew_recovery_integrity',
+    'unknown_integrity_error',
+  ])('loads the owned profile session for %s without authorizing retry or writing', async (reason) => {
+    const room = thread('t1', 'p1');
+    const blocked = projection('p1', 't1', 'blocked_needs_captain', reason);
+    seed([room]);
+    const fetchMock = installNetwork({ details: { p1: blocked } });
+
+    render(<ProfileChatTab agentId="host" threadId="t1" />);
+
+    const panel = await screen.findByTestId('crew-collaboration-panel');
+    expect(await screen.findByTestId('workspace-files-rail')).toBeTruthy();
+    await waitFor(() => expect(panel).toHaveAttribute('aria-busy', 'false'));
+    expect(panel).toHaveAttribute('data-state', 'blocked_needs_captain');
+    expect(panel).toHaveTextContent(blocked.goal);
+    expect(fetchMock.mock.calls.some(([input, init]) => String(input) === '/api/crew-tasks/p1'
+      && (init?.method ?? 'GET') === 'GET')).toBe(true);
+    expect(useStore.getState().crewSessionsByParent.get('p1')).toEqual(blocked);
+    expect(blocked.blocker!.action).toBe('retry_start_work');
+    expect(screen.getByTestId('crew-session-blocker')).toHaveTextContent(
+      'Work cannot be retried here. Execution evidence must be reviewed before work can continue.',
+    );
+    expect(screen.queryByRole('button', { name: 'Retry blocked CrewSession work' })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(fetchMock.mock.calls.filter(([, init]) => ['POST', 'PATCH', 'DELETE'].includes(String(init?.method ?? 'GET')))).toEqual([]);
+  });
+
   it('focuses the owned session band after a successful blocked retry removes its trigger', async () => {
     const room = thread('t1', 'p1');
     const blocked = projection('p1', 't1', 'blocked_needs_captain');
@@ -369,6 +401,7 @@ describe('AD-1132 ProfileChatTab CrewSession integration', () => {
     const sessionBand = await screen.findByTestId('crew-collaboration-panel');
     await waitFor(() => expect(sessionBand).toHaveFocus());
     expect(sessionBand.getAttribute('data-state')).toBe('executing');
+    expect(useStore.getState().crewSessionsByParent.get('p1')).toEqual(resumed);
     expect(screen.queryByRole('button', { name: 'Retry blocked CrewSession work' })).toBeNull();
   });
 

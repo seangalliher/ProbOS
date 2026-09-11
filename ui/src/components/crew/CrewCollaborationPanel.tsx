@@ -373,6 +373,19 @@ function SessionBand({
   ) => void;
 }) {
   const progress = session.progress;
+  const retryableBlocker = session.state === 'blocked_needs_captain'
+    && (session.blocker?.reason === 'crew_worker_unavailable'
+      || session.blocker?.reason === 'child_execution_interrupted'
+      || session.blocker?.reason === 'recovery_retry_exhausted');
+  const retryReady = retryableBlocker && !refreshing && !staleError
+    && Boolean(onRetryBlockedWork);
+  const blockerText = session.blocker?.reason === 'crew_worker_unavailable'
+    ? 'No eligible worker is available. Retry Start Work when a worker is available; current eligibility will be checked again.'
+    : session.blocker?.reason === 'child_execution_interrupted'
+      ? 'Work was interrupted. Retry Start Work to request recovery from the recorded state.'
+      : session.blocker?.reason === 'recovery_retry_exhausted'
+        ? 'Automatic recovery attempts are exhausted. Retry Start Work to request recovery.'
+        : 'Work cannot be retried here. Execution evidence must be reviewed before work can continue.';
   return (
     <section
       ref={sessionBandRef}
@@ -441,8 +454,13 @@ function SessionBand({
               <div style={{ fontSize: 10, color: DIM, textTransform: 'uppercase', letterSpacing: 0 }}>Active work</div>
               <div style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
                 {progress.active_child.title} · {progress.active_child.status}
-                {progress.active_child.owner_id ? ` · ${progress.active_child.owner_id}` : ''}
+                {progress.active_child.owner_id ? ` · Assigned worker: ${progress.active_child.owner_id}` : ''}
               </div>
+              {progress.active_child.owner_id ? (
+                <div style={{ marginTop: 4, fontSize: 10, color: '#9aa4ba' }}>
+                  Assigned workers can help without becoming room members.
+                </div>
+              ) : null}
             </div>
           ) : null}
           <div style={{ marginTop: 12, overflowWrap: 'anywhere' }}>
@@ -467,17 +485,20 @@ function SessionBand({
           {session.blocker ? (
             <div data-testid="crew-session-blocker" style={{ marginBottom: 14, overflowWrap: 'anywhere' }}>
               <div style={{ color: REJECT_RED, fontWeight: 700 }}>Captain action required</div>
-              <div style={{ margin: '5px 0' }}>{session.blocker.reason}</div>
+              <div style={{ margin: '5px 0' }}>{blockerText}</div>
               <div style={{ color: '#9aa4ba', fontSize: 10 }}>Blocked for {formatDuration(session.blocker.duration_seconds)}</div>
-              <button
+              {retryableBlocker ? <button
                 type="button"
                 className="crew-session-action"
                 aria-label="Retry blocked CrewSession work"
                 style={{ marginTop: 8 }}
-                onClick={(event) => onRetryBlockedWork?.(session, event.currentTarget)}
+                disabled={!retryReady}
+                onClick={(event) => {
+                  if (retryReady) onRetryBlockedWork?.(session, event.currentTarget);
+                }}
               >
                 Retry Start Work
-              </button>
+              </button> : null}
             </div>
           ) : null}
           <div style={{ fontSize: 10, color: '#9aa4ba', marginBottom: 12 }}>
@@ -491,6 +512,7 @@ function SessionBand({
                 className="crew-session-action"
                 aria-label="Open CrewSession result artifact"
                 style={{ marginTop: 7 }}
+                disabled={refreshing || staleError || !onOpenResultArtifact}
                 onClick={() => onOpenResultArtifact?.(session.result!.artifact_id, session)}
               >
                 Open result artifact

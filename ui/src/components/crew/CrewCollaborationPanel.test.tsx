@@ -12,7 +12,10 @@ import type {
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
 
-function projection(state: CrewSessionState): CrewSessionDetailProjection {
+function projection(
+  state: CrewSessionState,
+  blockerReason: string = 'child_execution_interrupted',
+): CrewSessionDetailProjection {
   const done = state === 'done';
   const blocked = state === 'blocked_needs_captain';
   return {
@@ -49,7 +52,7 @@ function projection(state: CrewSessionState): CrewSessionDetailProjection {
     },
     last_result_summary: done ? 'The report passed verification.' : 'Draft analysis is available.',
     blocker: blocked ? {
-      reason: 'Captain approval is required before the crew can continue.',
+      reason: blockerReason,
       since: 3,
       duration_seconds: 95,
       action: 'retry_start_work',
@@ -138,6 +141,98 @@ afterEach(() => {
 });
 
 describe('CrewCollaborationPanel', () => {
+  it.each([
+    'crew_worker_unavailable', 'child_execution_interrupted', 'recovery_retry_exhausted',
+  ])('offers an explicit retry for refreshed %s work', async (reason) => {
+    const session = projection('blocked_needs_captain', reason);
+    const onRetry = vi.fn();
+    stubFetch({ session });
+    render(<CrewCollaborationPanel threadId="t1" parentId="p1" onRetryBlockedWork={onRetry} />);
+    const retry = await screen.findByRole('button', { name: 'Retry blocked CrewSession work' });
+    expect(retry).toBeEnabled();
+    expect(screen.getByTestId('crew-session-blocker').textContent).not.toContain(reason);
+    if (reason === 'crew_worker_unavailable') {
+      expect(screen.getByText(/No eligible worker is available/)).toBeTruthy();
+    }
+    fireEvent.click(retry);
+    expect(onRetry).toHaveBeenCalledExactlyOnceWith(session, retry);
+  });
+
+  it.each([
+    'crew_worker_identity_lost', 'crew_recovery_plan_runtime_invalid',
+    'crew_recovery_integrity', 'unknown_integrity_error',
+  ])('requires evidence review without retry for %s', async (reason) => {
+    const session = projection('blocked_needs_captain', reason);
+    stubFetch({ session });
+    render(<CrewCollaborationPanel threadId="t1" parentId="p1" onRetryBlockedWork={vi.fn()} />);
+    expect(await screen.findByText(/evidence must be reviewed/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry blocked CrewSession work' })).toBeNull();
+    expect(screen.getByTestId('crew-session-blocker').textContent).not.toContain(reason);
+  });
+
+  it('disables snapshot retry through refresh failure until a successful current fetch', async () => {
+    const session = projection('blocked_needs_captain', 'crew_worker_unavailable');
+    useStore.getState().hydrateCrewSession('p1', session);
+    let resolveInitial!: (response: Response) => void;
+    let resolveRefresh!: (response: Response) => void;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>(resolve => { resolveInitial = resolve; }))
+      .mockImplementationOnce(() => new Promise<Response>(resolve => { resolveRefresh = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onRetry = vi.fn();
+    render(<CrewCollaborationPanel threadId="t1" parentId="p1" onRetryBlockedWork={onRetry} />);
+    const retry = screen.getByRole('button', { name: 'Retry blocked CrewSession work' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(retry).toBeDisabled();
+    fireEvent.click(retry);
+    await act(async () => resolveInitial({ ok: false, status: 503 } as Response));
+    expect(await screen.findByRole('alert')).toHaveTextContent('last known state');
+    expect(retry).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(retry).toBeDisabled();
+    expect(onRetry).not.toHaveBeenCalled();
+    await act(async () => resolveRefresh({
+      ok: true, status: 200, json: async () => ({ session }),
+    } as Response));
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(onRetry).toHaveBeenCalledExactlyOnceWith(session, retry);
+  });
+
+  it('removes retry when refreshed authority reports late identity loss', async () => {
+    const cached = projection('blocked_needs_captain', 'crew_worker_unavailable');
+    useStore.getState().hydrateCrewSession('p1', cached);
+    const current = { ...cached, revision: 3, blocker: { ...cached.blocker!, reason: 'crew_worker_identity_lost' } };
+    stubFetch({ session: current });
+    render(<CrewCollaborationPanel threadId="t1" parentId="p1" onRetryBlockedWork={vi.fn()} />);
+    expect(await screen.findByText(/evidence must be reviewed/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry blocked CrewSession work' })).toBeNull();
+  });
+
+  it('disables retry without a callback and labels assignment without inferring membership', async () => {
+    stubFetch({ session: projection('blocked_needs_captain') });
+    render(<CrewCollaborationPanel threadId="t1" parentId="p1" />);
+    expect(await screen.findByRole('button', { name: 'Retry blocked CrewSession work' })).toBeDisabled();
+    expect(screen.getByTestId('crew-session-active-child')).toHaveTextContent('Assigned worker: owner-2');
+    expect(screen.getByText('Assigned workers can help without becoming room members.')).toBeTruthy();
+  });
+
+  it('does not infer a verified artifact from a done state or verification alone', async () => {
+    const session = { ...projection('done'), result: null };
+    stubFetch({ session });
+    render(<CrewCollaborationPanel threadId="t1" parentId="p1" onOpenResultArtifact={vi.fn()} />);
+    await screen.findByTestId('crew-session-verification');
+    expect(screen.queryByText('Verified result')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open CrewSession result artifact' })).toBeNull();
+  });
+
+  it('disables a validated result command without an artifact callback', async () => {
+    stubFetch({ session: projection('done') });
+    render(<CrewCollaborationPanel threadId="t1" parentId="p1" />);
+    expect(await screen.findByRole('button', { name: 'Open CrewSession result artifact' })).toBeDisabled();
+  });
+
   it('claims only its mounted parent and releases ownership on unmount', async () => {
     stubFetch({ session: projection('executing') });
     const view = render(<CrewCollaborationPanel threadId="t1" parentId="p1" />);
