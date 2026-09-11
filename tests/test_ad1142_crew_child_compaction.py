@@ -533,6 +533,7 @@ async def test_stopped_reason_vocabulary_is_unchanged() -> None:
         "agent_unresolvable",
         "dependency_blocked",
         "start_transition_failed",
+        "crew_worker_identity_lost",
     }
 
 

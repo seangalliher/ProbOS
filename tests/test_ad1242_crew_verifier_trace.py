@@ -312,8 +312,8 @@ def _assert_worktree_imports() -> None:
 
 
 @pytest.fixture
-async def stores(tmp_path: Path) -> AsyncIterator[Any]:
-    generator = stores_fixture.__wrapped__(tmp_path)
+async def stores(tmp_path: Path, request: pytest.FixtureRequest) -> AsyncIterator[Any]:
+    generator = stores_fixture.__wrapped__(tmp_path, request)
     value = await generator.__anext__()
     try:
         yield value

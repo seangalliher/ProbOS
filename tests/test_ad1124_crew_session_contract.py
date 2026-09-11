@@ -1871,6 +1871,7 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "adopt_recovery_plan",
         "agent_principal",
         "bind_scheduler",
+        "bind_worker_resolver",
         "captain_principal",
         "compare_and_set_recovery",
         "fail_verified_outcome",
@@ -1883,6 +1884,7 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "publish_verified_result",
         "repair_provisioning",
         "transition_session",
+        "validate_worker_admission",
     }
     expected_parameters = {
         "adopt_recovery_plan": {
@@ -1891,6 +1893,7 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         },
         "agent_principal": {"self", "agent_id"},
         "bind_scheduler": {"self", "schedule"},
+        "bind_worker_resolver": {"self", "resolver"},
         "captain_principal": {"self"},
         "compare_and_set_recovery": {
             "self", "parent_id", "recovery", "expected_session",
@@ -1927,6 +1930,9 @@ def test_public_service_api_and_annotations_are_exact() -> None:
             "last_result_summary", "blocked_reason", "evidence_refs",
             "result_artifact_id", "result_ref", "expected_recovery", "recovery",
         },
+        "validate_worker_admission": {
+            "self", "parent_id", "allow_reassignment", "require_untouched",
+        },
     }
     for method_name, parameter_names in expected_parameters.items():
         signature = inspect.signature(getattr(CrewSessionService, method_name))
@@ -1949,6 +1955,8 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "compute_similarity",
         "decomposer",
         "admission_port",
+        "worker_resolver",
+        "require_worker_eligibility",
         "clock",
     }
     request_fields = tuple(CrewSessionParentCreate.__dataclass_fields__)
