@@ -14,7 +14,12 @@ returns the tmp store (byte-identical to the proven DM path).
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
+import io
+import json
+from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -22,7 +27,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from probos.attachments.filesystem_store import FilesystemAttachmentStore
-from probos.config import AttachmentsConfig
+from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.cognitive.llm_client import MockLLMClient
+from probos.config import AttachmentsConfig, SystemConfig
 from probos.mesh.intent import IntentBus
 from probos.mesh.signal import SignalManager
 from probos.routers import chat as chat_router
@@ -33,7 +40,7 @@ from probos.routers.thread_fanout import (
     resolve_attachment_refs,
 )
 from probos.threads import ChatThreadStore
-from probos.types import IntentMessage, IntentResult
+from probos.types import IntentMessage, IntentResult, LLMRequest, LLMResponse, Priority
 
 # Canonical 1x1 transparent PNG — correct magic bytes (BF-287 realism).
 _PNG_1x1 = base64.b64decode(
@@ -700,6 +707,233 @@ async def test_build_chat_vision_messages_text_block_carries_caption(tmp_path):
 
 
 # ---------------- group_chat_fanout vision threading (e2e) ----------------
+
+
+async def test_group_csv_reaches_actual_cognitive_requests(tmp_path: Path) -> None:
+    csv_text = (
+        "work_id,review_requested,review_reply,rework_requested\n"
+        "T01,yes,yes,no\n"
+        "T02,no,no,no\n"
+        "T03,yes,yes,yes\n"
+        "T04,yes,no,no\n"
+        "T05,no,yes,no\n"
+        "T06,yes,yes,no\n"
+        "T07,yes,no,no\n"
+        "T08,yes,no,yes\n"
+        "T09,no,no,no\n"
+        "T10,yes,yes,no\n"
+        "T11,no,yes,no\n"
+        "T12,no,no,yes\n"
+    )
+    source_rows = list(csv.DictReader(io.StringIO(csv_text)))
+    assert len(source_rows) == 12
+    row_ids = [row["work_id"] for row in source_rows]
+    assert len(set(row_ids)) == 12
+    captain_text = (
+        "Both of you, analyze the attached CSV. List the work identifiers for "
+        "requested reviews without replies and for requested reworks. "
+        "A reply without a review request is not an unanswered review; "
+        "a rework request does not require a review request."
+    )
+    instructions = "Analyze supplied records and distinguish requests from replies."
+    history_text = "We will examine the supplied records next."
+    assert all(
+        row_id not in text
+        for row_id in row_ids
+        for text in (captain_text, instructions, history_text, "records.csv")
+    )
+
+    class _CsvCompletionAdapter(MockLLMClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.requests: list[LLMRequest] = []
+            self.responses: list[LLMResponse] = []
+            self.parsed_rows: list[list[dict[str, str]]] = []
+            self.input_texts: list[str] = []
+
+        async def complete(
+            self, request: LLMRequest, *, priority: Priority = Priority.NORMAL,
+        ) -> LLMResponse:
+            self.requests.append(request)
+            input_parts = [request.prompt]
+            for message in request.messages or []:
+                if message.get("role") != "user":
+                    continue
+                content = message.get("content")
+                if isinstance(content, str):
+                    input_parts.append(content)
+                elif isinstance(content, list):
+                    input_parts.extend(
+                        block["text"] for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                        and isinstance(block.get("text"), str)
+                    )
+            input_text = "\n".join(input_parts)
+            self.input_texts.append(input_text)
+            lines = input_text.splitlines()
+            header = "work_id,review_requested,review_reply,rework_requested"
+            rows: list[dict[str, str]] = []
+            if header in lines:
+                reader = csv.DictReader(io.StringIO("\n".join(lines[lines.index(header):])))
+                for row in reader:
+                    if set(row) != set(header.split(",")) or any(
+                        row.get(field) not in {"yes", "no"}
+                        for field in ("review_requested", "review_reply", "rework_requested")
+                    ):
+                        break
+                    rows.append(row)
+            self.parsed_rows.append(rows)
+            derived = {
+                "unanswered_reviews": [
+                    row["work_id"] for row in rows
+                    if row["review_requested"] == "yes" and row["review_reply"] == "no"
+                ],
+                "reworks": [
+                    row["work_id"] for row in rows if row["rework_requested"] == "yes"
+                ],
+            }
+            response = replace(
+                await super().complete(request, priority=priority),
+                content=json.dumps(derived),
+            )
+            self.responses.append(response)
+            return response
+
+    handler_calls: dict[str, list[IntentMessage]] = {
+        "scout1": [], "counselor1": [],
+    }
+    handler_results: dict[str, list[IntentResult | None]] = {
+        "scout1": [], "counselor1": [],
+    }
+
+    class _CsvScout(CognitiveAgent):
+        agent_type = "scout"
+        instructions = "Analyze supplied records and distinguish requests from replies."
+
+        async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
+            handler_calls[self.id].append(intent)
+            result = await super().handle_intent(intent)
+            handler_results[self.id].append(result)
+            return result
+
+    class _CsvCounselor(_CsvScout):
+        agent_type = "counselor"
+
+    attach = await _make_attach_store(tmp_path)
+    csv_bytes = csv_text.encode("utf-8")
+    content_hash = hashlib.sha256(csv_bytes).hexdigest()
+    await attach.write(content_hash, csv_bytes, "text/csv")
+    stored_bytes = await attach.read(content_hash)
+    assert stored_bytes == csv_bytes
+    assert hashlib.sha256(stored_bytes).hexdigest() == content_hash
+    assert await attach.mime_for(content_hash) == "text/csv"
+    store, runtime, canned_received = _build_env(
+        tmp_path, attach,
+        agents={"scout1": "scout", "counselor1": "counselor"},
+        callsigns={"scout": "Scout", "counselor": "Counselor"},
+        subscribe=[],
+    )
+    runtime.config = SystemConfig()
+    runtime.config.attachments.enabled = True
+    runtime.attachment_store = attach
+    runtime.work_item_store = None
+    adapters = {
+        "scout1": _CsvCompletionAdapter(),
+        "counselor1": _CsvCompletionAdapter(),
+    }
+    agents = {
+        "scout1": _CsvScout(llm_client=adapters["scout1"], runtime=runtime),
+        "counselor1": _CsvCounselor(llm_client=adapters["counselor1"], runtime=runtime),
+    }
+    runtime.registry = _FakeRegistry(agents)
+    for agent_id, agent in agents.items():
+        agent.id = agent_id
+        assert agent.instructions == instructions
+        assert runtime.registry.get(agent_id) is agent
+        runtime.intent_bus.subscribe(
+            agent_id, agent.handle_intent, intent_names=["direct_message"],
+        )
+    thread = store.create_thread(
+        title="Record analysis", participants=["scout1", "counselor1"],
+    )
+    assert thread.participants == list(agents)
+    assert crew_agent_participants(runtime, thread.participants) == list(agents)
+    store.append_message(
+        thread.id, author_id="captain", role="captain", body=history_text,
+    )
+    assert [message.body for message in store.list_messages(thread.id, limit=100)] == [
+        history_text,
+    ]
+
+    with _rest_client(runtime) as client:
+        response = client.post(
+            f"/api/threads/{thread.id}/messages",
+            json={
+                "author_id": "captain",
+                "role": "captain",
+                "body": captain_text,
+                "attachment_ids": [content_hash],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    messages = store.list_messages(thread.id, limit=100)
+    captain_rows = [message for message in messages if message.id == response.json()["id"]]
+    assert len(captain_rows) == 1
+    captain_row = captain_rows[0]
+    assert captain_row.body == captain_text
+    assert captain_row.metadata["attachments"] == [
+        {"content_hash": content_hash, "mime": "text/csv"},
+    ]
+    assert canned_received == {}
+    assert {agent_id: len(calls) for agent_id, calls in handler_calls.items()} == {
+        "scout1": 1, "counselor1": 1,
+    }, "Invalid probe: both targeted CognitiveAgent handlers must run exactly once"
+    for agent_id, calls in handler_calls.items():
+        assert calls[0].intent == "direct_message"
+        assert calls[0].target_agent_id == agent_id
+        assert calls[0].thread_id == thread.id
+        assert calls[0].params["is_group_chat"] is True
+        assert all(
+            row_id not in json.dumps(calls[0].params["session_history"])
+            for row_id in row_ids
+        )
+    assert {agent_id: len(adapter.requests) for agent_id, adapter in adapters.items()} == {
+        "scout1": 1, "counselor1": 1,
+    }, "Invalid probe: both actual LLM requests must reach complete()"
+    assert {agent_id: len(adapter.responses) for agent_id, adapter in adapters.items()} == {
+        "scout1": 1, "counselor1": 1,
+    }, "Invalid probe: both local completion calls must finish"
+    for agent_id, adapter in adapters.items():
+        assert adapter.call_count == 1
+        assert len(handler_results[agent_id]) == 1
+        result = handler_results[agent_id][0]
+        assert result is not None and result.success, result
+        assert all(row_id not in adapter.requests[0].system_prompt for row_id in row_ids)
+
+    actual_inputs = {
+        agent_id: adapter.input_texts[0] for agent_id, adapter in adapters.items()
+    }
+    assert all(
+        adapter.parsed_rows == [source_rows] for adapter in adapters.values()
+    ), (
+        "Missing CSV context in actual LLMRequest user input after two targeted handlers "
+        f"and two completed local LLM calls: {actual_inputs!r}"
+    )
+    expected = {
+        "unanswered_reviews": ["T04", "T07", "T08"],
+        "reworks": ["T03", "T08", "T12"],
+    }
+    for agent_id, adapter in adapters.items():
+        assert adapter.parsed_rows == [source_rows]
+        assert json.loads(adapter.responses[0].content) == expected
+        replies = [
+            message for message in messages
+            if message.role == "agent" and message.author_id == agent_id
+        ]
+        assert len(replies) == 1
+        reply = replies[0]
+        assert all(row_id in reply.body for row_id in set(sum(expected.values(), [])))
 
 
 async def test_group_chat_fanout_vision_participant_gets_image_ref(tmp_path):
