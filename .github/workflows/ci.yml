@@ -62,8 +62,22 @@ jobs:
     # regressions.
     timeout-minutes: 15
 
+    env:
+      PROBOS_EMBEDDINGS: local
+      PROBOS_TEST_PYTHON: ${{ github.workspace }}/.venv/bin/python
+
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install backend test dependencies
+        run: uv sync --group dev --extra discovery --extra browser
 
       - uses: actions/setup-node@v7
         with:

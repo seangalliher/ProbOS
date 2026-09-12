@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
+from typing import Any
 
 import pytest
 
 pytestmark = pytest.mark.slow
 
 from probos.cognitive.task_scheduler import ScheduledTask, TaskScheduler
+from probos.types import IntentResult
 
 
 # ------------------------------------------------------------------
@@ -334,3 +337,65 @@ def test_get_stats():
     assert stats["total"] == 2
     assert stats["by_status"]["pending"] == 2
     assert stats["next_execute_in"] is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("second_result", "metadata", "direct_response", "expected"),
+    [
+        ("391", {}, None, "391"),
+        ("392", {}, None, "391\n392"),
+        ("391", {"verification": "pending"}, None, "391\n391"),
+        ("391", {}, "Synthesized answer", "Synthesized answer"),
+    ],
+)
+async def test_scheduled_result_presentation_retains_each_task_and_contributor(
+    second_result: str, metadata: dict[str, Any], direct_response: str | None, expected: str,
+) -> None:
+    contributors = [
+        IntentResult(
+            intent_id="calculation", agent_id="calculator-first", success=True,
+            result="391", confidence=0.9,
+        ),
+        IntentResult(
+            intent_id="calculation", agent_id="calculator-second", success=True,
+            result=second_result, confidence=0.9, metadata=metadata,
+        ),
+    ]
+    result = {
+        "response": direct_response,
+        "results": {"node": {"results": contributors, "result_count": 2}},
+    }
+    original = copy.deepcopy(result)
+
+    class _DeliveryAdapter(FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.delivered = asyncio.Event()
+
+        async def send_response(self, channel_id: str, text: str, **kwargs: Any) -> None:
+            await super().send_response(channel_id, text, **kwargs)
+            if len(self.sent) == 2:
+                self.delivered.set()
+
+    adapter = _DeliveryAdapter()
+    runtime = FakeRuntime(response=result)
+    scheduler = TaskScheduler(
+        process_fn=runtime.process_natural_language, channel_adapters=[adapter],
+    )
+    tasks = [
+        scheduler.schedule("calculate", delay_seconds=0, channel_id=f"channel-{index}")
+        for index in range(2)
+    ]
+    scheduler.start()
+    try:
+        await asyncio.wait_for(adapter.delivered.wait(), timeout=5)
+    finally:
+        await scheduler.stop()
+    assert sorted(adapter.sent) == [("channel-0", expected), ("channel-1", expected)]
+    assert runtime.calls == ["calculate", "calculate"]
+    for task in tasks:
+        assert task.status == "completed"
+        assert task.last_result is result
+        assert task.last_result == original
+    assert result["results"]["node"]["results"] is contributors
