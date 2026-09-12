@@ -1489,6 +1489,21 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     // the thread-keyed transcript (the displayed source). The per-agent buffer
     // append above stays for the no-thread cold-1:1 path + cross-session seed.
     const attachmentIds = pendingAttachments.map(a => a.attachment_id);
+    const attachmentFilenames = Object.fromEntries(pendingAttachments.flatMap(attachment => {
+      if (!attachment.filename || !/^[0-9a-f]{64}$/.test(attachment.attachment_id)) return [];
+      const basename = (attachment.filename.split(/[\\/]/).pop() ?? '')
+        .replace(/[\x00-\x1f\x7f<>:"|?*]/g, '').trim();
+      const encoder = new TextEncoder();
+      let label = '';
+      let byteLength = 0;
+      for (const character of basename) {
+        const length = encoder.encode(character).length;
+        if (byteLength + length > 255) break;
+        byteLength += length;
+        label += character;
+      }
+      return label && label !== '.' && label !== '..' ? [[attachment.attachment_id, label]] : [];
+    }));
     setPendingAttachments([]);
 
     // AD-917: route Captain sends to the group fan-out path once the active
@@ -1555,10 +1570,29 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
               role: 'captain',
               body: text || '(attachment)',
               attachment_ids: attachmentIds,
+              ...(Object.keys(attachmentFilenames).length > 0 ? { attachment_filenames: attachmentFilenames } : {}),
               metadata: { client_message_id: clientMessageId },
             }),
           });
+          if (!res.ok) {
+            setGroupTyping(null);
+            const state = useStore.getState();
+            state.setThreadMessages(groupThreadId, (state.threadMessages.get(groupThreadId) ?? [])
+              .filter(message => !(message.optimistic && message.id === `optimistic:${clientMessageId}`)));
+            state.updateComposerDraft(composerOwner, draft => ({
+              ...draft,
+              text: draft.text || text,
+              attachments: [
+                ...draft.attachments,
+                ...pendingAttachments.filter(attachment => !draft.attachments.some(existing => existing.attachment_id === attachment.attachment_id)),
+              ],
+              error: pendingAttachments.length > 0
+                ? 'Message not sent. Attachments retained for retry.' : 'Message not sent. Draft retained for retry.',
+            }));
+            return;
+          }
           const data = await res.json();
+          setAttachError(null);
           const captainRow = captainReplyToMessage(data, groupThreadId, clientMessageId, useStore.getState().agents);
           if (captainRow) useStore.getState().reconcileThreadMessage(groupThreadId, captainRow);
           // AD-914 returns {**msg.to_dict(), per_agent_replies: [{agent_id,
@@ -1832,7 +1866,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     } finally {
       setSending(false);
     }
-  }, [agentId, threadId, sending, seedMemories, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId, isOutputAudioEnabledNow, isCallLiveNow, speechOwner, setInput, setPendingAttachments]);
+  }, [agentId, threadId, sending, seedMemories, voiceProfile, pendingAttachments, speakMeetingReplies, activeThreadId, isOutputAudioEnabledNow, isCallLiveNow, speechOwner, setInput, setPendingAttachments, setAttachError, composerOwner]);
 
   // AD-985: keep the send ref current so the meeting open-mic's
   // ``submitTranscript`` routes through the live group-fan-out path.
@@ -2119,7 +2153,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'row', height: '100%', position: 'relative', minWidth: 0 }}>
       {/* AD-929: chat column (primary). Wraps all existing children so the
           conversation behavior is byte-identical; the Files rail is a sibling. */}
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, height: '100%' }}>

@@ -5,8 +5,28 @@
 // ProfileChatTab.sendText. If that production branch changes, update this
 // mirror. Plain fetch-mock pattern (vi.stubGlobal('fetch', ...)).
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { Agent } from '../../../store/types';
 import { resolveFirstResponder } from '../../../chat/firstResponder';
+import { ProfileChatTab } from '../ProfileChatTab';
+import { useStore } from '../../../store/useStore';
+
+vi.mock('../../../audio/speechInput', () => ({
+  isSpeechRecognitionSupported: () => false, startListening: vi.fn(), stopListening: vi.fn(),
+}));
+vi.mock('../../../audio/conversationController', () => ({
+  armConversationMode: vi.fn(() => () => {}), disarmConversationMode: vi.fn(), markAgentReplyComplete: vi.fn(),
+}));
+vi.mock('../../../audio/transformersStt', () => ({
+  armTransformersStt: vi.fn(), disarmTransformersStt: vi.fn(),
+  onTransformersTranscript: vi.fn(() => () => {}),
+  onTransformersTranscribing: vi.fn(() => () => {}), onTransformersProgress: vi.fn(() => () => {}),
+}));
+vi.mock('../../../hooks/useCameraStream', () => ({
+  startCameraStream: vi.fn(async () => undefined), stopCameraStream: vi.fn(async () => undefined),
+}));
+vi.mock('../MeetingView', () => ({ MeetingView: () => null }));
+vi.mock('../../workspace/WorkspaceFilesRail', () => ({ WorkspaceFilesRail: () => null }));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -69,6 +89,90 @@ function twoCrewThread(): { chatThreads: Map<string, ThreadView>; agents: Map<st
 }
 
 describe('AD-917 ProfileChatTab group send-routing', () => {
+  it.each([
+    { filename: 'reviews.csv', expectedFilename: 'reviews.csv', status: 200 },
+    { filename: 'why?.csv', expectedFilename: 'why.csv', status: 200 },
+    { filename: '\u6587'.repeat(90) + '.csv', expectedFilename: '\u6587'.repeat(85), status: 200 },
+    { filename: 'reviews.csv', expectedFilename: 'reviews.csv', status: 422 },
+  ])('forwards a safe picked filename and preserves rejected sends: $filename / $status', async ({ filename, expectedFilename, status }) => {
+    const initialState = useStore.getState();
+    const scrollBefore = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
+    const storageBefore = Object.fromEntries(Object.keys(localStorage).map(key => [key, localStorage.getItem(key)!]));
+    const hash = 'a'.repeat(64);
+    const thread = {
+      id: 't1', title: 'Inputs', participants: ['captain', 'a1', 'a2'],
+      created_at: 1, last_active_at: 1, task_id: null, metadata: {},
+    };
+    const response = (body: unknown): Response => new Response(JSON.stringify(body), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const upload = vi.fn((init: RequestInit) => {
+      const file = (init.body as FormData).get('file') as File;
+      expect(file.name).toBe(filename);
+      expect(file.size).toBeGreaterThan(0);
+      return response({ attachment_id: hash, sha256: hash, mime: 'text/csv', size_bytes: file.size, url: `/api/chat/attachments/${hash}` });
+    });
+    const groupPost = vi.fn((init: RequestInit) => {
+      const request = JSON.parse(String(init.body));
+      if (status !== 200) return new Response(JSON.stringify({ detail: 'invalid attachment label' }), { status });
+      return response({ id: 'persisted-captain', thread_id: 't1', author_id: 'captain', role: 'captain',
+        body: request.body, created_at: 2, metadata: request.metadata, per_agent_replies: [] });
+    });
+    try {
+      localStorage.clear();
+      Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
+      useStore.setState({
+        activeProfileAgent: 'a1', activeProfileThreadId: 't1', activeThreadId: null,
+        agents: new Map(['a1', 'a2'].map(id => [id, mkAgent({ id, callsign: id, isCrew: true })])),
+        chatThreads: new Map([['t1', thread]]), threadIdByAgent: new Map(),
+        threadMessages: new Map(), agentConversations: new Map(), chatDrafts: {},
+        artifactsByThread: new Map(), selectedArtifactId: null, typingAgent: null,
+        liveRepairEpoch: 0, liveThreadRefresh: null, voiceEnabled: false, callAudioEnabled: false,
+      });
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === '/api/chat/attachments/multipart' && init?.method === 'POST') return upload(init);
+        if (url === '/api/threads/t1/messages' && init?.method === 'POST') return groupPost(init);
+        if (url === '/api/threads/t1/messages?limit=200') return response({ thread_id: 't1', messages: [] });
+        if (url === '/api/threads/t1') return response(thread);
+        if (url.endsWith('/chat/history')) return response({ memories: [] });
+        if (url.endsWith('/profile')) return response({ voiceProfile: null });
+        if (url.endsWith('/tts/status')) return response({ enabled: false, backend: 'browser' });
+        if (url === '/api/voice/health') return response({ primary_stt: 'browser', engine: 'browser', backend_available: true, healthy: true });
+        return response({});
+      }));
+      const view = render(<ProfileChatTab agentId="a1" threadId="t1" />);
+      await act(async () => { await Promise.resolve(); });
+      const picker = view.container.querySelector<HTMLInputElement>('input[type="file"]');
+      expect(picker).not.toBeNull();
+      fireEvent.change(picker!, { target: { files: [new File(['id,status\nT04,open'], filename, { type: 'text/csv' })] } });
+      expect(await screen.findByText(filename)).toBeTruthy();
+      expect(upload).toHaveBeenCalledTimes(1);
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Send$/ })); });
+      await waitFor(() => expect(groupPost).toHaveBeenCalledTimes(1));
+      const request = JSON.parse(String(groupPost.mock.calls[0][0].body));
+      expect(request.attachment_ids).toEqual([hash]);
+      expect(request.attachment_filenames).toEqual({ [hash]: expectedFilename });
+      expect(request.body).toBe('(attachment)');
+      expect(request.metadata.client_message_id).toEqual(expect.any(String));
+      if (status === 200) {
+        expect(screen.queryByRole('button', { name: 'remove attachment' })).toBeNull();
+      } else {
+        expect(await screen.findByText('Message not sent. Attachments retained for retry.')).toBeVisible();
+        expect(screen.getByRole('button', { name: 'remove attachment' })).toBeVisible();
+        expect(useStore.getState().typingAgent).toBeNull();
+        expect(useStore.getState().threadMessages.get('t1') ?? []).toEqual([]);
+      }
+    } finally {
+      cleanup();
+      useStore.setState(initialState, true);
+      if (scrollBefore) Object.defineProperty(Element.prototype, 'scrollIntoView', scrollBefore);
+      else Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+      localStorage.clear();
+      for (const [key, value] of Object.entries(storageBefore)) localStorage.setItem(key, value);
+    }
+  });
+
   it('routes a Captain send to POST /api/threads/{id}/messages when >=2 crew participants', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ per_agent_replies: [] }) });
     vi.stubGlobal('fetch', fetchMock);

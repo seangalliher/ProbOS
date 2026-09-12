@@ -53,6 +53,7 @@ const INPUTS: TaskInput[] = [
     filename: 'notes.txt',
     size: 10,
     source: 'task',
+    available: true,
   },
 ];
 
@@ -144,6 +145,9 @@ beforeEach(() => {
     liveArtifactRefresh: null,
     liveTodoRefresh: null,
     liveRepairEpoch: 0,
+    liveThreadRefresh: null,
+    liveGeneration: null,
+    threadMessages: new Map(),
     liveRailOwner: null,
   });
 });
@@ -159,6 +163,9 @@ afterEach(() => {
     liveArtifactRefresh: null,
     liveTodoRefresh: null,
     liveRepairEpoch: 0,
+    liveThreadRefresh: null,
+    liveGeneration: null,
+    threadMessages: new Map(),
     liveRailOwner: null,
   });
 });
@@ -180,6 +187,188 @@ function fillValidStartWorkForm(): void {
 }
 
 describe('WorkspaceFilesRail (AD-929)', () => {
+  it('performs one initial Inputs request per expanded room', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    const view = render(<WorkspaceFilesRail threadId="t1" />);
+    await screen.findByText('notes.txt');
+    expect(fetchThreadInputs).toHaveBeenCalledTimes(1);
+    vi.mocked(fetchThreadInputs).mockClear();
+    view.rerender(<WorkspaceFilesRail threadId="t2" />);
+    await screen.findByText('notes.txt');
+    expect(fetchThreadInputs).toHaveBeenCalledTimes(1);
+    expect(fetchThreadInputs).toHaveBeenCalledWith('t2');
+  });
+
+  it('distinguishes initial input failure from a successfully empty room and recovers', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    vi.mocked(fetchThreadInputs).mockRejectedValue(new Error('503'));
+    render(<WorkspaceFilesRail threadId="t1" />);
+    expect(screen.queryByTestId('inputs-list-empty')).toBeNull();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Inputs unavailable.');
+    expect(screen.queryByTestId('inputs-list-empty')).toBeNull();
+    vi.mocked(fetchThreadInputs).mockResolvedValue([]);
+    fireEvent.click(screen.getByTestId('workspace-files-refresh'));
+    expect(await screen.findByTestId('inputs-list-empty')).toHaveTextContent('No inputs yet.');
+  });
+
+  it('retains known refs without download access after failure and restores Ready on recovery', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    render(<WorkspaceFilesRail threadId="t1" />);
+    await waitFor(() => expect(screen.getByTestId('input-row-in1')).toHaveTextContent('Ready'));
+    vi.mocked(fetchThreadInputs).mockRejectedValue(new Error('503'));
+    fireEvent.click(screen.getByTestId('workspace-files-refresh'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Showing last known inputs');
+    expect(screen.getByTestId('input-row-in1')).toHaveTextContent('notes.txt');
+    expect(screen.getByTestId('input-row-in1')).not.toHaveAttribute('href');
+    vi.mocked(fetchThreadInputs).mockResolvedValue(INPUTS);
+    act(() => useStore.setState({ liveRepairEpoch: 1 }));
+    await waitFor(() => expect(screen.getByTestId('input-row-in1')).toHaveTextContent('Ready'));
+  });
+
+  it('coalesces persisted attachment refreshes and ignores text-only and optimistic changes', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    render(<WorkspaceFilesRail threadId="t1" />);
+    await waitFor(() => expect(screen.getByTestId('input-row-in1')).toHaveTextContent('Ready'));
+    vi.mocked(fetchThreadInputs).mockClear();
+    const message = {
+      id: 'upload-1', threadId: 't1', role: 'user' as const, text: 'attached', timestamp: 1,
+      metadata: { attachments: [{ content_hash: SHA_A, mime: 'text/csv' }] },
+    };
+    act(() => useStore.setState({ threadMessages: new Map([['t1', [{ ...message, optimistic: true }]]]) }));
+    expect(fetchThreadInputs).not.toHaveBeenCalled();
+    let resolveOld!: (rows: TaskInput[]) => void;
+    vi.mocked(fetchThreadInputs).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
+    act(() => useStore.setState({ threadMessages: new Map([['t1', [message]]]) }));
+    expect(fetchThreadInputs).toHaveBeenCalledTimes(1);
+    expect(resolveOld).toBeTypeOf('function');
+    act(() => useStore.setState({ threadMessages: new Map([['t1', [{ ...message, text: 'new text' }]]]) }));
+    expect(fetchThreadInputs).toHaveBeenCalledTimes(1);
+    act(() => useStore.setState({ threadMessages: new Map([['t1', [{
+      ...message, metadata: { attachments: [{ content_hash: SHA_B, mime: 'text/csv' }] },
+    }]]]) }));
+    act(() => useStore.setState({ liveThreadRefresh: { threadId: 't1', requestId: 'upload-1' } }));
+    expect(fetchThreadInputs).toHaveBeenCalledTimes(1);
+    vi.mocked(fetchThreadInputs).mockResolvedValue([{ ...INPUTS[0], content_hash: SHA_B, filename: 'latest.csv' }]);
+    await act(async () => resolveOld([{ ...INPUTS[0], filename: 'obsolete.csv' }]));
+    expect(fetchThreadInputs).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText('latest.csv')).toBeTruthy();
+    expect(screen.queryByText('obsolete.csv')).toBeNull();
+  });
+
+  it('rejects late inputs across room generations including navigation back', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    let resolveOld!: (rows: TaskInput[]) => void;
+    vi.mocked(fetchThreadInputs).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
+    const view = render(<WorkspaceFilesRail threadId="t1" />);
+    expect(resolveOld).toBeTypeOf('function');
+    vi.mocked(fetchThreadInputs).mockResolvedValue([]);
+    view.rerender(<WorkspaceFilesRail threadId="t2" />);
+    expect(await screen.findByTestId('inputs-list-empty')).toBeTruthy();
+    view.rerender(<WorkspaceFilesRail threadId="t1" />);
+    expect(await screen.findByTestId('inputs-list-empty')).toBeTruthy();
+    await act(async () => resolveOld(INPUTS));
+    expect(screen.queryByText('notes.txt')).toBeNull();
+    expect(screen.getByTestId('inputs-list-empty')).toBeTruthy();
+  });
+
+  it('refreshes binding and reopen while doing no input work for collapsed live signals', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    const view = render(<WorkspaceFilesRail threadId="t1" />);
+    await waitFor(() => expect(screen.getByTestId('input-row-in1')).toHaveTextContent('Ready'));
+    vi.mocked(fetchThreadInputs).mockClear();
+    view.rerender(<WorkspaceFilesRail threadId="t1" taskId="parent-1" />);
+    await waitFor(() => expect(screen.getByTestId('input-row-in1')).toHaveTextContent('Ready'));
+    expect(fetchThreadInputs).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId('workspace-files-collapse'));
+    vi.mocked(fetchThreadInputs).mockClear();
+    act(() => useStore.setState({ liveRepairEpoch: 1, liveThreadRefresh: { threadId: 't1', requestId: 'persisted' } }));
+    expect(fetchThreadInputs).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('workspace-files-expand'));
+    await waitFor(() => expect(screen.getByTestId('input-row-in1')).toHaveTextContent('Ready'));
+    expect(fetchThreadInputs).toHaveBeenCalledWith('t1');
+  });
+
+  it('discards old stream results and accepts a repair response', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    let resolveOld!: (rows: TaskInput[]) => void;
+    vi.mocked(fetchThreadInputs).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
+    render(<WorkspaceFilesRail threadId="t1" />);
+    expect(resolveOld).toBeTypeOf('function');
+    vi.mocked(fetchThreadInputs).mockResolvedValue([]);
+    act(() => useStore.setState({ liveGeneration: 'b'.repeat(32), liveRepairEpoch: 1 }));
+    await act(async () => resolveOld(INPUTS));
+    expect(await screen.findByTestId('inputs-list-empty')).toBeTruthy();
+    expect(screen.queryByText('notes.txt')).toBeNull();
+  });
+
+  it('overlays a narrow room without shrinking the conversation and disconnects observation', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    vi.stubGlobal('innerWidth', 390);
+    let onResize!: ResizeObserverCallback;
+    let observed!: Element;
+    const disconnect = vi.fn();
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) { onResize = callback; }
+      observe(target: Element) { observed = target; }
+      disconnect = disconnect;
+    });
+    const view = render(<WorkspaceFilesRail threadId="t1" />);
+    await screen.findByTestId('inputs-list');
+    act(() => onResize([{ target: observed, contentRect: { width: 390 } } as ResizeObserverEntry], {} as ResizeObserver));
+    const rail = screen.getByTestId('workspace-files-rail');
+    expect(rail).toHaveAttribute('data-compact', 'true');
+    expect(rail.style.position).toBe('absolute');
+    expect(rail.style.width).toBe('100%');
+    vi.stubGlobal('innerWidth', 1440);
+    act(() => onResize([{ target: observed, contentRect: { width: 420 } } as ResizeObserverEntry], {} as ResizeObserver));
+    expect(rail).toHaveAttribute('data-compact', 'false');
+    expect(rail.style.position).toBe('relative');
+    view.unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('refreshes legacy task upload results into verified Ready inputs', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    render(<WorkspaceFilesRail threadId="t1" taskId="parent-1" />);
+    await screen.findByText('notes.txt');
+    await waitFor(() => expect(fetchThreadInputs).toHaveBeenCalled());
+    vi.mocked(fetchThreadInputs).mockClear();
+    const uploaded: TaskInput = { content_hash: SHA_A, filename: 'uploaded.csv', mime: 'text/csv', size: 7, source: 'task' };
+    vi.mocked(fetchThreadInputs).mockResolvedValue([{ ...uploaded, available: true }]);
+    const post = vi.fn().mockResolvedValue(new Response(JSON.stringify({ inputs: [uploaded] })));
+    vi.stubGlobal('fetch', post);
+    fireEvent.change(screen.getByTestId('workspace-files-attach-input'), { target: { files: [new File(['a,b\n1,2'], 'uploaded.csv', { type: 'text/csv' })] } });
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+    await waitFor(() => expect(fetchThreadInputs).toHaveBeenCalledWith('t1'));
+    expect(screen.getByTestId(`input-row-${SHA_A}`)).toHaveTextContent('Ready');
+    expect(screen.getByTestId(`input-row-${SHA_A}`)).toHaveAttribute('href');
+  });
+
+  it('retains an acknowledged task upload when the first authoritative GET is stale', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    render(<WorkspaceFilesRail threadId="t1" taskId="parent-1" />);
+    await screen.findByText('notes.txt');
+    const uploaded: TaskInput = { content_hash: SHA_A, filename: 'new.csv', mime: 'text/csv', size: 7, source: 'task' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ inputs: [uploaded] }))));
+    fireEvent.change(screen.getByTestId('workspace-files-attach-input'), { target: { files: [new File(['a,b\n1,2'], 'new.csv', { type: 'text/csv' })] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Inputs unavailable.');
+    expect(screen.getByTestId(`input-row-${SHA_A}`)).toHaveTextContent('new.csv');
+    expect(screen.getByTestId(`input-row-${SHA_A}`)).not.toHaveAttribute('href');
+    vi.mocked(fetchThreadInputs).mockResolvedValue([{ ...uploaded, available: true }]);
+    fireEvent.click(screen.getByTestId('workspace-files-refresh'));
+    await waitFor(() => expect(screen.getByTestId(`input-row-${SHA_A}`)).toHaveTextContent('Ready'));
+  });
+
+  it('surfaces task upload failure without deleting existing input rows', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    render(<WorkspaceFilesRail threadId="t1" taskId="parent-1" />);
+    await screen.findByText('notes.txt');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('unavailable', { status: 503 })));
+    fireEvent.change(screen.getByTestId('workspace-files-attach-input'), { target: { files: [new File(['a,b'], 'failed.csv', { type: 'text/csv' })] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Input upload failed.');
+    expect(screen.getByText('notes.txt')).toBeInTheDocument();
+  });
+
   it('registers only an expanded bound room and releases it on unmount', async () => {
     localStorage.setItem('probos.workspaceFiles.collapsed', '0');
     const view = render(<WorkspaceFilesRail threadId="t1" taskId="parent-1" />);

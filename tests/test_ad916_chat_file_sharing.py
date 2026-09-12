@@ -20,6 +20,7 @@ import io
 import json
 import logging
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -196,6 +197,7 @@ def _rest_client(runtime) -> TestClient:
 
     app = FastAPI()
     app.include_router(threads_router.router)
+    app.include_router(chat_router.router)
     app.dependency_overrides[get_runtime] = lambda: runtime
     return TestClient(app)
 
@@ -812,11 +814,15 @@ async def test_build_chat_vision_messages_text_block_carries_caption(tmp_path):
 
 
 @pytest.mark.parametrize("row_prefix", ["T", "R"])
-@pytest.mark.parametrize("input_source", ["message", "task"])
+@pytest.mark.parametrize("input_source", ["message", "task", "task-upload"])
 async def test_group_csv_reaches_actual_cognitive_requests(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, row_prefix: str,
-    input_source: str, room_work_items: WorkItemStore,
+    input_source: str, room_work_items: WorkItemStore, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import probos.runtime as runtime_module
+    import probos.threads as threads_module
+    from probos.routers import thread_fanout
+
     caplog.set_level(logging.INFO, logger="probos.cognitive.cognitive_agent")
     csv_text = (
         "work_id,review_requested,review_reply,rework_requested\n"
@@ -937,25 +943,49 @@ async def test_group_csv_reaches_actual_cognitive_requests(
     attach = await _make_attach_store(tmp_path)
     csv_bytes = csv_text.encode("utf-8")
     content_hash = hashlib.sha256(csv_bytes).hexdigest()
-    await attach.write(content_hash, csv_bytes, "text/csv")
-    stored_bytes = await attach.read(content_hash)
-    assert stored_bytes == csv_bytes
-    assert hashlib.sha256(stored_bytes).hexdigest() == content_hash
-    assert await attach.mime_for(content_hash) == "text/csv"
+    assert not await attach.exists(content_hash)
     store, runtime, canned_received = _build_env(
         tmp_path, attach,
         agents={"scout1": "scout", "counselor1": "counselor"},
         callsigns={"scout": "Scout", "counselor": "Counselor"},
         subscribe=[],
     )
+    identifiers = iter([
+        "attachment-room", "attachment-history", "attachment-captain",
+        "attachment-reply-1", "attachment-reply-2",
+    ])
+    with monkeypatch.context() as constructor_patch:
+        constructor_patch.setattr(
+            threads_module, "ChatThreadStore",
+            partial(ChatThreadStore, clock=_seq_clock(), id_factory=lambda: next(identifiers)),
+        )
+        event_runtime = runtime_module.ProbOSRuntime(config=SystemConfig(), data_dir=tmp_path / "events")
+    monkeypatch.setattr(
+        runtime_module, "time", SimpleNamespace(**{**vars(runtime_module.time), "time": lambda: 1000.0}),
+    )
+
+    def deterministic_intent(**kwargs: object) -> IntentMessage:
+        return IntentMessage(id=f"attachment-intent-{kwargs['target_agent_id']}", **kwargs)
+
+    monkeypatch.setattr(thread_fanout, "IntentMessage", deterministic_intent)
+    store = event_runtime.chat_thread_store
+    assert store is not None
+    runtime.chat_thread_store = store
+    events: list[dict] = []
+
+    def capture_event(event: dict) -> None:
+        if event["type"] == "chat_thread_message_appended":
+            events.append(event)
+
+    event_runtime.add_event_listener(capture_event)
     runtime.config = SystemConfig()
     runtime.config.attachments.enabled = True
     runtime.attachment_store = attach
     runtime.work_item_store = room_work_items
     task = None
-    if input_source == "task":
+    if input_source != "message":
         task = await room_work_items.create_work_item(
-            title="Analyze supplied records", work_type="task",
+            id="attachment-task", title="Analyze supplied records", work_type="task",
             metadata={"input_attachments": [{
                 "content_hash": content_hash, "mime": "text/csv", "filename": "records.csv",
             }]},
@@ -988,18 +1018,35 @@ async def test_group_csv_reaches_actual_cognitive_requests(
     assert [message.body for message in store.list_messages(thread.id, limit=100)] == [
         history_text,
     ]
-
+    initial_history = {"thread_id": thread.id, "messages": [message.to_dict() for message in store.list_messages(thread.id)]}
+    events.clear()
+    upload_message = input_source != "task"
+    request = {
+        "author_id": "captain", "role": "captain", "body": captain_text,
+        "attachment_ids": [content_hash] if upload_message else [],
+        "attachment_filenames": {content_hash: "records.csv"} if upload_message else {},
+        "metadata": {"client_message_id": "attachment-send"},
+    }
     with _rest_client(runtime) as client:
+        upload = client.post(
+            "/api/chat/attachments/multipart", files={"file": ("records.csv", csv_bytes, "text/csv")},
+        )
+        assert upload.status_code == 200, upload.text
+        assert upload.json()["attachment_id"] == content_hash
+        assert upload.json()["sha256"] == content_hash
+        assert upload.json()["size_bytes"] == len(csv_bytes)
+        stored_bytes = await attach.read(content_hash)
+        assert stored_bytes == csv_bytes
+        assert hashlib.sha256(stored_bytes).hexdigest() == content_hash
+        assert await attach.mime_for(content_hash) == "text/csv"
         response = client.post(
             f"/api/threads/{thread.id}/messages",
-            json={
-                "author_id": "captain",
-                "role": "captain",
-                "body": captain_text,
-                "attachment_ids": [content_hash] if input_source == "message" else [],
-                "attachment_filenames": {content_hash: "records.csv"} if input_source == "message" else {},
-            },
+            json=request,
         )
+        history = client.get(f"/api/threads/{thread.id}/messages")
+        inputs = client.get(f"/api/threads/{thread.id}/inputs")
+        current_thread = client.get(f"/api/threads/{thread.id}")
+        assert history.status_code == inputs.status_code == current_thread.status_code == 200
 
     assert response.status_code == 200, response.text
     messages = store.list_messages(thread.id, limit=100)
@@ -1009,7 +1056,7 @@ async def test_group_csv_reaches_actual_cognitive_requests(
     assert captain_row.body == captain_text
     assert captain_row.metadata.get("attachments", []) == ([
         {"content_hash": content_hash, "mime": "text/csv", "filename": "records.csv"},
-    ] if input_source == "message" else [])
+    ] if upload_message else [])
     assert canned_received == {}
     assert {agent_id: len(calls) for agent_id, calls in handler_calls.items()} == {
         "scout1": 1, "counselor1": 1,
@@ -1065,7 +1112,7 @@ async def test_group_csv_reaches_actual_cognitive_requests(
             "reader_id": agent_id,
             "thread_id": thread.id,
             "task_id": task.id if task is not None else None,
-            "source": input_source,
+            "source": "task" if task is not None else "message",
             "source_id": task.id if task is not None else captain_row.id,
             "content_hash": content_hash,
             "status": "read",
@@ -1083,6 +1130,29 @@ async def test_group_csv_reaches_actual_cognitive_requests(
         assert len(replies) == 1
         reply = replies[0]
         assert all(row_id in reply.body for row_id in set(sum(expected.values(), [])))
+    assert len(events) == 3
+    assert {event["data"]["message_id"] for event in events} == {
+        message.id for message in messages if message.id != "attachment-history"
+    }
+    assert history.json()["messages"] == [message.to_dict() for message in messages]
+    assert inputs.json()["inputs"][0]["available"] is True
+    assert inputs.json()["inputs"][0]["filename"] == "records.csv"
+    if row_prefix == "T" and input_source in {"message", "task-upload"}:
+        actual = {
+            "file": {"filename": "records.csv", "mime": "text/csv", "text": csv_text, "sha256": content_hash},
+            "upload": upload.json(), "thread": current_thread.json(),
+            "request": request, "response": response.json(),
+            "initial_history": initial_history, "history": history.json(),
+            "inputs": inputs.json(), "events": events,
+            "model_reads": [{
+                "reader_id": agent_id, "content_hash": content_hash,
+                "rows": adapter.parsed_rows[0], "result": json.loads(adapter.responses[0].content),
+            } for agent_id, adapter in adapters.items()],
+        }
+        fixture_path = Path(__file__).resolve().parents[1] / "ui/e2e/fixtures/room-attachments.json"
+        if not fixture_path.is_file():
+            pytest.fail("Actual attachment producer assertions passed; bank fixture scenario " + input_source + ":\n" + json.dumps(actual, indent=2), pytrace=False)
+        assert json.loads(fixture_path.read_text(encoding="utf-8"))[input_source] == actual
 
 
 async def test_group_chat_fanout_vision_participant_gets_image_ref(tmp_path):
