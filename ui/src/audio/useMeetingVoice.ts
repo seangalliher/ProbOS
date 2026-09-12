@@ -6,7 +6,7 @@
  *  talk-over across re-sends). */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { speakResponse, onSpeechEvent, stripMarkdownForSpeech, prewarmTts } from './voice';
+import { speakResponse, onSpeechEvent, stripMarkdownForSpeech, prewarmTts, flushSpeechQueue } from './voice';
 import {
   speakRepliesSequentially,
   createVoiceProfileResolver,
@@ -28,6 +28,7 @@ export interface UseMeetingVoiceOptions {
    *  serve as the owner. Bound here rather than pushed into ``MeetingVoiceDeps``
    *  because ownership is the CALLER's fact; the sequencer has no surface. */
   owner?: string;
+  scopeKey?: string | null;
 }
 
 /** BF-621: optional per-utterance reveal hooks. When supplied, the caller can
@@ -39,6 +40,9 @@ export interface UseMeetingVoiceOptions {
 export interface SpeakRepliesHooks {
   onUtteranceStart?: (reply: PerAgentReply) => void;
   onUtteranceEnd?: (reply: PerAgentReply) => void;
+  onBatchSettled?: () => void;
+  claimSpeech?: (reply: PerAgentReply) => boolean;
+  shouldContinue?: () => boolean;
 }
 
 export interface UseMeetingVoiceResult {
@@ -66,11 +70,25 @@ export function useMeetingVoice(opts: UseMeetingVoiceOptions): UseMeetingVoiceRe
   // Captain sends never talk over each other, and a stale onSpeakingChange
   // from a superseded batch can't clobber the current speakingAgentId.
   const genRef = useRef(0);
+  const batchSettledRef = useRef<(() => void) | null>(null);
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const resolverRef = useRef(createVoiceProfileResolver());
   // Read at speak time, like every other gate here, so a reference-stable
   // ``speakReplies`` never closes over a stale owner.
   const ownerRef = useRef(opts.owner);
   useEffect(() => { ownerRef.current = opts.owner; }, [opts.owner]);
+  const callAudioEnabled = useStore((state) => state.callAudioEnabled);
+  useEffect(() => () => {
+    genRef.current += 1;
+    const hadActiveBatch = batchSettledRef.current !== null;
+    batchSettledRef.current?.();
+    setSpeakingAgentId(null);
+    if (hadActiveBatch && opts.owner) flushSpeechQueue('meeting-context-ended', opts.owner);
+  }, [opts.scopeKey, opts.owner, opts.meetingActive, callAudioEnabled]);
 
   // AD-972: move the cold voice-profile fetch + TTS backend probe OFF the
   // first-utterance critical path. When the meeting opens we prewarm the TTS
@@ -90,34 +108,74 @@ export function useMeetingVoice(opts: UseMeetingVoiceOptions): UseMeetingVoiceRe
   }, [opts.meetingActive, participantKey]);
 
   const speakReplies = useCallback((replies: PerAgentReply[], hooks?: SpeakRepliesHooks): void => {
-    if (!meetingActiveRef.current) return;
+    let settled = false;
+    const settle = (): void => {
+      if (settled) return;
+      settled = true;
+      if (batchSettledRef.current === settle) {
+        batchSettledRef.current = null;
+        if (mountedRef.current) setSpeakingAgentId(null);
+      }
+      hooks?.onBatchSettled?.();
+    };
+    if (!mountedRef.current || !meetingActiveRef.current) {
+      settle();
+      return;
+    }
     // AD-949: gate on the call-scoped ``callAudioEnabled`` (default ON) instead
     // of the Ship's-Computer ``voiceEnabled`` — group/meeting voice is now
     // audible by default in a live call and muted only via the in-call control.
-    if (!useStore.getState().callAudioEnabled) return;
-    if (!Array.isArray(replies) || replies.length === 0) return;
+    if (!useStore.getState().callAudioEnabled || !(hooks?.shouldContinue?.() ?? true)) {
+      settle();
+      return;
+    }
     const myGen = ++genRef.current;
+    batchSettledRef.current?.();
+    batchSettledRef.current = settle;
+    setSpeakingAgentId(null);
+    if (!Array.isArray(replies) || replies.length === 0) {
+      settle();
+      return;
+    }
+    const owner = ownerRef.current;
+    const shouldContinue = (): boolean => {
+      const active = !settled && genRef.current === myGen
+        && mountedRef.current
+        && meetingActiveRef.current && useStore.getState().callAudioEnabled
+        && (hooks?.shouldContinue?.() ?? true);
+      if (!active) settle();
+      return active;
+    };
     // AD-972: kick off ALL reply profile fetches up front (promise-cached, so
     // this dedupes with the meeting-open prewarm). By the time the sequential
     // sequencer awaits speaker N, its profile is resolved / in-flight — no cold
     // fetch gap between speakers.
-    for (const r of replies) void resolverRef.current(r.agent_id);
-    void speakRepliesSequentially(replies, {
-      // ``'narration'`` is ``speakResponse``'s default, so this wrapper changes
-      // nothing but the owner it stamps on each entry.
-      speak: (text, profile, agentId) => speakResponse(
-        text, profile, agentId, undefined, 'narration', ownerRef.current,
-      ),
-      subscribe: onSpeechEvent,
-      resolveProfile: resolverRef.current,
-      strip: stripMarkdownForSpeech,
-      onSpeakingChange: (id) => { if (genRef.current === myGen) setSpeakingAgentId(id); },
-      // BF-621: gen-guard the reveal hooks so a superseded batch never labels
-      // or reveals stale text (mirrors the onSpeakingChange guard).
-      onUtteranceStart: (r) => { if (genRef.current === myGen) hooks?.onUtteranceStart?.(r); },
-      onUtteranceEnd: (r) => { if (genRef.current === myGen) hooks?.onUtteranceEnd?.(r); },
-      shouldContinue: () => genRef.current === myGen,
-    });
+    try {
+      for (const reply of replies) void resolverRef.current(reply.agent_id).catch(() => undefined);
+      void Promise.resolve(speakRepliesSequentially(replies, {
+        // ``'narration'`` is ``speakResponse``'s default, so this wrapper changes
+        // nothing but the owner it stamps on each entry.
+        speak: (text, profile, agentId) => speakResponse(
+          text, profile, agentId, undefined, 'narration', owner,
+        ),
+        subscribe: onSpeechEvent,
+        resolveProfile: resolverRef.current,
+        strip: stripMarkdownForSpeech,
+        onSpeakingChange: (id) => {
+          if (shouldContinue() || (id === null && mountedRef.current && genRef.current === myGen)) {
+            setSpeakingAgentId(id);
+          }
+        },
+        // BF-621: gen-guard the reveal hooks so a superseded batch never labels
+        // or reveals stale text (mirrors the onSpeakingChange guard).
+        onUtteranceStart: (r) => { if (shouldContinue()) hooks?.onUtteranceStart?.(r); },
+        onUtteranceEnd: (r) => { if (shouldContinue()) hooks?.onUtteranceEnd?.(r); },
+        claimSpeech: hooks?.claimSpeech,
+        shouldContinue,
+      })).then(settle, settle);
+    } catch {
+      settle();
+    }
   }, []);
 
   return { speakReplies, speakingAgentId };

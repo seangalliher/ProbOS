@@ -443,7 +443,7 @@ async def _fan_one_round(
     broadcast: bool = False,
     max_speakers_override: int | None = None,
     _semantic_replies: list[dict[str, str]] | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """One reactivity round (AD-935): facilitate over ``candidate_ids`` (minus
     ``exclude_ids``) using ``trigger_body`` for mention/relevance, dispatch the
     chosen speakers in parallel, persist each non-[NO_RESPONSE] reply, write
@@ -534,7 +534,7 @@ async def _fan_one_round(
     write_ledgers: dict[str, WriteLedger] = {}
     semantic_texts: list[str] = [""] * len(speaking_order)
 
-    async def _send_one(reply_index: int, agent_id: str) -> dict[str, str]:
+    async def _send_one(reply_index: int, agent_id: str) -> dict[str, Any]:
         callsign = ""
         agent: Any = None
         try:
@@ -771,6 +771,7 @@ async def _fan_one_round(
             return {"agent_id": agent_id, "callsign": callsign, "text": "", "_declined": True}
         if _semantic_replies is not None:
             semantic_texts[reply_index] = project_convergence_body(reply_text, convergence_evidence)
+        persisted_message: dict[str, Any] | None = None
         try:
             # AD-933b: attach the generated-image refs only when the
             # escalation produced any; an empty/failed escalation leaves the
@@ -778,17 +779,29 @@ async def _fan_one_round(
             metadata: dict[str, Any] = {"intent_id": intent.id, "fanout": "ad914"}
             if generated_ids:
                 metadata["generated_attachment_ids"] = generated_ids
-            store.append_message(
+            saved_message = store.append_message(
                 thread_id, author_id=agent_id, role="agent",
                 body=reply_text, metadata=metadata,
                 convergence_evidence=convergence_evidence,
             )
+            if saved_message is not None:
+                persisted_message = saved_message.to_dict()
+            else:
+                logger.warning(
+                    "Group reply was not persisted for thread=%s agent=%s; "
+                    "returning transient text without a canonical message receipt",
+                    thread_id, agent_id,
+                )
         except Exception:
             logger.warning(
-                "AD-914: persist reply failed for thread=%s agent=%s",
+                "Group reply persistence failed for thread=%s agent=%s; "
+                "returning transient text without a canonical message receipt",
                 thread_id, agent_id, exc_info=True,
             )
-        return {"agent_id": agent_id, "callsign": callsign, "text": reply_text}
+        return {
+            "agent_id": agent_id, "callsign": callsign, "text": reply_text,
+            "message": persisted_message,
+        }
 
     # AD-978: freshen every observer agent's visual working memory ONCE before
     # the parallel dispatch (shared camera frame -> one describe, not one per
@@ -930,7 +943,7 @@ async def _fan_one_round(
 def _record_conversation_trust(
     runtime: Any,
     thread: Any,
-    all_replies: list[dict[str, str]],
+    all_replies: list[dict[str, Any]],
     agent_ids: list[str],
 ) -> None:
     """AD-958 (epic #882, #894): credit a CONVERGENT conversation as bounded
@@ -993,7 +1006,7 @@ def _record_conversation_trust(
 def _observe_conversation_corrections(
     runtime: Any,
     thread: Any,
-    all_replies: list[dict[str, str]],
+    all_replies: list[dict[str, Any]],
     agent_ids: list[str],
 ) -> None:
     """AD-958c (#882, #894): DETECT-AND-OBSERVE peer-corrects-peer signals.
@@ -1275,7 +1288,7 @@ async def group_chat_fanout(
     captain_body: str,
     captain_msg: Any,
     opener_id: str | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Fan the Captain turn out to all crew-agent participants, then (when
     ``group_chat.agent_reactivity_enabled`` is True) run a BOUNDED SYNCHRONOUS
     agent-to-agent cascade for up to ``max_agent_rounds`` extra rounds (AD-935).
@@ -1347,7 +1360,7 @@ async def group_chat_fanout(
     # just-appended Captain message out of each agent's history (byte-identical).
     # AD-970: an agent-initiated kickoff passes opener_id so the opener is
     # excluded from round 0 (it just spoke); a Captain turn excludes nobody.
-    all_replies: list[dict[str, str]] = []
+    all_replies: list[dict[str, Any]] = []
     semantic_replies: list[dict[str, str]] = []
     # AD-963b: hoist the turn-mode policy ABOVE round 0 so the department-dominant
     # weight tilt reaches round 0 — the round that decides who FRAMES the topic

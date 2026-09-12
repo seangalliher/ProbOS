@@ -17,8 +17,9 @@ vi.mock('../../sidebar/threadApi', () => ({
 import { listMessages } from '../../sidebar/threadApi';
 import {
   threadDtoToMessage, selectTranscriptMessages, loadThreadMessages,
+  groupReplyToMessage, captainReplyToMessage,
   buildTranscriptItems, transcriptDayLabel, TRANSCRIPT_RENDER_CAP, type TranscriptItem,
-  createSpeechLedger, admitMessages, isSpeakableAgentMessage, speechKeyFor,
+  createSpeechLedger, admitMessages, claimSpeech, isSpeakableAgentMessage, speechKeyFor,
   SPEECH_SCOPE_CAP,
 } from '../profileTranscript';
 import { ChatMessageRow } from '../ChatMessageRow';
@@ -76,11 +77,11 @@ afterEach(() => {
 });
 
 describe('AD-938 threadDtoToMessage', () => {
-  it('maps a captain message to a user bubble with no author identity', () => {
+  it('maps a captain message to a user bubble retaining correlation author identity', () => {
     const agents = seedAgents([]);
     const msg = threadDtoToMessage(mkDto({ id: 'm1', role: 'captain', author_id: 'captain', body: 'status?' }), agents);
     expect(msg).toMatchObject({ id: 'm1', role: 'user', text: 'status?' });
-    expect(msg.authorId).toBeUndefined();
+    expect(msg.authorId).toBe('captain');
     expect(msg.callsign).toBeUndefined();
   });
 
@@ -142,6 +143,115 @@ describe('AD-938 threadDtoToMessage', () => {
       new Map(),
     );
     expect(empty.emotion).toBeUndefined();
+  });
+});
+
+describe('group reply display identity', () => {
+  const canonical = mkDto({ id: 'reply-id', role: 'agent', author_id: 'a1', body: 'stored body' });
+
+  it('preserves the canonical body, identity, author, metadata and timestamp without a fallback', () => {
+    const fallback = vi.fn(() => ({ id: 'local', timestamp: 42 }));
+    const row = groupReplyToMessage({ agent_id: 'a1', text: 'raw body', message: canonical }, 't1', new Map(), fallback);
+    expect(row).toEqual(threadDtoToMessage(canonical, new Map()));
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, null])('creates one transient identity for an unavailable DTO (%s)', (message) => {
+    const fallback = vi.fn(() => ({ id: 'request-reply', timestamp: 42 }));
+    const row = groupReplyToMessage({ agent_id: 'a1', text: 'legacy', message }, 't1', new Map(), fallback);
+    expect(row).toMatchObject({ id: 'transient:request-reply', threadId: 't1', text: 'legacy', timestamp: 42 });
+    expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { id: '' }, { id: ' bad' }, { thread_id: 'other' }, { author_id: 'other' },
+    { role: 'captain' }, { body: '' }, { body: 42 }, { created_at: NaN },
+    { created_at: Infinity }, { created_at: -1 }, { metadata: [] },
+  ])('rejects a malformed supplied DTO without legacy fallback: %j', (invalid) => {
+    const fallback = vi.fn(() => ({ id: 'local', timestamp: 42 }));
+    const message = { ...canonical, ...invalid } as ThreadMessageDTO;
+    expect(groupReplyToMessage({ agent_id: 'a1', text: 'raw', message }, 't1', new Map(), fallback)).toBeNull();
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('rejects empty legacy prose and invalid fallback identity', () => {
+    const fallback = vi.fn(() => ({ id: '', timestamp: 42 }));
+    expect(groupReplyToMessage({ agent_id: 'a1', text: '' }, 't1', new Map(), fallback)).toBeNull();
+    expect(fallback).not.toHaveBeenCalled();
+    expect(groupReplyToMessage({ agent_id: 'a1', text: 'reply' }, 't1', new Map(), fallback)).toBeNull();
+    expect(groupReplyToMessage({ agent_id: '', text: 'reply' }, 't1', new Map(), fallback)).toBeNull();
+  });
+});
+
+describe('canonical group speech claims', () => {
+  const dto = mkDto({
+    id: 'canonical-group-1', role: 'agent', author_id: 'a1', metadata: { fanout: 'ad914' },
+  });
+  const row = threadDtoToMessage(dto, new Map());
+
+  it('shares an HTTP/live claim but admits distinct IDs with identical author and prose', () => {
+    const ledger = createSpeechLedger();
+    const receipt = groupReplyToMessage({ agent_id: 'a1', text: 'raw', message: dto }, 't1', new Map(), () => {
+      throw new Error('canonical premise failed');
+    });
+    expect(receipt).not.toBeNull();
+    expect(claimSpeech(ledger, 't1', receipt!)).toBe(true);
+    expect(claimSpeech(ledger, 't1', row)).toBe(false);
+    expect(claimSpeech(ledger, 't1', { ...row, id: 'synthetic-negative-distinct-id' })).toBe(true);
+    expect(claimSpeech(ledger, 't1', { ...row, text: 'updated stored body' })).toBe(false);
+    expect(speechKeyFor({ ...row, threadId: 'other' })).not.toBe(speechKeyFor(row));
+  });
+
+  it('seeds history without consuming known live IDs silently', () => {
+    const ledger = createSpeechLedger();
+    const live = { ...row, id: 'synthetic-negative-live-id' };
+    expect(admitMessages(ledger, 't1', [row, live], { seed: true, liveIds: new Set([live.id]) })).toEqual([live]);
+    expect(claimSpeech(ledger, 't1', row)).toBe(false);
+    expect(claimSpeech(ledger, 't1', live)).toBe(false);
+    expect(admitMessages(ledger, 'empty', [], { seed: true })).toEqual([]);
+  });
+
+  it.each([
+    { metadata: undefined }, { metadata: null }, { metadata: {} }, { metadata: { fanout: 'other' } },
+    { id: '' }, { id: ' bad' }, { threadId: '' }, { authorId: '' }, { timestamp: NaN },
+    { timestamp: -1 }, { text: '' }, { role: 'user' as const },
+  ])('keeps fallback for unproven canonical group rows: %j', (change) => {
+    const candidate = { ...row, ...change };
+    expect(speechKeyFor(candidate)).toBe(
+      `${candidate.role}\u0000${candidate.authorId ?? ''}\u0000${candidate.text.trim()}`,
+    );
+  });
+
+  it.each([undefined, null])('keeps no-DTO receipts on the legacy claim: %s', (message) => {
+    const ledger = createSpeechLedger();
+    const legacy = groupReplyToMessage({ agent_id: 'a1', text: 'hello', message }, 't1', new Map(),
+      () => ({ id: 'request-local', timestamp: 1 }));
+    expect(legacy?.id).toBe('transient:request-local');
+    expect(claimSpeech(ledger, 't1', legacy!)).toBe(true);
+    expect(claimSpeech(ledger, 't1', { ...legacy!, id: 'different-local-id' })).toBe(false);
+  });
+});
+
+describe('Captain receipt identity', () => {
+  const captain = mkDto({ id: 'captain-id', role: 'captain', metadata: { client_message_id: 'token' } });
+
+  it('preserves canonical identity, body, timestamp, and correlation token', () => {
+    expect(captainReplyToMessage(captain, 't1', 'token', new Map()))
+      .toEqual(threadDtoToMessage(captain, new Map()));
+  });
+
+  it.each([
+    null, undefined, [], {}, { ...captain, id: '' }, { ...captain, thread_id: 'other' },
+    { ...captain, role: 'agent' }, { ...captain, author_id: 'other' },
+    { ...captain, body: '' }, { ...captain, created_at: NaN },
+    { ...captain, metadata: null }, { ...captain, metadata: [] },
+    { ...captain, metadata: { client_message_id: 'different' } },
+  ])('rejects missing, invalid, or uncorrelated receipts: %j', (value) => {
+    expect(captainReplyToMessage(value, 't1', 'token', new Map())).toBeNull();
+  });
+
+  it.each(['', ' ', null, undefined])('rejects invalid request tokens: %j', (token) => {
+    expect(captainReplyToMessage(captain, 't1', token as string, new Map())).toBeNull();
   });
 });
 

@@ -389,6 +389,9 @@ export interface NotificationView {
 
 export interface AgentProfileMessage {
   id: string;
+  threadId?: string;
+  metadata?: Record<string, unknown> | null;
+  optimistic?: boolean;
   // AD-809: 'system' added so the /personality slash-command reply
   // can render with distinct styling (subtle dim italic) — see
   // ProfileChatTab message render.

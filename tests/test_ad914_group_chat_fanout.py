@@ -10,8 +10,13 @@ real ``threads`` router with a ``SimpleNamespace`` runtime via
 """
 from __future__ import annotations
 
+import json
+from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -62,9 +67,10 @@ def _seq_clock():
     return _c
 
 
-def _make_recording_handler(received: dict, agent_id: str):
+def _make_recording_handler(received: dict, agent_id: str, reply_text: str | None = None):
     async def _h(intent: IntentMessage) -> IntentResult:
         received[agent_id] = {
+            "call_count": received.get(agent_id, {}).get("call_count", 0) + 1,
             "text": intent.params.get("text"),
             "history": intent.params.get("session_history"),
             "session": intent.params.get("session"),
@@ -75,7 +81,7 @@ def _make_recording_handler(received: dict, agent_id: str):
             intent_id=intent.id,
             agent_id=agent_id,
             success=True,
-            result=f"reply::{agent_id}",
+            result=f"reply::{agent_id}" if reply_text is None else reply_text,
         )
 
     return _h
@@ -88,14 +94,18 @@ def _make_raising_handler(agent_id: str):
     return _h
 
 
-def _build_env(tmp_path, *, agents, callsigns=None, subscribe=None, raising=None):
+def _build_env(
+    tmp_path, *, agents, callsigns=None, subscribe=None, raising=None,
+    reply_texts=None, store=None,
+):
     """agents: {agent_id: agent_type}. callsigns: {agent_type: callsign}.
 
     subscribe: agent_ids that get a recording handler (default: all).
     raising: agent_ids whose handler raises (delivery-failed path).
     Returns (store, runtime, received).
     """
-    store = ChatThreadStore(tmp_path / "threads.db", clock=_seq_clock())
+    if store is None:
+        store = ChatThreadStore(tmp_path / "threads.db", clock=_seq_clock())
     bus = IntentBus(SignalManager(reap_interval=1.0))
     registry = _FakeRegistry({aid: _FakeAgent(at) for aid, at in agents.items()})
     runtime = SimpleNamespace(
@@ -110,7 +120,10 @@ def _build_env(tmp_path, *, agents, callsigns=None, subscribe=None, raising=None
     sub_ids = list(agents.keys()) if subscribe is None else list(subscribe)
     raise_ids = set(raising or ())
     for aid in sub_ids:
-        handler = _make_raising_handler(aid) if aid in raise_ids else _make_recording_handler(received, aid)
+        handler = (
+            _make_raising_handler(aid) if aid in raise_ids
+            else _make_recording_handler(received, aid, (reply_texts or {}).get(aid))
+        )
         bus.subscribe(aid, handler, intent_names=["direct_message"])
     return store, runtime, received
 
@@ -341,18 +354,259 @@ async def test_fanout_response_includes_per_agent_replies(tmp_path):
         callsigns={"scout": "Scout", "counselor": "Troi"},
     )
     t = store.create_thread(title="room", participants=["scout1", "counselor1"])
+    assert isinstance(runtime.intent_bus, IntentBus)
+    assert sorted(crew_agent_participants(runtime, t.participants)) == [
+        "counselor1", "scout1",
+    ]
+    assert store.list_messages(t.id, limit=1000) == []
     client = _rest_client(runtime)
     r = client.post(
         f"/api/threads/{t.id}/messages",
         json={"author_id": "captain", "role": "captain", "body": "all hands"},
     )
     assert r.status_code == 200
+    assert set(received.keys()) == {"scout1", "counselor1"}
+    for agent_id in ("scout1", "counselor1"):
+        assert received[agent_id]["call_count"] == 1
+        assert received[agent_id]["text"] == "all hands"
+        assert received[agent_id]["from"] == "hxi_profile"
+        assert received[agent_id]["thread_id"] == t.id
+
+    persisted = store.list_messages(t.id, limit=1000)
+    assert len(persisted) == 3
+    assert len({message.id for message in persisted}) == 3
+    captain_rows = [message for message in persisted if message.role == "captain"]
+    agent_rows = [message for message in persisted if message.role == "agent"]
+    assert len(captain_rows) == 1
+    assert captain_rows[0].author_id == "captain"
+    assert captain_rows[0].body == "all hands"
+    assert len(agent_rows) == 2
+    assert {message.author_id for message in agent_rows} == {"scout1", "counselor1"}
+    for message in agent_rows:
+        assert message.body == f"reply::{message.author_id}"
+        assert message.metadata["fanout"] == "ad914"
+        assert message.metadata["intent_id"]
+
     body = r.json()
     assert "per_agent_replies" in body
+    assert {
+        key: value for key, value in body.items() if key != "per_agent_replies"
+    } == captain_rows[0].to_dict()
     replies = body["per_agent_replies"]
+    assert len(replies) == 2
     assert {x["agent_id"] for x in replies} == {"scout1", "counselor1"}
     assert {x["text"] for x in replies} == {"reply::scout1", "reply::counselor1"}
-    assert set(received.keys()) == {"scout1", "counselor1"}
+    persisted_by_author = {message.author_id: message for message in agent_rows}
+    for reply in replies:
+        assert reply["message"] == persisted_by_author[reply["agent_id"]].to_dict()
+
+
+@pytest.mark.parametrize(
+    "case", ["plain", "normalized", "same_text", "none", "raise", "empty", "declined"],
+)
+def test_fanout_receipt_boundaries_preserve_successful_peer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture, case: str,
+) -> None:
+    from probos.cognitive.dm.bypass_egress import UNRENDERABLE_NOTE
+
+    reply_texts = {
+        "scout1": "reply::scout1",
+        "counselor1": "reply::counselor1",
+    }
+    if case == "normalized":
+        reply_texts["scout1"] = "Status [A2UI]{}[/A2UI]"
+    elif case == "same_text":
+        reply_texts = dict.fromkeys(reply_texts, "Ready for the next task.")
+    elif case in {"empty", "declined"}:
+        reply_texts["scout1"] = "" if case == "empty" else "[NO_RESPONSE]"
+    store, runtime, received = _build_env(
+        tmp_path,
+        agents={"scout1": "scout", "counselor1": "counselor"},
+        callsigns={"scout": "Scout", "counselor": "Troi"},
+        reply_texts=reply_texts,
+    )
+    thread = store.create_thread(title="room", participants=["scout1", "counselor1"])
+    assert isinstance(runtime.intent_bus, IntentBus)
+    assert set(crew_agent_participants(runtime, thread.participants)) == set(reply_texts)
+    assert store.list_messages(thread.id, limit=1000) == []
+    committed = []
+    store.set_message_committed_callback(committed.append)
+    append_message = store.append_message
+    attempted: list[str] = []
+
+    def append_with_failure(thread_id: str, **kwargs: Any) -> Any:
+        attempted.append(kwargs["author_id"])
+        if kwargs["author_id"] == "scout1" and case in {"none", "raise"}:
+            if case == "raise":
+                raise RuntimeError("injected persistence failure")
+            return None
+        return append_message(thread_id, **kwargs)
+
+    monkeypatch.setattr(store, "append_message", append_with_failure)
+    send_count = 2 if case == "same_text" else 1
+    responses: list[dict[str, Any]] = []
+    with _rest_client(runtime) as client:
+        for send_index in range(send_count):
+            response = client.post(
+                f"/api/threads/{thread.id}/messages",
+                json={
+                    "author_id": "captain", "role": "captain", "body": "all hands",
+                    "metadata": {"client_message_id": f"send-{send_index}"},
+                },
+            )
+            assert response.status_code == 200
+            responses.append(response.json())
+        history = client.get(f"/api/threads/{thread.id}/messages")
+        assert history.status_code == 200
+
+    assert set(received) == set(reply_texts)
+    assert {agent_id: entry["call_count"] for agent_id, entry in received.items()} == {
+        "scout1": send_count, "counselor1": send_count,
+    }
+    persisted = store.list_messages(thread.id, limit=1000)
+    expected_agents = {"counselor1"} if case in {"none", "raise", "empty", "declined"} else set(reply_texts)
+    assert len(persisted) == send_count * (1 + len(expected_agents))
+    assert len({row.id for row in persisted}) == len(persisted)
+    assert len([row for row in persisted if row.role == "captain"]) == send_count
+    assert {row.author_id for row in persisted if row.role == "agent"} == expected_agents
+    assert [row.to_dict() for row in committed] == [row.to_dict() for row in persisted]
+    assert history.json() == {
+        "thread_id": thread.id, "messages": [row.to_dict() for row in persisted],
+    }
+    persisted_by_id = {row.id: row.to_dict() for row in persisted}
+    for body in responses:
+        assert {key: value for key, value in body.items() if key != "per_agent_replies"} == persisted_by_id[body["id"]]
+        replies = {reply["agent_id"]: reply for reply in body["per_agent_replies"]}
+        expected_replies = {"counselor1"} if case in {"empty", "declined"} else set(reply_texts)
+        assert set(replies) == expected_replies
+        for agent_id, reply in replies.items():
+            assert reply["callsign"] == {"scout1": "Scout", "counselor1": "Troi"}[agent_id]
+            if agent_id == "scout1" and case in {"none", "raise"}:
+                assert reply["message"] is None
+                assert reply["text"] == reply_texts[agent_id]
+                continue
+            receipt = reply["message"]
+            assert receipt == persisted_by_id[receipt["id"]]
+            assert receipt["author_id"] == agent_id
+            assert receipt["thread_id"] == thread.id
+            assert receipt["role"] == "agent"
+            if agent_id == "scout1" and case == "normalized":
+                assert reply["text"] != receipt["body"]
+                assert reply["text"] == reply_texts[agent_id]
+                assert receipt["body"] == f"Status {UNRENDERABLE_NOTE}"
+            else:
+                assert reply["text"] == receipt["body"] == reply_texts[agent_id]
+    assert attempted.count("captain") == send_count
+    assert attempted.count("counselor1") == send_count
+    assert attempted.count("scout1") == (0 if case in {"empty", "declined"} else send_count)
+    if case in {"none", "raise"}:
+        assert "returning transient text without a canonical message receipt" in caplog.text
+        assert reply_texts["scout1"] not in caplog.text
+    if case == "same_text":
+        for agent_id in reply_texts:
+            rows = [row for row in persisted if row.author_id == agent_id]
+            assert len(rows) == 2
+            assert rows[0].body == rows[1].body == reply_texts[agent_id]
+            assert rows[0].id != rows[1].id
+            assert rows[0].created_at < rows[1].created_at
+
+
+def test_group_reply_identity_fixture_matches_real_producers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import probos.runtime as runtime_module
+    import probos.threads as threads_module
+    from probos.config import SystemConfig
+    from probos.routers import thread_fanout
+
+    message_ids = iter(["identity-room", "identity-captain", "identity-reply-1", "identity-reply-2"])
+    with monkeypatch.context() as constructor_patch:
+        constructor_patch.setattr(
+            threads_module, "ChatThreadStore",
+            partial(ChatThreadStore, clock=_seq_clock(), id_factory=lambda: next(message_ids)),
+        )
+        event_runtime = runtime_module.ProbOSRuntime(
+            config=SystemConfig(), data_dir=tmp_path,
+        )
+    monkeypatch.setattr(
+        runtime_module, "time",
+        SimpleNamespace(**{**vars(runtime_module.time), "time": lambda: 1000.0}),
+    )
+
+    def deterministic_intent(**kwargs: Any) -> IntentMessage:
+        return IntentMessage(id=f"identity-intent-{kwargs['target_agent_id']}", **kwargs)
+
+    monkeypatch.setattr(thread_fanout, "IntentMessage", deterministic_intent)
+    store, runtime, received = _build_env(
+        tmp_path,
+        agents={"scout1": "scout", "counselor1": "counselor"},
+        callsigns={"scout": "Scout", "counselor": "Troi"},
+        store=event_runtime.chat_thread_store,
+    )
+    events: list[dict[str, Any]] = []
+
+    def capture_committed_event(event: dict[str, Any]) -> None:
+        if event["type"] == "chat_thread_message_appended":
+            events.append(event)
+
+    event_runtime.add_event_listener(capture_committed_event)
+    thread = store.create_thread(title="Identity room", participants=["scout1", "counselor1"])
+    assert store is event_runtime.chat_thread_store
+    assert isinstance(store, ChatThreadStore)
+    assert isinstance(runtime.intent_bus, IntentBus)
+    assert sorted(crew_agent_participants(runtime, thread.participants)) == ["counselor1", "scout1"]
+    assert store.list_messages(thread.id, limit=1000) == []
+    assert events == []
+    request = {
+        "author_id": "captain", "role": "captain", "body": "all hands",
+        "metadata": {"client_message_id": "identity-send-1"},
+    }
+    with _rest_client(runtime) as client:
+        response = client.post(f"/api/threads/{thread.id}/messages", json=request)
+        assert response.status_code == 200
+        history = client.get(f"/api/threads/{thread.id}/messages")
+        assert history.status_code == 200
+
+    assert set(received) == {"scout1", "counselor1"}
+    for agent_id, entry in received.items():
+        assert entry["call_count"] == 1
+        assert entry["text"] == request["body"]
+        assert entry["from"] == "hxi_profile"
+        assert entry["thread_id"] == thread.id
+        assert runtime.registry.get(agent_id) is not None
+    rows = store.list_messages(thread.id, limit=1000)
+    assert len(rows) == 3
+    assert len({row.id for row in rows}) == 3
+    assert [row.author_id for row in rows if row.role == "captain"] == ["captain"]
+    assert {row.author_id for row in rows if row.role == "agent"} == set(received)
+    assert history.json() == {"thread_id": thread.id, "messages": [row.to_dict() for row in rows]}
+    body = response.json()
+    assert {key: value for key, value in body.items() if key != "per_agent_replies"} == rows[0].to_dict()
+    assert len(body["per_agent_replies"]) == 2
+    rows_by_author = {row.author_id: row for row in rows}
+    for reply in body["per_agent_replies"]:
+        assert reply["message"] == rows_by_author[reply["agent_id"]].to_dict()
+        assert reply["text"] == f"reply::{reply['agent_id']}"
+    assert len(events) == 3
+    for event, row in zip(events, rows):
+        assert event["data"] == {
+            "thread_id": row.thread_id, "message_id": row.id,
+            "author_id": row.author_id, "role": row.role, "created_at": row.created_at,
+        }
+        assert event["timestamp"] == 1000.0
+    actual = {
+        "thread": thread.to_dict(), "request": request,
+        "response": body, "history": history.json(), "events": events,
+    }
+    fixture_path = Path(__file__).resolve().parents[1] / "ui/e2e/fixtures/group-reply-identity.json"
+    if not fixture_path.is_file():
+        pytest.fail(
+            "Producer assertions passed; Worker must bank this actual fixture payload:\n"
+            + json.dumps(actual, indent=2, sort_keys=True),
+            pytrace=False,
+        )
+    assert json.loads(fixture_path.read_text(encoding="utf-8")) == actual
 
 
 async def test_messages_endpoint_unchanged_for_non_group(tmp_path):

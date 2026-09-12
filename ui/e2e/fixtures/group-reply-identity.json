@@ -1,0 +1,130 @@
+{
+  "events": [
+    {
+      "data": {
+        "author_id": "captain",
+        "created_at": 2.0,
+        "message_id": "identity-captain",
+        "role": "captain",
+        "thread_id": "identity-room"
+      },
+      "timestamp": 1000.0,
+      "type": "chat_thread_message_appended"
+    },
+    {
+      "data": {
+        "author_id": "scout1",
+        "created_at": 4.0,
+        "message_id": "identity-reply-1",
+        "role": "agent",
+        "thread_id": "identity-room"
+      },
+      "timestamp": 1000.0,
+      "type": "chat_thread_message_appended"
+    },
+    {
+      "data": {
+        "author_id": "counselor1",
+        "created_at": 5.0,
+        "message_id": "identity-reply-2",
+        "role": "agent",
+        "thread_id": "identity-room"
+      },
+      "timestamp": 1000.0,
+      "type": "chat_thread_message_appended"
+    }
+  ],
+  "history": {
+    "messages": [
+      {
+        "author_id": "captain",
+        "body": "all hands",
+        "created_at": 2.0,
+        "id": "identity-captain",
+        "metadata": { "client_message_id": "identity-send-1" },
+        "role": "captain",
+        "thread_id": "identity-room"
+      },
+      {
+        "author_id": "scout1",
+        "body": "reply::scout1",
+        "created_at": 4.0,
+        "id": "identity-reply-1",
+        "metadata": { "fanout": "ad914", "intent_id": "identity-intent-scout1" },
+        "role": "agent",
+        "thread_id": "identity-room"
+      },
+      {
+        "author_id": "counselor1",
+        "body": "reply::counselor1",
+        "created_at": 5.0,
+        "id": "identity-reply-2",
+        "metadata": { "fanout": "ad914", "intent_id": "identity-intent-counselor1" },
+        "role": "agent",
+        "thread_id": "identity-room"
+      }
+    ],
+    "thread_id": "identity-room"
+  },
+  "request": {
+    "author_id": "captain",
+    "body": "all hands",
+    "metadata": { "client_message_id": "identity-send-1" },
+    "role": "captain"
+  },
+  "response": {
+    "author_id": "captain",
+    "body": "all hands",
+    "created_at": 2.0,
+    "id": "identity-captain",
+    "metadata": { "client_message_id": "identity-send-1" },
+    "per_agent_replies": [
+      {
+        "agent_id": "scout1",
+        "callsign": "Scout",
+        "message": {
+          "author_id": "scout1",
+          "body": "reply::scout1",
+          "created_at": 4.0,
+          "id": "identity-reply-1",
+          "metadata": { "fanout": "ad914", "intent_id": "identity-intent-scout1" },
+          "role": "agent",
+          "thread_id": "identity-room"
+        },
+        "text": "reply::scout1"
+      },
+      {
+        "agent_id": "counselor1",
+        "callsign": "Troi",
+        "message": {
+          "author_id": "counselor1",
+          "body": "reply::counselor1",
+          "created_at": 5.0,
+          "id": "identity-reply-2",
+          "metadata": { "fanout": "ad914", "intent_id": "identity-intent-counselor1" },
+          "role": "agent",
+          "thread_id": "identity-room"
+        },
+        "text": "reply::counselor1"
+      }
+    ],
+    "role": "captain",
+    "thread_id": "identity-room"
+  },
+  "thread": {
+    "archived": false,
+    "created_at": 1.0,
+    "id": "identity-room",
+    "last_active_at": 1.0,
+    "metadata": {},
+    "model": null,
+    "participants": ["scout1", "counselor1"],
+    "personality_override": null,
+    "pinned": false,
+    "preprompt": null,
+    "project_id": null,
+    "task_id": null,
+    "title": "Identity room",
+    "workspace_root": null
+  }
+}
