@@ -492,7 +492,21 @@ async def _run_disparate_disclosure_turn(
     assert {message.author_id for message in agent_messages} == set(agents)
     assert len({reply["agent_id"] for reply in replies}) == 4
     assert {reply["agent_id"] for reply in replies} == set(agents)
-    assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
+    assert all(set(reply) == {"agent_id", "callsign", "text", "message"} for reply in replies)
+    for reply in replies:
+        receipt = reply["message"]
+        assert receipt is not None
+        matching = [message for message in agent_messages if message.id == receipt["id"]]
+        assert len(matching) == 1
+        stored = matching[0]
+        assert receipt == stored.to_dict()
+        assert receipt["thread_id"] == stored.thread_id == thread.id
+        assert receipt["author_id"] == stored.author_id == reply["agent_id"]
+        assert receipt["role"] == stored.role == "agent"
+        assert receipt["body"] == stored.body == reply["text"]
+        assert receipt["created_at"] == stored.created_at
+        assert receipt["metadata"] == stored.metadata
+    assert len({reply["message"]["id"] for reply in replies}) == len(replies)
     rows = {message.author_id: message.body for message in agent_messages}
     reply_bodies = {reply["agent_id"]: reply["text"] for reply in replies}
     assert reply_bodies == rows
@@ -668,10 +682,10 @@ async def test_disclosure_cascade_has_an_eligible_unspoken_candidate(
     runtime.config.group_chat.agent_next_speaker_selection_enabled = False
     runtime.config.group_chat.broadcast_terminator_enabled = False
     runtime.proactive_loop = producer
-    rounds: list[tuple[list[str], list[dict[str, str]]]] = []
+    rounds: list[tuple[list[str], list[dict[str, Any]]]] = []
     fan_round = thread_fanout._fan_one_round
 
-    async def record_round(*args: Any, **kwargs: Any) -> list[dict[str, str]]:
+    async def record_round(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         pool = [agent_id for agent_id in kwargs["candidate_ids"] if agent_id not in kwargs["exclude_ids"]]
         result = await fan_round(*args, **kwargs)
         rounds.append((pool, result))
@@ -979,6 +993,21 @@ async def test_group_write_disclosure_does_not_decide_eligibility(
     }
     messages = [message for message in store.list_messages(thread.id, limit=1000) if message.role == "agent"]
     assert len(replies) == len(messages) == len(recorder.stored) == 1 + int(eligible)
+    for reply in replies:
+        assert set(reply) == {"agent_id", "callsign", "text", "message"}
+        receipt = reply["message"]
+        assert receipt is not None
+        matching = [message for message in messages if message.id == receipt["id"]]
+        assert len(matching) == 1
+        stored = matching[0]
+        assert receipt == stored.to_dict()
+        assert receipt["thread_id"] == stored.thread_id == thread.id
+        assert receipt["author_id"] == stored.author_id == reply["agent_id"]
+        assert receipt["role"] == stored.role == "agent"
+        assert receipt["body"] == stored.body == reply["text"]
+        assert receipt["created_at"] == stored.created_at
+        assert receipt["metadata"] == stored.metadata
+    assert len({reply["message"]["id"] for reply in replies}) == len(replies)
     peer_replies = [reply for reply in replies if reply["agent_id"] == "counselor1"]
     peer_messages = [message for message in messages if message.author_id == "counselor1"]
     peer_episodes = [episode for episode in recorder.stored if episode.agent_ids == ["counselor1"]]
@@ -999,7 +1028,7 @@ async def test_group_write_disclosure_does_not_decide_eligibility(
         assert writer_episodes[0].outcomes[0]["response"] == expected
         assert writer_episodes[0].self_contradicted_channels == ["notebook"]
         assert writer_episodes[0].outcomes[0]["success"] is True
-        assert set(writer_replies[0]) == {"agent_id", "callsign", "text"}
+        assert set(writer_replies[0]) == {"agent_id", "callsign", "text", "message"}
 
 
 @pytest.mark.parametrize("failure_stage", ["reply", "context", "pipeline", "before-producer"])
@@ -1071,7 +1100,11 @@ async def test_group_failure_before_write_facts_does_not_invent_ledger(
     replies = await group_chat_fanout(runtime, thread.id, captain_body=captain.body, captain_msg=captain)
 
     assert failures == [failure_stage]
-    assert semantic_replies == replies
+    assert semantic_replies == [
+        {"agent_id": reply["agent_id"], "callsign": reply["callsign"], "text": reply["text"]}
+        for reply in replies
+    ]
+    assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in semantic_replies)
     assert all(semantic is not public for semantic, public in zip(semantic_replies, replies))
     assert producer.calls == []
     writer_contexts = [ctx for ctx in contexts if ctx.agent_id == "scout1"]
@@ -1080,6 +1113,21 @@ async def test_group_failure_before_write_facts_does_not_invent_ledger(
     assert all(ctx.pre_write_disclosure_body is None for ctx in writer_contexts)
     messages = [message for message in store.list_messages(thread.id, limit=1000) if message.role == "agent"]
     assert len(replies) == len(messages) == len(recorder.stored) == 2
+    for reply in replies:
+        assert set(reply) == {"agent_id", "callsign", "text", "message"}
+        receipt = reply["message"]
+        assert receipt is not None
+        matching = [message for message in messages if message.id == receipt["id"]]
+        assert len(matching) == 1
+        stored = matching[0]
+        assert receipt == stored.to_dict()
+        assert receipt["thread_id"] == stored.thread_id == thread.id
+        assert receipt["author_id"] == stored.author_id == reply["agent_id"]
+        assert receipt["role"] == stored.role == "agent"
+        assert receipt["body"] == stored.body == reply["text"]
+        assert receipt["created_at"] == stored.created_at
+        assert receipt["metadata"] == stored.metadata
+    assert len({reply["message"]["id"] for reply in replies}) == len(replies)
     for agent_id, expected in (("scout1", raw_fallback), ("counselor1", peer_text)):
         agent_replies = [reply for reply in replies if reply["agent_id"] == agent_id]
         agent_messages = [message for message in messages if message.author_id == agent_id]
@@ -1159,7 +1207,7 @@ async def test_round_semantic_accumulator_matches_non_disclosed_reply_order(
     monkeypatch.setattr(runtime.registry, "get", get_or_missing)
     seed = {"agent_id": "previous", "callsign": "Previous", "text": "Prior turn."}
     semantic = [seed]
-    all_replies: list[dict[str, str]] = []
+    all_replies: list[dict[str, Any]] = []
     round_count = 2 if case in {"ordinary", "disclosed"} else 1
     for _ in range(round_count):
         peer_completed.clear()
@@ -1181,7 +1229,7 @@ async def test_round_semantic_accumulator_matches_non_disclosed_reply_order(
         assert len(completed[-3:]) == 3 and set(completed[-3:]) == set(thread.participants)
         assert completed[-3:].index("voice2") < completed[-3:].index("voice1")
         for reply in replies:
-            assert set(reply) == {"agent_id", "callsign", "text"}
+            assert set(reply) == {"agent_id", "callsign", "text", "message"}
             expected_first = (
                 first_semantic + disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING)
                 if case == "disclosed" else first_text
@@ -1189,11 +1237,16 @@ async def test_round_semantic_accumulator_matches_non_disclosed_reply_order(
             assert reply["text"] == (expected_first if reply["agent_id"] == "voice1" else "Prefer velvet.")
         all_replies.extend(replies)
         expected_semantic = [
-            {**reply, "text": first_semantic}
-            if case == "disclosed" and reply["agent_id"] == "voice1" else dict(reply)
+            {
+                "agent_id": reply["agent_id"],
+                "callsign": reply["callsign"],
+                "text": first_semantic
+                if case == "disclosed" and reply["agent_id"] == "voice1" else reply["text"],
+            }
             for reply in all_replies
         ]
         assert semantic == [seed, *expected_semantic]
+        assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in semantic)
         assert all(internal is not public for internal, public in zip(semantic[1:], all_replies))
         if case == "disclosed":
             assert any(internal["text"] != public["text"] for internal, public in zip(semantic[1:], all_replies))
@@ -1202,6 +1255,26 @@ async def test_round_semantic_accumulator_matches_non_disclosed_reply_order(
     assert len(messages) == len(all_replies) - int(case == "persist-failure")
     assert len(recorder.stored) == len(all_replies)
     assert persist_failures == ([first_text] if case == "persist-failure" else [])
+    receipt_ids: list[str] = []
+    for reply in all_replies:
+        receipt = reply["message"]
+        if case == "persist-failure" and reply["agent_id"] == "voice1":
+            assert receipt is None
+            assert not any(message.author_id == "voice1" for message in messages)
+        else:
+            assert receipt is not None
+            matching = [message for message in messages if message.id == receipt["id"]]
+            assert len(matching) == 1
+            stored = matching[0]
+            assert receipt == stored.to_dict()
+            assert receipt["thread_id"] == stored.thread_id == thread.id
+            assert receipt["author_id"] == stored.author_id == reply["agent_id"]
+            assert receipt["role"] == stored.role == "agent"
+            assert receipt["body"] == stored.body == reply["text"]
+            assert receipt["created_at"] == stored.created_at
+            assert receipt["metadata"] == stored.metadata
+            receipt_ids.append(receipt["id"])
+    assert len(receipt_ids) == len(set(receipt_ids)) == len(messages)
     assert all(
         ("ad1305_convergence" in message.metadata) is (case == "disclosed" and message.author_id == "voice1")
         for message in messages
@@ -1371,10 +1444,25 @@ async def test_fanout_return_shape_preserved_with_mutated_text(tmp_path):
             runtime, t.id, captain_body="handle it", captain_msg=cap
         )
 
-        # Shape {agent_id, callsign, text} preserved for every speaker.
+        # Public replies retain legacy fields and add the canonical receipt.
         assert len(replies) == 2
-        for r in replies:
-            assert set(r.keys()) == {"agent_id", "callsign", "text"}
+        messages = [message for message in store.list_messages(t.id) if message.role == "agent"]
+        assert len(messages) == 2
+        for reply in replies:
+            assert set(reply.keys()) == {"agent_id", "callsign", "text", "message"}
+            receipt = reply["message"]
+            assert receipt is not None
+            matching = [message for message in messages if message.id == receipt["id"]]
+            assert len(matching) == 1
+            stored = matching[0]
+            assert receipt == stored.to_dict()
+            assert receipt["thread_id"] == stored.thread_id == t.id
+            assert receipt["author_id"] == stored.author_id == reply["agent_id"]
+            assert receipt["role"] == stored.role == "agent"
+            assert receipt["body"] == stored.body == reply["text"]
+            assert receipt["created_at"] == stored.created_at
+            assert receipt["metadata"] == stored.metadata
+        assert len({reply["message"]["id"] for reply in replies}) == len(replies)
         by_id = {r["agent_id"]: r for r in replies}
         # The escalated reply's text is the MUTATED (tag-stripped + suffixed) text.
         assert "[CREATE_TASK" not in by_id["yeo1"]["text"]

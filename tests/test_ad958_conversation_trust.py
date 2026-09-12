@@ -380,7 +380,22 @@ async def test_substantive_convergence_preserves_trust_and_mention_override(
     suffix = disclosure_for(ClaimVerdict.MARKER_WROTE_NOTHING) if writes and guard_enabled else ""
     expected_body = substantive + suffix
     assert {reply["agent_id"] for reply in replies} == set(agents)
-    assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
+    assert all(set(reply) == {"agent_id", "callsign", "text", "message"} for reply in replies)
+    for reply in replies:
+        receipt = reply["message"]
+        assert receipt is not None
+        matching = [message for message in messages if message.id == receipt["id"]]
+        assert len(matching) == 1
+        stored = matching[0]
+        assert receipt == stored.to_dict()
+        assert receipt["thread_id"] == stored.thread_id == thread.id
+        assert receipt["author_id"] == stored.author_id == reply["agent_id"]
+        assert receipt["role"] == stored.role == "agent"
+        assert receipt["body"] == stored.body == reply["text"]
+        assert receipt["created_at"] == stored.created_at
+        assert receipt["metadata"] == stored.metadata
+    receipt_ids = {reply["message"]["id"] for reply in replies}
+    assert len(receipt_ids) == len(replies)
     assert all(reply["text"] == expected_body for reply in replies)
     for message in messages:
         assert message.body == expected_body
@@ -429,6 +444,24 @@ async def test_substantive_convergence_preserves_trust_and_mention_override(
     assert len(recorder.stored) == 6
     assert producer.calls == ([raw] * 6 if writes else [])
     assert len([message for message in store.list_messages(thread.id) if message.role == "agent"]) == 6
+    messages = [message for message in store.list_messages(thread.id) if message.role == "agent"]
+    for reply in mentioned_replies:
+        assert set(reply) == {"agent_id", "callsign", "text", "message"}
+        receipt = reply["message"]
+        assert receipt is not None
+        matching = [message for message in messages if message.id == receipt["id"]]
+        assert len(matching) == 1
+        stored = matching[0]
+        assert receipt == stored.to_dict()
+        assert receipt["thread_id"] == stored.thread_id == thread.id
+        assert receipt["author_id"] == stored.author_id == reply["agent_id"]
+        assert receipt["role"] == stored.role == "agent"
+        assert receipt["body"] == stored.body == reply["text"] == expected_body
+        assert receipt["created_at"] == stored.created_at
+        assert receipt["metadata"] == stored.metadata
+        assert receipt["id"] not in receipt_ids
+        receipt_ids.add(receipt["id"])
+    assert len(receipt_ids) == len(messages) == 6
     assert runtime.trust_network.get_recent_events() == events
 
 

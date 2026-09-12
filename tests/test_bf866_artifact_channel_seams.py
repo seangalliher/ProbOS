@@ -1005,7 +1005,22 @@ async def test_four_speaker_real_writes_preserve_semantic_trust_across_guard(
         assert sorted(failures) == (sorted(agents) if raw_fallback else [])
         assert len(semantic_replies) == 4
         assert [reply["agent_id"] for reply in semantic_replies] == [reply["agent_id"] for reply in replies]
-        assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
+        assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in semantic_replies)
+        assert all(set(reply) == {"agent_id", "callsign", "text", "message"} for reply in replies)
+        for reply in replies:
+            receipt = reply["message"]
+            assert receipt is not None
+            matching = [message for message in messages if message.id == receipt["id"]]
+            assert len(matching) == 1
+            stored = matching[0]
+            assert receipt == stored.to_dict()
+            assert receipt["thread_id"] == stored.thread_id == thread.id
+            assert receipt["author_id"] == stored.author_id == reply["agent_id"]
+            assert receipt["role"] == stored.role == "agent"
+            assert receipt["body"] == stored.body == reply["text"]
+            assert receipt["created_at"] == stored.created_at
+            assert receipt["metadata"] == stored.metadata
+        assert len({reply["message"]["id"] for reply in replies}) == len(replies)
         rows = {message.author_id: message for message in messages}
         by_context = {context.agent_id: context for context in contexts}
         assert {reply["agent_id"]: reply["text"] for reply in replies} == {
@@ -1085,6 +1100,7 @@ async def test_four_speaker_real_writes_preserve_semantic_trust_across_guard(
             {"agent_id": reply["agent_id"], "callsign": reply["callsign"], "text": expected_semantics[reply["agent_id"]]}
             for reply in replies
         ]
+        assert semantic_replies == control_replies
         outcomes = extract_conversation_trust_outcomes(
             control_replies, facilitator=facilitator, intent_type="write outcomes",
             positive_weight=0.05, max_outcomes=4,
@@ -1238,6 +1254,7 @@ async def test_group_real_write_outcomes_reach_durable_effects_and_episode(
             ClaimVerdict.MARKER_WROTE_PARTIALLY if expected_partial else ClaimVerdict.ABSTAIN
         )
         before_bytes: bytes | None = None
+        receipt_ids: set[str] = set()
         for turn in range(2 if notebook == "dedup" else 1):
             captain = store.append_message(
                 thread.id, author_id="captain", role="captain", body="Save the maintenance decision.",
@@ -1246,7 +1263,7 @@ async def test_group_real_write_outcomes_reach_durable_effects_and_episode(
                 runtime, thread.id, captain_body=captain.body, captain_msg=captain,
             )
             assert len(replies) == 2
-            assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
+            assert all(set(reply) == {"agent_id", "callsign", "text", "message"} for reply in replies)
             rows = _agent_rows(store, thread.id)
             assert rows == {reply["agent_id"]: reply["text"] for reply in replies}
             assert rows["counselor1"] == peer_text
@@ -1311,6 +1328,22 @@ async def test_group_real_write_outcomes_reach_durable_effects_and_episode(
             messages = [message for message in store.list_messages(thread.id, limit=1000) if message.role == "agent"]
             episodes = await memory.list_episodes()
             assert len(messages) == len(episodes) == 2 * (turn + 1)
+            for reply in replies:
+                receipt = reply["message"]
+                assert receipt is not None
+                matching = [message for message in messages if message.id == receipt["id"]]
+                assert len(matching) == 1
+                stored = matching[0]
+                assert receipt == stored.to_dict()
+                assert receipt["thread_id"] == stored.thread_id == thread.id
+                assert receipt["author_id"] == stored.author_id == reply["agent_id"]
+                assert receipt["role"] == stored.role == "agent"
+                assert receipt["body"] == stored.body == reply["text"]
+                assert receipt["created_at"] == stored.created_at
+                assert receipt["metadata"] == stored.metadata
+                assert receipt["id"] not in receipt_ids
+                receipt_ids.add(receipt["id"])
+            assert len(receipt_ids) == len(messages)
             writers = [episode for episode in episodes if episode.agent_ids == ["scout1"]]
             peers = [episode for episode in episodes if episode.agent_ids == ["counselor1"]]
             assert len(writers) == len(peers) == turn + 1
