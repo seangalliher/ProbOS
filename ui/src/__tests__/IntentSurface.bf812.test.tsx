@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, act, fireEvent, waitFor } from '@testing-library/react';
 import { execFile } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,11 +64,11 @@ async function resolveCalculatorPython(
     if (!overrides[name] || !isFile(candidate)) {
       throw new Error(`${name} must name an existing Python executable: ${candidate}`);
     }
-    return realpath(candidate);
+    return candidate;
   }
   const candidates = ['.venv/Scripts/python.exe', '.venv/bin/python'].map((relative) => join(root, relative));
   const local = candidates.find(isFile);
-  if (local) return realpath(local);
+  if (local) return local;
   let commonDirectory: string;
   try {
     const output = await new Promise<string>((accept, reject) => {
@@ -87,7 +87,7 @@ async function resolveCalculatorPython(
   candidates.push(...['.venv/Scripts/python.exe', '.venv/bin/python']
     .map((relative) => join(dirname(commonDirectory), relative)));
   const common = candidates.find(isFile);
-  if (common) return realpath(common);
+  if (common) return common;
   throw new Error(
     'No backend test interpreter found. Set PROBOS_TEST_PYTHON or PROBOS_PYTHON, '
     + 'or run uv sync --group dev --extra discovery --extra browser. Checked: '
@@ -396,18 +396,76 @@ describe('Issue 1378 fixture failure diagnostics', () => {
       const executable = join(temporary, '.venv', 'Scripts', 'python.exe');
       await mkdir(dirname(executable), { recursive: true });
       await writeFile(executable, 'resolver-only fixture');
-      expect(await resolveCalculatorPython(temporary, {})).toBe(await realpath(executable));
+      expect(await resolveCalculatorPython(temporary, {})).toBe(executable);
       expect(await resolveCalculatorPython(temporary, { PROBOS_TEST_PYTHON: '.venv/Scripts/python.exe' }))
-        .toBe(await realpath(executable));
+        .toBe(executable);
       expect(await resolveCalculatorPython(temporary, { PROBOS_PYTHON: executable }))
-        .toBe(await realpath(executable));
+        .toBe(executable);
       await expect(resolveCalculatorPython(temporary, {
         PROBOS_TEST_PYTHON: 'missing', PROBOS_PYTHON: executable,
       })).rejects.toThrow('PROBOS_TEST_PYTHON');
       await expect(resolveCalculatorPython(temporary, { PROBOS_PYTHON: 'missing' }))
         .rejects.toThrow('PROBOS_PYTHON');
+      for (const name of ['PROBOS_TEST_PYTHON', 'PROBOS_PYTHON'] as const) {
+        await expect(resolveCalculatorPython(temporary, { [name]: '' })).rejects.toThrow(name);
+        await expect(resolveCalculatorPython(temporary, { [name]: dirname(executable) }))
+          .rejects.toThrow(name);
+      }
+      expect(await resolveCalculatorPython(temporary, {
+        PROBOS_TEST_PYTHON: executable, PROBOS_PYTHON: 'missing',
+      })).toBe(executable);
       await rm(join(temporary, '.venv'), { recursive: true });
       await expect(resolveCalculatorPython(temporary, {})).rejects.toThrow('uv sync --group dev');
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['local', 'PROBOS_TEST_PYTHON', 'PROBOS_PYTHON'] as const)(
+    'preserves the virtualenv executable path through a linked directory for %s', async (mode) => {
+      const temporary = await mkdtemp(join(tmpdir(), 'probos-python-link-'));
+      try {
+        const shared = join(temporary, 'shared-bin');
+        await mkdir(shared);
+        await writeFile(join(shared, 'python'), 'resolver-only fixture');
+        await mkdir(join(temporary, '.venv'));
+        await symlink(shared, join(temporary, '.venv', 'bin'), 'junction');
+        const executable = join(temporary, '.venv', 'bin', 'python');
+        expect(await realpath(executable)).not.toBe(executable);
+        const overrides = mode === 'local' ? {} : { [mode]: executable };
+        expect(await resolveCalculatorPython(temporary, overrides)).toBe(executable);
+      } finally {
+        await rm(temporary, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('preserves a linked executable selected from the Git common root', async () => {
+    const temporary = await mkdtemp(join(tmpdir(), 'probos-common-python-'));
+    const runGit = (...args: string[]): Promise<void> => new Promise((accept, reject) => {
+      execFile('git', args, { shell: false, timeout: 5_000, maxBuffer: 65_536 },
+        (error) => error ? reject(error) : accept());
+    });
+    try {
+      const repositoryTarget = join(temporary, 'repository-target');
+      const repository = join(temporary, 'repository');
+      const checkout = join(temporary, 'checkout');
+      await runGit('init', repositoryTarget);
+      await symlink(repositoryTarget, repository, 'junction');
+      expect(await realpath(repository)).not.toBe(repository);
+      await runGit('-C', repository, '-c', 'user.name=Resolver Test', '-c',
+        'user.email=resolver@example.invalid', '-c', 'commit.gpgsign=false',
+        'commit', '--allow-empty', '-m', 'resolver fixture');
+      await runGit('-C', repository, 'worktree', 'add', '--detach', checkout);
+      const shared = join(temporary, 'shared-bin');
+      await mkdir(shared);
+      await writeFile(join(shared, 'python'), 'resolver-only fixture');
+      await mkdir(join(repository, '.venv'));
+      await symlink(shared, join(repository, '.venv', 'bin'), 'junction');
+      const executable = join(repository, '.venv', 'bin', 'python');
+      expect(await realpath(executable)).not.toBe(executable);
+      expect(await resolveCalculatorPython(checkout, {}))
+        .toBe(join(await realpath(repository), '.venv', 'bin', 'python'));
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
