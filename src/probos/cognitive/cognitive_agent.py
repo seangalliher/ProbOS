@@ -4129,6 +4129,44 @@ class CognitiveAgent(BaseAgent):
                 decision["_applied_strategy_ids"] = applied_strategy_ids
             return decision
 
+        room_input_context = None
+        room_params = observation.get("params", {})
+        if (
+            observation.get("intent") == "direct_message"
+            and room_params.get("is_group_chat") is True
+            and (room_params.get("room_input_hashes") or room_params.get("room_inputs_omitted"))
+        ):
+            from probos.room_inputs import build_room_input_context
+
+            room_runtime = self._runtime
+            room_config = getattr(getattr(room_runtime, "config", None), "attachments", None)
+            room_store = getattr(room_runtime, "chat_thread_store", None)
+            room_attachments = getattr(room_runtime, "attachment_store", None)
+            if room_config is not None and room_config.enabled and room_store is not None and room_attachments is not None:
+                try:
+                    room_input_context = await build_room_input_context(
+                        thread_id=observation.get("thread_id"), agent_id=self.id,
+                        task_id=room_params.get("room_input_task_id"),
+                        requested_hashes=room_params.get("room_input_hashes", []),
+                        thread_store=room_store,
+                        work_item_store=getattr(room_runtime, "work_item_store", None),
+                        attachment_store=room_attachments,
+                        max_bytes=room_config.text_extraction_max_bytes,
+                        pdf_extraction_enabled=room_config.pdf_extraction_enabled,
+                        allowed_mime_types=room_config.allowed_mime_types,
+                    )
+                    user_message += room_input_context.text
+                except Exception as exc:
+                    logger.warning(
+                        "Room input materialization failed (%s); replying with inputs unavailable",
+                        type(exc).__name__,
+                    )
+                    user_message += "\nRoom inputs unavailable; do not claim complete analysis."
+            else:
+                user_message += "\nRoom inputs unavailable; do not claim complete analysis."
+            if room_params.get("room_inputs_omitted"):
+                user_message += "\nSome room inputs were omitted; do not claim complete analysis."
+
         # AD-730 (Wave 151): vision pipe-through for DM perception.
         # When the intent params carry vision_messages (Captain attached an
         # image to the DM via /api/agent/{id}/chat), route through
@@ -4210,6 +4248,27 @@ class CognitiveAgent(BaseAgent):
             is_captain=_params.get("author_id", "") == "captain",
             was_mentioned=_params.get("was_mentioned", False),
         )
+        if room_input_context is not None:
+            for room_read in room_input_context.reads:
+                logger.info(
+                    "Room input %s status=%s truncated=%s reader=%s thread=%s "
+                    "task=%s source=%s:%s intent=%s; prepared context for LLM request=%s",
+                    room_read.content_hash, room_read.status, room_read.truncated,
+                    self.id, observation.get("thread_id"), room_params.get("room_input_task_id"),
+                    room_read.source, room_read.source_id, observation.get("intent_id"), request.id,
+                    extra={"room_input_receipt": {
+                        "request_id": request.id,
+                        "intent_id": observation.get("intent_id"),
+                        "reader_id": self.id,
+                        "thread_id": observation.get("thread_id"),
+                        "task_id": room_params.get("room_input_task_id"),
+                        "source": room_read.source,
+                        "source_id": room_read.source_id,
+                        "content_hash": room_read.content_hash,
+                        "status": room_read.status,
+                        "truncated": room_read.truncated,
+                    }},
+                )
         response = await self._llm_client.complete(request, priority=_priority)
         _latency_ms = (time.monotonic() - _t0) * 1000
 

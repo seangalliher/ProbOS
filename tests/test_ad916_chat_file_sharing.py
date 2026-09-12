@@ -18,6 +18,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,6 +42,9 @@ from probos.routers.thread_fanout import (
 )
 from probos.threads import ChatThreadStore
 from probos.types import IntentMessage, IntentResult, LLMRequest, LLMResponse, Priority
+from probos.workforce import WorkItemStore
+
+from tests.test_ad926_inputs_folder import wi_store as room_work_items
 
 # Canonical 1x1 transparent PNG — correct magic bytes (BF-287 realism).
 _PNG_1x1 = base64.b64decode(
@@ -285,6 +289,104 @@ async def test_append_message_no_attachment_ids_metadata_unchanged(tmp_path):
     )
     assert r.status_code == 200
     assert "attachments" not in r.json()["metadata"]
+
+
+@pytest.mark.parametrize("filename", ["records.txt", "../records.txt", r"C:\private\records.txt"])
+async def test_append_message_preserves_room_local_safe_attachment_filename(
+    tmp_path: Path, filename: str,
+) -> None:
+    attach = await _make_attach_store(tmp_path)
+    store, runtime, _ = _build_env(tmp_path, attach, agents={"scout1": "scout"})
+    runtime.attachment_store = attach
+    thread = store.create_thread(title="file room", participants=["scout1"])
+    content_hash = _sha(_TXT_BLOB)
+    assert await attach.read(content_hash) == _TXT_BLOB
+    with _rest_client(runtime) as client:
+        response = client.post(
+            f"/api/threads/{thread.id}/messages",
+            json={
+                "author_id": "captain", "role": "captain", "body": "inspect this input",
+                "attachment_ids": [content_hash],
+                "attachment_filenames": {content_hash: filename, "00" * 32: "ignored.txt"},
+            },
+        )
+        assert response.status_code == 200, response.text
+        rows = client.get(f"/api/threads/{thread.id}/messages").json()["messages"]
+        inputs = client.get(f"/api/threads/{thread.id}/inputs").json()["inputs"]
+    assert len(rows) == 1
+    assert rows[0]["id"] == response.json()["id"]
+    assert rows[0]["metadata"]["attachments"] == [{
+        "content_hash": content_hash, "mime": "text/plain", "filename": "records.txt",
+    }]
+    assert len(inputs) == 1
+    assert inputs[0]["filename"] == "records.txt"
+    assert inputs[0]["available"] is True
+    assert await attach.read(content_hash) == _TXT_BLOB
+
+
+@pytest.mark.parametrize("filename", ["", None, 3, "bad\nname.txt", "../", "x" * 256, "bad?.txt"])
+async def test_append_message_rejects_invalid_attachment_filename_before_persistence(
+    tmp_path: Path, filename: object,
+) -> None:
+    attach = await _make_attach_store(tmp_path)
+    store, runtime, received = _build_env(
+        tmp_path, attach, agents={"scout1": "scout", "counselor1": "counselor"},
+    )
+    thread = store.create_thread(title="reject invalid label", participants=["scout1", "counselor1"])
+    content_hash = _sha(_TXT_BLOB)
+    with _rest_client(runtime) as client:
+        response = client.post(
+            f"/api/threads/{thread.id}/messages",
+            json={
+                "author_id": "captain", "role": "captain", "body": "inspect input",
+                "attachment_ids": [content_hash],
+                "attachment_filenames": {content_hash: filename},
+            },
+        )
+    assert response.status_code == 422, response.text
+    assert store.list_messages(thread.id) == []
+    assert received == {}
+    assert await attach.read(content_hash) == _TXT_BLOB
+
+
+@pytest.mark.parametrize("filename", [None, "bad\x00name.txt", "../"])
+async def test_resolve_attachment_refs_rejects_invalid_filename(
+    tmp_path: Path, filename: object,
+) -> None:
+    attach = await _make_attach_store(tmp_path)
+    content_hash = _sha(_TXT_BLOB)
+    with pytest.raises(ValueError, match="Attachment filename"):
+        await resolve_attachment_refs(attach, [content_hash], filenames={content_hash: filename})
+    assert await attach.read(content_hash) == _TXT_BLOB
+
+
+async def test_attachment_filename_is_room_local_for_identical_bytes(tmp_path: Path) -> None:
+    attach = await _make_attach_store(tmp_path)
+    store, runtime, _ = _build_env(tmp_path, attach, agents={"scout1": "scout"})
+    runtime.attachment_store = attach
+    content_hash = _sha(_TXT_BLOB)
+    with _rest_client(runtime) as client:
+        threads = [
+            store.create_thread(title=filename, participants=["scout1"])
+            for filename in ("first.txt", "second.txt")
+        ]
+        for thread in threads:
+            response = client.post(
+                f"/api/threads/{thread.id}/messages",
+                json={
+                    "author_id": "captain", "role": "captain", "body": "inspect input",
+                    "attachment_ids": [content_hash],
+                    "attachment_filenames": {content_hash: thread.title},
+                },
+            )
+            assert response.status_code == 200, response.text
+        for thread in threads:
+            inputs = client.get(f"/api/threads/{thread.id}/inputs").json()["inputs"]
+            assert len(inputs) == 1
+            assert inputs[0]["filename"] == thread.title
+            assert inputs[0]["content_hash"] == content_hash
+            assert inputs[0]["available"] is True
+    assert await attach.read(content_hash) == _TXT_BLOB
 
 
 async def test_append_message_unknown_attachment_id_skipped(tmp_path):
@@ -709,7 +811,13 @@ async def test_build_chat_vision_messages_text_block_carries_caption(tmp_path):
 # ---------------- group_chat_fanout vision threading (e2e) ----------------
 
 
-async def test_group_csv_reaches_actual_cognitive_requests(tmp_path: Path) -> None:
+@pytest.mark.parametrize("row_prefix", ["T", "R"])
+@pytest.mark.parametrize("input_source", ["message", "task"])
+async def test_group_csv_reaches_actual_cognitive_requests(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, row_prefix: str,
+    input_source: str, room_work_items: WorkItemStore,
+) -> None:
+    caplog.set_level(logging.INFO, logger="probos.cognitive.cognitive_agent")
     csv_text = (
         "work_id,review_requested,review_reply,rework_requested\n"
         "T01,yes,yes,no\n"
@@ -726,6 +834,13 @@ async def test_group_csv_reaches_actual_cognitive_requests(tmp_path: Path) -> No
         "T12,no,no,yes\n"
     )
     source_rows = list(csv.DictReader(io.StringIO(csv_text)))
+    for row in source_rows:
+        row["work_id"] = row_prefix + row["work_id"][1:]
+    csv_output = io.StringIO()
+    csv_writer = csv.DictWriter(csv_output, fieldnames=list(source_rows[0]), lineterminator="\n")
+    csv_writer.writeheader()
+    csv_writer.writerows(source_rows)
+    csv_text = csv_output.getvalue()
     assert len(source_rows) == 12
     row_ids = [row["work_id"] for row in source_rows]
     assert len(set(row_ids)) == 12
@@ -836,7 +951,15 @@ async def test_group_csv_reaches_actual_cognitive_requests(tmp_path: Path) -> No
     runtime.config = SystemConfig()
     runtime.config.attachments.enabled = True
     runtime.attachment_store = attach
-    runtime.work_item_store = None
+    runtime.work_item_store = room_work_items
+    task = None
+    if input_source == "task":
+        task = await room_work_items.create_work_item(
+            title="Analyze supplied records", work_type="task",
+            metadata={"input_attachments": [{
+                "content_hash": content_hash, "mime": "text/csv", "filename": "records.csv",
+            }]},
+        )
     adapters = {
         "scout1": _CsvCompletionAdapter(),
         "counselor1": _CsvCompletionAdapter(),
@@ -855,6 +978,7 @@ async def test_group_csv_reaches_actual_cognitive_requests(tmp_path: Path) -> No
         )
     thread = store.create_thread(
         title="Record analysis", participants=["scout1", "counselor1"],
+        task_id=task.id if task is not None else None,
     )
     assert thread.participants == list(agents)
     assert crew_agent_participants(runtime, thread.participants) == list(agents)
@@ -872,7 +996,8 @@ async def test_group_csv_reaches_actual_cognitive_requests(tmp_path: Path) -> No
                 "author_id": "captain",
                 "role": "captain",
                 "body": captain_text,
-                "attachment_ids": [content_hash],
+                "attachment_ids": [content_hash] if input_source == "message" else [],
+                "attachment_filenames": {content_hash: "records.csv"} if input_source == "message" else {},
             },
         )
 
@@ -882,9 +1007,9 @@ async def test_group_csv_reaches_actual_cognitive_requests(tmp_path: Path) -> No
     assert len(captain_rows) == 1
     captain_row = captain_rows[0]
     assert captain_row.body == captain_text
-    assert captain_row.metadata["attachments"] == [
-        {"content_hash": content_hash, "mime": "text/csv"},
-    ]
+    assert captain_row.metadata.get("attachments", []) == ([
+        {"content_hash": content_hash, "mime": "text/csv", "filename": "records.csv"},
+    ] if input_source == "message" else [])
     assert canned_received == {}
     assert {agent_id: len(calls) for agent_id, calls in handler_calls.items()} == {
         "scout1": 1, "counselor1": 1,
@@ -898,6 +1023,8 @@ async def test_group_csv_reaches_actual_cognitive_requests(tmp_path: Path) -> No
             row_id not in json.dumps(calls[0].params["session_history"])
             for row_id in row_ids
         )
+        assert all(row_id not in json.dumps(calls[0].params) for row_id in row_ids)
+        assert calls[0].params["room_input_hashes"] == [content_hash]
     assert {agent_id: len(adapter.requests) for agent_id, adapter in adapters.items()} == {
         "scout1": 1, "counselor1": 1,
     }, "Invalid probe: both actual LLM requests must reach complete()"
@@ -921,12 +1048,34 @@ async def test_group_csv_reaches_actual_cognitive_requests(tmp_path: Path) -> No
         f"and two completed local LLM calls: {actual_inputs!r}"
     )
     expected = {
-        "unanswered_reviews": ["T04", "T07", "T08"],
-        "reworks": ["T03", "T08", "T12"],
+        "unanswered_reviews": [row_prefix + suffix for suffix in ("04", "07", "08")],
+        "reworks": [row_prefix + suffix for suffix in ("03", "08", "12")],
     }
+    receipt_records = [record for record in caplog.records if hasattr(record, "room_input_receipt")]
+    assert len(receipt_records) == 2
     for agent_id, adapter in adapters.items():
         assert adapter.parsed_rows == [source_rows]
         assert json.loads(adapter.responses[0].content) == expected
+        receipts = [record for record in receipt_records if record.room_input_receipt["reader_id"] == agent_id]
+        assert len(receipts) == 1
+        record = receipts[0]
+        assert record.room_input_receipt == {
+            "request_id": adapter.requests[0].id,
+            "intent_id": handler_calls[agent_id][0].id,
+            "reader_id": agent_id,
+            "thread_id": thread.id,
+            "task_id": task.id if task is not None else None,
+            "source": input_source,
+            "source_id": task.id if task is not None else captain_row.id,
+            "content_hash": content_hash,
+            "status": "read",
+            "truncated": False,
+        }
+        formatted = logging.Formatter("%(message)s").format(record)
+        assert agent_id in formatted and adapter.requests[0].id in formatted
+        assert content_hash in formatted
+        assert record.room_input_receipt["source_id"] in formatted
+        assert csv_text not in formatted and "records.csv" not in formatted
         replies = [
             message for message in messages
             if message.role == "agent" and message.author_id == agent_id
@@ -957,6 +1106,105 @@ async def test_group_chat_fanout_vision_participant_gets_image_ref(tmp_path):
         "type": "image",
         "source": {"type": "attachment_ref", "sha256": png_sha, "media_type": "image/png"},
     } in vm[0]["content"]
+
+
+async def test_group_attachment_denied_dispatch_never_reads_or_calls_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.test_ad926_inputs_folder import _RecordingRoomReader
+
+    class _InputAgent(CognitiveAgent):
+        agent_type = "scout"
+        instructions = "Summarize the supplied input data."
+
+    attach = await _make_attach_store(tmp_path)
+    reader = _RecordingRoomReader(attach)
+    store, runtime, canned_received = _build_env(
+        tmp_path, attach, agents={"first": "scout", "second": "scout"}, subscribe=[],
+    )
+    runtime.config = SystemConfig()
+    runtime.config.attachments.enabled = True
+    runtime.attachment_store = reader
+    runtime.work_item_store = None
+    clients = {agent_id: MockLLMClient() for agent_id in ("first", "second")}
+    agents = {agent_id: _InputAgent(llm_client=client, runtime=runtime) for agent_id, client in clients.items()}
+    runtime.registry = _FakeRegistry(agents)
+    for agent_id, agent in agents.items():
+        agent.id = agent_id
+        runtime.intent_bus.subscribe(agent_id, agent.handle_intent, intent_names=["direct_message"])
+    thread = store.create_thread(title="governed input", participants=list(agents))
+    assert crew_agent_participants(runtime, thread.participants) == list(agents)
+    authorizations: list[str] = []
+    allowed = False
+
+    def authorize(intent: IntentMessage) -> tuple[bool, str]:
+        assert intent.intent == "direct_message"
+        assert intent.thread_id == thread.id
+        authorizations.append(intent.target_agent_id)
+        return allowed, "" if allowed else "synthetic-denial"
+
+    monkeypatch.setattr("probos.extensions.overlay.evaluate_pre_intent_authorization", authorize)
+    body = {
+        "author_id": "captain", "role": "captain", "body": "Both of you, summarize the input.",
+        "attachment_ids": [_sha(_TXT_BLOB)],
+    }
+    with _rest_client(runtime) as client:
+        denied = client.post(f"/api/threads/{thread.id}/messages", json=body)
+        assert denied.status_code == 200, denied.text
+        assert sorted(authorizations) == sorted(agents)
+        assert denied.json()["per_agent_replies"] == []
+        assert reader.reads == []
+        assert all(model.call_count == 0 for model in clients.values())
+        allowed = True
+        accepted = client.post(f"/api/threads/{thread.id}/messages", json=body)
+        assert accepted.status_code == 200, accepted.text
+    assert canned_received == {}
+    assert sorted(authorizations) == sorted([*agents, *agents])
+    assert reader.reads == [_sha(_TXT_BLOB), _sha(_TXT_BLOB)]
+    assert len(accepted.json()["per_agent_replies"]) == 2
+    for model in clients.values():
+        assert model.call_count == 1
+        assert model.last_request is not None
+        assert _TXT_BLOB.decode().strip() in model.last_request.prompt
+
+
+@pytest.mark.parametrize("reattach_old_input", [False, True])
+async def test_group_attachment_ref_budget_keeps_the_latest_input(
+    tmp_path: Path, reattach_old_input: bool,
+) -> None:
+    from probos.room_inputs import MAX_ROOM_INPUT_REFS
+
+    attach = await _make_attach_store(tmp_path)
+    store, runtime, received = _build_env(
+        tmp_path, attach, agents={"first": "scout", "second": "counselor"},
+    )
+    thread = store.create_thread(title="many inputs", participants=["first", "second"])
+    hashes: list[str] = []
+    for index in range(MAX_ROOM_INPUT_REFS + 1):
+        blob = f"input-{index}".encode("utf-8")
+        content_hash = _sha(blob)
+        await attach.write(content_hash, blob, "text/plain")
+        hashes.append(content_hash)
+        captain = store.append_message(
+            thread.id, author_id="captain", role="captain", body="inspect latest input",
+            metadata={"attachments": [{"content_hash": content_hash, "mime": "text/plain"}]},
+        )
+        assert captain is not None
+    assert len(hashes) == len(set(hashes)) == MAX_ROOM_INPUT_REFS + 1
+    requested_hash = hashes[-1]
+    if reattach_old_input:
+        requested_hash = hashes[0]
+        captain = store.append_message(
+            thread.id, author_id="captain", role="captain", body="inspect reattached input",
+            metadata={"attachments": [{"content_hash": requested_hash, "mime": "text/plain"}]},
+        )
+        assert captain is not None
+    await group_chat_fanout(runtime, thread.id, captain_body=captain.body, captain_msg=captain)
+    assert set(received) == {"first", "second"}
+    for params in received.values():
+        assert len(params["room_input_hashes"]) == MAX_ROOM_INPUT_REFS
+        assert params["room_inputs_omitted"] is True
+        assert requested_hash in params["room_input_hashes"]
 
 
 async def test_group_chat_fanout_non_vision_participant_no_vision_messages(tmp_path):
