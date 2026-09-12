@@ -611,7 +611,7 @@ export interface HXIState {
     agentId: string,
     role: 'user' | 'agent' | 'system',
     text: string,
-    opts?: { authorId?: string; callsign?: string },
+    opts?: { authorId?: string; callsign?: string; message?: AgentProfileMessage },
   ) => void;
   markAgentRead: (agentId: string) => void;
   setProfilePanelPos: (pos: { x: number; y: number }) => void;
@@ -637,8 +637,9 @@ export interface HXIState {
   // AD-938: thread-keyed display transcript actions (mirror the chatThreads Map
   // pattern). ``setThreadMessages`` replaces a thread's list (load-on-open);
   // ``appendThreadMessage`` adds one message (send-reconcile), capped to 200.
-  setThreadMessages: (threadId: string, msgs: AgentProfileMessage[]) => void;
+  setThreadMessages: (threadId: string, msgs: AgentProfileMessage[], baseline?: readonly AgentProfileMessage[]) => void;
   appendThreadMessage: (threadId: string, msg: AgentProfileMessage) => void;
+  reconcileThreadMessage: (threadId: string, msg: AgentProfileMessage) => boolean;
   setActiveThread: (threadId: string | null) => void;
   hydrateChatThreads: (threads: AD791aChatThreadView[]) => void;
   // AD-793 (Wave 196): project state actions.
@@ -1878,6 +1879,20 @@ export const useStore = create<HXIState>((set, get) => ({
     set({ activeProfileAgent: null, activeProfileThreadId: null, agentConversations: convs, notificationNavigation: null });
   },
   addAgentMessage: (agentId, role, text, opts) => {
+    const receipt = opts?.message;
+    if (receipt !== undefined && (!receipt
+      || typeof agentId !== 'string' || !agentId.trim()
+      || [receipt.id, receipt.threadId, receipt.authorId].some((value) => (
+        typeof value !== 'string' || !value.length || value.length > 128
+        || value.trim() !== value || /[\u0000-\u001f\u007f]/.test(value)
+      ))
+      || receipt.role !== 'agent' || receipt.role !== role
+      || typeof receipt.text !== 'string' || !receipt.text.trim() || receipt.text !== text
+      || typeof receipt.timestamp !== 'number' || !Number.isFinite(receipt.timestamp) || receipt.timestamp < 0
+      || receipt.optimistic
+      || (opts?.authorId !== undefined && opts.authorId !== receipt.authorId)
+      || (receipt.metadata !== undefined && receipt.metadata !== null
+        && (typeof receipt.metadata !== 'object' || Array.isArray(receipt.metadata))))) return;
     const convs = new Map(get().agentConversations);
     const existing = convs.get(agentId) || {
       agentId,
@@ -1885,7 +1900,10 @@ export const useStore = create<HXIState>((set, get) => ({
       unreadCount: 0,
       minimized: false,
     };
-    const msg: AgentProfileMessage = {
+    if (receipt && existing.messages.some((message) => (
+      message.threadId === receipt.threadId && message.id === receipt.id
+    ))) return;
+    const msg: AgentProfileMessage = receipt ? { ...receipt } : {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       role,
       text,
@@ -1996,10 +2014,36 @@ export const useStore = create<HXIState>((set, get) => ({
       set({ liveRailOwner: null });
     }
   },
-  // AD-938: replace a thread's display transcript (load-on-open).
-  setThreadMessages: (threadId, msgs) => {
+  // Canonical arrivals survive in-flight snapshots; legacy mirrors and transient rows do not.
+  setThreadMessages: (threadId, msgs, baseline) => {
+    if (typeof threadId !== 'string' || !threadId.trim() || !Array.isArray(msgs)
+      || (baseline !== undefined && !Array.isArray(baseline))) return;
+    const existing = get().threadMessages.get(threadId) ?? [];
+    const accepted = baseline === undefined ? [] : existing.filter(
+      (message) => message.threadId === threadId && !message.id.startsWith('transient:')
+        && !baseline.includes(message),
+    );
+    const byId = new Map(msgs.filter((message) => message && message.id
+      && (!message.threadId || message.threadId === threadId)
+      && typeof message.text === 'string' && Number.isFinite(message.timestamp)
+      && message.timestamp >= 0 && ['user', 'agent', 'system'].includes(message.role))
+      .map((message) => [message.id, message]));
+    for (const message of accepted) {
+      if (!byId.has(message.id)) byId.set(message.id, message);
+    }
+    const canonicalTokens = new Set([...byId.values()].filter((message) => (
+      !message.optimistic && message.threadId === threadId
+      && message.role === 'user' && message.authorId === 'captain'
+      && typeof message.metadata?.client_message_id === 'string'
+      && message.metadata.client_message_id.trim().length > 0
+    )).map((message) => message.metadata!.client_message_id));
+    const messages = [...byId.values()].filter((message) => !(
+      message.optimistic && message.threadId === threadId
+      && message.role === 'user' && message.authorId === 'captain'
+      && canonicalTokens.has(message.metadata?.client_message_id)
+    )).sort((left, right) => left.timestamp - right.timestamp).slice(-200);
     const next = new Map(get().threadMessages);
-    next.set(threadId, msgs);
+    next.set(threadId, messages);
     set({ threadMessages: next });
   },
   // AD-938: append one message to a thread's display transcript (send-reconcile),
@@ -2009,6 +2053,19 @@ export const useStore = create<HXIState>((set, get) => ({
     const existing = next.get(threadId) ?? [];
     next.set(threadId, [...existing.slice(-199), msg]);
     set({ threadMessages: next });
+  },
+  reconcileThreadMessage: (threadId: string, msg: AgentProfileMessage): boolean => {
+    if (typeof threadId !== 'string' || !threadId.trim() || !msg
+      || typeof msg.id !== 'string' || !msg.id.trim() || msg.threadId !== threadId
+      || typeof msg.text !== 'string' || !msg.text.trim()
+      || !Number.isFinite(msg.timestamp) || msg.timestamp < 0
+      || !['user', 'agent', 'system'].includes(msg.role)
+      || (msg.role === 'agent' && (typeof msg.authorId !== 'string' || !msg.authorId.trim()))) return false;
+    const existing = get().threadMessages.get(threadId) ?? [];
+    const alreadyPresent = existing.some((message) => message.id === msg.id);
+    get().setThreadMessages(threadId, [...existing, msg]);
+    const messages = get().threadMessages.get(threadId) ?? [];
+    return !alreadyPresent && messages.some((message) => message.id === msg.id);
   },
   setActiveThread: (threadId) => set({ activeThreadId: threadId }),
   hydrateChatThreads: (threads) => {

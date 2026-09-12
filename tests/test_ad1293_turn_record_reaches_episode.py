@@ -273,7 +273,21 @@ async def _exercise_group_notebook_recall(
         ]
         assert len(messages) == len(replies) == 2
         assert sorted(message.author_id for message in messages) == ["counselor1", "scout1"]
-        assert all(set(reply) == {"agent_id", "callsign", "text"} for reply in replies)
+        assert all(set(reply) == {"agent_id", "callsign", "text", "message"} for reply in replies)
+        for reply in replies:
+            receipt = reply["message"]
+            assert receipt is not None
+            matching = [message for message in messages if message.id == receipt["id"]]
+            assert len(matching) == 1
+            stored = matching[0]
+            assert receipt == stored.to_dict()
+            assert receipt["thread_id"] == stored.thread_id == thread.id
+            assert receipt["author_id"] == stored.author_id == reply["agent_id"]
+            assert receipt["role"] == stored.role == "agent"
+            assert receipt["body"] == stored.body == reply["text"]
+            assert receipt["created_at"] == stored.created_at
+            assert receipt["metadata"] == stored.metadata
+        assert len({reply["message"]["id"] for reply in replies}) == len(replies)
         rows = _agent_rows(store, thread.id)
         assert rows == {reply["agent_id"]: reply["text"] for reply in replies}
         expected_composition_inputs = list(rows.values())

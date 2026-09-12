@@ -21,10 +21,13 @@
 
 /** One entry of the AD-914 ``per_agent_replies`` array (mirrors AD-921's
  *  ``PerAgentReply`` — kept local so this module has no audio dependency). */
+import type { ThreadMessageDTO } from '../components/sidebar/threadApi';
+
 export interface StaggerReply {
   agent_id: string;
   callsign?: string;
   text: string;
+  message?: ThreadMessageDTO | null;
 }
 
 /** AD-960: natural-pacing timing model. Exported as the single source of truth

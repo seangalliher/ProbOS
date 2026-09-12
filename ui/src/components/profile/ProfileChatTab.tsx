@@ -50,8 +50,10 @@ import type {
 // AD-936 ChatMessageRow precedent; keeps the heavy audio deps out of the test).
 import {
   selectTranscriptMessages, threadDtoToMessage, buildTranscriptItems,
+  groupReplyToMessage,
   admitMessages, claimSpeech, speechScopeKey, speechKeyFor,
   sharedSpeechLedger, markScopeSeen,
+  captainReplyToMessage,
 } from './profileTranscript';
 import { ModulationIndicator } from './ModulationIndicator';
 import { GroupChatHeader } from './GroupChatHeader';
@@ -697,6 +699,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     transcriptInFlightRef.current.add(targetThreadId);
     const requestId = ++transcriptRequestRef.current;
     const authority = useStore.getState();
+    const baseline = authority.threadMessages.get(targetThreadId) ?? [];
     // BF-720: capture the AUTHORITY this transcript is fetched under, and only
     // that. ``liveGeneration`` identifies the stream whose state the server is
     // serving; if it changes mid-fetch the result describes a world this client
@@ -751,6 +754,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       current.setThreadMessages(
         targetThreadId,
         outcome.messages.map(message => threadDtoToMessage(message, current.agents)),
+        baseline,
       );
       // BF-718: a load with no trigger message is a whole transcript arriving
       // at once — opening the thread, or the reconnect repair replaying what
@@ -986,6 +990,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     meetingActive,
     participantAgentIds: meetingParticipantIds,
     owner: speechOwner,
+    scopeKey: activeThreadId,
   });
   // AD-985: mirror the live speakingAgentId into a ref so the relocated arm
   // effect's echo-gate predicate reads the CURRENT value at callback time
@@ -1304,9 +1309,16 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // NOT deferred — `speakMeetingReplies` is only ever handed group fan-out
   // replies, so deferring a call would silence it entirely.
   // `isOutputAudioEnabledNow` already resolves call audio for that case.
-  // The group bail-out still CLAIMS first, so a room's backlog is not read
-  // aloud the moment it stops being a group.
   const defersToMeetingSequencer = meetingParticipantIds.length >= 2;
+  const deferredSpeechRef = useRef({ scopeKey: '', ids: new Set<string>() });
+  const groupSpeechEpochRef = useRef(0);
+  useEffect(() => () => {
+    groupSpeechEpochRef.current += 1;
+    const state = useStore.getState();
+    if (state.typingAgent?.threadId === activeThreadId) {
+      state.setTypingAgent(null);
+    }
+  }, [activeThreadId, meetingActive, callAudioEnabled]);
 
   // BF-764 / AD-1291: a refresh that admits two or more arrivals used to speak
   // them in one synchronous pass, and `speakResponse` CANCELLED in-flight audio
@@ -1335,6 +1347,34 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     const scopeKey = speechScopeKey(activeThreadId, agentId);
     const firstSight = markScopeSeen(speechLedgerRef.current, scopeKey);
     const seed = firstSight || speechSeedScopesRef.current.delete(scopeKey);
+    if (deferredSpeechRef.current.scopeKey !== scopeKey) {
+      deferredSpeechRef.current = { scopeKey, ids: new Set<string>() };
+    }
+    const deferredIds = deferredSpeechRef.current.ids;
+    const projectedMessages = messages.slice(-200);
+    const projectedIds = new Set(projectedMessages.map(msg => msg.id));
+    for (const id of deferredIds) {
+      if (!projectedIds.has(id)) deferredIds.delete(id);
+    }
+    if (defersToMeetingSequencer && meetingActive) {
+      const historicalMessages = projectedMessages.filter(msg => seed
+        && !speechLiveIdsRef.current.has(msg.id) && !deferredIds.has(msg.id));
+      admitMessages(speechLedgerRef.current, scopeKey, historicalMessages, {
+        seed: true, defaultAuthorId: agentId,
+      });
+      for (const msg of projectedMessages) {
+        if (!seed || speechLiveIdsRef.current.has(msg.id)) {
+          deferredIds.add(msg.id);
+          speechLiveIdsRef.current.delete(msg.id);
+        }
+      }
+      return;
+    }
+    admitMessages(speechLedgerRef.current, scopeKey,
+      projectedMessages.filter(msg => deferredIds.has(msg.id)), {
+        seed: true, defaultAuthorId: agentId,
+      });
+    deferredIds.clear();
     const arrivals = admitMessages(speechLedgerRef.current, scopeKey, messages, {
       seed, defaultAuthorId: agentId, liveIds: speechLiveIdsRef.current,
     });
@@ -1358,7 +1398,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       );
     }
   }, [
-    messages, activeThreadId, agentId, defersToMeetingSequencer,
+    messages, activeThreadId, agentId, defersToMeetingSequencer, meetingActive,
     isOutputAudioEnabledNow, voiceProfile, speechOwner,
   ]);
 
@@ -1422,6 +1462,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     // AD-1062: the Captain spoke — invalidate any in-flight call-open greeting so
     // it yields to this real turn instead of double-greeting / talking over.
     greetTokenRef.current += 1;
+    const sendGeneration = greetTokenRef.current;
 
     // AD-430b: Capture conversation history BEFORE adding current message
     const conv = useStore.getState().agentConversations.get(requestAgentId);
@@ -1447,15 +1488,6 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
     // AD-938: in a thread context, mirror the optimistic Captain message into
     // the thread-keyed transcript (the displayed source). The per-agent buffer
     // append above stays for the no-thread cold-1:1 path + cross-session seed.
-    if (activeThreadId) {
-      useStore.getState().appendThreadMessage(activeThreadId, {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        role: 'user',
-        text: displayText,
-        timestamp: Date.now() / 1000,
-      });
-    }
-
     const attachmentIds = pendingAttachments.map(a => a.attachment_id);
     setPendingAttachments([]);
 
@@ -1480,6 +1512,26 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         (id) => id !== 'captain' && _agents.get(id)?.isCrew,
       ).length;
       if (_thread && crewParticipantCount >= 2) {
+        const speechEpoch = groupSpeechEpochRef.current;
+        const clientMessageId = globalThis.crypto?.randomUUID?.()
+          ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+        useStore.getState().reconcileThreadMessage(groupThreadId, {
+          id: `optimistic:${clientMessageId}`,
+          threadId: groupThreadId,
+          role: 'user',
+          authorId: 'captain',
+          optimistic: true,
+          metadata: { client_message_id: clientMessageId },
+          text: displayText,
+          timestamp: Date.now() / 1000,
+        });
+        const setGroupTyping = (typing: Parameters<ReturnType<typeof useStore.getState>['setTypingAgent']>[0]): void => {
+          const owner = transcriptOwnerRef.current;
+          const state = useStore.getState();
+          if (greetTokenRef.current !== sendGeneration || groupSpeechEpochRef.current !== speechEpoch) return;
+          if (owner.agentId !== requestAgentId || owner.threadId !== groupThreadId) return;
+          if (typing !== null || state.typingAgent?.threadId === groupThreadId) state.setTypingAgent(typing);
+        };
         // AD-962 / AD-962a: fill the dead air before the first group reply.
         // AD-962a names the LIKELY first responder — if the Captain's message
         // directly addresses a crew participant by callsign ("@ezri ..." /
@@ -1487,10 +1539,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         // AD-962 generic "The crew" beat (byte-identical fallback). Cosmetic
         // only — the real fan-out reply still arrives correctly regardless.
         const _firstResponder = resolveFirstResponder(text, _thread.participants ?? [], _agents);
-        useStore.getState().setTypingAgent(
+        setGroupTyping(
           _firstResponder
-            ? { threadId: activeThreadId ?? null, agentId: _firstResponder.agentId, callsign: _firstResponder.callsign, verb: 'thinking' }
-            : { threadId: activeThreadId ?? null, agentId: '', callsign: 'The crew', verb: 'thinking' },
+            ? { threadId: groupThreadId, agentId: _firstResponder.agentId, callsign: _firstResponder.callsign, verb: 'thinking' }
+            : { threadId: groupThreadId, agentId: '', callsign: 'The crew', verb: 'thinking' },
         );
         try {
           // ``body`` has min_length=1 on AppendMessageRequest, so attach-only
@@ -1503,13 +1555,34 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
               role: 'captain',
               body: text || '(attachment)',
               attachment_ids: attachmentIds,
+              metadata: { client_message_id: clientMessageId },
             }),
           });
           const data = await res.json();
+          const captainRow = captainReplyToMessage(data, groupThreadId, clientMessageId, useStore.getState().agents);
+          if (captainRow) useStore.getState().reconcileThreadMessage(groupThreadId, captainRow);
           // AD-914 returns {**msg.to_dict(), per_agent_replies: [{agent_id,
           // callsign, text}]}. Render each reply as an agent message; v1
           // attribution is a callsign prefix on the shared conversation.
-          const replies = Array.isArray(data?.per_agent_replies) ? data.per_agent_replies : [];
+          const receivedReplies: StaggerReply[] = Array.isArray(data?.per_agent_replies) ? data.per_agent_replies : [];
+          const replyRows = new Map<StaggerReply, AgentProfileMessage>();
+          const replies: StaggerReply[] = [];
+          for (const receipt of receivedReplies) {
+            const row = groupReplyToMessage(receipt, groupThreadId, useStore.getState().agents, () => ({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              timestamp: Date.now() / 1000,
+            }));
+            if (!row) continue;
+            useStore.getState().addAgentMessage(requestAgentId, 'agent', row.text, { message: row });
+            const displayed = useStore.getState().threadMessages.get(groupThreadId)
+              ?.some((message) => message.id === row.id);
+            if (displayed) {
+              useStore.getState().reconcileThreadMessage(groupThreadId, row);
+            }
+            const reply = { ...receipt, text: row.text };
+            replyRows.set(reply, row);
+            replies.push(reply);
+          }
           // AD-960: the replies are in — release the composer NOW so the
           // Captain can read at a comfortable pace (and reply) WHILE the
           // AD-952 progressive reveal paces the crew responses in the
@@ -1524,31 +1597,15 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           // immediately re-sets a per-agent "{callsign} is typing" beat; the
           // meeting path leaves it cleared (AD-921 voice + AD-923 speaking
           // indicator pace the crew there).
-          useStore.getState().setTypingAgent(null);
-          // AD-936/938: commit ONE reply to both the per-agent buffer and the
-          // thread-keyed transcript with its author identity. Extracted so the
-          // instant (meeting) path and the AD-952 progressive (text) path share
-          // it (DRY).
-          const appendReply = (r: StaggerReply): void => {
-            const replyText = typeof r?.text === 'string' ? r.text : '';
-            if (!replyText) return;
-            const authorId = typeof r?.agent_id === 'string' ? r.agent_id : undefined;
-            const callsign = typeof r?.callsign === 'string' ? r.callsign : undefined;
-            // AD-936: thread the real author's agent_id + callsign onto the
-            // message so the bubble shows a per-author avatar + name label.
-            useStore.getState().addAgentMessage(requestAgentId, 'agent', replyText, { authorId, callsign });
-            // AD-938: mirror each fan-out reply into the thread transcript with
-            // its author identity (avatar + name label); no 'callsign:' text
-            // prefix — the AD-936 ChatMessageRow header shows the author.
-            if (activeThreadId) {
-              useStore.getState().appendThreadMessage(activeThreadId, {
-                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                role: 'agent',
-                text: replyText,
-                timestamp: Date.now() / 1000,
-                authorId,
-                callsign,
-              });
+          setGroupTyping(null);
+          const appendReply = (reply: StaggerReply): void => {
+            const row = replyRows.get(reply);
+            if (row) useStore.getState().reconcileThreadMessage(groupThreadId, row);
+          };
+          const settleReplyDisplay = (): void => {
+            for (const row of replyRows.values()) {
+              useStore.getState().reconcileThreadMessage(groupThreadId, row);
+              useStore.getState().addAgentMessage(requestAgentId, 'agent', row.text, { message: row });
             }
           };
           // AD-952 + AD-976 (BF-618): human response dynamics. Reveal the
@@ -1577,26 +1634,44 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             _meetingThread?.metadata as Record<string, unknown> | undefined
           )?.meeting_active;
           const _callAudioOn = useStore.getState().callAudioEnabled;
-          if (_meetingLive && _callAudioOn) {
+          const ownsSpeech = (): boolean => greetTokenRef.current === sendGeneration
+            && groupSpeechEpochRef.current === speechEpoch
+            && transcriptOwnerRef.current.agentId === requestAgentId
+            && transcriptOwnerRef.current.threadId === groupThreadId;
+          if (!ownsSpeech()) {
+            settleReplyDisplay();
+          } else if (_meetingLive && _callAudioOn) {
             // Voice-driven reveal: hear, then see. speakMeetingReplies is
             // fire-and-forget; the hooks set the "speaking" label as each agent
             // begins and reveal that agent's text the instant it finishes.
             speakMeetingReplies(replies as PerAgentReply[], {
-              onUtteranceStart: (r) => useStore.getState().setTypingAgent({
-                threadId: activeThreadId ?? null,
+              onBatchSettled: settleReplyDisplay,
+              shouldContinue: ownsSpeech,
+              claimSpeech: (reply) => {
+                const row = replyRows.get(reply as StaggerReply);
+                return !!row && claimSpeech(
+                  speechLedgerRef.current, speechScopeKey(groupThreadId, requestAgentId), row, requestAgentId,
+                );
+              },
+              onUtteranceStart: (r) => setGroupTyping({
+                threadId: groupThreadId,
                 agentId: r.agent_id,
                 callsign: r.callsign ?? '',
                 verb: 'speaking',
               }),
               onUtteranceEnd: (r) => {
-                useStore.getState().setTypingAgent(null);
+                setGroupTyping(null);
                 appendReply(r as StaggerReply);
               },
             });
           } else {
-            await revealRepliesProgressively(replies as StaggerReply[], {
-              setTyping: (tt) => useStore.getState().setTypingAgent(
-                tt ? { threadId: activeThreadId ?? null, agentId: tt.agentId, callsign: tt.callsign } : null,
+            await revealRepliesProgressively(replies.filter((reply) => {
+              const row = replyRows.get(reply);
+              return row && !useStore.getState().threadMessages.get(groupThreadId)
+                ?.some((message) => message.id === row.id);
+            }), {
+              setTyping: (tt) => setGroupTyping(
+                tt ? { threadId: groupThreadId, agentId: tt.agentId, callsign: tt.callsign } : null,
               ),
               appendReply,
               sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
@@ -1605,13 +1680,22 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
         } catch {
           // AD-962: clear the thinking/typing indicator on the error path so it
           // never sticks after a failed send.
-          useStore.getState().setTypingAgent(null);
+          setGroupTyping(null);
           useStore.getState().addAgentMessage(requestAgentId, 'agent', '(communication error)');
         } finally {
           setSending(false);
         }
         return;
       }
+    }
+
+    if (activeThreadId) {
+      useStore.getState().appendThreadMessage(activeThreadId, {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: 'user',
+        text: displayText,
+        timestamp: Date.now() / 1000,
+      });
     }
 
     try {

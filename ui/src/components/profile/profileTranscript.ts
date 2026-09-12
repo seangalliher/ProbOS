@@ -6,6 +6,7 @@
 // independently testable. ProfileChatTab imports ``selectTranscriptMessages``
 // (render source switch) and ``loadThreadMessages`` (the load-on-open effect).
 import type { Agent, AgentProfileMessage } from '../../store/types';
+import type { StaggerReply } from '../../chat/staggerReplies';
 import { listMessages, type ThreadMessageDTO } from '../sidebar/threadApi';
 
 /** Map a persisted thread message (GET /messages DTO) into the profile
@@ -24,14 +25,71 @@ export function threadDtoToMessage(
   const rawEmotion = m.metadata?.emotion;
   return {
     id: m.id,
+    threadId: m.thread_id,
+    metadata: m.metadata,
     role: m.role === 'captain' ? 'user' : (isAgent ? 'agent' : 'system'),
     text: m.body,
     timestamp: m.created_at,
-    authorId: isAgent ? m.author_id : undefined,
+    authorId: isAgent || m.role === 'captain' ? m.author_id : undefined,
     callsign: isAgent ? (agents.get(m.author_id)?.callsign ?? undefined) : undefined,
     emotion: typeof rawEmotion === 'string' && rawEmotion.length > 0
       ? rawEmotion
       : undefined,
+  };
+}
+
+function validId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128
+    && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function validThreadMessage(
+  value: unknown, threadId: string, authorId: string, role: string,
+): value is ThreadMessageDTO {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const message = value as ThreadMessageDTO;
+  return validId(threadId) && validId(authorId) && validId(message.id)
+    && message.thread_id === threadId && message.author_id === authorId && message.role === role
+    && typeof message.body === 'string' && !!message.body.trim()
+    && typeof message.created_at === 'number' && Number.isFinite(message.created_at)
+    && message.created_at >= 0
+    && (message.metadata === undefined || message.metadata === null
+      || (typeof message.metadata === 'object' && !Array.isArray(message.metadata)));
+}
+
+export function captainReplyToMessage(
+  value: unknown, threadId: string, clientMessageId: string, agents: Map<string, Agent>,
+): AgentProfileMessage | null {
+  if (!validId(clientMessageId) || !validThreadMessage(value, threadId, 'captain', 'captain')
+    || value.metadata?.client_message_id !== clientMessageId) return null;
+  return threadDtoToMessage(value, agents);
+}
+
+export function groupReplyToMessage(
+  reply: StaggerReply,
+  threadId: string,
+  agents: Map<string, Agent>,
+  createFallback: () => { id: string; timestamp: number },
+): AgentProfileMessage | null {
+  if (!reply || !validId(threadId) || !validId(reply.agent_id)) return null;
+  if (reply.message !== undefined && reply.message !== null) {
+    const message = reply.message;
+    if (!validThreadMessage(message, threadId, reply.agent_id, 'agent')) {
+      return null;
+    }
+    return threadDtoToMessage(message, agents);
+  }
+  if (typeof reply.text !== 'string' || !reply.text.trim()) return null;
+  const fallback = createFallback();
+  if (!validId(fallback.id) || !Number.isFinite(fallback.timestamp) || fallback.timestamp < 0) return null;
+  return {
+    id: `transient:${fallback.id}`,
+    threadId,
+    role: 'agent',
+    text: reply.text,
+    timestamp: fallback.timestamp,
+    authorId: reply.agent_id,
+    callsign: typeof reply.callsign === 'string' ? reply.callsign : undefined,
   };
 }
 
@@ -187,7 +245,8 @@ export function markScopeSeen(ledger: SpeechLedger, scopeKey: string): boolean {
   return first;
 }
 
-/** Identity for speech: role + author + trimmed text, NOT the message id.
+/** Canonical AD-914 group rows use thread + message identity. Other rows keep
+ *  the legacy role + author + trimmed text fallback described below.
  *
  *  ``sendText`` appends its reply locally with a generated id and the server's
  *  own append then replaces it with the canonical row under a different id.
@@ -210,9 +269,17 @@ export function markScopeSeen(ledger: SpeechLedger, scopeKey: string): boolean {
  *  cannot collide, so there is deliberately no second guard here to drift out
  *  of step with this one. */
 export function speechKeyFor(
-  msg: Pick<AgentProfileMessage, 'authorId' | 'text' | 'role'>,
+  msg: Pick<AgentProfileMessage, 'authorId' | 'text' | 'role'>
+    & Partial<Pick<AgentProfileMessage, 'id' | 'threadId' | 'timestamp' | 'metadata'>>,
   defaultAuthorId = '',
 ): string {
+  if (msg.metadata?.fanout === 'ad914' && msg.role === 'agent'
+    && validThreadMessage({
+      id: msg.id, thread_id: msg.threadId, author_id: msg.authorId,
+      role: msg.role, body: msg.text, created_at: msg.timestamp, metadata: msg.metadata,
+    }, msg.threadId ?? '', msg.authorId ?? '', 'agent')) {
+    return `group\u0000${msg.threadId}\u0000${msg.id}`;
+  }
   return `${msg.role ?? ''}\u0000${msg.authorId || defaultAuthorId}\u0000${(msg.text ?? '').trim()}`;
 }
 

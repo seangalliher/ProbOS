@@ -57,6 +57,7 @@ export interface MeetingVoiceDeps {
   /** Abort check evaluated before each utterance -- lets a newer batch
    *  supersede an in-flight one (no talk-over across Captain re-sends). */
   shouldContinue?: () => boolean;
+  claimSpeech?: (reply: PerAgentReply) => boolean;
   /** Safety cap (ms) for the case where ``'end'`` never fires (TTS
    *  unavailable). When omitted, a LENGTH-PROPORTIONAL cap is computed from
    *  the reply text (BF-615) so a long reply is never cut off mid-utterance.
@@ -169,6 +170,10 @@ export async function speakRepliesSequentially(
       profile = undefined; // Tier-2: distinct-voice -> same-voice degrade.
     }
     if (deps.shouldContinue && !deps.shouldContinue()) break;
+    if (deps.claimSpeech && !deps.claimSpeech(reply)) {
+      deps.onUtteranceEnd?.(reply);
+      continue;
+    }
     deps.onSpeakingChange?.(reply.agent_id);
     deps.onUtteranceStart?.(reply);
     let _spoken = false;
