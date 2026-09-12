@@ -13,6 +13,7 @@ export interface TaskInput {
   filename: string | null;
   size: number | null;
   source: 'task' | 'message';
+  available?: boolean;
 }
 
 export async function fetchThreadInputs(threadId: string): Promise<TaskInput[]> {
@@ -21,7 +22,25 @@ export async function fetchThreadInputs(threadId: string): Promise<TaskInput[]> 
     throw new Error(`fetchThreadInputs: ${res.status}`);
   }
   const body = await res.json();
-  return Array.isArray(body.inputs) ? body.inputs : [];
+  if (
+    !body || typeof body !== 'object' || Array.isArray(body)
+    || body.thread_id !== threadId
+    || !(body.task_id === null || typeof body.task_id === 'string')
+    || !Array.isArray(body.inputs)
+    || !body.inputs.every((input: unknown) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+      const row = input as Record<string, unknown>;
+      return typeof row.content_hash === 'string' && /^[0-9a-f]{64}$/.test(row.content_hash)
+        && typeof row.mime === 'string' && row.mime.trim().length > 0
+        && (row.filename === null || typeof row.filename === 'string')
+        && (row.size === null || (typeof row.size === 'number' && Number.isSafeInteger(row.size) && row.size >= 0))
+        && (row.source === 'task' || row.source === 'message')
+        && (row.available === undefined || typeof row.available === 'boolean');
+    })
+  ) {
+    throw new Error('fetchThreadInputs: invalid room inputs response');
+  }
+  return body.inputs;
 }
 
 export function attachmentUrl(contentHash: string): string {

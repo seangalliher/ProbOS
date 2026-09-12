@@ -1,0 +1,810 @@
+{
+  "message": {
+    "file": {
+      "filename": "records.csv",
+      "mime": "text/csv",
+      "text": "work_id,review_requested,review_reply,rework_requested\nT01,yes,yes,no\nT02,no,no,no\nT03,yes,yes,yes\nT04,yes,no,no\nT05,no,yes,no\nT06,yes,yes,no\nT07,yes,no,no\nT08,yes,no,yes\nT09,no,no,no\nT10,yes,yes,no\nT11,no,yes,no\nT12,no,no,yes\n",
+      "sha256": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe"
+    },
+    "upload": {
+      "attachment_id": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+      "url": "/api/chat/attachments/dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+      "mime": "text/csv",
+      "size_bytes": 227,
+      "sha256": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe"
+    },
+    "thread": {
+      "id": "attachment-room",
+      "title": "Record analysis",
+      "participants": [
+        "scout1",
+        "counselor1",
+        "captain"
+      ],
+      "project_id": null,
+      "task_id": null,
+      "pinned": false,
+      "archived": false,
+      "personality_override": null,
+      "workspace_root": null,
+      "created_at": 1.0,
+      "last_active_at": 6.0,
+      "preprompt": null,
+      "model": null,
+      "metadata": {}
+    },
+    "request": {
+      "author_id": "captain",
+      "role": "captain",
+      "body": "Both of you, analyze the attached CSV. List the work identifiers for requested reviews without replies and for requested reworks. A reply without a review request is not an unanswered review; a rework request does not require a review request.",
+      "attachment_ids": [
+        "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe"
+      ],
+      "attachment_filenames": {
+        "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe": "records.csv"
+      },
+      "metadata": {
+        "client_message_id": "attachment-send"
+      }
+    },
+    "response": {
+      "id": "attachment-captain",
+      "thread_id": "attachment-room",
+      "author_id": "captain",
+      "role": "captain",
+      "body": "Both of you, analyze the attached CSV. List the work identifiers for requested reviews without replies and for requested reworks. A reply without a review request is not an unanswered review; a rework request does not require a review request.",
+      "created_at": 3.0,
+      "metadata": {
+        "client_message_id": "attachment-send",
+        "attachments": [
+          {
+            "content_hash": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+            "mime": "text/csv",
+            "filename": "records.csv"
+          }
+        ]
+      },
+      "per_agent_replies": [
+        {
+          "agent_id": "scout1",
+          "callsign": "Scout",
+          "text": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+          "message": {
+            "id": "attachment-reply-1",
+            "thread_id": "attachment-room",
+            "author_id": "scout1",
+            "role": "agent",
+            "body": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+            "created_at": 5.0,
+            "metadata": {
+              "intent_id": "attachment-intent-scout1",
+              "fanout": "ad914"
+            }
+          }
+        },
+        {
+          "agent_id": "counselor1",
+          "callsign": "Counselor",
+          "text": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+          "message": {
+            "id": "attachment-reply-2",
+            "thread_id": "attachment-room",
+            "author_id": "counselor1",
+            "role": "agent",
+            "body": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+            "created_at": 6.0,
+            "metadata": {
+              "intent_id": "attachment-intent-counselor1",
+              "fanout": "ad914"
+            }
+          }
+        }
+      ]
+    },
+    "initial_history": {
+      "thread_id": "attachment-room",
+      "messages": [
+        {
+          "id": "attachment-history",
+          "thread_id": "attachment-room",
+          "author_id": "captain",
+          "role": "captain",
+          "body": "We will examine the supplied records next.",
+          "created_at": 2.0,
+          "metadata": {}
+        }
+      ]
+    },
+    "history": {
+      "thread_id": "attachment-room",
+      "messages": [
+        {
+          "id": "attachment-history",
+          "thread_id": "attachment-room",
+          "author_id": "captain",
+          "role": "captain",
+          "body": "We will examine the supplied records next.",
+          "created_at": 2.0,
+          "metadata": {}
+        },
+        {
+          "id": "attachment-captain",
+          "thread_id": "attachment-room",
+          "author_id": "captain",
+          "role": "captain",
+          "body": "Both of you, analyze the attached CSV. List the work identifiers for requested reviews without replies and for requested reworks. A reply without a review request is not an unanswered review; a rework request does not require a review request.",
+          "created_at": 3.0,
+          "metadata": {
+            "attachments": [
+              {
+                "content_hash": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+                "filename": "records.csv",
+                "mime": "text/csv"
+              }
+            ],
+            "client_message_id": "attachment-send"
+          }
+        },
+        {
+          "id": "attachment-reply-1",
+          "thread_id": "attachment-room",
+          "author_id": "scout1",
+          "role": "agent",
+          "body": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+          "created_at": 5.0,
+          "metadata": {
+            "fanout": "ad914",
+            "intent_id": "attachment-intent-scout1"
+          }
+        },
+        {
+          "id": "attachment-reply-2",
+          "thread_id": "attachment-room",
+          "author_id": "counselor1",
+          "role": "agent",
+          "body": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+          "created_at": 6.0,
+          "metadata": {
+            "fanout": "ad914",
+            "intent_id": "attachment-intent-counselor1"
+          }
+        }
+      ]
+    },
+    "inputs": {
+      "thread_id": "attachment-room",
+      "task_id": null,
+      "inputs": [
+        {
+          "content_hash": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+          "mime": "text/csv",
+          "filename": "records.csv",
+          "size": 227,
+          "source": "message",
+          "available": true
+        }
+      ]
+    },
+    "events": [
+      {
+        "type": "chat_thread_message_appended",
+        "data": {
+          "thread_id": "attachment-room",
+          "message_id": "attachment-captain",
+          "author_id": "captain",
+          "role": "captain",
+          "created_at": 3.0
+        },
+        "timestamp": 1000.0
+      },
+      {
+        "type": "chat_thread_message_appended",
+        "data": {
+          "thread_id": "attachment-room",
+          "message_id": "attachment-reply-1",
+          "author_id": "scout1",
+          "role": "agent",
+          "created_at": 5.0
+        },
+        "timestamp": 1000.0
+      },
+      {
+        "type": "chat_thread_message_appended",
+        "data": {
+          "thread_id": "attachment-room",
+          "message_id": "attachment-reply-2",
+          "author_id": "counselor1",
+          "role": "agent",
+          "created_at": 6.0
+        },
+        "timestamp": 1000.0
+      }
+    ],
+    "model_reads": [
+      {
+        "reader_id": "scout1",
+        "content_hash": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+        "rows": [
+          {
+            "work_id": "T01",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T02",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T03",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "yes"
+          },
+          {
+            "work_id": "T04",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T05",
+            "review_requested": "no",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T06",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T07",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T08",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "yes"
+          },
+          {
+            "work_id": "T09",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T10",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T11",
+            "review_requested": "no",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T12",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "yes"
+          }
+        ],
+        "result": {
+          "unanswered_reviews": [
+            "T04",
+            "T07",
+            "T08"
+          ],
+          "reworks": [
+            "T03",
+            "T08",
+            "T12"
+          ]
+        }
+      },
+      {
+        "reader_id": "counselor1",
+        "content_hash": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+        "rows": [
+          {
+            "work_id": "T01",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T02",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T03",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "yes"
+          },
+          {
+            "work_id": "T04",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T05",
+            "review_requested": "no",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T06",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T07",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T08",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "yes"
+          },
+          {
+            "work_id": "T09",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T10",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T11",
+            "review_requested": "no",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T12",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "yes"
+          }
+        ],
+        "result": {
+          "unanswered_reviews": [
+            "T04",
+            "T07",
+            "T08"
+          ],
+          "reworks": [
+            "T03",
+            "T08",
+            "T12"
+          ]
+        }
+      }
+    ]
+  },
+  "task-upload": {
+    "file": {
+      "filename": "records.csv",
+      "mime": "text/csv",
+      "text": "work_id,review_requested,review_reply,rework_requested\nT01,yes,yes,no\nT02,no,no,no\nT03,yes,yes,yes\nT04,yes,no,no\nT05,no,yes,no\nT06,yes,yes,no\nT07,yes,no,no\nT08,yes,no,yes\nT09,no,no,no\nT10,yes,yes,no\nT11,no,yes,no\nT12,no,no,yes\n",
+      "sha256": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe"
+    },
+    "upload": {
+      "attachment_id": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+      "url": "/api/chat/attachments/dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+      "mime": "text/csv",
+      "size_bytes": 227,
+      "sha256": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe"
+    },
+    "thread": {
+      "id": "attachment-room",
+      "title": "Record analysis",
+      "participants": [
+        "scout1",
+        "counselor1",
+        "captain"
+      ],
+      "project_id": null,
+      "task_id": "attachment-task",
+      "pinned": false,
+      "archived": false,
+      "personality_override": null,
+      "workspace_root": null,
+      "created_at": 1.0,
+      "last_active_at": 6.0,
+      "preprompt": null,
+      "model": null,
+      "metadata": {}
+    },
+    "request": {
+      "author_id": "captain",
+      "role": "captain",
+      "body": "Both of you, analyze the attached CSV. List the work identifiers for requested reviews without replies and for requested reworks. A reply without a review request is not an unanswered review; a rework request does not require a review request.",
+      "attachment_ids": [
+        "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe"
+      ],
+      "attachment_filenames": {
+        "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe": "records.csv"
+      },
+      "metadata": {
+        "client_message_id": "attachment-send"
+      }
+    },
+    "response": {
+      "id": "attachment-captain",
+      "thread_id": "attachment-room",
+      "author_id": "captain",
+      "role": "captain",
+      "body": "Both of you, analyze the attached CSV. List the work identifiers for requested reviews without replies and for requested reworks. A reply without a review request is not an unanswered review; a rework request does not require a review request.",
+      "created_at": 3.0,
+      "metadata": {
+        "client_message_id": "attachment-send",
+        "attachments": [
+          {
+            "content_hash": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+            "mime": "text/csv",
+            "filename": "records.csv"
+          }
+        ]
+      },
+      "per_agent_replies": [
+        {
+          "agent_id": "scout1",
+          "callsign": "Scout",
+          "text": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+          "message": {
+            "id": "attachment-reply-1",
+            "thread_id": "attachment-room",
+            "author_id": "scout1",
+            "role": "agent",
+            "body": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+            "created_at": 5.0,
+            "metadata": {
+              "intent_id": "attachment-intent-scout1",
+              "fanout": "ad914"
+            }
+          }
+        },
+        {
+          "agent_id": "counselor1",
+          "callsign": "Counselor",
+          "text": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+          "message": {
+            "id": "attachment-reply-2",
+            "thread_id": "attachment-room",
+            "author_id": "counselor1",
+            "role": "agent",
+            "body": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+            "created_at": 6.0,
+            "metadata": {
+              "intent_id": "attachment-intent-counselor1",
+              "fanout": "ad914"
+            }
+          }
+        }
+      ]
+    },
+    "initial_history": {
+      "thread_id": "attachment-room",
+      "messages": [
+        {
+          "id": "attachment-history",
+          "thread_id": "attachment-room",
+          "author_id": "captain",
+          "role": "captain",
+          "body": "We will examine the supplied records next.",
+          "created_at": 2.0,
+          "metadata": {}
+        }
+      ]
+    },
+    "history": {
+      "thread_id": "attachment-room",
+      "messages": [
+        {
+          "id": "attachment-history",
+          "thread_id": "attachment-room",
+          "author_id": "captain",
+          "role": "captain",
+          "body": "We will examine the supplied records next.",
+          "created_at": 2.0,
+          "metadata": {}
+        },
+        {
+          "id": "attachment-captain",
+          "thread_id": "attachment-room",
+          "author_id": "captain",
+          "role": "captain",
+          "body": "Both of you, analyze the attached CSV. List the work identifiers for requested reviews without replies and for requested reworks. A reply without a review request is not an unanswered review; a rework request does not require a review request.",
+          "created_at": 3.0,
+          "metadata": {
+            "attachments": [
+              {
+                "content_hash": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+                "filename": "records.csv",
+                "mime": "text/csv"
+              }
+            ],
+            "client_message_id": "attachment-send"
+          }
+        },
+        {
+          "id": "attachment-reply-1",
+          "thread_id": "attachment-room",
+          "author_id": "scout1",
+          "role": "agent",
+          "body": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+          "created_at": 5.0,
+          "metadata": {
+            "fanout": "ad914",
+            "intent_id": "attachment-intent-scout1"
+          }
+        },
+        {
+          "id": "attachment-reply-2",
+          "thread_id": "attachment-room",
+          "author_id": "counselor1",
+          "role": "agent",
+          "body": "{\"unanswered_reviews\": [\"T04\", \"T07\", \"T08\"], \"reworks\": [\"T03\", \"T08\", \"T12\"]}",
+          "created_at": 6.0,
+          "metadata": {
+            "fanout": "ad914",
+            "intent_id": "attachment-intent-counselor1"
+          }
+        }
+      ]
+    },
+    "inputs": {
+      "thread_id": "attachment-room",
+      "task_id": "attachment-task",
+      "inputs": [
+        {
+          "content_hash": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+          "mime": "text/csv",
+          "filename": "records.csv",
+          "size": 227,
+          "source": "task",
+          "available": true
+        }
+      ]
+    },
+    "events": [
+      {
+        "type": "chat_thread_message_appended",
+        "data": {
+          "thread_id": "attachment-room",
+          "message_id": "attachment-captain",
+          "author_id": "captain",
+          "role": "captain",
+          "created_at": 3.0
+        },
+        "timestamp": 1000.0
+      },
+      {
+        "type": "chat_thread_message_appended",
+        "data": {
+          "thread_id": "attachment-room",
+          "message_id": "attachment-reply-1",
+          "author_id": "scout1",
+          "role": "agent",
+          "created_at": 5.0
+        },
+        "timestamp": 1000.0
+      },
+      {
+        "type": "chat_thread_message_appended",
+        "data": {
+          "thread_id": "attachment-room",
+          "message_id": "attachment-reply-2",
+          "author_id": "counselor1",
+          "role": "agent",
+          "created_at": 6.0
+        },
+        "timestamp": 1000.0
+      }
+    ],
+    "model_reads": [
+      {
+        "reader_id": "scout1",
+        "content_hash": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+        "rows": [
+          {
+            "work_id": "T01",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T02",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T03",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "yes"
+          },
+          {
+            "work_id": "T04",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T05",
+            "review_requested": "no",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T06",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T07",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T08",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "yes"
+          },
+          {
+            "work_id": "T09",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T10",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T11",
+            "review_requested": "no",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T12",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "yes"
+          }
+        ],
+        "result": {
+          "unanswered_reviews": [
+            "T04",
+            "T07",
+            "T08"
+          ],
+          "reworks": [
+            "T03",
+            "T08",
+            "T12"
+          ]
+        }
+      },
+      {
+        "reader_id": "counselor1",
+        "content_hash": "dd197f6c9a80f975fefac9e37a274e9e3e13734e371615a9819db350ee9908fe",
+        "rows": [
+          {
+            "work_id": "T01",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T02",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T03",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "yes"
+          },
+          {
+            "work_id": "T04",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T05",
+            "review_requested": "no",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T06",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T07",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T08",
+            "review_requested": "yes",
+            "review_reply": "no",
+            "rework_requested": "yes"
+          },
+          {
+            "work_id": "T09",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T10",
+            "review_requested": "yes",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T11",
+            "review_requested": "no",
+            "review_reply": "yes",
+            "rework_requested": "no"
+          },
+          {
+            "work_id": "T12",
+            "review_requested": "no",
+            "review_reply": "no",
+            "rework_requested": "yes"
+          }
+        ],
+        "result": {
+          "unanswered_reviews": [
+            "T04",
+            "T07",
+            "T08"
+          ],
+          "reworks": [
+            "T03",
+            "T08",
+            "T12"
+          ]
+        }
+      }
+    ]
+  }
+}

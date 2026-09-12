@@ -63,11 +63,12 @@ function formatSize(size: number | null): string {
 
 export interface InputsListProps {
   inputs: TaskInput[];
+  status?: 'loading' | 'ready' | 'error';
 }
 
 export function InputsList(props: InputsListProps) {
-  const { inputs } = props;
-  if (inputs.length === 0) {
+  const { inputs, status = 'ready' } = props;
+  if (inputs.length === 0 && status === 'ready') {
     return (
       <div
         style={{
@@ -80,14 +81,29 @@ export function InputsList(props: InputsListProps) {
     );
   }
   return (
-    <div data-testid="inputs-list" style={{ overflowY: 'auto' }}>
+    <div data-testid="inputs-list" aria-busy={status === 'loading'} style={{ overflowY: 'auto' }}>
+      {status !== 'ready' && (
+        <div
+          role={status === 'error' ? 'alert' : 'status'}
+          style={{ color: DIM, fontSize: 11, padding: '12px 8px', overflowWrap: 'anywhere' }}
+        >
+          {status === 'loading' ? 'Checking inputs...' : inputs.length > 0
+            ? 'Inputs unavailable. Showing last known inputs.' : 'Inputs unavailable.'}
+        </div>
+      )}
       {inputs.map((input) => {
         const label = input.filename ?? `${input.content_hash.slice(0, 12)}…`;
         const sizeLabel = formatSize(input.size);
+        const ready = status === 'ready' && input.available === true;
+        const availability = status === 'error' || input.available === false
+          ? 'Unavailable' : ready ? 'Ready' : 'Checking';
         return (
           <a
             key={input.content_hash}
-            href={attachmentUrl(input.content_hash)}
+            href={ready ? attachmentUrl(input.content_hash) : undefined}
+            role="link"
+            aria-disabled={!ready}
+            tabIndex={ready ? undefined : -1}
             target="_blank"
             rel="noopener noreferrer"
             data-testid={`input-row-${input.content_hash}`}
@@ -95,6 +111,7 @@ export function InputsList(props: InputsListProps) {
               display: 'flex',
               alignItems: 'center',
               width: '100%',
+              boxSizing: 'border-box',
               gap: 6,
               background: 'transparent',
               border: '1px solid transparent',
@@ -114,6 +131,9 @@ export function InputsList(props: InputsListProps) {
               flex: '1 1 auto', minWidth: 0, overflow: 'hidden',
               textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>{label}</span>
+            <span style={{ color: ready ? AMBER : DIM, fontSize: 10, flex: '0 0 auto' }}>
+              {availability}
+            </span>
             {sizeLabel && (
               <span style={{ color: DIM, fontSize: 10, flex: '0 0 auto' }}>
                 {sizeLabel}

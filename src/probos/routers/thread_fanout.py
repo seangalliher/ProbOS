@@ -242,12 +242,14 @@ def _assemble_speaker_signals(
 
 
 async def resolve_attachment_refs(
-    store: Any, attachment_ids: list[str]
+    store: Any, attachment_ids: list[str], *, filenames: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
     """AD-916: resolve already-uploaded SHA-256 ``attachment_ids`` to persisted
     ref records ``{"content_hash", "mime"}``. An id absent from the store
-    (``mime_for`` returns None) is skipped with a warning — never raises,
-    never fabricates a mime. Order-preserving.
+    (``mime_for`` returns None) is skipped with a warning; MIME lookup errors
+    also degrade without fabricating a MIME. Optional room-local filenames
+    are normalized display labels; an invalid supplied label raises ValueError.
+    Order-preserving, with legacy ref shapes unchanged when labels are absent.
     """
     refs: list[dict[str, str]] = []
     for aid in attachment_ids:
@@ -261,7 +263,12 @@ async def resolve_attachment_refs(
         if not mime:
             logger.warning("AD-916: attachment %s not found in store; skipping ref", aid)
             continue
-        refs.append({"content_hash": aid, "mime": mime})
+        ref = {"content_hash": aid, "mime": mime}
+        if filenames is not None and aid in filenames:
+            from probos.room_inputs import normalize_room_input_filename
+
+            ref["filename"] = normalize_room_input_filename(filenames[aid])
+        refs.append(ref)
     return refs
 
 
@@ -443,6 +450,7 @@ async def _fan_one_round(
     broadcast: bool = False,
     max_speakers_override: int | None = None,
     _semantic_replies: list[dict[str, str]] | None = None,
+    current_input_hashes: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """One reactivity round (AD-935): facilitate over ``candidate_ids`` (minus
     ``exclude_ids``) using ``trigger_body`` for mention/relevance, dispatch the
@@ -534,6 +542,39 @@ async def _fan_one_round(
     write_ledgers: dict[str, WriteLedger] = {}
     semantic_texts: list[str] = [""] * len(speaking_order)
 
+    from probos.room_inputs import MAX_ROOM_INPUT_REFS, collect_room_inputs
+
+    room_input_hashes: list[str] = []
+    room_input_task_id: str | None = None
+    room_inputs_omitted = False
+    attachment_config = getattr(getattr(runtime, "config", None), "attachments", None)
+    if attachment_config is not None and attachment_config.enabled:
+        try:
+            input_thread = store.get_thread(thread_id)
+            room_input_task_id = input_thread.task_id if input_thread is not None else None
+            input_refs = await collect_room_inputs(
+                thread_id=thread_id, thread_store=store,
+                work_item_store=getattr(runtime, "work_item_store", None),
+                attachment_store=None,
+            )
+            non_image_hashes = [
+                ref.content_hash for ref in input_refs if not ref.mime.startswith("image/")
+            ]
+            eligible_hashes = set(non_image_hashes)
+            prioritized_hashes = dict.fromkeys([
+                *(current_input_hashes or []), *reversed(non_image_hashes),
+            ])
+            room_input_hashes = [
+                content_hash for content_hash in prioritized_hashes if content_hash in eligible_hashes
+            ][:MAX_ROOM_INPUT_REFS]
+            room_inputs_omitted = len(non_image_hashes) > MAX_ROOM_INPUT_REFS
+        except Exception as exc:
+            room_inputs_omitted = True
+            logger.warning(
+                "Room input projection failed (%s); group replies proceed with inputs unavailable",
+                type(exc).__name__,
+            )
+
     async def _send_one(reply_index: int, agent_id: str) -> dict[str, Any]:
         callsign = ""
         agent: Any = None
@@ -567,6 +608,10 @@ async def _fan_one_round(
             "trigger_speaker": trigger_speaker,
             "room_outputs": room_outputs,  # BF-651
         }
+        if room_input_hashes or room_inputs_omitted:
+            params["room_input_hashes"] = room_input_hashes
+            params["room_input_task_id"] = room_input_task_id
+            params["room_inputs_omitted"] = room_inputs_omitted
         # AD-978: prepend THIS agent's visual context (camera/screen) so the
         # crew can SEE in a group chat. The 1:1 path injects it (AD-733a) but the
         # group fan-out never did — that was the bug (camera feed invisible to
@@ -1341,8 +1386,13 @@ async def group_chat_fanout(
     # persisted attachment refs. Round 0 ONLY (agent rounds carry no Captain
     # attachments). None => no image refs => AD-914 text-only.
     vision_messages: list[dict[str, Any]] | None = None
+    current_input_hashes: list[str] = []
     try:
         _attachments = (getattr(captain_msg, "metadata", None) or {}).get("attachments") or []
+        current_input_hashes = [
+            ref["content_hash"] for ref in _attachments
+            if isinstance(ref, dict) and isinstance(ref.get("content_hash"), str)
+        ]
         _cfg_attach = getattr(getattr(runtime, "config", None), "attachments", None)
         if _attachments and _cfg_attach is not None and getattr(_cfg_attach, "enabled", False):
             from probos.routers.chat import _get_attachment_store
@@ -1425,6 +1475,7 @@ async def group_chat_fanout(
         broadcast=broadcast_weights,
         max_speakers_override=_speakers_override,
         _semantic_replies=semantic_replies,
+        current_input_hashes=current_input_hashes,
     )
     all_replies.extend(round0)
 
@@ -1538,6 +1589,7 @@ async def group_chat_fanout(
                     broadcast=broadcast_weights,
                     max_speakers_override=_speakers_override,
                     _semantic_replies=semantic_replies,
+                    current_input_hashes=current_input_hashes,
                 )
             except Exception:
                 logger.warning(

@@ -125,9 +125,59 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   const liveArtifactRefresh = useStore(state => state.liveArtifactRefresh);
   const liveTodoRefresh = useStore(state => state.liveTodoRefresh);
   const liveRepairEpoch = useStore(state => state.liveRepairEpoch);
+  const liveThreadRefresh = useStore(state => state.liveThreadRefresh);
+  const railRef = useRef<HTMLElement>(null);
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const parent = railRef.current?.parentElement;
+    if (!parent || typeof ResizeObserver === 'undefined') return;
+    const measure = (width: number): void => {
+      if (width > 0) setCompact(window.innerWidth < 660 && width < 660);
+    };
+    measure(parent.clientWidth);
+    const observer = new ResizeObserver(entries => {
+      const entry = entries.find(value => value.target === parent);
+      if (entry) measure(entry.contentRect.width);
+    });
+    observer.observe(parent);
+    const resize = (): void => measure(parent.clientWidth);
+    window.addEventListener('resize', resize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', resize);
+    };
+  }, []);
+  const attachmentSignature = useStore(state => JSON.stringify([
+    ...new Set((state.threadMessages.get(threadId) ?? []).flatMap(message => {
+      if (message.optimistic || message.threadId !== threadId) return [];
+      const attachments = message.metadata?.attachments;
+      if (!Array.isArray(attachments)) return [];
+      return attachments.flatMap((attachment: unknown) => {
+        if (!attachment || typeof attachment !== 'object') return [];
+        const hash = (attachment as Record<string, unknown>).content_hash;
+        return typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash) ? [hash] : [];
+      });
+    })),
+  ].sort()));
   const claimLiveRailOwner = useStore(state => state.claimLiveRailOwner);
   const releaseLiveRailOwner = useStore(state => state.releaseLiveRailOwner);
-  const [inputs, setInputs] = useState<TaskInput[]>([]);
+  const [inputState, setInputState] = useState<{
+    threadId: string;
+    generation: number;
+    taskId: string | null | undefined;
+    inputs: TaskInput[];
+    status: 'loading' | 'ready' | 'error';
+  } | null>(null);
+  const inputRevisionRef = useRef(0);
+  const pendingInputHashesRef = useRef<{
+    threadId: string; generation: number; taskId: string; hashes: string[];
+  } | null>(null);
+  const [inputUpload, setInputUpload] = useState<{
+    threadId: string; generation: number; taskId: string; status: 'uploading' | 'error';
+  } | null>(null);
+  const inputUploadRequestRef = useRef(0);
+  const inputRefreshRef = useRef<() => Promise<void>>(async () => {});
+  const refreshInputs = useCallback(() => inputRefreshRef.current(), []);
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [artifactsLoaded, setArtifactsLoaded] = useState(false);
   const [steps, setSteps] = useState<TodoStep[]>([]);
@@ -186,6 +236,14 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   const effectiveTaskId = taskId ?? startedParentId;
   const effectiveTaskIdRef = useRef(effectiveTaskId);
   effectiveTaskIdRef.current = effectiveTaskId;
+  const currentInputs = inputState?.threadId === threadId
+    && inputState.generation === roomTokenRef.current.generation
+    && inputState.taskId === effectiveTaskId ? inputState : null;
+  const inputs = currentInputs?.inputs ?? [];
+  const inputStatus = currentInputs?.status ?? 'loading';
+  const inputUploadStatus = inputUpload?.threadId === threadId
+    && inputUpload.generation === roomTokenRef.current.generation
+    && inputUpload.taskId === effectiveTaskId ? inputUpload.status : null;
   useEffect(() => {
     startSubmittingRef.current = false;
     setStartPending(false);
@@ -337,20 +395,88 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     }
   }, [collapsed, effectiveTaskId, ownsRoom]);
 
-  // Initial GETs run only while the rail is expanded and visible.
   useEffect(() => {
     if (collapsed) return;
     const token = roomTokenRef.current;
-    (async () => {
-      try {
-        const list = await fetchThreadInputs(threadId);
-        if (ownsRoom(token)) setInputs(list);
-      } catch {
-        if (ownsRoom(token)) setInputs([]);
+    const targetTaskId = effectiveTaskId;
+    let active = true;
+    let pending = false;
+    let inFlight: Promise<void> | null = null;
+    const owned = (): boolean => active && ownsRoom(token)
+      && effectiveTaskIdRef.current === targetTaskId;
+    const refresh = (): Promise<void> => {
+      if (!owned()) return Promise.resolve();
+      if (inFlight) {
+        pending = true;
+        return inFlight;
       }
-    })();
+      setInputState(current => ({
+        ...token, taskId: targetTaskId,
+        inputs: current?.threadId === token.threadId && current.generation === token.generation
+          ? current.inputs : [],
+        status: 'loading',
+      }));
+      inFlight = (async () => {
+        do {
+          pending = false;
+          const generation = useStore.getState().liveGeneration;
+          const revision = inputRevisionRef.current;
+          try {
+            const list = await fetchThreadInputs(threadId);
+            if (owned() && !pending && revision === inputRevisionRef.current
+              && generation === useStore.getState().liveGeneration) {
+              const expected = pendingInputHashesRef.current;
+              const missingUpload = expected?.threadId === token.threadId
+                && expected.generation === token.generation && expected.taskId === targetTaskId
+                && expected.hashes.some(hash => !list.some(input => input.content_hash === hash));
+              if (missingUpload) {
+                setInputState(current => current?.threadId === token.threadId
+                  && current.generation === token.generation ? { ...current, status: 'error' } : current);
+              } else {
+                pendingInputHashesRef.current = null;
+                setInputState({ ...token, taskId: targetTaskId, inputs: list, status: 'ready' });
+              }
+            }
+          } catch {
+            if (owned() && !pending && revision === inputRevisionRef.current
+              && generation === useStore.getState().liveGeneration) {
+              setInputState(current => ({
+                ...token, taskId: targetTaskId,
+                inputs: current?.threadId === token.threadId && current.generation === token.generation
+                  ? current.inputs : [],
+                status: 'error',
+              }));
+            }
+          }
+        } while (owned() && pending);
+      })().finally(() => { inFlight = null; });
+      return inFlight;
+    };
+    inputRefreshRef.current = refresh;
+    void refresh();
+    return () => {
+      active = false;
+      if (inputRefreshRef.current === refresh) inputRefreshRef.current = async () => {};
+    };
+  }, [collapsed, effectiveTaskId, ownsRoom, threadId]);
+
+  const observedInputSignatureRef = useRef({ threadId, signature: attachmentSignature });
+  useEffect(() => {
+    const previous = observedInputSignatureRef.current;
+    observedInputSignatureRef.current = { threadId, signature: attachmentSignature };
+    if (previous.threadId !== threadId || previous.signature === attachmentSignature) return;
+    if (!collapsed) void refreshInputs();
+  }, [attachmentSignature, collapsed, refreshInputs, threadId]);
+
+  useEffect(() => {
+    if (!collapsed && liveThreadRefresh?.threadId === threadId) void refreshInputs();
+  }, [collapsed, liveThreadRefresh, refreshInputs, threadId]);
+
+  // Initial GETs run only while the rail is expanded and visible.
+  useEffect(() => {
+    if (collapsed) return;
     void refreshArtifacts();
-  }, [collapsed, ownsRoom, refreshArtifacts, threadId]);
+  }, [collapsed, refreshArtifacts]);
 
   useEffect(() => {
     if (collapsed || !effectiveTaskId) return;
@@ -377,10 +503,11 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
 
   useEffect(() => {
     if (!collapsed && liveRepairEpoch > 0) {
+      void refreshInputs();
       void refreshArtifacts();
       void refreshSteps();
     }
-  }, [collapsed, liveRepairEpoch, refreshArtifacts, refreshSteps]);
+  }, [collapsed, liveRepairEpoch, refreshArtifacts, refreshInputs, refreshSteps]);
 
   const handleToggle = useCallback(() => {
     setCollapsed((prev) => {
@@ -598,15 +725,31 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     if (!effectiveTaskId || picked.length === 0) return;
     const roomToken = roomTokenRef.current;
     const targetTaskId = effectiveTaskId;
+    const requestId = ++inputUploadRequestRef.current;
+    const ownsUpload = (): boolean => ownsRoom(roomToken)
+      && effectiveTaskIdRef.current === targetTaskId && requestId === inputUploadRequestRef.current;
+    setInputUpload({ ...roomToken, taskId: targetTaskId, status: 'uploading' });
     try {
       const updated = await attachTaskInputs(targetTaskId, picked);
-      if (ownsRoom(roomToken) && effectiveTaskIdRef.current === targetTaskId) {
-        setInputs(updated);
+      if (ownsUpload()) {
+        pendingInputHashesRef.current = { ...roomToken, taskId: targetTaskId, hashes: updated.map(input => input.content_hash) };
+        inputRevisionRef.current += 1;
+        setInputState(current => ({
+          ...roomToken, taskId: targetTaskId, status: 'ready',
+          inputs: [
+            ...updated,
+            ...(current?.threadId === roomToken.threadId && current.generation === roomToken.generation
+              ? current.inputs.filter(input => input.source === 'message'
+                && !updated.some(row => row.content_hash === input.content_hash)) : []),
+          ],
+        }));
+        setInputUpload(null);
+        await refreshInputs();
       }
     } catch {
-      // honest-degrade — the attach failed; the rail keeps its current list.
+      if (ownsUpload()) setInputUpload({ ...roomToken, taskId: targetTaskId, status: 'error' });
     }
-  }, [effectiveTaskId, ownsRoom]);
+  }, [effectiveTaskId, ownsRoom, refreshInputs]);
 
   // AD-1083: load the room Todo checklist when the visible task changes.
   useEffect(() => {
@@ -635,12 +778,12 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     manualRefreshRef.current = true;
     setManualRefreshPending(true);
     try {
-      await Promise.all([refreshArtifacts(), refreshSteps()]);
+      await Promise.all([refreshInputs(), refreshArtifacts(), refreshSteps()]);
     } finally {
       manualRefreshRef.current = false;
       setManualRefreshPending(false);
     }
-  }, [collapsed, refreshArtifacts, refreshSteps]);
+  }, [collapsed, refreshArtifacts, refreshInputs, refreshSteps]);
 
   const totalCount = inputs.length + artifacts.length + steps.length;
   // BF-642: the output selected for in-app preview (Cowork-style file preview).
@@ -653,6 +796,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   if (collapsed) {
     return (
       <aside
+        ref={railRef}
         data-testid="workspace-files-rail"
         data-collapsed="true"
         style={{
@@ -700,11 +844,14 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
 
   return (
     <aside
+      ref={railRef}
       data-testid="workspace-files-rail"
       data-collapsed="false"
+      data-compact={compact}
       style={{
         flex: `0 0 ${selectedArtifact ? previewWidth : 300}px`, width: selectedArtifact ? previewWidth : 300, position: 'relative',
-        background: 'rgba(10, 10, 18, 0.92)',
+        ...(compact ? { position: 'absolute', inset: 0, width: '100%', maxWidth: '100%', zIndex: 2 } as const : {}),
+        background: compact ? '#0a0a12' : 'rgba(10, 10, 18, 0.92)',
         borderLeft: '1px solid rgba(240, 176, 96, 0.15)',
         display: 'flex', flexDirection: 'column',
       }}
@@ -940,6 +1087,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
               <input
                 type="file"
                 multiple
+                disabled={inputUploadStatus === 'uploading'}
                 data-testid="workspace-files-attach-input"
                 style={{ display: 'none' }}
                 onChange={(e) => {
@@ -951,7 +1099,12 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
             </label>
           )}
         </div>
-        <InputsList inputs={inputs} />
+        {inputUploadStatus && (
+          <div role={inputUploadStatus === 'error' ? 'alert' : 'status'} style={{ padding: '4px 10px', color: inputUploadStatus === 'error' ? '#ff8080' : DIM, fontSize: 11 }}>
+            {inputUploadStatus === 'error' ? 'Input upload failed.' : 'Uploading inputs...'}
+          </div>
+        )}
+        <InputsList inputs={inputs} status={inputStatus} />
       </div>
 
       <div
