@@ -94,7 +94,8 @@ describe('AD-917 ProfileChatTab group send-routing', () => {
     { filename: 'why?.csv', expectedFilename: 'why.csv', status: 200 },
     { filename: '\u6587'.repeat(90) + '.csv', expectedFilename: '\u6587'.repeat(85), status: 200 },
     { filename: 'reviews.csv', expectedFilename: 'reviews.csv', status: 422 },
-  ])('forwards a safe picked filename and preserves rejected sends: $filename / $status', async ({ filename, expectedFilename, status }) => {
+    { filename: 'accepted.csv', expectedFilename: 'accepted.csv', status: 200, invalidJson: true },
+  ])('forwards a safe picked filename and preserves rejected sends: $filename / $status', async ({ filename, expectedFilename, status, invalidJson }) => {
     const initialState = useStore.getState();
     const scrollBefore = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
     const storageBefore = Object.fromEntries(Object.keys(localStorage).map(key => [key, localStorage.getItem(key)!]));
@@ -115,6 +116,7 @@ describe('AD-917 ProfileChatTab group send-routing', () => {
     const groupPost = vi.fn((init: RequestInit) => {
       const request = JSON.parse(String(init.body));
       if (status !== 200) return new Response(JSON.stringify({ detail: 'invalid attachment label' }), { status });
+      if (invalidJson) return new Response('invalid response', { status: 200 });
       return response({ id: 'persisted-captain', thread_id: 't1', author_id: 'captain', role: 'captain',
         body: request.body, created_at: 2, metadata: request.metadata, per_agent_replies: [] });
     });
@@ -157,11 +159,24 @@ describe('AD-917 ProfileChatTab group send-routing', () => {
       expect(request.metadata.client_message_id).toEqual(expect.any(String));
       if (status === 200) {
         expect(screen.queryByRole('button', { name: 'remove attachment' })).toBeNull();
+        expect(useStore.getState().agentConversations.get('a1')?.messages.filter(message => message.role === 'user'))
+          .toEqual([expect.objectContaining({ text: `(attachment)\n\n[attached: ${filename}]` })]);
       } else {
         expect(await screen.findByText('Message not sent. Attachments retained for retry.')).toBeVisible();
         expect(screen.getByRole('button', { name: 'remove attachment' })).toBeVisible();
         expect(useStore.getState().typingAgent).toBeNull();
         expect(useStore.getState().threadMessages.get('t1') ?? []).toEqual([]);
+        expect(useStore.getState().agentConversations.get('a1')?.messages ?? []).toEqual([]);
+        groupPost.mockImplementationOnce(init => {
+          const retried = JSON.parse(String(init.body));
+          return response({ id: 'retried-captain', thread_id: 't1', author_id: 'captain', role: 'captain',
+            body: retried.body, created_at: 3, metadata: retried.metadata, per_agent_replies: [] });
+        });
+        await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^Send$/ })); });
+        await waitFor(() => expect(groupPost).toHaveBeenCalledTimes(2));
+        expect(upload).toHaveBeenCalledTimes(1);
+        expect(useStore.getState().agentConversations.get('a1')?.messages.filter(message => message.role === 'user'))
+          .toEqual([expect.objectContaining({ text: `(attachment)\n\n[attached: ${filename}]` })]);
       }
     } finally {
       cleanup();

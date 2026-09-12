@@ -13,6 +13,7 @@ returns the tmp store (byte-identical to the proven DM path).
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import csv
 import hashlib
@@ -926,6 +927,7 @@ async def test_group_csv_reaches_actual_cognitive_requests(
     handler_results: dict[str, list[IntentResult | None]] = {
         "scout1": [], "counselor1": [],
     }
+    scout_reply_committed = asyncio.Event()
 
     class _CsvScout(CognitiveAgent):
         agent_type = "scout"
@@ -939,6 +941,10 @@ async def test_group_csv_reaches_actual_cognitive_requests(
 
     class _CsvCounselor(_CsvScout):
         agent_type = "counselor"
+
+        async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
+            await asyncio.wait_for(scout_reply_committed.wait(), timeout=5.0)
+            return await super().handle_intent(intent)
 
     attach = await _make_attach_store(tmp_path)
     csv_bytes = csv_text.encode("utf-8")
@@ -976,6 +982,8 @@ async def test_group_csv_reaches_actual_cognitive_requests(
     def capture_event(event: dict) -> None:
         if event["type"] == "chat_thread_message_appended":
             events.append(event)
+            if event["data"].get("author_id") == "scout1":
+                scout_reply_committed.set()
 
     event_runtime.add_event_listener(capture_event)
     runtime.config = SystemConfig()

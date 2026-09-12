@@ -1483,11 +1483,6 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       : '';
     const displayText = (text || '(attachment)') + attachmentSummary;
 
-    // Add user message immediately (after capturing history)
-    useStore.getState().addAgentMessage(requestAgentId, 'user', displayText);
-    // AD-938: in a thread context, mirror the optimistic Captain message into
-    // the thread-keyed transcript (the displayed source). The per-agent buffer
-    // append above stays for the no-thread cold-1:1 path + cross-session seed.
     const attachmentIds = pendingAttachments.map(a => a.attachment_id);
     const attachmentFilenames = Object.fromEntries(pendingAttachments.flatMap(attachment => {
       if (!attachment.filename || !/^[0-9a-f]{64}$/.test(attachment.attachment_id)) return [];
@@ -1591,6 +1586,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             }));
             return;
           }
+          useStore.getState().addAgentMessage(requestAgentId, 'user', displayText);
           const data = await res.json();
           setAttachError(null);
           const captainRow = captainReplyToMessage(data, groupThreadId, clientMessageId, useStore.getState().agents);
@@ -1723,6 +1719,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       }
     }
 
+    useStore.getState().addAgentMessage(requestAgentId, 'user', displayText);
     if (activeThreadId) {
       useStore.getState().appendThreadMessage(activeThreadId, {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
