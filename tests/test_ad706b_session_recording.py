@@ -30,6 +30,7 @@ class _FakeContext:
     async def new_page(self) -> Any:
         page = MagicMock()
         page.set_default_timeout = MagicMock()
+        page.close = AsyncMock()
         return page
 
     async def close(self) -> None:

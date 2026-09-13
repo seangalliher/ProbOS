@@ -22,6 +22,8 @@ import pytest
 
 from probos.config import BrowserToolConfig
 from probos.tools.browser import actions as browser_actions
+from probos.tools.browser.session import BrowserSession
+from probos.tools.protocol import ToolResult
 from probos.tools.browser.tool import (
     _AGENT_ACTION_SET,
     _AGENT_ACTIONS,
@@ -36,7 +38,7 @@ def _tool() -> BrowserTool:
 class _GateProbe(BrowserTool):
     """A tool whose session creation is a tripwire.
 
-    The admission check runs BEFORE ``_get_or_create_session``, so an action the
+    The admission check runs BEFORE ``_create_session``, so an action the
     gate accepts reaches here and an action it refuses never does. Raising
     instead of launching Chromium keeps these tests to milliseconds and means a
     passing run proves the gate's decision rather than a browser's behaviour.
@@ -45,7 +47,18 @@ class _GateProbe(BrowserTool):
     class Admitted(Exception):
         pass
 
-    async def _get_or_create_session(self, *_args: object, **_kwargs: object):
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.hits: list[tuple[str | None, str]] = []
+        self.factory_hits = 0
+        self._session_factory = self.reject_factory
+
+    def reject_factory(self, **kwargs: object) -> BrowserSession:
+        self.factory_hits += 1
+        raise AssertionError("Admission tripwire missed; browser creation forbidden")
+
+    async def _create_session(self, session_id: str | None, agent_id: str) -> BrowserSession:
+        self.hits.append((session_id, agent_id))
         raise _GateProbe.Admitted()
 
 
@@ -53,15 +66,35 @@ async def _gate_verdict(action: str, **params: object) -> str:
     """Return 'admitted', 'refused', or the unexpected error text."""
     tool = _GateProbe(config=BrowserToolConfig(enabled=True))
     try:
-        result = await tool.invoke(
-            {"action": action, **params}, context={"agent_id": "t"}
-        )
-    except _GateProbe.Admitted:
-        return "admitted"
-    error = result.error or ""
-    if error.startswith("unknown browser action"):
+        try:
+            result = await tool.invoke(
+                {"action": action, **params}, context={"agent_id": "t"}
+            )
+        except _GateProbe.Admitted:
+            assert tool.hits == [(None, "t")]
+            return "admitted"
+        assert tool.hits == []
+        assert (result.error or "").startswith("unknown browser action"), "Admission tripwire did not fire"
         return "refused"
-    return "admitted"
+    finally:
+        await tool.stop()
+        assert tool.factory_hits == 0, "Fallback browser factory was reached"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["missing", "error", "success"])
+async def test_gate_probe_rejects_missing_or_unrelated_results(
+    monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    if failure == "missing":
+        monkeypatch.setattr(_GateProbe, "_create_session", BrowserTool._create_session)
+    else:
+        async def unrelated(*args: object, **kwargs: object) -> ToolResult:
+            return ToolResult(error="unrelated error" if failure == "error" else None)
+        monkeypatch.setattr(_GateProbe, "invoke", unrelated)
+    expected_guard = "Fallback browser factory was reached" if failure == "missing" else "Admission tripwire did not fire"
+    with pytest.raises(AssertionError, match=expected_guard):
+        await _gate_verdict("key_type")
 
 
 # ── the headline: promises and behaviour must agree ──────────────

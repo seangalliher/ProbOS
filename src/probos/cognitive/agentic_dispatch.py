@@ -39,6 +39,8 @@ from probos.integrations.mcp_bridge.risk import (
     McpToolRisk,
     resolve_tool_risk,
 )
+from probos.tools.browser.lifecycle import BrowserUse
+from probos.tools.browser.tool import BrowserTool
 from probos.tools.executor import ToolExecutor, wire_durable_tool_records
 from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolPermissionDenied
@@ -1083,6 +1085,11 @@ class DispatchToolExecutor(ToolExecutor):
         params: dict[str, Any],
         **kwargs: Any,
     ) -> ToolResult:
+        context = kwargs.get("context")
+        if tool_id == "browser" and type(params) is dict and not params.get("session_id"):
+            bound = context.get("browser_session_id") if type(context) is dict else None
+            if type(bound) is str and bound:
+                params = {**params, "session_id": bound}
         # AD-1153: armed only for ``browser``, and only when the offer block
         # called ``restrict_browser_actions``. Unarmed ⇒ this whole branch is
         # skipped and the AD-856 path below runs verbatim.
@@ -1759,6 +1766,36 @@ class WorkItemAgenticExecutor:
         logger.warning(_BROWSER_EGRESS_WARNING)
 
     async def run(
+        self, *, agent_id: str, instructions: str, task_text: str, runtime: Any,
+        department: str = "", rank: str = "ensign", thread_id: str = "",
+        max_iterations: int | None = None, tier: str | None = None,
+        extra_context: dict[str, Any] | None = None, priority: Any | None = None,
+        compose_disposition: bool = True, compactor: Any = None,
+        compaction_threshold: int | None = None, token_budget: int | None = None,
+        failure_scope: str | None = None,
+        work_item_id_provider: Callable[[], str | None] | None = None,
+        on_run_started: Callable[[str], None] | None = None,
+    ) -> WorkItemAgenticOutcome:
+        """Reserve browser use across offer construction, execution and finalization."""
+        arguments = {
+            "agent_id": agent_id, "instructions": instructions, "task_text": task_text,
+            "runtime": runtime, "department": department, "rank": rank,
+            "thread_id": thread_id, "max_iterations": max_iterations, "tier": tier,
+            "extra_context": extra_context, "priority": priority,
+            "compose_disposition": compose_disposition, "compactor": compactor,
+            "compaction_threshold": compaction_threshold, "token_budget": token_budget,
+            "failure_scope": failure_scope, "work_item_id_provider": work_item_id_provider,
+            "on_run_started": on_run_started,
+        }
+        registry = getattr(runtime, "tool_registry", None)
+        registration = registry.get("browser") if registry is not None else None
+        browser = getattr(registration, "tool", None)
+        if isinstance(browser, BrowserTool):
+            async with browser.reserve_use(agent_id=agent_id) as browser_use:
+                return await self._run_reserved(browser_use=browser_use, **arguments)
+        return await self._run_reserved(**arguments)
+
+    async def _run_reserved(
         self,
         *,
         agent_id: str,
@@ -1807,6 +1844,7 @@ class WorkItemAgenticExecutor:
         failure_scope: str | None = None,
         work_item_id_provider: Callable[[], str | None] | None = None,
         on_run_started: Callable[[str], None] | None = None,
+        browser_use: BrowserUse | None = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -2335,7 +2373,13 @@ class WorkItemAgenticExecutor:
         # AD-1163: resolved once, before the loop, so the browser offer can name
         # the Captain's open page. AD-1158/1162 made the binding WORK; this is
         # what makes the agent aware it exists.
-        _captain_row = _captain_browser_session(runtime)
+        if browser_use is not None:
+            _captain_row = (
+                {"session_id": browser_use.session.session_id, "url": browser_use.page_url}
+                if browser_use.session is not None and browser_use.session.owner_id == "captain" else None
+            )
+        else:
+            _captain_row = _captain_browser_session(runtime)
 
         offered_names: set[str] = set()
 
@@ -2364,17 +2408,7 @@ class WorkItemAgenticExecutor:
                     )
                 if tid == "browser" and _captain_row is not None:
                     definition = _announce_shared_session(definition, _captain_row)
-                    # AD-1163a: record what the agent was ACTUALLY told. Twice
-                    # now the binding logged as present while the agent made
-                    # zero tool calls, and the gap between "we wired it" and
-                    # "the model saw it" was unobservable. Log the offered
-                    # description verbatim so that gap is readable instead of
-                    # inferred.
-                    logger.info(
-                        "AD-1163: browser offered to %s with description: %s",
-                        agent_id,
-                        (definition.get("function") or {}).get("description", ""),
-                    )
+                    logger.info("AD-1163: reserved shared browser offered to agent %s", agent_id)
                 built.append(definition)
                 if tid.startswith("mcp:"):
                     mcp_definition_ids[id(definition)] = tid
@@ -2509,13 +2543,14 @@ class WorkItemAgenticExecutor:
         # browser call created a fresh signed-out session while the Captain
         # watched a different one. Bound only when the Captain actually has a
         # live session; absent, the key is omitted and behaviour is AD-1158's.
-        _captain_session = _captain_browser_session_id(runtime)
+        _captain_session = None
+        if "browser" in tool_ids and _captain_row is not None:
+            _captain_session = _captain_row.get("session_id")
         if _captain_session is not None:
             _context["browser_session_id"] = _captain_session
             logger.info(
-                "AD-1162: binding agent %s to the Captain's browser session %s; "
-                "browser calls without an explicit session_id will act on the "
-                "page the Captain is watching.",
+                "AD-1162: binding agent %s to reserved browser session %s; "
+                "calls without an explicit session_id retain this selection.",
                 agent_id, _captain_session[:12],
             )
         elif browser_ids:
@@ -2525,8 +2560,8 @@ class WorkItemAgenticExecutor:
             # session is bound, the agent works on a page the Captain cannot see.
             logger.info(
                 "AD-1162: agent %s was offered the browser with NO Captain "
-                "session bound; calls without an explicit session_id will create "
-                "a fresh, signed-out browser rather than acting on the Captain's "
+                "session bound; calls without an explicit session_id reuse its "
+                "own browser or create a fresh one rather than acting on the Captain's "
                 "page. Expected when the Captain has not opened one; unexpected "
                 "if they are watching a session right now.",
                 agent_id,

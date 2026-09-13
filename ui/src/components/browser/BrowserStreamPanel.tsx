@@ -8,7 +8,7 @@
  * Not yet wired into the parent agent-detail panel - that is forward-marked
  * as AD-706a-parent-wire.
  */
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 /** AD-1052c: a single human-forwarded input event (DD-2 v1 vocabulary). */
 export type ForwardInputEvent =
@@ -49,16 +49,56 @@ export type BrowserStreamPanelProps = {
    *  panel is byte-identical to the AD-706a read-only element. */
   driveEnabled?: boolean;
   /** AD-1052c: sink for captured input events (injected by the workstation). */
-  onForwardInput?: (evt: ForwardInputEvent) => void;
+  onForwardInput?: (evt: ForwardInputEvent) => void | Promise<void>;
+  onFailure?: (reason: string) => void;
+  onReconnect?: () => void;
 };
 
-export function BrowserStreamPanel({
+export function BrowserStreamPanel(props: BrowserStreamPanelProps): React.ReactElement {
+  return <SessionStream key={`${props.sessionId}:${props.streamingUrl}`} {...props} />;
+}
+
+function SessionStream({
   sessionId,
   streamingUrl,
   token,
   driveEnabled,
   onForwardInput,
+  onFailure,
+  onReconnect,
 }: BrowserStreamPanelProps): React.ReactElement {
+  const [failure, setFailure] = useState<string | null>(null);
+  const generation = useRef(0);
+  useEffect(() => {
+    generation.current += 1;
+    return () => { generation.current += 1; };
+  }, [driveEnabled]);
+  const fail = (reason: string): void => {
+    generation.current += 1;
+    setFailure(reason);
+    onFailure?.(reason);
+  };
+  const emit = (event: ForwardInputEvent): void => {
+    if (failure || !driveEnabled || !onForwardInput) return;
+    const request = generation.current;
+    try {
+      const result = onForwardInput(event);
+      if (result) void result.catch(() => {
+        if (request === generation.current) fail('Input failed. Control released in this view.');
+      });
+    } catch {
+      fail('Input failed. Control released in this view.');
+    }
+  };
+  if (failure) {
+    return <div role="alert" style={{ padding: 12, color: '#f0b060' }}>
+      <span>{failure}</span>
+      {onReconnect && <button type="button" onClick={onReconnect} aria-label="Reconnect viewer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5" /></svg>
+        Reconnect
+      </button>}
+    </div>;
+  }
   if (streamingUrl == null) {
     return (
       <div
@@ -102,9 +142,9 @@ export function BrowserStreamPanel({
   // Only when BOTH the toggle is on AND a sink is injected; otherwise the
   // <img> below is byte-identical to the AD-706a read-only element (DD-5).
   if (driveEnabled === true && onForwardInput) {
-    const emit = onForwardInput;
     return (
       <img
+        onError={() => fail('Viewer disconnected. The browser session may still be open.')}
         data-testid="browser-stream-panel-img"
         data-driving="true"
         src={fullUrl}
@@ -141,6 +181,7 @@ export function BrowserStreamPanel({
 
   return (
     <img
+      onError={() => fail('Viewer disconnected. The browser session may still be open.')}
       data-testid="browser-stream-panel-img"
       src={fullUrl}
       alt={`Browser session ${sessionId}`}

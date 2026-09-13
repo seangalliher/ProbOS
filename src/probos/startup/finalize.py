@@ -15,10 +15,12 @@ from types import MethodType
 from typing import TYPE_CHECKING, Any, Callable
 
 from probos.startup.results import FinalizationResult
+from probos.tools.browser.lifecycle import BrowserActor, BrowserAuthorityBasis, BrowserOwnerRegistry
 from probos.utils import format_duration
 from probos.crew_utils import is_crew_agent
 
 if TYPE_CHECKING:
+    from probos.capability_request import CapabilityRequestStore
     from probos.config import SystemConfig
 
 logger = logging.getLogger(__name__)
@@ -324,6 +326,63 @@ def _wire_workstation_types(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+class BrowserLifecycleAdapter:
+    def __init__(
+        self, *, registry: BrowserOwnerRegistry | None,
+        request_store: CapabilityRequestStore | None,
+        authority_basis: BrowserAuthorityBasis,
+        approval_tracking_required: bool,
+        crew_check: Callable[[Any], bool],
+    ) -> None:
+        self._registry = registry
+        self._request_store = request_store
+        self._authority_basis = authority_basis
+        self._approval_tracking_required = approval_tracking_required
+        self._crew_check = crew_check
+
+    def allows(self, actor: BrowserActor) -> bool:
+        return type(actor) is BrowserActor and actor.authority_basis is self._authority_basis
+
+    def is_known_crew_owner(self, agent_id: str) -> bool:
+        if self._registry is None or type(agent_id) is not str or not agent_id:
+            return False
+        owner = self._registry.get(agent_id)
+        registered_id = getattr(owner, "id", None)
+        agent_type = getattr(owner, "agent_type", None)
+        return (
+            owner is not None and type(registered_id) is str and registered_id == agent_id
+            and type(agent_type) is str and bool(agent_type)
+            and self._crew_check(owner) is True
+        )
+
+    async def read_pending_browser_work(self, session_id: str) -> int | None:
+        from probos.capability_request import CapabilityRequest, validate_action_payload
+
+        store = self._request_store
+        if store is None:
+            return None if self._approval_tracking_required else 0
+        pending = await store.list_pending()
+        if type(pending) is not list:
+            return None
+        count = 0
+        for request in pending:
+            if type(request) is not CapabilityRequest:
+                return None
+            if request.kind != "action":
+                continue
+            payload = validate_action_payload(request.payload)
+            if payload is None:
+                return None
+            if payload["tool_id"] != "browser":
+                continue
+            bound = payload["session_id"]
+            if not bound:
+                return None
+            if bound == session_id:
+                count += 1
+        return count
+
+
 def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-706: Register BrowserTool in the ToolRegistry (default-disabled).
 
@@ -356,11 +415,25 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
 
     emit_fn = getattr(runtime, "emit_event", None)
     audit_log = getattr(runtime, "audit_log", None)
+    ontology = getattr(runtime, "ontology", None)
+    lifecycle = BrowserLifecycleAdapter(
+        registry=getattr(runtime, "registry", None),
+        request_store=getattr(runtime, "capability_request_store", None),
+        authority_basis=(
+            BrowserAuthorityBasis.SHARED_CREW_SCOPE if config.auth.crew_scope_token
+            else BrowserAuthorityBasis.SINGLE_OPERATOR_COMPATIBILITY
+        ),
+        approval_tracking_required=config.approval_inbox.enabled,
+        crew_check=lambda owner: is_crew_agent(owner, ontology),
+    )
     browser_tool = BrowserTool(
         config=cfg,
         audit_log=audit_log,
         emit_event=emit_fn,
         runtime=runtime,
+        authorization=lifecycle,
+        ownership=lifecycle,
+        pending_work_reader=lifecycle,
     )
     runtime.tool_registry.register(
         browser_tool,

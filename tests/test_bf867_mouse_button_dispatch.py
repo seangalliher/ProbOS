@@ -207,25 +207,70 @@ async def test_no_sub_verb_can_route_here_by_itself() -> None:
 # ── end to end, through BrowserTool.invoke ────────────────────────
 
 
+class _OwnedFakeSession(BrowserSession):
+    def __init__(self, *, page: _CanvasPage, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.recording_page = page
+        self.start_count = 0
+        self.close_count = 0
+
+    @property
+    def page(self) -> _CanvasPage:
+        return self.recording_page
+
+    async def start(self) -> None:
+        self.start_count += 1
+
+    async def close_resources(self) -> bool:
+        if not self.close_count:
+            self.close_count += 1
+        return True
+
+
 class _BoundTool(BrowserTool):
-    """Real ``invoke`` -- gate, tier classification and dispatch -- over a
-    pre-made session, so nothing launches Chromium."""
+    """Real ``invoke`` over an owned factory session sharing a recording page,
+    so nothing launches Chromium."""
 
     def __init__(self, session: BrowserSession, **kw: Any) -> None:
         super().__init__(**kw)
-        self._bound = session
+        self.recording_page = session.page
+        self.created: list[_OwnedFakeSession] = []
+        self.factory_ids: list[str] = []
+        self._session_factory = self.make_session
 
-    async def _get_or_create_session(self, *_a: object, **_k: object) -> BrowserSession:
-        return self._bound
+    def make_session(self, **kwargs: Any) -> _OwnedFakeSession:
+        self.factory_ids.append(kwargs["session_id"])
+        session = _OwnedFakeSession(page=self.recording_page, **kwargs)
+        self.created.append(session)
+        return session
+
+
+async def _invoke_owned_mouse(tool: _BoundTool, params: dict[str, Any]) -> Any:
+    try:
+        result = await tool.invoke(params, context={"agent_id": "agent-a"})
+        assert result.error is None, result.error
+        assert len(tool.created) == 1
+        session = tool.created[0]
+        assert session.start_count == 1
+        assert tool.factory_ids == [session.session_id]
+        assert result.metadata["session_id"] == result.output["session_id"] == session.session_id
+        assert tool.get_session(session.session_id) is session
+        assert tool.session_snapshot(session.session_id).state.value == "active"
+        return result
+    finally:
+        await tool.stop()
+        for session in tool.created:
+            assert session.close_count == 1
+            assert tool.get_session(session.session_id) is None
+            assert tool.session_snapshot(session.session_id).state.value == "ended"
 
 
 @pytest.mark.asyncio
 async def test_browser_tool_invoke_presses_the_mouse_end_to_end() -> None:
     session = _session()
     tool = _BoundTool(session, config=BrowserToolConfig(enabled=True))
-    result = await tool.invoke(
+    result = await _invoke_owned_mouse(tool,
         {"action": "mouse_button", "button": "right", "press": "down"},
-        context={"agent_id": "agent-a"},
     )
     assert result.error is None, result.error
     assert session.page.mouse.downs == ["right"]
@@ -236,8 +281,8 @@ async def test_browser_tool_invoke_presses_the_mouse_end_to_end() -> None:
 async def test_browser_tool_invoke_click_default_end_to_end() -> None:
     session = _session()
     tool = _BoundTool(session, config=BrowserToolConfig(enabled=True))
-    result = await tool.invoke(
-        {"action": "mouse_button"}, context={"agent_id": "agent-a"}
+    result = await _invoke_owned_mouse(tool,
+        {"action": "mouse_button"},
     )
     assert result.error is None, result.error
     assert session.page.mouse.downs == ["left"]

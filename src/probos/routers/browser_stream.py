@@ -10,33 +10,24 @@ Auth: ``require_crew_scope`` (AD-722b-1) with AD-706a query-param fallback so
 
 from __future__ import annotations
 
-import asyncio
-import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, StrictBool
+from starlette.types import Receive, Scope, Send
 
-from probos.events import EventType
-from probos.routers.auth import require_crew_scope
+from probos.routers.auth import require_browser_actor, require_crew_scope
 from probos.routers.deps import get_runtime
-
-logger = logging.getLogger(__name__)
+from probos.tools.browser.lifecycle import (
+    BrowserActor, BrowserLifecycleConflict, BrowserLifecycleResult,
+    BrowserSessionListing,
+)
 
 router = APIRouter(prefix="/api/browser", tags=["browser-stream"])
 
 _BOUNDARY = b"--frame"
-
-
-def _safe_emit(runtime: Any, event_type: EventType, payload: dict[str, Any]) -> None:
-    """Best-effort event emit (Tier-2 log-and-degrade)."""
-    try:
-        emit = getattr(runtime, "emit_event", None)
-        if callable(emit):
-            emit(event_type, payload)
-    except Exception:
-        logger.debug("AD-706a: emit_event failed for %s", event_type, exc_info=True)
 
 
 @router.get(
@@ -58,65 +49,40 @@ async def stream_browser_session(
     if browser_tool is None:
         raise HTTPException(status_code=404, detail="browser_tool_unavailable")
 
-    session = browser_tool.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="session_not_found")
-
-    acquired = await browser_tool.acquire_viewer_slot()
-    if not acquired:
+    try:
+        stream = await browser_tool.admit_stream(session_id)
+    except BrowserLifecycleConflict as exc:
+        reason = str(exc)
+        status = 404 if reason == "session_not_found" else (
+            503 if reason == "viewer_cap_exhausted" else 409
+        )
         raise HTTPException(
-            status_code=503,
-            detail="viewer_cap_exhausted",
-            headers={"Retry-After": "5"},
-        )
+            status_code=status, detail=reason,
+            headers={"Retry-After": "5"} if status == 503 else None,
+        ) from exc
 
-    cfg = getattr(browser_tool, "_config", None)
-    fps = int(getattr(cfg, "streaming_fps", 4) or 4)
-    quality = int(getattr(cfg, "streaming_jpeg_quality", 60) or 60)
-    frame_interval = 1.0 / max(1, fps)
-
-    async def _generate() -> Any:
-        _safe_emit(
-            runtime,
-            EventType.BROWSER_STREAM_OPENED,
-            {"session_id": session_id, "fps": fps, "quality": quality},
-        )
-        close_reason = "client_disconnect"
+    async def _generate() -> AsyncIterator[bytes]:
+        frames = browser_tool.stream_frames(session_id, stream=stream)
         try:
-            while True:
-                page = getattr(session, "page", None)
-                if page is None:
-                    close_reason = "page_unavailable"
-                    return
-                try:
-                    jpeg_bytes = await page.screenshot(type="jpeg", quality=quality)
-                except Exception as exc:  # noqa: BLE001 - Tier-2 log-and-degrade
-                    logger.warning(
-                        "AD-706a: screenshot failed for session %s: %s; closing stream",
-                        session_id,
-                        exc,
-                    )
-                    close_reason = "screenshot_failed"
-                    return
+            async for jpeg_bytes in frames:
                 yield (
                     _BOUNDARY
                     + b"\r\nContent-Type: image/jpeg\r\n\r\n"
                     + jpeg_bytes
                     + b"\r\n"
                 )
-                await asyncio.sleep(frame_interval)
-        except asyncio.CancelledError:
-            close_reason = "cancelled"
-            raise
         finally:
-            _safe_emit(
-                runtime,
-                EventType.BROWSER_STREAM_CLOSED,
-                {"session_id": session_id, "reason": close_reason},
-            )
-            await browser_tool.release_viewer_slot()
+            browser_tool.release_stream(stream)
+            await frames.aclose()
 
-    return StreamingResponse(
+    class _BrowserStreamingResponse(StreamingResponse):
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            try:
+                await super().__call__(scope, receive, send)
+            finally:
+                browser_tool.release_stream(stream)
+
+    return _BrowserStreamingResponse(
         _generate(),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
@@ -132,8 +98,11 @@ async def stream_browser_session(
     )
 
 
-@router.get("/sessions", dependencies=[Depends(require_crew_scope)])
-async def list_browser_sessions(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+@router.get("/sessions", response_model=BrowserSessionListing)
+async def list_browser_sessions(
+    runtime: Any = Depends(get_runtime),
+    actor: BrowserActor = Depends(require_browser_actor),
+) -> BrowserSessionListing:
     """AD-1052a: list active browser sessions for the Captain-watch picker.
 
     Honest-degrade: returns {"enabled": False, "sessions": []} when the
@@ -142,12 +111,51 @@ async def list_browser_sessions(runtime: Any = Depends(get_runtime)) -> dict[str
     """
     browser_tool = getattr(runtime, "browser_tool", None)
     if browser_tool is None:
-        return {"enabled": False, "sessions": [], "input_forwarding_enabled": False}
-    return {
-        "enabled": True,
-        "sessions": browser_tool.list_sessions(),
-        "input_forwarding_enabled": browser_tool.input_forwarding_enabled,
-    }
+        return BrowserSessionListing(False, [], False, actor.authority_basis)
+    return BrowserSessionListing(
+        True, await browser_tool.list_session_metadata(),
+        browser_tool.input_forwarding_enabled, actor.authority_basis,
+    )
+
+
+class BrowserLifecycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: StrictBool
+
+
+@router.post("/sessions/{session_id}/end", response_model=BrowserLifecycleResult)
+async def end_browser_session(
+    body: BrowserLifecycleRequest,
+    response: Response,
+    session_id: str = Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+    actor: BrowserActor = Depends(require_browser_actor),
+    runtime: Any = Depends(get_runtime),
+) -> BrowserLifecycleResult:
+    browser_tool = getattr(runtime, "browser_tool", None)
+    if browser_tool is None:
+        result = BrowserLifecycleResult("rejected", "browser_tool_unavailable", 404)
+    else:
+        result = await browser_tool.end_session(session_id, actor=actor, confirm=body.confirm)
+    response.status_code = result.status_code
+    return result
+
+
+@router.post("/sessions/{session_id}/handoff", response_model=BrowserLifecycleResult)
+async def handoff_browser_session(
+    body: BrowserLifecycleRequest,
+    response: Response,
+    session_id: str = Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+    actor: BrowserActor = Depends(require_browser_actor),
+    runtime: Any = Depends(get_runtime),
+) -> BrowserLifecycleResult:
+    browser_tool = getattr(runtime, "browser_tool", None)
+    if browser_tool is None:
+        result = BrowserLifecycleResult("rejected", "browser_tool_unavailable", 404)
+    else:
+        result = await browser_tool.hand_to_crew(session_id, actor=actor, confirm=body.confirm)
+    response.status_code = result.status_code
+    return result
 
 
 class BridgeConnectRequest(BaseModel):

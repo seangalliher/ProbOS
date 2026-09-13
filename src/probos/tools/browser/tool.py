@@ -27,7 +27,11 @@ import json
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from dataclasses import asdict, dataclass, field, replace
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import urlparse
 
 from probos.events import EventType
@@ -41,6 +45,12 @@ from probos.tools.browser.actions import (
     dispatch_action,
 )
 from probos.tools.browser.loop_host import shutdown_playwright_host
+from probos.tools.browser.lifecycle import (
+    BrowserActor, BrowserAuthorityBasis, BrowserAuthorization,
+    BrowserLifecycleConflict, BrowserLifecycleResult, BrowserLifecycleState,
+    BrowserOwnership, BrowserPendingWork, BrowserPendingWorkReader,
+    BrowserSessionMetadata, BrowserSessionSnapshot, BrowserStream, BrowserUse,
+)
 from probos.tools.browser.session import BrowserSession
 from probos.tools.browser.url_route_guard import file_redirect_escalations
 from probos.tools.protocol import ToolResult, ToolType
@@ -117,6 +127,23 @@ _AGENT_ACTIONS: tuple[str, ...] = (
 )
 _AGENT_ACTION_SET: frozenset[str] = frozenset(_AGENT_ACTIONS)
 
+_OperationResult = TypeVar("_OperationResult")
+
+
+@dataclass
+class _SessionLifecycle:
+    state: BrowserLifecycleState = BrowserLifecycleState.ACTIVE
+    published: bool = True
+    initialization_failed: bool = False
+    operations: int = 0
+    idle: asyncio.Event = field(default_factory=asyncio.Event)
+    ending: asyncio.Event = field(default_factory=asyncio.Event)
+    cleanup: asyncio.Task[BrowserLifecycleResult] | None = None
+    result: BrowserLifecycleResult | None = None
+
+    def __post_init__(self) -> None:
+        self.idle.set()
+
 
 class BrowserTool:
     """AD-706 Tool implementation. Tool Protocol structural subtype."""
@@ -128,6 +155,10 @@ class BrowserTool:
         audit_log: AuditLog | None = None,
         emit_event: Any | None = None,
         runtime: Any | None = None,
+        authorization: BrowserAuthorization | None = None,
+        ownership: BrowserOwnership | None = None,
+        pending_work: BrowserPendingWork | None = None,
+        pending_work_reader: BrowserPendingWorkReader | None = None,
     ) -> None:
         self._config = config
         self._audit_log = audit_log
@@ -153,6 +184,20 @@ class BrowserTool:
         # episode" latch). session_ids are uuid4 (never reused) so this set
         # never needs cleanup. Emits BROWSER_INPUT_FORWARDED once per session.
         self._driven_sessions: set[str] = set()
+        self._authorization = authorization
+        self._ownership = ownership
+        self._pending_work = pending_work
+        self._pending_work_reader = pending_work_reader
+        self._lifecycles: dict[str, _SessionLifecycle] = {}
+        self._creation_lock = asyncio.Lock()
+        self._stopping = False
+        self._operations: set[asyncio.Task[Any]] = set()
+        self._uses: dict[str, tuple[BrowserUse, set[str]]] = {}
+        self._use_scope: ContextVar[BrowserUse | None] = ContextVar(
+            "browser_use", default=None,
+        )
+        self._streams: dict[str, BrowserStream] = {}
+        self._selected_session_id: str | None = None
 
     # ------------------------------------------------------------------
     # Tool Protocol surface
@@ -258,6 +303,386 @@ class BrowserTool:
     # Public lifecycle
     # ------------------------------------------------------------------
 
+    def _lifecycle(self, session_id: str) -> _SessionLifecycle:
+        return self._lifecycles.setdefault(session_id, _SessionLifecycle())
+
+    def _active_session(self, session_id: str, *, allow_expired: bool = False) -> BrowserSession:
+        session = self._sessions.get(session_id)
+        if session is None or self._lifecycle(session_id).state != BrowserLifecycleState.ACTIVE:
+            raise BrowserLifecycleConflict("session_not_active")
+        if (session.is_expired() and not allow_expired) or self._stopping:
+            raise BrowserLifecycleConflict("session_expired_or_stopping")
+        return session
+
+    def _owner_id(self, session: BrowserSession) -> str | None:
+        owner = session.agent_id
+        if type(owner) is not str or not owner:
+            return None
+        if owner == "captain":
+            return owner
+        try:
+            if self._ownership is not None and self._ownership.is_known_crew_owner(owner) is True:
+                return owner
+        except Exception:
+            logger.warning("Browser owner lookup failed; destructive actions remain blocked")
+        return None
+
+    def _pending_count(
+        self, session_id: str, *, require_tracking: bool = True,
+        include_confirmations: bool = True,
+    ) -> int | None:
+        count = sum(session_id in entry[1] for entry in self._uses.values())
+        now = time.time()
+        if include_confirmations:
+            count += sum(
+                entry.get("session_id") == session_id
+                and now - float(entry.get("created_at", 0)) < self._config.confirmation_timeout_seconds
+                for entry in self._pending_confirmations.values()
+            )
+        if self._pending_work is None:
+            return None if require_tracking else count
+        try:
+            external = self._pending_work.pending_browser_work(session_id)
+        except Exception:
+            logger.warning("Browser work lookup failed; session ending remains blocked")
+            return None
+        if type(external) is not int or external < 0:
+            return None
+        return count + external
+
+    async def _read_pending_count(
+        self, session_id: str, *, require_tracking: bool = True,
+        include_confirmations: bool = True,
+    ) -> int | None:
+        if self._pending_work_reader is None:
+            return self._pending_count(
+                session_id, require_tracking=require_tracking,
+                include_confirmations=include_confirmations,
+            )
+        try:
+            external = await self._pending_work_reader.read_pending_browser_work(session_id)
+        except Exception:
+            logger.warning("Browser work enumeration failed; lifecycle mutation remains blocked")
+            return None
+        if type(external) is not int or external < 0:
+            return None
+        local = self._pending_count(
+            session_id, require_tracking=False, include_confirmations=include_confirmations,
+        )
+        return None if local is None else local + external
+
+    async def list_session_metadata(self) -> list[BrowserSessionMetadata]:
+        rows: list[BrowserSessionMetadata] = []
+        for session_id in tuple(self._sessions):
+            pending = await self._read_pending_count(session_id)
+            session = self._sessions.get(session_id)
+            snapshot = self.session_snapshot(session_id)
+            if session is None or snapshot is None:
+                continue
+            rows.append(BrowserSessionMetadata(
+                **asdict(replace(snapshot, pending_work=pending)),
+                agent_id=session.agent_id if type(session.agent_id) is str else "",
+                streaming_url=session.get_streaming_url(), last_url=self._sanitize_url(session.last_url),
+            ))
+        return rows
+
+    def session_snapshot(self, session_id: str) -> BrowserSessionSnapshot | None:
+        session = self._sessions.get(session_id)
+        if session is None:
+            record = self._lifecycles.get(session_id)
+            return record.result.session if record is not None and record.result else None
+        sharing = "not_shared"
+        if session_id == self._selected_session_id:
+            sharing = "explicit_crew_binding"
+        elif self._selected_session_id is None and session.agent_id == "captain":
+            sharing = "legacy_ambient_binding"
+        return BrowserSessionSnapshot(
+            session_id=session_id, state=self._lifecycle(session_id).state,
+            owner_id=self._owner_id(session), sharing_scope=sharing,
+            recording_state=getattr(session, "recording_state", "unknown"),
+            recording_scope="external_unmanaged" if session.is_connected else "session_owned",
+            pending_work=self._pending_count(session_id),
+            expires_at=getattr(session, "expires_at", None),
+            external_browser=session.is_connected,
+        )
+
+    def _authorize_lifecycle(
+        self, session_id: str, actor: BrowserActor | None, confirm: bool,
+    ) -> BrowserLifecycleResult | None:
+        if type(session_id) is not str or not session_id or len(session_id) > 128 or any(
+            not (character.isascii() and (character.isalnum() or character in "_-"))
+            for character in session_id
+        ):
+            return BrowserLifecycleResult("rejected", "invalid_session_id", 422)
+        if type(confirm) is not bool or confirm is not True:
+            return BrowserLifecycleResult("rejected", "confirmation_required", 422)
+        allowed = False
+        if type(actor) is BrowserActor and type(actor.authority_basis) is BrowserAuthorityBasis:
+            try:
+                allowed = self._authorization is not None and self._authorization.allows(actor) is True
+            except Exception:
+                logger.warning("Browser authorization failed; lifecycle mutation refused")
+        if not allowed:
+            return BrowserLifecycleResult("rejected", "insufficient_authority", 403)
+        snapshot = self.session_snapshot(session_id)
+        if snapshot is None:
+            return BrowserLifecycleResult("rejected", "session_not_found", 404)
+        if snapshot.owner_id is None:
+            return BrowserLifecycleResult("conflict", "unknown_ownership", 409, snapshot)
+        return None
+
+    async def end_session(
+        self, session_id: str, *, actor: BrowserActor | None, confirm: bool,
+    ) -> BrowserLifecycleResult:
+        refused = self._authorize_lifecycle(session_id, actor, confirm)
+        if refused is not None:
+            return refused
+        result = await self._end_owned_session(session_id, reason="operator_ended", require_tracking=True)
+        self._audit(
+            action="end_session", agent_id=actor.actor_id, session_id=session_id,
+            success=result.status_code == 200, tier=3, error=None if result.status_code == 200 else result.reason,
+            url=None,
+        )
+        return result
+
+    async def hand_to_crew(
+        self, session_id: str, *, actor: BrowserActor | None, confirm: bool,
+    ) -> BrowserLifecycleResult:
+        refused = self._authorize_lifecycle(session_id, actor, confirm)
+        if refused is not None:
+            return refused
+        snapshot = self.session_snapshot(session_id)
+        if snapshot.owner_id != "captain":
+            return BrowserLifecycleResult("rejected", "captain_session_required", 403, snapshot)
+        pending = await self._read_pending_count(session_id)
+        refused = self._authorize_lifecycle(session_id, actor, confirm)
+        if refused is not None:
+            return refused
+        snapshot = replace(self.session_snapshot(session_id), pending_work=pending)
+        try:
+            self._active_session(session_id)
+        except BrowserLifecycleConflict as exc:
+            return BrowserLifecycleResult("conflict", str(exc), 409, snapshot)
+        if pending is None or pending or (
+            self._selected_session_id != session_id and any(entry[1] for entry in self._uses.values())
+        ):
+            return BrowserLifecycleResult("conflict", "pending_or_unknown_work", 409, snapshot)
+        self._selected_session_id = session_id
+        self._audit(
+            action="hand_to_crew", agent_id=actor.actor_id, session_id=session_id,
+            success=True, tier=3, error=None, url=None,
+        )
+        return BrowserLifecycleResult("completed", "selected_for_crew", 200, replace(
+            self.session_snapshot(session_id), pending_work=pending,
+        ))
+
+    async def _end_owned_session(
+        self, session_id: str, *, reason: str, require_tracking: bool = False,
+    ) -> BrowserLifecycleResult:
+        record = self._lifecycles.get(session_id)
+        if record is not None:
+            if record.state == BrowserLifecycleState.ENDED:
+                return record.result
+            if record.cleanup is not None and not record.cleanup.done():
+                return await asyncio.shield(record.cleanup)
+        if session_id not in self._sessions:
+            return BrowserLifecycleResult("rejected", "session_not_found", 404)
+        if record is not None and record.state == BrowserLifecycleState.CREATING:
+            return BrowserLifecycleResult("conflict", "session_creating", 409, self.session_snapshot(session_id))
+        unpublished_failure = (
+            not require_tracking and record is not None
+            and not record.published and record.initialization_failed
+        )
+        if not unpublished_failure:
+            pending = await self._read_pending_count(
+                session_id, require_tracking=require_tracking,
+                include_confirmations=reason != "shutdown",
+            )
+            record = self._lifecycles.get(session_id)
+            if record is not None:
+                if record.state == BrowserLifecycleState.ENDED:
+                    return record.result
+                if record.cleanup is not None and not record.cleanup.done():
+                    return await asyncio.shield(record.cleanup)
+            if require_tracking and self._owner_id(self._sessions[session_id]) is None:
+                return BrowserLifecycleResult("conflict", "unknown_ownership", 409, self.session_snapshot(session_id))
+            if pending is None or pending:
+                return BrowserLifecycleResult("conflict", "pending_or_unknown_work", 409, replace(
+                    self.session_snapshot(session_id), pending_work=pending,
+                ))
+        record = self._lifecycle(session_id)
+        record.state = BrowserLifecycleState.ENDING
+        record.ending.set()
+        record.cleanup = asyncio.create_task(self._finish_ending(session_id, reason))
+        return await asyncio.shield(record.cleanup)
+
+    async def _finish_ending(self, session_id: str, reason: str) -> BrowserLifecycleResult:
+        record = self._lifecycle(session_id)
+        for viewer_id, stream in list(self._streams.items()):
+            if stream.session_id == session_id:
+                self._release_stream(viewer_id)
+        await record.idle.wait()
+        session = self._sessions[session_id]
+        try:
+            if isinstance(session, BrowserSession):
+                completed = await session.close_resources()
+            else:
+                await session.stop()
+                completed = True
+            if not completed:
+                raise RuntimeError("resource_cleanup_incomplete")
+        except Exception:
+            record.state = BrowserLifecycleState.CLEANUP_FAILED
+            self._release_claim(session_id)
+            logger.warning("Browser session %s cleanup incomplete; identity fenced and retry available", session_id)
+            return BrowserLifecycleResult("failed", "cleanup_failed", 409, self.session_snapshot(session_id))
+        record.state = BrowserLifecycleState.ENDED
+        self._release_claim(session_id)
+        self._driven_sessions.discard(session_id)
+        for token, entry in list(self._pending_confirmations.items()):
+            if entry.get("session_id") == session_id:
+                self._pending_confirmations.pop(token, None)
+        snapshot = replace(self.session_snapshot(session_id), pending_work=0)
+        record.result = BrowserLifecycleResult("completed", reason, 200, snapshot)
+        self._sessions.pop(session_id)
+        self._safe_emit(EventType.BROWSER_SESSION_CLOSED, {"session_id": session_id, "reason": reason})
+        logger.info("Browser session %s ended (%s); unrelated sessions retained", session_id, reason)
+        return record.result
+
+    async def _run_operation(
+        self, session_id: str, operation: Callable[[], Awaitable[_OperationResult]],
+        *, allow_expired: bool = False,
+    ) -> _OperationResult:
+        self._active_session(session_id, allow_expired=allow_expired)
+        record = self._lifecycle(session_id)
+        record.operations += 1
+        record.idle.clear()
+
+        async def run() -> _OperationResult:
+            try:
+                return await operation()
+            finally:
+                record.operations -= 1
+                if not record.operations:
+                    record.idle.set()
+
+        task = asyncio.create_task(run())
+        self._operations.add(task)
+        task.add_done_callback(self._operation_done)
+        return await asyncio.shield(task)
+
+    def _operation_done(self, task: asyncio.Task[Any]) -> None:
+        self._operations.discard(task)
+        if not task.cancelled():
+            task.exception()
+
+    @asynccontextmanager
+    async def reserve_use(
+        self, session_id: str | None = None, *, agent_id: str | None = None,
+    ) -> AsyncIterator[BrowserUse]:
+        selected = session_id if session_id is not None else (
+            self._selected_session_id or self.captain_session_id
+        )
+        if selected is not None:
+            try:
+                self._active_session(selected)
+            except BrowserLifecycleConflict:
+                if session_id is not None:
+                    raise
+                selected = None
+        if selected is None and agent_id:
+            own_id = self._agent_sessions.get(agent_id)
+            if own_id is not None:
+                try:
+                    self._active_session(own_id)
+                except BrowserLifecycleConflict:
+                    pass
+                else:
+                    selected = own_id
+        page_url = self._sanitize_url(self._sessions[selected].last_url) if selected else ""
+        use = BrowserUse(uuid.uuid4().hex, self.session_snapshot(selected) if selected else None, page_url)
+        self._uses[use.scope_id] = (use, {selected} if selected else set())
+        token = self._use_scope.set(use)
+        try:
+            yield use
+        finally:
+            self._use_scope.reset(token)
+            self._uses.pop(use.scope_id, None)
+
+    def is_use_active(self, use: BrowserUse) -> bool:
+        entry = self._uses.get(use.scope_id) if type(use) is BrowserUse else None
+        return entry is not None and entry[0] is use
+
+    def _register_use(self, session_id: str) -> None:
+        use = self._use_scope.get()
+        if use is None:
+            return
+        if not self.is_use_active(use):
+            raise BrowserLifecycleConflict("browser_use_scope_released")
+        self._uses[use.scope_id][1].add(session_id)
+
+    def _release_stream(self, viewer_id: str) -> None:
+        stream = self._streams.pop(viewer_id, None)
+        if stream is not None:
+            self._active_viewers -= 1
+            self._safe_emit(EventType.BROWSER_STREAM_CLOSED, {"session_id": stream.session_id, "reason": "viewer_detached"})
+
+    async def admit_stream(self, session_id: str) -> BrowserStream:
+        if session_id not in self._sessions and session_id not in self._lifecycles:
+            raise BrowserLifecycleConflict("session_not_found")
+        self._active_session(session_id)
+        if not self._config.streaming_enabled:
+            raise BrowserLifecycleConflict("streaming_disabled")
+        if not await self.acquire_viewer_slot():
+            raise BrowserLifecycleConflict("viewer_cap_exhausted")
+        stream = BrowserStream(uuid.uuid4().hex, session_id)
+        self._streams[stream.viewer_id] = stream
+        try:
+            self._active_session(session_id)
+            self._safe_emit(EventType.BROWSER_STREAM_OPENED, {
+                "session_id": session_id, "fps": self._config.streaming_fps,
+                "quality": self._config.streaming_jpeg_quality,
+            })
+        except BaseException:
+            self.release_stream(stream)
+            raise
+        return stream
+
+    def release_stream(self, stream: BrowserStream) -> None:
+        if type(stream) is BrowserStream and self._streams.get(stream.viewer_id) is stream:
+            self._release_stream(stream.viewer_id)
+
+    async def stream_frames(
+        self, session_id: str, *, stream: BrowserStream | None = None,
+    ) -> AsyncIterator[bytes]:
+        admitted = stream if stream is not None else await self.admit_stream(session_id)
+        if type(admitted) is not BrowserStream or admitted.session_id != session_id:
+            raise BrowserLifecycleConflict("invalid_stream")
+        try:
+            while self._streams.get(admitted.viewer_id) is admitted:
+                try:
+                    session = self._active_session(session_id)
+                    frame = await self._run_operation(
+                        session_id, lambda: session.page.screenshot(
+                            type="jpeg", quality=self._config.streaming_jpeg_quality,
+                        ),
+                    )
+                except Exception:
+                    logger.warning("Browser screenshot failed for %s; detaching viewer only", session_id)
+                    return
+                if self._streams.get(admitted.viewer_id) is not admitted:
+                    return
+                yield frame
+                try:
+                    await asyncio.wait_for(
+                        self._lifecycle(session_id).ending.wait(),
+                        timeout=1.0 / max(1, self._config.streaming_fps),
+                    )
+                except TimeoutError:
+                    pass
+        finally:
+            self.release_stream(admitted)
+
     async def stop(self) -> None:
         """Stop the reaper task and close all live sessions."""
         if self._reaper_task is not None:
@@ -271,13 +696,12 @@ class BrowserTool:
             except (asyncio.CancelledError, Exception):
                 pass
             self._reaper_task = None
-        for sid in list(self._sessions.keys()):
-            session = self._sessions.pop(sid, None)
-            if session is not None:
-                try:
-                    await session.stop()
-                except Exception:
-                    logger.debug("AD-706: session %s stop failed", sid, exc_info=True)
+        self._stopping = True
+        async with self._creation_lock:
+            for sid in list(self._sessions):
+                result = await self._end_owned_session(sid, reason="shutdown")
+                if result.status_code != 200:
+                    raise BrowserLifecycleConflict(result.reason)
         # BF-749: no session survives shutdown, so no claim may either.
         self._agent_sessions.clear()
         # BF-695: every session is closed, so the Playwright host thread (if one
@@ -287,7 +711,7 @@ class BrowserTool:
         await shutdown_playwright_host()
 
     async def reap_expired(self) -> int:
-        """One-shot expiry sweep — closes any expired sessions. Returns count.
+        """Sweep eligible expiry and failed initialization; count completed closures.
 
         Public so tests can drive the reaper deterministically without
         starting the background task.
@@ -295,18 +719,15 @@ class BrowserTool:
         closed = 0
         for sid in list(self._sessions.keys()):
             session = self._sessions.get(sid)
-            if session is not None and session.is_expired():
-                try:
-                    await session.stop()
-                except Exception:
-                    logger.debug("AD-706: session %s stop failed", sid, exc_info=True)
-                self._sessions.pop(sid, None)
-                self._release_claim(sid)
-                self._safe_emit(
-                    EventType.BROWSER_SESSION_CLOSED,
-                    {"session_id": sid, "reason": "expired"},
+            record = self._lifecycles.get(sid)
+            unpublished_failure = (
+                record is not None and not record.published and record.initialization_failed
+            )
+            if session is not None and (unpublished_failure or session.is_expired()):
+                result = await self._end_owned_session(
+                    sid, reason="initialization_failed" if unpublished_failure else "expired",
                 )
-                closed += 1
+                closed += result.status_code == 200
         # Opportunistically prune expired confirmation tokens (D6 #5).
         now = time.time()
         ttl = float(self._config.confirmation_timeout_seconds)
@@ -362,7 +783,10 @@ class BrowserTool:
         if not session_id_param:
             mine = self._agent_sessions.get(agent_id or "")
             if mine and mine in self._sessions:
-                session_id_param = mine
+                if self._sessions[mine].is_expired():
+                    await self._end_owned_session(mine, reason="expired")
+                else:
+                    session_id_param = mine
 
         if action not in _AGENT_ACTION_SET:
             elapsed_ms = (time.monotonic() - t0) * 1000.0
@@ -381,7 +805,26 @@ class BrowserTool:
             )
 
         # 1. Resolve or create session.
-        session = await self._get_or_create_session(session_id_param, agent_id)
+        try:
+            use = self._use_scope.get()
+            if use is not None and not self.is_use_active(use):
+                raise BrowserLifecycleConflict("browser_use_scope_released")
+            async with self._creation_lock:
+                newly_created = session_id_param not in self._sessions
+                session = await self._create_session(session_id_param, agent_id)
+            self._register_use(session.session_id)
+            return await self._run_operation(
+                session.session_id,
+                lambda: self._invoke_session(params, context, session, t0, action, agent_id),
+                allow_expired=newly_created,
+            )
+        except BrowserLifecycleConflict as exc:
+            return ToolResult(error=str(exc), metadata={"session_id": session_id_param})
+
+    async def _invoke_session(
+        self, params: dict[str, Any], context: dict[str, Any] | None,
+        session: BrowserSession, t0: float, action: str, agent_id: str,
+    ) -> ToolResult:
 
         # 2. Domain allow/denylist check (only meaningful for navigation).
         if action == "goto":
@@ -651,23 +1094,20 @@ class BrowserTool:
         session_id: str | None,
         agent_id: str,
     ) -> BrowserSession:
+        async with self._creation_lock:
+            return await self._create_session(session_id, agent_id)
+
+    async def _create_session(self, session_id: str | None, agent_id: str) -> BrowserSession:
+        if self._stopping:
+            raise BrowserLifecycleConflict("browser_stopping")
+        if session_id in self._lifecycles and self._lifecycles[session_id].state != BrowserLifecycleState.ACTIVE:
+            raise BrowserLifecycleConflict("session_not_active")
         if session_id and session_id in self._sessions:
             existing = self._sessions[session_id]
             if not existing.is_expired():
                 return existing
-            # Expired: close + drop, fall through to create fresh.
-            try:
-                await existing.stop()
-            except Exception:
-                logger.debug("AD-706: stop expired session failed", exc_info=True)
-            self._sessions.pop(session_id, None)
-            # BF-749: an expired session must not stay claimable, or the next
-            # omitted-session_id call resolves to a dead id and lands here again.
-            self._release_claim(session_id)
-            self._safe_emit(
-                EventType.BROWSER_SESSION_CLOSED,
-                {"session_id": session_id, "reason": "expired"},
-            )
+            await self._end_owned_session(session_id, reason="expired")
+            raise BrowserLifecycleConflict("session_expired")
 
         new_id = session_id or uuid.uuid4().hex
         session = self._session_factory(
@@ -681,8 +1121,20 @@ class BrowserTool:
             # to the Captain's own browser and is deliberately unguarded.
             runtime=self._runtime,
         )
-        await session.start()
         self._sessions[new_id] = session
+        record = _SessionLifecycle(state=BrowserLifecycleState.CREATING, published=False)
+        self._lifecycles[new_id] = record
+        try:
+            await session.start()
+        except BaseException:
+            record.initialization_failed = (
+                not record.published and record.state == BrowserLifecycleState.CREATING
+            )
+            record.state = BrowserLifecycleState.CLEANUP_FAILED
+            await self._end_owned_session(new_id, reason="start_failed")
+            raise
+        record.published = True
+        record.state = BrowserLifecycleState.ACTIVE
         # BF-749: claim it for this agent so its next omitted-session_id call
         # continues here. Keyed per agent -- two agents never share a browser.
         if agent_id:
@@ -725,6 +1177,14 @@ class BrowserTool:
     async def connect_bridge_session(
         self, endpoint: str, *, agent_id: str, confirm: bool,
     ) -> dict[str, Any]:
+        async with self._creation_lock:
+            if self._stopping:
+                return {"connected": False, "reason": "browser_stopping"}
+            return await self._connect_bridge_session(endpoint, agent_id=agent_id, confirm=confirm)
+
+    async def _connect_bridge_session(
+        self, endpoint: str, *, agent_id: str, confirm: bool,
+    ) -> dict[str, Any]:
         """AD-1052b: consent-gated, allowlist-validated CDP bridge connect.
 
         Honest-degrade (returns {"connected": False, "reason": ...}) when bridge
@@ -747,14 +1207,30 @@ class BrowserTool:
         session = self._session_factory(
             session_id=new_id, config=self._config, agent_id=agent_id, emit_event=self._emit_event,
         )
+        self._sessions[new_id] = session
+        record = _SessionLifecycle(state=BrowserLifecycleState.CREATING, published=False)
+        self._lifecycles[new_id] = record
         try:
             await session.connect(endpoint)
         except Exception:
+            record.initialization_failed = (
+                not record.published and record.state == BrowserLifecycleState.CREATING
+            )
+            record.state = BrowserLifecycleState.CLEANUP_FAILED
+            await self._end_owned_session(new_id, reason="connect_failed")
             logger.warning("AD-1052b: bridge connect to %s failed", endpoint, exc_info=True)
             self._safe_emit(EventType.BROWSER_BRIDGE_REFUSED, {"reason": "unreachable", "host": host})
             return {"connected": False, "reason": f"Could not connect to {endpoint}"}
+        except BaseException:
+            record.initialization_failed = (
+                not record.published and record.state == BrowserLifecycleState.CREATING
+            )
+            record.state = BrowserLifecycleState.CLEANUP_FAILED
+            await self._end_owned_session(new_id, reason="connect_cancelled")
+            raise
 
-        self._sessions[new_id] = session
+        record.published = True
+        record.state = BrowserLifecycleState.ACTIVE
         # BF-749: deliberately NOT claimed. A bridged session is the Captain's
         # own browser attached over CDP with explicit consent; the id is
         # returned so the caller can name it. Claiming it would make every
@@ -777,25 +1253,7 @@ class BrowserTool:
         a discarded session is indistinguishable from an expired one to any
         BROWSER_SESSION_CLOSED consumer.
         """
-        session = self._sessions.get(session_id)
-        if session is None:
-            return
-        try:
-            await session.stop()
-        except Exception:
-            logger.debug(
-                "AD-1161: stop of discarded session %s failed; dropping it anyway",
-                session_id,
-                exc_info=True,
-            )
-        self._sessions.pop(session_id, None)
-        # BF-749: release any agent's claim, or its next omitted-session_id call
-        # resolves to a session that no longer exists.
-        self._release_claim(session_id)
-        self._safe_emit(
-            EventType.BROWSER_SESSION_CLOSED,
-            {"session_id": session_id, "reason": reason},
-        )
+        await self._end_owned_session(session_id, reason=reason)
 
     @property
     def captain_session(self) -> dict[str, Any] | None:
@@ -814,7 +1272,12 @@ class BrowserTool:
         captain_rows = [
             row for row in self.list_sessions()
             if row.get("agent_id") == "captain"
+            and row.get("state") == BrowserLifecycleState.ACTIVE
+            and type(row.get("expires_at")) in (int, float)
+            and row["expires_at"] > time.time()
         ]
+        if self._selected_session_id is not None:
+            return next((row for row in captain_rows if row.get("session_id") == self._selected_session_id), None)
         if not captain_rows:
             return None
         if len(captain_rows) > 1:
@@ -946,14 +1409,20 @@ class BrowserTool:
         if session is None:
             self._safe_emit(EventType.BROWSER_INPUT_REFUSED, {"reason": "session_not_found", "session_id": session_id})
             return {"forwarded": False, "reason": "Session not found."}
-        result = await session.forward_input(event)
+        if type(event) is not dict:
+            return {"forwarded": False, "reason": "invalid_input"}
+        try:
+            result = await self._run_operation(session_id, lambda: session.forward_input(event))
+        except Exception:
+            self._safe_emit(EventType.BROWSER_INPUT_REFUSED, {"reason": "session_unavailable", "session_id": session_id})
+            return {"forwarded": False, "reason": "session_unavailable"}
         if not result.get("forwarded"):
             self._safe_emit(
                 EventType.BROWSER_INPUT_REFUSED,
                 {"reason": result.get("reason", "rejected"), "session_id": session_id},
             )
             return result
-        if session_id not in self._driven_sessions:
+        if session_id in self._sessions and session_id not in self._driven_sessions:
             self._driven_sessions.add(session_id)
             self._safe_emit(
                 EventType.BROWSER_INPUT_FORWARDED,
@@ -979,6 +1448,7 @@ class BrowserTool:
                 "agent_id": s.agent_id,
                 "streaming_url": s.get_streaming_url(),
                 "last_url": s.last_url,
+                **asdict(self.session_snapshot(s.session_id)),
             }
             for s in self._sessions.values()
         ]
@@ -1207,7 +1677,9 @@ class BrowserTool:
         """Drop query + fragment from a URL to avoid leaking tokens (D5)."""
         try:
             parsed = urlparse(url)
-            return parsed._replace(query="", fragment="").geturl()
+            return parsed._replace(
+                netloc=parsed.netloc.rsplit("@", 1)[-1], query="", fragment="",
+            ).geturl()
         except Exception:
             return ""
 

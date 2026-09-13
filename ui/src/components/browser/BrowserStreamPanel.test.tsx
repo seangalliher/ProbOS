@@ -6,7 +6,7 @@
  * absent (DD-5), the backend-mirrored key allowlist, and the HXI no-emoji rule.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import { BrowserStreamPanel, _normalizePointer, _FORWARD_KEY_ALLOWLIST } from './BrowserStreamPanel';
 
 const EMOJI = /\p{Extended_Pictographic}/u;
@@ -37,6 +37,34 @@ describe('AD-1052c _normalizePointer', () => {
 });
 
 describe('AD-1052c BrowserStreamPanel drive capture', () => {
+  it('releases capture on stream failure and requests an explicit parent reconnect', () => {
+    const reconnect = vi.fn();
+    const failure = vi.fn();
+    render(<BrowserStreamPanel sessionId="first" streamingUrl="/first" driveEnabled onForwardInput={vi.fn()} onFailure={failure} onReconnect={reconnect} />);
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('data-driving')).toBe('true');
+    fireEvent.error(screen.getByTestId('browser-stream-panel-img'));
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+    expect(failure).toHaveBeenCalledOnce();
+    expect(reconnect).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect viewer' }));
+    expect(reconnect).toHaveBeenCalledOnce();
+  });
+
+  it('shows rejected input and fences an old rejection after session replacement', async () => {
+    let rejectInput!: (reason: Error) => void;
+    const input = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectInput = reject; }));
+    const view = render(<BrowserStreamPanel sessionId="first" streamingUrl="/first" driveEnabled onForwardInput={input} />);
+    fireEvent.keyDown(screen.getByTestId('browser-stream-panel-img'), { key: 'a' });
+    expect(input).toHaveBeenCalledOnce();
+    view.rerender(<BrowserStreamPanel sessionId="second" streamingUrl="/second" driveEnabled onForwardInput={input} />);
+    await act(async () => { rejectInput(new Error('old')); });
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.keyDown(screen.getByTestId('browser-stream-panel-img'), { key: 'b' });
+    await act(async () => { rejectInput(new Error('current')); });
+    expect(screen.getByRole('alert').textContent).toContain('Input failed');
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+  });
+
   it('without driveEnabled the <img> has no tabIndex / data-driving and never forwards (DD-5)', () => {
     const onForwardInput = vi.fn();
     render(<BrowserStreamPanel sessionId="s1" streamingUrl="/api/browser/sessions/s1/stream" onForwardInput={onForwardInput} />);

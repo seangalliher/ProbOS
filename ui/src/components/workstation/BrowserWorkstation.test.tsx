@@ -7,13 +7,15 @@
  * empty/honest-degrade state, data-testids, and the HXI no-emoji guard.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { BrowserWorkstation, _normalizeUrl } from './BrowserWorkstation';
 
 const EMOJI = /\p{Extended_Pictographic}/u;
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('AD-1052 BrowserWorkstation', () => {
@@ -91,7 +93,7 @@ describe('AD-1052 BrowserWorkstation', () => {
 
 type _Sessions = {
   enabled: boolean;
-  sessions: { session_id: string; agent_id: string; streaming_url: string | null; last_url: string }[];
+  sessions: { session_id: string; agent_id: string; streaming_url: string | null; last_url: string; state?: 'active' }[];
   input_forwarding_enabled?: boolean;
 };
 
@@ -255,7 +257,7 @@ describe('AD-1052b BrowserWorkstation bridge mode', () => {
     const connectBridge = vi.fn(async (): Promise<_Bridge> => ({
       connected: true, session_id: 's9', streaming_url: '/api/browser/sessions/s9/stream',
     }));
-    render(<BrowserWorkstation typeId="browser" connectBridge={connectBridge} />);
+    render(<BrowserWorkstation typeId="browser" connectBridge={connectBridge} fetchSessions={async () => _listing([_session('s9', { external_browser: true })])} />);
     fireEvent.click(screen.getByTestId('browser-mode-bridge'));
     fireEvent.click(screen.getByTestId('browser-bridge-connect'));
     const img = await screen.findByTestId('browser-stream-panel-img');
@@ -269,7 +271,7 @@ describe('AD-1052b BrowserWorkstation bridge mode', () => {
     const connectBridge = vi.fn(async (): Promise<_Bridge> => ({
       connected: true, session_id: 's9', streaming_url: null,
     }));
-    render(<BrowserWorkstation typeId="browser" connectBridge={connectBridge} />);
+    render(<BrowserWorkstation typeId="browser" connectBridge={connectBridge} fetchSessions={async () => _listing([_session('s9', { external_browser: true, streaming_url: null })])} />);
     fireEvent.click(screen.getByTestId('browser-mode-bridge'));
     fireEvent.click(screen.getByTestId('browser-bridge-connect'));
     await screen.findByTestId('browser-stream-panel-unavailable');
@@ -327,12 +329,14 @@ describe('AD-1052c BrowserWorkstation drive toggle', () => {
     const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({
       enabled: true,
       input_forwarding_enabled: true,
-      sessions: [{ session_id: 's1', agent_id: 'a1', streaming_url: '/api/browser/sessions/s1/stream', last_url: 'https://x.test' }],
+      sessions: [{ session_id: 's1', agent_id: 'a1', streaming_url: '/api/browser/sessions/s1/stream', last_url: 'https://x.test', state: 'active' }],
     }));
     render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />);
     fireEvent.click(screen.getByTestId('browser-mode-watch'));
     const drive = await screen.findByTestId('browser-watch-drive');
     expect(drive.getAttribute('aria-pressed')).toBe('false');
+    expect((drive as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(await screen.findByTestId('browser-watch-session-s1'));
     fireEvent.click(drive);
     expect(screen.getByTestId('browser-watch-drive').getAttribute('aria-pressed')).toBe('true');
   });
@@ -341,7 +345,7 @@ describe('AD-1052c BrowserWorkstation drive toggle', () => {
     const fetchSessions = vi.fn(async (): Promise<_Sessions> => ({
       enabled: true,
       input_forwarding_enabled: true,
-      sessions: [{ session_id: 's1', agent_id: 'a1', streaming_url: '/api/browser/sessions/s1/stream', last_url: 'https://x.test' }],
+      sessions: [{ session_id: 's1', agent_id: 'a1', streaming_url: '/api/browser/sessions/s1/stream', last_url: 'https://x.test', state: 'active' }],
     }));
     const forwardInput = vi.fn(async () => ({ forwarded: true }));
     render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} forwardInput={forwardInput} />);
@@ -365,6 +369,392 @@ describe('AD-1052c BrowserWorkstation drive toggle', () => {
     await screen.findByTestId('browser-watch-empty');
     expect(screen.getByTestId('browser-watch-drive')).toBeTruthy();
     expect(EMOJI.test(container.textContent ?? '')).toBe(false);
+  });
+});
+
+type _LifecycleProps = Parameters<typeof BrowserWorkstation>[0];
+type _LifecycleListing = Awaited<ReturnType<NonNullable<_LifecycleProps['fetchSessions']>>>;
+type _LifecycleRow = _LifecycleListing['sessions'][number];
+type _LifecycleResult = Awaited<ReturnType<NonNullable<_LifecycleProps['changeLifecycle']>>>;
+
+function _session(sessionId: string, overrides: Partial<_LifecycleRow> = {}): _LifecycleRow {
+  return {
+    session_id: sessionId, agent_id: 'captain', owner_id: 'captain', state: 'active',
+    streaming_url: `/api/browser/sessions/${sessionId}/stream`, last_url: 'http://127.0.0.1/',
+    sharing_scope: 'legacy_ambient_binding', recording_state: 'recording', recording_scope: 'session_owned',
+    pending_work: 0, expires_at: 4102444800, external_browser: false, ...overrides,
+  };
+}
+
+function _listing(sessions = [_session('first'), _session('second')]): _LifecycleListing {
+  return { enabled: true, input_forwarding_enabled: true, authority_basis: 'shared_crew_scope', sessions };
+}
+
+function _deferred<Value>(): { promise: Promise<Value>; resolve: (value: Value) => void; reject: (error: Error) => void } {
+  let resolve!: (value: Value) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<Value>((accept, refuse) => { resolve = accept; reject = refuse; });
+  return { promise, resolve, reject };
+}
+
+async function _mountSelected(props: Partial<_LifecycleProps> = {}): Promise<ReturnType<typeof render>> {
+  const view = render(<BrowserWorkstation typeId="browser" fetchSessions={async () => _listing()} {...props} />);
+  fireEvent.click(await screen.findByTestId('browser-watch-session-first'));
+  expect(screen.getByTestId('browser-stream-panel-img').getAttribute('src')).toContain('/first/stream');
+  return view;
+}
+
+describe('Selected browser lifecycle', () => {
+  it('Release control and Stop watching affect only this viewer and never request end', async () => {
+    const changeLifecycle = vi.fn();
+    const forwardInput = vi.fn(async () => ({ forwarded: true }));
+    const view = await _mountSelected({ changeLifecycle, forwardInput });
+    fireEvent.click(screen.getByRole('button', { name: 'Drive the browser' }));
+    fireEvent.keyDown(screen.getByTestId('browser-stream-panel-img'), { key: 'a' });
+    expect(forwardInput).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Release control' }));
+    fireEvent.keyDown(screen.getByTestId('browser-stream-panel-img'), { key: 'b' });
+    expect(forwardInput).toHaveBeenCalledOnce();
+    expect(screen.getByTestId('browser-stream-panel-img')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop watching' }));
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+    expect(screen.getByText('Not watching. The browser session remains open.')).toBeTruthy();
+    view.unmount();
+    expect(changeLifecycle).not.toHaveBeenCalled();
+  });
+
+  it('requires selected metadata and explicit confirmation, supports cancellation and preserves the other session', async () => {
+    const request = _deferred<_LifecycleResult>();
+    const changeLifecycle = vi.fn(() => request.promise);
+    await _mountSelected({ changeLifecycle });
+    fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+    const dialog = screen.getByRole('dialog', { name: 'End selected session' });
+    expect(dialog.textContent).toContain('first');
+    expect(dialog.textContent).toContain('captain');
+    expect(dialog.textContent).toContain('legacy ambient binding');
+    expect(dialog.textContent).toContain('recording');
+    expect(dialog.textContent).toContain('Pending browser work');
+    expect(dialog.textContent).toContain('2100-01-01T00:00:00.000Z');
+    expect(dialog.textContent).toContain('shared crew scope');
+    expect(document.activeElement).toBe(dialog);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(changeLifecycle).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm end session' }));
+    expect(changeLifecycle).toHaveBeenCalledWith('first', 'end');
+    expect(screen.getByText(/Session request pending/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Drive the browser' }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => request.resolve({ outcome: 'completed', reason: 'operator_ended', status_code: 200, session: _session('first', { state: 'ended' }) }));
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+    expect(screen.getByText('Session ended. Recordings retained.')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('browser-watch-session-second'));
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('src')).toContain('/second/stream');
+  });
+
+  it('posts exact confirmation without an actor or ownership payload', async () => {
+    const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      if (options?.method === 'POST') return { ok: true, status: 200, json: async () => ({ outcome: 'completed', reason: 'operator_ended', session: _session('first', { state: 'ended' }) }) };
+      expect(url).toBe('/api/browser/sessions');
+      return { ok: true, status: 200, json: async () => _listing() };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<BrowserWorkstation typeId="browser" />);
+    fireEvent.click(await screen.findByTestId('browser-watch-session-first'));
+    fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm end session' }));
+    await screen.findByText('Session ended. Recordings retained.');
+    const posts = fetchMock.mock.calls.filter((call) => call[1]?.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0][0]).toBe('/api/browser/sessions/first/end');
+    expect(JSON.parse(posts[0][1]?.body as string)).toEqual({ confirm: true });
+  });
+
+  it('hands the exact session to crew with consent and releases local capture without ending', async () => {
+    const changeLifecycle = vi.fn(async () => ({ outcome: 'completed', reason: 'selected_for_crew', status_code: 200, session: _session('first', { sharing_scope: 'explicit_crew_binding' }) }));
+    await _mountSelected({ changeLifecycle });
+    fireEvent.click(screen.getByRole('button', { name: 'Drive the browser' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Hand to crew' }));
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('data-driving')).toBeNull();
+    expect(screen.getByRole('dialog').textContent).toContain('does not change ownership or permissions');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm hand to crew' }));
+    await screen.findByText(/No crew job started/);
+    expect(changeLifecycle).toHaveBeenCalledExactlyOnceWith('first', 'handoff');
+    expect(screen.getByTestId('browser-session-metadata').textContent).toContain('explicit crew binding');
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('data-driving')).toBeNull();
+  });
+
+  it.each([
+    [{ owner_id: null }, 'Ownership is unknown.'],
+    [{ pending_work: null }, 'Pending browser work is unknown.'],
+    [{ pending_work: 2 }, 'Pending browser work must settle before retrying.'],
+    [{ state: 'ending' }, 'Session is not available for this action.'],
+  ] as [Partial<_LifecycleRow>, string][])('blocks unsafe confirmation for %j', async (overrides, reason) => {
+    const changeLifecycle = vi.fn();
+    render(<BrowserWorkstation typeId="browser" fetchSessions={async () => _listing([_session('first', overrides)])} changeLifecycle={changeLifecycle} />);
+    fireEvent.click(await screen.findByTestId('browser-watch-session-first'));
+    expect(screen.getByText(reason)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'End session' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+    expect(changeLifecycle).not.toHaveBeenCalled();
+  });
+
+  it.each(['conflict', 'failed', 'rejected'])('keeps a %s result visible and refreshes pending work for retry', async (outcome) => {
+    const changeLifecycle = vi.fn(async () => ({ outcome, reason: 'pending_or_unknown_work', status_code: 409, session: _session('first', { pending_work: 1 }) }));
+    await _mountSelected({ changeLifecycle });
+    fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm end session' }));
+    expect(await screen.findByText(new RegExp(`${outcome}: pending or unknown work`))).toBeTruthy();
+    expect(screen.queryByText('Session ended. Recordings retained.')).toBeNull();
+    expect((screen.getByRole('button', { name: 'End session' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh sessions' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'End session' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByTestId('browser-watch-session-first').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('shows lifecycle transport failure without claiming the session ended', async () => {
+    await _mountSelected({ changeLifecycle: async () => { throw new Error('offline'); } });
+    fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm end session' }));
+    await screen.findByText('Session request failed. Refresh session details before retrying.');
+    expect(screen.getByTestId('browser-stream-panel-img')).toBeTruthy();
+  });
+
+  it.each(['end', 'handoff'] as const)('ignores a stale %s response after a new selection', async (action) => {
+    const request = _deferred<_LifecycleResult>();
+    const changeLifecycle = vi.fn(() => request.promise);
+    await _mountSelected({ changeLifecycle });
+    fireEvent.click(screen.getByRole('button', { name: action === 'end' ? 'End session' : 'Hand to crew' }));
+    fireEvent.click(screen.getByRole('button', { name: action === 'end' ? 'Confirm end session' : 'Confirm hand to crew' }));
+    expect(changeLifecycle).toHaveBeenCalledWith('first', action);
+    fireEvent.click(screen.getByTestId('browser-watch-session-second'));
+    await act(async () => request.resolve({ outcome: 'completed', reason: 'done', status_code: 200, session: _session('first', { state: 'ended' }) }));
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('src')).toContain('/second/stream');
+    expect(screen.queryByText(/Session ended. Recordings retained/)).toBeNull();
+    expect(screen.queryByText(/No crew job started/)).toBeNull();
+    expect(screen.getByTestId('browser-session-metadata').textContent).toContain('second');
+  });
+
+  it('fences in-flight input across session selection and shows a current rejected input', async () => {
+    const old = _deferred<{ forwarded: boolean; reason?: string }>();
+    const forwardInput = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce({ forwarded: false, reason: 'session_ending' });
+    await _mountSelected({ forwardInput });
+    fireEvent.click(screen.getByRole('button', { name: 'Drive the browser' }));
+    fireEvent.keyDown(screen.getByTestId('browser-stream-panel-img'), { key: 'a' });
+    expect(forwardInput).toHaveBeenCalledWith('first', { kind: 'type', text: 'a' });
+    fireEvent.click(screen.getByTestId('browser-watch-session-second'));
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('data-driving')).toBeNull();
+    await act(async () => old.reject(new Error('stale input')));
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Drive the browser' }));
+    fireEvent.keyDown(screen.getByTestId('browser-stream-panel-img'), { key: 'b' });
+    await screen.findByText(/Input rejected: session_ending/);
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Drive the browser' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('reconnects only after a fresh active snapshot and never resets the session expiry', async () => {
+    const fetchSessions = vi.fn(async () => _listing());
+    const changeLifecycle = vi.fn();
+    await _mountSelected({ fetchSessions, changeLifecycle });
+    const expiry = screen.getByTestId('browser-session-metadata').textContent;
+    fireEvent.click(screen.getByRole('button', { name: 'Drive the browser' }));
+    fireEvent.error(screen.getByTestId('browser-stream-panel-img'));
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+    const before = fetchSessions.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect viewer' }));
+    await screen.findByTestId('browser-stream-panel-img');
+    expect(fetchSessions).toHaveBeenCalledTimes(before + 1);
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('data-driving')).toBeNull();
+    expect(screen.getByTestId('browser-session-metadata').textContent).toBe(expiry);
+    expect(changeLifecycle).not.toHaveBeenCalled();
+  });
+
+  it('refuses reconnect when the selected session disappeared', async () => {
+    const fetchSessions = vi.fn(async () => _listing());
+    await _mountSelected({ fetchSessions });
+    fireEvent.error(screen.getByTestId('browser-stream-panel-img'));
+    fetchSessions.mockResolvedValueOnce(_listing([_session('second')]));
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect viewer' }));
+    await waitFor(() => expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId('browser-watch-session-first')).toBeNull());
+    expect((screen.getByRole('button', { name: 'Drive the browser' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('keeps two viewers independent when one releases control and stops watching', async () => {
+    const forwardInput = vi.fn(async () => ({ forwarded: true }));
+    const changeLifecycle = vi.fn();
+    const first = render(<BrowserWorkstation typeId="browser" fetchSessions={async () => _listing()} forwardInput={forwardInput} changeLifecycle={changeLifecycle} />);
+    const second = render(<BrowserWorkstation typeId="browser" fetchSessions={async () => _listing()} forwardInput={forwardInput} changeLifecycle={changeLifecycle} />);
+    for (const view of [first, second]) {
+      const scope = within(view.container);
+      fireEvent.click(await scope.findByTestId('browser-watch-session-first'));
+      fireEvent.click(scope.getByRole('button', { name: 'Drive the browser' }));
+      fireEvent.load(scope.getByTestId('browser-stream-panel-img'));
+      fireEvent.keyDown(scope.getByTestId('browser-stream-panel-img'), { key: 'a' });
+    }
+    expect(forwardInput).toHaveBeenCalledTimes(2);
+    fireEvent.click(within(first.container).getByRole('button', { name: 'Release control' }));
+    fireEvent.click(within(first.container).getByRole('button', { name: 'Stop watching' }));
+    expect(within(first.container).queryByTestId('browser-stream-panel-img')).toBeNull();
+    expect(within(second.container).getByTestId('browser-stream-panel-img').getAttribute('data-driving')).toBe('true');
+    fireEvent.keyDown(within(second.container).getByTestId('browser-stream-panel-img'), { key: 'b' });
+    expect(forwardInput).toHaveBeenCalledTimes(3);
+    expect(changeLifecycle).not.toHaveBeenCalled();
+  });
+
+  it('shows bridge disconnect semantics and resets Drive across Watch and Bridge', async () => {
+    const fetchSessions = async () => _listing([_session('first', { external_browser: true, recording_scope: 'external_unmanaged' })]);
+    const changeLifecycle = vi.fn(async () => ({ outcome: 'completed', reason: 'operator_ended', status_code: 200, session: _session('first', { state: 'ended', external_browser: true }) }));
+    await _mountSelected({ fetchSessions, changeLifecycle, connectBridge: async () => ({ connected: true, session_id: 'first', streaming_url: '/api/browser/sessions/first/stream' }) });
+    fireEvent.click(screen.getByRole('button', { name: 'Drive the browser' }));
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    fireEvent.click(screen.getByTestId('browser-bridge-connect'));
+    await screen.findByTestId('browser-stream-panel-img');
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Drive the browser' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('data-driving')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+    expect(screen.getByRole('dialog').textContent).toContain('external browser, pages and contexts remain open');
+    expect(screen.getByRole('dialog').textContent).toContain('external unmanaged');
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(changeLifecycle).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Drive the browser' }));
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    await screen.findByTestId('browser-stream-panel-img');
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('data-driving')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm end session' }));
+    await screen.findByText('ProbOS disconnected. The external browser remains open.');
+  });
+
+  it('ignores stale list results and a delayed mount probe after a manual mode choice', async () => {
+    const initial = _deferred<_LifecycleListing>();
+    const old = _deferred<_LifecycleListing>();
+    const fetchSessions = vi.fn().mockReturnValueOnce(initial.promise).mockReturnValueOnce(old.promise).mockResolvedValue(_listing());
+    render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />);
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    await act(async () => initial.resolve(_listing()));
+    expect(screen.getByTestId('browser-mode-bridge').getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    fireEvent.click(await screen.findByTestId('browser-watch-session-second'));
+    await act(async () => old.resolve(_listing([_session('obsolete')])));
+    expect(screen.queryByTestId('browser-watch-session-obsolete')).toBeNull();
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('src')).toContain('/second/stream');
+  });
+
+  it('ignores an opened session response after another selection', async () => {
+    const opened = _deferred<{ opened: boolean; session_id: string }>();
+    const openSession = vi.fn(() => opened.promise);
+    await _mountSelected({ openSession });
+    fireEvent.change(screen.getByTestId('browser-watch-open-url'), { target: { value: 'http://127.0.0.1/' } });
+    fireEvent.click(screen.getByTestId('browser-watch-open'));
+    expect(openSession).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByTestId('browser-watch-session-second'));
+    await act(async () => opened.resolve({ opened: true, session_id: 'late' }));
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('src')).toContain('/second/stream');
+  });
+
+  it('refreshes at absolute expiry and removes capture without extending TTL', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-12T12:00:00Z'));
+    const expires = Date.now() / 1000 + 1;
+    const fetchSessions = vi.fn(async () => _listing([_session('first', { expires_at: expires })]));
+    await act(async () => { render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} />); });
+    fireEvent.click(screen.getByTestId('browser-watch-session-first'));
+    fireEvent.click(screen.getByRole('button', { name: 'Drive the browser' }));
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('data-driving')).toBe('true');
+    const before = fetchSessions.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1001); });
+    expect(fetchSessions).toHaveBeenCalledTimes(before + 1);
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+    expect(screen.getByTestId('browser-session-metadata').textContent).toContain('2026-09-12T12:00:01.000Z (expired)');
+    expect((screen.getByRole('button', { name: 'Drive the browser' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('observes another operator ending the selected session and removes input capture', async () => {
+    vi.useFakeTimers();
+    const fetchSessions = vi.fn(async () => _listing());
+    const forwardInput = vi.fn(async () => ({ forwarded: true }));
+    await act(async () => { render(<BrowserWorkstation typeId="browser" fetchSessions={fetchSessions} forwardInput={forwardInput} />); });
+    fireEvent.click(screen.getByTestId('browser-watch-session-first'));
+    fireEvent.click(screen.getByRole('button', { name: 'Drive the browser' }));
+    fireEvent.keyDown(screen.getByTestId('browser-stream-panel-img'), { key: 'a' });
+    expect(forwardInput).toHaveBeenCalledOnce();
+    fetchSessions.mockResolvedValue(_listing([_session('first', { state: 'ended' }), _session('second')]));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+    expect(screen.getByText('Session ended. Control released.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Drive the browser' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId('browser-watch-session-second'));
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('src')).toContain('/second/stream');
+    expect(forwardInput).toHaveBeenCalledOnce();
+  });
+
+  it('shows reconnect verification failure and keeps capture disabled', async () => {
+    const fetchSessions = vi.fn(async () => _listing());
+    await _mountSelected({ fetchSessions });
+    fireEvent.error(screen.getByTestId('browser-stream-panel-img'));
+    fetchSessions.mockRejectedValueOnce(new Error('offline'));
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect viewer' }));
+    await screen.findByText('Could not verify session state. Viewer remains disconnected.');
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Drive the browser' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('ignores a rejected in-flight input after Release control without recapturing', async () => {
+    const input = _deferred<{ forwarded: boolean }>();
+    const forwardInput = vi.fn(() => input.promise);
+    await _mountSelected({ forwardInput });
+    fireEvent.click(screen.getByRole('button', { name: 'Drive the browser' }));
+    fireEvent.keyDown(screen.getByTestId('browser-stream-panel-img'), { key: 'a' });
+    expect(forwardInput).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Release control' }));
+    await act(async () => input.reject(new Error('late rejection')));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('data-driving')).toBeNull();
+    fireEvent.keyDown(screen.getByTestId('browser-stream-panel-img'), { key: 'b' });
+    expect(forwardInput).toHaveBeenCalledOnce();
+  });
+
+  it('allows a known idle crew session to end but not to enter the Captain handoff binding', async () => {
+    await _mountSelected({ fetchSessions: async () => _listing([_session('first', { owner_id: 'crew-one', agent_id: 'crew-one', sharing_scope: 'not_shared' })]) });
+    expect((screen.getByRole('button', { name: 'End session' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Hand to crew' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('does not capture an already expired selection', async () => {
+    render(<BrowserWorkstation typeId="browser" fetchSessions={async () => _listing([_session('first', { expires_at: 1 })])} />);
+    fireEvent.click(await screen.findByTestId('browser-watch-session-first'));
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Drive the browser' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Hand to crew' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('fences a delayed bridge response after changing modes', async () => {
+    const bridge = _deferred<_Bridge>();
+    const connectBridge = vi.fn(() => bridge.promise);
+    await _mountSelected({ connectBridge });
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    fireEvent.click(screen.getByTestId('browser-bridge-connect'));
+    expect(connectBridge).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByTestId('browser-mode-watch'));
+    fireEvent.click(await screen.findByTestId('browser-watch-session-second'));
+    await act(async () => bridge.resolve({ connected: true, session_id: 'late', streaming_url: '/late' }));
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('src')).toContain('/second/stream');
+    fireEvent.click(screen.getByTestId('browser-mode-bridge'));
+    expect(screen.queryByTestId('browser-stream-panel-img')).toBeNull();
+  });
+
+  it('refreshes the new selection instead of stranding loading when an older list is in flight', async () => {
+    const old = _deferred<_LifecycleListing>();
+    const fetchSessions = vi.fn(async () => _listing());
+    await _mountSelected({ fetchSessions });
+    fetchSessions.mockReturnValueOnce(old.promise);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh sessions' }));
+    fireEvent.click(screen.getByTestId('browser-watch-session-second'));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Drive the browser' }) as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => old.resolve(_listing([_session('obsolete')])));
+    expect(screen.queryByTestId('browser-watch-session-obsolete')).toBeNull();
+    expect(screen.getByTestId('browser-stream-panel-img').getAttribute('src')).toContain('/second/stream');
   });
 });
 

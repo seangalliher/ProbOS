@@ -142,6 +142,11 @@ class BrowserSession:
         # ``recording_enabled`` is True; consulted by stop() to emit
         # BROWSER_RECORDING_STOPPED / FAILED events.
         self._recording_path: Path | None = None
+        self._initialization_task: asyncio.Task[None] | None = None
+        self._cleanup_task: asyncio.Task[bool] | None = None
+        self._terminated = False
+        self._recording_failed = False
+        self._recording_finished = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -185,7 +190,22 @@ class BrowserSession:
 
     async def start(self) -> None:
         """Launch Chromium and open a fresh BrowserContext."""
+        if self._terminated:
+            raise RuntimeError("Ended browser session cannot be restarted")
         self._ensure_host()
+        await self._initialize(self._start_and_record)
+
+    async def _initialize(
+        self, factory: Callable[[], Coroutine[Any, Any, None]],
+    ) -> None:
+        self._initialization_task = asyncio.create_task(factory())
+        try:
+            await asyncio.shield(self._initialization_task)
+        except BaseException:
+            await self.close_resources()
+            raise
+
+    async def _start_and_record(self) -> None:
         try:
             await self._run_hosted(self._start_impl)
         finally:
@@ -242,8 +262,10 @@ class BrowserSession:
 
     async def connect(self, endpoint: str) -> None:
         """AD-1052b: attach to an EXTERNAL user-launched browser over CDP."""
+        if self._terminated:
+            raise RuntimeError("Ended browser session cannot be reconnected")
         self._ensure_host()
-        await self._run_hosted(lambda: self._connect_impl(endpoint))
+        await self._initialize(lambda: self._run_hosted(lambda: self._connect_impl(endpoint)))
 
     async def _connect_impl(self, endpoint: str) -> None:
         """Playwright half of ``connect()``.
@@ -257,6 +279,7 @@ class BrowserSession:
 
         self._page_proxy = None
         self._playwright = await async_playwright().start()
+        self._connected = True
         self._browser = await self._playwright.chromium.connect_over_cdp(endpoint)
         contexts = self._browser.contexts
         self._context = contexts[0] if contexts else await self._browser.new_context()
@@ -269,14 +292,36 @@ class BrowserSession:
             logger.debug("AD-1052b: set_default_timeout failed on connected page", exc_info=True)
 
     async def stop(self) -> None:
-        """Close everything in reverse order. Idempotent.
+        """Attempt cleanup, retaining failed resources for a subsequent retry."""
+        await self.close_resources()
 
-        BF-695: the Playwright teardown runs wherever the objects live; every
-        event emit stays on the caller's loop.
-        """
+    async def close_resources(self) -> bool:
+        """Join protected cleanup; False means resources need a retry."""
+        self._terminated = True
+        if self._cleanup_task is None or (
+            self._cleanup_task.done() and not self._cleanup_task.result()
+        ):
+            self._cleanup_task = asyncio.create_task(self._stop_impl())
+        return await asyncio.shield(self._cleanup_task)
+
+    async def _stop_impl(self) -> bool:
+        if self._initialization_task is not None:
+            await asyncio.gather(self._initialization_task, return_exceptions=True)
         was_bridge = self._connected
         recording_path = self._recording_path
-        recording_failed = await self._run_hosted(self._close_playwright)
+        try:
+            await self._run_hosted(self._close_playwright)
+        except Exception:
+            logger.warning(
+                "Browser session %s cleanup failed; resources retained for retry",
+                self.session_id, exc_info=True,
+            )
+            if recording_path is not None and not self._recording_failed:
+                self._recording_failed = True
+                self._emit_recording_event(
+                    "BROWSER_RECORDING_FAILED", {"session_id": self.session_id},
+                )
+            return False
 
         if was_bridge:
             if self._emit_event is not None:
@@ -285,20 +330,12 @@ class BrowserSession:
                     self._emit_event(EventType.BROWSER_BRIDGE_DISCONNECTED, {"session_id": self.session_id})
                 except Exception:
                     logger.debug("AD-1052b: disconnect event emit failed", exc_info=True)
-            return
+            return True
 
         # AD-706b: emit recording lifecycle event after context.close() finalizes
         # the .webm file. Tier-2: failures never raise.
         if recording_path is not None:
-            if recording_failed:
-                self._emit_recording_event(
-                    "BROWSER_RECORDING_FAILED",
-                    {
-                        "session_id": self.session_id,
-                        "path": str(recording_path),
-                    },
-                )
-            else:
+            if not self._recording_finished:
                 size = 0
                 try:
                     for webm in recording_path.glob("*.webm"):
@@ -317,15 +354,12 @@ class BrowserSession:
                         "size_bytes": size,
                     },
                 )
+                self._recording_finished = True
             self._recording_path = None
+        return True
 
-    async def _close_playwright(self) -> bool:
-        """Playwright half of ``stop()``. Returns True when recording finalize failed.
-
-        Runs wherever this session's Playwright objects live. Emits nothing —
-        ``stop()`` owns every event so the runtime's bus is only ever touched
-        from the caller's loop.
-        """
+    async def _close_playwright(self) -> None:
+        """Close owned resources on their loop, retaining failed handles."""
         self._page_proxy = None
         # AD-1052b: a bridge session attaches to the user's REAL browser. NEVER
         # close the user's page/context (their tabs/session). browser.close() over
@@ -333,41 +367,38 @@ class BrowserSession:
         # it does NOT quit the user's Chrome.
         if self._connected:
             if self._browser is not None:
-                try:
-                    await self._browser.close()  # disconnect, not terminate
-                except Exception:
-                    logger.debug("AD-1052b: bridge disconnect failed", exc_info=True)
+                await self._browser.close()
+                self._browser = None
             if self._playwright is not None:
-                try:
-                    await self._playwright.stop()
-                except Exception:
-                    logger.debug("AD-1052b: playwright.stop failed (bridge)", exc_info=True)
+                await self._playwright.stop()
             self._page = self._context = self._browser = self._playwright = None
             self._connected = False
-            return False
+            return
 
-        recording_failed = False
-        for closer, attr in [
-            (self._page, "_page"),
-            (self._context, "_context"),
-            (self._browser, "_browser"),
-        ]:
-            if closer is not None:
-                try:
-                    await closer.close()
-                except Exception:
-                    logger.debug("AD-706: close %s failed", attr, exc_info=True)
-                    # AD-706b: record_video finalization happens during
-                    # _context.close(); flag the failure here.
-                    if attr == "_context" and self._recording_path is not None:
-                        recording_failed = True
+        if self._page is not None:
+            await self._page.close()
+            self._page = None
+        if self._context is not None:
+            await self._context.close()
+            self._context = None
+        if self._browser is not None:
+            await self._browser.close()
+            self._browser = None
         if self._playwright is not None:
-            try:
-                await self._playwright.stop()
-            except Exception:
-                logger.debug("AD-706: playwright.stop failed", exc_info=True)
-        self._page = self._context = self._browser = self._playwright = None
-        return recording_failed
+            await self._playwright.stop()
+            self._playwright = None
+
+    @property
+    def expires_at(self) -> float:
+        return self._created_at + self._config.session_max_duration_seconds
+
+    @property
+    def recording_state(self) -> str:
+        if self._recording_finished:
+            return "finalized"
+        if self._recording_failed:
+            return "cleanup_failed"
+        return "recording" if self._recording_path is not None else "off"
 
     def _emit_recording_event(self, event_name: str, payload: dict[str, Any]) -> None:
         """AD-706b: best-effort event emit (Tier-2 log-and-degrade)."""
