@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 
 from probos.config import BrowserToolConfig
+from probos.events import EventType
 from probos.tools.browser import session as session_mod
 from probos.tools.browser.actions import dispatch_action
 from probos.tools.browser.loop_host import (
@@ -361,6 +362,9 @@ class _FakePage:
 
     async def click(self, selector: str) -> None:
         self.calls.append(("page.click", asyncio.get_running_loop()))
+
+    async def close(self) -> None:
+        self.calls.append(("page.close", asyncio.get_running_loop()))
 
     def expect_download(self) -> _FakeExpectDownload:
         return _FakeExpectDownload(self.calls)
@@ -706,33 +710,116 @@ async def test_incapable_loop_routes_every_page_touch_through_the_host(
 
 async def test_hosted_session_stop_closes_playwright_and_emits_on_the_caller_loop(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
 ) -> None:
     host = PlaywrightLoopHost()
     monkeypatch.setattr(session_mod, "loop_supports_subprocess", lambda loop: False)
     monkeypatch.setattr(session_mod, "get_playwright_host", lambda: host)
     page = _FakePage()
     _install_fake_playwright(monkeypatch, page)
-    emit_loops: list[Any] = []
+    caller_loop = asyncio.get_running_loop()
+    emitted: list[tuple[EventType, dict[str, Any], Any]] = []
     sess = BrowserSession(
         session_id="s-stop",
         agent_id="a1",
-        config=BrowserToolConfig(enabled=True, recording_enabled=True),
-        emit_event=lambda et, payload: emit_loops.append(_maybe_running_loop()),
+        config=BrowserToolConfig(enabled=True, recording_enabled=True, recording_dir=str(tmp_path)),
+        emit_event=lambda et, payload: emitted.append((et, payload, _maybe_running_loop())),
     )
     try:
         await sess.start()
+        assert sess.page is not None
+        assert host.is_running
+        assert host.loop is not caller_loop
+        assert _loops_for(page, "page.close") == []
         await sess.stop()
 
         assert sess.page is None
-        assert emit_loops, "no lifecycle event was emitted"
+        assert _loops_for(page, "page.close") == [host.loop]
+        assert [event for event, _, _ in emitted] == [
+            EventType.BROWSER_RECORDING_STARTED, EventType.BROWSER_RECORDING_STOPPED,
+        ]
+        assert all(payload["session_id"] == "s-stop" for _, payload, _ in emitted)
+        assert sess.recording_state == "finalized"
         # Events must never be raised from the Playwright host thread: the
         # runtime's bus and its listeners belong to the caller's loop.
-        assert all(loop is asyncio.get_running_loop() for loop in emit_loops)
+        assert all(loop is caller_loop for _, _, loop in emitted)
 
         # Idempotent.
         await sess.stop()
+        assert await sess.close_resources() is True
+        assert _loops_for(page, "page.close") == [host.loop]
+        assert len(emitted) == 2
     finally:
-        await host.aclose()
+        try:
+            await sess.stop()
+        finally:
+            await host.aclose()
+
+
+async def test_hosted_page_close_failure_retains_resources_until_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    class _FailingPage(_FakePage):
+        fail_close = True
+        successful_closes = 0
+
+        async def close(self) -> None:
+            await super().close()
+            if self.fail_close:
+                raise RuntimeError("designated hosted page-close failure")
+            self.successful_closes += 1
+
+    host = PlaywrightLoopHost()
+    monkeypatch.setattr(session_mod, "loop_supports_subprocess", lambda loop: False)
+    monkeypatch.setattr(session_mod, "get_playwright_host", lambda: host)
+    page = _FailingPage()
+    _install_fake_playwright(monkeypatch, page)
+    caller_loop = asyncio.get_running_loop()
+    emitted: list[tuple[EventType, dict[str, Any], Any]] = []
+    sess = BrowserSession(
+        session_id="s-retry",
+        agent_id="a1",
+        config=BrowserToolConfig(enabled=True, recording_enabled=True, recording_dir=str(tmp_path)),
+        emit_event=lambda et, payload: emitted.append((et, payload, _maybe_running_loop())),
+    )
+    try:
+        await sess.start()
+        assert sess.page is not None
+        assert host.is_running and host.loop is not caller_loop
+        assert _loops_for(page, "page.close") == []
+        assert await sess.close_resources() is False
+        assert _loops_for(page, "page.close") == [host.loop]
+        assert page.successful_closes == 0
+        assert sess.page is not None
+        assert sess.recording_state == "cleanup_failed"
+        assert [event for event, _, _ in emitted] == [
+            EventType.BROWSER_RECORDING_STARTED, EventType.BROWSER_RECORDING_FAILED,
+        ]
+
+        page.fail_close = False
+        assert await sess.close_resources() is True
+        assert sess.page is None
+        assert sess.recording_state == "finalized"
+        assert _loops_for(page, "page.close") == [host.loop, host.loop]
+        assert page.successful_closes == 1
+        assert [event for event, _, _ in emitted] == [
+            EventType.BROWSER_RECORDING_STARTED, EventType.BROWSER_RECORDING_FAILED,
+            EventType.BROWSER_RECORDING_STOPPED,
+        ]
+        assert all(payload["session_id"] == "s-retry" for _, payload, _ in emitted)
+        assert all(loop is caller_loop for _, _, loop in emitted)
+        assert await sess.close_resources() is True
+        await sess.stop()
+        assert _loops_for(page, "page.close") == [host.loop, host.loop]
+        assert page.successful_closes == 1
+        assert len(emitted) == 3
+    finally:
+        page.fail_close = False
+        try:
+            await sess.close_resources()
+        finally:
+            await host.aclose()
 
 
 async def test_browser_tool_stop_closes_the_process_wide_host(
@@ -759,9 +846,9 @@ async def test_browser_tool_stop_closes_the_process_wide_host(
 # Every attribute the browser tool reaches on a Playwright object, or on an
 # object obtained from one. The proxy at ``BrowserSession.page`` covers all of
 # them, so a new entry here is a new thing the proxy must classify correctly and
-# a removed entry is dead surface. The two ``self._page`` entries are the only
-# raw-object touches, and both sit inside the lifecycle halves that already run
-# on whichever loop owns the objects.
+# a removed entry is dead surface. The three ``self._page`` entries are the only
+# raw-object touches, inside initialization and cleanup that already run on
+# whichever loop owns the objects.
 #
 # When this list changes, confirm the new touch is a kind the proxy recognises
 # (async method / sub-object / async context manager / plain data) before
@@ -823,11 +910,11 @@ _PLAYWRIGHT_TOUCH_SITES: tuple[str, ...] = (
     # async method — verified by reading _make_inline_call -> _wrap_result.
     "actions.py::_a11y_discover_elements::getattr(page, locator)",
     "actions.py::action_verify::page.screenshot",
-    "browser_stream.py::_generate::page.screenshot",
     "compute_use.py::action_compute_use_click::getattr(page, mouse)",
     "compute_use.py::action_compute_use_click::mouse.click",
     "compute_use.py::action_compute_use_click::page.screenshot",
     "credentials.py::action_fill_credential::page.fill",
+    "session.py::_close_playwright::self._page.close",
     "session.py::_connect_impl::self._page.set_default_timeout",
     "session.py::_resolve_viewport::getattr(page, viewport_size)",
     "session.py::_start_impl::self._page.set_default_timeout",
@@ -838,6 +925,7 @@ _PLAYWRIGHT_TOUCH_SITES: tuple[str, ...] = (
     "session.py::forward_input::mouse.click",
     "session.py::forward_input::mouse.move",
     "session.py::forward_input::mouse.wheel",
+    "tool.py::stream_frames::session.page.screenshot",
 )
 
 _SCANNED_MODULES: tuple[str, ...] = (
@@ -846,6 +934,7 @@ _SCANNED_MODULES: tuple[str, ...] = (
     "src/probos/tools/browser/credentials.py",
     "src/probos/tools/browser/session.py",
     "src/probos/routers/browser_stream.py",
+    "src/probos/tools/browser/tool.py",
 )
 
 _PAGE_DERIVED_LOCALS = frozenset(
@@ -930,8 +1019,8 @@ def test_only_the_session_lifecycle_touches_raw_playwright_objects() -> None:
         site for site in _scan_playwright_touch_sites() if "self._page" in site
     ]
     enclosing = sorted({site.split("::")[1] for site in raw_sites})
-    assert enclosing == ["_connect_impl", "_start_impl"], (
-        "Only the BrowserSession lifecycle halves may use the raw page; "
+    assert enclosing == ["_close_playwright", "_connect_impl", "_start_impl"], (
+        "Only BrowserSession initialization and cleanup may use the raw page; "
         "everything else must go through the proxied ``page`` property. "
         f"Found: {raw_sites}"
     )
