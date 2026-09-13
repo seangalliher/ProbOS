@@ -9,10 +9,14 @@ Covers 4 emitters:
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 import logging
 import re
 import uuid
+from importlib import import_module
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -163,6 +167,236 @@ class TestRecreationMoveRequired:
 # ───────────────────────────────────────────────────────────────────────────
 # 2) Delegation Tags — [ASSIGN] / [HANDOFF]
 # ───────────────────────────────────────────────────────────────────────────
+
+class TestRecreationTurnQueueBinding:
+    @pytest.mark.asyncio
+    async def test_noncrew_cognitive_agent_binds_without_queue_admission(self) -> None:
+        from probos.cognitive.counselor import CounselorAgent
+        from probos.recreation.service import RecreationService
+        from probos.startup.finalize import make_cognitive_queue_rehydrator
+
+        service = RecreationService()
+        runtime = SimpleNamespace(ontology=None, recreation_service=service)
+        agent = CounselorAgent(runtime=runtime)
+        agent.agent_type = "plain"
+        bus = MagicMock()
+        assert agent.recreation_turns is None
+
+        await make_cognitive_queue_rehydrator(runtime, bus)(agent)
+
+        assert agent.recreation_turns is service.turns
+        assert bus.mock_calls == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "scenario", ["initial", "late", "stale", "recycled", "service_absent"],
+    )
+    async def test_rehydrator_binds_owner_before_queue_early_return(self, scenario: str) -> None:
+        from probos.cognitive.counselor import CounselorAgent
+        from probos.mesh.intent import IntentBus
+        from probos.mesh.signal import SignalManager
+        from probos.recreation.service import RecreationService
+        from probos.startup.finalize import make_cognitive_queue_rehydrator
+
+        bus = IntentBus(SignalManager())
+        runtime = SimpleNamespace(ontology=None, emit_event=lambda kind, data: None)
+        service = RecreationService()
+        if scenario != "late":
+            runtime.recreation_service = service
+        agent = CounselorAgent(runtime=runtime)
+        assert agent.recreation_turns is None
+        rehydrate = make_cognitive_queue_rehydrator(runtime, bus)
+        queues = []
+        try:
+            with patch.object(bus, "register_queue", wraps=bus.register_queue) as register:
+                await rehydrate(agent)
+                assert register.call_count == 1
+                queues.append(register.call_args.args[1])
+                assert agent.recreation_turns is (None if scenario == "late" else service.turns)
+
+                if scenario == "late":
+                    runtime.recreation_service = service
+                elif scenario == "stale":
+                    agent.recreation_turns = RecreationService().turns
+                    assert agent.recreation_turns is not service.turns
+                elif scenario == "recycled":
+                    original = agent
+                    bus.unregister_queue(original.id)
+                    await queues[0].shutdown()
+                    agent = CounselorAgent(runtime=runtime)
+                    agent.id = original.id
+                    assert agent is not original
+                    assert agent.recreation_turns is None
+                elif scenario == "service_absent":
+                    runtime.recreation_service = None
+
+                await rehydrate(agent)
+                expected_count = 2 if scenario == "recycled" else 1
+                if register.call_count == 2:
+                    queues.append(register.call_args.args[1])
+                assert register.call_count == expected_count
+                expected = None if scenario == "service_absent" else service.turns
+                assert agent.recreation_turns is expected
+                assert register.call_args.args[0] == agent.id
+        finally:
+            for queue in queues:
+                await queue.shutdown()
+            bus.unregister_queue(agent.id)
+
+
+class TestRecreationLifecycleWiring:
+    @pytest.mark.asyncio
+    async def test_production_construction_binds_registry_identity_and_existing_agent(self) -> None:
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+        from probos.cognitive.counselor import CounselorAgent
+        from probos.recreation.service import RecreationService
+        from probos.types import IntentMessage
+
+        finalize = import_module("probos.startup.finalize")
+        tree = ast.parse(inspect.getsource(finalize))
+        owners = [
+            node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)
+            and any(isinstance(statement, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "recreation_registry"
+                for target in statement.targets
+            ) for statement in node.body)
+        ]
+        assert len(owners) == 1
+        body = owners[0].body
+        start = next(index for index, statement in enumerate(body) if isinstance(statement, ast.Assign)
+                     and any(isinstance(target, ast.Name) and target.id == "recreation_registry" for target in statement.targets))
+        statements = body[start:start + 4]
+        assert [type(statement) for statement in statements] == [ast.Assign, ast.Assign, ast.Assign, ast.For]
+        assert isinstance(statements[1].value, ast.Call)
+        assert statements[1].value.func.id == "RecreationService"
+        agent = CounselorAgent()
+        agents = [agent]
+        registry = SimpleNamespace(
+            all=lambda: list(agents), get=lambda actor_id: next((item for item in agents if item.id == actor_id), None),
+        )
+        runtime = SimpleNamespace(
+            registry=registry, ward_room=None, _records_store=None,
+            emit_event=lambda kind, data: None, dispatcher=_make_dispatcher(), callsign_registry=None,
+        )
+        namespace = dict(runtime=runtime, RecreationService=RecreationService, CognitiveAgent=CognitiveAgent)
+        exec(compile(ast.Module(body=statements, type_ignores=[]), finalize.__file__, "exec"), namespace)
+        service = runtime.recreation_service
+        try:
+            assert agent.recreation_turns is service.turns
+            game = await service.create_game("tictactoe", "Captain", "Counselor", opponent_agent_id=agent.id)
+            await service.make_move(game["game_id"], "Captain", "4")
+            runtime.dispatcher.dispatch.assert_awaited_once()
+            event = runtime.dispatcher.dispatch.call_args.args[0]
+            assert event.target.agent_id == agent.id
+            assert game["opponent_turn_status"] == "queued"
+            agents.clear()
+            intent = IntentMessage(intent="move_required", target_agent_id=agent.id, params={
+                **event.payload, "_task_event_id": event.id, "_source_type": event.source_type,
+                "_source_id": event.source_id,
+            })
+            assert service.turns.claim_turn(intent, agent.id) is None
+            assert game["opponent_turn_reason"] == "actor_unavailable"
+            assert game["moves_count"] == 1
+        finally:
+            await service.turns.stop()
+
+    @pytest.mark.asyncio
+    async def test_forfeit_completion_reaches_production_engagement_cleanup_without_reward(self) -> None:
+        from probos.events import EventType
+        from probos.recreation.service import RecreationService
+
+        finalize = import_module("probos.startup.finalize")
+        tree = ast.parse(inspect.getsource(finalize))
+        callbacks = [node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef) and node.name == "_on_game_completed"]
+        assert len(callbacks) == 1
+        engagements = {}
+        removed = []
+
+        def remove_engagement(game_id):
+            removed.append(game_id)
+            engagements.pop(game_id, None)
+
+        memory = SimpleNamespace(get_engagement=engagements.get, remove_engagement=remove_engagement)
+        agent = SimpleNamespace(id="crew-id", agent_type="counselor", callsign="Counselor", working_memory=memory)
+        runtime = SimpleNamespace(
+            registry=SimpleNamespace(all=lambda: [agent]), ontology=None,
+            trust_network=MagicMock(), reward_service=MagicMock(),
+        )
+        assert finalize.is_crew_agent(agent, runtime.ontology)
+        namespace = dict(runtime=runtime, is_crew_agent=finalize.is_crew_agent, logger=logging.getLogger(__name__))
+        exec(compile(ast.Module(body=callbacks, type_ignores=[]), finalize.__file__, "exec"), namespace)
+        callback = namespace["_on_game_completed"]
+        events = []
+        service = RecreationService(emit_event_fn=lambda kind, data: events.append((kind, data)))
+        game = await service.create_game("tictactoe", "Captain", "Counselor")
+        engagements[game["game_id"]] = object()
+        assert memory.get_engagement(game["game_id"]) is not None
+        await service.make_move(game["game_id"], "Captain", "4")
+        await service.forfeit_game(game["game_id"], "Captain")
+        completed = [data for kind, data in events if kind == EventType.GAME_COMPLETED]
+        assert len(completed) == 1
+        assert completed[0]["result"] == {"status": "forfeited", "winner": "", "forfeited_by": "Captain"}
+        await callback({"data": completed[0]})
+        await callback({"data": completed[0]})
+        assert memory.get_engagement(game["game_id"]) is None
+        assert removed == [game["game_id"]]
+        assert runtime.trust_network.mock_calls == []
+        assert runtime.reward_service.mock_calls == []
+        assert service.turns.snapshot(game)["board"][4] == "X"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("scenario", ["owned", "absent", "cancelled"])
+    async def test_shutdown_stops_same_support_before_queue_drain(self, scenario: str) -> None:
+        from probos.recreation.service import RecreationService
+        from probos.startup.shutdown import shutdown
+
+        tree = ast.parse(inspect.getsource(shutdown))
+        body = tree.body[0].body
+        starts = [index for index, statement in enumerate(body) if isinstance(statement, ast.ImportFrom)
+                  and statement.module == "probos.recreation.turns"]
+        assert len(starts) == 1
+        statements = body[starts[0]:starts[0] + 4]
+        assert [type(statement) for statement in statements] == [ast.ImportFrom, ast.Assign, ast.If, ast.If]
+        assert any(isinstance(node, ast.Attribute) and node.attr == "shutdown" for node in ast.walk(statements[-1]))
+        wrapper = ast.parse("async def run_slice():\n    pass\n").body[0]
+        wrapper.body = statements
+        module = ast.fix_missing_locations(ast.Module(body=[wrapper], type_ignores=[]))
+        service = RecreationService()
+        order = []
+        original_stop = service.turns.stop
+
+        async def stop():
+            order.append("stop")
+            await original_stop()
+            if scenario == "cancelled":
+                raise asyncio.CancelledError
+
+        async def drain():
+            order.append("drain")
+            if scenario != "absent":
+                assert service.turns.stopped
+                with pytest.raises(ValueError, match="stopped"):
+                    await service.create_game("tictactoe", "Captain", "Counselor")
+
+        runtime = SimpleNamespace(
+            recreation_service=None if scenario == "absent" else service,
+            intent_bus=SimpleNamespace(_agent_queues={"crew-id": SimpleNamespace(shutdown=drain)}),
+        )
+        namespace = dict(runtime=runtime, logger=logging.getLogger(__name__))
+        exec(compile(module, shutdown.__code__.co_filename, "exec"), namespace)
+        try:
+            with patch.object(service.turns, "stop", side_effect=stop) as observed:
+                if scenario == "cancelled":
+                    with pytest.raises(asyncio.CancelledError):
+                        await namespace["run_slice"]()
+                    assert order == ["stop"]
+                else:
+                    await namespace["run_slice"]()
+                    assert order == (["drain"] if scenario == "absent" else ["stop", "drain"])
+                assert observed.await_count == (0 if scenario == "absent" else 1)
+        finally:
+            await original_stop()
+
 
 class TestDelegationTags:
     """Delegation tag parsing in _extract_and_execute_actions()."""

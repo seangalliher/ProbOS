@@ -770,6 +770,17 @@ export interface HXIState {
   createFromTemplate: (templateId: string, variables?: Record<string, string>, overrides?: Record<string, any>) => Promise<void>;
   // AD-526b: Recreation Game (Captain vs Crew)
   activeGame: GameState | null;
+  gamePending: 'challenge' | 'move' | 'retry' | 'forfeit' | null;
+  gameError: string | null;
+  gameSyncing: boolean;
+  gameRequestGeneration: number;
+  gameConnectionGeneration: number;
+  gameHydrationGeneration: number;
+  gameSnapshotEpoch: number;
+  gameTombstones: Set<string>;
+  gameChallengeAgentId: string | null;
+  refreshActiveGame: () => Promise<void>;
+  retryGame: () => Promise<void>;
   gamePanelPos: { x: number; y: number };
   challengeAgent: (agentId: string) => Promise<void>;
   makeGameMove: (position: string) => Promise<void>;
@@ -1309,6 +1320,137 @@ function boundedMapSet<K, V>(
   return next;
 }
 
+function parseGameSnapshot(value: unknown): GameState | null {
+  if (!isLiveRecord(value)) return null;
+  if ('participants' in value && (!Array.isArray(value.participants)
+    || value.participants.length !== 2 || !value.participants.every(player =>
+      typeof player === 'string' && player.length > 0 && player.trim() === player))) return null;
+  const flatBoard = Array.isArray(value.board) && value.board.every(cell => typeof cell === 'string');
+  const matrixBoard = Array.isArray(value.board) && value.board.every(row =>
+    Array.isArray(row) && row.every(cell => typeof cell === 'string'));
+  const textKeys = ['game_id', 'game_type', 'current_player', 'winner', 'opponent',
+    'opponent_agent_id', 'thread_id', 'opponent_turn_reason', 'turn_id', 'attempt_id', 'event_id'];
+  if (textKeys.some(key => typeof value[key] !== 'string') || !value.game_id
+    || !Number.isSafeInteger(value.revision) || (value.revision as number) < 0
+    || !Number.isSafeInteger(value.moves_count) || (value.moves_count as number) < 0
+    || !Array.isArray(value.board) || (!flatBoard && !matrixBoard)
+    || !Array.isArray(value.valid_moves) || !value.valid_moves.every(move => typeof move === 'string')
+    || !['in_progress', 'won', 'draw', 'forfeited'].includes(value.status as string)
+    || !['idle', 'queued', 'thinking', 'recoverable'].includes(value.opponent_turn_status as string)
+    || (value.game_type === 'tictactoe' && (!flatBoard || value.board.length !== 9))
+    || (value.game_type === 'chess' && (!matrixBoard || value.board.length !== 8
+      || value.board.some(row => !Array.isArray(row) || row.length !== 8)))) return null;
+  return {
+    gameId: value.game_id as string, gameType: value.game_type as string,
+    board: value.board.map(cell => Array.isArray(cell) ? [...cell] : cell) as GameState['board'],
+    currentPlayer: value.current_player as string,
+    status: value.status as GameState['status'], winner: value.winner as string,
+    validMoves: [...value.valid_moves] as string[], movesCount: value.moves_count as number,
+    opponent: value.opponent as string, opponentAgentId: value.opponent_agent_id as string,
+    ...('participants' in value ? { participants: [...value.participants as string[]] as [string, string] } : {}),
+    threadId: value.thread_id as string, revision: value.revision as number,
+    opponentTurnStatus: value.opponent_turn_status as GameState['opponentTurnStatus'],
+    opponentTurnReason: value.opponent_turn_reason as string,
+    turnId: value.turn_id as string, attemptId: value.attempt_id as string,
+    eventId: value.event_id as string,
+  };
+}
+
+export const GAME_TOMBSTONE_LIMIT = 128;
+const GAME_REFRESH_ERROR = 'Game state could not be refreshed. Reconnect to try again.';
+
+function retireGame(tombstones: Set<string>, gameId: string): void {
+  tombstones.add(gameId);
+  while (tombstones.size > GAME_TOMBSTONE_LIMIT) {
+    const oldest = tombstones.values().next();
+    if (!oldest.done) tombstones.delete(oldest.value);
+  }
+}
+
+function reconcileGameSnapshot(
+  state: HXIState, game: GameState | null, source: 'active' | 'event' | 'response',
+  expectedGameId?: string,
+): Partial<HXIState> {
+  const current = state.activeGame;
+  const tombstones = new Set(state.gameTombstones);
+  if (game === null) {
+    if (source !== 'active' || state.gamePending === 'challenge') return {};
+    if (current) retireGame(tombstones, current.gameId);
+    return {
+      activeGame: current?.status === 'in_progress' ? null : current,
+      gameTombstones: tombstones, gameSnapshotEpoch: state.gameSnapshotEpoch + 1,
+      gameRequestGeneration: state.gameRequestGeneration + 1, gamePending: null,
+      gameChallengeAgentId: null,
+    };
+  }
+  if (expectedGameId && expectedGameId !== game.gameId) return {};
+  if (tombstones.has(game.gameId)) return {};
+  if (current?.gameId === game.gameId) {
+    if (game.revision <= current.revision || current.status !== 'in_progress'
+      || game.opponentAgentId !== current.opponentAgentId || game.gameType !== current.gameType) return {};
+  } else {
+    if (source === 'event') return {};
+    if (state.gamePending === 'challenge' && game.opponentAgentId !== state.gameChallengeAgentId) return {};
+    if (source === 'response' && (state.gamePending !== 'challenge'
+      || current?.status === 'in_progress')) return {};
+  }
+  if (current && current.gameId !== game.gameId) retireGame(tombstones, current.gameId);
+  if (game.status !== 'in_progress') retireGame(tombstones, game.gameId);
+  return {
+    activeGame: game, gameTombstones: tombstones,
+    gameSnapshotEpoch: state.gameSnapshotEpoch + 1,
+    ...(game.status !== 'in_progress' ? {
+      gameRequestGeneration: state.gameRequestGeneration + 1,
+      gamePending: null, gameChallengeAgentId: null,
+    } : {}),
+  };
+}
+
+async function submitGameRequest(
+  set: (update: Partial<HXIState> | ((state: HXIState) => Partial<HXIState>)) => void,
+  get: () => HXIState,
+  action: 'challenge' | 'move' | 'retry' | 'forfeit',
+  body: Record<string, unknown>,
+): Promise<void> {
+  const initial = get();
+  if (initial.gamePending || initial.gameSyncing || !initial.connected) return;
+  const request = initial.gameRequestGeneration + 1;
+  const connection = initial.gameConnectionGeneration;
+  set({ gamePending: action, gameError: null, gameRequestGeneration: request,
+    gameChallengeAgentId: action === 'challenge' ? body.opponent_agent_id as string : null });
+  const isCurrent = (): boolean => get().gameRequestGeneration === request
+    && get().gameConnectionGeneration === connection;
+  try {
+    const response = await fetch(`/api/recreation/${action}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!isCurrent()) return;
+    const data = await response.json().catch(() => null);
+    if (!isCurrent()) return;
+    if (!response.ok) {
+      const detail = isLiveRecord(data) && typeof data.detail === 'string' ? data.detail : 'Request failed. Try again.';
+      set({ gameError: detail });
+      if (response.status === 409) await get().refreshActiveGame();
+      return;
+    }
+    if (action === 'forfeit' && isLiveRecord(data) && data.status === 'forfeited' && !data.game_id) {
+      await get().refreshActiveGame();
+      return;
+    }
+    const game = parseGameSnapshot(data);
+    if (!game) {
+      set({ gameError: 'Invalid game response. Refreshing game state.' });
+      await get().refreshActiveGame();
+      return;
+    }
+    set(state => reconcileGameSnapshot(state, game, 'response', body.game_id as string | undefined));
+  } catch {
+    if (isCurrent()) set({ gameError: 'Game request failed. Check the connection and try again.' });
+  } finally {
+    if (isCurrent()) set({ gamePending: null, gameChallengeAgentId: null });
+  }
+}
+
 export const useStore = create<HXIState>((set, get) => ({
   agents: new Map(),
   connections: [],
@@ -1535,9 +1677,26 @@ export const useStore = create<HXIState>((set, get) => ({
 
   // AD-526b: Recreation Game
   activeGame: null,
+  gamePending: null,
+  gameError: null,
+  gameSyncing: false,
+  gameRequestGeneration: 0,
+  gameConnectionGeneration: 0,
+  gameHydrationGeneration: 0,
+  gameSnapshotEpoch: 0,
+  gameTombstones: new Set(),
+  gameChallengeAgentId: null,
   gamePanelPos: { x: 200, y: 120 },
 
-  setConnected: (v) => { soundEngine.setConnected(v); set({ connected: v }); },
+  setConnected: (v) => {
+    soundEngine.setConnected(v);
+    if (get().connected !== v) {
+      set(state => ({ connected: v, gameConnectionGeneration: state.gameConnectionGeneration + 1,
+        gameRequestGeneration: state.gameRequestGeneration + 1,
+        gameHydrationGeneration: state.gameHydrationGeneration + 1,
+        gamePending: null, gameChallengeAgentId: null, gameSyncing: v }));
+    }
+  },
   setHoveredAgent: (agent, pos) => set(pos ? { hoveredAgent: agent, tooltipPos: pos } : { hoveredAgent: agent }),
   setPinnedAgent: (agent) => set({ pinnedAgent: agent }),
 
@@ -2550,84 +2709,67 @@ export const useStore = create<HXIState>((set, get) => ({
 
   // AD-526b: Recreation Game actions
   challengeAgent: async (agentId: string) => {
-    try {
-      const resp = await fetch('/api/recreation/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ opponent_agent_id: agentId, game_type: 'tictactoe' }),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        console.warn('Challenge failed:', err.detail || resp.statusText);
-        return;
-      }
-      const data = await resp.json();
-      set({
-        activeGame: {
-          gameId: data.game_id,
-          gameType: data.game_type || 'tictactoe',
-          board: data.board || Array(9).fill(''),
-          currentPlayer: data.current_player || 'Captain',
-          status: data.status || 'in_progress',
-          winner: data.winner || '',
-          validMoves: data.valid_moves || [],
-          movesCount: data.moves_count || 0,
-          opponent: data.opponent || '',
-          opponentAgentId: data.opponent_agent_id || agentId,
-          threadId: data.thread_id || '',
-        },
-      });
-    } catch (e) {
-      console.warn('Challenge error:', e);
-    }
+    if (!agentId.trim() || get().activeGame?.status === 'in_progress') return;
+    await submitGameRequest(set, get, 'challenge', { opponent_agent_id: agentId, game_type: 'tictactoe' });
   },
 
   makeGameMove: async (position: string) => {
     const game = get().activeGame;
-    if (!game) return;
-    try {
-      const resp = await fetch('/api/recreation/move', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ game_id: game.gameId, position }),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        console.warn('Move failed:', err.detail || resp.statusText);
-        return;
-      }
-      const data = await resp.json();
-      set({
-        activeGame: {
-          ...game,
-          board: data.board || game.board,
-          currentPlayer: data.current_player || '',
-          status: data.status || game.status,
-          winner: data.winner || '',
-          validMoves: data.valid_moves || [],
-          movesCount: data.moves_count || game.movesCount,
-        },
-      });
-    } catch (e) {
-      console.warn('Move error:', e);
-    }
+    if (!game || game.status !== 'in_progress' || game.currentPlayer !== 'Captain'
+      || !game.validMoves.includes(position)) return;
+    await submitGameRequest(set, get, 'move', { game_id: game.gameId, position, revision: game.revision });
+  },
+
+  retryGame: async () => {
+    const game = get().activeGame;
+    if (!game || game.status !== 'in_progress' || game.currentPlayer === 'Captain'
+      || game.opponentTurnStatus !== 'recoverable') return;
+    await submitGameRequest(set, get, 'retry', { game_id: game.gameId, revision: game.revision });
   },
 
   forfeitGame: async () => {
     const game = get().activeGame;
-    if (!game) return;
+    if (!game || game.status !== 'in_progress') return;
+    await submitGameRequest(set, get, 'forfeit', { game_id: game.gameId, revision: game.revision });
+  },
+
+  refreshActiveGame: async () => {
+    const initial = get();
+    const hydration = initial.gameHydrationGeneration + 1;
+    const connection = initial.gameConnectionGeneration;
+    const request = initial.gameRequestGeneration;
+    const epoch = initial.gameSnapshotEpoch;
+    set({ gameHydrationGeneration: hydration, gameSyncing: true });
+    const isCurrent = (): boolean => get().gameHydrationGeneration === hydration
+      && get().gameConnectionGeneration === connection && get().gameRequestGeneration === request;
     try {
-      await fetch('/api/recreation/forfeit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ game_id: game.gameId }),
-      });
-    } catch { /* swallow */ }
-    set({ activeGame: null });
+      const response = await fetch('/api/recreation/active');
+      if (!isCurrent()) return;
+      if (!response.ok) throw new Error('Active game request failed');
+      const data: unknown = await response.json();
+      if (!isCurrent()) return;
+      if (!isLiveRecord(data) || !('game' in data)) throw new Error('Invalid active game response');
+      const game = data.game === null ? null : parseGameSnapshot(data.game);
+      if (data.game !== null && !game) throw new Error('Invalid active game snapshot');
+      if (get().gameSnapshotEpoch !== epoch && (!game || game.gameId !== get().activeGame?.gameId)) return;
+      set(state => ({
+        ...reconcileGameSnapshot(state, game, 'active'),
+        ...(state.gameError === GAME_REFRESH_ERROR ? { gameError: null } : {}),
+      }));
+    } catch {
+      if (isCurrent()) set({ gameError: GAME_REFRESH_ERROR });
+    } finally {
+      if (get().gameHydrationGeneration === hydration && get().gameConnectionGeneration === connection) {
+        set({ gameSyncing: false });
+      }
+    }
   },
 
   closeGame: () => {
-    set({ activeGame: null });
+    if (get().activeGame?.status === 'in_progress') return;
+    set(state => ({ activeGame: null, gameError: null, gamePending: null,
+      gameChallengeAgentId: null, gameRequestGeneration: state.gameRequestGeneration + 1,
+      gameSnapshotEpoch: state.gameSnapshotEpoch + 1 }));
   },
 
   setGamePanelPos: (pos) => {
@@ -2752,6 +2894,7 @@ export const useStore = create<HXIState>((set, get) => ({
           liveSequence: Math.max(authority.liveSequence, sequence),
           liveRepairEpoch: authority.liveRepairEpoch + 1,
         });
+        void get().refreshActiveGame();
         return;
       }
       if (sequence <= authority.liveSequence) {
@@ -2881,26 +3024,10 @@ export const useStore = create<HXIState>((set, get) => ({
           });
         }
         // AD-526b: Rehydrate active game on page refresh
-        fetch('/api/recreation/active').then(r => r.json()).then(gameData => {
-          if (gameData.game) {
-            const g = gameData.game;
-            set({
-              activeGame: {
-                gameId: g.game_id,
-                gameType: g.game_type || 'tictactoe',
-                board: g.board || Array(9).fill(''),
-                currentPlayer: g.current_player || '',
-                status: g.status || 'in_progress',
-                winner: g.winner || '',
-                validMoves: g.valid_moves || [],
-                movesCount: g.moves_count || 0,
-                opponent: g.opponent || '',
-                opponentAgentId: g.opponent_agent_id || '',
-                threadId: g.thread_id || '',
-              },
-            });
-          }
-        }).catch(() => {});
+        set(state => ({ gameConnectionGeneration: state.gameConnectionGeneration + 1,
+          gameRequestGeneration: state.gameRequestGeneration + 1,
+          gamePending: null, gameChallengeAgentId: null }));
+        void get().refreshActiveGame();
         break;
       }
 
@@ -3660,20 +3787,17 @@ export const useStore = create<HXIState>((set, get) => ({
 
       // AD-526b: Game state updates via WebSocket
       case 'game_update': {
-        const game = get().activeGame;
-        const d = data as Record<string, unknown>;
-        if (game && d.game_id === game.gameId) {
-          set({
-            activeGame: {
-              ...game,
-              board: (d.board as string[]) || game.board,
-              currentPlayer: (d.current_player as string) || '',
-              status: (d.status as GameState['status']) || game.status,
-              winner: (d.winner as string) || '',
-              validMoves: (d.valid_moves as string[]) || [],
-              movesCount: (d.moves_count as number) || game.movesCount,
-            },
-          });
+        const game = parseGameSnapshot(data);
+        if (game) {
+          const state = get();
+          if (state.activeGame?.gameId === game.gameId) {
+            set(current => reconcileGameSnapshot(current, game, 'event'));
+          } else if (game.participants?.includes('Captain') && state.connected
+            && !state.gameSyncing && !state.gameTombstones.has(game.gameId)
+            && state.activeGame?.status !== 'in_progress'
+            && (!state.gameChallengeAgentId || game.opponentAgentId === state.gameChallengeAgentId)) {
+            void get().refreshActiveGame();
+          }
         }
         break;
       }

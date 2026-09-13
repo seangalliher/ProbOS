@@ -3,7 +3,19 @@
 import { useStore } from '../store/useStore';
 import { useRef, useCallback, useState, useEffect } from 'react';
 import { Close, PlayArrow } from './icons/Glyphs';
-import type { GameState } from '../store/types';
+
+const TURN_REASONS: Record<string, string> = {
+  deadline_expired: 'Opponent turn timed out. Retry when ready.',
+  actor_unavailable: 'Opponent is unavailable. Retry or forfeit.',
+  dispatch_rejected: 'Opponent turn was not admitted. Retry when ready.',
+  dispatch_failed: 'Opponent turn could not be delivered. Retry when ready.',
+  dispatcher_unavailable: 'Turn delivery is unavailable. Retry or forfeit.',
+  invalid_move: 'Opponent returned an invalid move. Retry the turn.',
+  no_usable_move: 'Opponent returned no move. Retry the turn.',
+  cognitive_failed: 'Opponent could not process the turn. Retry when ready.',
+  cognitive_cancelled: 'Opponent turn was interrupted. Retry when ready.',
+  service_stopped: 'Recreation has stopped. Reconnect to refresh.',
+};
 
 const WIN_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
 
@@ -19,19 +31,26 @@ export function GamePanel() {
   const game = useStore(s => s.activeGame);
   const pos = useStore(s => s.gamePanelPos);
   const makeMove = useStore(s => s.makeGameMove);
+  const retry = useStore(s => s.retryGame);
+  const pending = useStore(s => s.gamePending);
+  const error = useStore(s => s.gameError);
+  const syncing = useStore(s => s.gameSyncing);
+  const connected = useStore(s => s.connected);
   const forfeit = useStore(s => s.forfeitGame);
   const closeGame = useStore(s => s.closeGame);
   const setPos = useStore(s => s.setGamePanelPos);
+  const board = game?.gameType === 'tictactoe' && game.board.every((cell): cell is string => typeof cell === 'string')
+    ? game.board : null;
 
   // Track previous board to animate only new pieces
   const [prevBoard, setPrevBoard] = useState<string[]>(Array(9).fill(''));
   useEffect(() => {
-    if (game) {
+    if (board) {
       // Delay updating prevBoard so the new piece animates first
-      const timer = setTimeout(() => setPrevBoard([...game.board]), 600);
+      const timer = setTimeout(() => setPrevBoard([...board]), 600);
       return () => clearTimeout(timer);
     }
-  }, [game?.board.join(',')]);
+  }, [board?.join(',')]);
 
   // Dragging state (same pattern as AgentProfilePanel)
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
@@ -54,17 +73,37 @@ export function GamePanel() {
     window.addEventListener('mouseup', onUp);
   }, [pos, setPos]);
 
-  if (!game) return null;
+  if ((!game && !error && !pending) || (game && game.gameType !== 'tictactoe')) return null;
 
-  const isMyTurn = game.currentPlayer === 'Captain';
-  const isFinished = game.status !== 'in_progress';
-  const winLine = isFinished && game.status === 'won' ? findWinLine(game.board) : null;
+  const isMyTurn = game?.currentPlayer === 'Captain';
+  const isFinished = !!game && game.status !== 'in_progress';
+  const busy = pending !== null || syncing || !connected;
+  const recoverable = !isFinished && !isMyTurn && game?.opponentTurnStatus === 'recoverable';
+  const thinking = !isFinished && game?.opponentTurnStatus === 'thinking';
+  const winLine = game?.status === 'won' && board ? findWinLine(board) : null;
+  const status = isFinished
+    ? game.status === 'won'
+      ? game.winner === 'Captain' ? 'You won!' : `${game.opponent} wins`
+      : game.status === 'draw' ? 'Draw!' : 'Game forfeited'
+    : !connected ? 'Disconnected. Waiting to reconnect.'
+    : syncing ? 'Refreshing game...'
+    : pending === 'challenge' ? 'Sending challenge...'
+    : pending === 'forfeit' ? 'Forfeiting game...'
+    : pending === 'retry' ? 'Requesting another attempt...'
+    : pending === 'move' && isMyTurn ? 'Submitting move...'
+    : recoverable ? TURN_REASONS[game.opponentTurnReason] || 'Opponent could not complete the turn. Retry or forfeit.'
+    : isMyTurn ? 'Your turn'
+    : thinking ? `${game?.opponent} is thinking...`
+    : game?.opponentTurnStatus === 'queued' ? `Turn queued for ${game.opponent}.`
+    : 'Waiting for game state.';
 
   const panelStyle: React.CSSProperties = {
     position: 'fixed',
-    left: pos.x,
-    top: pos.y,
-    width: 340,
+    left: `clamp(8px, ${pos.x}px, max(8px, calc(100vw - 348px)))`,
+    top: `clamp(8px, ${pos.y}px, max(8px, calc(100dvh - 480px)))`,
+    width: 'min(340px, calc(100vw - 16px))',
+    maxHeight: 'calc(100dvh - 16px)',
+    boxSizing: 'border-box',
     zIndex: 30,
     background: 'rgba(10, 10, 18, 0.94)',
     backdropFilter: 'blur(16px)',
@@ -74,7 +113,8 @@ export function GamePanel() {
     boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
     fontFamily: "'JetBrains Mono', monospace",
     color: '#e0dcd4',
-    overflow: 'hidden',
+    overflow: 'auto',
+    overflowWrap: 'anywhere',
   };
 
   const titleBarStyle: React.CSSProperties = {
@@ -96,6 +136,9 @@ export function GamePanel() {
     padding: '2px 6px',
     borderRadius: 4,
     lineHeight: 1,
+    width: 36,
+    height: 36,
+    flexShrink: 0,
   };
 
   return (
@@ -111,61 +154,69 @@ export function GamePanel() {
           0%, 100% { opacity: 0.6; }
           50% { opacity: 1; }
         }
+        .game-panel button:focus-visible {
+          outline: 2px solid #f0b060;
+          outline-offset: 2px;
+        }
+        .game-panel button:disabled { color: #666680; cursor: default; }
+        .game-panel button:not(:disabled):hover { filter: drop-shadow(0 0 4px rgba(240,176,96,0.4)); }
         @media (prefers-reduced-motion: reduce) {
-          .piece-animate { animation: none !important; }
+          .game-panel * { animation: none !important; }
         }
       `}</style>
-      <div style={panelStyle}>
+      <section className="game-panel" aria-label="Tic-Tac-Toe game" style={panelStyle}>
         {/* Title bar */}
         <div style={titleBarStyle} onMouseDown={onMouseDown}>
-          <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0.5 }}>
-            Tic-Tac-Toe vs {game.opponent}
+          <span style={{ fontSize: 12, fontWeight: 600, minWidth: 0 }}>
+            Tic-Tac-Toe{game ? ` vs ${game.opponent}` : ''}
           </span>
-          {!isFinished ? (
-            <button onClick={forfeit} title="Forfeit" style={closeBtnStyle}><Close size={14} /></button>
+          {game && !isFinished ? (
+            <button onMouseDown={event => event.stopPropagation()} onClick={forfeit}
+              disabled={busy} aria-label="Forfeit game" title="Forfeit game" style={closeBtnStyle}><Close size={14} /></button>
           ) : (
-            <button onClick={closeGame} title="Close" style={closeBtnStyle}><Close size={14} /></button>
+            <button onMouseDown={event => event.stopPropagation()} onClick={closeGame}
+              disabled={pending !== null} aria-label="Close game" title="Close game" style={closeBtnStyle}><Close size={14} /></button>
           )}
         </div>
 
         {/* Turn indicator */}
-        <div style={{
+        <div role="status" aria-live="polite" aria-atomic="true" style={{
           padding: '6px 12px',
           textAlign: 'center',
           fontSize: 12,
-          color: isMyTurn ? '#f0b060' : '#6a6a7a',
-          ...(!isMyTurn && !isFinished ? { animation: 'pulse-dim 2s ease-in-out infinite' } : {}),
+          minHeight: 44,
+          boxSizing: 'border-box',
+          color: isMyTurn || recoverable ? '#f0b060' : '#aaaabc',
+          ...(thinking && connected ? { animation: 'pulse-dim 2s ease-in-out infinite' } : {}),
         }}>
-          {isFinished
-            ? game.status === 'won'
-              ? game.winner === 'Captain' ? 'You won!' : `${game.opponent} wins`
-              : game.status === 'draw' ? 'Draw!' : 'Game forfeited'
-            : isMyTurn ? <><PlayArrow size={12} /> Your turn</> : `Waiting for ${game.opponent}...`
-          }
+          {status}
         </div>
+        {error && <div role="alert" style={{ color: '#f0b060', padding: '0 16px 12px', fontSize: 12 }}>{error}</div>}
 
         {/* Board */}
-        <div style={{
+        {game && <div role="group" aria-label="Game board" aria-busy={pending === 'move'} style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
+          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
           gap: 4,
           padding: '4px 16px 16px',
         }}>
-          {game.board.map((cell, i) => {
-            const isWinCell = winLine?.includes(i);
+          {board?.map((cell, index) => {
+            const isWinCell = winLine?.includes(index);
             const isEmpty = !cell;
-            const canClick = isMyTurn && isEmpty && !isFinished;
-            const isNewPiece = cell && !prevBoard[i];
+            const canClick = isMyTurn && isEmpty && !isFinished && !busy && game.validMoves.includes(String(index));
+            const isNewPiece = cell && !prevBoard[index];
 
             return (
               <button
-                key={i}
+                key={index}
+                aria-label={`Row ${Math.floor(index / 3) + 1}, column ${index % 3 + 1}, ${cell || 'empty'}`}
                 disabled={!canClick}
-                onClick={() => makeMove(String(i))}
+                onClick={() => makeMove(String(index))}
                 className={isNewPiece ? 'piece-animate' : ''}
                 style={{
-                  width: 80,
-                  height: 80,
+                  width: '100%',
+                  minWidth: 0,
+                  aspectRatio: '1',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -187,11 +238,18 @@ export function GamePanel() {
                   ...(isNewPiece ? { animation: 'piece-pop 0.5s ease-out' } : {}),
                 }}
               >
-                {cell || String(i)}
+                {cell}
               </button>
             );
           })}
-        </div>
+        </div>}
+        {game && !isFinished && <div style={{ minHeight: 44, padding: '0 16px 8px', boxSizing: 'border-box' }}>
+          {recoverable && <button onClick={retry} disabled={busy} aria-label="Retry opponent turn"
+            title="Retry opponent turn" style={{ ...closeBtnStyle, width: '100%', color: busy ? '#666680' : '#f0b060',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontSize: 12 }}>
+            <PlayArrow size={14} /> Retry turn
+          </button>}
+        </div>}
 
         {/* Post-game buttons */}
         {isFinished && (
@@ -213,7 +271,7 @@ export function GamePanel() {
             </button>
           </div>
         )}
-      </div>
+      </section>
     </>
   );
 }

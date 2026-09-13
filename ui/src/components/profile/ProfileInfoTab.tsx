@@ -53,6 +53,15 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
   const refreshDms = useStore(s => s.refreshWardRoomDmChannels);
   const activeGame = useStore(s => s.activeGame);
   const challengeAgent = useStore(s => s.challengeAgent);
+  const gamePending = useStore(s => s.gamePending);
+  const gameSyncing = useStore(s => s.gameSyncing);
+  const gameError = useStore(s => s.gameError);
+  const connected = useStore(s => s.connected);
+  const challengeBlock = !connected ? 'Disconnected'
+    : gameSyncing ? 'Refreshing game state...'
+    : gamePending ? 'Submitting game request...'
+    : activeGame?.status === 'in_progress' ? 'Game in progress...'
+    : '';
   useEffect(() => { refreshDms(); }, [refreshDms]);
 
   // AD-718: Per-agent voice profile editor state.
@@ -719,24 +728,26 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
       {agent.isCrew && (
         <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
           <button
+            type="button"
             onClick={() => challengeAgent(agent.id)}
-            disabled={!!activeGame}
+            disabled={!!challengeBlock}
             style={{
               width: '100%',
               padding: '8px 0',
-              background: activeGame ? 'rgba(100, 100, 100, 0.1)' : 'rgba(240, 176, 96, 0.1)',
-              border: `1px solid ${activeGame ? 'rgba(100, 100, 100, 0.15)' : 'rgba(240, 176, 96, 0.25)'}`,
+              background: challengeBlock ? 'rgba(100, 100, 100, 0.1)' : 'rgba(240, 176, 96, 0.1)',
+              border: `1px solid ${challengeBlock ? 'rgba(100, 100, 100, 0.15)' : 'rgba(240, 176, 96, 0.25)'}`,
               borderRadius: 6,
-              color: activeGame ? '#666' : '#f0b060',
+              color: challengeBlock ? '#8888a0' : '#f0b060',
               fontSize: 12,
               fontFamily: "'JetBrains Mono', monospace",
-              cursor: activeGame ? 'default' : 'pointer',
+              cursor: challengeBlock ? 'default' : 'pointer',
               fontWeight: 500,
               letterSpacing: 0.5,
             }}
           >
-            {activeGame ? 'Game in progress...' : 'Challenge to Tic-Tac-Toe'}
+            <span role="status">{challengeBlock || 'Challenge to Tic-Tac-Toe'}</span>
           </button>
+          {gameError && <div role="alert" style={{ color: '#d05050', marginTop: 6 }}>{gameError}</div>}
         </div>
       )}
     </div>
