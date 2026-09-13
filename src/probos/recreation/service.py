@@ -5,10 +5,19 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from probos.recreation.engine import GameEngine, TicTacToeEngine
 from probos.recreation.chess_engine import ChessEngine
+from probos.recreation.turns import (
+    UNVERSIONED,
+    RecreationConflict,
+    RecreationTurns,
+    RecreationTurnSupport,
+    RecreationTurnSupportFactory,
+    canonical_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +42,10 @@ class RecreationService:
         callsign_registry: Any | None = None,     # AD-654d: for callsign → agent_id
         *,
         default_game: str = "tictactoe",          # AD-526c: Captain default
-    ):
+        clock: Callable[[], float] = time.monotonic,
+        actor_exists: Callable[[str], bool] | None = None,
+        turns_factory: RecreationTurnSupportFactory | None = None,
+    ) -> None:
         self._ward_room = ward_room
         self._records_store = records_store
         self._emit = emit_event_fn
@@ -49,6 +61,14 @@ class RecreationService:
         self._active_games: dict[str, dict[str, Any]] = {}
         # Map thread_id -> game_id for move routing
         self._thread_games: dict[str, str] = {}
+        factory = turns_factory if turns_factory is not None else RecreationTurnSupport
+        self.turns: RecreationTurns = factory(
+            self,
+            dispatcher=dispatcher,
+            emit_event_fn=emit_event_fn,
+            clock=clock,
+            actor_exists=actor_exists,
+        )
 
         # Register default engines
         self.register_engine(TicTacToeEngine())
@@ -113,6 +133,8 @@ class RecreationService:
         challenger: str,
         opponent: str,
         thread_id: str = "",
+        *,
+        opponent_agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Create a new game. Returns game info dict.
 
@@ -128,6 +150,17 @@ class RecreationService:
         Raises:
             ValueError: If game_type is not registered.
         """
+        if self.turns.stopped:
+            raise ValueError("Recreation service is stopped")
+        for name, value in (("Game type", game_type), ("Challenger", challenger), ("Opponent", opponent)):
+            canonical_text(value, name)
+        canonical_text(thread_id, "Thread ID", allow_empty=True)
+        if opponent_agent_id is not None:
+            canonical_text(opponent_agent_id, "Opponent agent ID")
+        if challenger == opponent:
+            raise ValueError("Players must be distinct")
+        if "Captain" in (challenger, opponent) and self.get_game_by_player("Captain") is not None:
+            raise RecreationConflict("Captain already has an active game")
         engine = self._engines.get(game_type)
         if not engine:
             raise ValueError(
@@ -147,16 +180,44 @@ class RecreationService:
             "opponent": opponent,
             "created_at": time.time(),
             "moves_count": 0,
+            "revision": 0,
+            "opponent_agent_id": opponent_agent_id or self._resolve_callsign(opponent) or "",
+            "challenger_agent_id": self._resolve_callsign(challenger) or "",
+            "opponent_turn_status": "idle",
+            "opponent_turn_reason": "",
         }
 
         self._active_games[game_id] = game_info
         if thread_id:
             self._thread_games[thread_id] = game_id
 
+        self.turns.publish_snapshot(game_info)
+        if not thread_id and challenger == "Captain" and self._ward_room is not None:
+            try:
+                channels = await self._ward_room.list_channels()
+                channel = next((channel for channel in channels if channel.name == "Recreation"), None)
+                if channel is not None and game_id in self._active_games and not self.turns.stopped:
+                    thread = await self._ward_room.create_thread(
+                        channel_id=channel.id, author_id="captain",
+                        title=f"[Challenge] Captain challenges {opponent} to {game_type}!",
+                        body=f"The Captain has challenged {opponent} to a game of {game_type}.",
+                        author_callsign="Captain",
+                    )
+                    if game_id in self._active_games and not self.turns.stopped:
+                        game_info["thread_id"] = thread.id
+                        self._thread_games[thread.id] = game_id
+                        game_info["revision"] += 1
+                        self.turns.publish_snapshot(game_info)
+            except Exception:
+                logger.warning(
+                    "Recreation thread creation failed for %s; admitted game remains available",
+                    game_id, exc_info=True,
+                )
         return game_info
 
     async def make_move(
         self, game_id: str, player: str, move: str,
+        *, expected_revision: Any = UNVERSIONED,
     ) -> dict[str, Any]:
         """Apply a move to an active game.
 
@@ -171,102 +232,50 @@ class RecreationService:
         Raises:
             ValueError: If game not found, invalid move, or wrong player.
         """
-        game_info = self._active_games.get(game_id)
+        canonical_text(move, "Move")
+        game_info = self.turns.validate_request(game_id, player, expected_revision=expected_revision)
         if not game_info:
             raise ValueError(f"Game {game_id} not found")
 
         engine = self._engines[game_info["game_type"]]
+        if move not in engine.get_valid_moves(game_info["state"]):
+            raise ValueError(f"Invalid move '{move}': not a canonical legal move")
         new_state = engine.make_move(game_info["state"], player, move)
 
+        self.turns.invalidate_turn(game_id)
         game_info["state"] = new_state
         game_info["moves_count"] += 1
-
-        # AD-526b: Emit game state update for HXI WebSocket
-        if self._emit:
-            try:
-                from probos.events import EventType
-                self._emit(EventType.GAME_UPDATE, {
-                    "game_id": game_id,
-                    "board": new_state["board"],
-                    "current_player": new_state.get("current_player", ""),
-                    "status": new_state["status"],
-                    "winner": new_state.get("winner", ""),
-                    "valid_moves": engine.get_valid_moves(new_state) if new_state["status"] == "in_progress" else [],
-                    "moves_count": game_info["moves_count"],
-                    "last_move": {"player": player, "position": move},
-                    "thread_id": game_info.get("thread_id", ""),
-                })
-            except Exception:
-                pass
-
-        # AD-654d: Emit move_required TaskEvent for the next player
-        if not engine.is_finished(new_state) and self._dispatcher:
-            next_player_callsign = new_state.get("current_player", "")
-            next_agent_id = self._resolve_callsign(next_player_callsign)
-            if next_agent_id:
-                try:
-                    from probos.activation import task_event_for_agent
-                    from probos.types import Priority
-                    event = task_event_for_agent(
-                        agent_id=next_agent_id,
-                        source_type="recreation",
-                        source_id=game_id,
-                        event_type="move_required",
-                        priority=Priority.NORMAL,
-                        payload={
-                            "game_id": game_id,
-                            "game_type": game_info["game_type"],
-                            "board": engine.render_board(new_state),
-                            "valid_moves": engine.get_valid_moves(new_state),
-                            "opponent": next(
-                                (p for p in (game_info["challenger"], game_info["opponent"])
-                                 if p != next_player_callsign), ""
-                            ),
-                            "your_symbol": new_state.get("symbols", {}).get(next_player_callsign, ""),
-                            "thread_id": game_info.get("thread_id", ""),
-                        },
-                        thread_id=game_info.get("thread_id"),
-                    )
-                    _res = await self._dispatcher.dispatch(event)
-                    if not _res.accepted:
-                        # BF-810: a move prompt nobody received stalls the game
-                        # silently -- the player is simply never asked.
-                        logger.warning(
-                            "AD-654d: move_required for @%s reached no agent "
-                            "(rejected=%d unroutable=%d)",
-                            next_player_callsign, _res.rejected, _res.unroutable,
-                        )
-                except Exception:
-                    logger.debug("AD-654d: move_required TaskEvent emission failed", exc_info=True)
-
-        # Check if game is finished
-        if engine.is_finished(new_state):
-            result = engine.get_result(new_state)
-            game_info["result"] = result
+        game_info["revision"] += 1
+        game_info["opponent_turn_status"] = "idle"
+        game_info["opponent_turn_reason"] = ""
+        game_info["last_move"] = {"player": player, "position": move}
+        finished = engine.is_finished(new_state)
+        event = self.turns.prepare_turn(game_info, finished=finished)
+        if finished:
+            game_info["result"] = engine.get_result(new_state)
             game_info["finished_at"] = time.time()
-
-            # Write game record to Ship's Records
-            await self._record_game(game_info, engine)
-
-            # Emit event for Hebbian bond strengthening
-            if self._emit:
-                try:
-                    from probos.events import EventType
-                    self._emit(EventType.GAME_COMPLETED, {
-                        "game_id": game_id,
-                        "game_type": game_info["game_type"],
-                        "players": [game_info["challenger"], game_info["opponent"]],
-                        "result": result,
-                        "moves_count": game_info["moves_count"],
-                    })
-                except Exception:
-                    logger.debug("AD-526a: GAME_COMPLETED event emission failed", exc_info=True)
-
-            # Clean up
-            thread_id = game_info.get("thread_id")
-            if thread_id and thread_id in self._thread_games:
+            game_info["board_text"] = engine.render_board(new_state)
+            thread_id = game_info.get("thread_id", "")
+            if self._thread_games.get(thread_id) == game_id:
                 del self._thread_games[thread_id]
             del self._active_games[game_id]
+
+        self.turns.publish_snapshot(game_info, completed=finished)
+
+        if event is not None:
+            try:
+                admission = await self._dispatcher.dispatch(event)
+                if not admission.accepted:
+                    self.turns.fail_queued_turn(game_id, event.id, "dispatch_rejected")
+            except Exception:
+                logger.warning(
+                    "Recreation dispatch failed for %s; the accepted move remains and the turn is recoverable",
+                    game_id, exc_info=True,
+                )
+                self.turns.fail_queued_turn(game_id, event.id, "dispatch_failed")
+
+        if finished:
+            await self._record_game(game_info, engine)
 
         return game_info
 
@@ -309,31 +318,30 @@ class RecreationService:
                 return game
         return None
 
-    async def forfeit_game(self, game_id: str, player: str) -> None:
+    async def forfeit_game(
+        self, game_id: str, player: str, *, expected_revision: Any = UNVERSIONED,
+    ) -> None:
         """Forfeit/abandon an active game."""
-        game_info = self._active_games.get(game_id)
+        game_info = self.turns.validate_request(game_id, player, expected_revision=expected_revision)
         if not game_info:
             return
 
+        self.turns.invalidate_turn(game_id)
+        game_info["board_text"] = self._engines[game_info["game_type"]].render_board(game_info["state"])
+        game_info["state"] = {
+            **game_info["state"], "status": "forfeited", "current_player": "", "winner": "",
+        }
+        game_info["result"] = {"status": "forfeited", "winner": "", "forfeited_by": player}
+        game_info["finished_at"] = time.time()
+        game_info["revision"] += 1
+        game_info["opponent_turn_status"] = "idle"
+        game_info["opponent_turn_reason"] = ""
         thread_id = game_info.get("thread_id", "")
-        if thread_id and thread_id in self._thread_games:
+        if self._thread_games.get(thread_id) == game_id:
             del self._thread_games[thread_id]
         del self._active_games[game_id]
 
-        if self._emit:
-            try:
-                from probos.events import EventType
-                self._emit(EventType.GAME_UPDATE, {
-                    "game_id": game_id,
-                    "status": "forfeited",
-                    "board": [],
-                    "current_player": "",
-                    "winner": "",
-                    "valid_moves": [],
-                    "moves_count": 0,
-                })
-            except Exception:
-                pass
+        self.turns.publish_snapshot(game_info, completed=True)
 
     async def _record_game(
         self, game_info: dict[str, Any], engine: GameEngine,

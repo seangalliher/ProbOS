@@ -810,6 +810,13 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.initiative.stop()
         runtime.initiative = None
 
+    from probos.recreation.turns import RecreationTurns
+
+    recreation = getattr(runtime, "recreation_service", None)
+    if recreation is not None:
+        turns: RecreationTurns = recreation.turns
+        await turns.stop()
+
     # AD-654b: Shutdown cognitive queues (before proactive loop stops)
     if hasattr(runtime, 'intent_bus') and runtime.intent_bus:
         for agent_id, queue in list(runtime.intent_bus._agent_queues.items()):

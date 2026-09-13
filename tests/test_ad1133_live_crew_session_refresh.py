@@ -1005,8 +1005,9 @@ def test_input_upload_route_has_no_duplicate_broadcast_dependency() -> None:
     assert "broadcast" not in signature(attach_work_item_inputs).parameters
 
 
+@pytest.mark.parametrize("versioned", [False, True], ids=["legacy", "versioned"])
 def test_recreation_forfeit_lifespan_websocket_uses_service_event_once(
-    tmp_path: Path,
+    tmp_path: Path, versioned: bool,
 ) -> None:
     runtime = _Runtime(tmp_path)
     service = RecreationService(emit_event_fn=runtime.emit)
@@ -1015,42 +1016,64 @@ def test_recreation_forfeit_lifespan_websocket_uses_service_event_once(
 
     with TestClient(app) as client:
         assert client.portal is not None
-        game = client.portal.call(
-            service.create_game,
-            "tictactoe",
-            "Captain",
-            "Lynx",
-        )
         with client.websocket_connect("/ws/events") as websocket:
             snapshot = websocket.receive_json()
             generation = snapshot["stream"]["generation"]
+            initial_sequence = snapshot["stream"]["sequence"]
+            game = client.portal.call(
+                service.create_game, "tictactoe", "Captain", "Lynx",
+            )
+            created = websocket.receive_json()
+            assert created["type"] == EventType.GAME_UPDATE.value
+            assert created["data"] == service.turns.snapshot(game)
+            assert created["stream"] == {
+                "generation": generation, "sequence": initial_sequence + 1,
+            }
+            client.portal.call(service.make_move, game["game_id"], "Captain", "4")
+            moved = websocket.receive_json()
+            assert moved["type"] == EventType.GAME_UPDATE.value
+            assert moved["data"]["board"][4] == "X"
+            assert moved["stream"]["sequence"] == initial_sequence + 2
+            baseline = moved["stream"]["sequence"]
+            before = moved["data"]
+            body = {"game_id": game["game_id"]}
+            if versioned:
+                body["revision"] = before["revision"]
             response = client.post(
                 "/api/recreation/forfeit",
-                json={"game_id": game["game_id"]},
+                json=body,
             )
             assert response.status_code == 200
-            assert response.json() == {"status": "forfeited"}
-            for _ in range(100):
-                if app.state.event_stream_hub.sequence >= 1:
-                    break
-                time.sleep(0.005)
-            assert app.state.event_stream_hub.sequence == 1
 
             frame = websocket.receive_json()
             assert frame["type"] == EventType.GAME_UPDATE.value
-            assert frame["data"] == {
-                "game_id": game["game_id"],
-                "status": "forfeited",
-                "board": [],
-                "current_player": "",
-                "winner": "",
-                "valid_moves": [],
-                "moves_count": 0,
-            }
+            terminal = frame["data"]
+            assert terminal == service.turns.snapshot(game)
+            assert terminal["game_id"] == game["game_id"]
+            assert terminal["status"] == "forfeited"
+            assert terminal["board"] == before["board"]
+            assert terminal["moves_count"] == before["moves_count"] == 1
+            assert terminal["revision"] == before["revision"] + 1
+            assert terminal["current_player"] == terminal["winner"] == ""
+            assert terminal["valid_moves"] == []
+            assert terminal["opponent_turn_status"] == "idle"
+            assert terminal["turn_id"] == terminal["attempt_id"] == terminal["event_id"] == ""
+            assert terminal["participants"] == ["Captain", "Lynx"]
+            result = {"status": "forfeited", "winner": "", "forfeited_by": "Captain"}
+            assert terminal["result"] == result
             assert frame["stream"] == {
                 "generation": generation,
-                "sequence": 1,
+                "sequence": baseline + 1,
             }
+            completed = websocket.receive_json()
+            assert completed["type"] == EventType.GAME_COMPLETED.value
+            assert completed["data"] == {
+                "game_id": game["game_id"], "game_type": "tictactoe",
+                "players": ["Captain", "Lynx"], "result": result, "moves_count": 1,
+            }
+            assert completed["stream"] == {"generation": generation, "sequence": baseline + 2}
+            assert app.state.event_stream_hub.sequence == baseline + 2
+            assert response.json() == (terminal if versioned else {"status": "forfeited"})
 
     assert service.get_active_games() == []
 

@@ -25,6 +25,7 @@ from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.dm_reply import ToolInvocations  # AD-1295 (#1087)
+from probos.recreation.turns import RecreationTurnClaim, RecreationTurnOperations
 from probos.substrate.agent import BaseAgent
 from probos.types import (
     AnchorFrame,
@@ -1249,7 +1250,9 @@ class CognitiveAgent(BaseAgent):
     # ``paths=(WR_ONESHOT,)`` and self-wrapped output extend this tuple.
     _WR_SELF_WRAPPED_KEYS: ClassVar[tuple[str, ...]] = ()
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self, *, recreation_turns: RecreationTurnOperations | None = None, **kwargs: Any,
+    ) -> None:
         # Extract instructions from kwargs if provided (overrides class attr)
         if "instructions" in kwargs:
             self.instructions = kwargs.pop("instructions")
@@ -1261,6 +1264,7 @@ class CognitiveAgent(BaseAgent):
 
         # Runtime reference for mesh sub-intent dispatch
         self._runtime = kwargs.get("runtime")
+        self.recreation_turns: RecreationTurnOperations | None = recreation_turns
 
         # Skills dict (AD-199)
         self._skills: dict[str, Skill] = {}
@@ -3486,7 +3490,8 @@ class CognitiveAgent(BaseAgent):
         # observable behaviour is the vessel's current one (0 hits in 21,243
         # journalled decisions). The miss counter is still incremented so
         # ``cache_stats()`` reports the same numbers it does today.
-        cache_enabled = self._decision_cache_enabled()
+        recreation_turn = observation.get("_recreation_turn")
+        cache_enabled = not recreation_turn and self._decision_cache_enabled()
         cache = _DECISION_CACHES.setdefault(self.agent_type, {})
         cache_key = self._compute_cache_key(observation) if cache_enabled else ""
 
@@ -3530,7 +3535,7 @@ class CognitiveAgent(BaseAgent):
             observation["qualification_standing"] = self._qualification_standing
 
         # --- AD-534: Procedural memory check (semantic match) ---
-        procedural_result = await self._check_procedural_memory(observation)
+        procedural_result = None if recreation_turn else await self._check_procedural_memory(observation)
         if procedural_result is not None:
             # Record in journal (fire-and-forget)
             if self._cognitive_journal:
@@ -3554,7 +3559,7 @@ class CognitiveAgent(BaseAgent):
 
         # --- AD-643a: Intent-driven chain activation with targeted skill loading ---
         # Priority 1: externally-set chain (escape hatch for skills, JIT, etc.)
-        if self._pending_sub_task_chain is not None:
+        if not recreation_turn and self._pending_sub_task_chain is not None:
             chain = self._pending_sub_task_chain
             self._pending_sub_task_chain = None  # consume once
             # External chains get all augmentation skills (pre-AD-643 behavior)
@@ -3579,7 +3584,7 @@ class CognitiveAgent(BaseAgent):
             logger.info("AD-632f: Falling back to single-call for %s", self.agent_type)
 
         # Priority 2: intent-driven routing (AD-643a)
-        elif self._should_activate_chain(observation):
+        elif not recreation_turn and self._should_activate_chain(observation):
             # AD-722f: bracket chain reasoning with NORMAL-tier sampling.
             # Wrapped in try/finally so an exception inside the chain
             # cannot leak the refcount. Tier-2 degrade if the runtime is
@@ -3776,7 +3781,27 @@ class CognitiveAgent(BaseAgent):
             intent_name = observation.get("intent", "")
             _task_type = self._task_context.classify_task(intent_name)
 
-        if is_conversation:
+        recreation_turn = observation.get("_recreation_turn")
+        if recreation_turn is not None:
+            composed = compose_instructions(
+                agent_type=self.agent_type,
+                hardcoded_instructions="",
+                callsign=self._resolve_callsign(),
+                agent_rank=getattr(self, "rank", None),
+                skill_profile=getattr(self, "_skill_profile", None),
+                task_type=_task_type,
+            )
+            composed += (
+                f"\n\nYou are playing {recreation_turn.game_type} as {recreation_turn.player}. "
+                f"Your symbol is {recreation_turn.symbol}. It is your turn.\n"
+                f"Authoritative current board:\n{recreation_turn.board}\n"
+                f"Legal moves: {', '.join(recreation_turn.valid_moves)}.\n"
+                "Choose one legal move and include exactly one [MOVE position] tag. "
+                "You may add a short conversational comment. The game engine will validate "
+                "the move; your reply alone does not change the board. Do not post to the "
+                "Ward Room or issue other action tags."
+            )
+        elif is_conversation:
             # For 1:1 and ward room, use personality + standing orders only.
             # Exclude domain-specific task instructions (report formats, output blocks)
             # so the LLM responds naturally as itself.
@@ -6371,6 +6396,9 @@ class CognitiveAgent(BaseAgent):
         intent: IntentMessage,
         cognitive_skill_instructions: str | None = None,
         skill_entries: list | None = None,
+        *,
+        recreation_turn: RecreationTurnClaim | None = None,
+        recreation_turns: RecreationTurnOperations | None = None,
     ) -> IntentResult:
         """Execute the full cognitive lifecycle: perceive → decide → act → report.
 
@@ -6383,7 +6411,13 @@ class CognitiveAgent(BaseAgent):
             cognitive_skill_instructions: AD-596b cognitive skill instructions (if any).
             skill_entries: AD-596b skill catalog entries matched for this intent (if any).
         """
+        if intent.intent == "move_required" and (
+            recreation_turn is None or recreation_turns is None
+        ):
+            return await self._run_recreation_turn(intent)
         observation = await self.perceive(intent)
+        if recreation_turn is not None:
+            observation["_recreation_turn"] = recreation_turn
 
         # AD-430c (Pillar 4): Enrich observation with relevant episodic memories
         observation = await self._recall_relevant_memories(intent, observation)
@@ -6570,8 +6604,27 @@ class CognitiveAgent(BaseAgent):
             decision["llm_output"] = compound_result["result"]
             decision["compound"] = False  # prevent re-entry
 
-        result = await self.act(decision)
+        action_decision = (
+            {**decision, "intent": "proactive_think"}
+            if recreation_turn is not None else decision
+        )
+        result = await self.act(action_decision)
         report = await self.report(result)
+        if recreation_turn is not None and recreation_turns is not None:
+            from probos.cognitive.dm_sanity_gate import DmSanityGate
+
+            text = report.get("result")
+            move = (
+                DmSanityGate().extract_move(text)
+                if report.get("success") and isinstance(text, str)
+                and text.strip() and "[NO_RESPONSE]" not in text else None
+            )
+            outcome = await recreation_turns.complete_turn(recreation_turn, move)
+            outcome["intent_id"] = intent.id
+            report = {
+                **report, "success": outcome["applied"], "recreation": outcome,
+                "error": outcome["reason"] or None,
+            }
 
         # AD-573: Record action to working memory (all pathways)
         try:
@@ -6822,6 +6875,51 @@ class CognitiveAgent(BaseAgent):
             metadata=_build_result_metadata(report, decision, observation),
         )
 
+    async def _run_recreation_turn(self, intent: IntentMessage) -> IntentResult:
+        import asyncio
+
+        turns = self.recreation_turns
+        claim = turns.claim_turn(intent, self.id) if turns is not None else None
+        if turns is None or claim is None:
+            return IntentResult(
+                intent_id=intent.id, agent_id=self.id, success=False,
+                error="Recreation turn is not current or authorized", confidence=self.confidence,
+            )
+        try:
+            return await self._run_cognitive_lifecycle(
+                intent, recreation_turn=claim, recreation_turns=turns,
+            )
+        except asyncio.CancelledError:
+            try:
+                async with asyncio.timeout(1.0):
+                    outcome = await turns.complete_turn(claim, None, reason="cognitive_cancelled")
+                    outcome["intent_id"] = intent.id
+                    await self._store_action_episode(
+                        intent, {"params": intent.params},
+                        {"success": False, "result": "", "recreation": outcome},
+                    )
+            except Exception:
+                logger.warning(
+                    "Recreation cancellation bookkeeping failed for %s; cancellation propagates without waiting further",
+                    claim.game_id, exc_info=True,
+                )
+            raise
+        except Exception:
+            outcome = await turns.complete_turn(claim, None, reason="cognitive_failed")
+            outcome["intent_id"] = intent.id
+            await self._store_action_episode(
+                intent, {"params": intent.params},
+                {"success": False, "result": "", "recreation": outcome},
+            )
+            logger.warning(
+                "Recreation cognition failed for %s; no move fabricated and turn left for recovery",
+                claim.game_id, exc_info=True,
+            )
+            return IntentResult(
+                intent_id=intent.id, agent_id=self.id, success=False,
+                error="cognitive_failed", confidence=self.confidence,
+            )
+
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Skills first, then cognitive lifecycle.
 
@@ -6834,6 +6932,10 @@ class CognitiveAgent(BaseAgent):
             intent.intent in ("direct_message", "ward_room_notification", "proactive_think", "compound_step_replay")
             and intent.target_agent_id == self.id
         )
+        if intent.intent == "move_required":
+            if type(intent) is not IntentMessage or intent.target_agent_id != self.id:
+                return None
+            is_direct = True
 
         # BF-239: Ward Room thread engagement gate — skip if already
         # replied to this thread in the current round. Uses working memory
@@ -6910,7 +7012,7 @@ class CognitiveAgent(BaseAgent):
             return await self._handle_compound_step_replay(intent)
 
         # Skill dispatch — direct handler call, no LLM reasoning
-        if intent.intent in self._skills:
+        if intent.intent != "move_required" and intent.intent in self._skills:
             skill = self._skills[intent.intent]
             return await skill.handler(intent, llm_client=self._llm_client)
 
@@ -11333,6 +11435,7 @@ class CognitiveAgent(BaseAgent):
                     "response": result_text,
                     "agent_type": self.agent_type,
                     "source": source or "intent_bus",
+                    **({"recreation": report["recreation"]} if "recreation" in report else {}),
                     # AD-632g: Chain metadata for procedure extraction
                     **(observation.get("_chain_metadata") or {}),
                     # AD-643b: Trigger learning feedback

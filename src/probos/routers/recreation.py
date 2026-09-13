@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from probos.recreation.turns import RecreationConflict, RecreationTurns, canonical_text, validate_revision
 from probos.routers.deps import (
     WebSocketBroadcast,
-    broadcast_ws_event,
     get_runtime,
     get_ws_broadcast,
 )
@@ -20,6 +19,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/recreation", tags=["recreation"])
 
 
+def _validate_body(body: dict[str, Any], *fields: str, revision_required: bool = False) -> dict[str, Any]:
+    try:
+        if type(body) is not dict:
+            raise ValueError("Request body must be an object")
+        for field in fields:
+            canonical_text(body.get(field), field)
+        if "revision" in body or revision_required:
+            validate_revision(body.get("revision"))
+            return {"expected_revision": body["revision"]}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {}
+
+
 @router.post("/challenge")
 async def challenge_agent(
     body: dict[str, Any],
@@ -27,8 +40,13 @@ async def challenge_agent(
     broadcast: WebSocketBroadcast | None = Depends(get_ws_broadcast),
 ) -> dict[str, Any]:
     """Captain challenges a crew agent to a game."""
+    _validate_body(body, "opponent_agent_id")
     opponent_id = body.get("opponent_agent_id", "")
     game_type = body.get("game_type", "tictactoe")
+    try:
+        canonical_text(game_type, "Game type")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     rec_svc = getattr(runtime, "recreation_service", None)
     if not rec_svc:
@@ -53,48 +71,16 @@ async def challenge_agent(
             detail="Agent has no callsign — only crew agents can be challenged",
         )
 
-    # Create Ward Room thread in Recreation channel
-    thread_id = ""
     try:
-        channels = await runtime.ward_room.list_channels()
-        rec_ch = next((c for c in channels if c.name == "Recreation"), None)
-        if rec_ch:
-            thread = await runtime.ward_room.create_thread(
-                channel_id=rec_ch.id,
-                author_id="captain",
-                title=f"[Challenge] Captain challenges {callsign} to {game_type}!",
-                body=f"The Captain has challenged {callsign} to a game of {game_type}.",
-                author_callsign="Captain",
-            )
-            thread_id = thread.id
-    except Exception:
-        logger.debug("Ward Room thread creation failed for Captain challenge", exc_info=True)
-
-    # Create game via service
-    game = await rec_svc.create_game(game_type, "Captain", callsign, thread_id)
-    state = game.get("state", {})
-    board = state.get("board", [""] * 9)
-    valid_moves = rec_svc.get_valid_moves(game["game_id"])
-
-    result = {
-        "game_id": game["game_id"],
-        "game_type": game_type,
-        "board": board,
-        "current_player": state.get("current_player", "Captain"),
-        "status": state.get("status", "in_progress"),
-        "winner": "",
-        "valid_moves": valid_moves,
-        "moves_count": 0,
-        "opponent": callsign,
-        "opponent_agent_id": opponent_id,
-        "thread_id": thread_id,
-    }
-
-    broadcast_ws_event(
-        broadcast,
-        {"type": "game_update", "data": result, "timestamp": time.time()},
-    )
-    return result
+        game = await rec_svc.create_game(
+            game_type, "Captain", callsign, "", opponent_agent_id=opponent_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409 if isinstance(exc, RecreationConflict) else 400, detail=str(exc),
+        ) from exc
+    turns: RecreationTurns = rec_svc.turns
+    return turns.snapshot(game)
 
 
 @router.post("/move")
@@ -103,6 +89,7 @@ async def make_move(
     runtime: Any = Depends(get_runtime),
 ) -> dict[str, Any]:
     """Captain makes a move in an active game."""
+    precondition = _validate_body(body, "game_id", "position")
     game_id = body.get("game_id", "")
     position = body.get("position", "")
 
@@ -111,18 +98,16 @@ async def make_move(
         raise HTTPException(status_code=503, detail="Recreation service not available")
 
     try:
-        game_info = await rec_svc.make_move(game_id, "Captain", position)
+        game_info = await rec_svc.make_move(game_id, "Captain", position, **precondition)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=409 if isinstance(e, RecreationConflict) else 400, detail=str(e)) from e
 
     state = game_info.get("state", {})
-    board = state.get("board", [""] * 9)
-
     # Post board update to Ward Room thread
     thread_id = game_info.get("thread_id", "")
     if thread_id and runtime.ward_room:
         try:
-            board_text = rec_svc.render_board(game_id)
+            board_text = game_info.get("board_text") or rec_svc.render_board(game_id)
             status_text = state.get("status", "in_progress")
             if status_text == "won":
                 msg = f"Game over! Winner: {state.get('winner', '?')}\n```\n{board_text}\n```"
@@ -139,20 +124,12 @@ async def make_move(
         except Exception:
             logger.debug("Ward Room post failed for Captain move", exc_info=True)
 
-    valid_moves = rec_svc.get_valid_moves(game_id) if state.get("status") == "in_progress" else []
-
-    return {
-        "board": board,
-        "current_player": state.get("current_player", ""),
-        "status": state.get("status", "in_progress"),
-        "winner": state.get("winner", ""),
-        "valid_moves": valid_moves,
-        "moves_count": game_info.get("moves_count", 0),
-    }
+    turns: RecreationTurns = rec_svc.turns
+    return turns.snapshot(game_info)
 
 
 @router.get("/active")
-async def get_active_game(runtime: Any = Depends(get_runtime)):
+async def get_active_game(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     """Return the Captain's active game, if any."""
     rec_svc = getattr(runtime, "recreation_service", None)
     if not rec_svc:
@@ -160,25 +137,8 @@ async def get_active_game(runtime: Any = Depends(get_runtime)):
 
     for game in rec_svc.get_active_games():
         if "Captain" in [game.get("challenger"), game.get("opponent")]:
-            state = game.get("state", {})
-            board = state.get("board", [""] * 9)
-            valid_moves = rec_svc.get_valid_moves(game["game_id"])
-            opponent = game.get("opponent") if game.get("challenger") == "Captain" else game.get("challenger")
-            return {
-                "game": {
-                    "game_id": game["game_id"],
-                    "game_type": game.get("game_type", "tictactoe"),
-                    "board": board,
-                    "current_player": state.get("current_player", ""),
-                    "status": state.get("status", "in_progress"),
-                    "winner": state.get("winner", ""),
-                    "valid_moves": valid_moves,
-                    "moves_count": game.get("moves_count", 0),
-                    "opponent": opponent,
-                    "opponent_agent_id": "",
-                    "thread_id": game.get("thread_id", ""),
-                }
-            }
+            turns: RecreationTurns = rec_svc.turns
+            return {"game": turns.snapshot(game)}
     return {"game": None}
 
 
@@ -186,14 +146,36 @@ async def get_active_game(runtime: Any = Depends(get_runtime)):
 async def forfeit_game(
     body: dict[str, Any],
     runtime: Any = Depends(get_runtime),
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Captain forfeits the active game."""
+    precondition = _validate_body(body, "game_id")
     game_id = body.get("game_id", "")
 
     rec_svc = getattr(runtime, "recreation_service", None)
     if not rec_svc:
         raise HTTPException(status_code=503, detail="Recreation service not available")
 
-    await rec_svc.forfeit_game(game_id, "Captain")
+    try:
+        game = next((game for game in rec_svc.get_active_games() if game["game_id"] == game_id), None)
+        await rec_svc.forfeit_game(game_id, "Captain", **precondition)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if isinstance(exc, RecreationConflict) else 400, detail=str(exc)) from exc
 
-    return {"status": "forfeited"}
+    turns: RecreationTurns = rec_svc.turns
+    return turns.snapshot(game) if game is not None and precondition else {"status": "forfeited"}
+
+
+@router.post("/retry")
+async def retry_turn(
+    body: dict[str, Any], runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Captain explicitly retries a recoverable opponent turn."""
+    precondition = _validate_body(body, "game_id", revision_required=True)
+    rec_svc = getattr(runtime, "recreation_service", None)
+    if not rec_svc:
+        raise HTTPException(status_code=503, detail="Recreation service not available")
+    turns: RecreationTurns = rec_svc.turns
+    try:
+        return await turns.retry(body["game_id"], "Captain", **precondition)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if isinstance(exc, RecreationConflict) else 400, detail=str(exc)) from exc

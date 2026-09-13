@@ -3427,7 +3427,9 @@ def make_cognitive_queue_rehydrator(
     recycle seam this closes can be driven directly by a test.
     """
     from probos.cognitive.circuit_breaker import BreakerState
+    from probos.cognitive.cognitive_agent import CognitiveAgent
     from probos.cognitive.queue import AgentCognitiveQueue
+    from probos.recreation.service import RecreationService
 
     def _make_should_process(agent_ref: Any) -> Callable:
         """Create dequeue-time guard for an agent.
@@ -3459,6 +3461,9 @@ def make_cognitive_queue_rehydrator(
         lazy ``proactive_loop`` lookup above is what makes running this at
         birth — long before the proactive loop exists — safe.
         """
+        if isinstance(agent, CognitiveAgent):
+            recreation_service: RecreationService | None = getattr(runtime, "recreation_service", None)
+            agent.recreation_turns = recreation_service.turns if recreation_service is not None else None
         if not is_crew_agent(agent, runtime.ontology):
             return
         if intent_bus._get_agent_queue(agent.id) is not None:
@@ -5179,14 +5184,21 @@ async def finalize_startup(
         runtime.onboarding.set_billet_registry(runtime.ontology.billet_registry)
 
     # AD-526a: Wire RecreationService with late-init dependencies
+    from probos.cognitive.cognitive_agent import CognitiveAgent
     from probos.recreation.service import RecreationService
-    runtime.recreation_service = RecreationService(
+    recreation_registry = runtime.registry
+    recreation_service = RecreationService(
         ward_room=runtime.ward_room,
         records_store=runtime._records_store,
         emit_event_fn=runtime.emit_event,
         dispatcher=runtime.dispatcher,                # AD-654d
         callsign_registry=runtime.callsign_registry,  # AD-654d
+        actor_exists=lambda agent_id: recreation_registry.get(agent_id) is not None,
     )
+    runtime.recreation_service = recreation_service
+    for agent in runtime.registry.all():
+        if isinstance(agent, CognitiveAgent):
+            agent.recreation_turns = recreation_service.turns
 
     # AD-597: Wire MCP App Host registry (default-False; serves internal games when enabled)
     try:

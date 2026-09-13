@@ -956,7 +956,7 @@ export interface ServiceStatus {
 export interface GameState {
   gameId: string;
   gameType: string;
-  board: string[];           // 9 cells: "" | "X" | "O"
+  board: string[] | string[][];
   currentPlayer: string;     // callsign whose turn ("Captain" or agent callsign)
   status: 'in_progress' | 'won' | 'draw' | 'forfeited';
   winner: string;
@@ -964,7 +964,14 @@ export interface GameState {
   movesCount: number;
   opponent: string;          // agent callsign
   opponentAgentId: string;
+  participants?: [string, string];
   threadId: string;
+  revision: number;
+  opponentTurnStatus: 'idle' | 'queued' | 'thinking' | 'recoverable';
+  opponentTurnReason: string;
+  turnId: string;
+  attemptId: string;
+  eventId: string;
 }
 
 // AD-513: Crew manifest entry from /api/ontology/crew-manifest
