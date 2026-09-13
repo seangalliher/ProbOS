@@ -28,22 +28,23 @@ from typing import Any
 import pytest
 
 from probos.config import BrowserToolConfig
+from probos.tools.browser.session import BrowserSession
 from probos.tools.browser.tool import BrowserTool
 
 
-class _FakeSession:
+class _FakeSession(BrowserSession):
     """Minimal session standing in for a live page.
 
-    Carries ``_config`` because the AD-706e tier classifier reads it for
-    click/type risk assessment — that runs *after* binding, so a thinner fake
-    would fail for reasons unrelated to what is under test.
+    Inherits lifecycle metadata and tier-classification configuration while
+    avoiding Playwright resource creation in these binding probes.
     """
 
-    def __init__(self, session_id: str, config: Any) -> None:
-        self.session_id = session_id
-        self.last_url = "https://example.com/doc"
-        self.agent_id = ""
-        self._config = config
+    async def start(self) -> None:
+        pass
+
+    @property
+    def last_url(self) -> str:
+        return "https://example.com/doc"
 
     async def state(self, **_kw: Any) -> dict[str, Any]:
         return {"url": self.last_url, "title": "", "screenshot_b64": ""}
@@ -59,17 +60,21 @@ class _RecordingTool(BrowserTool):
 
     def __init__(self) -> None:
         super().__init__(config=BrowserToolConfig(enabled=True))
+        self._session_factory = _FakeSession
         self.resolved_with: list[str | None] = []
 
-    async def _get_or_create_session(
+    async def _create_session(
         self, session_id: str | None, agent_id: str,
-    ) -> Any:
+    ) -> BrowserSession:
         self.resolved_with.append(session_id)
-        return _FakeSession(session_id or "fresh-session", self._config)
+        return await super()._create_session(session_id, agent_id)
 
 
 async def _invoke(tool: BrowserTool, params: dict, context: dict | None) -> Any:
-    return await tool.invoke(params, context)
+    try:
+        return await tool.invoke(params, context)
+    finally:
+        await tool.stop()
 
 
 # ---------------------------------------------------------------------------

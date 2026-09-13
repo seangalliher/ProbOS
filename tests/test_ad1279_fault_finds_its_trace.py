@@ -464,7 +464,7 @@ def test_the_writer_and_the_detector_are_handed_the_same_resolver() -> None:
     the detector cannot disagree" a property of the code rather than of the
     current implementation of the resolver.
     """
-    tree = ast.parse(inspect.getsource(WorkItemAgenticExecutor.run).lstrip())
+    tree = ast.parse(inspect.getsource(WorkItemAgenticExecutor._run_reserved).lstrip())
 
     built = [
         node for node in ast.walk(tree)

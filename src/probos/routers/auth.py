@@ -22,6 +22,7 @@ from typing import Any
 from fastapi import Depends, Header, HTTPException, Request, WebSocket
 
 from probos.routers.deps import get_runtime
+from probos.tools.browser.lifecycle import BrowserActor, BrowserAuthorityBasis
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,19 @@ async def require_crew_scope(
 
     if not hmac.compare_digest(presented, expected):
         raise HTTPException(status_code=401, detail="invalid_token")
+
+
+async def require_browser_actor(
+    runtime: Any = Depends(get_runtime),
+    crew_scope: None = Depends(require_crew_scope),
+) -> BrowserActor:
+    """Resolve operator provenance only after the existing crew-scope check."""
+    basis = (
+        BrowserAuthorityBasis.SHARED_CREW_SCOPE
+        if _configured_token(runtime)
+        else BrowserAuthorityBasis.SINGLE_OPERATOR_COMPATIBILITY
+    )
+    return BrowserActor(basis)
 
 
 async def verify_ws_token(websocket: WebSocket, runtime: Any) -> bool:

@@ -16,7 +16,7 @@
  *  scheme allowlist (http/https only) blocks javascript:/data:/file:/about:
  *  injection before anything reaches the iframe `src`.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { NativeWorkstationProps } from './WorkstationLauncher';
 import { BrowserStreamPanel } from '../browser/BrowserStreamPanel';
 import type { ForwardInputEvent } from '../browser/BrowserStreamPanel';
@@ -24,8 +24,21 @@ import type { ForwardInputEvent } from '../browser/BrowserStreamPanel';
 type BrowserMode = 'embedded' | 'watch' | 'bridge';
 
 /** AD-1052a: one active browser session as projected by GET /api/browser/sessions. */
-type SessionRow = { session_id: string; agent_id: string; streaming_url: string | null; last_url: string };
-type SessionsResponse = { enabled: boolean; sessions: SessionRow[]; input_forwarding_enabled?: boolean };
+type SessionSnapshot = {
+  session_id: string;
+  state?: 'creating' | 'active' | 'ending' | 'cleanup_failed' | 'ended';
+  owner_id?: string | null;
+  sharing_scope?: string;
+  recording_state?: string;
+  recording_scope?: string;
+  pending_work?: number | null;
+  expires_at?: number | null;
+  external_browser?: boolean;
+};
+type SessionRow = SessionSnapshot & { agent_id: string; streaming_url: string | null; last_url: string };
+type SessionsResponse = { enabled: boolean; sessions: SessionRow[]; input_forwarding_enabled?: boolean; authority_basis?: string };
+type LifecycleAction = 'end' | 'handoff';
+type LifecycleResponse = { outcome: string; reason: string; status_code: number; session?: SessionSnapshot | null };
 /** AD-1052b: POST /api/browser/bridge/connect response. */
 type BridgeConnectResponse = {
   connected: boolean; reason?: string | null;
@@ -48,6 +61,20 @@ type Props = NativeWorkstationProps & {
   forwardInput?: (sessionId: string, evt: ForwardInputEvent) => Promise<ForwardInputResponse>;
   /** AD-1161: injectable for tests; defaults to the same-origin POST (no token — DD-1). */
   openSession?: (url: string) => Promise<OpenSessionResponse>;
+  changeLifecycle?: (sessionId: string, action: LifecycleAction) => Promise<LifecycleResponse>;
+};
+
+const _defaultChangeLifecycle = async (sessionId: string, action: LifecycleAction): Promise<LifecycleResponse> => {
+  const response = await fetch(`/api/browser/sessions/${encodeURIComponent(sessionId)}/${action}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true }),
+  });
+  const result = await response.json();
+  return {
+    outcome: response.ok ? result.outcome : (result.outcome ?? 'rejected'),
+    reason: typeof result.reason === 'string' ? result.reason : `Request rejected (${response.status}).`,
+    status_code: response.status, session: result.session,
+  };
 };
 
 /** AD-1052a / DD-1: same-origin fetch with NO token. The HXI calls require_crew_scope
@@ -108,6 +135,11 @@ const _defaultOpenSession = async (url: string): Promise<OpenSessionResponse> =>
 const _AMBER = '#f0b060';
 const _DIM = '#666680';
 const _TEXT = '#c8c8d4';
+const _ACTION_STYLE: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
+  border: '1px solid #33334a', borderRadius: 4, background: 'transparent',
+  color: _TEXT, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer',
+};
 
 /** AD-1052b: the canonical local CDP endpoint a Captain-launched Chrome exposes
  *  via ``--remote-debugging-port=9222``. */
@@ -120,6 +152,10 @@ const _svgBase = (color: string): React.SVGProps<SVGSVGElement> => ({
 
 function IconGo({ color = _DIM }: { color?: string }): React.ReactElement {
   return (<svg {..._svgBase(color)} aria-hidden="true"><path d="M5 12 H19 M13 6 L19 12 L13 18" /></svg>);
+}
+
+function IconClose({ color = _DIM }: { color?: string }): React.ReactElement {
+  return <svg {..._svgBase(color)} aria-hidden="true"><path d="M6 6L18 18M18 6L6 18" /></svg>;
 }
 
 function IconGlobe({ color = _DIM }: { color?: string }): React.ReactElement {
@@ -193,11 +229,12 @@ const _MODES: { id: BrowserMode; label: string; title?: string; disabled: boolea
   { id: 'bridge', label: 'Bridge', disabled: false },
 ];
 
-export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBridge, forwardInput, openSession }: Props): React.ReactElement {
+export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBridge, forwardInput, openSession, changeLifecycle }: Props): React.ReactElement {
   const _fetchSessions = fetchSessions ?? _defaultFetchSessions;
   const _connectBridge = connectBridge ?? _defaultConnectBridge;
   const _forwardInput = forwardInput ?? _defaultForwardInput;
   const _openSession = openSession ?? _defaultOpenSession;
+  const _changeLifecycle = changeLifecycle ?? _defaultChangeLifecycle;
   // AD-1161: `embedded` is an iframe, and every interesting target (Word Online,
   // OneDrive, most SaaS) sends X-Frame-Options/frame-ancestors and refuses to
   // render in one. Landing the Captain on a mode that cannot show the thing they
@@ -233,6 +270,102 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
   const [bridgeState, setBridgeState] = useState<'idle' | 'connecting' | 'connected' | 'refused'>('idle');
   const [bridgeReason, setBridgeReason] = useState<string | null>(null);
   const [bridgeSession, setBridgeSession] = useState<{ session_id: string; streaming_url: string | null } | null>(null);
+  const generation = useRef(0);
+  const listGeneration = useRef(0);
+  const inputGeneration = useRef(0);
+  const manualMode = useRef(false);
+  const [authority, setAuthority] = useState<string>('unknown');
+  const [watching, setWatching] = useState(true);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<LifecycleAction | null>(null);
+  const [pending, setPending] = useState(false);
+  const [streamGeneration, setStreamGeneration] = useState(0);
+  const [clock, setClock] = useState(Date.now());
+  const dialog = useRef<HTMLDivElement>(null);
+  const activeId = mode === 'watch' ? selectedId : mode === 'bridge' ? bridgeSession?.session_id ?? null : null;
+  const activeSession = sessions.find((session) => session.session_id === activeId);
+  const expired = activeSession?.expires_at != null && activeSession.expires_at * 1000 <= clock;
+  const releaseInput = (): void => {
+    inputGeneration.current += 1;
+    setDriveEnabled(false);
+  };
+  const resetView = (): void => {
+    generation.current += 1;
+    listGeneration.current += 1;
+    releaseInput();
+    setWatching(true);
+    setViewerError(null);
+    setNotice(null);
+    setConfirmation(null);
+    setPending(false);
+    setOpenState('idle');
+    setBridgeState((current) => current === 'connecting' ? 'idle' : current);
+  };
+  const acceptListing = (data: SessionsResponse): void => {
+    setSessions(data.sessions);
+    setEnabled(data.enabled);
+    setInputForwardingEnabled(data.input_forwarding_enabled ?? false);
+    setAuthority(data.authority_basis ?? 'unknown');
+    setClock(Date.now());
+    setSessionsState('ready');
+  };
+  const refreshSessions = (): void => {
+    generation.current += 1;
+    listGeneration.current += 1;
+    releaseInput();
+    setPending(false);
+    setOpenState('idle');
+    setConfirmation(null);
+    setReloadKey((current) => current + 1);
+  };
+  useEffect(() => () => {
+    generation.current += 1;
+    listGeneration.current += 1;
+    inputGeneration.current += 1;
+  }, []);
+  useEffect(() => {
+    if (!activeId || !watching || pending || confirmation) return;
+    let inFlight = false;
+    const timer = window.setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
+      const request = ++listGeneration.current;
+      const view = generation.current;
+      void _fetchSessions().then((data) => {
+        if (request !== listGeneration.current || view !== generation.current) return;
+        acceptListing(data);
+        const session = data.sessions.find((row) => row.session_id === activeId);
+        if (!data.enabled || !data.input_forwarding_enabled || session?.state !== 'active' || (session.expires_at != null && session.expires_at * 1000 <= Date.now())) releaseInput();
+        if (!session || session.state !== 'active' || !data.enabled) setViewerError('Session unavailable. Viewer disconnected.');
+      }).catch(() => {
+        if (request !== listGeneration.current || view !== generation.current) return;
+        releaseInput();
+        setSessionsState('error');
+        setViewerError('Could not verify session state. Viewer disconnected.');
+      }).finally(() => { inFlight = false; });
+    }, 5000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, watching, pending, confirmation, mode]);
+  useEffect(() => {
+    if (!activeSession?.expires_at) return;
+    const delay = activeSession.expires_at * 1000 - Date.now();
+    if (delay <= 0) { releaseInput(); setClock(Date.now()); return; }
+    const timer = window.setTimeout(() => {
+      releaseInput();
+      setClock(Date.now());
+      setReloadKey((current) => current + 1);
+    }, Math.min(delay, 2147483647));
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, activeSession?.expires_at]);
+  useEffect(() => {
+    if (!confirmation) return;
+    const previous = document.activeElement;
+    dialog.current?.focus();
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+  }, [confirmation]);
 
   // AD-1161: resolve the initial mode from the SAME /api/browser/sessions probe
   // the watch surface already uses (no second endpoint). Mount-only: once the
@@ -242,10 +375,10 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
     void (async () => {
       try {
         const data = await _fetchSessions();
-        if (cancelled) return;
+        if (cancelled || manualMode.current) return;
         setEnabled(data.enabled);
         setInputForwardingEnabled(data.input_forwarding_enabled ?? false);
-        if (data.enabled) setMode('watch');
+        if (data.enabled && !manualMode.current) setMode('watch');
       } catch {
         // Honest-degrade: no backend answer means no browser tool, so the
         // iframe-based embedded mode stays the default. Nothing to surface.
@@ -258,21 +391,21 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
   }, []);
 
   useEffect(() => {
-    if (mode !== 'watch') return;
+    if (mode === 'embedded') return;
     let cancelled = false;
+    const request = ++listGeneration.current;
+    releaseInput();
     setSessionsState('loading');
-    setSelectedId(null);
     _fetchSessions()
       .then((data) => {
-        if (cancelled) return;
-        setSessions(data.sessions);
-        setEnabled(data.enabled);
-        setInputForwardingEnabled(data.input_forwarding_enabled ?? false);
-        setSessionsState('ready');
+        if (cancelled || request !== listGeneration.current) return;
+        acceptListing(data);
       })
       .catch(() => {
-        if (cancelled) return;
+        if (cancelled || request !== listGeneration.current) return;
         setSessionsState('error');
+        releaseInput();
+        setViewerError('Could not verify session state. Viewer disconnected.');
       });
     return () => {
       cancelled = true;
@@ -305,30 +438,39 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
     }
     setOpenState('opening');
     setOpenReason(null);
+    releaseInput();
+    const request = ++generation.current;
+    listGeneration.current += 1;
     _openSession(normalized)
       .then((res) => {
+      if (request !== generation.current) return;
         if (!res.opened) {
           setOpenReason(res.reason ?? 'Could not open that URL.');
+          refreshSessions();
           return;
         }
         const sid = res.session_id ?? '';
-        if (sid) setSelectedId(sid);
+        if (sid) { setSelectedId(sid); setWatching(true); setViewerError(null); setConfirmation(null); }
         // A refresh failure must NOT be reported as an open failure — the
         // session is open either way; the list just stays stale until Refresh.
         return _fetchSessions()
           .then((data) => {
-            setSessions(data.sessions);
-            setEnabled(data.enabled);
-            setInputForwardingEnabled(data.input_forwarding_enabled ?? false);
-            setSessionsState('ready');
+            if (request !== generation.current) return;
+            acceptListing(data);
           })
-          .catch(() => undefined);
+          .catch(() => {
+            if (request !== generation.current) return;
+            setSessionsState('error');
+            setOpenReason('Session opened. Refresh sessions to view it.');
+          });
       })
       .catch(() => {
+        if (request !== generation.current) return;
         setOpenReason('Could not open that URL.');
+        refreshSessions();
       })
       .finally(() => {
-        setOpenState('idle');
+        if (request === generation.current) setOpenState('idle');
       });
   };
 
@@ -337,20 +479,25 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
   // reuse the AD-706a stream panel; else surface the honest-degrade reason.
   const onConnect = (): void => {
     const endpoint = bridgeEndpoint;
+    resetView();
+    const request = generation.current;
     setBridgeState('connecting');
     setBridgeReason(null);
     setBridgeSession(null);
     _connectBridge(endpoint)
       .then((res) => {
+        if (request !== generation.current) return;
         if (res.connected) {
           setBridgeSession({ session_id: res.session_id ?? '', streaming_url: res.streaming_url ?? null });
           setBridgeState('connected');
+          setReloadKey((current) => current + 1);
         } else {
           setBridgeReason(res.reason ?? 'Connection refused.');
           setBridgeState('refused');
         }
       })
       .catch(() => {
+        if (request !== generation.current) return;
         setBridgeReason(`Could not connect to ${endpoint}`);
         setBridgeState('refused');
       });
@@ -365,10 +512,11 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
     return (
       <button
         data-testid="browser-watch-drive"
-        onClick={() => setDriveEnabled((d) => !d)}
+        onClick={() => { if (driveEnabled) releaseInput(); else setDriveEnabled(true); }}
+        disabled={!activeId || !watching || !!viewerError || expired || pending || confirmation !== null || sessionsState !== 'ready' || activeSession?.state !== 'active'}
         aria-pressed={driveEnabled}
-        aria-label="Drive the browser"
-        title="Drive: forward your clicks and typing to the live page"
+        aria-label={driveEnabled ? 'Release control' : 'Drive the browser'}
+        title={driveEnabled ? 'Release control in this view only' : 'Drive the browser in this view'}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
           border: '1px solid #33334a', borderRadius: 4,
@@ -376,24 +524,132 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
           color: driveEnabled ? _AMBER : _DIM, cursor: 'pointer', fontSize: 11,
         }}
       >
-        <IconDrive color={driveEnabled ? _AMBER : _DIM} />Drive
+        <IconDrive color={driveEnabled ? _AMBER : _DIM} />{driveEnabled ? 'Release control' : 'Drive'}
       </button>
     );
   };
+
+  const reconnect = async (): Promise<void> => {
+    releaseInput();
+    const request = ++generation.current;
+    const listingRequest = ++listGeneration.current;
+    const sessionId = activeId;
+    setPending(true);
+    setConfirmation(null);
+    try {
+      const data = await _fetchSessions();
+      if (request !== generation.current || listingRequest !== listGeneration.current) return;
+      acceptListing(data);
+      const session = data.sessions.find((row) => row.session_id === sessionId);
+      if (!data.enabled || session?.state !== 'active' || (session.expires_at != null && session.expires_at * 1000 <= Date.now())) {
+        setViewerError('Session unavailable or expired. Viewer remains disconnected.');
+        return;
+      }
+      setViewerError(null);
+      setWatching(true);
+      setStreamGeneration((current) => current + 1);
+    } catch {
+      if (request === generation.current) setViewerError('Could not verify session state. Viewer remains disconnected.');
+    } finally {
+      if (request === generation.current) setPending(false);
+    }
+  };
+  const mutateSession = async (): Promise<void> => {
+    if (!activeId || !confirmation || pending) return;
+    const sessionId = activeId;
+    const action = confirmation;
+    releaseInput();
+    const request = ++generation.current;
+    listGeneration.current += 1;
+    setPending(true);
+    setOpenState('idle');
+    setConfirmation(null);
+    setNotice(null);
+    try {
+      const result = await _changeLifecycle(sessionId, action);
+      if (request !== generation.current) return;
+      if (result.session?.session_id === sessionId) {
+        setSessions((current) => current.map((row) => row.session_id === sessionId ? { ...row, ...result.session } : row));
+      }
+      if (result.status_code === 200 && result.outcome === 'completed') {
+        if (action === 'end') {
+          setWatching(false);
+          setSessions((current) => current.map((row) => row.session_id === sessionId ? { ...row, state: 'ended' } : row));
+          setNotice(activeSession?.external_browser ? 'ProbOS disconnected. The external browser remains open.' : 'Session ended. Recordings retained.');
+        } else {
+          setNotice('Selected for subsequent crew browser work. No crew job started; ownership is unchanged.');
+        }
+      } else {
+        setNotice(`${result.outcome}: ${result.reason.replace(/_/g, ' ')}. Refresh session details before retrying.`);
+      }
+    } catch {
+      if (request === generation.current) setNotice('Session request failed. Refresh session details before retrying.');
+    } finally {
+      if (request === generation.current) setPending(false);
+    }
+  };
+  const renderViewer = (session: { session_id: string; streaming_url: string | null }): React.ReactElement => {
+    if (activeSession?.state === 'ended' || activeSession?.state === 'ending' || activeSession?.state === 'cleanup_failed' || expired) {
+      return <div role="status">Session {expired ? 'expired' : activeSession?.state?.replace(/_/g, ' ')}. Control released.</div>;
+    }
+    if (!watching || viewerError) return <div style={{ padding: 12 }}>
+      <div role={viewerError ? 'alert' : 'status'}>{viewerError ?? 'Not watching. The browser session remains open.'}</div>
+      <button type="button" style={_ACTION_STYLE} disabled={pending} onClick={() => { void reconnect(); }} aria-label="Reconnect viewer"><IconRefresh />Reconnect</button>
+    </div>;
+    return <BrowserStreamPanel
+      key={`${session.session_id}:${streamGeneration}`}
+      sessionId={session.session_id} streamingUrl={session.streaming_url}
+      driveEnabled={inputForwardingEnabled && driveEnabled && sessionsState === 'ready' && activeSession?.state === 'active' && !pending && !confirmation}
+      onFailure={(reason) => { releaseInput(); setViewerError(reason); }}
+      onReconnect={() => { void reconnect(); }}
+      onForwardInput={async (event) => {
+        const request = generation.current;
+        const inputRequest = inputGeneration.current;
+        try {
+          const response = await _forwardInput(session.session_id, event);
+          if (request !== generation.current || inputRequest !== inputGeneration.current) return;
+          if (!response.forwarded) {
+            releaseInput();
+            setViewerError(`Input rejected: ${response.reason ?? 'unknown reason'}. Control released in this view.`);
+          }
+        } catch {
+          if (request !== generation.current || inputRequest !== inputGeneration.current) return;
+          releaseInput();
+          setViewerError('Input failed. Control released in this view.');
+        }
+      }}
+    />;
+  };
+  const metadata = (): React.ReactElement => <dl data-testid="browser-session-metadata" style={{ margin: 0, display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', gap: '4px 12px', overflowWrap: 'anywhere', fontSize: 12 }}>
+    <dt>Session</dt><dd style={{ margin: 0 }}>{activeId}</dd>
+    <dt>State</dt><dd style={{ margin: 0 }}>{activeSession?.state?.replace(/_/g, ' ') ?? 'Unknown'}</dd>
+    <dt>Owner</dt><dd style={{ margin: 0 }}>{activeSession?.owner_id ?? 'Unknown'}</dd>
+    <dt>Authority</dt><dd style={{ margin: 0 }}>{authority.replace(/_/g, ' ')}</dd>
+    <dt>Crew sharing</dt><dd style={{ margin: 0 }}>{activeSession?.sharing_scope?.replace(/_/g, ' ') ?? 'Unknown'}</dd>
+    <dt>Recording</dt><dd style={{ margin: 0 }}>{activeSession?.recording_state ?? 'Unknown'} / {activeSession?.recording_scope?.replace(/_/g, ' ') ?? 'Unknown'}</dd>
+    <dt>Pending browser work</dt><dd style={{ margin: 0 }}>{activeSession?.pending_work ?? 'Unknown'}</dd>
+    <dt>Expires</dt><dd style={{ margin: 0 }}>{activeSession?.expires_at != null ? new Date(activeSession.expires_at * 1000).toISOString() : 'Unknown'}{expired ? ' (expired)' : ''}</dd>
+  </dl>;
+  const blockedReason = !activeSession?.owner_id ? 'Ownership is unknown.'
+    : activeSession.pending_work == null ? 'Pending browser work is unknown.'
+    : activeSession.pending_work > 0 ? 'Pending browser work must settle before retrying.'
+    : sessionsState !== 'ready' ? 'Refresh session details before continuing.'
+    : !['shared_crew_scope', 'single_operator_compatibility'].includes(authority) ? 'Operator authority is unknown.'
+    : !['active', 'cleanup_failed'].includes(activeSession.state ?? '') ? 'Session is not available for this action.' : null;
 
   // AD-1052a: the watch surface — a privacy note + Refresh, then the honest-degrade
   // chain (loading -> unavailable -> disabled -> empty -> session list + live MJPEG).
   const renderWatch = (): React.ReactElement => {
     const opening = openState === 'opening';
     const body = ((): React.ReactElement => {
-      if (sessionsState === 'loading' || sessionsState === 'idle') {
+      if ((sessionsState === 'loading' || sessionsState === 'idle') && sessions.length === 0) {
         return (
           <div data-testid="browser-watch-loading" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
             Loading sessions…
           </div>
         );
       }
-      if (sessionsState === 'error') {
+      if (sessionsState === 'error' && !activeId) {
         return (
           <div data-testid="browser-watch-unavailable" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
             Browser streaming unavailable.
@@ -417,6 +673,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
       const sel = selectedId !== null ? sessions.find((s) => s.session_id === selectedId) ?? null : null;
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, minHeight: 0, flex: 1 }}>
+          {selectedId && !sel && <div role="status">Selected session unavailable. Viewer disconnected.</div>}
           <div data-testid="browser-watch-list" role="list" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {sessions.map((s) => {
               const active = s.session_id === selectedId;
@@ -425,7 +682,11 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
                   key={s.session_id}
                   data-testid={`browser-watch-session-${s.session_id}`}
                   role="listitem"
-                  onClick={() => setSelectedId(s.session_id)}
+                  onClick={() => {
+                    resetView();
+                    setSelectedId(s.session_id);
+                    if (sessionsState === 'loading') setReloadKey((current) => current + 1);
+                  }}
                   aria-pressed={active}
                   style={{
                     display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
@@ -443,12 +704,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
           {sel !== null && (
             <div data-testid="browser-watch-stream" style={{ flex: 1, minHeight: 0 }}>
               {/* DD-1: NO token passed to the stream panel. */}
-              <BrowserStreamPanel
-                sessionId={sel.session_id}
-                streamingUrl={sel.streaming_url}
-                driveEnabled={inputForwardingEnabled && driveEnabled}
-                onForwardInput={(evt) => { void _forwardInput(sel.session_id, evt); }}
-              />
+              {renderViewer(sel)}
             </div>
           )}
         </div>
@@ -464,7 +720,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
           </span>
           <button
             data-testid="browser-watch-refresh"
-            onClick={() => setReloadKey((k) => k + 1)}
+            onClick={refreshSessions}
             aria-label="Refresh sessions"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', border: '1px solid #33334a', borderRadius: 4, background: 'transparent', color: _DIM, cursor: 'pointer', fontSize: 11 }}
           >
@@ -544,12 +800,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
         {bridgeState === 'connected' && bridgeSession !== null ? (
           <div data-testid="browser-bridge-stream" style={{ flex: 1, minHeight: 0 }}>
             {/* DD-1: NO token passed to the stream panel. */}
-            <BrowserStreamPanel
-              sessionId={bridgeSession.session_id}
-              streamingUrl={bridgeSession.streaming_url}
-              driveEnabled={inputForwardingEnabled && driveEnabled}
-              onForwardInput={(evt) => { void _forwardInput(bridgeSession.session_id, evt); }}
-            />
+            {renderViewer(bridgeSession)}
           </div>
         ) : bridgeState === 'refused' ? (
           <div data-testid="browser-bridge-reason" style={{ padding: 16, color: _DIM, fontSize: 12 }}>
@@ -572,7 +823,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
   return (
     <div
       data-testid="browser-workstation"
-      style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, color: _TEXT }}
+      style={{ position: 'relative', display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, color: _TEXT }}
     >
       {/* Toolbar */}
       <div
@@ -590,7 +841,7 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
               <button
                 key={m.id}
                 data-testid={`browser-mode-${m.id}`}
-                onClick={() => { if (!m.disabled) setMode(m.id); }}
+                onClick={() => { manualMode.current = true; if (!m.disabled && m.id !== mode) { resetView(); setMode(m.id); } }}
                 disabled={m.disabled}
                 title={m.title}
                 aria-pressed={active}
@@ -634,6 +885,42 @@ export function BrowserWorkstation({ typeId: _typeId, fetchSessions, connectBrid
           </>
         )}
       </div>
+
+      {activeId && <section aria-label="Selected browser session" style={{ padding: '8px 12px', borderBottom: '1px solid #33334a' }}>
+        {!confirmation && metadata()}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+          <button type="button" style={_ACTION_STYLE} onClick={() => { generation.current += 1; releaseInput(); setPending(false); setOpenState('idle'); setConfirmation(null); setWatching(false); }} disabled={!watching}><IconEye />Stop watching</button>
+          <button type="button" style={_ACTION_STYLE} disabled={pending || !!blockedReason || activeSession?.owner_id !== 'captain' || activeSession?.state !== 'active' || expired} onClick={() => { releaseInput(); setConfirmation('handoff'); }}><IconLink />Hand to crew</button>
+          <button type="button" style={_ACTION_STYLE} disabled={pending || !!blockedReason} onClick={() => { releaseInput(); setConfirmation('end'); }}><IconClose />End session</button>
+          {mode === 'bridge' && <button type="button" style={_ACTION_STYLE} aria-label="Refresh sessions" title="Refresh sessions" onClick={refreshSessions}><IconRefresh /></button>}
+        </div>
+        {blockedReason && <div role="status">{blockedReason}</div>}
+      </section>}
+      {pending && <div role="status" aria-live="polite">Session request pending. Control released in this view.</div>}
+      {notice && <div role="status" aria-live="polite" style={{ padding: '8px 12px', overflowWrap: 'anywhere' }}>{notice}</div>}
+      {confirmation && activeId && <div style={{ position: 'absolute', inset: 0, zIndex: 2, background: 'rgba(6,6,12,0.94)', display: 'grid', placeItems: 'center', padding: 12 }}>
+        <div ref={dialog} role="dialog" aria-modal="true" aria-label={confirmation === 'end' ? 'End selected session' : 'Hand selected session to crew'} tabIndex={-1}
+          style={{ background: '#12121c', border: '1px solid #33334a', borderRadius: 4, padding: 16, width: 'min(100%, 520px)', maxHeight: '100%', overflow: 'auto' }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setConfirmation(null); }
+            if (event.key === 'Tab') {
+              const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+              const first = buttons[0];
+              const last = buttons[buttons.length - 1];
+              if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) { event.preventDefault(); last?.focus(); }
+              else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+            }
+          }}>
+          <h2 style={{ fontSize: 16, marginTop: 0 }}>{confirmation === 'end' ? 'End session?' : 'Hand to crew?'}</h2>
+          {metadata()}
+          <p>{confirmation === 'end' ? (activeSession?.external_browser ? 'ProbOS will disconnect. The external browser, pages and contexts remain open.' : 'Close this session and its owned pages. Retained recordings are not deleted.') : 'Select this session for subsequent crew browser work. This starts no job and does not change ownership or permissions.'}</p>
+          {blockedReason && <p role="status">{blockedReason}</p>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" style={_ACTION_STYLE} onClick={() => setConfirmation(null)}>Cancel</button>
+            <button type="button" style={_ACTION_STYLE} disabled={pending || !!blockedReason || (confirmation === 'handoff' && expired)} onClick={() => { void mutateSession(); }}>Confirm {confirmation === 'end' ? 'end session' : 'hand to crew'}</button>
+          </div>
+        </div>
+      </div>}
 
       {/* URL validation notice (defense-in-depth). BF-694: scoped to embedded
           mode with the input that produces it, so a stale error cannot outlive

@@ -80,6 +80,7 @@ export function BrowserWorkstationPanel(): React.ReactElement | null {
           data-testid="browser-workstation-close"
           onClick={close}
           aria-label="Close Browser Workstation"
+          title="Stop watching in this view; browser sessions remain open"
           style={{ background: 'none', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 4, color: _DIM, width: 28, height: 28, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
           <IconClose />

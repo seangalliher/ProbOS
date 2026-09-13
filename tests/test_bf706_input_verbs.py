@@ -27,7 +27,9 @@ import pytest
 
 from probos.config import BrowserToolConfig
 from probos.tools.browser import actions as browser_actions
+from probos.tools.browser.session import BrowserSession
 from probos.tools.browser.tool import _AGENT_ACTION_SET, _AGENT_ACTIONS, BrowserTool
+from probos.tools.protocol import ToolResult
 
 
 def _tool() -> BrowserTool:
@@ -40,17 +42,51 @@ class _GateProbe(BrowserTool):
     class Admitted(Exception):
         pass
 
-    async def _get_or_create_session(self, *_a: object, **_k: object):
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.hits: list[tuple[str | None, str]] = []
+        self.factory_hits = 0
+        self._session_factory = self.reject_factory
+
+    def reject_factory(self, **kwargs: object) -> BrowserSession:
+        self.factory_hits += 1
+        raise AssertionError("Admission tripwire missed; browser creation forbidden")
+
+    async def _create_session(self, session_id: str | None, agent_id: str) -> BrowserSession:
+        self.hits.append((session_id, agent_id))
         raise _GateProbe.Admitted()
 
 
 async def _admitted(action: str) -> bool:
     tool = _GateProbe(config=BrowserToolConfig(enabled=True))
     try:
-        result = await tool.invoke({"action": action}, context={"agent_id": "t"})
-    except _GateProbe.Admitted:
-        return True
-    return not (result.error or "").startswith("unknown browser action")
+        try:
+            result = await tool.invoke({"action": action}, context={"agent_id": "t"})
+        except _GateProbe.Admitted:
+            assert tool.hits == [(None, "t")]
+            return True
+        assert tool.hits == []
+        assert (result.error or "").startswith("unknown browser action"), "Admission tripwire did not fire"
+        return False
+    finally:
+        await tool.stop()
+        assert tool.factory_hits == 0, "Fallback browser factory was reached"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["missing", "error", "success"])
+async def test_admission_probe_rejects_missing_or_unrelated_results(
+    monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    if failure == "missing":
+        monkeypatch.setattr(_GateProbe, "_create_session", BrowserTool._create_session)
+    else:
+        async def unrelated(*args: object, **kwargs: object) -> ToolResult:
+            return ToolResult(error="unrelated error" if failure == "error" else None)
+        monkeypatch.setattr(_GateProbe, "invoke", unrelated)
+    expected_guard = "Fallback browser factory was reached" if failure == "missing" else "Admission tripwire did not fire"
+    with pytest.raises(AssertionError, match=expected_guard):
+        await _admitted("key_combo")
 
 
 # ── the headline ──────────────────────────────────────────────────
@@ -194,15 +230,7 @@ async def test_a_new_verb_fails_on_ITS_ARGUMENTS_not_on_being_unknown(
     needs. An unwired one is rejected as unknown before it can look. BF-701 was
     the second case; this asserts these four are the first.
     """
-    tool = _GateProbe(config=BrowserToolConfig(enabled=True))
-    try:
-        result = await tool.invoke({"action": verb}, context={"agent_id": "t"})
-    except _GateProbe.Admitted:
-        return  # reached session creation, i.e. fully admitted
-    error = result.error or ""
-    assert not error.startswith("unknown browser action"), (
-        f"{verb} is advertised but the gate rejects it"
-    )
+    assert await _admitted(verb) is True
 
 
 def test_schema_gate_and_description_still_share_one_source() -> None:

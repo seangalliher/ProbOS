@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from fastapi.testclient import TestClient
 
 from probos.avatars.events import AvatarEventBus
@@ -16,6 +19,9 @@ from probos.events import EventType
 from probos.tools.browser.session import BrowserSession
 from probos.tools.browser.tool import BrowserTool
 from probos.types import AgentState
+from tests.test_browser_session_lifecycle import (
+    _bridge, browser_app, lifecycle_tool, wired_browser_runtime,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -278,3 +284,262 @@ def test_require_crew_scope_empty_query_token_rejected() -> None:
     client = TestClient(_make_app(rt))
     resp = client.get("/api/browser/sessions/sess-1/stream?token=")
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["end", "handoff"])
+@pytest.mark.parametrize("wired_browser_runtime", ["secret", ""], indirect=True)
+async def test_lifecycle_endpoint_confirmed_operator_succeeds(
+    wired_browser_runtime: Any, operation: str,
+) -> None:
+    runtime, drivers, _ = wired_browser_runtime
+    tool = runtime.browser_tool
+    selected = await _bridge(tool)
+    other = await _bridge(tool)
+    async with AsyncClient(transport=ASGITransport(app=browser_app(runtime)), base_url="http://test") as client:
+        listed = await client.get("/api/browser/sessions", headers={"Authorization": "Bearer secret"})
+        assert listed.status_code == 200
+        basis = "shared_crew_scope" if runtime.config.auth.crew_scope_token else "single_operator_compatibility"
+        assert listed.json()["authority_basis"] == basis
+        row = next(row for row in listed.json()["sessions"] if row["session_id"] == selected)
+        assert row["owner_id"] == "captain"
+        assert row["pending_work"] == 0
+        assert row["expires_at"] == tool.get_session(selected).expires_at
+        assert row["sharing_scope"] == "legacy_ambient_binding"
+        response = await client.post(
+            f"/api/browser/sessions/{selected}/{operation}", json={"confirm": True},
+            headers={"Authorization": "Bearer secret"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["outcome"] == "completed"
+        assert response.json()["session"]["session_id"] == selected
+        assert other not in response.text
+        assert "secret" not in response.text
+        assert "recording_path" not in response.text
+        assert tool.get_session(other) is not None
+        assert drivers[1].stop_count == 0
+        if operation == "handoff":
+            assert tool.captain_session_id == selected
+            assert response.json()["session"]["sharing_scope"] == "explicit_crew_binding"
+            assert drivers[0].stop_count == 0
+        else:
+            assert tool.get_session(selected) is None
+            assert drivers[0].stop_count == 1
+            repeat = await client.post(
+                f"/api/browser/sessions/{selected}/end", json={"confirm": True},
+                headers={"Authorization": "Bearer secret"},
+            )
+            assert repeat.json() == response.json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["end", "handoff"])
+@pytest.mark.parametrize("body", [
+    {}, {"confirm": False}, {"confirm": 1}, {"confirm": "true"}, {"confirm": None},
+    {"confirm": True, "actor": "captain"}, {"confirm": True, "owner_id": "captain"},
+    {"confirm": True, "authority_basis": "shared_crew_scope"},
+])
+async def test_lifecycle_endpoint_rejects_malformed_and_forged_bodies(
+    wired_browser_runtime: Any, operation: str, body: dict[str, Any],
+) -> None:
+    runtime, drivers, _ = wired_browser_runtime
+    selected = await _bridge(runtime.browser_tool)
+    async with AsyncClient(transport=ASGITransport(app=browser_app(runtime)), base_url="http://test") as client:
+        response = await client.post(
+            f"/api/browser/sessions/{selected}/{operation}", json=body,
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert response.status_code == 422
+    assert runtime.browser_tool.get_session(selected) is not None
+    assert drivers[0].stop_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["end", "handoff"])
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"}])
+async def test_lifecycle_endpoint_rejects_unauthenticated_operator(
+    wired_browser_runtime: Any, operation: str, headers: dict[str, str],
+) -> None:
+    runtime, drivers, _ = wired_browser_runtime
+    selected = await _bridge(runtime.browser_tool)
+    async with AsyncClient(transport=ASGITransport(app=browser_app(runtime)), base_url="http://test") as client:
+        response = await client.post(
+            f"/api/browser/sessions/{selected}/{operation}", json={"confirm": True}, headers=headers,
+        )
+    assert response.status_code == 401
+    assert drivers[0].stop_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["end", "handoff"])
+@pytest.mark.parametrize("identity,status", [("unknown", 404), ("bad.id", 422), ("x" * 129, 422)])
+async def test_lifecycle_endpoint_validates_identity(
+    wired_browser_runtime: Any, operation: str, identity: str, status: int,
+) -> None:
+    runtime, drivers, _ = wired_browser_runtime
+    async with AsyncClient(transport=ASGITransport(app=browser_app(runtime)), base_url="http://test") as client:
+        response = await client.post(
+            f"/api/browser/sessions/{identity}/{operation}", json={"confirm": True},
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert response.status_code == status
+    assert drivers == []
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_endpoint_owner_policy_and_cleanup_failure_are_not_success(
+    wired_browser_runtime: Any,
+) -> None:
+    runtime, drivers, _ = wired_browser_runtime
+    unknown = await _bridge(runtime.browser_tool, "unregistered")
+    crew = await _bridge(runtime.browser_tool, "crew-one")
+    captain = await _bridge(runtime.browser_tool)
+    async with AsyncClient(
+        transport=ASGITransport(app=browser_app(runtime)), base_url="http://test",
+        headers={"Authorization": "Bearer secret"},
+    ) as client:
+        response = await client.post(f"/api/browser/sessions/{unknown}/end", json={"confirm": True})
+        assert response.status_code == 409
+        assert response.json()["reason"] == "unknown_ownership"
+        response = await client.post(f"/api/browser/sessions/{crew}/handoff", json={"confirm": True})
+        assert response.status_code == 403
+        assert (await client.post(f"/api/browser/sessions/{crew}/end", json={"confirm": True})).status_code == 200
+        drivers[2].chromium.browser.fail_close = True
+        try:
+            response = await client.post(f"/api/browser/sessions/{captain}/end", json={"confirm": True})
+            assert response.status_code == 409
+            assert response.json()["outcome"] == "failed"
+            assert response.json()["reason"] == "cleanup_failed"
+        finally:
+            drivers[2].chromium.browser.fail_close = False
+        assert (await client.post(f"/api/browser/sessions/{captain}/end", json={"confirm": True})).status_code == 200
+    assert drivers[0].stop_count == 0
+
+
+class _ASGIViewer:
+    def __init__(self, app: Any, session_id: str) -> None:
+        self.app = app
+        self.session_id = session_id
+        self.frame_seen = asyncio.Event()
+        self.disconnected = asyncio.Event()
+        self.frames = 0
+        self.status: int | None = None
+
+    async def run(self) -> None:
+        async def receive() -> dict[str, Any]:
+            await self.disconnected.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                self.status = message["status"]
+            if message["type"] == "http.response.body" and b"jpeg-frame" in message.get("body", b""):
+                self.frames += 1
+                self.frame_seen.set()
+
+        await self.app({
+            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1", "method": "GET", "scheme": "http",
+            "path": f"/api/browser/sessions/{self.session_id}/stream", "query_string": b"",
+            "headers": [(b"authorization", b"Bearer secret")],
+            "client": ("127.0.0.1", 1234), "server": ("test", 80), "root_path": "",
+        }, receive, send)
+
+
+@pytest.mark.asyncio
+async def test_router_end_drains_admitted_input_and_both_streams_only(
+    wired_browser_runtime: Any, tmp_path: Path,
+) -> None:
+    runtime, drivers, events = wired_browser_runtime
+    tool = runtime.browser_tool
+    selected = await _bridge(tool)
+    runtime.config.browser_tool.recording_enabled = True
+    runtime.config.browser_tool.recording_dir = str(tmp_path)
+    opened = await tool.open_captain_session("https://other.example/")
+    assert opened["opened"] is True
+    other = tool.get_session(opened["session_id"])
+    assert other.recording_state == "recording"
+    app = browser_app(runtime)
+    viewers = [_ASGIViewer(app, selected), _ASGIViewer(app, selected)]
+    tasks = [asyncio.create_task(viewer.run()) for viewer in viewers]
+    keyboard = drivers[0].chromium.browser.contexts[0].pages[0].keyboard
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"Authorization": "Bearer secret"},
+    ) as client:
+        try:
+            for viewer in viewers:
+                await asyncio.wait_for(viewer.frame_seen.wait(), 2)
+                assert viewer.frames >= 1 and viewer.status == 200
+            assert tool.active_viewers == 2
+            entering = asyncio.create_task(client.post(
+                f"/api/browser/sessions/{selected}/input", json={"kind": "type", "text": "admitted"},
+            ))
+            tasks.append(entering)
+            await asyncio.wait_for(keyboard.entered.wait(), 2)
+            ending = asyncio.create_task(client.post(
+                f"/api/browser/sessions/{selected}/end", json={"confirm": True},
+            ))
+            tasks.append(ending)
+
+            async def wait_for_ending() -> None:
+                while tool.session_snapshot(selected).state != "ending":
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_ending(), 2)
+            assert not ending.done()
+            late = await client.post(
+                f"/api/browser/sessions/{selected}/input", json={"kind": "type", "text": "late"},
+            )
+            assert late.json()["forwarded"] is False
+            keyboard.release.set()
+            assert (await entering).json()["forwarded"] is True
+            assert (await ending).status_code == 200
+            await asyncio.wait_for(asyncio.gather(*tasks[:2]), 2)
+            assert tool.active_viewers == 0
+            assert keyboard.typed == ["admitted"]
+            assert (await client.post(f"/api/browser/sessions/{selected}/end", json={"confirm": True})).status_code == 200
+            assert (await client.get(f"/api/browser/sessions/{selected}/stream")).status_code == 409
+            assert sum(kind == EventType.BROWSER_STREAM_CLOSED and payload["session_id"] == selected for kind, payload in events) == 2
+            assert sum(kind == EventType.BROWSER_SESSION_CLOSED and payload["session_id"] == selected for kind, payload in events) == 1
+            assert other.recording_state == "recording"
+            assert drivers[1].chromium.browser.contexts[0].close_count == 0
+            drivers[1].chromium.browser.contexts[0].pages[0].keyboard.release.set()
+            forwarded = await client.post(
+                f"/api/browser/sessions/{other.session_id}/input", json={"kind": "type", "text": "other still usable"},
+            )
+            assert forwarded.json()["forwarded"] is True
+        finally:
+            keyboard.release.set()
+            for viewer in viewers:
+                viewer.disconnected.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_stream_response_cancellation_before_frames_releases_admission(
+    wired_browser_runtime: Any,
+) -> None:
+    from probos.routers.browser_stream import stream_browser_session
+
+    runtime, drivers, events = wired_browser_runtime
+    selected = await _bridge(runtime.browser_tool)
+    response = await stream_browser_session(selected, runtime)
+    assert runtime.browser_tool.active_viewers == 1
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        assert message["type"] == "http.response.start"
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+    assert runtime.browser_tool.active_viewers == 0
+    assert drivers[0].chromium.browser.contexts[0].pages[0].frames == 0
+    assert drivers[0].stop_count == 0
+    assert sum(kind == EventType.BROWSER_STREAM_CLOSED for kind, _ in events) == 1

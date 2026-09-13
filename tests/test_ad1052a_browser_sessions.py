@@ -193,7 +193,10 @@ def test_endpoint_disabled_honest_degrade() -> None:
     resp = client.get("/api/browser/sessions")
     assert resp.status_code == 200
     # AD-1052c added the additive `input_forwarding_enabled` field (default-OFF).
-    assert resp.json() == {"enabled": False, "sessions": [], "input_forwarding_enabled": False}
+    assert resp.json() == {
+        "enabled": False, "sessions": [], "input_forwarding_enabled": False,
+        "authority_basis": "single_operator_compatibility",
+    }
 
 
 def test_endpoint_lists_seeded_sessions() -> None:

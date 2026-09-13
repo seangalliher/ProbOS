@@ -310,7 +310,56 @@ def test_mcp_ids_precede_browser_ids_in_the_offered_set() -> None:
 
     from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 
-    source = inspect.getsource(WorkItemAgenticExecutor.run)
+    source = inspect.getsource(WorkItemAgenticExecutor._run_reserved)
     assembly = source.split("tool_ids = list(", 1)[1].split(")", 1)[0]
 
     assert assembly.index("*mcp_ids") < assembly.index("*browser_ids")
+
+
+@pytest.mark.asyncio
+async def test_run_awaits_reserved_owner_with_unchanged_arguments() -> None:
+    from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+
+    outcome = object()
+    calls: list[dict[str, Any]] = []
+
+    class _RecordingExecutor(WorkItemAgenticExecutor):
+        async def _run_reserved(self, **arguments: Any) -> Any:
+            calls.append(arguments)
+            return outcome
+
+    def work_item_id_provider() -> str | None:
+        return "work-item-1239"
+
+    def on_run_started(run_id: str) -> None:
+        pytest.fail(f"forwarding must not execute callback: {run_id}")
+
+    registry = ToolRegistry()
+    assert registry.get("browser") is None
+    arguments: dict[str, Any] = {
+        "agent_id": "agent-1239",
+        "instructions": "Forwarding probe",
+        "task_text": "Observe arguments",
+        "runtime": types.SimpleNamespace(tool_registry=registry),
+        "department": "engineering",
+        "rank": "lieutenant",
+        "thread_id": "thread-1239",
+        "max_iterations": 3,
+        "tier": "fast",
+        "extra_context": {},
+        "priority": object(),
+        "compose_disposition": False,
+        "compactor": object(),
+        "compaction_threshold": 7,
+        "token_budget": 101,
+        "failure_scope": "forwarding-1239",
+        "work_item_id_provider": work_item_id_provider,
+        "on_run_started": on_run_started,
+    }
+    executor = _RecordingExecutor(llm_client=None)
+
+    result = await executor.run(**arguments)
+
+    assert result is outcome
+    assert calls == [arguments]
+    assert all(calls[0][name] is value for name, value in arguments.items())
