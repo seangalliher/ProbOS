@@ -1,6 +1,6 @@
 /* Bridge Panel — unified command console (AD-325) */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useStore, type PendingApproval } from '../store/useStore';
 import { ChevronDown, ChevronRight, Expand, Close } from './icons/Glyphs';
 import { TaskCard } from './bridge/BridgeCards';
@@ -8,6 +8,9 @@ import { NotificationCard } from './bridge/BridgeNotifications';
 import { BridgeShutdown } from './bridge/BridgeSystem';
 import { buildBridgeStations, isPopulated, type StationId, type StationAction } from './bridge/stations';
 import { timeAgo } from './wardroom/timeAgo';
+import { ApprovalQueueStatus } from './approvals/ApprovalsCenterPanel';
+import { ApprovalRefreshGlyph } from './skill/SkillRequestPanel';
+import type { ApprovalQueue } from '../store/types';
 
 /* AD-1201: the ONE approvals poll. The Bridge APPROVALS section, the approvals
  * centre and the BRIDGE badge all read the same store slice this fills, so they
@@ -15,7 +18,6 @@ import { timeAgo } from './wardroom/timeAgo';
  * cadence (CrewRosterPanel.tsx, bridge/FullSystem.tsx, bridge/BridgeSystem.tsx).
  * BridgePanel owns it because it is mounted for the whole session (IntentSurface
  * renders it unconditionally and slides it off-screen when closed). */
-const APPROVALS_POLL_INTERVAL_MS = 10000;
 
 /* ── BF-724: UA-chrome neutraliser for the semantic controls ──
  *
@@ -67,7 +69,7 @@ const FOCUS_RING_CSS = `
 function BridgeSection({
   title, count, defaultOpen, accentColor, onExpand, stationId, alerting, children,
 }: {
-  title: string; count: number; defaultOpen: boolean;
+  title: string; count: number | string; defaultOpen: boolean;
   accentColor?: string; onExpand?: () => void;
   stationId?: StationId;
   /** BF-716: this section is waiting on the Captain. Pulses its edge (HXI #4:
@@ -307,16 +309,51 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
   const wardRoomUnread = useStore(s => s.wardRoomUnread);
   const pendingApprovals = useStore(s => s.pendingApprovals);
   const refreshApprovals = useStore(s => s.refreshPendingApprovals);
+  const approvalResources = useStore(s => s.approvalResources);
+  const wasOpen = useRef(open);
+  const approvalsKnown = Object.values(approvalResources).every(resource => resource.status === 'ready' || resource.status === 'empty');
+  const approvalsEmpty = Object.values(approvalResources).every(resource => resource.status === 'empty');
   const totalUnread = Object.values(wardRoomUnread ?? {}).reduce((sum, n) => sum + n, 0);
 
   useEffect(() => { refreshDms(); }, [refreshDms]);
 
-  // AD-1201: the single approvals poll. Cleared on unmount — no leaked timer.
   useEffect(() => {
-    refreshApprovals();
-    const timer = window.setInterval(() => { refreshApprovals(); }, APPROVALS_POLL_INTERVAL_MS);
-    return () => { window.clearInterval(timer); };
+    const owner = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = (): void => {
+      clearTimeout(timer);
+      const state = useStore.getState();
+      const due = (['capability', 'skill'] as ApprovalQueue[])
+        .filter(queue => !state.approvalControllers[queue])
+        .map(queue => state.approvalPoll[queue].nextAt)
+        .filter((time): time is number => time !== null);
+      if (!owner.signal.aborted && due.length) {
+        timer = setTimeout(() => {
+          void refreshApprovals({ automatic: true, signal: owner.signal });
+        }, Math.max(0, Math.min(...due) - Date.now()));
+      }
+    };
+    const unsubscribe = useStore.subscribe(arm);
+    void refreshApprovals({ signal: owner.signal });
+    arm();
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+      owner.abort();
+      useStore.getState().cancelPendingApprovals();
+    };
   }, [refreshApprovals]);
+
+  useEffect(() => {
+    const reentered = open && !wasOpen.current;
+    wasOpen.current = open;
+    if (!reentered) return;
+    const state = useStore.getState();
+    const queues = (['capability', 'skill'] as ApprovalQueue[]).filter(queue =>
+      !state.approvalControllers[queue] && state.approvalPoll[queue].nextAt === null
+      && !['ready', 'empty'].includes(state.approvalResources[queue].status));
+    if (queues.length) void refreshApprovals({ queues });
+  }, [open, refreshApprovals]);
 
   // ATTENTION: requires_action tasks + action_required notifications
   const attentionTasks = (agentTasks ?? []).filter(
@@ -435,15 +472,22 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
             It still carries no stationId: it is a feed item that rises and
             recedes, not a command station. `alerting` gives it the one pulsing
             edge in the panel — the exception that makes the rule readable. ── */}
-        {pendingApprovals.length > 0 && (
+        {(pendingApprovals.length > 0 || !approvalsEmpty) && (
           <BridgeSection
             title="Approvals"
-            count={pendingApprovals.length}
+            count={approvalsKnown ? pendingApprovals.length : pendingApprovals.length > 0
+              ? `${pendingApprovals.length} last-known; current unknown` : 'unknown'}
             defaultOpen={true}
             accentColor="#f0b060"
-            alerting={true}
+            alerting={pendingApprovals.length > 0}
             onExpand={() => useStore.setState({ approvalsCenterOpen: true })}
           >
+            <ApprovalQueueStatus />
+            <button type="button" aria-label="Refresh approval queues" title="Refresh approval queues" data-hxi-focus=""
+              onClick={() => { void refreshApprovals(); }}
+              style={{ ...BARE_BUTTON, color: '#f0b060', cursor: 'pointer' }}>
+              <ApprovalRefreshGlyph />
+            </button>
             {pendingApprovals.map(a => (
               <ApprovalRow
                 key={`${a.queue}:${a.id}`}
@@ -523,7 +567,7 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
         )}
 
         {/* Empty state — the activity feed is empty (stations always render). */}
-        {pendingApprovals.length === 0 && attentionCount === 0 && activeTasks.length === 0 &&
+        {approvalsEmpty && pendingApprovals.length === 0 && attentionCount === 0 && activeTasks.length === 0 &&
          infoNotifs.length === 0 && recentTasks.length === 0 && (
           <div style={{
             fontSize: 10, color: '#555', fontStyle: 'italic',

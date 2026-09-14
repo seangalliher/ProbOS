@@ -132,11 +132,11 @@ export default function ShipLayoutView({ alertLevel = null }: ShipLayoutViewProp
 
   if (!layout || layout.decks.length === 0) {
     return (
-      <div data-testid="ship-layout-empty" style={{
+      <div data-testid="ship-layout-empty" role="status" style={{
         padding: 24, color: '#8888a0', fontFamily: "'JetBrains Mono', monospace",
         fontSize: 12, textAlign: 'center',
       }}>
-        No spatial layout — enable in config
+        {layout ? 'No decks in this layout.' : 'No spatial layout snapshot available.'}
       </div>
     );
   }

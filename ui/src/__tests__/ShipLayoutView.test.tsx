@@ -4,7 +4,7 @@
  * Mocks @react-three/fiber + @react-three/drei to render plain DOM stand-ins.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 
 vi.mock('@react-three/fiber', () => ({
   Canvas: ({ children }: any) => <div data-testid="mock-r3f-canvas">{children}</div>,
@@ -18,9 +18,15 @@ vi.mock('@react-three/drei', () => ({
 }));
 
 import ShipLayoutView, { computePlacements, alertTint } from '../components/spatial/ShipLayoutView';
+import SpatialExplorerPanel from '../components/SpatialExplorerPanel';
 import { useStore } from '../store/useStore';
+import type { SpatialLayoutData } from '../store/types';
 
-const SAMPLE_LAYOUT = {
+vi.mock('../components/spatial/KnowledgeGraphView', () => ({
+  default: () => <div data-testid="mock-knowledge-graph-view" />,
+}));
+
+const SAMPLE_LAYOUT: SpatialLayoutData = {
   schema_version: 1,
   decks: [
     { deck_id: 'bridge', name: 'Bridge', department_id: 'command', position: [0, 6, 0] as [number, number, number], dimensions: [8, 1.5, 6] as [number, number, number], accent_color: '#f0b060', post_offsets: { captain: [0, 0, -1] as [number, number, number] } },
@@ -35,6 +41,8 @@ const SAMPLE_LAYOUT = {
 
 function reset() {
   useStore.setState({
+    spatialExplorerOpen: false,
+    spatialViewMode: 'graph',
     spatialLayoutData: null,
     spatialGraphData: null,
     spatialSelectedNode: null,
@@ -110,6 +118,23 @@ describe('ShipLayoutView (AD-520)', () => {
     useStore.setState({ spatialLayoutData: null });
     render(<ShipLayoutView />);
     expect(screen.getByTestId('ship-layout-empty')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('No spatial layout snapshot available.');
+    expect(screen.queryByText(/enable|config/i)).toBeNull();
+  });
+
+  it('reports a successful empty layout without inferring configuration-off', () => {
+    useStore.setState({ spatialLayoutData: { schema_version: 1, decks: [] } });
+    render(<ShipLayoutView />);
+    expect(screen.getByRole('status').textContent).toBe('No decks in this layout.');
+    expect(screen.queryByText(/enable|config/i)).toBeNull();
+    expect(screen.queryByTestId('mock-r3f-canvas')).toBeNull();
+  });
+
+  it('renders available decks even when the independent graph is unavailable', () => {
+    useStore.setState({ spatialLayoutData: SAMPLE_LAYOUT, spatialGraphData: null });
+    render(<ShipLayoutView />);
+    expect(screen.getAllByTestId('mock-text')).toHaveLength(7);
+    expect(screen.queryByTestId('ship-layout-empty')).toBeNull();
   });
 
   it('non-agent nodes are excluded from placements', () => {
@@ -123,5 +148,51 @@ describe('ShipLayoutView (AD-520)', () => {
     );
     expect(placements).toHaveLength(1);
     expect(placements[0].agent_id).toBe('cap');
+  });
+});
+
+describe('issue #1368 real ship layout host boundary', () => {
+  beforeEach(reset);
+  afterEach(() => { cleanup(); reset(); vi.restoreAllMocks(); });
+
+  it.each([500, 503])('does not show successful empty content under HTTP %s failure', async status => {
+    const empty = { schema_version: 1, decks: [] };
+    let layoutResponse = (): Promise<Response> => Promise.resolve(new Response(JSON.stringify(empty), { status: 200 }));
+    const transport = vi.spyOn(global, 'fetch').mockImplementation(async input => String(input).includes('spatial-layout')
+      ? layoutResponse() : new Response(JSON.stringify({ nodes: [], edges: [], generated_at: 0 }), { status: 200 }));
+    useStore.setState({ spatialExplorerOpen: true, spatialViewMode: 'ship' });
+    await act(async () => { render(<SpatialExplorerPanel />); });
+    expect(transport.mock.calls.some(([url]) => String(url) === '/api/ontology/spatial-layout')).toBe(true);
+    expect(screen.getByTestId('ship-layout-empty')).toHaveTextContent('No decks in this layout.');
+    let finish!: (value: Response) => void;
+    layoutResponse = () => new Promise<Response>(resolve => { finish = resolve; });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(screen.queryByTestId('ship-layout-empty')).toBeNull();
+    await act(async () => { finish(new Response(JSON.stringify({ error: 'Unavailable' }), { status })); });
+    expect(screen.getByRole('status', { name: 'Ship layout status' })).toHaveTextContent(status === 503 ? 'Unavailable.' : 'Request failed.');
+    expect(screen.getByRole('status', { name: 'Ship layout status' })).toHaveTextContent('Stale snapshot.');
+    expect(useStore.getState().spatialLayoutData).toEqual(empty);
+    expect(screen.queryByText('No decks in this layout.')).toBeNull();
+    layoutResponse = () => Promise.resolve(new Response(JSON.stringify(empty), { status: 200 }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Refresh' })); });
+    expect(screen.getByTestId('ship-layout-empty')).toHaveTextContent('No decks in this layout.');
+    expect(screen.getByRole('status', { name: 'Ship layout status' })).not.toHaveTextContent('Stale snapshot.');
+  });
+
+  it('retains a populated layout with visible stale status after failure', async () => {
+    let down = false;
+    vi.spyOn(global, 'fetch').mockImplementation(async input => {
+      if (!String(input).includes('spatial-layout')) return new Response(JSON.stringify({ nodes: [], edges: [], generated_at: 0 }));
+      return new Response(JSON.stringify(down ? { error: 'Unavailable' } : SAMPLE_LAYOUT), { status: down ? 503 : 200 });
+    });
+    useStore.setState({ spatialExplorerOpen: true, spatialViewMode: 'ship' });
+    await act(async () => { render(<SpatialExplorerPanel />); });
+    expect(screen.getByTestId('ship-layout-view')).toBeTruthy();
+    down = true;
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Refresh' })); });
+    expect(screen.getByTestId('ship-layout-view')).toBeTruthy();
+    expect(screen.getByRole('status', { name: 'Ship layout status' })).toHaveTextContent('Unavailable.');
+    expect(screen.getByRole('status', { name: 'Ship layout status' })).toHaveTextContent('Stale snapshot.');
+    expect(screen.queryByTestId('ship-layout-empty')).toBeNull();
   });
 });

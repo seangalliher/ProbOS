@@ -1061,7 +1061,18 @@ class TestFiledRequest:
             / "CapabilityRequestPanel.tsx"
         ).read_text(encoding="utf-8")
         # Assert — an untyped kind, rendered verbatim, with a neutral fallback.
-        assert "kind: string;" in source
+        assert "import type { ApprovalPayload, CapabilityApprovalView } from '../../store/types';" in source
+        assert "export type CapabilityRequestView = CapabilityApprovalView;" in source
+        assert "req: CapabilityRequestView;" in source
+        shared_types = (_REPO_ROOT / "ui" / "src" / "store" / "types.ts").read_text(
+            encoding="utf-8"
+        )
+        declaration = "export interface CapabilityApprovalView {"
+        assert shared_types.count(declaration) == 1
+        interface_start = shared_types.index(declaration) + len(declaration)
+        interface_end = shared_types.find("\n}", interface_start)
+        assert interface_end > interface_start
+        assert "  kind: string;" in shared_types[interface_start:interface_end].splitlines()
         assert "{req.kind}" in source
         assert "DEPARTMENT_COLORS[key] || DEFAULT_DEPARTMENT_COLOR" in source
         assert CONTINUE_REQUEST_KIND not in source

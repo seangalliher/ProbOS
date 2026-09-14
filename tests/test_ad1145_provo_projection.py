@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -554,10 +554,10 @@ class _FakeStore:
         return self._entry
 
 
-def _runtime(store: Any) -> MagicMock:
-    rt = MagicMock()
-    rt._records_store = store
-    return rt
+def _runtime(store: Any) -> SimpleNamespace:
+    runtime = SimpleNamespace(records_store=store)
+    assert runtime.records_store is store
+    return runtime
 
 
 def _entry() -> dict[str, Any]:
@@ -576,7 +576,9 @@ def _entry() -> dict[str, Any]:
 async def test_read_record_without_format_is_byte_identical_to_the_store_entry() -> None:
     entry = _entry()
     expected = json.dumps(entry, sort_keys=True)
-    result = await read_record("notebooks/chapel/n1.md", runtime=_runtime(_FakeStore(entry)))
+    store = _FakeStore(entry)
+    result = await read_record("notebooks/chapel/n1.md", runtime=_runtime(store))
+    assert store.calls == [("notebooks/chapel/n1.md", "captain")]
     # Identity, not just equality: the projection is never in the path.
     assert result is entry
     assert json.dumps(result, sort_keys=True) == expected
@@ -585,19 +587,23 @@ async def test_read_record_without_format_is_byte_identical_to_the_store_entry()
 @pytest.mark.asyncio
 async def test_read_record_with_explicitly_empty_format_is_still_inert() -> None:
     entry = _entry()
+    store = _FakeStore(entry)
     result = await read_record(
-        "notebooks/chapel/n1.md", format="", runtime=_runtime(_FakeStore(entry))
+        "notebooks/chapel/n1.md", format="", runtime=_runtime(store)
     )
+    assert store.calls == [("notebooks/chapel/n1.md", "captain")]
     assert result is entry
 
 
 @pytest.mark.asyncio
 async def test_read_record_with_prov_jsonld_returns_the_projection() -> None:
+    store = _FakeStore(_entry())
     result = await read_record(
         "notebooks/chapel/n1.md",
         format="prov-jsonld",
-        runtime=_runtime(_FakeStore(_entry())),
+        runtime=_runtime(store),
     )
+    assert store.calls == [("notebooks/chapel/n1.md", "captain")]
     assert set(result) == {"@context", "@graph"}
     assert result["@context"]["prov"] == PROV_NAMESPACE
     assert _prov_strings(result) <= PROV_TERMS
@@ -616,17 +622,20 @@ async def test_read_record_rejects_an_unsupported_format() -> None:
 
 @pytest.mark.asyncio
 async def test_read_record_still_503s_without_a_store_even_when_format_is_set() -> None:
-    rt = MagicMock()
-    rt._records_store = None
-    result = await read_record("n1.md", format="prov-jsonld", runtime=rt)
+    runtime = _runtime(None)
+    assert runtime.records_store is None
+    result = await read_record("n1.md", format="prov-jsonld", runtime=runtime)
     assert getattr(result, "status_code", 200) == 503
+    assert json.loads(result.body)["error"] == "Ship's Records not available"
 
 
 @pytest.mark.asyncio
 async def test_read_record_still_404s_when_projection_is_requested_for_a_missing_doc() -> None:
+    store = _FakeStore(None)
     result = await read_record(
-        "missing.md", format="prov-jsonld", runtime=_runtime(_FakeStore(None))
+        "missing.md", format="prov-jsonld", runtime=_runtime(store)
     )
+    assert store.calls == [("missing.md", "captain")]
     assert getattr(result, "status_code", 200) == 404
 
 

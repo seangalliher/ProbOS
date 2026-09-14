@@ -17,10 +17,12 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from probos.api_models import SkillRequestDecideRequest, SkillRequestFileRequest
 from probos.routers.deps import get_runtime
+from probos.routers.readiness import failed_read, unavailable_dependency
 from probos.skill_request import SkillRequest
 
 logger = logging.getLogger(__name__)
@@ -84,19 +86,36 @@ async def file_skill_request(
 async def list_skill_requests(
     status: str = "pending",
     runtime: Any = Depends(get_runtime),
-) -> dict[str, Any]:
+) -> Any:
     """AD-908: List skill requests (pending by default).
 
     Only the pending view is served today; the ``status`` query param is
     accepted for forward-compatibility but anything other than ``pending``
     returns an empty list (no other view is built in this AD).
+
+    Failed reads retain detail and add availability (state, code, message,
+    retryable). HTTP 503 is disabled only with typed config-off evidence.
     """
-    if not runtime.skill_request_store:
-        raise HTTPException(status_code=503, detail="skill request store not available")
+    store = getattr(runtime, "skill_request_store", None)
+    if store is None:
+        return JSONResponse({
+            "detail": "skill request store not available",
+            "availability": unavailable_dependency(getattr(runtime, "config", None), "skill_requests"),
+        }, status_code=503)
     if status != "pending":
         return {"requests": [], "status": status}
-    pending = await runtime.skill_request_store.list_pending()
-    return {"requests": [_serialize(r) for r in pending], "status": "pending"}
+    try:
+        pending = await store.list_pending()
+        return {"requests": [_serialize(request) for request in pending], "status": "pending"}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Skill request queue read failed; pending requests unavailable; returning HTTP 500")
+        message = "skill requests unavailable"
+        return JSONResponse({
+            "detail": message,
+            "availability": failed_read(message, "skill_requests.read_failed"),
+        }, status_code=500)
 
 
 @router.post("/{request_id}/decide")
@@ -162,13 +181,27 @@ async def begin_skill_request_training(
 async def list_skill_requests_for_agent(
     agent_id: str,
     runtime: Any = Depends(get_runtime),
-) -> dict[str, Any]:
+) -> Any:
     """AD-908: List all skill requests filed for a given agent.
 
-    Honest-degrade: when the store is unavailable, returns an empty list
-    rather than 503 so a read-only history view never errors.
+    Missing storage returns HTTP 503 with detail and availability, never a
+    successful empty history. Successful request serialization is unchanged.
     """
-    if not runtime.skill_request_store:
-        return {"requests": []}
-    by_agent = await runtime.skill_request_store.list_by_agent(agent_id)
-    return {"requests": [_serialize(r) for r in by_agent]}
+    store = getattr(runtime, "skill_request_store", None)
+    if store is None:
+        return JSONResponse({
+            "detail": "skill request store not available",
+            "availability": unavailable_dependency(getattr(runtime, "config", None), "skill_requests"),
+        }, status_code=503)
+    try:
+        by_agent = await store.list_by_agent(agent_id)
+        return {"requests": [_serialize(request) for request in by_agent]}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Skill request history read failed; history unavailable; returning HTTP 500")
+        message = "skill request history unavailable"
+        return JSONResponse({
+            "detail": message,
+            "availability": failed_read(message, "skill_requests.read_failed"),
+        }, status_code=500)

@@ -18,7 +18,7 @@
  * reconciled against it. A test of either half alone passes against the defect.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent, within, act } from '@testing-library/react';
 
 import { useStore } from '../../../store/useStore';
 import { ApprovalsCenterPanel } from '../ApprovalsCenterPanel';
@@ -57,16 +57,22 @@ const SKILL_ROW = {
 };
 
 function okJson(body: unknown): Response {
-  return { ok: true, status: 200, json: async () => body } as Response;
+  return new Response(JSON.stringify(body), { status: 200 });
 }
 
 function errorResponse(status: number): Response {
-  return { ok: false, status, json: async () => ({}) } as Response;
+  return new Response(JSON.stringify({ detail: 'queue unavailable' }), { status });
 }
 
 /** Reset every slice these assertions read, including the BF-723 additions. */
 function resetApprovalState(): void {
+  useStore.getState().cancelPendingApprovals();
+  const initial = useStore.getInitialState();
   useStore.setState({
+    approvalResources: initial.approvalResources,
+    approvalPoll: initial.approvalPoll,
+    approvalControllers: { capability: null, skill: null },
+    approvalIssuedSeq: { capability: 0, skill: 0 },
     pendingApprovals: [],
     decidedApprovals: new Set<string>(),
     approvalRequestSeq: 0,
@@ -87,6 +93,127 @@ afterEach(() => {
 });
 
 describe('BF-723 a decided request is reconciled centrally, not just locally', () => {
+  it('records both failed queues and filters decided rows from every cached payload', async () => {
+    let down = false;
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async input => down ? errorResponse(503)
+      : okJson({ requests: String(input).startsWith('/api/skill-requests') ? [SKILL_ROW] : [CAPABILITY_ROW] })));
+    await useStore.getState().refreshPendingApprovals();
+    expect(useStore.getState().pendingApprovals).toHaveLength(2);
+    const observations = useStore.getState().approvalResources;
+    useStore.getState().recordApprovalDecision('capability', 'cap-1');
+    useStore.getState().recordApprovalDecision('skill', 'sk-1');
+    down = true;
+    await useStore.getState().refreshPendingApprovals();
+    expect(useStore.getState().pendingApprovals).toEqual([]);
+    for (const queue of ['capability', 'skill'] as const) {
+      expect(useStore.getState().approvalResources[queue]).toMatchObject({
+        status: 'unavailable', stale: true, observedAt: observations[queue].observedAt, data: { requests: [] },
+      });
+    }
+    expect(useStore.getState().decidedApprovals.size).toBe(2);
+  });
+
+  it('does not let late old success replace newer failure metadata or its generation', async () => {
+    const releases: Array<(response: Response) => void> = [];
+    let reads = 0;
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(() => {
+      reads += 1;
+      return reads <= 2 ? new Promise<Response>(resolve => { releases.push(resolve); })
+        : Promise.resolve(errorResponse(503));
+    }));
+    const old = useStore.getState().refreshPendingApprovals();
+    expect(releases).toHaveLength(2);
+    await useStore.getState().refreshPendingApprovals();
+    const issued = { ...useStore.getState().approvalIssuedSeq };
+    expect(useStore.getState().approvalResources.skill.status).toBe('unavailable');
+    releases[0](okJson({ requests: [CAPABILITY_ROW] }));
+    releases[1](okJson({ requests: [SKILL_ROW] }));
+    await old;
+    expect(useStore.getState().approvalIssuedSeq).toEqual(issued);
+    expect(useStore.getState().approvalResources.capability.status).toBe('unavailable');
+    expect(useStore.getState().approvalResources.skill.status).toBe('unavailable');
+    expect(useStore.getState().pendingApprovals).toEqual([]);
+  });
+
+  it('ignores an old failure while the newer refresh still owns loading state', async () => {
+    const releases: Array<(response: Response) => void> = [];
+    const transport = vi.fn<typeof fetch>().mockImplementation(() => new Promise<Response>(resolve => { releases.push(resolve); }));
+    vi.stubGlobal('fetch', transport);
+    const old = useStore.getState().refreshPendingApprovals();
+    const current = useStore.getState().refreshPendingApprovals();
+    expect(releases).toHaveLength(4);
+    const issued = { ...useStore.getState().approvalIssuedSeq };
+    expect(transport.mock.calls.slice(0, 2).every(([, init]) => init?.signal?.aborted)).toBe(true);
+    releases[0](errorResponse(503));
+    releases[1](errorResponse(503));
+    await old;
+    expect(useStore.getState().approvalResources.capability.status).toBe('loading');
+    expect(useStore.getState().approvalResources.skill.status).toBe('loading');
+    expect(useStore.getState().approvalIssuedSeq).toEqual(issued);
+    releases[2](okJson({ requests: [] }));
+    releases[3](okJson({ requests: [SKILL_ROW] }));
+    await current;
+    expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual(['sk-1']);
+  });
+
+  it.each([{}, { requests: null }, { requests: [{}] }])('classifies malformed queue payload %j as failed, never empty', async payload => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async () => okJson(payload)));
+    await useStore.getState().refreshPendingApprovals();
+    expect(useStore.getState().approvalResources.capability.status).toBe('failed');
+    expect(useStore.getState().approvalResources.skill.status).toBe('failed');
+  });
+
+  it('does not issue requests for an already canceled or empty refresh selection', async () => {
+    const transport = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', transport);
+    const controller = new AbortController();
+    controller.abort();
+    await useStore.getState().refreshPendingApprovals({ signal: controller.signal });
+    await useStore.getState().refreshPendingApprovals({ queues: [] });
+    useStore.getState().cancelPendingApprovals();
+    expect(transport).not.toHaveBeenCalled();
+    expect(useStore.getState().approvalResources.skill.status).toBe('idle');
+  });
+
+  it('cancels superseding hung reads without leaving either queue loading', async () => {
+    const transport = vi.fn<typeof fetch>().mockImplementation(() => new Promise<Response>(() => {}));
+    vi.stubGlobal('fetch', transport);
+    const first = useStore.getState().refreshPendingApprovals();
+    const second = useStore.getState().refreshPendingApprovals();
+    expect(transport).toHaveBeenCalledTimes(4);
+    expect(useStore.getState().approvalResources.skill.status).toBe('loading');
+    useStore.getState().cancelPendingApprovals();
+    await Promise.all([first, second]);
+    expect(transport.mock.calls.every(([, init]) => init?.signal?.aborted)).toBe(true);
+    expect(useStore.getState().approvalControllers).toEqual({ capability: null, skill: null });
+    expect(useStore.getState().approvalResources.skill.status).toBe('idle');
+    expect(useStore.getState().approvalResources.capability.status).toBe('idle');
+  });
+
+  it('removes a hosted skill decision immediately even when both shared queues then fail', async () => {
+    let down = false;
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      if (init?.method === 'POST') { down = true; return okJson({ request: {} }); }
+      if (down) return errorResponse(503);
+      return okJson({ requests: String(input).startsWith('/api/skill-requests') ? [SKILL_ROW] : [] });
+    });
+    vi.stubGlobal('fetch', transport);
+    useStore.setState({ approvalsCenterOpen: true });
+    render(<ApprovalsCenterPanel />);
+    const card = await screen.findByTestId('skill-request-card');
+    expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual(['sk-1']);
+    fireEvent.click(within(card).getByRole('button', { name: 'Approve' }));
+    await waitFor(() => expect(useStore.getState().approvalResources.skill.status).toBe('unavailable'));
+    expect(screen.queryByTestId('skill-request-card')).toBeNull();
+    expect(useStore.getState().pendingApprovals).toEqual([]);
+    expect(useStore.getState().decidedApprovals.has('skill\u0000sk-1')).toBe(true);
+    expect(useStore.getState().approvalResources.capability.status).toBe('unavailable');
+    expect(screen.queryByTestId('approvals-center-empty')).toBeNull();
+    await act(async () => { await useStore.getState().refreshPendingApprovals(); });
+    expect(transport.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+    expect(useStore.getState().pendingApprovals).toEqual([]);
+  });
+
   it('drops the card AND the badge count when that queue 503s right after the decision', async () => {
     /* The reproduction. `capabilityDown` flips the moment the decide POST
      * lands, which is exactly the reference-vessel sequence: the write

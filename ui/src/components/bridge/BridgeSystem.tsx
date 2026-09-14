@@ -1,12 +1,9 @@
 /* Bridge System Panel — service status, shutdown, thread management (AD-436) */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Lock, Unlock } from '../icons/Glyphs';
-
-interface ServiceStatus {
-  name: string;
-  status: 'online' | 'offline' | 'degraded';
-}
+import { Lock, Unlock, StatusInProgress } from '../icons/Glyphs';
+import { useServiceStatus } from '../../hooks/useServiceStatus';
+import type { ServiceStatusResult } from '../../hooks/useServiceStatus';
 
 interface ThreadSummary {
   id: string;
@@ -19,21 +16,8 @@ interface ThreadSummary {
 
 /* ── Service Status List ── */
 function ServiceStatusList() {
-  const [services, setServices] = useState<ServiceStatus[]>([]);
-
-  const fetchServices = useCallback(async () => {
-    try {
-      const res = await fetch('/api/system/services');
-      const data = await res.json();
-      setServices(data.services || []);
-    } catch { /* swallow */ }
-  }, []);
-
-  useEffect(() => {
-    fetchServices();
-    const interval = setInterval(fetchServices, 10000);
-    return () => clearInterval(interval);
-  }, [fetchServices]);
+  const status = useServiceStatus();
+  const { services } = status;
 
   const statusDot = (s: string) => {
     const color = s === 'online' ? '#50d070' : s === 'degraded' ? '#f0b060' : '#f04040';
@@ -46,6 +30,8 @@ function ServiceStatusList() {
   };
 
   return (
+    <section aria-label="System services">
+      <ServiceReadiness status={status} />
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 8px' }}>
       {services.map(s => (
         <div key={s.name} style={{
@@ -53,9 +39,44 @@ function ServiceStatusList() {
           display: 'flex', alignItems: 'center',
         }}>
           {statusDot(s.status)}
-          {s.name}
+          {s.name}: {s.status === 'online' ? 'initialized' : s.status === 'offline' ? 'not initialized' : 'degraded'}
         </div>
       ))}
+    </div>
+    </section>
+  );
+}
+
+export function ServiceReadiness({ status }: { status: ServiceStatusResult }): React.JSX.Element {
+  const { resource } = status;
+  const scopeCounts = status.integrations.length > 0 && status.integrations.every(entry => entry.state !== 'unknown')
+    ? {
+      initialization: status.integrations.filter(entry => entry.scope === 'initialization').length,
+      connection: status.integrations.filter(entry => entry.scope === 'connection').length,
+    } : null;
+  return (
+    <div style={{ fontSize: 11, color: '#aaa', overflowWrap: 'anywhere' }}>
+      <div role="status" aria-live="polite">
+        {status.summary} {resource.stale && 'Stale snapshot. '}{resource.refreshing && 'Refreshing. '}
+        {status.paused && 'Automatic refresh paused.'}
+      </div>
+      <button type="button" aria-label="Refresh service status" title="Refresh service status"
+        disabled={resource.status === 'loading' || resource.refreshing} onClick={status.refresh}
+        style={{ background: 'none', color: '#aaa', border: '1px solid #666680', borderRadius: 4, width: 28, height: 28, cursor: 'pointer' }}>
+        <StatusInProgress size={14} />
+      </button>
+      {resource.data && <div>{resource.stale ? 'Last known: ' : ''}{status.population}</div>}
+      {resource.lastSuccess === 'empty' && resource.data && <div>No components reported.</div>}
+      {scopeCounts
+        ? <div>{resource.stale ? 'Last known integration observations' : 'Integration observations'}: {scopeCounts.initialization} initialization checks, {scopeCounts.connection} current connection check{scopeCounts.connection === 1 ? '' : 's'}.</div>
+        : <div>Integration observations unavailable.</div>}
+      <ul style={{ listStyle: 'none', padding: 0, margin: '6px 0' }}>
+        {status.integrations.map(entry => (
+          <li key={entry.id} aria-label={`${entry.label} ${entry.scope}`}>
+            {entry.label} ({entry.scope}): {entry.message}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

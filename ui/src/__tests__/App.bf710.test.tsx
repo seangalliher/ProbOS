@@ -124,10 +124,13 @@ describe('approvals surface reachability (BF-710, re-homed by AD-1201)', () => {
     expect(tree).toContain('approvalsCenterOpen: true');
   });
 
-  it('BridgePanel gates the APPROVALS section on there being pending requests', () => {
-    /* HXI #9 — the section rises and recedes. An always-present empty section
-     * would be the same clutter the floating stack was. */
-    expect(returnedTree(bridgeSource)).toContain('pendingApprovals.length > 0 &&');
+  it('BridgePanel hides the APPROVALS section only after both queues are successfully empty', () => {
+    /* Issue #1368: zero cached rows do not establish empty queues. Keep unknown
+     * or unavailable approvals reachable; only authoritative empty reads recede. */
+    expect(returnedTree(bridgeSource)).toContain('(pendingApprovals.length > 0 || !approvalsEmpty) &&');
+    expect(bridgeSource).toMatch(
+      /const approvalsEmpty = Object\.values\(approvalResources\)\.every\(\s*resource => resource\.status === 'empty'\s*\);/,
+    );
   });
 
   it('the APPROVALS section carries no stationId — it is feed, not a station', () => {

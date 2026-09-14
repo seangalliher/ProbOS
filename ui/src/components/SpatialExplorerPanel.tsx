@@ -12,15 +12,30 @@ import KnowledgeGraphView from './spatial/KnowledgeGraphView';
 import ShipLayoutView from './spatial/ShipLayoutView';
 import NodeDetailDrawer from './spatial/NodeDetailDrawer';
 import type { SpatialGraphData, SpatialLayoutData } from '../store/types';
+import { idleResource, loadingResource, requestResource, resourceMessage } from '../utils/resourceState';
 
-async function fetchJson<T>(url: string): Promise<T | null> {
-  try {
-    const r = await fetch(url);
-    if (!r.ok) return null;
-    return (await r.json()) as T;
-  } catch {
-    return null;
-  }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isVector(value: unknown): value is [number, number, number] {
+  return Array.isArray(value) && value.length === 3
+    && value.every(coordinate => typeof coordinate === 'number' && Number.isFinite(coordinate));
+}
+
+function isGraph(value: unknown): value is SpatialGraphData {
+  return isRecord(value) && typeof value.generated_at === 'number' && Number.isFinite(value.generated_at)
+    && Array.isArray(value.nodes) && value.nodes.every(node => isRecord(node) && typeof node.id === 'string')
+    && Array.isArray(value.edges) && value.edges.every(edge => isRecord(edge)
+      && typeof edge.source === 'string' && typeof edge.target === 'string' && typeof edge.relation === 'string');
+}
+
+function isLayout(value: unknown): value is SpatialLayoutData {
+  return isRecord(value) && value.schema_version === 1 && Array.isArray(value.decks)
+    && value.decks.every(deck => isRecord(deck) && typeof deck.deck_id === 'string'
+      && typeof deck.name === 'string' && (deck.department_id === null || typeof deck.department_id === 'string')
+      && isVector(deck.position) && isVector(deck.dimensions) && typeof deck.accent_color === 'string'
+      && isRecord(deck.post_offsets) && Object.values(deck.post_offsets).every(isVector));
 }
 
 export default function SpatialExplorerPanel() {
@@ -28,11 +43,14 @@ export default function SpatialExplorerPanel() {
   const close = useStore(s => s.closeSpatialExplorer);
   const viewMode = useStore(s => s.spatialViewMode);
   const setViewMode = useStore(s => s.setSpatialViewMode);
-  const graphData = useStore(s => s.spatialGraphData);
-  const layoutData = useStore(s => s.spatialLayoutData);
   const setGraphData = useStore(s => s.setSpatialGraphData);
   const setLayoutData = useStore(s => s.setSpatialLayoutData);
+  const setSelected = useStore(s => s.setSpatialSelectedNode);
   const selected = useStore(s => s.spatialSelectedNode);
+  const [graph, setGraph] = useState(() => idleResource<SpatialGraphData>());
+  const [layout, setLayout] = useState(() => idleResource<SpatialLayoutData>());
+  const snapshot = useRef({ graph, layout });
+  const request = useRef<AbortController | null>(null);
 
   // Draggable + resizable. Position/size local — declared before any early
   // return so hooks order is stable across renders.
@@ -41,19 +59,43 @@ export default function SpatialExplorerPanel() {
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const resizeRef = useRef<{ startX: number; startY: number; origW: number; origH: number } | null>(null);
 
-  const refresh = useCallback(async () => {
-    const [g, l] = await Promise.all([
-      fetchJson<SpatialGraphData>('/api/ontology/graph?include_edges=true'),
-      fetchJson<SpatialLayoutData>('/api/ontology/spatial-layout'),
-    ]);
-    setGraphData(g);
-    setLayoutData(l);
-  }, [setGraphData, setLayoutData]);
+  const refresh = useCallback(() => {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    const graphUrl = '/api/ontology/graph?include_edges=true';
+    const layoutUrl = '/api/ontology/spatial-layout';
+    const nextGraph = loadingResource(snapshot.current.graph, graphUrl);
+    const nextLayout = loadingResource(snapshot.current.layout, layoutUrl);
+    snapshot.current = { graph: nextGraph, layout: nextLayout };
+    setGraph(nextGraph);
+    setLayout(nextLayout);
+    setSelected(null);
+    void requestResource(graphUrl, nextGraph, isGraph, data => data.nodes.length === 0, controller.signal).then(result => {
+      if (!result || controller.signal.aborted) return;
+      snapshot.current.graph = result;
+      setGraphData(result.data);
+      setGraph(result);
+    });
+    void requestResource(layoutUrl, nextLayout, isLayout, data => data.decks.length === 0, controller.signal).then(result => {
+      if (!result || controller.signal.aborted) return;
+      snapshot.current.layout = result;
+      setLayoutData(result.data);
+      setLayout(result);
+    });
+  }, [setGraphData, setLayoutData, setSelected]);
 
   useEffect(() => {
     if (!open) return;
-    void refresh();
-  }, [open, refresh]);
+    refresh();
+    return () => {
+      request.current?.abort();
+      snapshot.current = { graph: idleResource<SpatialGraphData>(), layout: idleResource<SpatialLayoutData>() };
+      setGraphData(null);
+      setLayoutData(null);
+      setSelected(null);
+    };
+  }, [open, refresh, setGraphData, setLayoutData, setSelected]);
 
   useEffect(() => {
     if (!open) return;
@@ -91,8 +133,6 @@ export default function SpatialExplorerPanel() {
     background: 'transparent',
     userSelect: 'none' as const,
   };
-
-  const isEmpty = !graphData && !layoutData;
 
   const onHeaderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Skip drag when click originated on a button/tab control.
@@ -169,46 +209,62 @@ export default function SpatialExplorerPanel() {
           SPATIAL EXPLORER
         </div>
         <div data-no-drag="1" style={{ display: 'flex', gap: 6 }}>
-          <div
+          <button
+            type="button"
             data-testid="spatial-tab-graph"
             onClick={() => setViewMode('graph')}
+            aria-pressed={viewMode === 'graph'}
             style={tabStyle(viewMode === 'graph')}
-          >GRAPH</div>
-          <div
+          >GRAPH</button>
+          <button
+            type="button"
             data-testid="spatial-tab-ship"
             onClick={() => setViewMode('ship')}
+            aria-pressed={viewMode === 'ship'}
             style={tabStyle(viewMode === 'ship')}
-          >SHIP LAYOUT</div>
+          >SHIP LAYOUT</button>
         </div>
         <div data-no-drag="1" style={{ display: 'flex', gap: 6 }}>
-          <div
+          <button
+            type="button"
             data-testid="spatial-refresh"
-            onClick={() => { void refresh(); }}
+            onClick={refresh}
             style={iconBtnStyle}
-            role="button"
             aria-label="Refresh"
-          >↻</div>
-          <div
+            title="Refresh"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+              <path d="M13 6a5 5 0 1 0 0 4M13 2v4H9" />
+            </svg>
+          </button>
+          <button
+            type="button"
             data-testid="spatial-close"
             onClick={close}
             style={iconBtnStyle}
-            role="button"
             aria-label="Close"
-          >×</div>
+            title="Close"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+          </button>
         </div>
       </div>
-      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        {isEmpty ? (
-          <div data-testid="spatial-empty" style={{
-            padding: 24, color: '#8888a0', fontSize: 12, textAlign: 'center',
-          }}>
-            No spatial data — enable in config or check ontology service
+      <div style={{ padding: '6px 14px', fontSize: 11 }}>
+        {([['Graph', graph], ['Ship layout', layout]] as const).map(([label, resource]) => (
+          <div key={label} role="status" aria-label={`${label} status`} aria-live="polite">
+            {label}: {resourceMessage(resource.status)}
+            {resource.refreshing && ' Refreshing last successful snapshot.'}
+            {resource.stale && ' Stale snapshot.'}
+            {resource.observedAt !== null && <> Last successful observation: <time dateTime={new Date(resource.observedAt).toISOString()}>{new Date(resource.observedAt).toLocaleTimeString()}</time>.</>}
           </div>
-        ) : viewMode === 'graph' ? (
-          <KnowledgeGraphView />
-        ) : (
-          <ShipLayoutView />
-        )}
+        ))}
+      </div>
+      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+        {viewMode === 'graph'
+          ? graph.data !== null && graph.lastSuccess === 'ready' && <KnowledgeGraphView />
+          : layout.data !== null && (layout.lastSuccess === 'ready' || layout.status === 'empty') && <ShipLayoutView />}
         {selected && <NodeDetailDrawer />}
       </div>
       <div

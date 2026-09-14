@@ -1,35 +1,23 @@
 /* Capability-request decision card — alert-driven HXI surface (AD-857)
  *
  * The Captain's approve/deny surface for pending capability requests filed by
- * blocked agents (the BLOCKED -> request -> approve/deny loop). Fetch-driven:
- * polls /api/capability-requests?status=pending and renders one card per
- * request. Approve/Deny POST to /api/capability-requests/{id}/decide.
+ * blocked agents (the BLOCKED -> request -> approve/deny loop). Standalone
+ * reads use bounded polling; hosted reads use the Bridge-owned shared queue.
+ * Approve/Deny POST to /api/capability-requests/{id}/decide.
  *
  * HXI Design Principle #3: inline SVG glyphs only (no emoji), stroke-based,
  * amber active / dim inactive. Principle #9: department-colored context bar.
  */
 
-import { useState, useEffect, useCallback } from 'react';
-
-/* BF-723: type-only — the panel stays store-free at runtime (it is fetch-driven
- * and mountable standalone). Importing the shape keeps the callback contract
- * and the store's reconciliation key from drifting apart. */
-import type { DecidedApproval } from '../../store/useStore';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useStore, isApprovalPayload, isCapabilityRequestView, type DecidedApproval } from '../../store/useStore';
+import type { ApprovalPayload, CapabilityApprovalView } from '../../store/types';
+import { idleResource, loadingResource, requestResource, resourceMessage, nextResourcePoll } from '../../utils/resourceState';
+import type { ResourceState, ResourcePoll } from '../../utils/resourceState';
+import { ApprovalRefreshGlyph } from '../skill/SkillRequestPanel';
 
 // ── Capability request shape (mirrors the GET serializer) ──────────
-export interface CapabilityRequestView {
-  id: string;
-  agent_id: string;
-  kind: string;
-  target: string;
-  rationale: string;
-  work_item_id: string | null;
-  status: string;
-  created_at: number;
-  decided_at: number | null;
-  decided_by: string;
-  decision_reason: string;
-}
+export type CapabilityRequestView = CapabilityApprovalView;
 
 // ── Department -> context color (Principle #9, LCARS departments) ──
 // No prior constant existed; defined here per AD-857.
@@ -45,13 +33,6 @@ const DEFAULT_DEPARTMENT_COLOR = '#666680';
 const ACTIVE_AMBER = '#f0b060';
 const DIM = '#666680';
 const DENY_RED = '#d05050';
-
-/* BF-710: the module docstring above always claimed this panel polls; it did
- * not. `load` is a stable useCallback, so the mount effect ran exactly once and
- * a request filed afterwards never appeared. 10s matches the established
- * panel-list refresh cadence (CrewRosterPanel.tsx, bridge/FullSystem.tsx,
- * bridge/BridgeSystem.tsx all use 10000). */
-const POLL_INTERVAL_MS = 10000;
 
 function departmentColor(kind: string): string {
   // Map the request kind to a department context color. grant/install lean
@@ -208,29 +189,69 @@ function RequestCard({ req, onDecide }: {
  * queue is this panel's own identity: it is the panel that talks to
  * /api/capability-requests, so it is the one that knows. */
 export default function CapabilityRequestPanel(
-  { onDecided }: { onDecided?: (decided: DecidedApproval) => void } = {},
+  { onDecided, hosted = false }: { onDecided?: (decided: DecidedApproval) => void; hosted?: boolean } = {},
 ) {
-  const [requests, setRequests] = useState<CapabilityRequestView[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const shared = useStore(state => state.approvalResources.capability);
+  const pending = useStore(state => state.pendingApprovals);
+  const [local, setLocal] = useState<ResourceState<ApprovalPayload>>(() => idleResource('capability'));
+  const localRef = useRef(local);
+  const poll = useRef<ResourcePoll>({ failures: 0, failedAt: null, nextAt: null });
+  const controller = useRef<AbortController | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const generation = useRef(0);
+  const decidedIds = useRef(new Set<string>());
+  const mounted = useRef(false);
 
-  const load = useCallback(async () => {
-    try {
-      const resp = await fetch('/api/capability-requests?status=pending');
-      if (!resp.ok) return;
-      const data = await resp.json();
-      setRequests(Array.isArray(data.requests) ? data.requests : []);
-    } catch {
-      // Tier-1 swallow: a transient fetch failure leaves the prior list shown.
-    } finally {
-      setLoaded(true);
+  const load = useCallback(async (automatic = false): Promise<void> => {
+    if (automatic && controller.current) return;
+    clearTimeout(timer.current);
+    controller.current?.abort();
+    const request = new AbortController();
+    controller.current = request;
+    const ticket = ++generation.current;
+    if (hosted) {
+      try {
+        await useStore.getState().refreshPendingApprovals({ queues: ['capability'], signal: request.signal });
+      } finally {
+        if (controller.current === request) controller.current = null;
+      }
+      return;
     }
-  }, []);
+    if (!automatic) poll.current = { failures: 0, failedAt: null, nextAt: null };
+    const startedAt = Date.now();
+    const previous = localRef.current;
+    setLocal(loadingResource(previous, 'capability'));
+    const outcome = await requestResource('/api/capability-requests?status=pending', previous,
+      (value): value is ApprovalPayload => isApprovalPayload('capability', value),
+      value => value.requests.length === 0, request.signal);
+    if (!outcome || request.signal.aborted || ticket !== generation.current || !mounted.current) return;
+    if (outcome.status === 'ready' || outcome.status === 'empty') {
+      const reported = new Set(outcome.data!.requests.map(row => row.id));
+      for (const id of decidedIds.current) if (!reported.has(id)) decidedIds.current.delete(id);
+    }
+    const result = { ...outcome, data: outcome.data === null ? null : {
+      requests: outcome.data.requests.filter(row => !decidedIds.current.has(row.id)),
+    } };
+    localRef.current = result;
+    setLocal(result);
+    controller.current = null;
+    poll.current = nextResourcePoll(poll.current, outcome.status, startedAt);
+    if (poll.current.nextAt !== null) {
+      timer.current = setTimeout(() => { void load(true); }, Math.max(0, poll.current.nextAt - Date.now()));
+    }
+  }, [hosted]);
 
   useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => { void load(); }, POLL_INTERVAL_MS);
-    return () => { window.clearInterval(timer); };
-  }, [load]);
+    mounted.current = true;
+    if (!hosted) void load();
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+      clearTimeout(timer.current);
+      controller.current?.abort();
+      controller.current = null;
+    };
+  }, [load, hosted]);
 
   const onDecide = useCallback(async (id: string, approve: boolean, reason: string) => {
     const resp = await fetch(`/api/capability-requests/${id}/decide`, {
@@ -241,14 +262,19 @@ export default function CapabilityRequestPanel(
     if (!resp.ok) {
       throw new Error(`decision failed (${resp.status})`);
     }
-    // Remove the decided request from the pending list.
-    setRequests(prev => prev.filter(r => r.id !== id));
+    decidedIds.current.add(id);
+    const previous = localRef.current;
+    localRef.current = { ...previous, data: previous.data === null ? null : {
+      requests: previous.data.requests.filter(row => row.id !== id),
+    } };
+    if (mounted.current) setLocal(localRef.current);
+    useStore.getState().recordApprovalDecision('capability', id);
     onDecided?.({ queue: 'capability', id });
   }, [onDecided]);
 
-  if (loaded && requests.length === 0) {
-    return null;
-  }
+  const resource = hosted ? shared : local;
+  const requests = resource.data?.requests.filter(isCapabilityRequestView)
+    .filter(row => !hosted || pending.some(approval => approval.queue === 'capability' && approval.id === row.id)) ?? [];
 
   return (
     <div data-testid="capability-request-panel" style={{ padding: '8px 0' }}>
@@ -257,6 +283,17 @@ export default function CapabilityRequestPanel(
         color: ACTIVE_AMBER, fontWeight: 700, marginBottom: 6, padding: '0 2px',
       }}>
         Capability Requests
+        <button type="button" aria-label="Refresh capability requests" title="Refresh capability requests"
+          onClick={() => { void load(); }} data-hxi-focus=""
+          style={{ background: 'none', border: 'none', color: ACTIVE_AMBER, cursor: 'pointer', marginLeft: 8 }}>
+          <ApprovalRefreshGlyph />
+        </button>
+      </div>
+      <div role="status" aria-label="Capability requests status" style={{ fontSize: 11, color: DIM, marginBottom: 6 }}>
+        {resource.status === 'empty' ? 'No capability requests pending.' : resourceMessage(resource.status)}
+        {(resource.stale || resource.refreshing) && ' Showing last-known capability requests; current count unknown.'}
+        {resource.observedAt !== null && (resource.stale || resource.refreshing)
+          && ` Last successful observation: ${new Date(resource.observedAt).toLocaleTimeString()}.`}
       </div>
       {requests.map(req => (
         <RequestCard key={req.id} req={req} onDecide={onDecide} />

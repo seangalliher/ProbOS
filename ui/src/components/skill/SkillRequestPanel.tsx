@@ -2,8 +2,9 @@
  *
  * The Captain's approve/deny surface for pending crew skill-acquisition
  * requests (the AD-906 requested -> approved|denied -> in_training -> completed
- * loop). Fetch-driven: polls /api/skill-requests?status=pending and renders one
- * card per request. Approve/Deny POST to /api/skill-requests/{id}/decide.
+ * loop). Standalone reads use bounded polling; hosted detail comes from the
+ * Bridge-owned shared queue. Approve/Deny POST to
+ * /api/skill-requests/{id}/decide and are never automatically retried.
  *
  * Structurally mirrors CapabilityRequestPanel (AD-857). HXI Design Principle #3:
  * inline SVG glyphs only (no emoji), stroke-based, amber active / dim inactive.
@@ -12,28 +13,13 @@
  * without global stubbing.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useStore, isApprovalPayload, isSkillRequestView, type DecidedApproval } from '../../store/useStore';
+import type { ApprovalPayload, SkillRequestView } from '../../store/types';
+import { idleResource, loadingResource, requestResource, resourceMessage, nextResourcePoll } from '../../utils/resourceState';
+import type { ResourceState, ResourcePoll } from '../../utils/resourceState';
 
-/* BF-723: type-only — the panel stays store-free at runtime. */
-import type { DecidedApproval } from '../../store/useStore';
-
-// ── Skill request shape (mirrors the GET serializer) ───────────────
-export interface SkillRequestView {
-  id: string;
-  agent_id: string;
-  skill_id: string;
-  skill_label: string;
-  source: string;
-  justification: string;
-  status: string;
-  linked_simulation_id: string | null;
-  created_at: number;
-  decided_at: number | null;
-  decided_by: string;
-  decision_reason: string;
-  pre_metric: number | null;
-  post_metric: number | null;
-}
+export type { SkillRequestView } from '../../store/types';
 
 type FetchImpl = typeof fetch;
 
@@ -59,10 +45,12 @@ const ACTIVE_AMBER = '#f0b060';
 const DIM = '#666680';
 const DENY_RED = '#d05050';
 
-/* BF-710: the module docstring above always claimed this panel polls; it did
- * not. 10s matches the established panel-list refresh cadence
- * (CrewRosterPanel.tsx, bridge/FullSystem.tsx, bridge/BridgeSystem.tsx). */
-const POLL_INTERVAL_MS = 10000;
+export function ApprovalRefreshGlyph(): React.JSX.Element {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3A7 7 0 0 0 17.9 17" />
+  </svg>;
+}
 
 function sourceColor(source: string): string {
   const key = (source || '').toLowerCase();
@@ -102,19 +90,23 @@ function RequestCard({ req, onDecide }: {
 }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const accent = sourceColor(req.source);
 
   const decide = useCallback(async (approve: boolean) => {
+    if (submitting.current) return;
     if (!approve && !reason.trim()) {
       setError('A reason is required to deny.');
       return;
     }
+    submitting.current = true;
     setBusy(true);
     setError(null);
     try {
       await onDecide(req.id, approve, reason.trim());
     } catch (e) {
+      submitting.current = false;
       setError(e instanceof Error ? e.message : 'Decision failed.');
       setBusy(false);
     }
@@ -226,7 +218,8 @@ export default function SkillRequestPanel(
   {
     fetchImpl,
     onDecided,
-  }: { fetchImpl?: FetchImpl; onDecided?: (decided: DecidedApproval) => void } = {},
+    hosted = false,
+  }: { fetchImpl?: FetchImpl; onDecided?: (decided: DecidedApproval) => void; hosted?: boolean } = {},
 ) {
   /* BF-710: this was a bare `fetchImpl ?? ((...args) => fetch(...args))`, so on
    * the production path (no prop) it produced a new function every render,
@@ -238,27 +231,66 @@ export default function SkillRequestPanel(
     (...args: Parameters<FetchImpl>) => (fetchImpl ? fetchImpl(...args) : fetch(...args)),
     [fetchImpl],
   );
-  const [requests, setRequests] = useState<SkillRequestView[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const shared = useStore(state => state.approvalResources.skill);
+  const [local, setLocal] = useState<ResourceState<ApprovalPayload>>(() => idleResource('skill'));
+  const localRef = useRef(local);
+  const poll = useRef<ResourcePoll>({ failures: 0, failedAt: null, nextAt: null });
+  const controller = useRef<AbortController | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const generation = useRef(0);
+  const decidedIds = useRef(new Set<string>());
+  const mounted = useRef(false);
 
-  const load = useCallback(async () => {
-    try {
-      const resp = await doFetch('/api/skill-requests?status=pending');
-      if (!resp.ok) return;
-      const data = await resp.json();
-      setRequests(Array.isArray(data.requests) ? data.requests : []);
-    } catch {
-      // Tier-1 swallow: a transient fetch failure leaves the prior list shown.
-    } finally {
-      setLoaded(true);
+  const load = useCallback(async (automatic = false): Promise<void> => {
+    if (automatic && controller.current) return;
+    clearTimeout(timer.current);
+    controller.current?.abort();
+    const request = new AbortController();
+    controller.current = request;
+    const ticket = ++generation.current;
+    if (hosted) {
+      try {
+        await useStore.getState().refreshPendingApprovals({ queues: ['skill'], signal: request.signal });
+      } finally {
+        if (controller.current === request) controller.current = null;
+      }
+      return;
     }
-  }, [doFetch]);
+    if (!automatic) poll.current = { failures: 0, failedAt: null, nextAt: null };
+    const startedAt = Date.now();
+    const previous = localRef.current;
+    setLocal(loadingResource(previous, 'skill'));
+    const outcome = await requestResource('/api/skill-requests?status=pending', previous,
+      (value): value is ApprovalPayload => isApprovalPayload('skill', value),
+      value => value.requests.length === 0, request.signal, doFetch);
+    if (!outcome || request.signal.aborted || ticket !== generation.current || !mounted.current) return;
+    if (outcome.status === 'ready' || outcome.status === 'empty') {
+      const reported = new Set(outcome.data!.requests.map(row => row.id));
+      for (const id of decidedIds.current) if (!reported.has(id)) decidedIds.current.delete(id);
+    }
+    const result = { ...outcome, data: outcome.data === null ? null : {
+      requests: outcome.data.requests.filter(row => !decidedIds.current.has(row.id)),
+    } };
+    localRef.current = result;
+    setLocal(result);
+    controller.current = null;
+    poll.current = nextResourcePoll(poll.current, outcome.status, startedAt);
+    if (poll.current.nextAt !== null) {
+      timer.current = setTimeout(() => { void load(true); }, Math.max(0, poll.current.nextAt - Date.now()));
+    }
+  }, [doFetch, hosted]);
 
   useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => { void load(); }, POLL_INTERVAL_MS);
-    return () => { window.clearInterval(timer); };
-  }, [load]);
+    mounted.current = true;
+    if (!hosted) void load();
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+      clearTimeout(timer.current);
+      controller.current?.abort();
+      controller.current = null;
+    };
+  }, [load, hosted]);
 
   const onDecide = useCallback(async (id: string, approve: boolean, reason: string) => {
     const resp = await doFetch(`/api/skill-requests/${id}/decide`, {
@@ -269,14 +301,17 @@ export default function SkillRequestPanel(
     if (!resp.ok) {
       throw new Error(`decision failed (${resp.status})`);
     }
-    // Remove the decided request from the pending list.
-    setRequests(prev => prev.filter(r => r.id !== id));
+    decidedIds.current.add(id);
+    const previous = localRef.current;
+    localRef.current = { ...previous, data: previous.data === null ? null : {
+      requests: previous.data.requests.filter(row => row.id !== id),
+    } };
+    if (mounted.current) setLocal(localRef.current);
     onDecided?.({ queue: 'skill', id });
   }, [doFetch, onDecided]);
 
-  if (loaded && requests.length === 0) {
-    return null;
-  }
+  const resource = hosted ? shared : local;
+  const requests = resource.data?.requests.filter(isSkillRequestView) ?? [];
 
   return (
     <div data-testid="skill-request-panel" style={{ padding: '8px 0' }}>
@@ -285,6 +320,17 @@ export default function SkillRequestPanel(
         color: ACTIVE_AMBER, fontWeight: 700, marginBottom: 6, padding: '0 2px',
       }}>
         Skill Requests
+        <button type="button" aria-label="Refresh skill requests" title="Refresh skill requests"
+          onClick={() => { void load(); }} data-hxi-focus=""
+          style={{ background: 'none', border: 'none', color: ACTIVE_AMBER, cursor: 'pointer', marginLeft: 8 }}>
+          <ApprovalRefreshGlyph />
+        </button>
+      </div>
+      <div role="status" aria-label="Skill requests status" style={{ fontSize: 11, color: DIM, marginBottom: 6 }}>
+        {resource.status === 'empty' ? 'No skill requests pending.' : resourceMessage(resource.status)}
+        {(resource.stale || resource.refreshing) && ' Showing last-known skill requests; current count unknown.'}
+        {resource.observedAt !== null && (resource.stale || resource.refreshing)
+          && ` Last successful observation: ${new Date(resource.observedAt).toLocaleTimeString()}.`}
       </div>
       {requests.map(req => (
         <RequestCard key={req.id} req={req} onDecide={onDecide} />
