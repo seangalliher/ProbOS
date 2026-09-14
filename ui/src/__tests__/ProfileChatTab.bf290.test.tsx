@@ -73,7 +73,9 @@ beforeEach(() => {
     if (typeof m === 'function' && 'mockReset' in m) (m as any).mockReset();
   });
   mocks.armConversationModeMock.mockReturnValue(() => {});
-  mocks.whisperOnTranscriptMock.mockReturnValue(() => {});
+  mocks.armWhisperSttMock.mockImplementation(() => vi.fn());
+  mocks.startListeningMock.mockImplementation(() => ({ cancel: vi.fn() }));
+  mocks.whisperOnTranscriptMock.mockReturnValue(vi.fn());
   mocks.onSpeechEventMock.mockReturnValue(() => {});
   localStorage.clear();
   useStore.setState({
@@ -93,7 +95,7 @@ afterEach(() => {
 });
 
 describe('BF-290 PTT toggle + whisper fallback cleanup', () => {
-  it('two presses: start then stop also disarms whisper fallback', async () => {
+  it('two presses: start then stop cancels only the owned browser capture', async () => {
     render(<ProfileChatTab agentId="a1" />);
     const mic = await screen.findByLabelText('Voice input');
 
@@ -101,11 +103,12 @@ describe('BF-290 PTT toggle + whisper fallback cleanup', () => {
     fireEvent.click(mic);
     expect(mocks.startListeningMock).toHaveBeenCalledTimes(1);
 
-    // 2nd press — stops browser SR + disarms whisper (BF-290 cleanup).
+    // Issue #1367: cancel this invocation without stopping another owner's backend.
     const armed = await screen.findByLabelText('Stop listening');
     fireEvent.click(armed);
-    expect(mocks.stopListeningMock).toHaveBeenCalledTimes(1);
-    expect(mocks.disarmWhisperSttMock).toHaveBeenCalledTimes(1);
+    expect(mocks.startListeningMock.mock.results[0].value.cancel).toHaveBeenCalledTimes(1);
+    expect(mocks.stopListeningMock).not.toHaveBeenCalled();
+    expect(mocks.disarmWhisperSttMock).not.toHaveBeenCalled();
     await screen.findByLabelText('Voice input');
   });
 
@@ -127,13 +130,14 @@ describe('BF-290 PTT toggle + whisper fallback cleanup', () => {
     await waitFor(() => expect(mocks.armWhisperSttMock).toHaveBeenCalledTimes(1));
     expect(mocks.startListeningMock.mock.calls.length).toBe(beforeStartCount);
     expect(mocks.whisperOnTranscriptMock).toHaveBeenCalledTimes(1);
+    const unsubscribe = mocks.whisperOnTranscriptMock.mock.results[0].value;
 
     // BF-290: after arming whisper, listening visual state must be reset
     // so the operator can press again to abort. If setListening(false)
     // is missing, the button stays in 'Stop listening' aria state.
     await screen.findByLabelText('Voice input');
 
-    // Press 4 — operator gave up. Must stop + disarm whisper.
+    // Press 4 replaces only this capture's transcript subscription.
     fireEvent.click(await screen.findByLabelText('Voice input'));
     // Mic press starts a fresh session (listening was false, so the
     // non-listening branch runs). After arming whisper above, the empty
@@ -142,8 +146,11 @@ describe('BF-290 PTT toggle + whisper fallback cleanup', () => {
     // again to trigger stop.
     const armed4 = await screen.findByLabelText('Stop listening');
     fireEvent.click(armed4);
-    expect(mocks.stopListeningMock).toHaveBeenCalledTimes(1);
-    expect(mocks.disarmWhisperSttMock).toHaveBeenCalledTimes(1);
+    const currentHandle = mocks.startListeningMock.mock.results[mocks.startListeningMock.mock.results.length - 1].value;
+    expect(currentHandle.cancel).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(mocks.stopListeningMock).not.toHaveBeenCalled();
+    expect(mocks.disarmWhisperSttMock).not.toHaveBeenCalled();
 
     // Press 5 — fresh start works.
     const beforeStart5 = mocks.startListeningMock.mock.calls.length;

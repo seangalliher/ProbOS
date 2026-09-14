@@ -11,6 +11,7 @@
  * Network: fetch is stubbed via vi.spyOn(global, 'fetch').
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PcmTapHandler } from '../voiceActivity';
 
 // --- Mocks at the module boundary --------------------------------------------
 
@@ -19,13 +20,28 @@ const _whisperState: {
   listener: ((text: string) => void) | null;
 } = { armed: false, listener: null };
 
+let _realStt: typeof import('../transformersStt') | null = null;
+const _realSttOrder: string[] = [];
+const _realPcmTaps = new Set<PcmTapHandler>();
+
 vi.mock('../transformersStt', () => ({
   armTransformersStt: () => {
+    if (_realStt) {
+      _realSttOrder.push('arm');
+      return _realStt.armTransformersStt();
+    }
     _whisperState.armed = true;
     return () => { _whisperState.armed = false; };
   },
-  disarmTransformersStt: () => { _whisperState.armed = false; },
+  disarmTransformersStt: () => {
+    if (_realStt) { _realStt.disarmTransformersStt(); return; }
+    _whisperState.armed = false;
+  },
   onTransformersTranscript: (l: (text: string) => void) => {
+    if (_realStt) {
+      _realSttOrder.push('subscribe');
+      return _realStt.onTransformersTranscript(l);
+    }
     _whisperState.listener = l;
     return () => { _whisperState.listener = null; };
   },
@@ -38,6 +54,11 @@ const _vadState: {
 
 vi.mock('../voiceActivity', () => ({
   subscribePcm: (h: { onSpeechStart?: () => void; onSpeechEnd?: () => void }) => {
+    if (_realStt) {
+      const tap = h as PcmTapHandler;
+      _realPcmTaps.add(tap);
+      return () => { _realPcmTaps.delete(tap); };
+    }
     _vadState.handler = h;
     _vadState.handlers.add(h as never);
     return () => {
@@ -107,6 +128,165 @@ function _resetAll(): void {
   _vadState.handlers.clear();
   _voiceState.stopSpeakingCalls = 0;
 }
+
+describe('issue1367 ownership conversationController real STT', () => {
+  type PostedJob = {
+    type: 'transcribe'; samples: Float32Array; sampleRate: number;
+    captureId?: string; jobId?: string;
+  };
+
+  async function setupCapture() {
+    const stt = await vi.importActual<typeof import('../transformersStt')>('../transformersStt');
+    stt._resetTransformersStt();
+    _realStt = stt;
+    _realSttOrder.length = 0;
+    _realPcmTaps.clear();
+    const jobs: PostedJob[] = [];
+    const sequences = new Map<PostedJob, number>();
+    const events = new Map<string, Set<EventListener>>();
+    const worker = {
+      postMessage: vi.fn((message: { type: string }) => {
+        if (message.type === 'transcribe') jobs.push(message as PostedJob);
+      }),
+      addEventListener: (type: string, listener: EventListener) => {
+        if (!events.has(type)) events.set(type, new Set());
+        events.get(type)!.add(listener);
+      },
+      removeEventListener: (type: string, listener: EventListener) => { events.get(type)?.delete(listener); },
+      terminate: vi.fn(),
+    };
+    stt._setTransformersWorkerOverride(() => worker as unknown as Worker);
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(chatResponse({ response: 'Controller reply.' }));
+    const start = (): void => { for (const tap of [..._realPcmTaps]) tap.onSpeechStart?.(0); };
+    const frame = (samples: number[]): void => {
+      for (const tap of [..._realPcmTaps]) tap.onFrame(new Float32Array(samples), 16000);
+    };
+    const end = (): void => { for (const tap of [..._realPcmTaps]) tap.onSpeechEnd?.(30); };
+    const utterance = (samples: number[]): PostedJob[] => {
+      const before = jobs.length;
+      start(); frame(samples); end();
+      return jobs.slice(before);
+    };
+    const reply = (job: PostedJob, payload: Record<string, unknown>): void => {
+      const sequence = (sequences.get(job) ?? 0) + 1;
+      sequences.set(job, sequence);
+      const event = new MessageEvent('message', {
+        data: { ...payload, captureId: job.captureId, jobId: job.jobId, sequence },
+      });
+      for (const listener of [...(events.get('message') ?? [])]) listener(event);
+    };
+    const finish = (job: PostedJob, text: string): void => {
+      reply(job, { type: 'transcribing', active: true });
+      reply(job, { type: 'transcript', text, isPartial: false });
+      reply(job, { type: 'transcribing', active: false });
+      reply(job, { type: 'complete', outcome: 'success' });
+    };
+    const dispose = (): void => {
+      _resetConversationControllerForTests();
+      stt._resetTransformersStt();
+      _resetArbiter();
+      _realStt = null;
+      _realPcmTaps.clear();
+      _realSttOrder.length = 0;
+    };
+    return { stt, jobs, worker, fetchSpy, start, frame, end, utterance, reply, finish, dispose };
+  }
+
+  it.each(['success', 'empty', 'error'] as const)('arm-before-subscribe routes a genuine legacy job: %s', async (outcome) => {
+    const capture = await setupCapture();
+    const onTranscript = vi.fn();
+    const onAgentReply = vi.fn();
+    try {
+      armConversationMode({ agentId: 'legacy-controller', onTranscript, onAgentReply, bargeInEnabled: false });
+      expect(_realSttOrder).toEqual(['arm', 'subscribe']);
+      expect(getConversationState()).toBe('listening');
+      expect(capture.stt._isArmed()).toBe(true);
+      const posted = capture.utterance([0.125, 0.25, 0.5]);
+      expect(posted).toHaveLength(1);
+      const job = posted[0];
+      expect(Array.from(job.samples)).toEqual([0.125, 0.25, 0.5]);
+      expect(job.sampleRate).toBe(16000);
+      expect(job.captureId).toEqual(expect.any(String));
+      expect(job.jobId).toEqual(expect.any(String));
+      if (outcome === 'error') capture.reply(job, { type: 'complete', outcome: 'error' });
+      else capture.finish(job, outcome === 'empty' ? '   ' : 'legacy controller report');
+      await flushAsync();
+      if (outcome === 'success') {
+        expect(onTranscript.mock.calls).toEqual([['legacy controller report']]);
+        expect(capture.fetchSpy).toHaveBeenCalledTimes(1);
+        expect(capture.fetchSpy).toHaveBeenCalledWith('/api/agent/legacy-controller/chat', expect.objectContaining({ method: 'POST' }));
+        expect(JSON.parse(String(capture.fetchSpy.mock.calls[0][1]?.body))).toEqual({ message: 'legacy controller report', history: [] });
+        expect(onAgentReply.mock.calls).toEqual([['Controller reply.']]);
+        expect(getConversationState()).toBe('agent_speaking');
+      } else {
+        expect(onTranscript).not.toHaveBeenCalled();
+        expect(capture.fetchSpy).not.toHaveBeenCalled();
+        expect(onAgentReply).not.toHaveBeenCalled();
+        expect(getConversationState()).toBe('listening');
+      }
+      capture.finish(job, 'late settled controller text');
+      await flushAsync();
+      expect(capture.fetchSpy).toHaveBeenCalledTimes(outcome === 'success' ? 1 : 0);
+    } finally { capture.dispose(); }
+  });
+
+  it.each(['disarm', 'disposer'] as const)('%s preserves scoped PCM and rejects retired jobs after controller replacement', async (shutdown) => {
+    const capture = await setupCapture();
+    const releases: Array<() => void> = [];
+    const oldTranscript = vi.fn();
+    const newTranscript = vi.fn();
+    const scopedTranscript = vi.fn();
+    try {
+      const disposeOld = armConversationMode({ agentId: 'old-controller', onTranscript: oldTranscript });
+      const oldJobs = capture.utterance([0.125]);
+      expect(oldJobs).toHaveLength(1);
+      expect(Array.from(oldJobs[0].samples)).toEqual([0.125]);
+      const scope = Symbol('controller sibling');
+      releases.push((capture.stt.onTransformersTranscript as (listener: (text: string) => void, scope?: symbol) => () => void)(scopedTranscript, scope));
+      releases.push((capture.stt.armTransformersStt as (scope?: symbol) => () => void)(scope));
+      capture.start(); capture.frame([0.5, 0.25]);
+      if (shutdown === 'disarm') disarmConversationMode();
+      else disposeOld();
+      expect(getConversationState()).toBe('inactive');
+      const before = capture.jobs.length;
+      capture.frame([0.75]); capture.end();
+      const survivors = capture.jobs.slice(before);
+      expect(survivors).toHaveLength(1);
+      const survivor = survivors[0];
+      expect(Array.from(survivor.samples)).toEqual([0.5, 0.25, 0.75]);
+      expect(survivor.captureId).toEqual(expect.any(String));
+      expect(survivor.captureId).not.toBe(oldJobs[0].captureId);
+      expect(capture.worker.terminate).not.toHaveBeenCalled();
+      armConversationMode({ agentId: 'new-controller', onTranscript: newTranscript, bargeInEnabled: false });
+      capture.finish(oldJobs[0], 'cancelled controller text');
+      capture.finish(survivor, 'private scoped controller text');
+      await flushAsync();
+      expect(oldTranscript).not.toHaveBeenCalled();
+      expect(newTranscript).not.toHaveBeenCalled();
+      expect(capture.fetchSpy).not.toHaveBeenCalled();
+      expect(scopedTranscript.mock.calls).toEqual([['private scoped controller text']]);
+      const fresh = capture.utterance([0.875]);
+      expect(fresh).toHaveLength(2);
+      const legacy = fresh.find((job) => job.captureId !== survivor.captureId)!;
+      const sibling = fresh.find((job) => job.captureId === survivor.captureId)!;
+      expect(legacy).toBeDefined();
+      expect(sibling).toBeDefined();
+      expect(Array.from(legacy.samples)).toEqual([0.875]);
+      capture.finish(legacy, 'fresh controller report');
+      capture.finish(sibling, 'fresh scoped report');
+      await flushAsync();
+      expect(newTranscript.mock.calls).toEqual([['fresh controller report']]);
+      expect(capture.fetchSpy).toHaveBeenCalledTimes(1);
+      expect(capture.fetchSpy).toHaveBeenCalledWith('/api/agent/new-controller/chat', expect.objectContaining({ method: 'POST' }));
+      expect(JSON.parse(String(capture.fetchSpy.mock.calls[0][1]?.body))).toEqual({ message: 'fresh controller report', history: [] });
+      expect(scopedTranscript.mock.calls).toEqual([['private scoped controller text'], ['fresh scoped report']]);
+      expect(capture.worker.postMessage.mock.calls.filter(([message]) => message.type === 'init')).toHaveLength(1);
+    } finally {
+      for (const release of releases.reverse()) release();
+      capture.dispose();
+    }
+  });
+});
 
 beforeEach(() => {
   _resetAll();

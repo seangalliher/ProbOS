@@ -5,6 +5,7 @@ import {
   stopListening,
   isListening,
 } from '../audio/speechInput';
+import { acquire, release, currentHolder, _resetForTests } from '../audio/speechRecognitionArbiter';
 
 interface FakeSR {
   continuous: boolean;
@@ -250,5 +251,174 @@ describe('speechInput.ts VAD (AD-474c)', () => {
     expect(second).not.toBe(first);
     second.onspeechend?.();
     expect(onSpeechEnd).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('issue #1367 invocation-owned cancellation', () => {
+  beforeEach(() => {
+    stopListening();
+    _resetForTests();
+    lastInstance = null;
+    vi.stubGlobal('SpeechRecognition', makeFakeSRCtor());
+  });
+
+  afterEach(() => {
+    stopListening();
+    _resetForTests();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('cancels idempotently and fences captured result, error, end and speech-end callbacks', () => {
+    const onResult = vi.fn();
+    const onEnd = vi.fn();
+    const onError = vi.fn();
+    const onSpeechEnd = vi.fn();
+    const handle = startListening(onResult, onEnd, onError, { continuous: true, onSpeechEnd });
+    const recognition = lastInstance as FakeSR & { onspeechend: () => void };
+    const callbacks = { result: recognition.onresult!, error: recognition.onerror!, end: recognition.onend!, speechEnd: recognition.onspeechend };
+    expect(recognition.start).toHaveBeenCalledTimes(1);
+    expect(currentHolder()?.holder).toBe('press_to_talk');
+    handle.cancel();
+    handle.cancel();
+    callbacks.result({ results: { length: 1, 0: { 0: { transcript: 'retired' }, isFinal: true } } as never });
+    callbacks.error({ error: 'network' });
+    callbacks.end();
+    callbacks.speechEnd();
+    expect(recognition.abort).toHaveBeenCalledTimes(1);
+    expect(isListening()).toBe(false);
+    expect(currentHolder()).toBeNull();
+    expect(onResult).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onEnd).not.toHaveBeenCalled();
+    expect(onSpeechEnd).not.toHaveBeenCalled();
+    expect(lastInstance).toBe(recognition);
+  });
+
+  it('does not cancel a newer invocation that uses the same holder label', () => {
+    const first = startListening(vi.fn());
+    const retired = lastInstance!;
+    startListening(vi.fn());
+    const current = lastInstance!;
+    expect(current).not.toBe(retired);
+    expect(retired.abort).toHaveBeenCalledTimes(1);
+    first.cancel();
+    expect(current.abort).not.toHaveBeenCalled();
+    expect(isListening()).toBe(true);
+    expect(currentHolder()?.holder).toBe('press_to_talk');
+  });
+
+  it('leaves an independent higher-priority holder alive after preemption and old cancellation', () => {
+    const onPreempted = vi.fn();
+    const onEnd = vi.fn();
+    const handle = startListening(vi.fn(), onEnd, undefined, { holder: 'wake_word', priority: 50, continuous: true, onPreempted });
+    const recognition = lastInstance!;
+    const independent = acquire({ holder: 'conversation', priority: 75 });
+    expect(independent).not.toBeNull();
+    expect(onPreempted).toHaveBeenCalledExactlyOnceWith('conversation');
+    expect(onEnd).toHaveBeenCalledTimes(1);
+    expect(recognition.abort).toHaveBeenCalledTimes(1);
+    handle.cancel();
+    expect(currentHolder()).toEqual({ holder: 'conversation', priority: 75 });
+    release(independent!);
+  });
+
+  it('cancels a queued invocation without starting it when its lease is later granted', () => {
+    const independent = acquire({ holder: 'independent', priority: 200 });
+    const onResult = vi.fn();
+    const handle = startListening(onResult);
+    expect(lastInstance).toBeNull();
+    handle.cancel();
+    expect(currentHolder()?.holder).toBe('independent');
+    release(independent!);
+    expect(lastInstance).toBeNull();
+    expect(currentHolder()).toBeNull();
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
+  it('starts an uncancelled queued invocation on promotion and releases only its lease', () => {
+    const independent = acquire({ holder: 'independent', priority: 200 });
+    const handle = startListening(vi.fn());
+    expect(lastInstance).toBeNull();
+    release(independent!);
+    expect(lastInstance!.start).toHaveBeenCalledTimes(1);
+    expect(currentHolder()?.holder).toBe('press_to_talk');
+    handle.cancel();
+    expect(currentHolder()).toBeNull();
+  });
+
+  it('returns an inert idempotent handle when browser recognition is unavailable', () => {
+    vi.unstubAllGlobals();
+    const onError = vi.fn();
+    const handle = startListening(vi.fn(), undefined, onError);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(() => { handle.cancel(); handle.cancel(); }).not.toThrow();
+    expect(currentHolder()).toBeNull();
+  });
+
+  it.each(['construct', 'start', 'non-error'] as const)('releases its lease when the %s path fails', failure => {
+    const construct = makeFakeSRCtor();
+    vi.stubGlobal('SpeechRecognition', vi.fn(function () {
+      if (failure !== 'start') throw failure === 'construct' ? new Error('constructor failed') : 'unavailable';
+      const recognition = construct() as unknown as FakeSR;
+      recognition.start.mockImplementation(() => { throw new Error('start failed'); });
+      return recognition;
+    }));
+    const onError = vi.fn();
+    const handle = startListening(vi.fn(), undefined, onError);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(isListening()).toBe(false);
+    expect(currentHolder()).toBeNull();
+    expect(() => handle.cancel()).not.toThrow();
+    if (failure === 'start') expect(lastInstance!.abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases its lease even when native abort throws', () => {
+    const handle = startListening(vi.fn());
+    lastInstance!.abort.mockImplementation(() => { throw new Error('abort failed'); });
+    expect(() => handle.cancel()).not.toThrow();
+    expect(currentHolder()).toBeNull();
+    expect(isListening()).toBe(false);
+  });
+
+  it('does not clear a reentrant newer owner created during abort', () => {
+    const handle = startListening(vi.fn());
+    const retired = lastInstance!;
+    retired.abort.mockImplementation(() => startListening(vi.fn(), undefined, undefined, { holder: 'new-owner' }));
+    handle.cancel();
+    expect(lastInstance).not.toBe(retired);
+    expect(lastInstance!.start).toHaveBeenCalledTimes(1);
+    expect(currentHolder()?.holder).toBe('new-owner');
+    expect(isListening()).toBe(true);
+  });
+
+  it('fences the previous recognizer generation during continuous restart', () => {
+    const onResult = vi.fn();
+    startListening(onResult, undefined, undefined, { continuous: true });
+    const retired = lastInstance!;
+    const lateResult = retired.onresult!;
+    const lateEnd = retired.onend!;
+    retired.onend!();
+    const current = lastInstance!;
+    expect(current).not.toBe(retired);
+    lateResult({ results: { length: 1, 0: { 0: { transcript: 'retired' } } } as never });
+    lateEnd();
+    expect(lastInstance).toBe(current);
+    expect(onResult).not.toHaveBeenCalled();
+    current.onresult!({ results: { length: 1, 0: { 0: { transcript: 'current' } } } as never });
+    expect(onResult).toHaveBeenCalledExactlyOnceWith('current');
+  });
+
+  it('releases natural completion before the callback starts another owner', () => {
+    const onEnd = vi.fn(() => startListening(vi.fn(), undefined, undefined, { holder: 'next' }));
+    const handle = startListening(vi.fn(), onEnd);
+    const retired = lastInstance!;
+    retired.onend!();
+    expect(onEnd).toHaveBeenCalledTimes(1);
+    expect(lastInstance).not.toBe(retired);
+    handle.cancel();
+    expect(currentHolder()?.holder).toBe('next');
+    expect(lastInstance!.abort).not.toHaveBeenCalled();
   });
 });

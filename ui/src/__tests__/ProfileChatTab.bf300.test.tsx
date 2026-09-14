@@ -79,6 +79,8 @@ beforeEach(() => {
     if (typeof m === 'function' && 'mockReset' in m) (m as any).mockReset();
   });
   mocks.armConversationModeMock.mockReturnValue(() => {});
+  mocks.startListeningMock.mockImplementation(() => ({ cancel: vi.fn() }));
+  mocks.armWhisperSttMock.mockImplementation(() => vi.fn());
   mocks.whisperOnTranscriptMock.mockReturnValue(() => {});
   mocks.whisperOnTranscribingMock.mockReturnValue(() => {});
   mocks.onSpeechEventMock.mockImplementation((fn: any) => {
@@ -122,23 +124,20 @@ function dispatchSpeechEvent(type: 'start' | 'end', agentId?: string): void {
 }
 
 describe('BF-300 — PTT mic does not capture TTS playback', () => {
-  it('browser-SR result callback calls stopListening before sendText fires', async () => {
+  it('browser-SR result callback cancels its owned handle before sendText fires', async () => {
     render(<ProfileChatTab agentId="a1" />);
     const mic = await screen.findByLabelText('Voice input');
     fireEvent.click(mic);
     expect(mocks.startListeningMock).toHaveBeenCalledTimes(1);
     const onResult = (mocks.startListeningMock.mock.calls[0] as any)[0] as (t: string) => void;
 
-    // Fire the result. stopListening MUST be called synchronously,
-    // inside the result callback (before the 100 ms sendText timer
-    // fires). We don't fake timers because findByLabelText's polling
-    // relies on real setTimeout; the synchronous-stopListening check
-    // doesn't need timer manipulation.
+    // Issue #1367: the owned handle must stop synchronously before reply TTS.
     act(() => { onResult('hello ezri'); });
-    expect(mocks.stopListeningMock).toHaveBeenCalledTimes(1);
+    expect(mocks.startListeningMock.mock.results[0].value.cancel).toHaveBeenCalledTimes(1);
+    expect(mocks.stopListeningMock).not.toHaveBeenCalled();
   });
 
-  it('whisper-primary onTranscript path disarms whisper before sendText', async () => {
+  it('whisper-primary onTranscript path releases its owned capture before sendText', async () => {
     // Wire whisper as primary + healthy so the click takes the
     // whisper-onTranscript branch (line ~957).
     global.fetch = vi.fn((url: any) => {
@@ -174,9 +173,9 @@ describe('BF-300 — PTT mic does not capture TTS playback', () => {
     const onTranscript = (mocks.whisperOnTranscriptMock.mock.calls[0] as any)[0] as (t: string) => void;
 
     act(() => { onTranscript('hello ezri'); });
-    // disarmWhisperStt fires synchronously inside the transcript callback,
-    // BEFORE the 100 ms setTimeout(sendText).
-    expect(mocks.disarmWhisperSttMock).toHaveBeenCalledTimes(1);
+    expect(mocks.armWhisperSttMock.mock.results[0].value).toHaveBeenCalledTimes(1);
+    expect(mocks.disarmWhisperSttMock).not.toHaveBeenCalled();
+    expect(vi.mocked(global.fetch).mock.calls.filter(([, options]) => options?.method === 'POST')).toEqual([]);
   });
 
   it('clicking the mic while TTS is playing is a no-op (ttsActive gate)', async () => {

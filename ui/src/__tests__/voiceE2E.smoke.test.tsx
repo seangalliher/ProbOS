@@ -36,7 +36,7 @@
  *       PTT click reaches the REAL `armTransformersStt` branch (mirrors ad826).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import React from 'react';
 
 // PCM-tap boundary (copied mechanism from transformersStt.bf301.test.tsx; the
@@ -102,7 +102,7 @@ class FakeWorker {
   static instances: FakeWorker[] = [];
   posted: any[] = [];
   terminated = false;
-  listeners: Array<(e: MessageEvent) => void> = [];
+  listeners = new Map<string, Set<(event: MessageEvent) => void>>();
 
   constructor() {
     FakeWorker.instances.push(this);
@@ -112,12 +112,14 @@ class FakeWorker {
     this.posted.push(message);
   }
 
-  addEventListener(_type: string, listener: (e: MessageEvent) => void): void {
-    this.listeners.push(listener);
+  addEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    const listeners = this.listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
   }
 
-  removeEventListener(_type: string, listener: (e: MessageEvent) => void): void {
-    this.listeners = this.listeners.filter((l) => l !== listener);
+  removeEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    this.listeners.get(type)?.delete(listener);
   }
 
   terminate(): void {
@@ -125,24 +127,24 @@ class FakeWorker {
   }
 
   /** Simulate a worker → main thread message. */
-  emit(data: any): void {
+  emit(data: any, type: string = 'message'): void {
     const event = { data } as MessageEvent;
-    for (const l of this.listeners) l(event);
+    for (const listener of [...this.listeners.get(type) ?? []]) listener(event);
   }
 }
 
 // Extends bf294's setDefaultFetch with the ad826 voice-health branch: a
 // transformers-primary + healthy engine, so the PTT handler takes the REAL
 // `armTransformersStt` branch instead of falling through to browser SR.
-function setDefaultFetch(): void {
+function setDefaultFetch(primary: 'transformers' | 'browser' = 'transformers'): void {
   global.fetch = vi.fn((url: any) => {
     const target = String(url);
     if (target.endsWith('/api/voice/health')) {
       return Promise.resolve({
         ok: true,
         json: async () => ({
-          primary_stt: 'transformers',
-          engine: 'transformers',
+          primary_stt: primary,
+          engine: primary,
           backend_available: true,
           healthy: true,
           model: 'Xenova/whisper-tiny.en',
@@ -154,6 +156,9 @@ function setDefaultFetch(): void {
     }
     if (target.endsWith('/profile')) {
       return Promise.resolve({ ok: true, json: async () => ({ voiceProfile: null }) }) as any;
+    }
+    if (target.endsWith('/chat')) {
+      return Promise.resolve({ ok: true, json: async () => ({ response: 'Acknowledged.' }) }) as any;
     }
     return Promise.resolve({ ok: true, json: async () => ({}) }) as any;
   }) as any;
@@ -181,6 +186,8 @@ beforeEach(() => {
     if (typeof m === 'function' && 'mockReset' in m) (m as any).mockReset();
   });
   mocks.armConversationModeMock.mockReturnValue(() => {});
+  mocks.startListeningMock.mockImplementation(() => ({ cancel: vi.fn() }));
+  mocks.speakResponseMock.mockResolvedValue(undefined);
   mocks.onSpeechEventMock.mockReturnValue(() => {});
   localStorage.clear();
   _resetTransformersStt();
@@ -204,6 +211,288 @@ afterEach(() => {
 });
 
 describe('#787 voice end-to-end smoke (REAL ProfileChatTab ↔ REAL transformersStt)', () => {
+  it.each(['thread', 'away-and-back', 'unmount'] as const)('issue1367 ownership fences a posted job after %s and a fresh explicit capture', async change => {
+    useStore.setState({ voiceEnabled: false, activeProfileThreadId: null, threadIdByAgent: new Map() });
+    const view = render(<ProfileChatTab agentId="owner" threadId="thread-one" />);
+    await flushMicrotasks();
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    const oldTap = pcm.handlers.find(handler => typeof handler.onSpeechStart === 'function');
+    expect(oldTap).toBeTruthy();
+    act(() => {
+      oldTap.onSpeechStart(0);
+      oldTap.onFrame(new Float32Array([1, 2]), 16000);
+      oldTap.onSpeechEnd(100);
+    });
+    const worker = FakeWorker.instances[0];
+    const oldJobs = worker.posted.filter(message => message.type === 'transcribe');
+    expect(oldJobs).toHaveLength(1);
+    const oldJob = oldJobs[0];
+    expect(Array.from(oldJob.samples)).toEqual([1, 2]);
+    if (change === 'unmount') {
+      view.unmount();
+      render(<ProfileChatTab agentId="owner" threadId="thread-one" />);
+    } else if (change === 'thread') {
+      view.rerender(<ProfileChatTab agentId="owner" threadId="thread-two" />);
+    } else {
+      view.rerender(<ProfileChatTab agentId="other-owner" threadId="thread-two" />);
+      await flushMicrotasks();
+      view.rerender(<ProfileChatTab agentId="owner" threadId="thread-one" />);
+    }
+    await flushMicrotasks();
+    expect(pcm.handlers).not.toContain(oldTap);
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    const freshTap = pcm.handlers.find(handler => typeof handler.onSpeechStart === 'function');
+    expect(freshTap).toBeTruthy();
+    expect(freshTap).not.toBe(oldTap);
+    act(() => worker.emit({ ...oldJob, type: 'transcript', text: 'retired destination text', isPartial: false, sequence: 1 }));
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('');
+    expect(vi.mocked(global.fetch).mock.calls.filter(([, options]) => options?.method === 'POST')).toEqual([]);
+    expect(mocks.speakResponseMock).not.toHaveBeenCalled();
+    act(() => {
+      oldTap.onFrame(new Float32Array([99]), 16000);
+      oldTap.onSpeechEnd(200);
+      freshTap.onSpeechStart(300);
+      freshTap.onFrame(new Float32Array([7, 8]), 16000);
+      freshTap.onSpeechEnd(400);
+    });
+    const freshJobs = worker.posted.filter(message => message.type === 'transcribe');
+    expect(freshJobs).toHaveLength(2);
+    expect(Array.from(freshJobs[1].samples)).toEqual([7, 8]);
+    expect(freshJobs[1].captureId).not.toBe(oldJob.captureId);
+    expect(worker.terminated).toBe(false);
+  });
+
+  it.each([false, true])('issue1367 ownership drops cancelled pre-roll and pending speech window (started=%s)', async started => {
+    const view = render(<ProfileChatTab agentId="first" />);
+    await flushMicrotasks();
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    const oldTap = pcm.handlers.find(handler => typeof handler.onSpeechStart === 'function');
+    expect(oldTap).toBeTruthy();
+    act(() => {
+      oldTap.onFrame(new Float32Array([31, 32]), 16000);
+      if (started) oldTap.onSpeechStart(0);
+      oldTap.onFrame(new Float32Array([33, 34]), 16000);
+    });
+    const worker = FakeWorker.instances[0];
+    expect(worker.posted.filter(message => message.type === 'transcribe')).toHaveLength(0);
+    fireEvent.click(screen.getByLabelText('Stop listening'));
+    view.rerender(<ProfileChatTab agentId="second" />);
+    await flushMicrotasks();
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    const freshTap = pcm.handlers.find(handler => typeof handler.onSpeechStart === 'function');
+    expect(freshTap).not.toBe(oldTap);
+    act(() => {
+      oldTap.onFrame(new Float32Array([99]), 16000);
+      oldTap.onSpeechEnd(100);
+      freshTap.onFrame(new Float32Array([77]), 16000);
+      freshTap.onSpeechEnd(100);
+    });
+    expect(worker.posted.filter(message => message.type === 'transcribe')).toHaveLength(0);
+    act(() => {
+      freshTap.onSpeechStart(200);
+      freshTap.onFrame(new Float32Array([7, 8]), 16000);
+      freshTap.onSpeechEnd(300);
+    });
+    const jobs = worker.posted.filter(message => message.type === 'transcribe');
+    expect(jobs).toHaveLength(1);
+    expect(Array.from(jobs[0].samples)).toEqual([7, 8]);
+  });
+
+  it('issue1367 ownership keeps a sibling capture and processing alive when another profile unmounts', async () => {
+    const first = render(<ProfileChatTab agentId="first" />);
+    const second = render(<ProfileChatTab agentId="second" />);
+    await flushMicrotasks();
+    fireEvent.click(within(first.container).getByLabelText('Voice input'));
+    const firstTap = pcm.handlers.find(handler => typeof handler.onSpeechStart === 'function');
+    fireEvent.click(within(second.container).getByLabelText('Voice input'));
+    const secondTap = pcm.handlers.filter(handler => typeof handler.onSpeechStart === 'function').slice(-1)[0];
+    expect(firstTap).toBeTruthy();
+    expect(secondTap).toBeTruthy();
+    expect(secondTap).not.toBe(firstTap);
+    act(() => {
+      for (const tap of [firstTap, secondTap]) {
+        tap.onSpeechStart(0);
+        tap.onFrame(new Float32Array([1, 2]), 16000);
+        tap.onSpeechEnd(100);
+      }
+    });
+    const worker = FakeWorker.instances[0];
+    const jobs = worker.posted.filter(message => message.type === 'transcribe');
+    expect(jobs).toHaveLength(2);
+    expect(within(first.container).getByTestId('mic-indicator')).toHaveAttribute('data-bf294-state', 'processing');
+    expect(within(second.container).getByTestId('mic-indicator')).toHaveAttribute('data-bf294-state', 'processing');
+    first.unmount();
+    expect(pcm.handlers).not.toContain(firstTap);
+    expect(pcm.handlers).toContain(secondTap);
+    act(() => {
+      worker.emit({ ...jobs[0], type: 'transcribing', active: true, sequence: 1 });
+      worker.emit({ ...jobs[0], type: 'transcript', text: 'retired sibling', isPartial: false, sequence: 2 });
+      worker.emit({ ...jobs[1], type: 'transcript', text: 'unfinished sibling', isPartial: true, sequence: 1 });
+    });
+    expect(within(second.container).getByTestId('mic-indicator')).toHaveAttribute('data-bf294-state', 'processing');
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('');
+    act(() => {
+      for (const sequence of [2, 2, 3]) {
+        worker.emit({ ...jobs[1], type: 'transcript', text: 'valid sibling', isPartial: false, sequence });
+      }
+    });
+    expect(pcm.handlers).not.toContain(secondTap);
+    expect(mocks.speakResponseMock).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    const posts = vi.mocked(global.fetch).mock.calls.filter(([, options]) => options?.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0][0]).toBe('/api/agent/second/chat');
+    expect(JSON.parse(String(posts[0][1]?.body)).message).toBe('valid sibling');
+    expect(mocks.speakResponseMock).toHaveBeenCalledTimes(1);
+    expect(worker.terminated).toBe(false);
+  });
+
+  it('issue1367 ownership uses a fresh local capture after two empty browser results', async () => {
+    setDefaultFetch('browser');
+    render(<ProfileChatTab agentId="fallback-owner" />);
+    await flushMicrotasks();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      fireEvent.click(screen.getByLabelText('Voice input'));
+      const empty = mocks.startListeningMock.mock.calls[attempt][1];
+      act(() => empty());
+    }
+    expect(FakeWorker.instances).toHaveLength(0);
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    expect(FakeWorker.instances).toHaveLength(1);
+    const tap = pcm.handlers.find(handler => typeof handler.onSpeechStart === 'function');
+    expect(tap).toBeTruthy();
+    act(() => {
+      tap.onSpeechStart(0);
+      tap.onFrame(new Float32Array([3, 4]), 16000);
+      tap.onSpeechEnd(100);
+    });
+    const worker = FakeWorker.instances[0];
+    const jobs = worker.posted.filter(message => message.type === 'transcribe');
+    expect(jobs).toHaveLength(1);
+    act(() => worker.emit({ ...jobs[0], type: 'transcript', text: 'fallback text', isPartial: false, sequence: 1 }));
+    expect(pcm.handlers).not.toContain(tap);
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    const posts = vi.mocked(global.fetch).mock.calls.filter(([, options]) => options?.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0][0]).toBe('/api/agent/fallback-owner/chat');
+    expect(JSON.parse(String(posts[0][1]?.body)).message).toBe('fallback text');
+  });
+
+  it('issue1367 ownership does not arm during StrictMode replay and recovers from a failed explicit start', async () => {
+    const view = render(<ProfileChatTab agentId="strict-owner" />, { reactStrictMode: true });
+    await flushMicrotasks();
+    expect(FakeWorker.instances).toHaveLength(0);
+    _setTransformersWorkerOverride(() => { throw new Error('controlled worker startup failure'); });
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    expect(screen.getByTestId('mic-indicator')).toHaveAttribute('data-bf294-state', 'idle');
+    expect(pcm.handlers).toHaveLength(0);
+    _setTransformersWorkerOverride(() => new FakeWorker() as unknown as Worker);
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    expect(FakeWorker.instances).toHaveLength(1);
+    expect(pcm.handlers.filter(handler => typeof handler.onSpeechStart === 'function')).toHaveLength(1);
+    view.unmount();
+    expect(pcm.handlers).toHaveLength(0);
+    expect(FakeWorker.instances[0].terminated).toBe(false);
+  });
+
+  it.each(['error', 'messageerror', 'model-error'] as const)('issue1367 ownership returns a failed %s capture to idle without inventing text', async failure => {
+    render(<ProfileChatTab agentId="fault-owner" />);
+    await flushMicrotasks();
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    const worker = FakeWorker.instances[0];
+    const tap = pcm.handlers.find(handler => typeof handler.onSpeechStart === 'function');
+    expect(tap).toBeTruthy();
+    act(() => {
+      tap.onSpeechStart(0);
+      tap.onFrame(new Float32Array([1, 2]), 16000);
+      tap.onSpeechEnd(100);
+    });
+    expect(worker.posted.filter(message => message.type === 'transcribe')).toHaveLength(1);
+    expect(screen.getByTestId('mic-indicator')).toHaveAttribute('data-bf294-state', 'processing');
+    act(() => {
+      if (failure === 'model-error') worker.emit({ type: 'progress', event: { status: 'error' } });
+      else worker.emit({}, failure);
+    });
+    expect(screen.getByTestId('mic-indicator')).toHaveAttribute('data-bf294-state', 'idle');
+    expect(pcm.handlers).not.toContain(tap);
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('');
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    expect(vi.mocked(global.fetch).mock.calls.filter(([, options]) => options?.method === 'POST')).toEqual([]);
+    expect(mocks.speakResponseMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    expect(pcm.handlers.filter(handler => typeof handler.onSpeechStart === 'function')).toHaveLength(1);
+    expect(FakeWorker.instances).toHaveLength(failure === 'model-error' ? 1 : 2);
+  });
+
+  it('issue1367 ownership rejects an old posted job after a new participant explicitly starts capture', async () => {
+    useStore.setState({ voiceEnabled: false, activeProfileThreadId: null, threadIdByAgent: new Map() });
+    const view = render(<ProfileChatTab agentId="first-participant" />);
+    await flushMicrotasks();
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    expect(screen.getByLabelText('Stop listening')).toBeTruthy();
+    const tap = pcm.handlers.find(handler => typeof handler.onSpeechStart === 'function');
+    expect(tap).toBeTruthy();
+    act(() => {
+      tap.onFrame(new Float32Array([0.1, 0.2]), 16000);
+      tap.onSpeechStart(0);
+      tap.onFrame(new Float32Array([0.3, 0.4]), 16000);
+      tap.onSpeechEnd(100);
+    });
+    expect(FakeWorker.instances).toHaveLength(1);
+    const worker = FakeWorker.instances[0];
+    const jobs = worker.posted.filter(message => message.type === 'transcribe');
+    expect(jobs).toHaveLength(1);
+    const oldJob = jobs[0];
+    expect(oldJob.samples.length).toBeGreaterThan(0);
+    expect(screen.getByTestId('mic-indicator')).toHaveAttribute('data-bf294-state', 'processing');
+    fireEvent.click(screen.getByLabelText('Transcribing speech'));
+    view.rerender(<ProfileChatTab agentId="second-participant" />);
+    await flushMicrotasks();
+    fireEvent.click(screen.getByLabelText('Voice input'));
+    expect(screen.getByLabelText('Stop listening')).toBeTruthy();
+
+    act(() => worker.emit({
+      type: 'transcript', text: 'retired capture text', isPartial: false,
+      captureId: oldJob.captureId, jobId: oldJob.jobId, sequence: 1,
+    }));
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('');
+    const posts = vi.mocked(global.fetch).mock.calls.filter(([url, options]) =>
+      String(url).endsWith('/chat') && options?.method === 'POST');
+    expect(posts).toEqual([]);
+    expect(useStore.getState().agentConversations.get('second-participant')?.messages ?? []).toEqual([]);
+    expect(mocks.speakResponseMock).not.toHaveBeenCalled();
+    expect(worker.terminated).toBe(false);
+    expect(screen.getByLabelText('Stop listening')).toBeTruthy();
+    const nextTap = pcm.handlers.find(handler => typeof handler.onSpeechStart === 'function');
+    expect(nextTap).toBeTruthy();
+    expect(nextTap).not.toBe(tap);
+    act(() => {
+      nextTap.onSpeechStart(200);
+      nextTap.onFrame(new Float32Array([7, 8]), 16000);
+      nextTap.onSpeechEnd(300);
+    });
+    const currentJobs = worker.posted.filter(message => message.type === 'transcribe');
+    expect(currentJobs).toHaveLength(2);
+    const nextJob = currentJobs[1];
+    expect(Array.from(nextJob.samples)).toEqual([7, 8]);
+    expect(nextJob.captureId).not.toBe(oldJob.captureId);
+    expect(nextJob.jobId).not.toBe(oldJob.jobId);
+    act(() => worker.emit({
+      type: 'transcript', text: 'new capture text', isPartial: false,
+      captureId: nextJob.captureId, jobId: nextJob.jobId, sequence: 1,
+    }));
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('new capture text');
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    const freshPosts = vi.mocked(global.fetch).mock.calls.filter(([url, options]) =>
+      String(url).endsWith('/chat') && options?.method === 'POST');
+    expect(freshPosts).toHaveLength(1);
+    expect(freshPosts[0][0]).toBe('/api/agent/second-participant/chat');
+    expect(JSON.parse(String(freshPosts[0][1]?.body)).message).toBe('new capture text');
+  });
+
   it('mic press → arm → utterance → transcribing → transcript-to-input → idle', async () => {
     render(<ProfileChatTab agentId="yeo" />);
     // Settle mount effects so /api/voice/health is applied before the click.
@@ -234,12 +523,14 @@ describe('#787 voice end-to-end smoke (REAL ProfileChatTab ↔ REAL transformers
     // in-speech frames. (BF-310 pre-roll + BF-311 worker round-trip)
     const tap = pcm.handlers.find((h) => typeof h?.onSpeechStart === 'function');
     expect(tap).toBeTruthy();
-    tap.onFrame(new Float32Array([0.01, 0.02]), 16000); // pre-speech → pre-roll
-    tap.onFrame(new Float32Array([0.03]), 16000); // pre-speech → pre-roll
-    tap.onSpeechStart(0);
-    tap.onFrame(new Float32Array([0.1, 0.2, 0.3]), 16000); // in-speech
-    tap.onFrame(new Float32Array([0.4, 0.5]), 16000); // in-speech
-    tap.onSpeechEnd(0);
+    act(() => {
+      tap.onFrame(new Float32Array([0.01, 0.02]), 16000);
+      tap.onFrame(new Float32Array([0.03]), 16000);
+      tap.onSpeechStart(0);
+      tap.onFrame(new Float32Array([0.1, 0.2, 0.3]), 16000);
+      tap.onFrame(new Float32Array([0.4, 0.5]), 16000);
+      tap.onSpeechEnd(0);
+    });
 
     const worker = FakeWorker.instances[0];
     const transcribeMsg = worker.posted.find((m) => m.type === 'transcribe');
@@ -249,10 +540,11 @@ describe('#787 voice end-to-end smoke (REAL ProfileChatTab ↔ REAL transformers
     expect(transcribeMsg.samples.length).toBeGreaterThanOrEqual(inSpeechSamples);
     // 3 pre-roll + 5 in-speech — the strict inequality proves the BF-310 prepend.
     expect(transcribeMsg.samples.length).toBe(8);
+    const identity = { captureId: transcribeMsg.captureId, jobId: transcribeMsg.jobId };
 
     // (6) worker signals transcribing → mic flips to processing. (BF-294)
     act(() => {
-      worker.emit({ type: 'transcribing', active: true });
+      worker.emit({ ...identity, type: 'transcribing', active: true, sequence: 1 });
     });
     expect(screen.getByTestId('mic-indicator').getAttribute('data-bf294-state')).toBe('processing');
 
@@ -260,14 +552,15 @@ describe('#787 voice end-to-end smoke (REAL ProfileChatTab ↔ REAL transformers
     // ProfileChatTab listener, which lands it in the composer input. This is the
     // unique "voice produced text" integration seam.
     act(() => {
-      worker.emit({ type: 'transcript', text: 'hello world', isPartial: false });
+      worker.emit({ ...identity, type: 'transcript', text: 'hello world', isPartial: false, sequence: 2 });
     });
     const composer = screen.getByPlaceholderText('Message...') as HTMLInputElement;
     expect(composer.value).toBe('hello world');
 
     // (8) worker clears transcribing → mic returns to idle. (BF-294)
     act(() => {
-      worker.emit({ type: 'transcribing', active: false });
+      worker.emit({ ...identity, type: 'transcribing', active: false, sequence: 3 });
+      worker.emit({ ...identity, type: 'complete', outcome: 'success', sequence: 4 });
     });
     expect(screen.getByTestId('mic-indicator').getAttribute('data-bf294-state')).toBe('idle');
   });

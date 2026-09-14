@@ -7,12 +7,13 @@
  * as an argument instead of being read from stale state.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 
 const mocks = vi.hoisted(() => ({
   startListeningMock: vi.fn(),
   stopListeningMock: vi.fn(),
+  cancelListeningMock: vi.fn(),
   armConversationModeMock: vi.fn(() => () => {}),
   disarmConversationModeMock: vi.fn(),
   markAgentReplyCompleteMock: vi.fn(),
@@ -86,6 +87,8 @@ beforeEach(() => {
     if (typeof m === 'function' && 'mockReset' in m) (m as any).mockReset();
   });
   mocks.armConversationModeMock.mockReturnValue(() => {});
+  mocks.armWhisperSttMock.mockImplementation(() => vi.fn());
+  mocks.startListeningMock.mockReturnValue({ cancel: mocks.cancelListeningMock });
   mocks.whisperOnTranscriptMock.mockReturnValue(() => {});
   mocks.onSpeechEventMock.mockReturnValue(() => {});
   localStorage.clear();
@@ -106,6 +109,42 @@ afterEach(() => {
 });
 
 describe('BF-292 PTT transcript reaches POST (stale closure fix)', () => {
+  it.each(['unmount', 'cancel', 'replacement'] as const)('ignores a captured browser callback after %s', async transition => {
+    const { calls } = captureChatCalls();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const view = render(<ProfileChatTab agentId="a1" />);
+    fireEvent.click(await screen.findByLabelText('Voice input'));
+    expect(mocks.startListeningMock).toHaveBeenCalledTimes(1);
+    const retired = mocks.startListeningMock.mock.calls[0][0] as (text: string) => void;
+    if (transition === 'unmount') view.unmount();
+    else {
+      fireEvent.click(await screen.findByLabelText('Stop listening'));
+      if (transition === 'replacement') fireEvent.click(await screen.findByLabelText('Voice input'));
+    }
+    expect(mocks.cancelListeningMock).toHaveBeenCalledTimes(1);
+
+    act(() => retired('retired transcript'));
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+
+    expect(calls).toEqual([]);
+    if (transition !== 'unmount') expect(screen.getByPlaceholderText('Message...')).toHaveValue('');
+    if (transition === 'replacement') expect(screen.getByLabelText('Stop listening')).toBeTruthy();
+  });
+
+  it('cancels a transcript send already queued when its profile unmounts', async () => {
+    const { calls } = captureChatCalls();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const view = render(<ProfileChatTab agentId="a1" />);
+    fireEvent.click(await screen.findByLabelText('Voice input'));
+    const result = mocks.startListeningMock.mock.calls[0][0] as (text: string) => void;
+    act(() => result('pending send'));
+    expect(mocks.cancelListeningMock).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual([]);
+    view.unmount();
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    expect(calls).toEqual([]);
+  });
+
   it('browser-SR transcript triggers POST with transcript body', async () => {
     const { calls } = captureChatCalls();
     vi.useFakeTimers({ shouldAdvanceTime: true });

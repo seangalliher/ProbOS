@@ -6,7 +6,7 @@
  *  capture is unavailable — see AD-721 D5 / `speechAmplitude.ts`).
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -207,8 +207,16 @@ function _sampleRhubarbFrames(
   };
 }
 
-export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadError, restingExpression, bodyState, onHeadY }: Props) {
+export function CrewVRM(props: Props): ReactElement {
+  return <ParticipantVRM key={JSON.stringify([props.agentId, props.vrmUrl])} {...props} />;
+}
+
+function ParticipantVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadError, restingExpression, bodyState, onHeadY }: Props) {
   const vrmRef = useRef<VRM | null>(null);
+  const loadCallbacks = useRef({ onLoadError, onHeadY, restingExpression });
+  useLayoutEffect(() => {
+    loadCallbacks.current = { onLoadError, onHeadY, restingExpression };
+  }, [onLoadError, onHeadY, restingExpression]);
   // BF: also keep VRM in state so React mounts <primitive> after load.
   // Updating a ref alone does not trigger a re-render, which previously
   // meant the avatar scene was loaded but never inserted into the R3F tree
@@ -277,10 +285,14 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     loader.load(
       resolvedUrl,
       (gltf: any) => {
-        if (!mounted) return;
-        const vrm = gltf.userData.vrm as VRM | undefined;
+        const vrm = gltf.userData?.vrm as VRM | undefined;
+        if (!mounted) {
+          VRMUtils.deepDispose(vrm?.scene ?? gltf.scene);
+          return;
+        }
         if (!vrm) {
-          onLoadError();
+          VRMUtils.deepDispose(gltf.scene);
+          loadCallbacks.current.onLoadError();
           return;
         }
         // VRM 0.x models face -Z; rotate so they face the camera (+Z).
@@ -352,8 +364,9 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         }
         // AD-721d: apply DSL resting expression across every face mesh
         // carrying a matching morph target (multi-mesh face-split fix).
-        if (restingExpression && restingExpression !== 'neutral') {
-          applyRestingExpressionMultiMesh(vrm.scene, restingExpression, 1.0);
+        const resting = loadCallbacks.current.restingExpression;
+        if (resting && resting !== 'neutral') {
+          applyRestingExpressionMultiMesh(vrm.scene, resting, 1.0);
         }
         vrmRef.current = vrm;
         setVrmReady(vrm);
@@ -363,10 +376,11 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         // scene gives the true top-of-head (hair included); each slot renders
         // the avatar at the origin, so local-Y == world-Y. Tier-2: any failure
         // simply skips the callback and the slot keeps its default framing.
-        if (onHeadY) {
+        const measureHead = loadCallbacks.current.onHeadY;
+        if (measureHead) {
           try {
             const box = new THREE.Box3().setFromObject(vrm.scene);
-            if (Number.isFinite(box.max.y) && box.max.y > 0) onHeadY(box.max.y);
+            if (Number.isFinite(box.max.y) && box.max.y > 0) measureHead(box.max.y);
           } catch {
             /* skip — slot falls back to its default face height */
           }
@@ -374,9 +388,10 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
       },
       undefined,
       (err: unknown) => {
+        if (!mounted) return;
         // eslint-disable-next-line no-console
         console.warn('[AD-721 VRM load failed]', { url: resolvedUrl, err });
-        onLoadError();
+        loadCallbacks.current.onLoadError();
       },
     );
     return () => { mounted = false; };
@@ -444,6 +459,12 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
     };
   }, [vrmReady]);
 
+  useEffect(() => () => {
+    const vrm = vrmRef.current;
+    vrmRef.current = null;
+    if (vrm) VRMUtils.deepDispose(vrm.scene);
+  }, []);
+
   // AD-721e: cross-fade body state. When the requested state has a cached
   // clip, fade from current action to the new one over ~300 ms. When no
   // clip is registered for the state, stop any current action so the
@@ -477,8 +498,9 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
 
   // Subscribe to TTS events for mouth animation.
   useEffect(() => {
+    let active = true;
     const off = onSpeechEvent((e) => {
-      if (e.agent_id !== agentId) return;
+      if (!active || e.agent_id !== agentId) return;
       if (e.type === 'start') {
         // AD-721b: try the heuristic viseme track first; fall back to the
         // AD-721 D5 amplitude analyser path when the track is null/empty.
@@ -514,7 +536,13 @@ export function CrewVRM({ vrmUrl, agentId, expressionOverrides, signals, onLoadE
         }
       }
     });
-    return off;
+    return () => {
+      active = false;
+      off();
+      speakingRef.current = false;
+      analyserRef.current = null;
+      currentTrackRef.current = null;
+    };
   }, [agentId]);
 
   useFrame((_state, delta) => {

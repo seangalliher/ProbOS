@@ -74,6 +74,7 @@ beforeEach(() => {
     if (typeof m === 'function' && 'mockReset' in m) (m as any).mockReset();
   });
   mocks.armConversationModeMock.mockReturnValue(() => {});
+  mocks.armWhisperSttMock.mockImplementation(() => vi.fn());
   mocks.whisperOnTranscriptMock.mockReturnValue(() => {});
   mocks.onSpeechEventMock.mockReturnValue(() => {});
   localStorage.clear();

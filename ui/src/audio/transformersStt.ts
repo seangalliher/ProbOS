@@ -7,9 +7,9 @@
  * running inside a dedicated Web Worker for thread isolation. Browser
  * Cache API persists model shards on first use; subsequent loads hit cache.
  *
- * Public surface mirrors ``./whisperStt.ts`` so the three migrated call
- * sites (ProfileChatTab.tsx, IntentSurface.tsx, conversationController.ts)
- * use import-name swaps with local aliases — no logic changes required.
+ * No-argument APIs retain a shared legacy capture domain. ProfileChatTab
+ * passes one fresh optional scope through arm and subscriptions so each
+ * explicit capture owns its PCM window, worker jobs and delivery lifetime.
  *
  * New surface vs. AD-705a: ``onTransformersProgress(handler)`` exposes
  * the first-load download status so the UI can render a progress bar
@@ -22,8 +22,8 @@
  *
  * Honest-degrade paths:
  *   - Worker model fetch fails → ``{status: 'error'}`` progress event;
- *     no transcripts emitted; UI falls through to browser SR via the
- *     existing AD-826 empty-counter logic (see ProfileChatTab.tsx).
+ *     no transcripts emitted; ProfileChatTab cancels its owned local
+ *     capture and returns to idle without inventing recognized text.
  *   - VAD subscription absent → arm() succeeds idempotently; no frames
  *     collected; no transcripts emitted.
  */
@@ -60,26 +60,71 @@ type TranscriptListener = (text: string) => void;
 type TranscribingListener = (active: boolean) => void;
 type ProgressListener = (event: TransformersProgressEvent) => void;
 
+export type TransformersCaptureScope = symbol;
+
+export interface TransformersJobIdentity {
+  readonly captureId: string;
+  readonly jobId: string;
+}
+
+export interface TransformersTranscribeRequest extends TransformersJobIdentity {
+  readonly type: 'transcribe';
+  readonly samples: Float32Array;
+  readonly sampleRate: number;
+}
+
+export type TransformersJobEvent = TransformersJobIdentity & {
+  readonly sequence: number;
+} & (
+  | { type: 'transcript'; text: string; isPartial: boolean }
+  | { type: 'transcribing'; active: boolean }
+  | { type: 'complete'; outcome: 'success' | 'error' }
+);
+
+interface Registration<Value> {
+  scope: TransformersCaptureScope | undefined;
+  owner: Engaged | null;
+  listener: ((value: Value) => void) | null;
+  jobs: Set<string>;
+  processing: boolean;
+}
+
 interface Engaged {
+  readonly captureId: string;
+  readonly scope: TransformersCaptureScope | undefined;
+  active: boolean;
+  speaking: boolean;
   unsubscribe: () => void;
   ringBuffers: Float32Array[];
   ringSampleCount: number;
-  // BF-310: rolling pre-speech buffer. Always accumulating; trimmed to
-  // ``PREROLL_SAMPLES`` worth of audio. Dumped into ``ringBuffers`` at
-  // speech_start so whisper receives the word onset.
   preroll: Float32Array[];
   prerollCount: number;
+  jobs: Set<string>;
 }
 
-// BF-320: worker + whisper pipeline survive across arm/disarm cycles so
-// PTT clicks don't pay the ~2-4s whisper-medium.en re-init cost.
-// ``_engaged`` carries the PCM-tap subscription + per-utterance ring
-// buffers and is allocated only while armed.
-let _worker: Worker | null = null;
-let _engaged: Engaged | null = null;
-const _transcriptListeners: Set<TranscriptListener> = new Set();
-const _transcribingListeners: Set<TranscribingListener> = new Set();
+interface WorkerSession {
+  readonly worker: Worker;
+  detach: () => void;
+}
+
+interface PendingJob {
+  readonly session: WorkerSession;
+  readonly owner: Engaged;
+  readonly jobId: string;
+  sequence: number;
+  final: boolean;
+  transcripts: Set<Registration<string>>;
+  processing: Set<Registration<boolean>>;
+}
+
+let _session: WorkerSession | null = null;
+let _nextIdentity = 0;
+const _captures = new Map<TransformersCaptureScope | undefined, Engaged>();
+const _jobs = new Map<string, PendingJob>();
+const _transcriptListeners = new Set<Registration<string>>();
+const _transcribingListeners = new Set<Registration<boolean>>();
 const _progressListeners: Set<ProgressListener> = new Set();
+const _retiringWorkers = new Map<Worker, ReturnType<typeof setTimeout>>();
 let _workerOverride: (() => Worker) | null = null;
 let _model = DEFAULT_MODEL;
 
@@ -96,15 +141,14 @@ export function _setTransformersWorkerOverride(
 
 /** Test seam — reset module-scoped state between tests. */
 export function _resetTransformersStt(): void {
-  if (_engaged) {
-    try { _engaged.unsubscribe(); } catch { /* Tier-2 */ }
+  terminateTransformersStt();
+  for (const [worker, timer] of _retiringWorkers) {
+    clearTimeout(timer);
+    _safely(() => worker.terminate());
   }
-  _engaged = null;
-  if (_worker) {
-    try { _worker.postMessage({ type: 'shutdown' }); } catch { /* Tier-2 */ }
-    try { _worker.terminate(); } catch { /* Tier-2 */ }
-  }
-  _worker = null;
+  _retiringWorkers.clear();
+  for (const registration of _transcriptListeners) _releaseRegistration(registration);
+  for (const registration of _transcribingListeners) _releaseRegistration(registration);
   _transcriptListeners.clear();
   _transcribingListeners.clear();
   _progressListeners.clear();
@@ -112,9 +156,9 @@ export function _resetTransformersStt(): void {
   _model = DEFAULT_MODEL;
 }
 
-/** Test seam — inspect armed state. */
+/** Test seam: true while any legacy or explicitly scoped capture is armed. */
 export function _isArmed(): boolean {
-  return _engaged !== null;
+  return _captures.size > 0;
 }
 
 /**
@@ -128,25 +172,70 @@ export function _setTransformersModel(model: string): void {
   }
 }
 
-function _emitTranscribing(active: boolean): void {
-  for (const cb of _transcribingListeners) {
-    try {
-      cb(active);
-    } catch {
-      // Tier-2.
-    }
+function _safely(operation: () => void): void {
+  try { operation(); } catch {
+    console.warn('Local STT callback or cleanup failed; other capture owners remain active.');
   }
 }
 
-function _emitTranscript(text: string): void {
-  if (!text) return;
-  for (const cb of _transcriptListeners) {
-    try {
-      cb(text);
-    } catch {
-      // Tier-2.
+function _releaseRegistration<Value>(registration: Registration<Value>): void {
+  registration.listener = null;
+  registration.owner = null;
+  registration.jobs.clear();
+  registration.processing = false;
+}
+
+function _updateProcessing(registration: Registration<boolean>): void {
+  const active = registration.jobs.size > 0;
+  if (!registration.listener || registration.processing === active) return;
+  registration.processing = active;
+  const listener = registration.listener;
+  _safely(() => listener(active));
+}
+
+function _settleJob(job: PendingJob): void {
+  if (_jobs.get(job.jobId) !== job) return;
+  _jobs.delete(job.jobId);
+  job.owner.jobs.delete(job.jobId);
+  const registrations = [...job.processing];
+  for (const registration of job.transcripts) registration.jobs.delete(job.jobId);
+  for (const registration of registrations) registration.jobs.delete(job.jobId);
+  job.transcripts.clear();
+  job.processing.clear();
+  for (const registration of registrations) _updateProcessing(registration);
+}
+
+function _cancelCapture(owner: Engaged): void {
+  if (!owner.active) return;
+  owner.active = false;
+  if (_captures.get(owner.scope) === owner) _captures.delete(owner.scope);
+  const unsubscribe = owner.unsubscribe;
+  owner.unsubscribe = () => {};
+  owner.ringBuffers = [];
+  owner.ringSampleCount = 0;
+  owner.preroll = [];
+  owner.prerollCount = 0;
+  owner.speaking = false;
+  const processingCallbacks: TranscribingListener[] = [];
+  if (owner.scope !== undefined) {
+    for (const registration of _transcriptListeners) {
+      if (registration.owner !== owner) continue;
+      _transcriptListeners.delete(registration);
+      _releaseRegistration(registration);
+    }
+    for (const registration of _transcribingListeners) {
+      if (registration.owner !== owner) continue;
+      if (registration.processing && registration.listener) processingCallbacks.push(registration.listener);
+      _transcribingListeners.delete(registration);
+      _releaseRegistration(registration);
     }
   }
+  for (const jobId of [...owner.jobs]) {
+    const job = _jobs.get(jobId);
+    if (job) _settleJob(job);
+  }
+  _safely(unsubscribe);
+  for (const listener of processingCallbacks) _safely(() => listener(false));
 }
 
 function _emitProgress(event: TransformersProgressEvent): void {
@@ -169,197 +258,274 @@ function _defaultWorkerFactory(): Worker {
   );
 }
 
-function _buildTapHandler(): PcmTapHandler {
+function _dispatch(owner: Engaged, buffers: Float32Array[]): void {
+  const session = _session;
+  if (!owner.active || !session) return;
+  const total = buffers.reduce((count, buffer) => count + buffer.length, 0);
+  if (!total) return;
+  const merged = new Float32Array(total);
+  let offset = 0;
+  for (const buffer of buffers) {
+    merged.set(buffer, offset);
+    offset += buffer.length;
+  }
+  const jobId = String(++_nextIdentity);
+  const eligible = <Value>(registration: Registration<Value>): boolean =>
+    registration.listener !== null && registration.scope === owner.scope &&
+    (owner.scope === undefined || registration.owner === owner);
+  const job: PendingJob = {
+    session, owner, jobId, sequence: 0, final: false,
+    transcripts: new Set([..._transcriptListeners].filter(eligible)),
+    processing: new Set([..._transcribingListeners].filter(eligible)),
+  };
+  _jobs.set(jobId, job);
+  owner.jobs.add(jobId);
+  for (const registration of job.transcripts) registration.jobs.add(jobId);
+  for (const registration of job.processing) registration.jobs.add(jobId);
+  for (const registration of [...job.processing]) _updateProcessing(registration);
+  if (!owner.active || _session !== session || _jobs.get(jobId) !== job) return;
+  const request: TransformersTranscribeRequest = {
+    type: 'transcribe', captureId: owner.captureId, jobId,
+    samples: merged, sampleRate: SAMPLE_RATE,
+  };
+  try {
+    session.worker.postMessage(request, [merged.buffer]);
+  } catch {
+    _settleJob(job);
+    console.warn('Local STT dispatch failed; the job was settled without recognized text.');
+  }
+}
+
+function _buildTapHandler(owner: Engaged): PcmTapHandler {
   return {
-    onFrame(frame, _sr) {
-      if (!_engaged) return;
-      // BF-310: while pre-speech, accumulate into the rolling preroll
-      // buffer (FIFO trim to PREROLL_SAMPLES). Once speech_start has
-      // fired (ringBuffers non-empty), append to the utterance ring.
-      if (_engaged.ringBuffers.length === 0 && _engaged.ringSampleCount === 0) {
-        // Pre-speech: append to preroll, trim oldest frames.
-        _engaged.preroll.push(new Float32Array(frame));
-        _engaged.prerollCount += frame.length;
-        while (_engaged.prerollCount > PREROLL_SAMPLES && _engaged.preroll.length > 1) {
-          const dropped = _engaged.preroll.shift();
-          if (dropped) _engaged.prerollCount -= dropped.length;
+    onFrame(frame, sampleRate) {
+      if (!owner.active || sampleRate !== SAMPLE_RATE || !(frame instanceof Float32Array) || !frame.length) return;
+      if (!owner.speaking) {
+        owner.preroll.push(new Float32Array(frame));
+        owner.prerollCount += frame.length;
+        while (owner.prerollCount > PREROLL_SAMPLES) {
+          const first = owner.preroll[0];
+          const excess = owner.prerollCount - PREROLL_SAMPLES;
+          if (first.length <= excess) {
+            owner.preroll.shift();
+            owner.prerollCount -= first.length;
+          } else {
+            owner.preroll[0] = first.slice(excess);
+            owner.prerollCount -= excess;
+          }
         }
         return;
       }
-      if (_engaged.ringSampleCount + frame.length > MAX_UTTERANCE_SAMPLES) {
-        return;
-      }
-      // Defensive copy — the VAD loop may reuse the buffer.
-      _engaged.ringBuffers.push(new Float32Array(frame));
-      _engaged.ringSampleCount += frame.length;
+      const count = Math.min(frame.length, MAX_UTTERANCE_SAMPLES - owner.ringSampleCount);
+      if (!count) return;
+      owner.ringBuffers.push(frame.slice(0, count));
+      owner.ringSampleCount += count;
     },
-    onSpeechStart(_now) {
-      if (!_engaged) return;
-      // BF-310: seed the utterance ring with the rolling pre-roll so
-      // whisper sees the word onset (otherwise the first 400 ms is
-      // lost). Clear the preroll buffer after the dump — the next
-      // utterance gathers fresh pre-roll while the current one is
-      // being collected (we keep filling preroll between utterances).
-      const seed: Float32Array[] = [];
-      let seedCount = 0;
-      for (const b of _engaged.preroll) {
-        seed.push(b);
-        seedCount += b.length;
-      }
-      _engaged.ringBuffers = seed.length > 0 ? seed : [new Float32Array(0)];
-      _engaged.ringSampleCount = seedCount;
-      _engaged.preroll = [];
-      _engaged.prerollCount = 0;
+    onSpeechStart() {
+      if (!owner.active || owner.speaking) return;
+      owner.speaking = true;
+      owner.ringBuffers = owner.preroll;
+      owner.ringSampleCount = owner.prerollCount;
+      owner.preroll = [];
+      owner.prerollCount = 0;
     },
-    onSpeechEnd(_now) {
-      if (!_engaged || !_worker) return;
-      const buffers = _engaged.ringBuffers;
-      _engaged.ringBuffers = [];
-      _engaged.ringSampleCount = 0;
-      // Concatenate and ship to the worker.
-      let total = 0;
-      for (const b of buffers) total += b.length;
-      if (total === 0) return;
-      const merged = new Float32Array(total);
-      let offset = 0;
-      for (const b of buffers) {
-        merged.set(b, offset);
-        offset += b.length;
-      }
-      try {
-        _worker.postMessage(
-          { type: 'transcribe', samples: merged, sampleRate: SAMPLE_RATE },
-          [merged.buffer],
-        );
-      } catch {
-        // Tier-2 — worker may have been terminated between the speech
-        // event and dispatch.
-      }
+    onSpeechEnd() {
+      if (!owner.active) return;
+      owner.preroll = [];
+      owner.prerollCount = 0;
+      if (!owner.speaking) return;
+      owner.speaking = false;
+      const buffers = owner.ringBuffers;
+      owner.ringBuffers = [];
+      owner.ringSampleCount = 0;
+      _dispatch(owner, buffers);
     },
   };
 }
 
-function _wireWorker(worker: Worker): void {
-  worker.addEventListener('message', (e: MessageEvent) => {
-    const msg = e.data;
-    if (!msg || typeof msg !== 'object') return;
-    if (msg.type === 'progress') {
-      const event = msg.event as TransformersProgressEvent | undefined;
-      if (event && typeof event.status === 'string') {
-        _emitProgress(event);
+function _isJobEvent(value: Record<string, unknown>): value is Record<string, unknown> & TransformersJobEvent {
+  if (typeof value.captureId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value.captureId) ||
+      typeof value.jobId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value.jobId) ||
+      !Number.isSafeInteger(value.sequence) || (value.sequence as number) < 1) return false;
+  return (value.type === 'transcript' && typeof value.text === 'string' && typeof value.isPartial === 'boolean') ||
+    (value.type === 'transcribing' && typeof value.active === 'boolean') ||
+    (value.type === 'complete' && (value.outcome === 'success' || value.outcome === 'error'));
+}
+
+function _validProgress(value: unknown): value is TransformersProgressEvent {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as Record<string, unknown>;
+  return ['initiate', 'download', 'progress', 'done', 'ready', 'error'].includes(event.status as string) &&
+    ['name', 'file'].every(key => event[key] === undefined || typeof event[key] === 'string') &&
+    ['loaded', 'total', 'progress'].every(key => event[key] === undefined ||
+      (typeof event[key] === 'number' && Number.isFinite(event[key]) && event[key] >= 0));
+}
+
+function _failWorker(session: WorkerSession): void {
+  if (_session !== session) return;
+  _session = null;
+  session.detach();
+  const owners = [..._captures.values()];
+  for (const owner of owners) _cancelCapture(owner);
+  _safely(() => session.worker.terminate());
+  _emitProgress({ status: 'error', name: _model, file: 'Local STT worker unavailable; explicit re-arm can retry.' });
+}
+
+function _wireWorker(session: WorkerSession): void {
+  const message = (event: MessageEvent): void => {
+    if (_session !== session || !event.data || typeof event.data !== 'object') return;
+    const msg = event.data as Record<string, unknown>;
+    if (msg.type === 'progress' && _validProgress(msg.event)) {
+      _emitProgress(msg.event);
+      return;
+    }
+    if (!_isJobEvent(msg)) return;
+    const job = _jobs.get(msg.jobId);
+    if (!job || job.session !== session || !job.owner.active ||
+        job.owner.captureId !== msg.captureId || msg.sequence <= job.sequence) return;
+    job.sequence = msg.sequence;
+    if (msg.type === 'complete') {
+      _settleJob(job);
+    } else if (msg.type === 'transcript' && !job.final) {
+      if (!msg.isPartial) job.final = true;
+      if (msg.isPartial && job.owner.scope !== undefined) return;
+      if (!msg.text.trim() && job.owner.scope === undefined) return;
+      const recipients = [...job.transcripts].filter(registration => registration.jobs.has(job.jobId));
+      for (const registration of recipients) {
+        if (_session !== session) break;
+        if (job.owner.scope !== undefined && (!job.owner.active || _jobs.get(job.jobId) !== job)) break;
+        const listener = registration.listener;
+        if (listener) _safely(() => listener(msg.text));
       }
-      return;
     }
-    if (msg.type === 'transcript') {
-      const text = typeof msg.text === 'string' ? msg.text : '';
-      _emitTranscript(text);
-      return;
-    }
-    if (msg.type === 'transcribing') {
-      _emitTranscribing(Boolean(msg.active));
-      return;
-    }
-  });
+  };
+  const failure = (): void => _failWorker(session);
+  session.worker.addEventListener('message', message);
+  session.worker.addEventListener('error', failure);
+  session.worker.addEventListener('messageerror', failure);
+  session.detach = () => {
+    session.worker.removeEventListener('message', message);
+    session.worker.removeEventListener('error', failure);
+    session.worker.removeEventListener('messageerror', failure);
+  };
 }
 
 /**
- * Arm the STT consumer. Idempotent. Returns the disarm handle so callers
- * can hot-toggle off the settings store.
+ * Arm the legacy domain, or the supplied optional capture scope.
+ * Repeated active calls are idempotent. A scoped return cancels only its
+ * captured generation; an unscoped return keeps legacy disarm semantics.
  *
  * BF-320: the Worker + whisper pipeline is created ONCE per page
  * lifetime and reused across arm/disarm cycles. Subsequent arm calls
  * only re-subscribe the PCM tap; the model stays resident.
  */
-export function armTransformersStt(): () => void {
-  if (_engaged) return disarmTransformersStt;
-  if (_worker === null) {
-    const factory = _workerOverride ?? _defaultWorkerFactory;
-    const worker = factory();
-    _wireWorker(worker);
-    // Init the pipeline; the worker emits progress events back through
-    // the message channel.
-    try {
-      worker.postMessage({ type: 'init', model: _model });
-    } catch {
-      // Tier-2 — surface a synthetic error progress event so subscribers
-      // can fall through.
-      _emitProgress({ status: 'error', name: _model, file: 'postMessage init failed' });
-    }
-    _worker = worker;
-  }
-  _engaged = {
-    unsubscribe: subscribePcm(_buildTapHandler()),
-    ringBuffers: [],
-    ringSampleCount: 0,
-    preroll: [],
-    prerollCount: 0,
+export function armTransformersStt(scope?: TransformersCaptureScope): () => void {
+  if (scope !== undefined && typeof scope !== 'symbol') throw new TypeError('Capture scope must be a symbol.');
+  const existing = _captures.get(scope);
+  if (existing) return scope === undefined ? disarmTransformersStt : () => _cancelCapture(existing);
+  const owner: Engaged = {
+    captureId: String(++_nextIdentity), scope, active: true, speaking: false,
+    unsubscribe: () => {}, ringBuffers: [], ringSampleCount: 0,
+    preroll: [], prerollCount: 0, jobs: new Set(),
   };
-  return disarmTransformersStt;
+  _captures.set(scope, owner);
+  if (scope !== undefined) {
+    for (const registration of _transcriptListeners) {
+      if (registration.scope === scope && registration.owner === null) registration.owner = owner;
+    }
+    for (const registration of _transcribingListeners) {
+      if (registration.scope === scope && registration.owner === null) registration.owner = owner;
+    }
+  }
+  try {
+    if (!_session) {
+      const session: WorkerSession = { worker: (_workerOverride ?? _defaultWorkerFactory)(), detach: () => {} };
+      _session = session;
+      _wireWorker(session);
+      try { session.worker.postMessage({ type: 'init', model: _model }); }
+      catch { _failWorker(session); }
+    }
+    if (owner.active) {
+      const unsubscribe = subscribePcm(_buildTapHandler(owner));
+      if (owner.active) owner.unsubscribe = unsubscribe;
+      else _safely(unsubscribe);
+    }
+  } catch (error) {
+    _cancelCapture(owner);
+    throw error;
+  }
+  return scope === undefined ? disarmTransformersStt : () => _cancelCapture(owner);
 }
 
 /**
- * Disarm the STT consumer. Idempotent. Detaches the PCM tap only — the
- * worker + whisper pipeline remain resident for the next arm cycle.
- * Use ``terminateTransformersStt`` to fully tear down (e.g. on page
- * unload).
+ * Idempotently cancel only the legacy capture domain and its pending jobs.
+ * Explicitly scoped captures and the resident worker/model remain active.
+ * An accepted legacy reply still reaches its already-eligible live siblings.
+ * Use terminateTransformersStt for page-level teardown of every domain.
  */
 export function disarmTransformersStt(): void {
-  if (!_engaged) return;
-  try {
-    _engaged.unsubscribe();
-  } catch {
-    // Tier-2.
-  }
-  _engaged = null;
+  const owner = _captures.get(undefined);
+  if (owner) _cancelCapture(owner);
 }
 
 /**
- * Fully shut down the worker + whisper pipeline. Disarms first if armed.
- * Wired to ``beforeunload`` in production; callable directly from tests.
+ * Fence the current worker and cancel every capture domain immediately.
+ * Request graceful shutdown, then terminate that exact worker after 250 ms.
+ * Wired to beforeunload; a newly armed replacement is independent.
  */
 export function terminateTransformersStt(): void {
-  if (_engaged) {
-    try { _engaged.unsubscribe(); } catch { /* Tier-2 */ }
-    _engaged = null;
-  }
-  if (_worker === null) return;
-  const worker = _worker;
-  _worker = null;
-  try {
-    worker.postMessage({ type: 'shutdown' });
-  } catch {
-    // Tier-2.
-  }
-  // 250 ms grace before terminate; covers in-flight transcribe responses
-  // still being delivered.
-  setTimeout(() => {
-    try {
-      worker.terminate();
-    } catch {
-      // Tier-2.
-    }
+  const session = _session;
+  _session = null;
+  session?.detach();
+  for (const owner of [..._captures.values()]) _cancelCapture(owner);
+  if (!session) return;
+  const worker = session.worker;
+  _safely(() => worker.postMessage({ type: 'shutdown' }));
+  const timer = setTimeout(() => {
+    _retiringWorkers.delete(worker);
+    _safely(() => worker.terminate());
   }, 250);
+  _retiringWorkers.set(worker, timer);
 }
 
-/**
- * Subscribe to transcript events. Returns an unsubscribe handle.
- * Listeners receive the recognized text; they MUST NOT carry the audio
- * back over the wire — the privacy invariant is enforced at the call
- * site (only the text string is sent in subsequent API calls).
+function _subscribe<Value>(
+  registrations: Set<Registration<Value>>, listener: (value: Value) => void,
+  scope?: TransformersCaptureScope, settledValue?: Value,
+): () => void {
+  if (typeof listener !== 'function') throw new TypeError('Capture listener must be a function.');
+  if (scope !== undefined && typeof scope !== 'symbol') throw new TypeError('Capture scope must be a symbol.');
+  const registration: Registration<Value> = {
+    scope, listener, owner: scope === undefined ? null : _captures.get(scope) ?? null,
+    jobs: new Set(), processing: false,
+  };
+  registrations.add(registration);
+  return () => {
+    registrations.delete(registration);
+    for (const jobId of registration.jobs) {
+      const job = _jobs.get(jobId);
+      job?.transcripts.delete(registration as unknown as Registration<string>);
+      job?.processing.delete(registration as unknown as Registration<boolean>);
+    }
+    const notify = registration.processing ? registration.listener : null;
+    _releaseRegistration(registration);
+    if (notify && settledValue !== undefined) _safely(() => notify(settledValue));
+  };
+}
+
+/** Subscribe to future jobs in the legacy domain or one optional scope.
+ * Scoped listeners receive final text only; legacy listeners retain partials.
+ * Registrations never inherit an already-dispatched job. Returns unsubscribe.
  */
-export function onTransformersTranscript(listener: TranscriptListener): () => void {
-  _transcriptListeners.add(listener);
-  return () => {
-    _transcriptListeners.delete(listener);
-  };
+export function onTransformersTranscript(listener: TranscriptListener, scope?: TransformersCaptureScope): () => void {
+  return _subscribe(_transcriptListeners, listener, scope);
 }
 
-/** Subscribe to transcribing-state changes (HXI mic pulse). */
-export function onTransformersTranscribing(listener: TranscribingListener): () => void {
-  _transcribingListeners.add(listener);
-  return () => {
-    _transcribingListeners.delete(listener);
-  };
+/** Subscribe to pending-job state in the legacy domain or one optional scope.
+ * Dispatch/completion drive this aggregate, not worker transcribing booleans.
+ * Unsubscribing an active registration emits one terminal false.
+ */
+export function onTransformersTranscribing(listener: TranscribingListener, scope?: TransformersCaptureScope): () => void {
+  return _subscribe(_transcribingListeners, listener, scope, false);
 }
 
 /**
