@@ -27,6 +27,7 @@ interface SpeechRecognitionInstance {
   onresult: ((event: { results: { [index: number]: { [index: number]: { transcript: string } } } }) => void) | null;
   onerror: ((event: { error: string }) => void) | null;
   onend: (() => void) | null;
+  onspeechend?: (() => void) | null;
   start(): void;
   abort(): void;
   stop(): void;
@@ -37,27 +38,10 @@ export function isSpeechRecognitionSupported(): boolean {
     ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
 }
 
-let activeRecognition: SpeechRecognitionInstance | null = null;
-let stopRequested = false;
-let activeContinuous = false;
-let activeLease: Lease | null = null;
-// AD-760: accumulator + silence-gap timer state for ``endOfSpeechGapMs``.
-let gapAccumulator = '';
-let gapTimer: ReturnType<typeof setTimeout> | null = null;
-let gapForwardOnResult: ((text: string) => void) | null = null;
+let activeListening: ListeningInvocation | null = null;
 
-function _flushGapAccumulator(): void {
-  if (gapTimer !== null) {
-    clearTimeout(gapTimer);
-    gapTimer = null;
-  }
-  const text = gapAccumulator.trim();
-  gapAccumulator = '';
-  const forward = gapForwardOnResult;
-  gapForwardOnResult = null;
-  if (text && forward) {
-    try { forward(text); } catch { /* Tier-2 */ }
-  }
+export interface ListeningHandle {
+  cancel(): void;
 }
 
 /** Options for startListening. AD-474b adds continuous-listen + interim-results;
@@ -103,166 +87,178 @@ export function startListening(
   onEnd?: () => void,
   onError?: (error: string) => void,
   opts?: ListenOptions,
-): void {
+): ListeningHandle {
+  const invocation = new ListeningInvocation(onResult, onEnd, onError, opts);
   if (!isSpeechRecognitionSupported()) {
+    invocation.cancel();
     onError?.('Speech recognition not supported in this browser');
-    return;
+    return invocation;
   }
-
-  // Stop any active session
-  stopListening();
-  stopRequested = false;
-
-  const continuous = opts?.continuous === true;
-  const interimResults = opts?.interimResults === true;
-  activeContinuous = continuous;
-
-  // BF-318 — acquire the arbiter lease before spawning. If the arbiter
-  // denies (a higher-priority holder is active), the request queues
-  // and ``onAcquired`` fires later; meanwhile no SR instance is
-  // created. Callers that don't pass priority get press-to-talk.
-  const priority = opts?.priority ?? PRIORITY_PRESS_TO_TALK;
-  const holder = opts?.holder ?? 'press_to_talk';
-  const lease = _arbiterAcquire({
-    holder,
-    priority,
-    onAcquired: (grantedLease) => {
-      activeLease = grantedLease;
-      _spawnRecognition(onResult, onEnd, onError, continuous, interimResults, opts);
-    },
-    onPreempted: (by) => {
-      // A higher-priority holder grabbed the device. Abort our SR
-      // instance (the lease is already invalidated by the arbiter)
-      // and notify the caller.
-      _abortActiveRecognition();
-      activeLease = null;
-      opts?.onPreempted?.(by);
-      onEnd?.();
-    },
-  });
-  if (lease !== null) {
-    activeLease = lease;
-    // _grantSync already invoked onAcquired which spawned recognition.
-  } else {
-    // Queued — wait for onAcquired to fire. activeLease stays null
-    // until promotion; isListening() returns false until SR spawns.
-  }
+  const previous = activeListening;
+  activeListening = invocation;
+  previous?.stopAndFlush();
+  if (activeListening === invocation) invocation.acquire();
+  else invocation.cancel();
+  return invocation;
 }
 
-function _spawnRecognition(
-  onResult: (text: string) => void,
-  onEnd: (() => void) | undefined,
-  onError: ((error: string) => void) | undefined,
-  continuous: boolean,
-  interimResults: boolean,
-  opts: ListenOptions | undefined,
-): void {
-  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition!;
-  const recognition = new Ctor();
-  recognition.continuous = continuous;
-  recognition.interimResults = interimResults;
-  recognition.lang = 'en-US';
+class ListeningInvocation implements ListeningHandle {
+  private live = true;
+  private recognition: SpeechRecognitionInstance | null = null;
+  private lease: Lease | null = null;
+  private pendingText = '';
+  private gapTimer: ReturnType<typeof setTimeout> | null = null;
+  private gapGeneration = 0;
+  private callbacks: {
+    onResult: (text: string) => void;
+    onEnd?: () => void;
+    onError?: (error: string) => void;
+    options?: ListenOptions;
+  } | null;
 
-  // AD-760: end-of-speech gap mode. Accumulate finals across utterances
-  // and only forward after ``endOfSpeechGapMs`` of silence (or on
-  // stopListening). Default off — IntentSurface / wake-word / other
-  // callers are unaffected.
-  const gapMs = opts?.endOfSpeechGapMs;
-  const gapEnabled = continuous && typeof gapMs === 'number' && gapMs > 0;
-  if (gapEnabled) {
-    gapAccumulator = '';
-    gapForwardOnResult = onResult;
+  constructor(onResult: (text: string) => void, onEnd?: () => void,
+    onError?: (error: string) => void, options?: ListenOptions) {
+    this.callbacks = { onResult, onEnd, onError, options };
   }
 
-  recognition.onresult = (event) => {
-    // Pick the most recent final result. In single-shot mode this is always index 0.
-    // In continuous mode results accumulate; we report the latest final transcript.
-    // event.results[i].isFinal exists at runtime; types here keep the v0 shape.
-    const results = event.results as unknown as ArrayLike<{ 0: { transcript: string }; isFinal?: boolean }>;
-    let lastFinal: string | null = null;
-    for (let i = 0; i < (results as { length: number }).length; i++) {
-      const r = results[i];
-      if (r.isFinal !== false) {
-        lastFinal = r[0].transcript;
-      }
-    }
-    if (lastFinal !== null) {
-      if (gapEnabled) {
-        // Append (with a leading space if needed) and (re)start the
-        // silence-gap timer. onResult fires only when the timer elapses
-        // or stopListening is called.
-        const piece = lastFinal.trim();
-        if (piece) {
-          gapAccumulator = gapAccumulator
-            ? `${gapAccumulator} ${piece}`
-            : piece;
+  get listening(): boolean {
+    return this.live && this.recognition !== null;
+  }
+
+  acquire(): void {
+    const options = this.callbacks?.options;
+    _arbiterAcquire({
+      holder: options?.holder ?? 'press_to_talk',
+      priority: options?.priority ?? PRIORITY_PRESS_TO_TALK,
+      onAcquired: lease => {
+        if (!this.live || activeListening !== this) {
+          _arbiterRelease(lease);
+          return;
         }
-        if (gapTimer !== null) clearTimeout(gapTimer);
-        gapTimer = setTimeout(() => {
-          gapTimer = null;
-          _flushGapAccumulator();
-        }, gapMs as number);
-      } else {
-        onResult(lastFinal);
-      }
-    }
-  };
-
-  recognition.onerror = (event) => {
-    if (event.error !== 'aborted') {
-      onError?.(event.error);
-    }
-  };
-
-  // AD-474c — VAD end-of-utterance hook.
-  if (opts?.onSpeechEnd) {
-    (recognition as unknown as { onspeechend: (() => void) | null }).onspeechend = () => {
-      opts.onSpeechEnd?.();
-    };
+        this.lease = lease;
+        this.spawn();
+      },
+      onPreempted: holder => {
+        const callbacks = this.callbacks;
+        this.cancel();
+        callbacks?.options?.onPreempted?.(holder);
+        callbacks?.onEnd?.();
+      },
+    });
   }
 
-  recognition.onend = () => {
-    const wasContinuous = activeContinuous;
-    activeRecognition = null;
-    if (wasContinuous && !stopRequested) {
-      // Auto-restart for hands-free continuous mode (AD-474b).
-      _spawnRecognition(onResult, onEnd, onError, continuous, interimResults, opts);
-      return;
+  cancel(): void {
+    if (!this.live) return;
+    this.live = false;
+    this.clearGap();
+    this.pendingText = '';
+    this.callbacks = null;
+    if (activeListening === this) activeListening = null;
+    const recognition = this.recognition;
+    this.recognition = null;
+    const lease = this.lease;
+    this.lease = null;
+    if (recognition) {
+      this.detach(recognition);
+      try { recognition.abort(); } catch { /* already stopped */ }
     }
-    onEnd?.();
-  };
+    if (lease) _arbiterRelease(lease);
+  }
 
-  activeRecognition = recognition;
-  recognition.start();
+  stopAndFlush(): void {
+    const callback = this.callbacks?.onResult;
+    const text = this.pendingText.trim();
+    this.cancel();
+    if (text && callback) {
+      try { callback(text); } catch { /* legacy gap delivery is best-effort */ }
+    }
+  }
+
+  private clearGap(): void {
+    if (this.gapTimer !== null) clearTimeout(this.gapTimer);
+    this.gapTimer = null;
+    this.gapGeneration += 1;
+  }
+
+  private detach(recognition: SpeechRecognitionInstance): void {
+    recognition.onresult = null;
+    recognition.onerror = null;
+    recognition.onend = null;
+    recognition.onspeechend = null;
+  }
+
+  private spawn(): void {
+    if (!this.live || activeListening !== this) return;
+    const options = this.callbacks?.options;
+    const continuous = options?.continuous === true;
+    const gapMs = options?.endOfSpeechGapMs;
+    const gapEnabled = continuous && typeof gapMs === 'number' && gapMs > 0;
+    let recognition: SpeechRecognitionInstance;
+    try {
+      const Constructor = window.SpeechRecognition || window.webkitSpeechRecognition!;
+      recognition = new Constructor();
+      this.recognition = recognition;
+      recognition.continuous = continuous;
+      recognition.interimResults = options?.interimResults === true;
+      recognition.lang = 'en-US';
+      const current = (): boolean => this.live && activeListening === this && this.recognition === recognition;
+      recognition.onresult = event => {
+        if (!current()) return;
+        const results = event.results as unknown as ArrayLike<{ 0: { transcript: string }; isFinal?: boolean }>;
+        let latest: string | null = null;
+        for (let index = 0; index < results.length; index += 1) {
+          const result = results[index];
+          if (result.isFinal !== false) latest = result[0].transcript;
+        }
+        if (latest === null) return;
+        if (!gapEnabled) {
+          this.callbacks?.onResult(latest);
+          return;
+        }
+        const piece = latest.trim();
+        if (piece) this.pendingText = this.pendingText ? `${this.pendingText} ${piece}` : piece;
+        this.clearGap();
+        const generation = this.gapGeneration;
+        this.gapTimer = setTimeout(() => {
+          if (!this.live || activeListening !== this || this.gapGeneration !== generation) return;
+          this.clearGap();
+          const text = this.pendingText.trim();
+          this.pendingText = '';
+          if (text) this.callbacks?.onResult(text);
+        }, gapMs);
+      };
+      recognition.onerror = event => {
+        if (current() && event.error !== 'aborted') this.callbacks?.onError?.(event.error);
+      };
+      if (options?.onSpeechEnd) {
+        recognition.onspeechend = () => {
+          if (current()) this.callbacks?.options?.onSpeechEnd?.();
+        };
+      }
+      recognition.onend = () => {
+        if (!current()) return;
+        this.detach(recognition);
+        this.recognition = null;
+        if (continuous) this.spawn();
+        else {
+          const onEnd = this.callbacks?.onEnd;
+          this.cancel();
+          onEnd?.();
+        }
+      };
+      recognition.start();
+    } catch (error) {
+      const onError = this.callbacks?.onError;
+      this.cancel();
+      onError?.(error instanceof Error ? error.message : 'Speech recognition failed to start');
+    }
+  }
 }
 
 export function stopListening(): void {
-  stopRequested = true;
-  activeContinuous = false;
-  // AD-760: flush any pending accumulator BEFORE aborting so the
-  // caller sees the partial transcript.
-  if (gapForwardOnResult !== null || gapAccumulator) {
-    _flushGapAccumulator();
-  }
-  _abortActiveRecognition();
-  // BF-318: release the arbiter lease so queued waiters (wake-word)
-  // can resume.
-  if (activeLease !== null) {
-    const lease = activeLease;
-    activeLease = null;
-    _arbiterRelease(lease);
-  }
-}
-
-/** Internal: abort the current SR instance without touching the
- *  arbiter lease. Used for both stopListening and preemption. */
-function _abortActiveRecognition(): void {
-  if (activeRecognition) {
-    try { activeRecognition.abort(); } catch { /* already stopped */ }
-    activeRecognition = null;
-  }
+  activeListening?.stopAndFlush();
 }
 
 export function isListening(): boolean {
-  return activeRecognition !== null;
+  return activeListening?.listening ?? false;
 }

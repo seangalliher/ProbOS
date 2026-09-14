@@ -96,4 +96,49 @@ describe('AD-760 endOfSpeechGapMs', () => {
     expect(onResult).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledWith('pending text');
   });
+
+  it('owned cancellation discards pending text without forwarding or leaving a timer', () => {
+    vi.useFakeTimers();
+    const onResult = vi.fn();
+    const handle = startListening(onResult, undefined, undefined, { continuous: true, endOfSpeechGapMs: 1500 });
+    fireFinal(lastInstance!, 'not committed');
+    expect(vi.getTimerCount()).toBe(1);
+    handle.cancel();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(2000);
+    expect(onResult).not.toHaveBeenCalled();
+    expect(lastInstance!.abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('legacy flush cannot stop a newer invocation created by its result callback', () => {
+    vi.useFakeTimers();
+    const nextResult = vi.fn();
+    const onResult = vi.fn(() => startListening(nextResult));
+    startListening(onResult, undefined, undefined, { continuous: true, endOfSpeechGapMs: 1500 });
+    const retired = lastInstance!;
+    fireFinal(retired, 'committed text');
+    stopListening();
+    expect(onResult).toHaveBeenCalledExactlyOnceWith('committed text');
+    expect(lastInstance).not.toBe(retired);
+    expect(lastInstance!.abort).not.toHaveBeenCalled();
+    fireFinal(lastInstance!, 'next');
+    expect(nextResult).toHaveBeenCalledExactlyOnceWith('next');
+  });
+
+  it('retired silence callbacks cannot flush cancelled or superseded text', () => {
+    vi.useFakeTimers();
+    const schedule = vi.spyOn(globalThis, 'setTimeout');
+    const onResult = vi.fn();
+    const handle = startListening(onResult, undefined, undefined, { continuous: true, endOfSpeechGapMs: 1500 });
+    fireFinal(lastInstance!, 'first');
+    const oldTimer = schedule.mock.calls[schedule.mock.calls.length - 1][0] as () => void;
+    fireFinal(lastInstance!, 'second');
+    oldTimer();
+    expect(onResult).not.toHaveBeenCalled();
+    const currentTimer = schedule.mock.calls[schedule.mock.calls.length - 1][0] as () => void;
+    handle.cancel();
+    currentTimer();
+    expect(onResult).not.toHaveBeenCalled();
+    schedule.mockRestore();
+  });
 });

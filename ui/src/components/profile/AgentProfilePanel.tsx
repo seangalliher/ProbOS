@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, type SetStateAction, type RefObject } from 'react';
 import { useStore } from '../../store/useStore';
 import { ProfileChatTab } from './ProfileChatTab';
 import { ArtifactDrawer } from '../artifacts/ArtifactDrawer';
@@ -39,6 +39,26 @@ function readViewport(): { w: number; h: number } {
     w: Number.isFinite(window.innerWidth) ? Math.max(0, window.innerWidth) : 0,
     h: Number.isFinite(window.innerHeight) ? Math.max(0, window.innerHeight) : 0,
   };
+}
+
+function useParticipantState<Value>(
+  owner: object,
+  activeOwner: RefObject<object | null>,
+  initial: Value,
+  resetOnChange = true,
+): [Value, (update: SetStateAction<Value>) => void] {
+  const [entry, setEntry] = useState({ owner, value: initial });
+  const value = entry.owner === owner || !resetOnChange ? entry.value : initial;
+  const update = useCallback((next: SetStateAction<Value>): void => {
+    if (activeOwner.current !== owner) return;
+    setEntry(previous => {
+      if (activeOwner.current !== owner) return previous;
+      const current = previous.owner === owner || !resetOnChange ? previous.value : initial;
+      return { owner, value: typeof next === 'function'
+        ? (next as (previous: Value) => Value)(current) : next };
+    });
+  }, [owner, activeOwner, initial, resetOnChange]);
+  return [value, update];
 }
 
 export function AgentProfilePanel() {
@@ -86,7 +106,14 @@ export function AgentProfilePanel() {
       setActiveTab('chat');
     }
   }, [notificationNavigation, liveGeneration, activeProfileThreadId, agentId]);
-  const [profileData, setProfileData] = useState<AgentProfileData | null>(null);
+  const [profileOwner, setProfileOwner] = useState({ agentId });
+  if (profileOwner.agentId !== agentId) setProfileOwner({ agentId });
+  const activeProfileOwner = useRef<object | null>(null);
+  useLayoutEffect(() => {
+    activeProfileOwner.current = profileOwner;
+    return () => { activeProfileOwner.current = null; };
+  }, [profileOwner]);
+  const [profileData, setProfileData] = useParticipantState<AgentProfileData | null>(profileOwner, activeProfileOwner, null);
   const [isDragging, setIsDragging] = useState(false);
   // Resizable panel state — persisted in localStorage so the captain's
   // preferred chat-window size survives reloads.
@@ -117,24 +144,24 @@ export function AgentProfilePanel() {
   const [isResizing, setIsResizing] = useState(false);
   const resizeStart = useRef({ x: 0, y: 0, w: 420, h: 580, left: 0, top: 0 });
   // AD-721: avatar popout state.
-  const [avatarOpen, setAvatarOpen] = useState(false);
+  const [avatarOpen, setAvatarOpen] = useParticipantState(profileOwner, activeProfileOwner, false, false);
   const [avatarsEnabled, setAvatarsEnabled] = useState(false);
   // AD-721d: proposed (not-yet-persisted) DSL surfaced in the popout for Captain review.
-  const [proposedDsl, setProposedDsl] = useState<AvatarDSLDict | null>(null);
-  const [designInFlight, setDesignInFlight] = useState(false);
-  const [designError, setDesignError] = useState<string | null>(null);
+  const [proposedDsl, setProposedDsl] = useParticipantState<AvatarDSLDict | null>(profileOwner, activeProfileOwner, null);
+  const [designInFlight, setDesignInFlight] = useParticipantState(profileOwner, activeProfileOwner, false);
+  const [designError, setDesignError] = useParticipantState<string | null>(profileOwner, activeProfileOwner, null);
   // AD-721d-1: revision-cycle state.
-  const [previousDsl, setPreviousDsl] = useState<AvatarDSLDict | null>(null);
-  const [proposalIteration, setProposalIteration] = useState<number>(1);
-  const [proposalMaxIterations, setProposalMaxIterations] = useState<number>(3);
+  const [previousDsl, setPreviousDsl] = useParticipantState<AvatarDSLDict | null>(profileOwner, activeProfileOwner, null);
+  const [proposalIteration, setProposalIteration] = useParticipantState(profileOwner, activeProfileOwner, 1);
+  const [proposalMaxIterations, setProposalMaxIterations] = useParticipantState(profileOwner, activeProfileOwner, 3);
   // AD-721d-3: preview-render state.
-  const [previewVrmUrl, setPreviewVrmUrl] = useState<string | null>(null);
-  const [previewInFlight, setPreviewInFlight] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewVrmUrl, setPreviewVrmUrl] = useParticipantState<string | null>(profileOwner, activeProfileOwner, null);
+  const [previewInFlight, setPreviewInFlight] = useParticipantState(profileOwner, activeProfileOwner, false);
+  const [previewError, setPreviewError] = useParticipantState<string | null>(profileOwner, activeProfileOwner, null);
   // AD-721h: VRM upload state.
   const vrmFileInputRef = useRef<HTMLInputElement | null>(null);
-  const [vrmUploadInFlight, setVrmUploadInFlight] = useState(false);
-  const [vrmUploadError, setVrmUploadError] = useState<string | null>(null);
+  const [vrmUploadInFlight, setVrmUploadInFlight] = useParticipantState(profileOwner, activeProfileOwner, false);
+  const [vrmUploadError, setVrmUploadError] = useParticipantState<string | null>(profileOwner, activeProfileOwner, null);
   useEffect(() => {
     fetch('/api/config/avatars-enabled')
       .then(r => r.ok ? r.json() : null)
@@ -145,12 +172,9 @@ export function AgentProfilePanel() {
 
   const agent = agentId ? agents.get(agentId) : null;
 
-  // Fetch profile data when agent changes. AD-954a: a group surface is a ROOM,
-  // not the (derived) anchor's profile — skip the host-scoped fetch (its data
-  // is never shown in group mode: the title is the room title and the
-  // agent-scoped tabs are collapsed) so the panel is not coupled to the host.
   useEffect(() => {
-    if (!agentId || isGroupSurface) {
+    // Group chat omits host-profile tabs; an open avatar still needs its resolved participant's appearance.
+    if (!agentId || (isGroupSurface && !avatarOpen)) {
       setProfileData(null);
       return;
     }
@@ -158,11 +182,11 @@ export function AgentProfilePanel() {
     fetch(`/api/agent/${agentId}/profile`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
-        if (!cancelled && data) setProfileData(data);
+        if (!cancelled) setProfileData(data ?? null);
       })
-      .catch(() => {});
+      .catch(() => { if (!cancelled) setProfileData(null); });
     return () => { cancelled = true; };
-  }, [agentId, isGroupSurface]);
+  }, [agentId, isGroupSurface, avatarOpen, setProfileData]);
 
   // Mark messages read when opening — AD-954a: only a 1:1. A group surface is a
   // room, not the host's DM, so opening it must not mark the derived anchor

@@ -1,6 +1,6 @@
 /** AD-721 D3: 3D avatar popout — VRM viewer with parametric fallback. */
 
-import { Suspense, useState, useRef, useEffect, useCallback } from 'react';
+import { Suspense, useState, useRef, useEffect, useLayoutEffect, useCallback, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
@@ -56,7 +56,11 @@ const MIN_H = 320;
 const DEFAULT_W = 320;
 const DEFAULT_H = 480;
 
-export function CrewAvatarPopout({
+export function CrewAvatarPopout(props: Props): ReactElement {
+  return <ParticipantAvatarPopout key={props.agentId} {...props} />;
+}
+
+function ParticipantAvatarPopout({
   agentId,
   appearance,
   departmentColor,
@@ -76,17 +80,27 @@ export function CrewAvatarPopout({
   previewInFlight,
   previewError,
 }: Props) {
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [failedAttempt, setFailedAttempt] = useState<string | null>(null);
+  const [retryAttempt, setRetryAttempt] = useState(0);
   // AD-721a: Captain inline avatar editor state. ``editorOpen`` controls the
   // overlay mount; ``editorPreviewUrl`` is set by the editor's preview-fetch
   // callback and takes precedence over the AD-721d-3 propose-preview URL.
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorPreviewUrl, setEditorPreviewUrl] = useState<string | null>(null);
-  const useVRM = !!appearance?.vrm_url && !loadFailed;
   // AD-721d-3: when a preview URL is set, render it INSTEAD of the canonical VRM.
   // AD-721a precedence: editor preview > propose preview > canonical VRM.
   const activeVrmUrl =
-    editorPreviewUrl || previewVrmUrl || (useVRM ? appearance!.vrm_url : null);
+    editorPreviewUrl || previewVrmUrl || appearance?.vrm_url || null;
+  const loadIdentity = JSON.stringify([agentId, activeVrmUrl, retryAttempt]);
+  const activeLoad = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    activeLoad.current = loadIdentity;
+    setFailedAttempt(null);
+    return () => {
+      if (activeLoad.current === loadIdentity) activeLoad.current = null;
+    };
+  }, [loadIdentity]);
+  const loadFailed = failedAttempt === loadIdentity;
   const showVRM = !!activeVrmUrl && !loadFailed;
   const tint = appearance?.color_palette_hint || departmentColor;
   // AD-721d-1: revision-flow local UI state.
@@ -290,7 +304,9 @@ export function CrewAvatarPopout({
                 agentId={agentId}
                 expressionOverrides={appearance?.expression_overrides ?? {}}
                 signals={agentSignals}
-                onLoadError={() => setLoadFailed(true)}
+                onLoadError={() => {
+                  if (activeLoad.current === loadIdentity) setFailedAttempt(loadIdentity);
+                }}
                 restingExpression={appearance?.dsl?.expression_resting ?? null}
               />
             ) : (
@@ -300,6 +316,23 @@ export function CrewAvatarPopout({
           {/* Drag to rotate, scroll to zoom — pivot on the head. */}
           <OrbitControls target={[0, 1.42, 0]} enablePan={false} minDistance={0.3} maxDistance={3} />
         </Canvas>
+        {loadFailed && (
+          <div role="status" aria-label="Avatar asset status" style={{
+            position: 'absolute', left: 8, right: 8, bottom: 8,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+            padding: 6, background: 'rgba(10,10,18,0.92)', color: '#e0dcd4', fontSize: 11,
+          }}>
+            <span>Avatar unavailable.</span>
+            <button type="button" aria-label="Retry avatar" title="Retry avatar" data-hxi-focus=""
+              onClick={() => setRetryAttempt(attempt => attempt + 1)}
+              style={{ background: 'none', border: 'none', color: '#f0b060', cursor: 'pointer', display: 'flex', padding: 4 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3A7 7 0 0 0 17.9 17" />
+              </svg>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* AD-721a: Captain inline avatar editor. Mounted below the canvas

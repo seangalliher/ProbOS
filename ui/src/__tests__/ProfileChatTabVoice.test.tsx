@@ -1,6 +1,6 @@
 /** AD-718: ProfileChatTab voice integration tests. */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { act, render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
 import React from 'react';
 
 // Mock voice + speechInput before importing component.
@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
   speakResponseMock: vi.fn(),
   startListeningMock: vi.fn(),
   stopListeningMock: vi.fn(),
+  cancelListeningMock: vi.fn(),
   supportedRef: { v: true },
+  realSpeech: false,
 }));
 const { speakResponseMock, startListeningMock, stopListeningMock, supportedRef } = mocks;
 
@@ -22,20 +24,42 @@ vi.mock('../audio/voice', () => ({
   onSpeechEvent: vi.fn(() => () => {}),
 }));
 
-vi.mock('../audio/speechInput', () => ({
-  isSpeechRecognitionSupported: () => mocks.supportedRef.v,
-  startListening: mocks.startListeningMock,
-  stopListening: mocks.stopListeningMock,
-}));
+vi.mock('../audio/speechInput', async importOriginal => {
+  const actual = await importOriginal<typeof import('../audio/speechInput')>();
+  return {
+    ...actual,
+    isSpeechRecognitionSupported: () => mocks.realSpeech ? actual.isSpeechRecognitionSupported() : mocks.supportedRef.v,
+    startListening: (...args: Parameters<typeof actual.startListening>) =>
+      mocks.realSpeech ? actual.startListening(...args) : mocks.startListeningMock(...args),
+    stopListening: () => mocks.realSpeech ? actual.stopListening() : mocks.stopListeningMock(),
+  };
+});
 
 import { ProfileChatTab } from '../components/profile/ProfileChatTab';
 import { useStore } from '../store/useStore';
+import { _resetForTests as resetArbiter, currentHolder } from '../audio/speechRecognitionArbiter';
+
+class _FakeRecognition {
+  static instances: _FakeRecognition[] = [];
+  onresult: ((event: unknown) => void) | null = null;
+  onerror: ((event: { error: string }) => void) | null = null;
+  onend: (() => void) | null = null;
+  start = vi.fn();
+  abort = vi.fn(() => this.onend?.());
+  stop = vi.fn(() => this.onend?.());
+
+  constructor() { _FakeRecognition.instances.push(this); }
+}
 
 beforeEach(() => {
   speakResponseMock.mockReset();
   startListeningMock.mockReset();
   stopListeningMock.mockReset();
+  mocks.cancelListeningMock.mockReset();
+  startListeningMock.mockReturnValue({ cancel: mocks.cancelListeningMock });
   supportedRef.v = true;
+  mocks.realSpeech = false;
+  _FakeRecognition.instances = [];
   // jsdom does not implement scrollIntoView.
   if (!(Element.prototype as any).scrollIntoView) {
     (Element.prototype as any).scrollIntoView = vi.fn();
@@ -72,7 +96,79 @@ beforeEach(() => {
   }) as any;
 });
 
+afterEach(async () => {
+  cleanup();
+  const actual = await vi.importActual<typeof import('../audio/speechInput')>('../audio/speechInput');
+  actual.stopListening();
+  resetArbiter();
+  vi.unstubAllGlobals();
+});
+
 describe('AD-718 ProfileChatTab voice', () => {
+  it('aborts its real browser recognizer when a listening profile unmounts', async () => {
+    mocks.realSpeech = true;
+    vi.stubGlobal('SpeechRecognition', _FakeRecognition);
+    const view = render(<ProfileChatTab agentId="agent-007" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Voice input' }));
+    await screen.findByRole('button', { name: 'Stop listening' });
+    expect(_FakeRecognition.instances).toHaveLength(1);
+    const recognition = _FakeRecognition.instances[0]!;
+    expect(recognition.start).toHaveBeenCalledTimes(1);
+    expect(recognition.abort).not.toHaveBeenCalled();
+
+    view.unmount();
+
+    expect(recognition.abort).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['agent', 'thread'] as const)('cancels recognition on %s replacement and discards a captured retired callback', async change => {
+    mocks.realSpeech = true;
+    vi.stubGlobal('SpeechRecognition', _FakeRecognition);
+    const view = render(<ProfileChatTab agentId="agent-007" threadId="thread-one" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Voice input' }));
+    await screen.findByRole('button', { name: 'Stop listening' });
+    const retired = _FakeRecognition.instances[0]!;
+    expect(retired.start).toHaveBeenCalledTimes(1);
+    const lateResult = retired.onresult!;
+    view.rerender(<ProfileChatTab agentId={change === 'agent' ? 'agent-008' : 'agent-007'} threadId="thread-two" />);
+    await screen.findByRole('button', { name: 'Voice input' });
+    expect(retired.abort).toHaveBeenCalledTimes(1);
+    act(() => lateResult({ results: { length: 1, 0: { 0: { transcript: 'retired input' }, isFinal: true } } }));
+    expect(screen.getByPlaceholderText('Message...')).toHaveValue('');
+    expect(currentHolder()).toBeNull();
+  });
+
+  it('does not abort a newer profile recognizer when the earlier profile unmounts', async () => {
+    mocks.realSpeech = true;
+    vi.stubGlobal('SpeechRecognition', _FakeRecognition);
+    const first = render(<ProfileChatTab agentId="agent-007" />);
+    fireEvent.click(await within(first.container).findByRole('button', { name: 'Voice input' }));
+    const earlier = _FakeRecognition.instances[0]!;
+    const second = render(<ProfileChatTab agentId="agent-008" />);
+    fireEvent.click(await within(second.container).findByRole('button', { name: 'Voice input' }));
+    expect(_FakeRecognition.instances).toHaveLength(2);
+    const current = _FakeRecognition.instances[1]!;
+    expect(earlier.abort).toHaveBeenCalledTimes(1);
+    first.unmount();
+    expect(current.abort).not.toHaveBeenCalled();
+    expect(currentHolder()?.holder).toBe('press_to_talk');
+    second.unmount();
+    expect(current.abort).toHaveBeenCalledTimes(1);
+    expect(currentHolder()).toBeNull();
+  });
+
+  it('does not acquire capture during StrictMode replay and cancels exactly the explicit mic start', async () => {
+    mocks.realSpeech = true;
+    vi.stubGlobal('SpeechRecognition', _FakeRecognition);
+    const view = render(<ProfileChatTab agentId="agent-007" />, { reactStrictMode: true });
+    const button = await screen.findByRole('button', { name: 'Voice input' });
+    expect(_FakeRecognition.instances).toHaveLength(0);
+    fireEvent.click(button);
+    expect(_FakeRecognition.instances).toHaveLength(1);
+    view.unmount();
+    expect(_FakeRecognition.instances[0]!.abort).toHaveBeenCalledTimes(1);
+  });
+
   it('mic button renders only when speech recognition supported', async () => {
     supportedRef.v = false;
     render(<ProfileChatTab agentId="agent-007" />);
@@ -87,7 +183,8 @@ describe('AD-718 ProfileChatTab voice', () => {
     // After click, listening=true → button label updates to "Stop listening"
     const stopBtn = await screen.findByLabelText('Stop listening');
     fireEvent.click(stopBtn);
-    expect(stopListeningMock).toHaveBeenCalledTimes(1);
+    expect(mocks.cancelListeningMock).toHaveBeenCalledTimes(1);
+    expect(stopListeningMock).not.toHaveBeenCalled();
   });
 
   it('agent reply triggers speakResponse when voiceEnabled is true', async () => {

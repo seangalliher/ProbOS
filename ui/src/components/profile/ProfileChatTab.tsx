@@ -6,7 +6,7 @@ import {
 import { denialNotice, policyDenialOf } from '../../chat/policyDenial';
 import { useMeetingVoice } from '../../audio/useMeetingVoice';
 import type { PerAgentReply } from '../../audio/meetingVoice';
-import { startListening, stopListening, isSpeechRecognitionSupported } from '../../audio/speechInput';
+import { startListening, isSpeechRecognitionSupported, type ListeningHandle } from '../../audio/speechInput';
 import { ArtifactCard } from '../artifacts/ArtifactCard';
 import { parseArtifactStub } from '../artifacts/artifactApi';
 import { A2UIChoiceCard } from '../a2ui/A2UIChoiceCard';
@@ -30,7 +30,6 @@ import {
 import { onSpeechEvent } from '../../audio/voice';
 import {
   armTransformersStt as armWhisperStt,
-  disarmTransformersStt as disarmWhisperStt,
   onTransformersTranscript as onWhisperTranscript,
   onTransformersTranscribing as onWhisperTranscribing,
   onTransformersProgress,
@@ -347,15 +346,6 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // Browser-SR's onend → onresult is effectively instant, so we only
   // wire this to the whisper path. Falls back to false on error.
   const [processing, setProcessing] = useState(false);
-  useEffect(() => {
-    const unsub = onWhisperTranscribing((active) => {
-      setProcessing(active);
-    });
-    return () => {
-      try { unsub(); } catch { /* Tier-2 */ }
-      setProcessing(false);
-    };
-  }, []);
   const [screenMode, setScreenMode] = useState<ScreenMode>(() => loadScreenMode(agentId));
   const [screenMenuOpen, setScreenMenuOpen] = useState(false);
   const [screenShareInFlight, setScreenShareInFlight] = useState(false);
@@ -376,17 +366,29 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // whisper→browser fallback in primary=whisper mode is independent of
   // the browser→whisper fallback in primary=browser mode (AD-760).
   const emptyWhisperCountRef = useRef(0);
-  // BF-319: ref holding the current click cycle's transcript-listener
-  // unsubscribe handle. The listener was previously closed-over inside
-  // the click handler with no way for the cancel branch (a second click
-  // while listening) to unsubscribe it — leaving a zombie listener in
-  // the global _transcriptListeners set. The next click's transcript
-  // event would fan out to BOTH zombie + new listener, calling
-  // sendText() twice with the same text, double-posting the Captain's
-  // message AND triggering a duplicate agent reply. Storing the unsub
-  // on a ref lets EVERY exit path (cancel click, agent switch, unmount)
-  // tear the listener down cleanly.
-  const transcriptUnsubRef = useRef<(() => void) | null>(null);
+  const localCaptureReleaseRef = useRef<(() => void) | null>(null);
+  const browserListeningRef = useRef<ListeningHandle | null>(null);
+  const captureGeneration = useRef(0);
+  const captureTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const cancelBrowserListening = useCallback((): void => {
+    const handle = browserListeningRef.current;
+    browserListeningRef.current = null;
+    handle?.cancel();
+  }, []);
+  const cancelCapture = useCallback((): void => {
+    captureGeneration.current += 1;
+    for (const timer of captureTimers.current) clearTimeout(timer);
+    captureTimers.current.clear();
+    cancelBrowserListening();
+    const release = localCaptureReleaseRef.current;
+    localCaptureReleaseRef.current = null;
+    release?.();
+  }, [cancelBrowserListening]);
+  useEffect(() => {
+    setListening(false);
+    setProcessing(false);
+    return cancelCapture;
+  }, [agentId, activeThreadId, cancelCapture]);
   // AD-985: refs the relocated arm effect reads at callback time without
   // re-arming on every render. ``speakingAgentIdRef`` is the meeting-wide echo
   // gate source (the AD-922 ``speakingAgentId != null`` rule); ``sendTextRef``
@@ -425,9 +427,14 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       } else {
         setTransformersProgress(event);
       }
+      if (event.status === 'error' && localCaptureReleaseRef.current) {
+        cancelCapture();
+        setListening(false);
+        setProcessing(false);
+      }
     });
     return () => { try { unsub(); } catch { /* Tier-2 */ } };
-  }, []);
+  }, [cancelCapture]);
   const globalVoiceEnabled = useStore((s) => s.voiceEnabled);
   // AD-949 call-scoped audio flag (default ON, session-scoped). AD-985 gates
   // the meeting open-mic on it (consistent with useMeetingVoice).
@@ -2564,22 +2571,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
                   // logic stays in the popover.
                 }
                 if (listening) {
-                  stopListening();
-                  // BF-290: also disarm whisper fallback in case the previous
-                  // press armed it but the operator never spoke. stopListening
-                  // only stops the browser SpeechRecognition; whisperStt is a
-                  // separate subsystem that needs explicit teardown.
-                  try { disarmWhisperStt(); } catch { /* Tier-2 */ }
-                  // BF-319: tear down the per-click transcript listener so
-                  // a straggler transcript event (whisper-medium can take
-                  // 3-4s) does not fire a zombie handler. Without this,
-                  // a cancel-then-new-PTT sequence registers TWO listeners
-                  // that BOTH call sendText on the next transcript →
-                  // duplicate Captain message + duplicate agent reply.
-                  if (transcriptUnsubRef.current) {
-                    try { transcriptUnsubRef.current(); } catch { /* Tier-2 */ }
-                    transcriptUnsubRef.current = null;
-                  }
+                  cancelCapture();
                   setListening(false);
                   setProcessing(false); // BF-294: cancel any pending processing visual
                   return;
@@ -2598,6 +2590,100 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
                   );
                   return;
                 }
+                cancelCapture();
+                const generation = captureGeneration.current;
+                const destination = { agentId, threadId: activeThreadId };
+                const current = (): boolean => captureGeneration.current === generation
+                  && transcriptOwnerRef.current.agentId === destination.agentId
+                  && transcriptOwnerRef.current.threadId === destination.threadId;
+                let settled = false;
+                const accept = (): boolean => {
+                  if (!current() || settled) return false;
+                  settled = true;
+                  return true;
+                };
+                const scheduleCapture = (callback: () => void, delay: number): void => {
+                  const timer = setTimeout(() => {
+                    captureTimers.current.delete(timer);
+                    if (current()) callback();
+                  }, delay);
+                  captureTimers.current.add(timer);
+                };
+                const startBrowserCapture = (countEmpty: boolean): void => {
+                  const handle = startListening(
+                    text => {
+                      if (!accept()) return;
+                      if (countEmpty) emptyTranscriptCountRef.current = 0;
+                      setInput(text);
+                      setListening(false);
+                      cancelBrowserListening();
+                      scheduleCapture(() => { void sendText(text); }, 100);
+                    },
+                    () => {
+                      if (!accept()) return;
+                      if (countEmpty) emptyTranscriptCountRef.current += 1;
+                      setListening(false);
+                    },
+                    () => {
+                      if (!accept()) return;
+                      cancelBrowserListening();
+                      setListening(false);
+                    },
+                    { continuous: true, interimResults: true, endOfSpeechGapMs: 1500 },
+                  );
+                  if (!current() || settled) handle.cancel();
+                  else browserListeningRef.current = handle;
+                };
+                const startLocalCapture = (countEmpty: boolean): void => {
+                  const scope = Symbol();
+                  const cleanups = new Set<() => void>();
+                  let released = false;
+                  const release = (): void => {
+                    if (released) return;
+                    released = true;
+                    if (localCaptureReleaseRef.current === release) localCaptureReleaseRef.current = null;
+                    for (const cleanup of [...cleanups]) {
+                      cleanups.delete(cleanup);
+                      try { cleanup(); } catch {
+                        console.warn('Profile local capture cleanup failed; remaining owned resources will still be released.');
+                      }
+                    }
+                  };
+                  const retain = (cleanup: () => void): void => {
+                    if (released || !current()) cleanup();
+                    else cleanups.add(cleanup);
+                  };
+                  localCaptureReleaseRef.current = release;
+                  try {
+                    retain(onWhisperTranscribing(active => {
+                      if (!released && !settled && current()) setProcessing(active);
+                    }, scope));
+                    if (released || !current()) return;
+                    retain(onWhisperTranscript(text => {
+                      if (released || !accept()) return;
+                      release();
+                      setListening(false);
+                      setProcessing(false);
+                      const meaningful = text.trim().length > 0;
+                      if (countEmpty) {
+                        emptyWhisperCountRef.current = meaningful ? 0 : emptyWhisperCountRef.current + 1;
+                        scheduleCapture(() => setProcessing(false), 300);
+                      }
+                      if (meaningful) {
+                        setInput(text);
+                        scheduleCapture(() => { void sendText(text); }, 100);
+                      }
+                    }, scope));
+                    if (!released && current()) retain(armWhisperStt(scope));
+                  } catch {
+                    release();
+                    if (current()) {
+                      setListening(false);
+                      setProcessing(false);
+                    }
+                    console.warn('Profile local speech capture could not start; capture stopped and press-to-talk remains available.');
+                  }
+                };
                 setListening(true);
                 // BF-301 (was AD-826) — branch by primary_stt. Accept
                 // both 'transformers' (new default) and 'whisper'
@@ -2617,65 +2703,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
                     console.info(
                       `AD-826: browser-SR fallback for agent ${agentId} after 2 empty whisper transcripts`,
                     );
-                    let gotResult = false;
-                    startListening(
-                      (text) => {
-                        gotResult = true;
-                        setInput(text);
-                        setListening(false);
-                        // BF-300: terminate the continuous SR session so
-                        // the upcoming TTS reply isn't captured as the
-                        // next utterance (#774 echo loop).
-                        try { stopListening(); } catch { /* Tier-2 */ }
-                        setTimeout(() => { void sendText(text); }, 100);
-                      },
-                      () => {
-                        // BF-293 mirror: empty browser SR in whisper-
-                        // primary fallback mode does NOT increment the
-                        // whisper counter; the operator already paid the
-                        // whisper-empty price to get here.
-                        if (!gotResult) { /* no counter update */ }
-                        setListening(false);
-                      },
-                      () => setListening(false),
-                      { continuous: true, interimResults: true, endOfSpeechGapMs: 1500 },
-                    );
+                    startBrowserCapture(false);
                     return;
                   }
-                  const unsub = onWhisperTranscript((text: string) => {
-                    try { unsub(); } catch { /* Tier-2 */ }
-                    transcriptUnsubRef.current = null; // BF-319: clear ref on natural completion
-                    try { disarmWhisperStt(); } catch { /* Tier-2 */ }
-                    if (text && text.trim().length > 0) {
-                      emptyWhisperCountRef.current = 0;
-                      setInput(text);
-                      setListening(false);
-                      setProcessing(false);
-                      // BF-314: sweep ``processing`` again after 300 ms.
-                      // Belt-and-suspenders for BF-311: even when the
-                      // worker's finally-block ``transcribing: false`` is
-                      // delivered, a SECOND consumer (IntentSurface in
-                      // wake-word mode, ConversationController if armed
-                      // mid-utterance) can re-emit ``transcribing: true``
-                      // for an overlapping arm cycle and leave the
-                      // spinner stuck. By the time 300 ms has passed,
-                      // any straggler from the previous arm cycle has
-                      // arrived; force-false guarantees the spinner
-                      // clears for THIS chat tab regardless of what other
-                      // subsystems do.
-                      setTimeout(() => setProcessing(false), 300);
-                      // BF-300: disarmWhisperStt above already terminated
-                      // whisper capture; nothing further needed here.
-                      setTimeout(() => { void sendText(text); }, 100);
-                    } else {
-                      emptyWhisperCountRef.current += 1;
-                      setListening(false);
-                      setProcessing(false);
-                      setTimeout(() => setProcessing(false), 300); // BF-314 sweep
-                    }
-                  });
-                  transcriptUnsubRef.current = unsub; // BF-319: enable cancel-path cleanup
-                  armWhisperStt();
+                  startLocalCapture(true);
                   return;
                 }
 
@@ -2689,23 +2720,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
                     `AD-826: whisper primary but unhealthy (backend_available=${voiceHealth?.backend_available}); ` +
                       `using browser SR for agent ${agentId}`,
                   );
-                  let gotResult = false;
-                  startListening(
-                    (text) => {
-                      gotResult = true;
-                      setInput(text);
-                      setListening(false);
-                      // BF-300: terminate the continuous SR session — see 3a.
-                      try { stopListening(); } catch { /* Tier-2 */ }
-                      setTimeout(() => { void sendText(text); }, 100);
-                    },
-                    () => {
-                      if (!gotResult) { /* no counter update on honest-degrade press */ }
-                      setListening(false);
-                    },
-                    () => setListening(false),
-                    { continuous: true, interimResults: true, endOfSpeechGapMs: 1500 },
-                  );
+                  startBrowserCapture(false);
                   return;
                 }
 
@@ -2716,54 +2731,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
                   // results. One-shot — reset counter.
                   emptyTranscriptCountRef.current = 0;
                   console.info(`AD-760: whisperStt fallback for agent ${agentId} after 2 empty transcripts`);
-                  const unsub = onWhisperTranscript((text: string) => {
-                    try { unsub(); } catch { /* Tier-2 */ }
-                    transcriptUnsubRef.current = null; // BF-319: clear ref on natural completion
-                    try { disarmWhisperStt(); } catch { /* Tier-2 */ }
-                    setInput(text);
-                    setListening(false);
-                    setProcessing(false); // BF-311: clear spinner; worker teardown race can lose transcribing:false.
-                    // BF-300: disarmWhisperStt above terminated whisper
-                    // capture. The legacy AD-760 browser-SR path is not
-                    // running in this fallback branch.
-                    // BF-292: pass ``text`` as an argument so the timer
-                    // does not depend on the post-render value of ``input``.
-                    setTimeout(() => { void sendText(text); }, 100);
-                  });
-                  transcriptUnsubRef.current = unsub; // BF-319: enable cancel-path cleanup
-                  armWhisperStt();
-                  // BF-290: clear visual "listening" state so the operator can
-                  // press again to abort (which now also disarms whisper via
-                  // the stopListening branch above). The whisper onTranscript
-                  // handler at the top of this block sets listening=false on
-                  // success; this matches that semantics on the give-up path.
+                  startLocalCapture(false);
                   setListening(false);
                   return;
                 }
-                let gotResult = false;
-                startListening(
-                  (text) => {
-                    gotResult = true;
-                    emptyTranscriptCountRef.current = 0;
-                    setInput(text);
-                    setListening(false);
-                    // BF-300: terminate the continuous SR session so the
-                    // agent's TTS reply isn't captured and auto-sent as
-                    // the next user message (#774 echo loop).
-                    try { stopListening(); } catch { /* Tier-2 */ }
-                    // BF-292: pass ``text`` as an argument so the timer
-                    // does not depend on the post-render value of ``input``.
-                    setTimeout(() => { void sendText(text); }, 100);
-                  },
-                  () => {
-                    if (!gotResult) {
-                      emptyTranscriptCountRef.current += 1;
-                    }
-                    setListening(false);
-                  },
-                  () => setListening(false),
-                  { continuous: true, interimResults: true, endOfSpeechGapMs: 1500 },
-                );
+                startBrowserCapture(true);
               }}
               onContextMenu={(event) => {
                 event.preventDefault();

@@ -145,6 +145,41 @@ describe('AD-920 MeetingView gallery', () => {
     expect(screen.queryByTestId('crew-vrm-bones')).toBeNull();
   });
 
+  it('replaces the participant with the same asset URL without accepting the retired slot error', async () => {
+    profileMock.vrmByAgent.echo = '/avatars/shared.vrm';
+    profileMock.vrmByAgent.bones = '/avatars/shared.vrm';
+    const agents = [mkAgent({ id: 'echo', callsign: 'Echo' }), mkAgent({ id: 'bones', callsign: 'Bones' })];
+    seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), agents);
+    render(<MeetingView threadId="t1" />);
+    await screen.findByTestId('crew-vrm-echo');
+    const retiredError = crewVrmMock.lastOnLoadError;
+    expect(retiredError).toEqual(expect.any(Function));
+    act(() => seed(mkThread({ id: 't1', participants: ['captain', 'bones'] }), agents));
+    await screen.findByTestId('crew-vrm-bones');
+    act(() => retiredError?.());
+    expect(screen.queryByTestId('avatar-slot-echo')).toBeNull();
+    expect(screen.getByTestId('crew-vrm-bones')).toBeTruthy();
+    expect(screen.getByTestId('avatar-caption-bones')).toHaveTextContent('Bones');
+  });
+
+  it('rehydrates a removed participant on rejoin without retaining its failed slot', async () => {
+    profileMock.vrmByAgent.echo = '/avatars/echo.vrm';
+    const agents = [mkAgent({ id: 'echo', callsign: 'Echo' })];
+    seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), agents);
+    render(<MeetingView threadId="t1" />);
+    await screen.findByTestId('crew-vrm-echo');
+    const retiredError = crewVrmMock.lastOnLoadError;
+    act(() => retiredError?.());
+    expect(within(screen.getByTestId('avatar-slot-echo')).getByTestId('agent-avatar-badge')).toBeTruthy();
+    act(() => seed(mkThread({ id: 't1', participants: ['captain'] }), agents));
+    expect(screen.queryByTestId('avatar-slot-echo')).toBeNull();
+    act(() => seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), agents));
+    await screen.findByTestId('crew-vrm-echo');
+    act(() => retiredError?.());
+    expect(screen.getByTestId('crew-vrm-echo')).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/api/agent/echo/profile'))).toHaveLength(2);
+  });
+
   it('falls back to badge when CrewVRM onLoadError fires', async () => {
     profileMock.vrmByAgent.echo = '/avatars/echo.vrm';
     seed(mkThread({ id: 't1', participants: ['captain', 'echo'] }), [

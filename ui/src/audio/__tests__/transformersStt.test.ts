@@ -15,7 +15,7 @@ import {
   disarmTransformersStt,
   terminateTransformersStt,
 } from '../transformersStt';
-import { _resetPcmSubscribers } from '../voiceActivity';
+import { _resetPcmSubscribers, _peekPcmSubscriberCount as _pcmSubscriberCount, subscribePcm } from '../voiceActivity';
 
 interface FakeWorker {
   postMessage: ReturnType<typeof vi.fn>;
@@ -122,5 +122,81 @@ describe('BF-320: worker survives across arm/disarm cycles', () => {
 
     expect(factory).toHaveBeenCalledTimes(1);
     expect(_isArmed()).toBe(true);
+  });
+
+  it('scoped and legacy PCM subscriptions coexist with an independent App tap and resident worker', () => {
+    const fake = makeFakeWorker();
+    const factory = vi.fn(() => fake as unknown as Worker);
+    _setTransformersWorkerOverride(factory);
+    const releaseApp = subscribePcm({ onFrame: vi.fn() });
+    try {
+      const scope = Symbol();
+      const cancel = armTransformersStt(scope);
+      const siblingCancel = armTransformersStt(Symbol());
+      armTransformersStt();
+      expect(_pcmSubscriberCount()).toBe(4);
+      disarmTransformersStt();
+      expect(_pcmSubscriberCount()).toBe(3);
+      cancel();
+      cancel();
+      expect(_pcmSubscriberCount()).toBe(2);
+      armTransformersStt(scope);
+      cancel();
+      expect(_pcmSubscriberCount()).toBe(3);
+      siblingCancel();
+      expect(_pcmSubscriberCount()).toBe(2);
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(fake.postMessage).toHaveBeenCalledTimes(1);
+      expect(fake.terminate).not.toHaveBeenCalled();
+      terminateTransformersStt();
+      expect(_pcmSubscriberCount()).toBe(1);
+    } finally { releaseApp(); }
+  });
+
+  it.each(['error', 'messageerror'])('%s releases STT taps but preserves independent PCM and permits replacement', eventType => {
+    const first = makeFakeWorker();
+    const next = makeFakeWorker();
+    const factory = vi.fn().mockReturnValueOnce(first).mockReturnValue(next);
+    _setTransformersWorkerOverride(factory);
+    const releaseApp = subscribePcm({ onFrame: vi.fn() });
+    try {
+      armTransformersStt(Symbol());
+      armTransformersStt();
+      expect(_pcmSubscriberCount()).toBe(3);
+      const callback = first.addEventListener.mock.calls.find(([type]) => type === eventType)![1];
+      callback(new Event(eventType));
+      expect(_pcmSubscriberCount()).toBe(1);
+      expect(_isArmed()).toBe(false);
+      expect(first.terminate).toHaveBeenCalledTimes(1);
+      expect(first.removeEventListener).toHaveBeenCalledTimes(3);
+      armTransformersStt(Symbol());
+      expect(_pcmSubscriberCount()).toBe(2);
+      expect(factory).toHaveBeenCalledTimes(2);
+    } finally { releaseApp(); }
+  });
+
+  it('old-worker grace termination cannot terminate a replacement and reset releases only STT subscriptions', () => {
+    vi.useFakeTimers();
+    const releaseApp = subscribePcm({ onFrame: vi.fn() });
+    try {
+      const first = makeFakeWorker();
+      const next = makeFakeWorker();
+      const factory = vi.fn().mockReturnValueOnce(first).mockReturnValue(next);
+      _setTransformersWorkerOverride(factory);
+      armTransformersStt(Symbol());
+      terminateTransformersStt();
+      armTransformersStt(Symbol());
+      vi.advanceTimersByTime(260);
+      expect(first.terminate).toHaveBeenCalledTimes(1);
+      expect(next.terminate).not.toHaveBeenCalled();
+      expect(_pcmSubscriberCount()).toBe(2);
+      _resetTransformersStt();
+      expect(next.terminate).toHaveBeenCalledTimes(1);
+      expect(_pcmSubscriberCount()).toBe(1);
+      expect(_isArmed()).toBe(false);
+    } finally {
+      releaseApp();
+      vi.useRealTimers();
+    }
   });
 });

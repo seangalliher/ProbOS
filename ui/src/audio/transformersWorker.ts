@@ -8,11 +8,9 @@
  *   - ``{ type: 'init', model: string }``     — load the ASR pipeline.
  *     Worker emits ``{ type: 'progress', event }`` during fetch and a
  *     ``{ status: 'ready' }`` event when the pipeline is constructed.
- *   - ``{ type: 'transcribe', samples: Float32Array, sampleRate: number }``
- *     — run inference. Worker emits ``{ type: 'transcribing', active: true }``
- *     then partial ``{ type: 'transcript', text, isPartial: true }`` events
- *     during chunked decoding, a final ``{ type: 'transcript', text,
- *     isPartial: false }``, and ``{ type: 'transcribing', active: false }``.
+ *   - ``{ type: 'transcribe', captureId, jobId, samples, sampleRate }``
+ *     — run inference. Processing, partial/final transcript and completion
+ *     events echo the invocation's immutable IDs and increasing sequence.
  *   - ``{ type: 'shutdown' }`` — release the pipeline and self.close().
  *
  * Privacy invariant: this worker never makes audio-bearing network
@@ -24,6 +22,7 @@ import {
   pipeline,
   type AutomaticSpeechRecognitionPipeline,
 } from '@huggingface/transformers';
+import type { TransformersJobEvent, TransformersJobIdentity } from './transformersStt';
 
 // transformers.js v3 `pipeline()` has heavily overloaded signatures that
 // blow the TS union-type budget when narrowed by string-literal task id.
@@ -40,9 +39,13 @@ const _pipeline = pipeline as unknown as _AsrPipelineFactory;
 
 let _asr: AutomaticSpeechRecognitionPipeline | null = null;
 let _model = 'Xenova/whisper-tiny.en';
+let _initializing: Promise<AutomaticSpeechRecognitionPipeline> | null = null;
+let _closed = false;
+const _scope = self;
+const _running = new Map<string, () => void>();
 
 function _post(message: unknown): void {
-  (self as unknown as Worker).postMessage(message);
+  (_scope as unknown as Worker).postMessage(message);
 }
 
 /**
@@ -66,67 +69,104 @@ function _isMeaningfulTranscript(text: string): boolean {
   return true;
 }
 
-self.addEventListener('message', async (e: MessageEvent) => {
+function _initialize(): Promise<AutomaticSpeechRecognitionPipeline> {
+  if (_initializing) return _initializing;
+  _initializing = Promise.resolve().then(() => _pipeline(
+    'automatic-speech-recognition', _model,
+    { progress_callback: (event: unknown) => {
+      if (!_closed) _post({ type: 'progress', event });
+    } },
+  )).then(async asr => {
+    if (_closed) {
+      await asr.dispose();
+      throw new Error('Local STT worker closed during initialization.');
+    }
+    _asr = asr;
+    _post({ type: 'progress', event: { status: 'ready', name: _model } });
+    return asr;
+  });
+  return _initializing;
+}
+
+function _validIdentity(message: Record<string, unknown>): message is Record<string, unknown> & TransformersJobIdentity {
+  return typeof message.captureId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(message.captureId) &&
+    typeof message.jobId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(message.jobId);
+}
+
+_scope.addEventListener('message', async (e: MessageEvent) => {
   const msg = e.data;
-  if (!msg || typeof msg !== 'object') return;
+  if (_closed || !msg || typeof msg !== 'object') return;
 
   if (msg.type === 'init') {
-    _model = typeof msg.model === 'string' && msg.model.length > 0 ? msg.model : _model;
+    if (!_initializing) _model = typeof msg.model === 'string' && msg.model.length > 0 ? msg.model : _model;
     try {
-      _asr = await _pipeline(
-        'automatic-speech-recognition',
-        _model,
-        {
-          progress_callback: (event: unknown) => {
-            // Forward HF progress shape verbatim; the main thread normalizes.
-            _post({ type: 'progress', event });
-          },
-        },
-      );
-      _post({ type: 'progress', event: { status: 'ready', name: _model } });
-    } catch (err) {
-      _post({
+      await _initialize();
+    } catch {
+      if (!_closed) _post({
         type: 'progress',
-        event: { status: 'error', name: _model, file: String(err) },
+        event: { status: 'error', name: _model, file: 'Local model initialization failed; jobs return explicit failure.' },
       });
     }
     return;
   }
 
   if (msg.type === 'transcribe') {
-    if (!_asr) return;
-    _post({ type: 'transcribing', active: true });
+    if (!_validIdentity(msg) || _running.has(msg.jobId)) return;
+    const identity: TransformersJobIdentity = Object.freeze({ captureId: msg.captureId, jobId: msg.jobId });
+    let sequence = 0;
+    let finished = false;
+    const send = (event: Omit<Extract<TransformersJobEvent, { type: 'transcript' }>, keyof TransformersJobIdentity | 'sequence'> |
+      Omit<Extract<TransformersJobEvent, { type: 'transcribing' }>, keyof TransformersJobIdentity | 'sequence'> |
+      Omit<Extract<TransformersJobEvent, { type: 'complete' }>, keyof TransformersJobIdentity | 'sequence'>): void => {
+      if (!finished) _post({ ...identity, ...event, sequence: ++sequence });
+    };
+    const finish = (outcome: 'success' | 'error'): void => {
+      if (finished) return;
+      send({ type: 'transcribing', active: false });
+      send({ type: 'complete', outcome });
+      finished = true;
+      _running.delete(identity.jobId);
+    };
+    _running.set(identity.jobId, () => finish('error'));
+    let outcome: 'success' | 'error' = 'error';
     try {
-      const samples = msg.samples as Float32Array;
-      const out = await _asr(samples, {
-        sampling_rate: msg.sampleRate ?? 16000,
+      send({ type: 'transcribing', active: true });
+      if (!(msg.samples instanceof Float32Array) || !msg.samples.length ||
+          msg.samples.length > 16000 * 30 || msg.sampleRate !== 16000) return;
+      const asr = _asr ?? await (_initializing ?? Promise.reject(new Error('Local model not initialized.')));
+      if (finished || _closed) return;
+      if (!asr) throw new Error('Local model initialization returned no pipeline.');
+      const out = await asr(msg.samples, {
+        sampling_rate: 16000,
         chunk_length_s: 30,
         stride_length_s: 5,
         return_timestamps: false,
-        // chunk_callback fires per chunk during transcription, enabling
-        // progressive partial transcripts (xenova/whisper-web pattern).
         chunk_callback: (chunk: { text?: string }) => {
           if (chunk && typeof chunk.text === 'string' && _isMeaningfulTranscript(chunk.text)) {
-            _post({ type: 'transcript', text: chunk.text, isPartial: true });
+            send({ type: 'transcript', text: chunk.text, isPartial: true });
           }
         },
       } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
-      const text = (out as { text?: string })?.text ?? '';
-      if (_isMeaningfulTranscript(text)) {
-        _post({ type: 'transcript', text, isPartial: false });
-      }
-    } catch (err) {
-      // Tier-2 log; no transcript emitted on failure.
-      console.warn('[BF-301] transcribe error', err);
+      const candidate = (out as { text?: unknown })?.text;
+      const text = typeof candidate === 'string' && _isMeaningfulTranscript(candidate) ? candidate : '';
+      send({ type: 'transcript', text, isPartial: false });
+      outcome = 'success';
+    } catch {
+      console.warn('Local STT inference or initialization failed; completing the job without recognized text.');
     } finally {
-      _post({ type: 'transcribing', active: false });
+      finish(outcome);
     }
     return;
   }
 
   if (msg.type === 'shutdown') {
+    _closed = true;
+    for (const finish of [..._running.values()]) finish();
+    const asr = _asr;
     _asr = null;
-    self.close();
+    try { await asr?.dispose(); } catch {
+      console.warn('Local STT model disposal failed; closing the worker releases its remaining resources.');
+    } finally { _scope.close(); }
     return;
   }
 });
