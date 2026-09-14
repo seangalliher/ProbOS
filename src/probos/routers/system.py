@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from probos.api_models import ShutdownRequest
+from probos.config import SystemConfig
 from probos.crew_session_live import LoadedCrewSessionProjection, load_crew_session_projection
 from probos.crew_session_projection import CrewSessionProjectionError
 from probos.events import OSActivityEvent
@@ -22,6 +23,7 @@ from probos.notification_context import NotificationContextError, NotificationCo
 from probos.proactive import build_proactive_status_snapshot
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime, get_task_tracker
+from probos.routers.readiness import Feature, integration_availability
 from probos.types import IntentMessage
 
 logger = logging.getLogger(__name__)
@@ -31,7 +33,13 @@ router = APIRouter(prefix="/api", tags=["system"])
 
 @router.get("/health")
 async def health(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
+    """Liveness and legacy agent telemetry, not an integration readiness gate.
+
+    liveness means this handler answered. health_scope describes the unchanged
+    mean confidence calculation; zero population is explicitly unmeasured.
+    """
     status = runtime.status()
+    population_count = runtime.registry.count
     return {
         "status": "ok",
         "crew_agents": status.get("crew_agents", 0),
@@ -40,9 +48,18 @@ async def health(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
             sum(
                 a.confidence
                 for a in runtime.registry.all()
-            ) / max(1, runtime.registry.count),
+            ) / max(1, population_count),
             2,
         ),
+        "liveness": True,
+        "liveness_scope": "http_handler_response",
+        "health_scope": {
+            "metric": "mean_confidence",
+            "population": "registered_agents",
+            "population_count": population_count,
+            "empty_population": population_count == 0,
+            "integrations_assessed": False,
+        },
     }
 
 
@@ -258,7 +275,13 @@ async def get_intent_metrics(runtime: Any = Depends(get_runtime)) -> dict[str, A
 
 @router.get("/system/services")
 async def system_services(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
-    """AD-436: Service status for Bridge System panel."""
+    """Legacy services plus six request-local integration observations.
+
+    services entries retain their legacy names/statuses. integrations entries
+    carry id, state, scope, code, controlled message and retryable. Presence
+    means initialized, never verified I/O. NATS ready is connection-only and
+    ignores historical startup warnings; no active probes are performed.
+    """
     services = []
     checks = [
         ("Ward Room", runtime.ward_room),
@@ -296,7 +319,33 @@ async def system_services(runtime: Any = Depends(get_runtime)) -> dict[str, Any]
     else:
         services.append({"name": "LLM Proxy", "status": "offline"})
 
-    return {"services": services}
+    config = getattr(runtime, "config", None)
+    integration_dependencies: list[tuple[Feature, str]] = [
+        ("records", "records_store"),
+        ("knowledge_browser", "knowledge_browser"),
+        ("skill_requests", "skill_request_store"),
+        ("ontology_graph", "ontology"),
+        ("spatial_explorer", "spatial_layout"),
+    ]
+    integrations = [
+        integration_availability(
+            config, feature, initialized=getattr(runtime, attribute, None) is not None,
+        )
+        for feature, attribute in integration_dependencies
+    ]
+    bus = getattr(runtime, "nats_bus", None)
+    connected = None
+    if bus is not None and isinstance(config, SystemConfig) and config.nats.enabled is True:
+        try:
+            observation = bus.connected
+            if type(observation) is bool:
+                connected = observation
+        except Exception:
+            logger.warning("NATS connection observation failed; connection state unknown; reporting unavailable")
+    integrations.append(integration_availability(
+        config, "nats", initialized=bus is not None, connected=connected,
+    ))
+    return {"services": services, "integrations": integrations}
 
 
 @router.get("/system/llm-health")

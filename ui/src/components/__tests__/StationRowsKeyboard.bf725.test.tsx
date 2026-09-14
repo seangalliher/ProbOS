@@ -13,10 +13,9 @@
  * not the element is focusable, so the assertion proves the handler is wired
  * and says nothing about whether a human without a mouse can get to it.
  *
- * Every section is `defaultOpen: false`, so a station row does not exist until
- * its section is expanded. That makes the honest test the full path — open a
- * section by keyboard, then reach a row by keyboard — which is what a keyboard
- * user actually has to do.
+ * Station sections are `defaultOpen: false`; the Approvals feed may start open.
+ * A station row does not exist until its section is expanded. Test the full
+ * path: open a station section by keyboard, then reach a row by keyboard.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
@@ -63,14 +62,17 @@ const stationRows = (c: HTMLElement) =>
       !el.hasAttribute('aria-expanded'),
   );
 
-/** Open the first collapsed section using the keyboard only. */
+/** Open the collapsed Communications station using the keyboard only. */
 async function openFirstSection(container: HTMLElement) {
   const user = userEvent.setup();
-  const header = sectionHeaders(container)[0];
+  const header = sectionHeaders(container).find(candidate =>
+    candidate.textContent?.trim().startsWith('Communications ('))!;
   expect(header).toBeTruthy();
+  expect(header.getAttribute('aria-expanded')).toBe('false');
   header.focus();
   await user.keyboard('{Enter}');
   expect(header.getAttribute('aria-expanded')).toBe('true');
+  expect(stationRows(container).length).toBeGreaterThan(0);
   return user;
 }
 

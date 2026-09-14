@@ -51,7 +51,7 @@ const CAPABILITY_ROW = {
 let decided = false;
 
 function okJson(body: unknown): Response {
-  return { ok: true, status: 200, json: async () => body } as Response;
+  return new Response(JSON.stringify(body), { status: 200 });
 }
 
 /** Routes the capability queue to one pending row; everything else is empty. */
@@ -69,7 +69,13 @@ function approvalsFetch() {
 
 function resetApprovalState(): void {
   decided = false;
+  useStore.getState().cancelPendingApprovals();
+  const initial = useStore.getInitialState();
   useStore.setState({
+    approvalResources: initial.approvalResources,
+    approvalPoll: initial.approvalPoll,
+    approvalControllers: { capability: null, skill: null },
+    approvalIssuedSeq: { capability: 0, skill: 0 },
     pendingApprovals: [],
     decidedApprovals: new Set<string>(),
     approvalRequestSeq: 0,
@@ -344,6 +350,38 @@ describe('BF-724 aria-expanded tracks the collapse state', () => {
 });
 
 describe('BF-724 the centre is a modal dialog', () => {
+  it('keeps unavailable skill refresh keyboard-operable and inside the focus trap', async () => {
+    const user = userEvent.setup();
+    let down = true;
+    const transport = vi.fn<typeof fetch>().mockImplementation(async input => {
+      if (String(input).startsWith('/api/skill-requests') && down) {
+        return new Response(JSON.stringify({ detail: 'skill request store not available' }), { status: 503 });
+      }
+      return okJson({ requests: [] });
+    });
+    vi.stubGlobal('fetch', transport);
+    useStore.setState({ approvalsCenterOpen: true });
+    render(<ApprovalsCenterPanel />);
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Skill requests status' })).toHaveTextContent('Unavailable.'));
+    expect(screen.queryByTestId('approvals-center-empty')).toBeNull();
+    const refresh = await tabUntil(user, element => element?.getAttribute('aria-label') === 'Refresh skill requests');
+    expect(dialog.contains(refresh)).toBe(true);
+    expect(refresh.tagName).toBe('BUTTON');
+    const before = transport.mock.calls.length;
+    down = false;
+    await user.keyboard('{Enter}');
+    expect(await screen.findByTestId('approvals-center-empty')).toBeTruthy();
+    expect(transport.mock.calls.length).toBeGreaterThan(before);
+    expect(refresh).toHaveFocus();
+    const controls = dialogControls(dialog);
+    controls[controls.length - 1].focus();
+    await user.tab();
+    expect(controls[0]).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   async function openCentre(user: ReturnType<typeof userEvent.setup>) {
     render(
       <>

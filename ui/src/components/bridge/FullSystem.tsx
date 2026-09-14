@@ -4,11 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { Lock, Unlock, Pin } from '../icons/Glyphs';
 import DesktopConsole from '../desktop/DesktopConsole';
 import ConnectPhoneCard from './ConnectPhoneCard';
-
-interface ServiceStatus {
-  name: string;
-  status: 'online' | 'offline' | 'degraded';
-}
+import { ServiceReadiness } from './BridgeSystem';
+import { useServiceStatus } from '../../hooks/useServiceStatus';
+import type { ServiceStatus } from '../../hooks/useServiceStatus';
 
 interface ThreadSummary {
   id: string;
@@ -47,42 +45,25 @@ function ServiceCard({ service }: { service: ServiceStatus }) {
         marginLeft: 'auto', fontSize: 9, color: STATUS_COLORS[service.status] || '#555',
         fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' as const,
       }}>
-        {service.status}
+        {service.status === 'online' ? 'initialized' : service.status === 'offline' ? 'not initialized' : 'degraded'}
       </span>
     </div>
   );
 }
 
 function ServicesGrid() {
-  const [services, setServices] = useState<ServiceStatus[]>([]);
-
-  const fetchServices = useCallback(async () => {
-    try {
-      const res = await fetch('/api/system/services');
-      const data = await res.json();
-      setServices(data.services || []);
-    } catch { /* swallow */ }
-  }, []);
-
-  useEffect(() => {
-    fetchServices();
-    const interval = setInterval(fetchServices, 10000);
-    return () => clearInterval(interval);
-  }, [fetchServices]);
-
-  const online = services.filter(s => s.status === 'online').length;
+  const status = useServiceStatus();
+  const { services } = status;
 
   return (
-    <div>
+    <section aria-label="System services">
       <div style={{
         fontSize: 10, color: '#666', marginBottom: 8, fontWeight: 600, letterSpacing: 1,
         display: 'flex', alignItems: 'center', gap: 8,
       }}>
         SERVICES
-        <span style={{ color: '#888', fontWeight: 400 }}>
-          {online}/{services.length} online
-        </span>
       </div>
+      <ServiceReadiness status={status} />
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
@@ -90,7 +71,7 @@ function ServicesGrid() {
       }}>
         {services.map(s => <ServiceCard key={s.name} service={s} />)}
       </div>
-    </div>
+    </section>
   );
 }
 

@@ -1,5 +1,48 @@
 /* HXI TypeScript types matching Python event schema (AD-255) */
 
+export interface SkillRequestView {
+  id: string;
+  agent_id: string;
+  skill_id: string;
+  skill_label: string;
+  source: string;
+  justification: string;
+  status: string;
+  linked_simulation_id: string | null;
+  created_at: number;
+  decided_at: number | null;
+  decided_by: string;
+  decision_reason: string;
+  pre_metric: number | null;
+  post_metric: number | null;
+}
+
+export interface CapabilityApprovalView {
+  id: string;
+  agent_id: string;
+  kind: string;
+  target: string;
+  created_at: number;
+  rationale?: string;
+  work_item_id?: string | null;
+  status?: string;
+  decided_at?: number | null;
+  decided_by?: string;
+  decision_reason?: string;
+  payload?: Record<string, unknown> | null;
+}
+
+export type ApprovalQueue = 'capability' | 'skill';
+export interface ApprovalPayload {
+  requests: (CapabilityApprovalView | SkillRequestView)[];
+}
+
+export interface ApprovalRefreshOptions {
+  queues?: ApprovalQueue[];
+  automatic?: boolean;
+  signal?: AbortSignal;
+}
+
 export interface Agent {
   id: string;
   agentType: string;

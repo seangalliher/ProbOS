@@ -6,20 +6,24 @@ runtime's ``skill_request_store`` at None — the mutating endpoints must 503.
 """
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from probos.config import SystemConfig
 from probos.routers.deps import get_runtime
+from probos.routers.readiness import unavailable_dependency
 from probos.routers.skill_requests import router
-from probos.skill_request import SkillRequestStore
+from probos.skill_request import SkillRequest, SkillRequestStore
 
 
 class _FakeRuntime:
-    def __init__(self, store: SkillRequestStore | None) -> None:
+    def __init__(self, store: SkillRequestStore | _FakeReadStore | None, config: object | None = None) -> None:
         self.skill_request_store = store
+        self.config = config
 
 
 def _client_for(runtime: _FakeRuntime) -> TestClient:
@@ -199,10 +203,110 @@ async def test_begin_training_unknown_id_is_404(store: SkillRequestStore) -> Non
     assert resp.status_code == 404
 
 
-def test_list_for_agent_honest_degrade_when_store_absent() -> None:
+def test_list_for_agent_absent_store_is_unavailable_not_empty() -> None:
     client = _client_for(_FakeRuntime(None))
 
     resp = client.get("/api/skill-requests/agent/agent-1")
 
-    assert resp.status_code == 200
-    assert resp.json() == {"requests": []}
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "skill request store not available"
+    assert resp.json()["availability"]["state"] == "unavailable"
+
+
+class _FakeReadStore:
+    def __init__(self, result: Any, error: Exception | None = None) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list[str] = []
+
+    def _read(self, key: str) -> Any:
+        self.calls.append(key)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    async def list_pending(self) -> Any:
+        return self._read("pending")
+
+    async def list_by_agent(self, agent_id: str) -> Any:
+        return self._read(agent_id)
+
+
+@pytest.mark.parametrize("route", ["?status=pending", "/agent/agent-1"])
+@pytest.mark.parametrize("enabled", [False, True, None])
+def test_skill_get_missing_store_typed_availability(route: str, enabled: bool | None) -> None:
+    config = None if enabled is None else SystemConfig.model_validate({"skill_requests": {"enabled": enabled}})
+    with _client_for(_FakeRuntime(None, config)) as client:
+        response = client.get(f"/api/skill-requests{route}")
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "skill request store not available",
+        "availability": unavailable_dependency(config, "skill_requests"),
+    }
+
+
+@pytest.mark.parametrize("route,key", [("?status=pending", "pending"), ("/agent/agent-1", "agent-1")])
+@pytest.mark.parametrize("populated", [False, True])
+def test_skill_get_success_http_body_unchanged(route: str, key: str, populated: bool) -> None:
+    requests = [SkillRequest(id="request-1", agent_id="agent-1", skill_id="summary")] if populated else []
+    read_store = _FakeReadStore(requests)
+    with _client_for(_FakeRuntime(read_store, SystemConfig())) as client:
+        response = client.get(f"/api/skill-requests{route}")
+    assert read_store.calls == [key]
+    expected: dict[str, Any] = {"requests": [asdict(request) for request in requests]}
+    if key == "pending":
+        expected["status"] = "pending"
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+@pytest.mark.parametrize("route", ["?status=pending", "/agent/agent-1"])
+@pytest.mark.parametrize("raises", [False, True])
+def test_skill_get_read_failure_not_empty_or_leaked(
+    route: str, raises: bool, caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "token=private C:/private/skills.db"
+    read_store = _FakeReadStore(None, OSError(secret) if raises else None)
+    with _client_for(_FakeRuntime(read_store, SystemConfig())) as client:
+        response = client.get(f"/api/skill-requests{route}")
+    assert len(read_store.calls) == 1
+    assert response.status_code == 500
+    message = "skill requests unavailable" if route.startswith("?") else "skill request history unavailable"
+    assert response.json() == {
+        "detail": message,
+        "availability": {
+            "state": "failed", "code": "skill_requests.read_failed",
+            "message": message, "retryable": True,
+        },
+    }
+    assert "returning HTTP 500" in caplog.text
+    assert secret not in response.text + caplog.text
+
+
+@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize("route", ["?status=pending", "/agent/agent-1"])
+def test_skill_get_authorization_preserved(route: str, status: int) -> None:
+    read_store = _FakeReadStore(None, HTTPException(status_code=status, detail="Access denied"))
+    with _client_for(_FakeRuntime(read_store, SystemConfig())) as client:
+        response = client.get(f"/api/skill-requests{route}")
+    assert len(read_store.calls) == 1
+    assert response.status_code == status
+    assert response.json() == {"detail": "Access denied"}
+
+
+def test_skill_get_non_pending_compatibility_does_not_read() -> None:
+    read_store = _FakeReadStore(None, RuntimeError("must not read"))
+    with _client_for(_FakeRuntime(read_store, SystemConfig())) as client:
+        response = client.get("/api/skill-requests?status=approved")
+    assert response.status_code == 200
+    assert response.json() == {"requests": [], "status": "approved"}
+    assert read_store.calls == []
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_skill_decision_missing_store_legacy_response_unchanged(enabled: bool) -> None:
+    config = SystemConfig.model_validate({"skill_requests": {"enabled": enabled}})
+    with _client_for(_FakeRuntime(None, config)) as client:
+        response = client.post("/api/skill-requests/x/decide", json={"approve": True})
+    assert response.status_code == 503
+    assert response.json() == {"detail": "skill request store not available"}

@@ -6,13 +6,48 @@
  * (rail visible only in reader view + selection).
  */
 import { useEffect, useCallback } from 'react';
+import type { ReactNode } from 'react';
 import { useStore } from '../store/useStore';
+import type { KnowledgeResource } from '../store/useStore';
+import { resourceMessage } from '../utils/resourceState';
 import EntryListView from './knowledge/EntryListView';
 import EntryReader from './knowledge/EntryReader';
 import RecordsGraphView from './knowledge/RecordsGraphView';
 import TimelineView from './knowledge/TimelineView';
 import FilterRail from './knowledge/FilterRail';
 import BacklinksRail from './knowledge/BacklinksRail';
+
+function ResourceBoundary({ resource, label, children }: { resource: KnowledgeResource; label: string; children: ReactNode }) {
+  const state = useStore(store => store.knowledgeBrowserResources[resource]);
+  const retry = useStore(store => store.retryKnowledgeResource);
+  const showStatus = state.status !== 'ready' && state.status !== 'empty';
+  return (
+    <section aria-label={`${label} resource`} style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {showStatus && (
+        <div role="status" aria-label={`${label} status`} style={{ padding: 10, fontSize: 11, color: '#cccce0' }}>
+          {label}: {resourceMessage(state.status)}
+          {state.refreshing && ' Refreshing last successful result.'}
+          {state.stale && (state.lastSuccess === 'empty' ? ' Stale: last successful result was empty.' : ' Stale: showing last successful result.')}
+          {state.observedAt !== null && (state.stale || state.refreshing) && (
+            <time dateTime={new Date(state.observedAt).toISOString()}> {new Date(state.observedAt).toLocaleString()}</time>
+          )}
+          {state.retryable && (
+            <button type="button" aria-label={`Retry ${label}`} title={`Retry ${label}`}
+              onClick={() => { void retry(resource); }}
+              style={{ marginLeft: 8, width: 28, height: 28, color: '#f0b060', background: 'transparent', border: '1px solid rgba(240,176,96,0.3)', borderRadius: 4 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17" />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
+      {state.data !== null && (!showStatus || state.lastSuccess === 'ready') && (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{children}</div>
+      )}
+    </section>
+  );
+}
 
 export default function KnowledgeBrowserPanel() {
   const open = useStore(s => s.knowledgeBrowserOpen);
@@ -22,6 +57,10 @@ export default function KnowledgeBrowserPanel() {
   const refresh = useStore(s => s.refreshKnowledgeBrowser);
   const selectedPath = useStore(s => s.knowledgeBrowserSelectedPath);
   const loading = useStore(s => s.knowledgeBrowserLoading);
+  const resources = useStore(s => s.knowledgeBrowserResources);
+  const resourceValues = Object.values(resources);
+  const degraded = resourceValues.some(state => state.status === 'ready' || state.status === 'empty')
+    && resourceValues.some(state => ['disabled', 'unauthorized', 'unavailable', 'failed'].includes(state.status));
 
   const triggerRefresh = useCallback(() => { void refresh(); }, [refresh]);
 
@@ -97,22 +136,23 @@ export default function KnowledgeBrowserPanel() {
           <div data-testid="knowledge-tab-timeline" onClick={() => setView('timeline')} style={tabStyle(view === 'timeline')}>TIMELINE</div>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          <div
+          <button type="button"
             data-testid="knowledge-refresh"
             onClick={triggerRefresh}
             style={iconBtnStyle}
             role="button"
             aria-label="Refresh"
-          >↻</div>
-          <div
+          >↻</button>
+          <button type="button"
             data-testid="knowledge-close"
             onClick={close}
             style={iconBtnStyle}
             role="button"
             aria-label="Close"
-          >×</div>
+          >×</button>
         </div>
       </div>
+      {degraded && <div aria-label="Knowledge partial results" style={{ padding: '4px 14px', fontSize: 10, color: '#f0b060' }}>Degraded: some knowledge resources are unavailable or failed.</div>}
       <div style={{
         flex: 1, minHeight: 0,
         display: 'grid', gridTemplateColumns, gap: 0,
@@ -129,14 +169,16 @@ export default function KnowledgeBrowserPanel() {
               position: 'absolute', top: 6, right: 10, fontSize: 10, color: '#666680',
             }}>loading…</div>
           )}
-          {view === 'list' && <EntryListView />}
-          {view === 'reader' && <EntryReader />}
-          {view === 'graph' && <RecordsGraphView />}
-          {view === 'timeline' && <TimelineView />}
+          {view === 'list' && <ResourceBoundary resource="browse" label="Browse"><EntryListView /></ResourceBoundary>}
+          {view === 'reader' && (selectedPath
+            ? <ResourceBoundary resource="document" label="Document"><EntryReader /></ResourceBoundary>
+            : <EntryReader />)}
+          {view === 'graph' && <ResourceBoundary resource="graph" label="Graph"><RecordsGraphView /></ResourceBoundary>}
+          {view === 'timeline' && <ResourceBoundary resource="timeline" label="Timeline"><TimelineView /></ResourceBoundary>}
         </div>
         {showBacklinksRail && (
           <div style={{ overflow: 'hidden' }}>
-            <BacklinksRail />
+            <ResourceBoundary resource="backlinks" label="Backlinks"><BacklinksRail /></ResourceBoundary>
           </div>
         )}
       </div>

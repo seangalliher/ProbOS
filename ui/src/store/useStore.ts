@@ -32,7 +32,7 @@ import type {
   CrewSessionSummaryProjection, LiveArtifactRefreshCommand,
   LiveDropGate, LiveDropRecord,
   LiveRailOwner, LiveThreadRefreshCommand, LiveTodoRefreshCommand,
-  RoomSummary,
+  RoomSummary, SkillRequestView, CapabilityApprovalView, ApprovalQueue, ApprovalPayload, ApprovalRefreshOptions,
 } from './types';
 
 // AD-562: Knowledge Browser types
@@ -41,6 +41,137 @@ import type {
   KnowledgeBrowserGraphData, KnowledgeBrowserTimeline, KnowledgeBrowserFilters,
 } from '../components/knowledge/types';
 import { DEFAULT_KNOWLEDGE_BROWSER_FILTERS } from '../components/knowledge/types';
+import { idleResource, loadingResource, requestResource, nextResourcePoll } from '../utils/resourceState';
+import type { ResourceState, ResourcePoll } from '../utils/resourceState';
+
+export function isSkillRequestView(value: unknown): value is SkillRequestView {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return ['id', 'agent_id', 'skill_id', 'skill_label', 'source', 'justification', 'status', 'decided_by', 'decision_reason']
+    .every(key => typeof row[key] === 'string') && Boolean(row.id)
+    && typeof row.created_at === 'number' && Number.isFinite(row.created_at)
+    && (row.linked_simulation_id === null || typeof row.linked_simulation_id === 'string')
+    && ['decided_at', 'pre_metric', 'post_metric'].every(key => row[key] === null
+      || (typeof row[key] === 'number' && Number.isFinite(row[key])));
+}
+
+export function isCapabilityRequestView(value: unknown): value is CapabilityApprovalView {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return ['id', 'agent_id', 'kind', 'target'].every(key => typeof row[key] === 'string')
+    && Boolean(row.id) && typeof row.created_at === 'number' && Number.isFinite(row.created_at)
+    && ['rationale', 'status', 'decided_by', 'decision_reason'].every(key => row[key] === undefined || typeof row[key] === 'string')
+    && (row.work_item_id == null || typeof row.work_item_id === 'string')
+    && (row.decided_at == null || (typeof row.decided_at === 'number' && Number.isFinite(row.decided_at)))
+    && (row.payload == null || (typeof row.payload === 'object' && !Array.isArray(row.payload)));
+}
+
+export function isApprovalPayload(queue: ApprovalQueue, value: unknown): value is ApprovalPayload {
+  if (!value || typeof value !== 'object' || !('requests' in value) || !Array.isArray(value.requests)) return false;
+  return value.requests.every(row => queue === 'skill' ? isSkillRequestView(row)
+    : isCapabilityRequestView(row));
+}
+
+export type KnowledgeResource = 'browse' | 'graph' | 'timeline' | 'document' | 'backlinks';
+type KnowledgeBrowse = { documents: KnowledgeBrowserEntry[]; count: number; filters_applied: Record<string, unknown> };
+type KnowledgePayload = KnowledgeBrowse | KnowledgeBrowserGraphData | KnowledgeBrowserTimeline | KnowledgeBrowserDoc | KnowledgeBrowserBacklinks;
+type KnowledgeResources = Record<KnowledgeResource, ResourceState<KnowledgePayload>>;
+
+const knowledgeRequests = new Map<KnowledgeResource, AbortController>();
+
+function knowledgeResources(): KnowledgeResources {
+  return { browse: idleResource(), graph: idleResource(), timeline: idleResource(), document: idleResource(), backlinks: idleResource() };
+}
+
+function cancelKnowledgeRequests(resources: KnowledgeResource[] = ['browse', 'graph', 'timeline', 'document', 'backlinks']): void {
+  for (const resource of resources) {
+    knowledgeRequests.get(resource)?.abort();
+    knowledgeRequests.delete(resource);
+  }
+}
+
+function knowledgeObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function knowledgeCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function knowledgeEntry(value: unknown): value is KnowledgeBrowserEntry {
+  if (!knowledgeObject(value) || typeof value.path !== 'string' || !value.path || !knowledgeObject(value.frontmatter)) return false;
+  const frontmatter = value.frontmatter;
+  return ['author', 'department', 'classification', 'created', 'updated', 'topic_slug'].every(key => (
+    frontmatter[key] == null || typeof frontmatter[key] === 'string'
+  )) && (frontmatter.revision_count == null || knowledgeCount(frontmatter.revision_count))
+    && (frontmatter.tags == null || (Array.isArray(frontmatter.tags) && frontmatter.tags.every(tag => typeof tag === 'string')));
+}
+
+function knowledgePayload(resource: KnowledgeResource, value: unknown, path: string | null): value is KnowledgePayload {
+  if (!knowledgeObject(value)) return false;
+  switch (resource) {
+    case 'browse':
+      return Array.isArray(value.documents) && value.documents.every(knowledgeEntry)
+        && knowledgeCount(value.count) && value.count === value.documents.length && knowledgeObject(value.filters_applied);
+    case 'document':
+      return knowledgeEntry(value) && value.path === path && typeof (value as unknown as Record<string, unknown>).content === 'string';
+    case 'backlinks':
+      return value.path === path && Array.isArray(value.references) && value.references.every(reference => (
+        knowledgeObject(reference) && ['wikilink', 'callsign', 'topic_slug', 'tag'].includes(String(reference.kind))
+        && typeof reference.target === 'string' && typeof reference.raw_match === 'string'
+      )) && Array.isArray(value.referenced_by) && value.referenced_by.every(source => typeof source === 'string')
+        && Array.isArray(value.suggested) && value.suggested.every(suggestion => (
+          knowledgeObject(suggestion) && typeof suggestion.path === 'string'
+          && typeof suggestion.similarity === 'number' && Number.isFinite(suggestion.similarity)
+        ));
+    case 'timeline':
+      return Array.isArray(value.buckets) && knowledgeCount(value.total) && value.bucket === 'day'
+        && value.buckets.every(bucket => knowledgeObject(bucket) && typeof bucket.date === 'string'
+          && knowledgeCount(bucket.count) && bucket.count > 0 && knowledgeObject(bucket.by_department)
+          && Object.values(bucket.by_department).every(knowledgeCount)
+          && Object.values(bucket.by_department).reduce<number>((total, count) => total + (count as number), 0) === bucket.count)
+        && value.buckets.reduce((total, bucket) => total + bucket.count, 0) === value.total;
+    case 'graph':
+      return Array.isArray(value.nodes) && Array.isArray(value.edges)
+        && typeof value.generated_at === 'number' && Number.isFinite(value.generated_at)
+        && knowledgeCount(value.node_count) && knowledgeCount(value.edge_count)
+        && value.node_count === value.nodes.length && value.edge_count === value.edges.length
+        && value.nodes.every(node => knowledgeObject(node)
+          && ['id', 'label', 'type', 'department', 'classification', 'author'].every(key => typeof node[key] === 'string')
+          && knowledgeCount(node.revision_count) && typeof node.is_convergence_hub === 'boolean'
+          && (node.quality_overlay === null || (knowledgeObject(node.quality_overlay)
+            && ['novel_content_rate', 'repetition_alerts', 'stale_rate'].every(key => (
+              node.quality_overlay !== null && knowledgeObject(node.quality_overlay)
+              && (node.quality_overlay[key] === null || (typeof node.quality_overlay[key] === 'number' && Number.isFinite(node.quality_overlay[key])))
+            )))))
+        && value.edges.every(edge => knowledgeObject(edge) && typeof edge.source === 'string'
+          && typeof edge.target === 'string' && ['backlink', 'suggested', 'convergence'].includes(String(edge.kind))
+          && (edge.similarity === undefined || (typeof edge.similarity === 'number' && Number.isFinite(edge.similarity))));
+  }
+}
+
+function emptyKnowledgePayload(resource: KnowledgeResource, payload: KnowledgePayload): boolean {
+  switch (resource) {
+    case 'browse': return (payload as KnowledgeBrowse).documents.length === 0;
+    case 'graph': return (payload as KnowledgeBrowserGraphData).nodes.length === 0;
+    case 'timeline': return (payload as KnowledgeBrowserTimeline).buckets.length === 0;
+    case 'document': return (payload as KnowledgeBrowserDoc).content.length === 0;
+    case 'backlinks': {
+      const backlinks = payload as KnowledgeBrowserBacklinks;
+      return backlinks.references.length + backlinks.referenced_by.length + backlinks.suggested.length === 0;
+    }
+  }
+}
+
+function knowledgeData(resource: KnowledgeResource, data: KnowledgePayload | null): Partial<HXIState> {
+  switch (resource) {
+    case 'browse': return { knowledgeBrowserEntries: (data as KnowledgeBrowse | null)?.documents ?? [] };
+    case 'graph': return { knowledgeBrowserGraphData: data as KnowledgeBrowserGraphData | null };
+    case 'timeline': return { knowledgeBrowserTimeline: data as KnowledgeBrowserTimeline | null };
+    case 'document': return { knowledgeBrowserSelectedDoc: data as KnowledgeBrowserDoc | null };
+    case 'backlinks': return { knowledgeBrowserBacklinks: data as KnowledgeBrowserBacklinks | null };
+  }
+}
 
 export type KnowledgeBrowserView = 'list' | 'reader' | 'graph' | 'timeline';
 
@@ -523,6 +654,7 @@ export interface HXIState {
   knowledgeBrowserGraphData: KnowledgeBrowserGraphData | null;
   knowledgeBrowserTimeline: KnowledgeBrowserTimeline | null;
   knowledgeBrowserLoading: boolean;
+  knowledgeBrowserResources: KnowledgeResources;
   // Assignments (AD-408)
   assignments: Assignment[];
   // Scheduled Tasks (Phase 25a)
@@ -689,6 +821,7 @@ export interface HXIState {
   setKnowledgeBrowserFilters: (partial: Partial<KnowledgeBrowserFilters>) => void;
   selectKnowledgeBrowserEntry: (path: string) => Promise<void>;
   refreshKnowledgeBrowser: () => Promise<void>;
+  retryKnowledgeResource: (resource: KnowledgeResource) => Promise<void>;
   // Ward Room HXI actions (AD-407c)
   openWardRoom: (channelId?: string) => void;
   closeWardRoom: () => void;
@@ -713,7 +846,12 @@ export interface HXIState {
   // by the single poller in BridgePanel; read by the Bridge APPROVALS section
   // and the BRIDGE badge in IntentSurface.
   pendingApprovals: PendingApproval[];
-  refreshPendingApprovals: () => void;
+  refreshPendingApprovals: (options?: ApprovalRefreshOptions) => Promise<void>;
+  cancelPendingApprovals: () => void;
+  approvalResources: Record<ApprovalQueue, ResourceState<ApprovalPayload>>;
+  approvalPoll: Record<ApprovalQueue, ResourcePoll>;
+  approvalControllers: Record<ApprovalQueue, AbortController | null>;
+  approvalIssuedSeq: Record<ApprovalQueue, number>;
   /* BF-723: requests the Captain has decided, keyed by `approvalKey`. A refresh
    * result is reconciled against this set, so a server that has not yet caught
    * up cannot resurrect a decided row — nor can an in-flight GET issued before
@@ -1563,6 +1701,13 @@ export const useStore = create<HXIState>((set, get) => ({
   wardRoomDmPending: null,
   wardRoomDmChannels: [],
   pendingApprovals: [],  // AD-1201
+  approvalResources: { capability: idleResource('capability'), skill: idleResource('skill') },
+  approvalPoll: {
+    capability: { failures: 0, failedAt: null, nextAt: null },
+    skill: { failures: 0, failedAt: null, nextAt: null },
+  },
+  approvalControllers: { capability: null, skill: null },
+  approvalIssuedSeq: { capability: 0, skill: 0 },
   decidedApprovals: new Set<string>(),  // BF-723
   approvalRequestSeq: 0,  // BF-723
   approvalAppliedSeq: { capability: 0, skill: 0 },  // BF-723
@@ -1614,6 +1759,7 @@ export const useStore = create<HXIState>((set, get) => ({
   knowledgeBrowserGraphData: null,
   knowledgeBrowserTimeline: null,
   knowledgeBrowserLoading: false,
+  knowledgeBrowserResources: knowledgeResources(),
   // Assignments (AD-408)
   assignments: [],
   // Scheduled Tasks (Phase 25a)
@@ -1964,65 +2110,104 @@ export const useStore = create<HXIState>((set, get) => ({
     set({ knowledgeBrowserOpen: true });
     await get().refreshKnowledgeBrowser();
   },
-  closeKnowledgeBrowser: () => set({
-    knowledgeBrowserOpen: false,
-    knowledgeBrowserSelectedPath: null,
-    knowledgeBrowserSelectedDoc: null,
-    knowledgeBrowserBacklinks: null,
-  }),
+  closeKnowledgeBrowser: () => {
+    cancelKnowledgeRequests();
+    set({
+      knowledgeBrowserOpen: false,
+      knowledgeBrowserSelectedPath: null,
+      knowledgeBrowserSelectedDoc: null,
+      knowledgeBrowserBacklinks: null,
+      knowledgeBrowserEntries: [],
+      knowledgeBrowserGraphData: null,
+      knowledgeBrowserTimeline: null,
+      knowledgeBrowserLoading: false,
+      knowledgeBrowserResources: knowledgeResources(),
+    });
+  },
   setKnowledgeBrowserView: (view) => set({ knowledgeBrowserView: view }),
   setKnowledgeBrowserFilters: (partial) => {
     const next = { ...get().knowledgeBrowserFilters, ...partial };
-    set({ knowledgeBrowserFilters: next });
+    if ((Object.keys(next) as Array<keyof KnowledgeBrowserFilters>).every(key => next[key] === get().knowledgeBrowserFilters[key])) {
+      void get().refreshKnowledgeBrowser();
+      return;
+    }
+    cancelKnowledgeRequests();
+    set({
+      knowledgeBrowserFilters: next,
+      knowledgeBrowserResources: knowledgeResources(),
+      knowledgeBrowserEntries: [], knowledgeBrowserGraphData: null, knowledgeBrowserTimeline: null,
+      knowledgeBrowserSelectedDoc: null, knowledgeBrowserBacklinks: null, knowledgeBrowserLoading: false,
+    });
     void get().refreshKnowledgeBrowser();
   },
   refreshKnowledgeBrowser: async () => {
-    set({ knowledgeBrowserLoading: true });
-    try {
-      const f = get().knowledgeBrowserFilters;
-      const qs = new URLSearchParams();
-      for (const k of Object.keys(f) as Array<keyof KnowledgeBrowserFilters>) {
-        const v = f[k];
-        if (v) qs.set(k, v);
-      }
-      const browseUrl = `/api/records/browse${qs.toString() ? '?' + qs.toString() : ''}`;
-      const [browseR, graphR, tlR] = await Promise.all([
-        fetch(browseUrl).catch(() => null),
-        fetch('/api/records/graph?include_quality=true&include_suggested=true').catch(() => null),
-        fetch('/api/records/timeline?bucket=day').catch(() => null),
-      ]);
-      const browse = browseR && browseR.ok ? await browseR.json() : null;
-      const graph = graphR && graphR.ok ? await graphR.json() : null;
-      const timeline = tlR && tlR.ok ? await tlR.json() : null;
-      set({
-        knowledgeBrowserEntries: (browse?.documents || []) as KnowledgeBrowserEntry[],
-        knowledgeBrowserGraphData: graph as KnowledgeBrowserGraphData | null,
-        knowledgeBrowserTimeline: timeline as KnowledgeBrowserTimeline | null,
-        knowledgeBrowserLoading: false,
-      });
-    } catch {
-      set({ knowledgeBrowserLoading: false });
-    }
+    const resources: KnowledgeResource[] = ['browse', 'graph', 'timeline'];
+    if (get().knowledgeBrowserSelectedPath) resources.push('document', 'backlinks');
+    await Promise.all(resources.map(resource => get().retryKnowledgeResource(resource)));
   },
   selectKnowledgeBrowserEntry: async (path: string) => {
-    set({ knowledgeBrowserSelectedPath: path, knowledgeBrowserLoading: true });
-    try {
-      const enc = encodeURIComponent(path);
-      const [docR, blR] = await Promise.all([
-        fetch(`/api/records/documents/${enc}?reader=captain`).catch(() => null),
-        fetch(`/api/records/backlinks/${enc}?include_suggested=true`).catch(() => null),
-      ]);
-      const doc = docR && docR.ok ? await docR.json() : null;
-      const bl = blR && blR.ok ? await blR.json() : null;
-      set({
-        knowledgeBrowserSelectedDoc: doc as KnowledgeBrowserDoc | null,
-        knowledgeBrowserBacklinks: bl as KnowledgeBrowserBacklinks | null,
+    cancelKnowledgeRequests(['document', 'backlinks']);
+    const samePath = get().knowledgeBrowserSelectedPath === path;
+    set(state => {
+      const resources = {
+        ...state.knowledgeBrowserResources,
+        document: samePath ? state.knowledgeBrowserResources.document : idleResource<KnowledgePayload>(),
+        backlinks: samePath ? state.knowledgeBrowserResources.backlinks : idleResource<KnowledgePayload>(),
+      };
+      return {
+        knowledgeBrowserOpen: state.knowledgeBrowserOpen || Boolean(path),
+        knowledgeBrowserSelectedPath: path || null,
         knowledgeBrowserView: 'reader',
-        knowledgeBrowserLoading: false,
-      });
-    } catch {
-      set({ knowledgeBrowserLoading: false });
+        knowledgeBrowserSelectedDoc: samePath ? state.knowledgeBrowserSelectedDoc : null,
+        knowledgeBrowserBacklinks: samePath ? state.knowledgeBrowserBacklinks : null,
+        knowledgeBrowserResources: resources,
+        knowledgeBrowserLoading: Object.values(resources).some(value => value.status === 'loading'),
+      };
+    });
+    await Promise.all(['document', 'backlinks'].map(resource => get().retryKnowledgeResource(resource as KnowledgeResource)));
+  },
+  retryKnowledgeResource: async (resource) => {
+    if (!get().knowledgeBrowserOpen) return;
+    const path = get().knowledgeBrowserSelectedPath;
+    if ((resource === 'document' || resource === 'backlinks') && !path) return;
+    cancelKnowledgeRequests([resource]);
+    const filters = get().knowledgeBrowserFilters;
+    const query = new URLSearchParams();
+    for (const key of Object.keys(filters).sort() as Array<keyof KnowledgeBrowserFilters>) {
+      if (filters[key]) query.set(key, filters[key]);
     }
+    const encodedPath = encodeURIComponent(path ?? '');
+    const urls: Record<KnowledgeResource, string> = {
+      browse: `/api/records/browse${query.size ? '?' + query.toString() : ''}`,
+      graph: '/api/records/graph?include_quality=true&include_suggested=true',
+      timeline: '/api/records/timeline?bucket=day',
+      document: `/api/records/documents/${encodedPath}?reader=captain`,
+      backlinks: `/api/records/backlinks/${encodedPath}?include_suggested=true`,
+    };
+    const identity = JSON.stringify([resource, query.toString(), resource === 'document' || resource === 'backlinks' ? path : null]);
+    const pending = loadingResource(get().knowledgeBrowserResources[resource], identity);
+    const controller = new AbortController();
+    knowledgeRequests.set(resource, controller);
+    set(state => ({
+      ...knowledgeData(resource, pending.data),
+      knowledgeBrowserResources: { ...state.knowledgeBrowserResources, [resource]: pending },
+      knowledgeBrowserLoading: true,
+    }));
+    const result = await requestResource(
+      urls[resource], pending,
+      (payload): payload is KnowledgePayload => knowledgePayload(resource, payload, path),
+      payload => emptyKnowledgePayload(resource, payload), controller.signal,
+    );
+    if (!result || knowledgeRequests.get(resource) !== controller || !get().knowledgeBrowserOpen) return;
+    knowledgeRequests.delete(resource);
+    set(state => {
+      const resources = { ...state.knowledgeBrowserResources, [resource]: result };
+      return {
+        ...knowledgeData(resource, result.data),
+        knowledgeBrowserResources: resources,
+        knowledgeBrowserLoading: Object.values(resources).some(value => value.status === 'loading'),
+      };
+    });
   },
   minimizeAgentProfile: () => {
     const agentId = get().activeProfileAgent;
@@ -2382,27 +2567,10 @@ export const useStore = create<HXIState>((set, get) => ({
       }
     } catch { /* swallow */ }
   },
-  /* AD-1201: the single fetch for pending approvals. Both queues are read
-   * together and committed in ONE `set`, so the Bridge section, the approvals
-   * centre and the BRIDGE badge always see the same count — three independent
-   * pollers could disagree mid-cycle. `Promise.allSettled` keeps one endpoint
-   * being down from blanking the other queue's requests.
-   *
-   * BF-723: a result is now applied only if it is still current in two senses.
-   * It must be newer than the last response applied for its queue (an older
-   * in-flight GET landing late describes a superseded state), and every row it
-   * carries must survive the tombstone set (a request the Captain has already
-   * decided is gone whatever the server still says).
-   *
-   * The degraded `keep(...)` branch is filtered too, so `reconcile`'s
-   * postcondition — "returns no decided row" — holds by reading this function
-   * alone. It is belt to the fulfilled branch's braces rather than an
-   * independently reachable fault: `recordApprovalDecision` already drops the
-   * row from the shared slice, and `previous` is read after the await, so a
-   * decided row cannot reach `previous` while the fulfilled branch filters. A
-   * mutation removing only this filter leaves every BF-723 test green; a
-   * mutation removing the fulfilled one fails three. Do not read the two as
-   * equally load-bearing. */
+  /* Shared approval reads settle independently so a hung queue cannot block
+   * its peer. Bridge owns scheduling; the store owns per-queue generations,
+   * cancellation and BF-723 tombstones. Failure metadata and retained detail
+   * are reconciled together, including when both queues fail. */
   recordApprovalDecision: (queue, id) => {
     const key = approvalKey(queue, id);
     const decided = new Set(get().decidedApprovals);
@@ -2414,105 +2582,100 @@ export const useStore = create<HXIState>((set, get) => ({
       pendingApprovals: get().pendingApprovals.filter(
         (a) => approvalKey(a.queue, a.id) !== key,
       ),
+      approvalResources: {
+        ...get().approvalResources,
+        [queue]: {
+          ...get().approvalResources[queue],
+          data: get().approvalResources[queue].data === null ? null : {
+            requests: get().approvalResources[queue].data!.requests.filter(row => row.id !== id),
+          },
+        },
+      },
     });
   },
-  refreshPendingApprovals: async () => {
-    type Row = Record<string, unknown>;
-    const readQueue = async (
-      url: string,
-      queue: PendingApproval['queue'],
-      project: (r: Row) => PendingApproval,
-    ): Promise<PendingApproval[]> => {
-      const resp = await fetch(url);
-      if (!resp.ok) {
-        throw new Error(`${queue} approvals unavailable (${resp.status})`);
-      }
-      const data = await resp.json();
-      const rows: Row[] = Array.isArray(data?.requests) ? data.requests : [];
-      return rows.map(project);
-    };
-
-    // BF-723: claim an ordinal before issuing, so a response can be compared
-    // against whatever has been applied for its queue by the time it lands.
-    const ticket = get().approvalRequestSeq + 1;
-    set({ approvalRequestSeq: ticket });
-
-    const [capability, skill] = await Promise.allSettled([
-      readQueue('/api/capability-requests?status=pending', 'capability', (r) => ({
-        id: String(r.id ?? ''),
-        queue: 'capability' as const,
-        agent_id: String(r.agent_id ?? ''),
-        kind: String(r.kind ?? ''),
-        target: String(r.target ?? ''),
-        created_at: Number(r.created_at ?? 0),
-      })),
-      readQueue('/api/skill-requests?status=pending', 'skill', (r) => ({
-        id: String(r.id ?? ''),
-        queue: 'skill' as const,
-        agent_id: String(r.agent_id ?? ''),
-        kind: String(r.source ?? ''),
-        target: String(r.skill_label || r.skill_id || ''),
-        created_at: Number(r.created_at ?? 0),
-      })),
-    ]);
-
-    if (capability.status === 'rejected' && skill.status === 'rejected') {
-      /* Tier-2 log-and-degrade: both queues unreachable, so we know nothing new.
-       * Keep the last known list rather than falsely clearing the badge. */
-      console.warn(
-        'AD-1201: both approval queues unreachable; keeping the last known pending list',
-        capability.reason,
-        skill.reason,
-      );
-      return;
-    }
-
-    /* Read the reconciliation inputs AFTER the await — a decision taken while
-     * these GETs were in flight is exactly the case this has to catch. */
-    const previous = get().pendingApprovals;
-    const decided = get().decidedApprovals;
-    const appliedSeq = get().approvalAppliedSeq;
-    const nextAppliedSeq = { ...appliedSeq };
-    const spentTombstones = new Set<string>();
-
-    const reconcile = (
-      queue: PendingApproval['queue'],
-      outcome: PromiseSettledResult<PendingApproval[]>,
-    ): PendingApproval[] => {
-      const survive = (rows: PendingApproval[]) =>
-        rows.filter((r) => !decided.has(approvalKey(queue, r.id)));
-      // Degraded or superseded: hold what we already showed, minus anything
-      // decided since. Never re-admit a decided row on the fallback path.
-      if (outcome.status !== 'fulfilled' || ticket <= appliedSeq[queue]) {
-        return survive(previous.filter((a) => a.queue === queue));
-      }
-      nextAppliedSeq[queue] = ticket;
-      // This response is authoritative for the queue, so any tombstone it does
-      // not mention has served its purpose and is released below.
-      const reported = new Set(outcome.value.map((r) => approvalKey(queue, r.id)));
-      const prefix = `${queue}${APPROVAL_KEY_SEP}`;
-      for (const key of decided) {
-        if (key.startsWith(prefix) && !reported.has(key)) spentTombstones.add(key);
-      }
-      return survive(outcome.value);
-    };
-
-    const next = [
-      ...reconcile('capability', capability),
-      ...reconcile('skill', skill),
-    ].sort((a, b) => b.created_at - a.created_at);
-
-    set({
-      pendingApprovals: next,
-      approvalAppliedSeq: nextAppliedSeq,
-      ...(spentTombstones.size > 0
-        ? {
-          decidedApprovals: new Set(
-            [...decided].filter((key) => !spentTombstones.has(key)),
-          ),
+  cancelPendingApprovals: () => {
+    get().approvalControllers.capability?.abort();
+    get().approvalControllers.skill?.abort();
+  },
+  refreshPendingApprovals: async (options = {}) => {
+    if (options.signal?.aborted) return;
+    await Promise.all((options.queues ?? ['capability', 'skill'] as ApprovalQueue[]).map(async queue => {
+      const current = get();
+      const startedAt = Date.now();
+      const scheduledPoll = current.approvalPoll[queue];
+      const previousPoll = options.automatic ? scheduledPoll
+        : { failures: 0, failedAt: null, nextAt: null };
+      if (options.automatic && (current.approvalControllers[queue]
+        || previousPoll.nextAt === null || previousPoll.nextAt > startedAt)) return;
+      current.approvalControllers[queue]?.abort();
+      const controller = new AbortController();
+      const cancel = (): void => controller.abort();
+      options.signal?.addEventListener('abort', cancel, { once: true });
+      const ticket = current.approvalRequestSeq + 1;
+      const previous = current.approvalResources[queue];
+      set(state => ({
+        approvalRequestSeq: ticket,
+        approvalIssuedSeq: { ...state.approvalIssuedSeq, [queue]: ticket },
+        approvalControllers: { ...state.approvalControllers, [queue]: controller },
+        approvalResources: { ...state.approvalResources, [queue]: loadingResource(previous, queue) },
+        approvalPoll: { ...state.approvalPoll, [queue]: { ...previousPoll, nextAt: null } },
+      }));
+      try {
+        const outcome = await requestResource(`/api/${queue === 'skill' ? 'skill' : 'capability'}-requests?status=pending`,
+          previous, (value): value is ApprovalPayload => isApprovalPayload(queue, value),
+          value => value.requests.length === 0, controller.signal);
+        if (!outcome || controller.signal.aborted || get().approvalIssuedSeq[queue] !== ticket) return;
+        set(state => {
+          const authoritative = outcome.status === 'ready' || outcome.status === 'empty';
+          const decided = new Set(state.decidedApprovals);
+          if (authoritative) {
+            const reported = new Set(outcome.data!.requests.map(row => approvalKey(queue, row.id)));
+            for (const key of decided) {
+              if (key.startsWith(`${queue}${APPROVAL_KEY_SEP}`) && !reported.has(key)) decided.delete(key);
+            }
+          }
+          const resource = {
+            ...outcome,
+            data: outcome.data === null ? null : {
+              requests: outcome.data.requests.filter(row => !state.decidedApprovals.has(approvalKey(queue, row.id))),
+            },
+          };
+          const rows = resource.data?.requests.map(row => ({
+            id: row.id, queue, agent_id: row.agent_id, created_at: row.created_at,
+            kind: 'skill_id' in row ? row.source : row.kind,
+            target: 'skill_id' in row ? row.skill_label || row.skill_id : row.target,
+          })) ?? [];
+          return {
+            approvalResources: { ...state.approvalResources, [queue]: resource },
+            approvalPoll: { ...state.approvalPoll, [queue]: nextResourcePoll(previousPoll, outcome.status, startedAt) },
+            approvalAppliedSeq: { ...state.approvalAppliedSeq, [queue]: ticket },
+            decidedApprovals: decided,
+            pendingApprovals: [...state.pendingApprovals.filter(row => row.queue !== queue), ...rows]
+              .filter(row => !state.decidedApprovals.has(approvalKey(row.queue, row.id)))
+              .sort((first, second) => second.created_at - first.created_at),
+          };
+        });
+        if (outcome.status === 'unavailable' || outcome.status === 'failed') {
+          console.warn(`Approval ${queue} queue read failed; retaining last-known rows and bounding retries`);
         }
-        : {}),
-    });
+      } finally {
+        options.signal?.removeEventListener('abort', cancel);
+        if (get().approvalControllers[queue] === controller) {
+          set(state => ({
+            approvalControllers: { ...state.approvalControllers, [queue]: null },
+            ...(controller.signal.aborted ? {
+              approvalResources: { ...state.approvalResources, [queue]: {
+                ...state.approvalResources[queue],
+                status: previous.status === 'loading' ? previous.lastSuccess ?? 'idle' : previous.status,
+                refreshing: false,
+              } },
+              approvalPoll: { ...state.approvalPoll, [queue]: scheduledPoll.nextAt === null && current.approvalControllers[queue]
+                ? { ...scheduledPoll, nextAt: Date.now() + 10_000 } : scheduledPoll },
+            } : {}),
+          }));
+        }
+      }
+    }));
   },
   refreshCommunicationsSettings: async () => {
     try {

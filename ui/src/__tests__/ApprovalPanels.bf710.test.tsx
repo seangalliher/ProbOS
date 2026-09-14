@@ -169,10 +169,12 @@ describe('approval panel polling (BF-710)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
-  it('both panels still render null once loaded with no pending requests', async () => {
-    const capabilityFetch = vi.fn(async () => okJson({ requests: [] }));
+  it('both panels report successful empty reads without rendering request cards', async () => {
+    const capabilityFetch = vi.fn(async () =>
+      new Response(JSON.stringify({ requests: [] }), { status: 200 }));
     vi.stubGlobal('fetch', capabilityFetch);
-    const skillFetch = vi.fn(async () => okJson({ requests: [] }));
+    const skillFetch = vi.fn(async () =>
+      new Response(JSON.stringify({ requests: [] }), { status: 200 }));
 
     render(
       <>
@@ -182,8 +184,14 @@ describe('approval panel polling (BF-710)', () => {
     );
 
     await waitFor(() => {
-      expect(screen.queryByTestId('capability-request-panel')).toBeNull();
-      expect(screen.queryByTestId('skill-request-panel')).toBeNull();
+      expect(capabilityFetch).toHaveBeenCalledTimes(1);
+      expect(skillFetch).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('status', { name: 'Capability requests status' }).textContent)
+        .toBe('No capability requests pending.');
+      expect(screen.getByRole('status', { name: 'Skill requests status' }).textContent)
+        .toBe('No skill requests pending.');
     });
+    expect(screen.queryByTestId('capability-request-card')).toBeNull();
+    expect(screen.queryByTestId('skill-request-card')).toBeNull();
   });
 });

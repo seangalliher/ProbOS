@@ -21,7 +21,7 @@ class _FakeStore:
 
 def _runtime(store) -> MagicMock:
     rt = MagicMock()
-    rt._records_store = store
+    rt.records_store = store
     return rt
 
 
@@ -54,16 +54,15 @@ async def test_browse_filters_by_department_and_tags() -> None:
 @pytest.mark.asyncio
 async def test_browse_returns_503_when_store_missing() -> None:
     rt = MagicMock()
-    rt._records_store = None
+    rt.records_store = None
     res = await browse_records(runtime=rt)
     assert getattr(res, "status_code", 200) == 503
 
 
 @pytest.mark.asyncio
-async def test_browse_log_and_degrade_on_store_exception() -> None:
+async def test_browse_store_exception_returns_503_not_successful_empty() -> None:
     store = _FakeStore(raise_exc=RuntimeError("boom"))
     res = await browse_records(runtime=_runtime(store))
-    # Tier-2 log-and-degrade: returns empty list + 200
-    assert isinstance(res, dict)
-    assert res["count"] == 0
-    assert res["documents"] == []
+    assert res.status_code == 503
+    assert b'"state":"unavailable"' in res.body
+    assert b'"documents"' not in res.body

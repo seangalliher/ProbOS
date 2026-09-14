@@ -6,10 +6,11 @@ import logging
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from probos.routers.deps import get_runtime
+from probos.routers.readiness import failed_read, unavailable_dependency
 
 logger = logging.getLogger(__name__)
 
@@ -97,32 +98,67 @@ async def get_ontology_graph(
     AD-694a: business logic lives in
     ``probos.ontology.graph_snapshot.build_ontology_graph_snapshot``;
     this handler only marshals the request and response.
+
+    Failures add availability (state, code, message, retryable) to error.
+    Ontology absence is unavailable, not configuration-off.
     """
-    ont = runtime.ontology
-    if not ont:
-        return JSONResponse({"error": "Ontology not initialized"}, status_code=503)
+    ont = getattr(runtime, "ontology", None)
+    if ont is None:
+        return JSONResponse({
+            "error": "Ontology not initialized",
+            "availability": unavailable_dependency(getattr(runtime, "config", None), "ontology_graph"),
+        }, status_code=503)
     from probos.ontology.graph_snapshot import build_ontology_graph_snapshot
-    return await build_ontology_graph_snapshot(
-        ontology=ont,
-        knowledge_edges=getattr(runtime, "knowledge_edges", None),
-        trust_network=getattr(runtime, "trust_network", None),
-        callsign_registry=getattr(runtime, "callsign_registry", None),
-        include_edges=include_edges,
-        max_edges=max_edges,
-        max_nodes=max_nodes,
-        edge_relations=edge_relations,
-    )
+    try:
+        return await build_ontology_graph_snapshot(
+            ontology=ont,
+            knowledge_edges=getattr(runtime, "knowledge_edges", None),
+            trust_network=getattr(runtime, "trust_network", None),
+            callsign_registry=getattr(runtime, "callsign_registry", None),
+            include_edges=include_edges,
+            max_edges=max_edges,
+            max_nodes=max_nodes,
+            edge_relations=edge_relations,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Ontology graph read failed; graph unavailable; returning HTTP 500")
+        message = "Ontology graph unavailable"
+        return JSONResponse({
+            "error": message,
+            "availability": failed_read(message, "ontology_graph.read_failed"),
+        }, status_code=500)
 
 
 @router.get("/spatial-layout")
 async def get_spatial_layout(runtime: Any = Depends(get_runtime)) -> Any:
-    """AD-520: Spatial Knowledge Explorer — deck topology snapshot."""
+    """Deck snapshot; failures add availability without changing successful bodies.
+
+    Disabled requires typed spatial_explorer.enabled=False. Missing layout
+    with enabled or unknown configuration is unavailable, not disabled.
+    """
     layout = getattr(runtime, "spatial_layout", None)
     if layout is None:
-        return JSONResponse(
-            {"error": "Spatial explorer not enabled"}, status_code=503
-        )
-    return layout.to_dict()
+        availability = unavailable_dependency(getattr(runtime, "config", None), "spatial_explorer")
+        return JSONResponse({
+            "error": "Spatial explorer not enabled" if availability["state"] == "disabled" else "Spatial layout not available",
+            "availability": availability,
+        }, status_code=503)
+    try:
+        result = layout.to_dict()
+        if not isinstance(result, dict):
+            raise TypeError("Invalid layout snapshot")
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("Spatial layout read failed; layout unavailable; returning HTTP 500")
+        message = "Spatial layout unavailable"
+        return JSONResponse({
+            "error": message,
+            "availability": failed_read(message, "spatial_explorer.read_failed"),
+        }, status_code=500)
 
 
 @router.get("/skills/{agent_type}")

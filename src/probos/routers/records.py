@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from probos.knowledge.provo import project_record_frontmatter
 from probos.routers.deps import get_runtime
+from probos.routers.readiness import failed_read, unavailable_dependency
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,13 @@ router = APIRouter(prefix="/api/records", tags=["records"])
 
 # AD-1145 DD-7: the only accepted value of the opt-in ``format`` parameter.
 _PROV_JSONLD_FORMAT = "prov-jsonld"
+
+
+def _read_failure(message: str, code: str, status_code: int = 500) -> JSONResponse:
+    return JSONResponse(
+        {"error": message, "availability": failed_read(message, code, status_code)},
+        status_code=status_code,
+    )
 
 
 @router.get("/stats")
@@ -60,20 +68,33 @@ async def read_record(
     projection of the document's provenance frontmatter. The parameter is
     default-OFF -- absent it, the response body is byte-identical to what this
     endpoint has always returned, and the projection is never invoked.
+
+    Read failures retain ``error`` and add ``availability`` with state, code,
+    controlled message and retryable. Missing documents remain HTTP 404;
+    absent storage is HTTP 503, with disabled reserved for typed config-off.
     """
-    if not runtime._records_store:
-        return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+    store = getattr(runtime, "records_store", None)
+    if store is None:
+        return JSONResponse({
+            "error": "Ship's Records not available",
+            "availability": unavailable_dependency(getattr(runtime, "config", None), "records"),
+        }, status_code=503)
     if format and format != _PROV_JSONLD_FORMAT:
-        return JSONResponse(
-            {"error": f"Unsupported format; expected '{_PROV_JSONLD_FORMAT}'"},
-            status_code=400,
+        return _read_failure(
+            f"Unsupported format; expected '{_PROV_JSONLD_FORMAT}'",
+            "records.invalid_format", 400,
         )
     try:
-        entry = await runtime._records_store.read_entry(path, reader_id=reader)
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+        entry = await store.read_entry(path, reader_id=reader)
+    except HTTPException:
+        raise
+    except ValueError:
+        return _read_failure("Invalid document parameters", "records.invalid_parameters", 400)
+    except Exception:
+        logger.warning("Records document read failed; document unavailable; returning HTTP 503")
+        return _read_failure("Record document unavailable", "records.read_failed", 503)
     if entry is None:
-        return JSONResponse({"error": "Not found or access denied"}, status_code=404)
+        return _read_failure("Not found or access denied", "records.not_found", 404)
     if format == _PROV_JSONLD_FORMAT:
         return project_record_frontmatter(
             entry.get("path") or path, entry.get("frontmatter") or {}
@@ -180,20 +201,27 @@ async def browse_records(
     runtime: Any = Depends(get_runtime),
 ) -> Any:
     """AD-562 Phase 1: unified entry list across all Ship's Records sub-directories."""
-    if not runtime._records_store:
-        return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
+    store = getattr(runtime, "records_store", None)
+    if store is None:
+        return JSONResponse({
+            "error": "Ship's Records not available",
+            "availability": unavailable_dependency(getattr(runtime, "config", None), "records"),
+        }, status_code=503)
     tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()] if tags else []
     try:
-        entries = await runtime._records_store.list_entries(
+        entries = await store.list_entries(
             directory=directory,
             author=author,
             classification=classification,
         )
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+    except ValueError:
+        return _read_failure("Invalid records browse parameters", "records.invalid_parameters", 400)
     except Exception:
-        logger.warning("AD-562: browse list_entries failed; returning empty", exc_info=True)
-        entries = []
+        logger.warning("Records browse storage read failed; results unavailable; returning HTTP 503")
+        return _read_failure("Records browse unavailable", "records.read_failed", 503)
+    if entries is None:
+        logger.warning("Records browse storage returned no result; results unavailable; returning HTTP 503")
+        return _read_failure("Records browse unavailable", "records.read_failed", 503)
     filtered = []
     for e in entries:
         fm = e.get("frontmatter") or {}
@@ -228,14 +256,17 @@ async def get_backlinks(
     """AD-562 Phase 2: backlinks for a single entry."""
     service = getattr(runtime, "knowledge_browser", None)
     if service is None:
-        return JSONResponse({"error": "Knowledge Browser not available"}, status_code=503)
+        return JSONResponse({
+            "error": "Knowledge Browser not available",
+            "availability": unavailable_dependency(getattr(runtime, "config", None), "knowledge_browser"),
+        }, status_code=503)
     try:
         result = await service.get_backlinks(path, include_suggested=include_suggested)
     except Exception:
-        logger.warning("AD-562: get_backlinks failed for %s", path, exc_info=True)
-        return JSONResponse({"error": "backlink lookup failed"}, status_code=500)
+        logger.warning("Knowledge Browser backlink lookup failed; results unavailable; returning HTTP 500")
+        return _read_failure("backlink lookup failed", "knowledge_browser.backlinks_failed")
     if result is None:
-        return JSONResponse({"error": "Not found in index"}, status_code=404)
+        return _read_failure("Not found in index", "knowledge_browser.not_found", 404)
     return result
 
 
@@ -252,11 +283,14 @@ async def get_records_graph(
     """AD-562 Phase 3+4: 3D force-directed knowledge graph payload."""
     service = getattr(runtime, "knowledge_browser", None)
     if service is None:
-        return JSONResponse({"error": "Knowledge Browser not available"}, status_code=503)
+        return JSONResponse({
+            "error": "Knowledge Browser not available",
+            "availability": unavailable_dependency(getattr(runtime, "config", None), "knowledge_browser"),
+        }, status_code=503)
     capped_nodes = max(0, min(max_nodes, 2000))
     capped_edges = max(0, min(max_edges, 5000))
     try:
-        return await service.get_graph(
+        result = await service.get_graph(
             max_nodes=capped_nodes,
             max_edges=capped_edges,
             include_suggested=include_suggested,
@@ -265,8 +299,11 @@ async def get_records_graph(
             classification_filter=classification,
         )
     except Exception:
-        logger.warning("AD-562: get_graph failed", exc_info=True)
-        return JSONResponse({"error": "graph assembly failed"}, status_code=500)
+        logger.warning("Knowledge Browser graph assembly failed; results unavailable; returning HTTP 500")
+        return _read_failure("graph assembly failed", "knowledge_browser.graph_failed")
+    if result is None:
+        return _read_failure("graph assembly failed", "knowledge_browser.graph_failed")
+    return result
 
 
 @router.get("/timeline")
@@ -279,11 +316,17 @@ async def get_records_timeline(
     """AD-562 Phase 1: entry-creation timeline (day-buckets, dept-stacked)."""
     service = getattr(runtime, "knowledge_browser", None)
     if service is None:
-        return JSONResponse({"error": "Knowledge Browser not available"}, status_code=503)
+        return JSONResponse({
+            "error": "Knowledge Browser not available",
+            "availability": unavailable_dependency(getattr(runtime, "config", None), "knowledge_browser"),
+        }, status_code=503)
     try:
-        return await service.get_timeline(bucket=bucket, since=since, until=until)
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+        result = await service.get_timeline(bucket=bucket, since=since, until=until)
+    except ValueError:
+        return _read_failure("Invalid timeline parameters", "knowledge_browser.invalid_parameters", 400)
     except Exception:
-        logger.warning("AD-562: get_timeline failed", exc_info=True)
-        return JSONResponse({"error": "timeline assembly failed"}, status_code=500)
+        logger.warning("Knowledge Browser timeline assembly failed; results unavailable; returning HTTP 500")
+        return _read_failure("timeline assembly failed", "knowledge_browser.timeline_failed")
+    if result is None:
+        return _read_failure("timeline assembly failed", "knowledge_browser.timeline_failed")
+    return result

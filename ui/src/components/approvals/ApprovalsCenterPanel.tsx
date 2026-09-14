@@ -8,11 +8,10 @@
  * Communications / Operations / Engineering stations already use.
  *
  * This is a host, not a rewrite. CapabilityRequestPanel (AD-857) and
- * SkillRequestPanel (AD-908) already carry working approve/deny, the reason
- * field and the correct empty-state behaviour; they keep owning their own
- * request detail and decide calls. The centre supplies the frame, the close
- * control and the empty state, and refreshes the shared store slice after a
- * decision so the Bridge count does not lag behind what the Captain just did.
+ * SkillRequestPanel (AD-908) retain their decision controls. Hosted skill detail
+ * comes from the shared queue; the centre owns only its entry/manual refreshes,
+ * while Bridge owns background scheduling. Empty requires both queues to have
+ * successful empty observations, not just an absent local row.
  *
  * HXI Principle #3: inline SVG glyphs only, no emoji. Overlay geometry matches
  * the McpServersPanel idiom (fixed inset 0, zIndex 30, self-gated on a store
@@ -23,10 +22,32 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useStore, type DecidedApproval } from '../../store/useStore';
 import { Close } from '../icons/Glyphs';
 import CapabilityRequestPanel from '../capability/CapabilityRequestPanel';
-import SkillRequestPanel from '../skill/SkillRequestPanel';
+import SkillRequestPanel, { ApprovalRefreshGlyph } from '../skill/SkillRequestPanel';
+import { resourceMessage } from '../../utils/resourceState';
+import type { ApprovalQueue } from '../../store/types';
 
 const ACTIVE_AMBER = '#f0b060';
 const DIM = '#666680';
+
+export function ApprovalQueueStatus(): React.JSX.Element {
+  const resources = useStore(state => state.approvalResources);
+  const pending = useStore(state => state.pendingApprovals);
+  return <div role="status" aria-label="Approval queue freshness" style={{ fontSize: 11, color: DIM }}>
+    {(['capability', 'skill'] as ApprovalQueue[]).map(queue => {
+      const resource = resources[queue];
+      const known = resource.status === 'ready' || resource.status === 'empty';
+      const count = pending.filter(row => row.queue === queue).length;
+      return <div key={queue}>
+        {queue === 'skill' ? 'Skill' : 'Capability'}: {resourceMessage(resource.status)}
+        {!known && ' Current count unknown.'}
+        {!known && resource.data !== null && ` Last-known pending: ${count}.`}
+        {resource.stale && ' Stale.'}
+        {resource.observedAt !== null && !known
+          && ` Last successful observation: ${new Date(resource.observedAt).toLocaleTimeString()}.`}
+      </div>;
+    })}
+  </div>;
+}
 
 /* BF-724: the same focusable set WorkspaceFilesRail's start-work dialog uses,
  * so the two modal surfaces cannot drift on what "focusable" means. The dialog
@@ -38,11 +59,29 @@ const FOCUSABLE_SELECTOR =
 export function ApprovalsCenterPanel() {
   const open = useStore(s => s.approvalsCenterOpen);
   const pendingApprovals = useStore(s => s.pendingApprovals);
+  const resources = useStore(s => s.approvalResources);
   const refreshApprovals = useStore(s => s.refreshPendingApprovals);
   const recordDecision = useStore(s => s.recordApprovalDecision);
 
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  const refreshController = useRef<AbortController | null>(null);
+
+  const refresh = useCallback((initial = false) => {
+    const queues = initial ? (['capability', 'skill'] as const)
+      .filter(queue => useStore.getState().approvalResources[queue].status === 'idle') : undefined;
+    if (queues?.length === 0) return Promise.resolve();
+    refreshController.current?.abort();
+    const controller = new AbortController();
+    refreshController.current = controller;
+    return refreshApprovals({ queues, signal: controller.signal });
+  }, [refreshApprovals]);
+
+  useEffect(() => {
+    if (!open) return;
+    void refresh(true);
+    return () => { refreshController.current?.abort(); };
+  }, [open, refresh]);
 
   const close = useCallback(() => useStore.setState({ approvalsCenterOpen: false }), []);
 
@@ -117,8 +156,8 @@ export function ApprovalsCenterPanel() {
    * The tombstone is what makes the refresh result reconcilable. */
   const onDecided = useCallback((decided: DecidedApproval) => {
     recordDecision(decided.queue, decided.id);
-    refreshApprovals();
-  }, [recordDecision, refreshApprovals]);
+    void refresh();
+  }, [recordDecision, refresh]);
 
   if (!open) return null;
 
@@ -147,10 +186,10 @@ export function ApprovalsCenterPanel() {
       }}>
         <div>
           <div id="approvals-center-title" style={{ fontSize: 14, color: ACTIVE_AMBER, letterSpacing: 1 }}>
-            APPROVALS ({pendingApprovals.length})
-          </div>
-          <div style={{ fontSize: 10, color: DIM, marginTop: 2 }}>
-            Crew waiting on a decision — approve or deny with a reason.
+            APPROVALS ({pendingApprovals.length > 0 || Object.values(resources).every(resource =>
+              resource.status === 'ready' || resource.status === 'empty') ? pendingApprovals.length : 'unknown'})
+            {Object.values(resources).some(resource => resource.status !== 'ready' && resource.status !== 'empty')
+              && ' - last-known total; partial / unknown'}
           </div>
         </div>
         <button
@@ -169,9 +208,15 @@ export function ApprovalsCenterPanel() {
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 18px 24px' }}>
         <div style={{ maxWidth: 620 }}>
-          <CapabilityRequestPanel onDecided={onDecided} />
-          <SkillRequestPanel onDecided={onDecided} />
-          {pendingApprovals.length === 0 && (
+          <button type="button" aria-label="Refresh approval queues" title="Refresh approval queues" data-hxi-focus=""
+            onClick={() => { void refresh(); }}
+            style={{ background: 'none', border: 'none', color: ACTIVE_AMBER, cursor: 'pointer' }}>
+            <ApprovalRefreshGlyph />
+          </button>
+          <ApprovalQueueStatus />
+          <CapabilityRequestPanel hosted onDecided={onDecided} />
+          <SkillRequestPanel hosted onDecided={onDecided} />
+          {pendingApprovals.length === 0 && Object.values(resources).every(resource => resource.status === 'empty') && (
             <div
               data-testid="approvals-center-empty"
               style={{
