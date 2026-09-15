@@ -51,6 +51,7 @@ export default function App() {
   /* ── Global keydown: type-to-focus like Spotlight ── */
   useEffect(() => {
     function handleGlobalKey(e: KeyboardEvent) {
+      if (e.key === ' ' && e.target instanceof Element && e.target.closest('button')) return;
       // Don't capture if another input is focused
       if (document.activeElement?.tagName === 'INPUT' ||
           document.activeElement?.tagName === 'TEXTAREA') return;

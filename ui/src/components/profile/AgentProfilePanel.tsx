@@ -2,6 +2,8 @@ import { useState, useRef, useCallback, useEffect, useLayoutEffect, type SetStat
 import { useStore } from '../../store/useStore';
 import { ProfileChatTab } from './ProfileChatTab';
 import { ArtifactDrawer } from '../artifacts/ArtifactDrawer';
+import type { ArtifactOpenRequest } from '../artifacts/ArtifactCard';
+import { resolveProfileThreadId } from './profileThreadResolution';
 import { ProfileWorkTab } from './ProfileWorkTab';
 import { ProfileInfoTab } from './ProfileInfoTab';
 import { ProfileServiceTab } from './ProfileServiceTab';
@@ -322,6 +324,27 @@ export function AgentProfilePanel() {
     };
   }, [isResizing, viewport.w, viewport.h]);
 
+  const artifactThreadId = useStore(state => agentId
+    ? resolveProfileThreadId(undefined, state.activeProfileThreadId, state.threadIdByAgent, agentId)
+    : undefined);
+  const artifactDrawerAvailable = !!agentId && !!agent && !isWorkspaceFilesRoom
+    && (profileData?.isCrew ?? true) && (isGroupSurface || activeTab === 'chat');
+  const [artifactOwner, setArtifactOwner] = useState({ agentId, threadId: artifactThreadId, available: artifactDrawerAvailable });
+  const [pendingArtifactOpen, setPendingArtifactOpen] = useState<ArtifactOpenRequest | null>(null);
+  if (artifactOwner.agentId !== agentId || artifactOwner.threadId !== artifactThreadId
+    || artifactOwner.available !== artifactDrawerAvailable) {
+    setArtifactOwner({ agentId, threadId: artifactThreadId, available: artifactDrawerAvailable });
+    setPendingArtifactOpen(null);
+  }
+  const handleArtifactOpen = (request: ArtifactOpenRequest): void => {
+    if (artifactDrawerAvailable && request.threadId === artifactThreadId) {
+      setPendingArtifactOpen({ ...request });
+    }
+  };
+  const handleArtifactOpenConsumed = (request: ArtifactOpenRequest): void => {
+    setPendingArtifactOpen(current => current === request ? null : current);
+  };
+
   if (!agentId || !agent) return null;
 
   const callsign = profileData?.callsign || agent.callsign || '';
@@ -380,13 +403,17 @@ export function AgentProfilePanel() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          flexShrink: 0,
+          gap: 8,
+          minWidth: 0,
           padding: '10px 14px',
           borderBottom: '1px solid rgba(255,255,255,0.06)',
           cursor: isDragging ? 'grabbing' : 'grab',
           userSelect: 'none',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', flex: '1 1 120px', minWidth: 0, maxHeight: '3em', overflowY: 'auto', overflowWrap: 'anywhere', gap: 8 }}>
           <div style={{
             width: 8, height: 8, borderRadius: '50%',
             background: isGroupSurface ? '#8888a0' : deptColor,
@@ -411,7 +438,7 @@ export function AgentProfilePanel() {
             </>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', flexShrink: 0, marginLeft: 'auto', gap: 6 }}>
           {/* AD-721d: Design avatar (crew only, gated on avatars.enabled). */}
           {isCrew && avatarsEnabled && agentId && (
             <button
@@ -628,6 +655,7 @@ export function AgentProfilePanel() {
               lineHeight: 1,
             }}
             title="Minimize"
+            aria-label="Minimize profile"
           >
             &#x2013;
           </button>
@@ -639,6 +667,7 @@ export function AgentProfilePanel() {
               lineHeight: 1,
             }}
             title="Close"
+            aria-label="Close profile"
           >
             &#x2715;
           </button>
@@ -649,6 +678,8 @@ export function AgentProfilePanel() {
       {visionError && <div role="alert" style={{ padding: '6px 14px', fontSize: 11, color: '#f0b060', overflowWrap: 'anywhere' }}>{visionError}</div>}
       <div style={{
         display: 'flex',
+        flexWrap: 'wrap',
+        flexShrink: 0,
         borderBottom: '1px solid rgba(255,255,255,0.06)',
       }}>
         {visibleTabs.map(({ key, label }) => (
@@ -661,7 +692,9 @@ export function AgentProfilePanel() {
                 && (effectiveTab === 'profile' || effectiveTab === 'health' || avatarOpen && avatarsEnabled)) refreshProfile();
             }}
             style={{
-              flex: 1,
+              flex: '1 0 52px',
+              minWidth: 0,
+              overflowWrap: 'anywhere',
               background: 'none',
               border: 'none',
               borderBottom: effectiveTab === key ? '2px solid #f0b060' : '2px solid transparent',
@@ -691,7 +724,7 @@ export function AgentProfilePanel() {
       )}
 
       {/* Tab content */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {effectiveTab === 'chat' && isCrew && (
           <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
             {/* AD-1074a: chat + the Output/Workspace drawer side by side (the
@@ -699,9 +732,14 @@ export function AgentProfilePanel() {
                 [ProfileChatTab | ArtifactDrawer] row. The drawer is
                 self-contained (thread artifacts, collapsible rail). */}
             <div style={{ flex: '1 1 auto', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <ProfileChatTab agentId={agentId} />
+              <ProfileChatTab agentId={agentId} onArtifactOpen={handleArtifactOpen} />
             </div>
-            {!isWorkspaceFilesRoom && <ArtifactDrawer />}
+            {!isWorkspaceFilesRoom && <ArtifactDrawer
+              threadId={artifactThreadId ?? null}
+              conversationKey={artifactOwner}
+              openRequest={pendingArtifactOpen}
+              onOpenConsumed={handleArtifactOpenConsumed}
+            />}
           </div>
         )}
         {effectiveTab === 'work' && <ProfileWorkTab agentId={agentId} />}

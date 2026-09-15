@@ -8,6 +8,7 @@
 // no-emoji guard. Test #1 FLIPS the AD-919 contract: 1:1s are now INCLUDED.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { act, render, screen, fireEvent, cleanup, waitFor, within, type RenderResult } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useStore, type AD791aChatThreadView } from '../../../store/useStore';
 import type { Agent, CrewSessionSummaryProjection, RoomSummary, WSEvent } from '../../../store/types';
 import notificationFixture from '../../../../e2e/fixtures/notification-navigation.json';
@@ -20,7 +21,7 @@ vi.mock('../../sidebar/threadApi', () => ({
   createThread: vi.fn(),
 }));
 
-import { listThreads, addParticipant, repairRoomSummaries } from '../../sidebar/threadApi';
+import { listThreads, addParticipant, getThread, repairRoomSummaries } from '../../sidebar/threadApi';
 import ChatsPanel from '../ChatsPanel';
 
 function mkAgent(p: { id: string; callsign: string; isCrew?: boolean; department?: string }): Agent {
@@ -125,6 +126,20 @@ afterEach(() => {
 });
 
 describe('AD-931 ChatsPanel', () => {
+  it('returns cancelled launcher focus to its actual opening control', async () => {
+    vi.mocked(listThreads).mockResolvedValue([]);
+    vi.mocked(repairRoomSummaries).mockResolvedValue({ kind: 'success', summaries: {} });
+    useStore.setState({ chatsOpen: false });
+    const user = userEvent.setup();
+    render(<><button type="button" onClick={() => useStore.getState().openChats()}>Open rooms</button><ChatsPanel /></>);
+    const opener = screen.getByRole('button', { name: 'Open rooms' });
+    await user.click(opener);
+    await screen.findByTestId('chats-empty');
+    await user.click(screen.getByRole('button', { name: 'Close chats' }));
+    expect(opener).toHaveFocus();
+    expect(useStore.getState().chatsOpen).toBe(false);
+  });
+
   it('keeps failed rooms and synthetic blocked work discoverable after notification acknowledgement and pruning', async () => {
     const failedRoom = notificationFixture.context.thread;
     const failedSummary = notificationFixture.summaries.summaries[failedRoom.id as 'notification-navigation-1'] as RoomSummary;
@@ -263,6 +278,11 @@ describe('AD-931 ChatsPanel', () => {
     await renderOpen();
     expect(screen.getByTestId('chat-join-g4')).toBeTruthy();
     fireEvent.click(screen.getByTestId('chat-join-g4'));
+    await waitFor(() => expect(useStore.getState().chatsOpen).toBe(false));
+    // Successful Join opens the conversation; its joined marker remains on reopen.
+    const joined = useStore.getState().chatThreads.get('g4')!;
+    vi.mocked(listThreads).mockResolvedValue(ALL.map(thread => thread.id === joined.id ? joined : thread));
+    act(() => useStore.getState().openChats());
     await waitFor(() => expect(screen.queryByTestId('chat-joined-g4')).not.toBeNull());
     expect(screen.queryByTestId('chat-join-g4')).toBeNull();
   });
@@ -276,6 +296,7 @@ describe('AD-931 ChatsPanel', () => {
     await waitFor(() => expect(useStore.getState().activeProfileThreadId).toBe('g1'));
     expect(useStore.getState().activeProfileAgent).toBe('mccoy');
     expect(useStore.getState().threadIdByAgent.get('mccoy')).toBeUndefined();
+    expect(useStore.getState().chatsOpen).toBe(false);
   });
 
   it('clicking a 1:1 row opens the chat in its single crew host via the AD-937 override', async () => {
@@ -284,6 +305,38 @@ describe('AD-931 ChatsPanel', () => {
     await waitFor(() => expect(useStore.getState().activeProfileThreadId).toBe('g3'));
     expect(useStore.getState().activeProfileAgent).toBe('mccoy');
     expect(useStore.getState().threadIdByAgent.get('mccoy')).toBeUndefined();
+    expect(useStore.getState().chatsOpen).toBe(false);
+  });
+
+  it('closes after a task-room open and retains the launcher when the fresh room has no host', async () => {
+    await renderOpen();
+    fireEvent.click(screen.getByTestId('chat-row-t1'));
+    await waitFor(() => expect(useStore.getState().activeProfileThreadId).toBe('t1'));
+    expect(useStore.getState().chatsOpen).toBe(false);
+    act(() => useStore.getState().openChats());
+    await screen.findByTestId('chat-row-g1');
+    vi.mocked(getThread).mockResolvedValueOnce({ ...G1, participants: ['unavailable-host'] });
+    fireEvent.click(screen.getByTestId('chat-row-g1'));
+    await waitFor(() => expect(getThread).toHaveBeenCalledWith('g1'));
+    expect(useStore.getState().activeProfileThreadId).toBe('t1');
+    expect(useStore.getState().chatsOpen).toBe(true);
+  });
+
+  it('supports native keyboard launcher close and modal cancel controls', async () => {
+    const user = userEvent.setup();
+    await renderOpen();
+    await user.click(screen.getByRole('button', { name: 'New chat' }));
+    const modal = screen.getByTestId('new-chat-modal');
+    expect(modal).toHaveStyle({ minHeight: '0', overflowY: 'auto' });
+    const cancel = screen.getByRole('button', { name: 'Cancel new chat' });
+    cancel.focus();
+    await user.keyboard(' ');
+    expect(screen.queryByTestId('new-chat-modal')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New chat' })).toHaveFocus();
+    expect(useStore.getState().chatsOpen).toBe(true);
+    screen.getByRole('button', { name: 'Close chats' }).focus();
+    await user.keyboard('{Enter}');
+    expect(useStore.getState().chatsOpen).toBe(false);
   });
 
   it('AD-937: after opening a group, reopening the host profile clears the override (1:1 reachable)', async () => {

@@ -5,19 +5,20 @@
  *   [ThreadSidebar | ProfileChatTab | ArtifactDrawer]
  *
  * 360px expanded / 28px rail collapsed. localStorage persists the
- * collapsed state under ``probos.artifactDrawer.collapsed``. Viewport
- * <1024px defaults to rail (responsive proper → AD-797j).
+ * collapsed state under ``probos.artifactDrawer.collapsed``. Narrow
+ * hosts present a rail unless the drawer is explicitly opened.
  *
  * Subscribes to ``useStore.activeThreadId``: on change, fetches the
  * thread's artifacts and replaces drawer state. If the list is empty
  * AND no project pins surface, the drawer auto-collapses to rail
  * unless the Captain manually expanded it.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useStore } from '../../store/useStore';
 import { ArtifactList } from './ArtifactList';
 import { ArtifactViewer } from './ArtifactViewer';
 import { fetchThreadArtifacts } from './artifactApi';
+import type { ArtifactOpenRequest } from './ArtifactCard';
 
 const AMBER = '#f0b060';
 const DIM = '#888899';
@@ -37,10 +38,15 @@ function loadCollapsedFromStorage(): boolean | null {
 export interface ArtifactDrawerProps {
   /** Optional override for tests/storybook. */
   initialCollapsed?: boolean;
+  threadId?: string | null;
+  openRequest?: ArtifactOpenRequest | null;
+  onOpenConsumed?: (request: ArtifactOpenRequest) => void;
+  conversationKey?: object;
 }
 
-export function ArtifactDrawer(props: ArtifactDrawerProps) {
-  const activeThreadId = useStore((s) => s.activeThreadId);
+export function ArtifactDrawer(props: ArtifactDrawerProps): ReactElement {
+  const globalThreadId = useStore((s) => s.activeThreadId);
+  const activeThreadId = props.threadId === undefined ? globalThreadId : props.threadId;
   const chatThreads = useStore((s) => s.chatThreads);
   const artifactsByThread = useStore((s) => s.artifactsByThread);
   const selectedId = useStore((s) => s.selectedArtifactId);
@@ -49,24 +55,87 @@ export function ArtifactDrawer(props: ArtifactDrawerProps) {
   const selectArtifact = useStore((s) => s.selectArtifact);
   const setCollapsed = useStore((s) => s.setArtifactDrawerCollapsed);
 
-  const [userToggled, setUserToggled] = useState<boolean>(false);
+  const userToggled = useRef(props.initialCollapsed !== undefined);
+  const drawerRef = useRef<HTMLElement>(null);
+  const expandRef = useRef<HTMLButtonElement>(null);
+  const collapseRef = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  const focusExpanded = useRef(false);
+  const openerRef = useRef<ArtifactOpenRequest | null>(null);
+  const consumedRequests = useRef(new WeakSet<ArtifactOpenRequest>());
+  const presentationOwner = useRef({ activeThreadId, conversationKey: props.conversationKey });
+  const [hostWidth, setHostWidth] = useState<number | null>(null);
+  const [explicitExpanded, setExplicitExpanded] = useState(props.initialCollapsed === false);
+  const compact = hostWidth !== null && hostWidth < 660;
+  const effectiveCollapsed = collapsed || (!activeThreadId && !userToggled.current) || (compact && !explicitExpanded);
+  const overlay = compact && !effectiveCollapsed;
+
+  useLayoutEffect(() => {
+    if (presentationOwner.current.activeThreadId === activeThreadId
+      && presentationOwner.current.conversationKey === props.conversationKey) return;
+    presentationOwner.current = { activeThreadId, conversationKey: props.conversationKey };
+    openerRef.current = null;
+    restoreFocus.current = false;
+    focusExpanded.current = false;
+    setExplicitExpanded(false);
+  }, [activeThreadId, props.conversationKey]);
+
+  useLayoutEffect(() => {
+    const parent = drawerRef.current?.parentElement;
+    if (!parent) return;
+    let previousWidth: number | null = null;
+    const measure = (width: number): void => {
+      if (!Number.isFinite(width) || width <= 0) return;
+      if (previousWidth !== null && previousWidth >= 660 && width < 660) {
+        restoreFocus.current = !!drawerRef.current?.contains(document.activeElement);
+        openerRef.current = null;
+        setExplicitExpanded(false);
+      }
+      previousWidth = width;
+      setHostWidth(width);
+    };
+    measure(parent.clientWidth);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(entries => {
+      const entry = entries.find(value => value.target === parent);
+      if (entry) measure(entry.contentRect.width);
+    });
+    observer?.observe(parent);
+    const resize = (): void => measure(parent.clientWidth);
+    window.addEventListener('resize', resize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', resize);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (effectiveCollapsed && restoreFocus.current) {
+      const request = openerRef.current;
+      const opener = request?.opener;
+      if (request?.threadId === activeThreadId && opener?.isConnected
+        && opener.dataset.artifactThreadId === activeThreadId
+        && opener.dataset.artifactId === request.artifactId && !opener.disabled) {
+        opener.focus();
+      } else {
+        expandRef.current?.focus();
+      }
+      openerRef.current = null;
+      restoreFocus.current = false;
+    } else if (!effectiveCollapsed && focusExpanded.current) {
+      collapseRef.current?.focus();
+      focusExpanded.current = false;
+    }
+  });
 
   // Hydrate persisted collapsed state on mount.
   useEffect(() => {
     const persisted = loadCollapsedFromStorage();
-    let initial: boolean;
     if (props.initialCollapsed !== undefined) {
-      initial = props.initialCollapsed;
+      setCollapsed(props.initialCollapsed);
     } else if (persisted !== null) {
-      initial = persisted;
-      setUserToggled(true);
-    } else if (typeof window !== 'undefined' && window.innerWidth < 1024) {
-      // Viewport-based default per architect N2.
-      initial = true;
-    } else {
-      initial = false;
+      userToggled.current = true;
+      setCollapsed(persisted);
     }
-    setCollapsed(initial);
     // We intentionally run this only on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -82,7 +151,7 @@ export function ArtifactDrawer(props: ArtifactDrawerProps) {
         hydrateArtifacts(activeThreadId, list);
         // Auto-collapse to rail when empty AND Captain hasn't manually
         // expanded. If the operator already toggled, respect it.
-        if (!userToggled && list.length === 0) {
+        if (!userToggled.current && list.length === 0) {
           setCollapsed(true);
         }
       } catch {
@@ -97,6 +166,24 @@ export function ArtifactDrawer(props: ArtifactDrawerProps) {
     () => (activeThreadId ? artifactsByThread.get(activeThreadId) ?? [] : []),
     [artifactsByThread, activeThreadId],
   );
+
+  useLayoutEffect(() => {
+    const request = props.openRequest;
+    if (!request || consumedRequests.current.has(request)) return;
+    consumedRequests.current.add(request);
+    if (request.threadId === activeThreadId && artifacts.some(artifact =>
+      artifact.id === request.artifactId && artifact.thread_id === activeThreadId)) {
+      openerRef.current = request;
+      userToggled.current = true;
+      restoreFocus.current = false;
+      focusExpanded.current = true;
+      setExplicitExpanded(true);
+      selectArtifact(request.artifactId);
+      setCollapsed(false);
+      collapseRef.current?.focus();
+    }
+    props.onOpenConsumed?.(request);
+  }, [props.openRequest, props.onOpenConsumed, activeThreadId, artifacts, selectArtifact, setCollapsed]);
 
   // AD-1074c: auto-open a freshly-produced document. When the active thread's
   // artifact list GROWS in place (a live arrival - not a thread switch or the
@@ -142,25 +229,32 @@ export function ArtifactDrawer(props: ArtifactDrawerProps) {
   }, [activeThreadId, chatThreads]);
 
   const handleToggle = useCallback(() => {
-    setUserToggled(true);
-    setCollapsed(!collapsed);
-  }, [collapsed, setCollapsed]);
+    userToggled.current = true;
+    setExplicitExpanded(effectiveCollapsed);
+    restoreFocus.current = !effectiveCollapsed;
+    focusExpanded.current = effectiveCollapsed;
+    if (effectiveCollapsed) openerRef.current = null;
+    setCollapsed(!effectiveCollapsed);
+  }, [effectiveCollapsed, setCollapsed]);
 
   const handleSelect = useCallback(
     (id: string) => {
       selectArtifact(id);
-      if (collapsed) {
-        setUserToggled(true);
+      setExplicitExpanded(true);
+      if (effectiveCollapsed) {
+        userToggled.current = true;
         setCollapsed(false);
       }
     },
-    [selectArtifact, collapsed, setCollapsed],
+    [effectiveCollapsed, selectArtifact, setCollapsed],
   );
 
-  if (collapsed) {
+  if (effectiveCollapsed) {
     return (
       <aside
+        ref={drawerRef}
         data-testid="artifact-drawer"
+        data-thread-id={activeThreadId ?? undefined}
         data-collapsed="true"
         style={{
           flex: '0 0 28px', width: 28,
@@ -171,8 +265,11 @@ export function ArtifactDrawer(props: ArtifactDrawerProps) {
         }}
       >
         <button
+          ref={expandRef}
           type="button" onClick={handleToggle}
           data-testid="artifact-drawer-expand"
+          aria-label="Expand artifacts"
+          aria-expanded={false}
           title={`Artifacts (${artifacts.length})`}
           style={{
             background: 'transparent', border: 'none', color: AMBER,
@@ -207,13 +304,36 @@ export function ArtifactDrawer(props: ArtifactDrawerProps) {
 
   return (
     <aside
+      ref={drawerRef}
       data-testid="artifact-drawer"
+      data-thread-id={activeThreadId ?? undefined}
       data-collapsed="false"
+      data-overlay={overlay ? 'true' : 'false'}
       style={{
-        flex: '0 0 360px', width: 360,
+        flex: overlay ? '0 0 28px' : '0 0 360px', width: overlay ? 28 : 360,
+        minWidth: 0, minHeight: 0, position: 'relative',
+        display: 'flex', flexDirection: 'column',
+      }}
+    >
+      <div
+        role={overlay ? 'dialog' : undefined}
+        aria-label={overlay ? 'Artifacts' : undefined}
+        onKeyDown={event => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            handleToggle();
+          }
+        }}
+        style={{
+        flex: '1 1 auto', minWidth: 0, minHeight: 0,
+        width: overlay ? Math.min(360, hostWidth ?? 28) : '100%',
+        boxSizing: 'border-box', overflow: 'auto',
+        position: overlay ? 'absolute' : 'relative',
+        ...(overlay ? { top: 0, bottom: 0, right: 0, zIndex: 10 } : {}),
         background: 'rgba(10, 10, 18, 0.92)',
         borderLeft: '1px solid rgba(240, 176, 96, 0.15)',
-        display: 'flex', flexDirection: 'column', position: 'relative',
+        display: 'flex', flexDirection: 'column',
       }}
     >
       <div
@@ -235,12 +355,15 @@ export function ArtifactDrawer(props: ArtifactDrawerProps) {
           }}>{artifacts.length}</span>
         )}
         <button
+          ref={collapseRef}
           type="button" onClick={handleToggle}
           data-testid="artifact-drawer-collapse"
+          aria-label="Collapse artifacts"
+          aria-expanded={true}
           title="Collapse drawer"
           style={{
             background: 'transparent', border: 'none', color: AMBER,
-            cursor: 'pointer', padding: 2,
+            cursor: 'pointer', padding: 2, width: 32, height: 32, flexShrink: 0,
           }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -276,6 +399,7 @@ export function ArtifactDrawer(props: ArtifactDrawerProps) {
           Select an artifact to preview.
         </div>
       )}
+      </div>
     </aside>
   );
 }

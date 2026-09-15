@@ -10,13 +10,14 @@ describe('AD-1074a AgentProfilePanel Output drawer', () => {
   });
 
   it('renders the ArtifactDrawer beside ProfileChatTab in the chat tab', () => {
-    expect(source).toContain('<ArtifactDrawer />');
+    // Optional open-request props replace the literal empty tag without changing adjacency or suppression.
+    expect(source).toMatch(/<ProfileChatTab[^>]*\/>\s*<\/div>\s*\{!isWorkspaceFilesRoom && <ArtifactDrawer[\s\S]*?\/>\}/);
     // The chat tab is a flex row: [chat column | drawer].
     expect(source).toContain("display: 'flex', height: '100%', minHeight: 0");
   });
 
   it('BF-642: suppresses the drawer in workspace rooms (WorkspaceFilesRail owns it)', () => {
     expect(source).toContain("from '../workspace/isWorkspaceRoom'");
-    expect(source).toContain('{!isWorkspaceFilesRoom && <ArtifactDrawer />}');
+    expect(source).toMatch(/\{!isWorkspaceFilesRoom && <ArtifactDrawer\s[\s\S]*?\/>\}/);
   });
 });

@@ -27,7 +27,7 @@
  *
  * HXI Design Principle #3 — inline stroke-SVG glyphs only, no emoji.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react';
 import { InputsList } from '../inputs/InputsList';
 import { fetchThreadInputs, attachTaskInputs, type TaskInput } from '../inputs/inputsApi';
 import { ArtifactList } from '../artifacts/ArtifactList';
@@ -114,7 +114,7 @@ export interface WorkspaceFilesRailProps {
   onSessionBound?: (result: StartWorkResult) => void;
 }
 
-export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
+export function WorkspaceFilesRail(props: WorkspaceFilesRailProps): ReactElement {
   const {
     threadId,
     taskId,
@@ -127,23 +127,27 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   const liveRepairEpoch = useStore(state => state.liveRepairEpoch);
   const liveThreadRefresh = useStore(state => state.liveThreadRefresh);
   const railRef = useRef<HTMLElement>(null);
-  const [compact, setCompact] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const previewCloseRef = useRef<HTMLButtonElement>(null);
+  const previewOpenerRef = useRef<{ element: HTMLElement; threadId: string } | null>(null);
+  const focusDestinationRef = useRef<'toggle' | 'preview' | 'opener' | null>(null);
+  const [hostWidth, setHostWidth] = useState<number | null>(null);
   useEffect(() => {
     const parent = railRef.current?.parentElement;
-    if (!parent || typeof ResizeObserver === 'undefined') return;
+    if (!parent) return;
     const measure = (width: number): void => {
-      if (width > 0) setCompact(window.innerWidth < 660 && width < 660);
+      if (Number.isFinite(width) && width > 0) setHostWidth(width);
     };
     measure(parent.clientWidth);
-    const observer = new ResizeObserver(entries => {
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(entries => {
       const entry = entries.find(value => value.target === parent);
       if (entry) measure(entry.contentRect.width);
     });
-    observer.observe(parent);
+    observer?.observe(parent);
     const resize = (): void => measure(parent.clientWidth);
     window.addEventListener('resize', resize);
     return () => {
-      observer.disconnect();
+      observer?.disconnect();
       window.removeEventListener('resize', resize);
     };
   }, []);
@@ -195,6 +199,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
   const [startError, setStartError] = useState('');
   const startSubmittingRef = useRef(false);
   const startGenerationRef = useRef(0);
+  useEffect(() => () => { startGenerationRef.current += 1; }, []);
   const startDialogRef = useRef<HTMLDivElement | null>(null);
   const startGoalRef = useRef<HTMLTextAreaElement | null>(null);
   const startOpenerRef = useRef<HTMLButtonElement | null>(null);
@@ -256,6 +261,8 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     setArtifactCommandError('');
     setArtifactLookupPending(false);
     setSelectedId(null);
+    previewOpenerRef.current = null;
+    focusDestinationRef.current = null;
     setArtifactsLoaded(false);
   }, [threadId]);
   useEffect(() => {
@@ -509,7 +516,26 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     }
   }, [collapsed, liveRepairEpoch, refreshArtifacts, refreshInputs, refreshSteps]);
 
+  useLayoutEffect(() => {
+    const destination = focusDestinationRef.current;
+    focusDestinationRef.current = null;
+    if (destination === 'toggle') toggleRef.current?.focus();
+    if (destination === 'preview') previewCloseRef.current?.focus();
+    if (destination === 'opener') {
+      const opener = previewOpenerRef.current;
+      if (opener?.threadId === threadId && opener.element.isConnected) opener.element.focus();
+      else toggleRef.current?.focus();
+      previewOpenerRef.current = null;
+    }
+  }, [collapsed, selectedId, threadId]);
+
+  const closePreview = useCallback(() => {
+    focusDestinationRef.current = 'opener';
+    setSelectedId(null);
+  }, []);
+
   const handleToggle = useCallback(() => {
+    focusDestinationRef.current = 'toggle';
     setCollapsed((prev) => {
       const next = !prev;
       persistCollapsed(next);
@@ -650,7 +676,12 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
     const row = artifacts.find(artifact => (
       artifact.id === id && artifact.thread_id === roomTokenRef.current.threadId
     ));
-    if (row) setSelectedId(id);
+    if (row) {
+      const element = railRef.current?.querySelector<HTMLElement>(`[data-testid="artifact-row-${CSS.escape(id)}"]`);
+      previewOpenerRef.current = element ? { element, threadId: roomTokenRef.current.threadId } : null;
+      focusDestinationRef.current = 'preview';
+      setSelectedId(id);
+    }
   }, [artifacts]);
 
   const loadCommandArtifact = useCallback(async (command: CrewSessionArtifactCommand) => {
@@ -792,6 +823,8 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
       artifact.id === selectedId && artifact.thread_id === threadId
     )) ?? null
   ) : null;
+  const compact = hostWidth !== null
+    && hostWidth < Math.max(660, (selectedArtifact ? previewWidth : 300) + 280);
 
   if (collapsed) {
     return (
@@ -808,6 +841,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
         }}
       >
         <button
+          ref={toggleRef}
           type="button" onClick={handleToggle}
           data-testid="workspace-files-expand"
           title={`Files (${totalCount})`}
@@ -848,6 +882,15 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
       data-testid="workspace-files-rail"
       data-collapsed="false"
       data-compact={compact}
+      onKeyDown={event => {
+        if (event.key === 'Escape' && !event.defaultPrevented && !startDialogOpen) {
+          if (selectedId) closePreview();
+          else if (compact) handleToggle();
+          else return;
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
       style={{
         flex: `0 0 ${selectedArtifact ? previewWidth : 300}px`, width: selectedArtifact ? previewWidth : 300, position: 'relative',
         ...(compact ? { position: 'absolute', inset: 0, width: '100%', maxWidth: '100%', zIndex: 2 } as const : {}),
@@ -920,6 +963,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
           Start Work
         </button>
         <button
+          ref={toggleRef}
           type="button" onClick={handleToggle}
           data-testid="workspace-files-collapse"
           title="Collapse files"
@@ -1164,7 +1208,8 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps) {
               </svg>
             </button>
             <button
-              type="button" onClick={() => setSelectedId(null)}
+              ref={previewCloseRef}
+              type="button" onClick={closePreview}
               data-testid="workspace-files-preview-close" title="Close preview"
               style={{ background: 'transparent', border: 'none', color: DIM, cursor: 'pointer', padding: 4 }}
             >

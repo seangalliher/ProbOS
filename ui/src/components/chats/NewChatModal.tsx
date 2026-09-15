@@ -14,14 +14,14 @@
  *
  * Per HXI Design Principle #3: inline SVG glyphs only, amber `#f0b060`, no emoji.
  */
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { useStore } from '../../store/useStore';
 import { AddParticipantPopover } from '../profile/AddParticipantPopover';
 import { Close } from '../icons/Glyphs';
 import { createThread } from '../sidebar/threadApi';
 import { COLOR_ACTIVE, COLOR_INACTIVE } from './chatFilters';
 
-export function NewChatModal({ onClose, seedParticipantId }: { onClose: () => void; seedParticipantId?: string }) {
+export function NewChatModal({ onClose, seedParticipantId }: { onClose: () => void; seedParticipantId?: string }): ReactElement {
   const agents = useStore((s) => s.agents);
   const openAgentProfile = useStore((s) => s.openAgentProfile);
   // AD-937: open a created group via the override (does NOT bind it into the
@@ -76,6 +76,10 @@ export function NewChatModal({ onClose, seedParticipantId }: { onClose: () => vo
         zIndex: 40,
         display: 'flex',
         flexDirection: 'column',
+        minWidth: 0,
+        minHeight: 0,
+        boxSizing: 'border-box',
+        overflowY: 'auto',
         background: 'rgba(8, 8, 14, 0.97)',
         borderRadius: 8,
         padding: 14,
@@ -84,25 +88,26 @@ export function NewChatModal({ onClose, seedParticipantId }: { onClose: () => vo
       }}
     >
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexShrink: 0, position: 'sticky', top: 0, zIndex: 1, background: '#08080e' }}>
         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: COLOR_ACTIVE }}>
           NEW CHAT
         </span>
         <div style={{ flex: 1 }} />
-        <div
+        <button
+          type="button"
           data-testid="new-chat-cancel"
           onClick={onClose}
-          style={{ cursor: 'pointer', color: COLOR_INACTIVE, display: 'inline-flex' }}
+          style={{ cursor: 'pointer', color: COLOR_INACTIVE, display: 'inline-flex', background: 'transparent', border: 0, padding: 4 }}
           aria-label="Cancel new chat"
         >
           <Close size={14} />
-        </div>
+        </button>
       </div>
 
       {/* Selected chips (click to remove -> drops back into the popover list).
           AD-937: the seeded host chip is locked (no remove control). */}
       {selected.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, flexShrink: 0, maxHeight: '30%', overflowY: 'auto' }}>
           {selected.map((id) => {
             const label = agents.get(id)?.callsign ?? id;
             const chipStyle = {
@@ -156,7 +161,7 @@ export function NewChatModal({ onClose, seedParticipantId }: { onClose: () => vo
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexShrink: 0, position: 'sticky', bottom: 0, background: '#08080e' }}>
         <div style={{ flex: 1 }} />
         <button
           data-testid="new-chat-start"

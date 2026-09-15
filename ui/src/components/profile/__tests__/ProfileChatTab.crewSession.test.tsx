@@ -424,7 +424,12 @@ describe('AD-1132 ProfileChatTab CrewSession integration', () => {
 
     const panel = await screen.findByTestId('crew-collaboration-panel');
     const rail = await screen.findByTestId('workspace-files-rail');
-    const chatColumn = panel.parentElement?.parentElement;
+    const status = screen.getByRole('region', { name: 'Task status' });
+    expect(status).toContainElement(panel);
+    expect(status).toHaveAttribute('tabindex', '0');
+    expect(status).toHaveStyle({ maxHeight: 'min(180px, 25%)', overflowY: 'auto' });
+    // The bounded status wrapper preserves ownership in the same chat column.
+    const chatColumn = status.parentElement;
     expect(chatColumn?.parentElement).toBe(rail.parentElement);
     expect(chatColumn?.style.flex).toContain('1');
     expect(chatColumn?.style.minWidth).toBe('0px');
@@ -529,8 +534,8 @@ describe('AD-1132 ProfileChatTab CrewSession integration', () => {
     expect(screen.queryByRole('button', { name: 'Retry blocked CrewSession work' })).toBeNull();
   });
 
-  it('binds a taskless room from one Start Work response and renders the hydrated session immediately', async () => {
-    const room = thread('t2', null);
+  it.each([null, undefined])('binds a taskless room (%s) and retains the validated task after remount', async (taskId) => {
+    const room = { ...thread('t2', null), task_id: taskId };
     const created = projection('p2', 't2', 'discussing');
     const result: StartWorkResult = {
       disposition: 'created', parent_id: 'p2', thread_id: 't2', state: 'discussing',
@@ -539,7 +544,7 @@ describe('AD-1132 ProfileChatTab CrewSession integration', () => {
     };
     seed([room]);
     const fetchMock = installNetwork({ details: { p2: created }, startResult: result });
-    render(<ProfileChatTab agentId="host" threadId="t2" />);
+    const view = render(<ProfileChatTab agentId="host" threadId="t2" />);
     await screen.findByTestId('workspace-files-rail');
     expect(screen.queryByTestId('crew-collaboration-panel')).toBeNull();
 
@@ -551,9 +556,75 @@ describe('AD-1132 ProfileChatTab CrewSession integration', () => {
 
     expect(await screen.findByText(created.goal)).toBeTruthy();
     expect(useStore.getState().crewSessionsByParent.get('p2')).toEqual(created);
+    expect(useStore.getState().chatThreads.get('t2')).toEqual({ ...room, task_id: 'p2' });
+    view.unmount();
+    render(<ProfileChatTab agentId="host" threadId="t2" />);
+    expect(await screen.findByTestId('crew-collaboration-panel')).toContainHTML('data-state="discussing"');
+    expect(await screen.findByText(created.goal)).toBeInTheDocument();
     const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST');
     expect(posts).toHaveLength(1);
     expect(String(posts[0][0])).toBe('/api/threads/t2/start-work');
+  });
+
+  it.each(['same', 'conflict', 'metadata', 'missing', 'away-back', 'unmounted'])('guards a pending Start Work completion after %s changes', async (change) => {
+    const room = thread('t1', null);
+    const created = projection('p1', 't1', 'discussing');
+    const other = projection('other-parent', 't1', 'executing');
+    const result: StartWorkResult = {
+      disposition: 'created', parent_id: 'p1', thread_id: 't1', state: 'discussing',
+      facilitator_id: 'host', owner_ids: ['host', 'peer'], duplicate_resume_count: 0,
+      scheduled: true, session: created,
+    };
+    seed([room, thread('t2', null)]);
+    let resolveStart!: (response: Response) => void;
+    const network = installNetwork({ details: { p1: created, 'other-parent': other } });
+    const base = network.getMockImplementation()!;
+    network.mockImplementation((request: RequestInfo | URL, options?: RequestInit) => {
+      if (String(request) === '/api/threads/t1/start-work' && options?.method === 'POST') {
+        return new Promise<Response>(resolve => { resolveStart = resolve; });
+      }
+      return base(request, options);
+    });
+    const view = render(<ProfileChatTab agentId="host" threadId="t1" />);
+    await screen.findByTestId('workspace-start-work-open');
+    fireEvent.click(screen.getByTestId('workspace-start-work-open'));
+    fireEvent.change(screen.getByTestId('workspace-start-work-goal'), { target: { value: created.goal } });
+    fireEvent.change(screen.getByTestId('workspace-start-work-criteria'), { target: { value: created.success_criteria.join('\n') } });
+    fireEvent.change(screen.getByTestId('workspace-start-work-deliverable'), { target: { value: created.expected_deliverable } });
+    fireEvent.click(screen.getByTestId('workspace-start-work-confirm'));
+    await waitFor(() => expect(resolveStart).toBeTypeOf('function'));
+    if (change === 'same' || change === 'conflict') {
+      act(() => useStore.getState().setChatThread({ ...room, task_id: change === 'same' ? 'p1' : 'other-parent' }));
+    } else if (change === 'metadata') {
+      act(() => useStore.getState().setChatThread({ ...room, title: 'Latest title', metadata: { keep: 'latest' } }));
+    } else if (change === 'missing') {
+      act(() => {
+        const rooms = new Map(useStore.getState().chatThreads);
+        rooms.delete('t1');
+        useStore.setState({ chatThreads: rooms });
+      });
+    } else if (change === 'away-back') {
+      view.rerender(<ProfileChatTab agentId="host" threadId="t2" />);
+      view.rerender(<ProfileChatTab agentId="host" threadId="t1" />);
+    } else view.unmount();
+    const currentRoom = useStore.getState().chatThreads.get('t1');
+    await act(async () => resolveStart(json(result)));
+    if (change === 'metadata') {
+      expect(useStore.getState().chatThreads.get('t1')).toEqual({ ...currentRoom, task_id: 'p1' });
+    } else {
+      expect(useStore.getState().chatThreads.get('t1')).toBe(currentRoom);
+    }
+    expect(useStore.getState().chatThreads.get('t2')?.task_id).toBeNull();
+    if (change === 'conflict') {
+      expect(await screen.findByTestId('crew-collaboration-panel')).toHaveAttribute('data-state', 'executing');
+      expect(useStore.getState().chatThreads.get('t1')?.task_id).toBe('other-parent');
+    }
+    if (change === 'conflict' || change === 'missing') {
+      act(() => useStore.getState().setChatThread({ ...room, task_id: null }));
+      expect(screen.queryByTestId('crew-collaboration-panel')).not.toBeInTheDocument();
+      expect(screen.queryByText(created.goal)).not.toBeInTheDocument();
+    }
+    expect(network.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
   });
 
   it('drops a taskless binding resolved in the same act as a room switch', async () => {
@@ -598,6 +669,8 @@ describe('AD-1132 ProfileChatTab CrewSession integration', () => {
     });
 
     expect(useStore.getState().crewSessionsByParent.has('stale-parent')).toBe(false);
+    expect(useStore.getState().chatThreads.get('t1')?.task_id).toBeNull();
+    expect(useStore.getState().chatThreads.get('t2')?.task_id).toBeNull();
     expect(screen.queryByText(stale.goal)).toBeNull();
     expect(screen.queryByTestId('crew-collaboration-panel')).toBeNull();
   });

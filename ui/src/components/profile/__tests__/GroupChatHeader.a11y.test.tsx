@@ -18,6 +18,7 @@ vi.mock('../../sidebar/threadApi', () => ({
 }));
 
 import { GroupChatHeader } from '../GroupChatHeader';
+import { removeParticipant } from '../../sidebar/threadApi';
 
 function mkAgent(p: { id: string; callsign: string; isCrew?: boolean }): Agent {
   return {
@@ -62,6 +63,28 @@ afterEach(() => {
 });
 
 describe('AD-984b GroupChatHeader title a11y', () => {
+  it('wraps long room controls without removing the rename affordance', () => {
+    seed(mkThread({ id: 't1', title: 'A very long room title '.repeat(10), participants: ['a1', 'a2'] }), [
+      mkAgent({ id: 'a1', callsign: 'Vex' }), mkAgent({ id: 'a2', callsign: 'Peer' }),
+    ]);
+    render(<GroupChatHeader threadId="t1" />);
+    expect(screen.getByTestId('group-chat-header')).toHaveStyle({ flexWrap: 'wrap', minWidth: '0' });
+    expect(screen.getByRole('button', { name: 'Rename room' })).toHaveStyle({ whiteSpace: 'normal', overflowWrap: 'anywhere', maxHeight: '3em' });
+    expect(screen.getByTestId('participant-strip')).toHaveStyle({ flexWrap: 'wrap', maxHeight: '64px' });
+    expect(screen.getByRole('button', { name: 'add participant' })).toBeInTheDocument();
+  });
+
+  it.each(['focus', 'touch'])('exposes the existing participant action through %s without hover', async (input) => {
+    seed(mkThread({ id: 't1', participants: ['captain', 'a1'] }), [mkAgent({ id: 'a1', callsign: 'Vex' })]);
+    render(<GroupChatHeader threadId="t1" />);
+    const participant = screen.getByRole('group', { name: 'Participant Vex' });
+    expect(screen.queryByRole('button', { name: 'remove Vex' })).not.toBeInTheDocument();
+    if (input === 'focus') fireEvent.focus(participant);
+    else fireEvent.touchStart(participant);
+    fireEvent.click(screen.getByRole('button', { name: 'remove Vex' }));
+    expect(removeParticipant).toHaveBeenCalledWith('t1', 'a1');
+  });
+
   it('the non-editing title is a keyboard-operable button (role/tabIndex/aria-label)', () => {
     seed(mkThread({ id: 't1', title: 'Bridge', participants: ['captain', 'a1'] }), [
       mkAgent({ id: 'a1', callsign: 'Vex' }),

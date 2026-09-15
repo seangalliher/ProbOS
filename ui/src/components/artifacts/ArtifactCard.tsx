@@ -16,11 +16,19 @@
  * ``(threadId, name, version)`` against
  * ``useStore.artifactsByThread`` to find the row.
  */
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type MouseEvent, type ReactElement } from 'react';
 import { useStore } from '../../store/useStore';
 
 const AMBER = '#f0b060';
 const DIM = '#888899';
+
+export interface ArtifactOpenRequest {
+  artifactId: string;
+  threadId: string;
+  opener: HTMLButtonElement;
+}
+
+export type ArtifactOpenCallback = (request: ArtifactOpenRequest) => void;
 
 export interface ArtifactCardProps {
   /** The chat thread the message belongs to. */
@@ -30,9 +38,10 @@ export interface ArtifactCardProps {
   version: number;
   lineCount: number;
   mime: string;
+  onArtifactOpen?: ArtifactOpenCallback;
 }
 
-export function ArtifactCard(props: ArtifactCardProps) {
+export function ArtifactCard(props: ArtifactCardProps): ReactElement {
   const { threadId, name, version, lineCount, mime } = props;
   const artifactsByThread = useStore((s) => s.artifactsByThread);
   const selectArtifact = useStore((s) => s.selectArtifact);
@@ -61,23 +70,28 @@ export function ArtifactCard(props: ArtifactCardProps) {
     })();
   }, [resolved, threadId, hydrateArtifacts]);
 
-  const onClick = () => {
+  const onClick = (event: MouseEvent<HTMLButtonElement>): void => {
     if (!resolved) return;
     selectArtifact(resolved.id);
     setCollapsed(false);
+    props.onArtifactOpen?.({ artifactId: resolved.id, threadId, opener: event.currentTarget });
   };
 
   return (
-    <span
+    <button
+      type="button"
       onClick={onClick}
-      role="button"
-      tabIndex={resolved ? 0 : -1}
+      disabled={!resolved}
+      aria-label={`Open ${name} v${version}`}
+      data-artifact-thread-id={threadId}
+      data-artifact-id={resolved?.id}
       data-testid="artifact-card"
       title={resolved
         ? `Open ${name} v${version}`
         : `Loading ${name} v${version}…`}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 6,
+        flexWrap: 'wrap', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box',
         margin: '4px 0', padding: '4px 8px',
         border: `1px solid ${resolved ? AMBER : 'rgba(255,255,255,0.1)'}`,
         borderRadius: 4,
@@ -86,7 +100,7 @@ export function ArtifactCard(props: ArtifactCardProps) {
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: 11,
         cursor: resolved ? 'pointer' : 'wait',
-        whiteSpace: 'nowrap',
+        whiteSpace: 'normal', overflowWrap: 'anywhere', textAlign: 'left',
       }}
     >
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
@@ -95,7 +109,7 @@ export function ArtifactCard(props: ArtifactCardProps) {
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
         <path d="M14 2v6h6" />
       </svg>
-      <span>{name}</span>
+      <span style={{ minWidth: 0 }}>{name}</span>
       <span style={{
         color: AMBER, border: '1px solid rgba(240, 176, 96, 0.3)',
         borderRadius: 2, padding: '0 3px', fontSize: 10,
@@ -103,6 +117,6 @@ export function ArtifactCard(props: ArtifactCardProps) {
       <span style={{ color: DIM, fontSize: 10 }}>
         {lineCount} lines · {mime}
       </span>
-    </span>
+    </button>
   );
 }
