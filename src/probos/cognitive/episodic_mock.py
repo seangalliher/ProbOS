@@ -48,11 +48,18 @@ class MockEpisodicMemory:
         self._activation_tracker: Any = None
         self._participant_index: Any = None
         self._store_write_lock = asyncio.Lock()
+        self._available = True
+
+    @property
+    def is_available(self) -> bool:
+        """The in-memory collection is ready at construction and until stopped."""
+        return self._available
 
     async def start(self) -> None:
-        pass
+        self._available = True
 
     async def stop(self) -> None:
+        self._available = False
         if self._participant_index is not None:
             await self._participant_index.stop()
             self._participant_index = None

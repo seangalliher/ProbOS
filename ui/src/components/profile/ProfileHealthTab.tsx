@@ -3,13 +3,14 @@ import type { Agent, AgentProfileData } from '../../store/types';
 interface Props {
   profileData: AgentProfileData | null;
   agent: Agent;
+  onRefresh?: () => void;
 }
 
-export function ProfileHealthTab({ profileData, agent }: Props) {
-  const trust = profileData?.trust ?? agent.trust;
-  const confidence = profileData?.confidence ?? agent.confidence;
-  const trustColor = trust >= 0.7 ? '#f0b060' : trust >= 0.35 ? '#88a4c8' : '#7060a8';
-  const stateColor = agent.state === 'active' ? '#80c878' : '#f0b060';
+export function ProfileHealthTab({ profileData, agent, onRefresh }: Props): React.JSX.Element {
+  const trust = profileData?.trust;
+  const confidence = profileData?.confidence;
+  const trustColor = trust === undefined ? '#8888a0' : trust >= 0.7 ? '#f0b060' : trust >= 0.35 ? '#88a4c8' : '#7060a8';
+  const stateColor = profileData?.state === 'active' ? '#80c878' : '#f0b060';
 
   function formatUptime(seconds: number): string {
     if (seconds < 60) return `${Math.floor(seconds)}s`;
@@ -30,10 +31,10 @@ export function ProfileHealthTab({ profileData, agent }: Props) {
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           <span style={{ fontSize: 24, fontWeight: 600, color: trustColor }}>
-            {(trust * 100).toFixed(0)}%
+            {trust === undefined ? 'Unknown' : `${(trust * 100).toFixed(0)}%`}
           </span>
           <span style={{ color: '#666680', fontSize: 11 }}>
-            {trust >= 0.7 ? 'high' : trust >= 0.35 ? 'medium' : 'low'}
+            {trust === undefined ? '' : trust >= 0.7 ? 'high' : trust >= 0.35 ? 'medium' : 'low'}
           </span>
         </div>
         {/* Trust history sparkline */}
@@ -68,13 +69,13 @@ export function ProfileHealthTab({ profileData, agent }: Props) {
           }}>
             <div style={{
               height: '100%',
-              width: `${confidence * 100}%`,
+              width: `${(confidence ?? 0) * 100}%`,
               background: '#5090d0',
               borderRadius: 3,
             }} />
           </div>
           <span style={{ color: '#e0dcd4', fontSize: 12 }}>
-            {(confidence * 100).toFixed(0)}%
+            {confidence === undefined ? 'Unknown' : `${(confidence * 100).toFixed(0)}%`}
           </span>
         </div>
       </div>
@@ -84,18 +85,23 @@ export function ProfileHealthTab({ profileData, agent }: Props) {
         <div style={{ color: '#8888a0', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>
           Status
         </div>
-        <span style={{ color: stateColor, textTransform: 'capitalize' }}>{agent.state}</span>
+        <span style={{ color: stateColor, textTransform: 'capitalize' }}>{profileData?.state ?? 'Unknown'}</span>
       </div>
 
       {/* Memory count */}
       {profileData && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ color: '#8888a0', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>
-            Episodic Memory
+            Stored agent-membership episodes
           </div>
           <span style={{ color: '#e0dcd4' }}>
-            {profileData.memoryCount} episode{profileData.memoryCount !== 1 ? 's' : ''}
+            {profileData.memoryCount === null ? 'Unknown' : `${profileData.memoryCount} episode${profileData.memoryCount !== 1 ? 's' : ''}`}
           </span>
+          <div style={{ color: '#8888a0', fontSize: 10, overflowWrap: 'anywhere' }}>
+            {profileData.memoryCountMetadata
+              ? `${profileData.memoryCountMetadata.status}; subject ${profileData.memoryCountMetadata.subjectId ?? 'unknown'}; sampled ${profileData.memoryCountMetadata.sampleCompletedAt ?? 'unknown'}`
+              : 'Sample time/scope unverified.'}
+          </div>
         </div>
       )}
 
@@ -103,9 +109,14 @@ export function ProfileHealthTab({ profileData, agent }: Props) {
       {profileData && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ color: '#8888a0', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>
-            Uptime
+            System runtime uptime
           </div>
-          <span style={{ color: '#e0dcd4' }}>{formatUptime(profileData.uptime)}</span>
+          <span style={{ color: '#e0dcd4' }}>{profileData.uptime === null ? 'Unknown' : formatUptime(profileData.uptime)}</span>
+          <div style={{ color: '#8888a0', fontSize: 10, overflowWrap: 'anywhere' }}>
+            {profileData.uptimeMetadata
+              ? `${profileData.uptimeMetadata.status}; sampled ${profileData.uptimeMetadata.sampleCompletedAt ?? 'unknown'}`
+              : 'Sample time/scope unverified.'}
+          </div>
         </div>
       )}
 
@@ -125,11 +136,12 @@ export function ProfileHealthTab({ profileData, agent }: Props) {
               onChange={async (e) => {
                 const cooldown = Number(e.target.value);
                 try {
-                  await fetch(`/api/agent/${agent.id}/proactive-cooldown`, {
+                  const response = await fetch(`/api/agent/${agent.id}/proactive-cooldown`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ cooldown }),
                   });
+                  if (response.ok) onRefresh?.();
                 } catch { /* fail silently */ }
               }}
               style={{ flex: 1, accentColor: '#5090d0' }}

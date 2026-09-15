@@ -56,6 +56,7 @@ def _make_runtime(episodes: list[Episode] | None = None):
     episodes = episodes or []
 
     runtime.episodic_memory = AsyncMock()
+    runtime.episodic_memory.is_available = True
     runtime.episodic_memory.recent_for_agent = AsyncMock(return_value=episodes)
     runtime.episodic_memory.recall_by_anchor = AsyncMock(return_value=[])
     runtime.episodic_memory.count_for_agent = AsyncMock(return_value=len(episodes))
@@ -64,6 +65,7 @@ def _make_runtime(episodes: list[Episode] | None = None):
     runtime.episodic_memory._activation_tracker = None
     runtime.identity_registry = None
     runtime.registry = _FakeRegistry({})
+    runtime.introspective_telemetry = None
 
     return runtime
 
@@ -77,6 +79,27 @@ async def test_empty_memory_returns_empty_graph():
     assert result["nodes"] == []
     assert result["edges"] == []
     assert result["meta"]["nodes_shown"] == 0
+
+
+@pytest.mark.asyncio
+async def test_issue1370_empty_selection_preserves_stored_membership_total():
+    from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
+    from probos.routers.memory_graph import get_memory_graph
+
+    runtime = _make_runtime([])
+    runtime.episodic_memory.is_available = True
+    runtime.episodic_memory.count_for_agent.return_value = 196
+    runtime.introspective_telemetry = IntrospectiveTelemetryService(runtime=runtime)
+
+    result = await get_memory_graph(
+        "agent-a", runtime, max_nodes=20, ship_wide=False, semantic_k=5,
+        time_range_hours=1,
+    )
+
+    runtime.episodic_memory.recent_for_agent.assert_awaited_once_with("agent-a", k=14)
+    assert result["nodes"] == []
+    assert result["meta"]["nodes_shown"] == 0
+    assert result["meta"]["total_episodes"] == 196
 
 
 @pytest.mark.asyncio
@@ -99,6 +122,27 @@ async def test_nodes_built_from_episodes():
     node_1 = next(n for n in result["nodes"] if n["id"] == "ep-1")
     assert node_1["importance"] == 8
     assert node_1["size"] > 4.0  # 2 + (8/10)*4 = 5.2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ship_wide", [False, True])
+async def test_issue1370_failed_total_preserves_known_selection_identity(ship_wide: bool) -> None:
+    from probos.routers.memory_graph import get_memory_graph
+
+    runtime = _make_runtime([_make_episode("selected")])
+    telemetry = MagicMock()
+    telemetry.get_memory_state = AsyncMock(side_effect=RuntimeError("Synthetic measurement failure"))
+    runtime.introspective_telemetry = telemetry
+    result = await get_memory_graph(
+        "agent-a", runtime, max_nodes=200, ship_wide=ship_wide, semantic_k=5, time_range_hours=None,
+    )
+
+    telemetry.get_memory_state.assert_awaited_once_with("agent-a")
+    assert result["meta"]["selection"]["status"] == "available"
+    assert result["meta"]["selection"]["subject_id"] == ("ship" if ship_wide else "agent-a")
+    assert result["meta"]["total_episodes"] is None
+    assert result["meta"]["total_measurement"]["status"] == "failed"
+    assert result["meta"]["total_measurement"]["subject_id"] == "agent-a"
 
 
 @pytest.mark.asyncio

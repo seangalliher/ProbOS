@@ -1,0 +1,107 @@
+{
+  "sampleTime": "2026-09-14T19:41:43+00:00",
+  "profile": {
+    "id": "alpha", "sovereignId": "sovereign-alpha", "did": "", "agentType": "scout",
+    "callsign": "Alpha", "displayName": "Alpha", "rank": "ensign", "agencyLevel": "ensign",
+    "department": "science", "personality": {}, "specialization": [], "trust": 0.5,
+    "trustHistory": [], "confidence": 0.8, "state": "active", "tier": "domain", "pool": "science",
+    "hebbianConnections": [], "memoryCount": 4, "uptime": 662.5,
+    "memoryCountMetadata": {
+      "subjectId": "sovereign-alpha", "population": "stored_agent_membership", "unit": "episodes",
+      "source": "episodic_memory.count_for_agent", "sampleStartedAt": "2026-09-14T19:41:43+00:00",
+      "sampleCompletedAt": "2026-09-14T19:41:43+00:00", "status": "available"
+    },
+    "uptimeMetadata": {
+      "subjectId": "system", "population": "system_runtime", "unit": "seconds",
+      "source": "runtime.get_uptime_seconds", "sampleStartedAt": "2026-09-14T19:41:43+00:00",
+      "sampleCompletedAt": "2026-09-14T19:41:43+00:00", "status": "available"
+    },
+    "voiceProfile": { "voice_name": "", "pitch": 1, "rate": 1, "volume": 1 },
+    "appearance": { "vrm_url": "", "expression_overrides": {}, "color_palette_hint": "" },
+    "isCrew": true, "proactiveCooldown": null, "visionCapable": false
+  },
+  "selfQuery": {
+    "agent_id": "alpha",
+    "domains": {
+      "memory": {
+        "episode_count": 4,
+        "measurement": {
+          "subject_id": "sovereign-alpha", "population": "stored_agent_membership", "unit": "episodes",
+          "source": "episodic_memory.count_for_agent", "sample_started_at": "2026-09-14T19:41:43+00:00",
+          "sample_completed_at": "2026-09-14T19:41:43+00:00", "status": "available"
+        },
+        "retrieval": "cosine_similarity", "capacity": "unbounded", "offline_processing": false, "lifecycle": "unknown"
+      },
+      "temporal": {
+        "system_uptime_seconds": 662.5, "system_uptime_hours": 0.2,
+        "uptime_measurement": {
+          "subject_id": "system", "population": "system_runtime", "unit": "seconds",
+          "source": "runtime.get_uptime_seconds", "sample_started_at": "2026-09-14T19:41:43+00:00",
+          "sample_completed_at": "2026-09-14T19:41:43+00:00", "status": "available"
+        },
+        "lifecycle": "unknown"
+      }
+    },
+    "rendered": "--- Your Telemetry (ground self-referential claims in these metrics) ---\nMemory: 4 episodes (cosine similarity retrieval, no offline processing)\nUptime: 0.2h\nMemory measurement: available; subject=sovereign-alpha; population=stored_agent_membership; unit=episodes; source=episodic_memory.count_for_agent\nSystem uptime measurement: available; subject=system; population=system_runtime; unit=seconds; source=runtime.get_uptime_seconds\n\nWhen discussing yourself, cite these numbers. You may express warmth and\npersonality \u2014 do not generate claims about architecture not reflected here.\n---",
+    "unknown_domains": []
+  },
+  "memoryGraph": {
+    "nodes": [
+      { "id": "alpha-episode", "label": "Alpha observation", "timestamp": 4000, "importance": 5, "activation": 0, "channel": "science", "department": "science", "agent_ids": ["sovereign-alpha"], "participants": [], "source": "direct", "reflection": "", "user_input": "Alpha observation", "color": "#c084fc", "size": 4 },
+      { "id": "shared-episode", "label": "Shared observation", "timestamp": 3000, "importance": 5, "activation": 0, "channel": "science", "department": "science", "agent_ids": ["sovereign-alpha", "sovereign-beta"], "participants": [], "source": "direct", "reflection": "", "user_input": "Shared observation", "color": "#c084fc", "size": 4 },
+      { "id": "old-episode", "label": "Older observation", "timestamp": 1000, "importance": 5, "activation": 0, "channel": "science", "department": "science", "agent_ids": ["sovereign-alpha"], "participants": [], "source": "direct", "reflection": "", "user_input": "Older observation", "color": "#c084fc", "size": 4 }
+    ],
+    "edges": [],
+    "meta": {
+      "agent_id": "alpha", "total_episodes": 4, "nodes_shown": 3, "ship_wide": false,
+      "total_measurement": {
+        "subject_id": "sovereign-alpha", "population": "stored_agent_membership", "unit": "episodes",
+        "source": "episodic_memory.count_for_agent", "sample_started_at": "2026-09-14T19:41:43+00:00",
+        "sample_completed_at": "2026-09-14T19:41:43+00:00", "status": "available"
+      },
+      "selection": {
+        "subject_id": "sovereign-alpha", "population": "agent_bounded_graph", "unit": "episodes",
+        "source": "memory_graph.selection", "status": "available", "sample_started_at": "2026-09-14T19:41:43+00:00",
+        "sample_completed_at": "2026-09-14T19:41:43+00:00", "max_nodes": 200, "time_range_hours": null, "bounded": true
+      }
+    }
+  },
+  "shipGraph": {
+    "nodes": [
+      { "id": "alpha-episode", "label": "Alpha observation", "timestamp": 4000, "importance": 5, "activation": 0, "channel": "science", "department": "science", "agent_ids": ["sovereign-alpha"], "participants": [], "source": "direct", "reflection": "", "user_input": "Alpha observation", "color": "#c084fc", "size": 4 },
+      { "id": "shared-episode", "label": "Shared observation", "timestamp": 3000, "importance": 5, "activation": 0, "channel": "science", "department": "science", "agent_ids": ["sovereign-alpha", "sovereign-beta"], "participants": [], "source": "direct", "reflection": "", "user_input": "Shared observation", "color": "#c084fc", "size": 4 },
+      { "id": "old-episode", "label": "Older observation", "timestamp": 1000, "importance": 5, "activation": 0, "channel": "science", "department": "science", "agent_ids": ["sovereign-alpha"], "participants": [], "source": "direct", "reflection": "", "user_input": "Older observation", "color": "#c084fc", "size": 4 },
+      { "id": "beta-episode", "label": "Beta observation", "timestamp": 2000, "importance": 5, "activation": 0, "channel": "science", "department": "science", "agent_ids": ["sovereign-beta"], "participants": [], "source": "direct", "reflection": "", "user_input": "Beta observation", "color": "#c084fc", "size": 4 }
+    ],
+    "edges": [],
+    "meta": {
+      "agent_id": "alpha", "total_episodes": 4, "nodes_shown": 4, "ship_wide": true,
+      "total_measurement": {
+        "subject_id": "sovereign-alpha", "population": "stored_agent_membership", "unit": "episodes",
+        "source": "episodic_memory.count_for_agent", "sample_started_at": "2026-09-14T19:41:43+00:00",
+        "sample_completed_at": "2026-09-14T19:41:43+00:00", "status": "available"
+      },
+      "selection": {
+        "subject_id": "ship", "population": "registered_crew_bounded_graph", "unit": "episodes",
+        "source": "memory_graph.selection", "status": "available", "sample_started_at": "2026-09-14T19:41:43+00:00",
+        "sample_completed_at": "2026-09-14T19:41:43+00:00", "max_nodes": 200, "time_range_hours": null, "bounded": true
+      }
+    }
+  },
+  "filteredGraph": {
+    "nodes": [], "edges": [],
+    "meta": {
+      "agent_id": "alpha", "total_episodes": 4, "nodes_shown": 0, "ship_wide": false,
+      "total_measurement": {
+        "subject_id": "sovereign-alpha", "population": "stored_agent_membership", "unit": "episodes",
+        "source": "episodic_memory.count_for_agent", "sample_started_at": "2026-09-14T19:41:43+00:00",
+        "sample_completed_at": "2026-09-14T19:41:43+00:00", "status": "available"
+      },
+      "selection": {
+        "subject_id": "sovereign-alpha", "population": "agent_bounded_graph", "unit": "episodes",
+        "source": "memory_graph.selection", "status": "available", "sample_started_at": "2026-09-14T19:41:43+00:00",
+        "sample_completed_at": "2026-09-14T19:41:43+00:00", "max_nodes": 200, "time_range_hours": 1, "bounded": true
+      }
+    }
+  }
+}

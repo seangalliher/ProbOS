@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,7 +19,7 @@ from probos.cognitive import introspective_telemetry as telemetry_module
 from probos.substrate.agent import BaseAgent
 from probos.substrate.pool_group import PoolGroup, PoolGroupRegistry
 from probos.tools import self_query_tool as self_query_module
-from probos.types import AgentState, IntentMessage
+from probos.types import AgentState, AnchorFrame, Episode, IntentMessage
 
 
 _PRIVATE_FAILURE = "private-captain-telemetry-payload"
@@ -186,6 +189,223 @@ def _captain_plan(action: str) -> dict[str, Any]:
         "action": action,
         "params": {"agent_id": "target-agent"} if action == "agent_info" else {"team": "science"},
     }
+
+
+@pytest.mark.asyncio
+async def test_profile_and_self_query_reconcile_sovereign_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from probos import crew_profile
+    from probos.routers import agents as agents_module
+
+    repository_root = Path(__file__).resolve().parents[1]
+    for module in (agents_module, telemetry_module, self_query_module):
+        assert Path(module.__file__).resolve().is_relative_to(repository_root / "src")
+
+    subject = SimpleNamespace(
+        id="runtime-subject", sovereign_id="sovereign-subject", agent_type="test_agent",
+        confidence=0.8, state=AgentState.ACTIVE, tier="domain", pool="test",
+    )
+    counts = {subject.id: 17, subject.sovereign_id: 196}
+    count_subjects: list[str] = []
+
+    class _RecordingMemory:
+        @property
+        def is_available(self) -> bool:
+            return True
+
+        async def count_for_agent(self, agent_id: str) -> int:
+            count_subjects.append(agent_id)
+            return counts[agent_id]
+
+    async def seed_profile(agent_type: str) -> None:
+        assert agent_type == subject.agent_type
+        return None
+
+    monkeypatch.setattr(crew_profile, "load_seed_profile_async", seed_profile)
+    registry = _FakeRegistry(agent=subject)
+    runtime = SimpleNamespace(
+        registry=registry, episodic_memory=_RecordingMemory(), ontology=None,
+        work_item_store=None, _start_time=0.0,
+    )
+    service = telemetry_module.IntrospectiveTelemetryService(runtime=runtime)
+    runtime.introspective_telemetry = service
+    self_query = self_query_module.SelfQueryTool(telemetry=service)
+    assert subject.id != subject.sovereign_id
+    assert counts[subject.id] != counts[subject.sovereign_id]
+    assert not count_subjects
+
+    profile = await agents_module.agent_profile(subject.id, runtime=runtime)
+    assert profile["id"] == subject.id
+    assert count_subjects == [subject.sovereign_id]
+    result = await self_query.invoke({"domains": ["memory"]}, context={"agent_id": subject.id})
+
+    assert result.error is None
+    assert result.output["agent_id"] == subject.id
+    assert set(result.output) == {"agent_id", "domains", "rendered", "unknown_domains"}
+    assert len(count_subjects) == 2
+    assert all(identity in counts for identity in count_subjects)
+    assert profile["memoryCount"] == result.output["domains"]["memory"]["episode_count"]
+    assert count_subjects == [subject.sovereign_id, subject.sovereign_id]
+
+
+async def _issue1370_fixture_outputs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> dict[str, Any]:
+    from probos import crew_profile
+    from probos.cognitive.episodic import EpisodicMemory
+    from probos.routers import agents as agents_module
+    from probos.routers import memory_graph as graph_module
+
+    sample = datetime(2026, 9, 14, 19, 41, 43, tzinfo=timezone.utc)
+
+    class _SampleClock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            return sample if tz is not None else sample.replace(tzinfo=None)
+
+    monkeypatch.setattr(telemetry_module, "datetime", _SampleClock)
+    monkeypatch.setattr(graph_module, "datetime", _SampleClock)
+    monkeypatch.setattr(graph_module.time, "time", lambda: sample.timestamp())
+    agents = {
+        identity: SimpleNamespace(
+            id=identity, sovereign_id=f"sovereign-{identity}", agent_type="scout",
+            confidence=0.8, state=AgentState.ACTIVE, tier="domain", pool="science",
+        ) for identity in ("alpha", "beta")
+    }
+    rows = [
+        Episode(id="runtime-only", user_input="Runtime shard", timestamp=6000, agent_ids=["alpha"]),
+        Episode(id="self-contradicted", user_input="Retracted statement", timestamp=5000,
+                agent_ids=["sovereign-alpha"], self_contradicted_channels=["dm"]),
+        Episode(id="alpha-episode", user_input="Alpha observation", timestamp=4000, agent_ids=["sovereign-alpha"]),
+        Episode(id="shared-episode", user_input="Shared observation", timestamp=3000,
+                agent_ids=["sovereign-alpha", "sovereign-beta"]),
+        Episode(id="beta-episode", user_input="Beta observation", timestamp=2000, agent_ids=["sovereign-beta"]),
+        Episode(id="old-episode", user_input="Older observation", timestamp=1000, agent_ids=["sovereign-alpha"]),
+    ]
+    rows = [replace(episode, anchors=AnchorFrame(channel="science", department="science")) for episode in rows]
+    storage_calls: list[tuple[str, Any]] = []
+
+    class _Collection:
+        def count(self) -> int:
+            storage_calls.append(("count", None))
+            return len(rows)
+
+        def get(self, *, include: list[str]) -> dict[str, Any]:
+            storage_calls.append(("get", tuple(include)))
+            return {
+                "ids": [episode.id for episode in rows],
+                "documents": [episode.user_input for episode in rows],
+                "metadatas": [EpisodicMemory._episode_to_metadata(episode) for episode in rows],
+            }
+
+    memory = EpisodicMemory(db_path=tmp_path / "synthetic.db")
+    monkeypatch.setattr(memory, "_collection", _Collection())
+    embedding_reads: list[list[str]] = []
+
+    async def embeddings(episode_ids: list[str]) -> dict[str, list[float]]:
+        embedding_reads.append(list(episode_ids))
+        return {}
+
+    monkeypatch.setattr(memory, "get_embeddings", embeddings)
+    registry = SimpleNamespace(get=lambda identity: agents.get(identity), all=lambda: list(agents.values()))
+    identity_registry = SimpleNamespace(get_by_slot=lambda identity: (
+        SimpleNamespace(agent_uuid=agents[identity].sovereign_id) if identity in agents else None
+    ))
+    clock_reads: list[float] = []
+
+    def uptime() -> float:
+        clock_reads.append(662.5)
+        return 662.5
+
+    runtime = SimpleNamespace(
+        registry=registry, identity_registry=identity_registry, episodic_memory=memory,
+        get_uptime_seconds=uptime, ontology=None, work_item_store=None,
+        callsign_registry=SimpleNamespace(
+            get_callsign=lambda agent_type: "Alpha",
+            resolve=lambda name: {"department": "science", "display_name": "Alpha"},
+        ),
+    )
+
+    async def seed_profile(agent_type: str) -> dict[str, Any]:
+        assert agent_type == "scout"
+        return {"display_name": "Alpha", "department": "science", "voice": {
+            "voice_name": "", "pitch": 1.0, "rate": 1.0, "volume": 1.0,
+        }}
+
+    monkeypatch.setattr(crew_profile, "load_seed_profile_async", seed_profile)
+    service = telemetry_module.IntrospectiveTelemetryService(runtime=runtime)
+    runtime.introspective_telemetry = service
+    try:
+        assert memory.is_available is True
+        assert await memory.count_for_agent("alpha") == 1
+        assert await memory.count_for_agent("sovereign-alpha") == 4
+        assert await memory.count_for_agent("sovereign-beta") == 2
+        assert [episode.id for episode in await memory.recent_for_agent("sovereign-alpha", k=2)] == ["alpha-episode"]
+        reads_before_anchor = len(storage_calls)
+        assert await memory.recall_by_anchor(agent_id="sovereign-alpha", limit=5) == []
+        assert len(storage_calls) == reads_before_anchor
+        profile = await agents_module.agent_profile("alpha", runtime=runtime)
+        query = await self_query_module.SelfQueryTool(telemetry=service).invoke(
+            {"domains": ["memory", "temporal"]}, context={"agent_id": "alpha"},
+        )
+        assert query.error is None
+        graph = await graph_module.get_memory_graph(
+            "alpha", runtime, max_nodes=200, ship_wide=False, semantic_k=5, time_range_hours=None,
+        )
+        ship_graph = await graph_module.get_memory_graph(
+            "alpha", runtime, max_nodes=200, ship_wide=True, semantic_k=5, time_range_hours=None,
+        )
+        empty_graph = await graph_module.get_memory_graph(
+            "alpha", runtime, max_nodes=200, ship_wide=False, semantic_k=5, time_range_hours=1,
+        )
+        assert profile["memoryCount"] == query.output["domains"]["memory"]["episode_count"] == 4
+        assert profile["uptime"] == query.output["domains"]["temporal"]["system_uptime_seconds"] == 662.5
+        assert {node["id"] for node in graph["nodes"]} == {"alpha-episode", "shared-episode", "old-episode"}
+        assert {node["id"] for node in ship_graph["nodes"]} == {"alpha-episode", "shared-episode", "old-episode", "beta-episode"}
+        assert empty_graph["nodes"] == []
+        assert empty_graph["meta"]["total_episodes"] == 4
+        assert clock_reads == [662.5, 662.5]
+        assert ("get", ("metadatas",)) in storage_calls
+        assert ("get", ("metadatas", "documents")) in storage_calls
+        assert embedding_reads[:2] == [
+            ["alpha-episode", "shared-episode", "old-episode"],
+            ["alpha-episode", "shared-episode", "old-episode", "beta-episode"],
+        ]
+        failed_total_calls: list[str] = []
+
+        async def fail_total(identity: str) -> dict[str, Any]:
+            failed_total_calls.append(identity)
+            raise RuntimeError("Synthetic total measurement failure")
+
+        monkeypatch.setattr(service, "get_memory_state", fail_total)
+        failed_total_graph = await graph_module.get_memory_graph(
+            "alpha", runtime, max_nodes=200, ship_wide=False, semantic_k=5, time_range_hours=None,
+        )
+        assert failed_total_calls == ["alpha"]
+        assert failed_total_graph == {
+            **graph, "meta": {**graph["meta"], "total_episodes": None,
+                "total_measurement": {**graph["meta"]["total_measurement"], "status": "failed",
+                    "sample_started_at": None, "sample_completed_at": None}},
+        }
+        return json.loads(json.dumps({
+            "sampleTime": sample.isoformat(), "profile": profile, "selfQuery": query.output,
+            "memoryGraph": graph, "shipGraph": ship_graph, "filteredGraph": empty_graph,
+        }))
+    finally:
+        await memory.stop()
+
+
+@pytest.mark.asyncio
+async def test_issue1370_real_populations_keep_membership_and_selection_distinct(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    result = await _issue1370_fixture_outputs(monkeypatch, tmp_path)
+    assert result["profile"]["memoryCount"] == 4
+    assert result["memoryGraph"]["meta"]["nodes_shown"] == 3
+    assert result["shipGraph"]["meta"]["nodes_shown"] == 4
+    fixture = Path(__file__).resolve().parents[1] / "ui/e2e/fixtures/issue1370-telemetry.json"
+    assert result == json.loads(fixture.read_text(encoding="utf-8"))
 
 
 @pytest.mark.asyncio

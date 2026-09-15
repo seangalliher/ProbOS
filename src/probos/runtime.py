@@ -514,6 +514,23 @@ class ProbOSRuntime:
         """The startup-owned telemetry service, when available."""
         return getattr(self, "_introspective_telemetry", None)
 
+    def get_uptime_seconds(self) -> float | None:
+        """Return monotonic runtime age, or None when the clock is unavailable."""
+        try:
+            start = getattr(self, "_start_time", None)
+            if type(start) not in (int, float) or not math.isfinite(start) or start < 0:
+                return None
+            now = time.monotonic()
+            if type(now) not in (int, float) or not math.isfinite(now) or now < start:
+                return None
+            return float(now - start)
+        except Exception:
+            logger.warning(
+                "Runtime monotonic clock failed; uptime is unavailable, "
+                "continuing without a duration measurement"
+            )
+            return None
+
     def __init__(
         self,
         config: SystemConfig | None = None,
