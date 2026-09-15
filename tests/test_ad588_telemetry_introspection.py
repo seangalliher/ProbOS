@@ -6,9 +6,11 @@ telemetry injection in DM/WR/proactive paths, and rendering.
 
 from __future__ import annotations
 
+import asyncio
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,7 +29,7 @@ def _make_runtime(
     trust_network: Any = None,
     hebbian_router: Any = None,
     registry: Any = None,
-    start_time_wall: float | None = None,
+    uptime_seconds: float | None = 0.0,
     lifecycle_state: str = "running",
 ) -> MagicMock:
     rt = MagicMock()
@@ -35,9 +37,211 @@ def _make_runtime(
     rt.trust_network = trust_network
     rt.hebbian_router = hebbian_router
     rt.registry = registry
-    rt._start_time_wall = start_time_wall or time.time()
+    rt.identity_registry = None
+    rt.get_uptime_seconds.return_value = uptime_seconds
     rt._lifecycle_state = lifecycle_state
     return rt
+
+
+@dataclass
+class _Issue1370Memory:
+    count: int = 47
+    is_available: bool = True
+    calls: list[str] = field(default_factory=list)
+    failure: BaseException | None = None
+
+    async def count_for_agent(self, agent_id: str) -> int:
+        self.calls.append(agent_id)
+        if self.failure is not None:
+            raise self.failure
+        return self.count
+
+
+@dataclass
+class _Issue1370Registry:
+    agent: Any = None
+
+    def get(self, agent_id: str) -> Any:
+        return self.agent if self.agent is not None and self.agent.id == agent_id else None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity", ["runtime", "sovereign", "slot", "unmapped"])
+async def test_issue1370_memory_resolves_only_membership_subject(identity: str) -> None:
+    memory = _Issue1370Memory()
+    agent = SimpleNamespace(id="runtime", sovereign_id="sovereign")
+    slot_calls: list[str] = []
+
+    class _IdentityRegistry:
+        def get_by_slot(self, slot_id: str) -> Any:
+            slot_calls.append(slot_id)
+            return SimpleNamespace(agent_uuid="sovereign") if slot_id == "slot" else None
+
+    service = IntrospectiveTelemetryService(runtime=SimpleNamespace(
+        registry=_Issue1370Registry(agent), identity_registry=_IdentityRegistry(),
+        episodic_memory=memory,
+    ))
+    before = datetime.now(timezone.utc)
+    result = await service.get_memory_state(identity)
+    after = datetime.now(timezone.utc)
+
+    subject = "unmapped" if identity == "unmapped" else "sovereign"
+    assert memory.calls == [subject]
+    assert slot_calls == ([] if identity == "runtime" else [identity])
+    assert result["episode_count"] == 47
+    metadata = result["measurement"]
+    assert metadata["subject_id"] == subject
+    assert metadata["population"] == "stored_agent_membership"
+    assert metadata["source"] == "episodic_memory.count_for_agent"
+    assert metadata["unit"] == "episodes"
+    assert metadata["status"] == "available"
+    assert before <= datetime.fromisoformat(metadata["sample_started_at"]) <= datetime.fromisoformat(metadata["sample_completed_at"]) <= after
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["empty", "unmapped-agent", "legacy", "mock", "stopped", "resolution-error", "invalid-subject", "availability-error", "count-error", "negative", "boolean", "stopped-during-count"])
+async def test_issue1370_memory_unknown_and_empty_paths(case: str, caplog: pytest.LogCaptureFixture) -> None:
+    memory = _Issue1370Memory(count=0)
+    runtime = SimpleNamespace(episodic_memory=memory, registry=None, identity_registry=None)
+    identity = "runtime"
+    expected_status = "unavailable"
+    if case == "empty":
+        identity = ""
+    elif case == "unmapped-agent":
+        runtime.registry = _Issue1370Registry(SimpleNamespace(id="runtime", sovereign_id=""))
+        expected_status = "available"
+    elif case == "legacy":
+        class _LegacyMemory:
+            async def count_for_agent(self, agent_id: str) -> int:
+                raise AssertionError("Legacy availability was assumed")
+        runtime.episodic_memory = _LegacyMemory()
+    elif case == "mock":
+        runtime.episodic_memory = MagicMock()
+    elif case == "stopped":
+        memory.is_available = False
+    elif case == "resolution-error":
+        class _BrokenRegistry:
+            def get(self, agent_id: str) -> None:
+                raise RuntimeError("private-measurement-payload")
+        runtime.registry = _BrokenRegistry()
+        expected_status = "failed"
+    elif case == "invalid-subject":
+        runtime.registry = _Issue1370Registry(SimpleNamespace(id="runtime", sovereign_id=object()))
+        expected_status = "failed"
+    elif case == "availability-error":
+        class _BrokenAvailability:
+            @property
+            def is_available(self) -> bool:
+                raise RuntimeError("private-measurement-payload")
+        runtime.episodic_memory = _BrokenAvailability()
+        expected_status = "failed"
+    elif case == "count-error":
+        memory.failure = RuntimeError("private-measurement-payload")
+        expected_status = "failed"
+    elif case in ("negative", "boolean"):
+        memory.count = -1 if case == "negative" else True
+        expected_status = "failed"
+    elif case == "stopped-during-count":
+        class _StoppingMemory(_Issue1370Memory):
+            async def count_for_agent(self, agent_id: str) -> int:
+                count = await super().count_for_agent(agent_id)
+                self.is_available = False
+                return count
+        memory = _StoppingMemory(count=0)
+        runtime.episodic_memory = memory
+    result = await IntrospectiveTelemetryService(runtime=runtime).get_memory_state(identity)
+    assert result["measurement"]["status"] == expected_status
+    assert result["episode_count"] == (0 if expected_status == "available" else "unknown")
+    assert memory.calls == (["runtime"] if case in {"unmapped-agent", "count-error", "negative", "boolean", "stopped-during-count"} else [])
+    assert "private-measurement-payload" not in caplog.text + repr(result)
+
+
+@pytest.mark.asyncio
+async def test_issue1370_memory_cancellation_propagates() -> None:
+    memory = _Issue1370Memory(failure=asyncio.CancelledError())
+    service = IntrospectiveTelemetryService(runtime=SimpleNamespace(episodic_memory=memory))
+    with pytest.raises(asyncio.CancelledError):
+        await service.get_memory_state("subject")
+    assert memory.calls == ["subject"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seconds", [0.0, 10800.0, None, -1.0, float("nan"), float("inf"), True, "3"])
+async def test_issue1370_temporal_uses_public_seconds(seconds: Any) -> None:
+    calls: list[str] = []
+
+    class _Clock:
+        def get_uptime_seconds(self) -> float | None:
+            calls.append("clock")
+            return seconds
+
+    service = IntrospectiveTelemetryService(runtime=_Clock())
+    result = await service.get_temporal_state("subject")
+    assert calls == ["clock"]
+    metadata = result["uptime_measurement"]
+    assert metadata["subject_id"] == "system"
+    assert metadata["population"] == "system_runtime"
+    assert metadata["unit"] == "seconds"
+    assert metadata["source"] == "runtime.get_uptime_seconds"
+    if type(seconds) is float and seconds in (0.0, 10800.0):
+        assert result["system_uptime_seconds"] == seconds
+        assert result["system_uptime_hours"] == round(seconds / 3600, 1)
+        assert metadata["status"] == "available"
+    else:
+        assert "system_uptime_seconds" not in result
+        assert "system_uptime_hours" not in result
+        assert metadata["status"] == ("unavailable" if seconds is None else "failed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", [False, True])
+async def test_issue1370_temporal_failed_or_missing_clock_keeps_other_domains(missing: bool) -> None:
+    class _BrokenClock:
+        def get_uptime_seconds(self) -> float | None:
+            raise RuntimeError("private-clock-payload")
+
+    runtime = SimpleNamespace() if missing else _BrokenClock()
+    snapshot = await IntrospectiveTelemetryService(runtime=runtime).get_full_snapshot("subject")
+    assert set(snapshot) == {"memory", "trust", "cognitive", "temporal", "social"}
+    assert "system_uptime_hours" not in snapshot["temporal"]
+    assert snapshot["temporal"]["uptime_measurement"]["status"] == ("unavailable" if missing else "failed")
+    rendered = IntrospectiveTelemetryService.render_telemetry_context(snapshot)
+    assert "Uptime: unknown" in rendered
+    assert "Memory: unknown episodes" in rendered
+    assert "private-clock-payload" not in rendered
+
+
+@pytest.mark.parametrize("start", [None, True, "1", -1.0, float("nan"), float("inf")])
+def test_issue1370_runtime_uptime_invalid_start_is_unknown(start: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from probos.runtime import ProbOSRuntime
+    runtime = object.__new__(ProbOSRuntime)
+    assert runtime.get_uptime_seconds() is None
+    monkeypatch.setattr(runtime, "_start_time", start, raising=False)
+    assert runtime.get_uptime_seconds() is None
+
+
+@pytest.mark.parametrize("now", [100.0, 3700.0, None, True, "100", 99.0, float("nan"), float("inf")])
+def test_issue1370_runtime_uptime_monotonic_boundary(now: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from probos import runtime as runtime_module
+    runtime = object.__new__(runtime_module.ProbOSRuntime)
+    monkeypatch.setattr(runtime, "_start_time", 100.0, raising=False)
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: now)
+    expected = now - 100.0 if type(now) is float and now in (100.0, 3700.0) else None
+    assert runtime.get_uptime_seconds() == expected
+
+
+def test_issue1370_runtime_uptime_clock_exception_is_unknown(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    from probos import runtime as runtime_module
+    runtime = object.__new__(runtime_module.ProbOSRuntime)
+    monkeypatch.setattr(runtime, "_start_time", 100.0, raising=False)
+
+    def fail_clock() -> float:
+        raise RuntimeError("private-clock-payload")
+
+    monkeypatch.setattr(runtime_module.time, "monotonic", fail_clock)
+    assert runtime.get_uptime_seconds() is None
+    assert "uptime is unavailable" in caplog.text
+    assert "private-clock-payload" not in caplog.text
 
 
 @dataclass
@@ -103,8 +307,7 @@ class TestIntrospectiveTelemetryService:
 
     @pytest.mark.asyncio
     async def test_get_memory_state_with_episodes(self):
-        em = AsyncMock()
-        em.count_for_agent = AsyncMock(return_value=47)
+        em = _Issue1370Memory(count=47)
         rt = _make_runtime(episodic_memory=em)
         svc = IntrospectiveTelemetryService(runtime=rt)
 
@@ -223,7 +426,7 @@ class TestIntrospectiveTelemetryService:
         agent = _make_agent(birth_ts=now - 7200)  # 2 hours ago
         reg = MagicMock()
         reg.get.return_value = agent
-        rt = _make_runtime(registry=reg, start_time_wall=now - 10800)  # 3h uptime
+        rt = _make_runtime(registry=reg, uptime_seconds=10800.0)
         svc = IntrospectiveTelemetryService(runtime=rt)
 
         result = await svc.get_temporal_state("agent-1")
@@ -254,8 +457,7 @@ class TestIntrospectiveTelemetryService:
 
     @pytest.mark.asyncio
     async def test_get_full_snapshot_all_domains(self):
-        em = AsyncMock()
-        em.count_for_agent = AsyncMock(return_value=10)
+        em = _Issue1370Memory(count=10)
         tn = MagicMock()
         tn.get_score.return_value = 0.6
         tn.get_record.return_value = None
@@ -276,8 +478,7 @@ class TestIntrospectiveTelemetryService:
     @pytest.mark.asyncio
     async def test_get_full_snapshot_partial_failure(self):
         """One domain throws, others still return."""
-        em = AsyncMock()
-        em.count_for_agent = AsyncMock(side_effect=RuntimeError("DB error"))
+        em = _Issue1370Memory(failure=RuntimeError("DB error"))
         tn = MagicMock()
         tn.get_score.return_value = 0.5
         tn.get_record.return_value = None

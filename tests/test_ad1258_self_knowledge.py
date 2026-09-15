@@ -558,6 +558,39 @@ def test_runtime_telemetry_property_is_read_only_and_preserves_service_identity(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("available", [False, True])
+async def test_issue1370_self_query_measurements_preserve_envelope_and_social_filter(available: bool) -> None:
+    from probos.cognitive.episodic_mock import MockEpisodicMemory
+    memory = MockEpisodicMemory()
+    if not available:
+        await memory.stop()
+    calls = {"hebbian": 0}
+    router = _FakeHebbianRouter(
+        weights={("peer", "runtime", "routing"): 0.5}, calls=calls,
+    )
+    service = IntrospectiveTelemetryService(runtime=SimpleNamespace(
+        episodic_memory=memory, hebbian_router=router,
+    ))
+    try:
+        result = await SelfQueryTool(telemetry=service).invoke({}, {"agent_id": "runtime"})
+        assert result.error is None
+        assert set(result.output) == {"agent_id", "domains", "rendered", "unknown_domains"}
+        assert result.output["agent_id"] == "runtime"
+        assert calls["hebbian"] == 1
+        domains = result.output["domains"]
+        assert domains["memory"]["episode_count"] == (0 if available else "unknown")
+        assert domains["memory"]["measurement"]["subject_id"] == "runtime"
+        assert domains["memory"]["measurement"]["status"] == ("available" if available else "unavailable")
+        assert domains["social"] == {"routing_affinities": [{"intent": "peer", "weight": 0.5}]}
+        assert "system_uptime_hours" not in domains["temporal"]
+        assert "Uptime: unknown (unavailable)" in result.output["rendered"]
+        assert "population=stored_agent_membership" in result.output["rendered"]
+        assert not is_capability_gap(result.output["rendered"])
+    finally:
+        await memory.stop()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("domain", SELF_QUERY_DOMAINS)
 async def test_self_query_singleton_calls_only_selected_getter(
     domain: str, self_query_telemetry: _FakeSelfQueryTelemetry,

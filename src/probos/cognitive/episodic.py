@@ -1272,6 +1272,11 @@ class EpisodicMemory:
         self._security_event_emitter: Any = None  # AD-607: emit hook for security events
         self._store_write_lock = asyncio.Lock()
 
+    @property
+    def is_available(self) -> bool:
+        """Whether the primary collection is open, including an empty collection."""
+        return self._collection is not None
+
     def set_activation_tracker(self, tracker: Any) -> None:
         """AD-567d: Wire the activation tracker after construction."""
         self._activation_tracker = tracker
@@ -1502,6 +1507,7 @@ class EpisodicMemory:
             self._fts_db = None
 
     async def stop(self) -> None:
+        self._collection = None
         # AD-567b: Close FTS5 sidecar
         if self._fts_db is not None:
             try:

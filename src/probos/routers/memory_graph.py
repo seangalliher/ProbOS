@@ -5,12 +5,14 @@ from __future__ import annotations
 import logging
 import math
 import time
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Protocol
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService, MEMORY_POPULATION, MEMORY_SOURCE
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -53,6 +55,10 @@ MAX_NODES_CAP = 500
 MAX_EDGES_CAP = 2000
 
 
+class _MemoryTelemetry(Protocol):
+    async def get_memory_state(self, agent_id: str) -> dict[str, Any]: ...
+
+
 @router.get("/{agent_id}/memory-graph")
 async def get_memory_graph(
     agent_id: str,
@@ -69,13 +75,42 @@ async def get_memory_graph(
         )
 
     episodic = runtime.episodic_memory
+    if getattr(episodic, "is_available", None) is False:
+        return JSONResponse({"error": "Episodic memory not available"}, status_code=503)
     max_nodes = min(max_nodes, MAX_NODES_CAP)
+    selection_started_at = datetime.now(timezone.utc).isoformat()
+    measurement: dict[str, Any] = {
+        "subject_id": None, "population": MEMORY_POPULATION, "unit": "episodes",
+        "source": MEMORY_SOURCE, "sample_started_at": None,
+        "sample_completed_at": None, "status": "failed",
+    }
+    total: int | None = None
+    try:
+        telemetry: _MemoryTelemetry | None = getattr(runtime, "introspective_telemetry", None)
+        if telemetry is None:
+            telemetry = IntrospectiveTelemetryService(runtime=runtime)
+        memory = await telemetry.get_memory_state(agent_id)
+        if type(memory) is not dict or type(memory.get("measurement")) is not dict:
+            raise ValueError("Invalid memory measurement")
+        measurement = memory["measurement"]
+        if measurement["status"] == "available":
+            count = memory.get("episode_count")
+            if type(count) is not int or count < 0:
+                raise ValueError("Invalid episode total")
+            total = count
+    except Exception:
+        measurement = {**measurement, "status": "failed"}
+        logger.warning("Memory graph total could not be measured; retaining the selection with an unknown stored total")
 
     # --- Resolve sovereign ID ---
     sovereign_id = resolve_sovereign_id_from_slot(
         agent_id,
         getattr(runtime, 'identity_registry', None),
     )
+    if type(measurement.get("subject_id")) is str and measurement["subject_id"]:
+        sovereign_id = measurement["subject_id"]
+    else:
+        measurement = {**measurement, "subject_id": sovereign_id}
 
     # --- Collect episodes ---
     # Three-tier selection for per-agent; ship-wide merges across agents
@@ -85,22 +120,10 @@ async def get_memory_graph(
             runtime,
         )
     except Exception:
-        logger.exception("AD-611: Episode selection failed")
+        logger.warning("Memory graph selection failed; returning unavailable instead of an empty graph")
         return JSONResponse(
             {"error": "Failed to retrieve episodes"}, status_code=500,
         )
-
-    if not episodes:
-        return {
-            "nodes": [],
-            "edges": [],
-            "meta": {
-                "agent_id": agent_id,
-                "total_episodes": 0,
-                "nodes_shown": 0,
-                "ship_wide": ship_wide,
-            },
-        }
 
     # --- Get activations ---
     episode_ids = [ep.id for ep in episodes]
@@ -125,13 +148,6 @@ async def get_memory_graph(
         logger.exception("AD-611: Edge construction failed")
         edges = []
 
-    # --- Get total count for meta ---
-    total = 0
-    try:
-        total = await episodic.count_for_agent(sovereign_id)
-    except Exception:
-        pass
-
     return {
         "nodes": nodes,
         "edges": edges,
@@ -140,6 +156,16 @@ async def get_memory_graph(
             "total_episodes": total,
             "nodes_shown": len(nodes),
             "ship_wide": ship_wide,
+            "total_measurement": measurement,
+            "selection": {
+                "subject_id": "ship" if ship_wide else sovereign_id,
+                "population": "registered_crew_bounded_graph" if ship_wide else "agent_bounded_graph",
+                "unit": "episodes", "source": "memory_graph.selection", "status": "available",
+                "sample_started_at": selection_started_at,
+                "sample_completed_at": datetime.now(timezone.utc).isoformat(),
+                "max_nodes": max_nodes, "time_range_hours": time_range_hours,
+                "bounded": True,
+            },
         },
     }
 

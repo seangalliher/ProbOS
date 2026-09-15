@@ -453,8 +453,19 @@ export interface AgentConversation {
   minimized: boolean;
 }
 
+export interface ProfileMeasurement {
+  subjectId: string | null;
+  population: string;
+  unit: string;
+  source: string;
+  sampleStartedAt: string | null;
+  sampleCompletedAt: string | null;
+  status: 'available' | 'unavailable' | 'failed';
+}
+
 export interface AgentProfileData {
   id: string;
+  sovereignId?: string;
   agentType: string;
   callsign: string;
   displayName: string;
@@ -470,8 +481,10 @@ export interface AgentProfileData {
   tier: string;
   pool: string;
   hebbianConnections: { targetId: string; weight: number; relType: string }[];
-  memoryCount: number;
-  uptime: number;
+  memoryCount: number | null;
+  uptime: number | null;
+  memoryCountMetadata?: ProfileMeasurement;
+  uptimeMetadata?: ProfileMeasurement;
   proactiveCooldown: number | null;  // Phase 28b: per-agent proactive think cooldown (seconds), null for non-crew (BF-017)
   isCrew: boolean;  // BF-017: true for crew agents, false for utility/infrastructure
   visionCapable?: boolean;  // AD-982a: live vision-capability gate (ambient perception access)

@@ -6,6 +6,10 @@ import { StatusDone } from './icons/Glyphs';
 export function WelcomeOverlay() {
   const showIntro = useStore((s) => s.showIntro);
   const setShowIntro = useStore((s) => s.setShowIntro);
+  const agents = useStore(state => state.agents);
+  const connected = useStore(state => state.connected);
+  const generation = useStore(state => state.liveGeneration);
+  const registeredCount = connected && typeof generation === 'string' && generation.length > 0 ? agents.size : null;
 
   if (!showIntro) return null;
 
@@ -51,9 +55,9 @@ export function WelcomeOverlay() {
         <p style={{
           fontSize: 14, lineHeight: 1.7, color: '#b0acc0', marginBottom: 16,
         }}>
-          You're looking at a living cognitive mesh &mdash; {' '}
-          <span style={{ color: '#e0dcd4' }}>47 AI agents</span>{' '}
-          self-organizing to handle your requests.
+          <span style={{ color: '#e0dcd4' }}>
+            {registeredCount === null ? 'Registered agents: unavailable' : `Registered agents: ${registeredCount}`}
+          </span>
         </p>
         <div style={{
           textAlign: 'left', fontSize: 13, lineHeight: 2, color: '#a0a0b8',
@@ -62,7 +66,7 @@ export function WelcomeOverlay() {
           <div><span style={{ color: '#f0b060' }}><StatusDone size={8} /></span> Each glowing node is an autonomous agent</div>
           <div><span style={{ color: '#88a4c8' }}>{'\u2500'}</span> Curves show learned routing between intents and agents</div>
           <div>Brighter = higher confidence &nbsp;|&nbsp; Warmer = higher trust</div>
-          <div>Ask it anything in the input box above</div>
+          <div>Ask it anything in the input box</div>
         </div>
         <p style={{
           fontSize: 12, color: '#8888a0', marginTop: 16, fontStyle: 'italic',

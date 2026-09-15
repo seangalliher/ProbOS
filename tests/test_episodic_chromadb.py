@@ -3,11 +3,110 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from probos.types import Episode, EpisodeStoreOutcome
+
+
+@dataclasses.dataclass
+class _Issue1370Collection:
+    metadatas: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    calls: list[tuple[str, Any]] = dataclasses.field(default_factory=list)
+
+    def count(self) -> int:
+        self.calls.append(("count", None))
+        return len(self.metadatas)
+
+    def get(self, *, include: list[str]) -> dict[str, Any]:
+        self.calls.append(("get", include))
+        assert include == ["metadatas"]
+        return {"metadatas": self.metadatas}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_error", [False, True])
+async def test_issue1370_real_availability_empty_start_and_stop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, close_error: bool) -> None:
+    import chromadb
+    from probos.cognitive.episodic import EpisodicMemory
+    from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
+    from probos.knowledge import embeddings
+
+    collection = _Issue1370Collection()
+    calls: list[str] = []
+
+    class _Client:
+        def get_or_create_collection(self, **kwargs: Any) -> _Issue1370Collection:
+            calls.append("open")
+            assert kwargs["name"] == "episodes"
+            return collection
+
+        def close(self) -> None:
+            calls.append("close")
+            if close_error:
+                raise RuntimeError("synthetic close failure")
+
+    monkeypatch.setattr(chromadb, "PersistentClient", lambda **kwargs: _Client())
+    monkeypatch.setattr(embeddings, "get_collection_embedding_function", lambda: None)
+    monkeypatch.setattr(embeddings, "get_active_embedding_model_name", lambda: "synthetic")
+    monkeypatch.setattr(embeddings, "get_active_embedding_backend_id", lambda: "synthetic")
+    memory = EpisodicMemory(db_path=tmp_path / "episodes.db")
+    service = IntrospectiveTelemetryService(runtime=SimpleNamespace(episodic_memory=memory))
+    assert memory.is_available is False
+    assert (await service.get_memory_state("subject"))["episode_count"] == "unknown"
+    await memory.start()
+    try:
+        assert calls == ["open"]
+        assert memory.is_available is True
+        result = await service.get_memory_state("subject")
+        assert result["episode_count"] == 0
+        assert result["measurement"]["status"] == "available"
+        assert collection.calls == [("count", None)]
+    finally:
+        await memory.stop()
+    assert calls == ["open", "close"]
+    assert memory.is_available is False
+    assert (await service.get_memory_state("subject"))["episode_count"] == "unknown"
+    assert collection.calls == [("count", None)]
+
+
+@pytest.mark.asyncio
+async def test_issue1370_real_count_is_unbounded_membership_not_recall(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from probos.cognitive.episodic import EpisodicMemory
+    from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
+
+    rows = [
+        {"agent_ids_json": json.dumps(["runtime"])},
+        {"agent_ids_json": json.dumps(["sovereign"])},
+        {"agent_ids_json": json.dumps(["sovereign", "other"])},
+        {"agent_ids_json": json.dumps(["sovereign"]), "timestamp": 1.0},
+        {"agent_ids_json": json.dumps(["sovereign"]), "self_contradicted": True},
+        {"agent_ids_json": json.dumps(["other"])},
+        {"agent_ids_json": "malformed"},
+        {"agent_ids_json": None},
+        {},
+    ] + [{"agent_ids_json": json.dumps(["sovereign"])} for _index in range(250)]
+    collection = _Issue1370Collection(rows)
+    memory = EpisodicMemory(db_path=tmp_path / "unused.db", max_episodes=10)
+    monkeypatch.setattr(memory, "_collection", collection)
+    service = IntrospectiveTelemetryService(runtime=SimpleNamespace(episodic_memory=memory))
+    try:
+        assert len(rows) > 200
+        assert memory.is_available is True
+        assert await memory.count_for_agent("runtime") == 1
+        assert await memory.count_for_agent("other") == 2
+        assert await memory.count_for_agent("") == 0
+        result = await service.get_memory_state("sovereign")
+        assert result["episode_count"] == 254
+        assert result["measurement"]["population"] == "stored_agent_membership"
+        assert collection.calls == [("count", None), ("get", ["metadatas"])] * 4
+    finally:
+        await memory.stop()
 
 
 def _make_episode(

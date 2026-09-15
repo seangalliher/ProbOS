@@ -33,9 +33,26 @@ vi.mock('../audio/speechInput', () => ({
 
 import { AgentProfilePanel } from '../components/profile/AgentProfilePanel';
 import { useStore } from '../store/useStore';
+import type { AgentProfileData } from '../store/types';
+import { validProfile } from '../hooks/useProfileResource';
 
 const HOST = 'agent-counselor';
 const PEER = 'agent-yeoman';
+const INITIAL = useStore.getState();
+const originalFetch = global.fetch;
+
+function profilePayload(id: string, vrmUrl = ''): AgentProfileData {
+  const result: AgentProfileData = {
+    id, agentType: id === HOST ? 'counselor' : 'yeoman', callsign: id === HOST ? 'Ezri' : 'Yeo',
+    displayName: id === HOST ? 'Ezri' : 'Yeo', rank: 'lieutenant', agencyLevel: 'autonomous',
+    department: id === HOST ? 'medical' : 'bridge', personality: {}, specialization: [],
+    trust: 0.7, trustHistory: [], confidence: 0.7, state: 'idle', tier: 'domain', pool: 'medical',
+    hebbianConnections: [], memoryCount: 0, uptime: 120, proactiveCooldown: null, isCrew: true,
+    appearance: { vrm_url: vrmUrl, dsl: null, expression_overrides: {}, color_palette_hint: '' },
+  };
+  expect(validProfile(result, id)).toBe(true);
+  return result;
+}
 
 function _agent(id: string, agent_type: string, callsign: string, pool: string) {
   return {
@@ -53,6 +70,7 @@ function _seedAgents() {
 }
 
 beforeEach(() => {
+  useStore.setState({ ...INITIAL, connected: true, liveGeneration: 'group-fixture', liveRepairEpoch: 0 }, true);
   if (!(Element.prototype as any).scrollIntoView) {
     (Element.prototype as any).scrollIntoView = vi.fn();
   }
@@ -64,14 +82,18 @@ beforeEach(() => {
     if (u.endsWith('/profile')) {
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ id: HOST, isCrew: true, department: 'medical', displayName: 'Ezri' }),
+        json: () => Promise.resolve(profilePayload(HOST)),
       }) as any;
     }
     return Promise.resolve({ ok: true, json: () => Promise.resolve({}) }) as any;
   }) as any;
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useStore.setState(INITIAL, true);
+  global.fetch = originalFetch;
+});
 
 
 describe('AD-965 group surface', () => {
@@ -199,10 +221,7 @@ describe('AD-965 group surface', () => {
       if (url === '/api/config/avatars-enabled') return Response.json({ enabled: true });
       if (url === `/api/agent/${HOST}/profile`) {
         profileRequests += 1;
-        return Response.json({
-          id: HOST, isCrew: true, callsign: 'Ezri', department: 'medical',
-          appearance: { vrm_url: vrmUrl, dsl: null, expression_overrides: {} },
-        });
+        return Response.json(profilePayload(HOST, vrmUrl));
       }
       return Response.json({});
     });
@@ -241,10 +260,7 @@ describe('AD-965 group surface', () => {
     global.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === '/api/config/avatars-enabled') return Response.json({ enabled: true });
-      if (url === `/api/agent/${HOST}/profile`) return Response.json({
-        id: HOST, isCrew: true, callsign: 'Ezri', department: 'medical',
-        appearance: { vrm_url: '/api/avatars/ezri.vrm', dsl: null, expression_overrides: {} },
-      });
+      if (url === `/api/agent/${HOST}/profile`) return Response.json(profilePayload(HOST, '/api/avatars/ezri.vrm'));
       if (url === `/api/agent/${PEER}/profile`) {
         peerRequests += 1;
         return (await peerResponse).clone();
@@ -269,10 +285,7 @@ describe('AD-965 group surface', () => {
       expect(useStore.getState().activeProfileAgent).toBe(PEER);
       expect(screen.queryByTestId('crew-vrm')).toBeNull();
       await act(async () => resolvePeer(outcome === 'success'
-        ? Response.json({
-          id: PEER, isCrew: true, callsign: 'Yeo', department: 'bridge',
-          appearance: { vrm_url: '/api/avatars/yeo.vrm', dsl: null, expression_overrides: {} },
-        })
+        ? Response.json(profilePayload(PEER, '/api/avatars/yeo.vrm'))
         : Response.json({ error: 'Profile unavailable' }, { status: outcome === 'missing' ? 404 : 503 })));
       if (outcome === 'success') {
         await waitFor(() => expect(screen.getByTestId('crew-vrm').getAttribute('data-vrm-url'))
@@ -301,10 +314,7 @@ describe('AD-965 group surface', () => {
       }
       if (url.endsWith('/profile')) {
         const participant = url.includes(HOST) ? HOST : PEER;
-        return Response.json({
-          id: participant, isCrew: true, callsign: participant === HOST ? 'Ezri' : 'Yeo',
-          appearance: { vrm_url: `/avatars/${participant}.vrm`, expression_overrides: {}, color_palette_hint: '' },
-        });
+        return Response.json(profilePayload(participant, `/avatars/${participant}.vrm`));
       }
       return Response.json({});
     });
