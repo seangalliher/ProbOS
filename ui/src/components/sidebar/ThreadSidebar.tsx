@@ -14,7 +14,7 @@
  *   #4 motion communicates state      -> amber border + glow on active row
  *   #5 progressive disclosure         -> 240px <-> 56px collapse w/ localStorage
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useStore, type AD791aChatThreadView, type ProjectView } from '../../store/useStore';
 import {
   createThread,
@@ -484,7 +484,7 @@ function findYeoFromStore(): { id: string; callsign?: string } | null {
 
 // ---------- Main component ---------------------------------------------
 
-export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThreadId }: ThreadSidebarProps) {
+export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThreadId }: ThreadSidebarProps): ReactElement {
   const chatThreads = useStore((s) => s.chatThreads);
   const hydrateChatThreads = useStore((s) => s.hydrateChatThreads);
   const setChatThread = useStore((s) => s.setChatThread);
@@ -497,7 +497,48 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
   const setProject = useStore((s) => s.setProject);
   const removeProject = useStore((s) => s.removeProject);
 
-  const [collapsed, setCollapsed] = useState<boolean>(() => initialCollapsed ?? loadSidebarCollapsed());
+  const [preferredCollapsed, setCollapsed] = useState<boolean>(() => initialCollapsed ?? loadSidebarCollapsed());
+  const [narrow, setNarrow] = useState(false);
+  const [narrowOpen, setNarrowOpen] = useState(false);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const focusToggleRef = useRef(false);
+  const collapsed = narrow ? !narrowOpen : preferredCollapsed;
+  useLayoutEffect(() => {
+    const parent = sidebarRef.current?.parentElement;
+    if (!parent) return;
+    let previousNarrow: boolean | null = null;
+    const measure = (width: number): void => {
+      if (!Number.isFinite(width) || width <= 0) return;
+      const nextNarrow = width < 600;
+      if (previousNarrow !== null && nextNarrow !== previousNarrow) setNarrowOpen(false);
+      previousNarrow = nextNarrow;
+      setNarrow(nextNarrow);
+    };
+    measure(parent.clientWidth);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(entries => {
+      const entry = entries.find(value => value.target === parent);
+      if (entry) measure(entry.contentRect.width);
+    });
+    observer?.observe(parent);
+    const resize = (): void => measure(parent.clientWidth);
+    window.addEventListener('resize', resize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', resize);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (focusToggleRef.current) {
+      toggleRef.current?.focus();
+      focusToggleRef.current = false;
+    }
+  }, [collapsed]);
+  const toggleCollapsed = (): void => {
+    focusToggleRef.current = true;
+    if (narrow) setNarrowOpen(!narrowOpen);
+    else setCollapsed(!preferredCollapsed);
+  };
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<AD791aChatThreadView[] | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -541,8 +582,8 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
 
   // Persist collapse preference.
   useEffect(() => {
-    persistSidebarCollapsed(collapsed);
-  }, [collapsed]);
+    persistSidebarCollapsed(preferredCollapsed);
+  }, [preferredCollapsed]);
 
   // Debounced search: 300ms (matches useStore.ts:549 precedent).
   useEffect(() => {
@@ -619,6 +660,7 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
   const handleSelect = useCallback(
     (id: string) => {
       setActiveThread(id);
+      setNarrowOpen(false);
       onThreadSelected(id);
     },
     [onThreadSelected, setActiveThread],
@@ -635,6 +677,7 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
     setChatThread(thread);
     setActiveThread(thread.id);
     setThreadForAgent(yeo.id, thread.id);
+    setNarrowOpen(false);
     onThreadSelected(thread.id);
   }, [onThreadSelected, setActiveThread, setChatThread, setThreadForAgent]);
 
@@ -869,6 +912,7 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
   if (collapsed) {
     return (
       <div
+        ref={sidebarRef}
         data-testid="thread-sidebar"
         data-collapsed="true"
         style={{
@@ -884,10 +928,11 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
       >
         <div style={{ flex: '0 0 auto', padding: 6, borderBottom: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
           <button
+            ref={toggleRef}
             type="button"
             data-testid="sidebar-collapse-toggle"
             aria-label="Expand sidebar"
-            onClick={() => setCollapsed(false)}
+            onClick={toggleCollapsed}
             style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 4 }}
           >
             <GlyphChevron collapsed />
@@ -934,11 +979,23 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
 
   return (
     <div
+      ref={sidebarRef}
       data-testid="thread-sidebar"
       data-collapsed="false"
+      data-overlay={narrow ? 'true' : 'false'}
+      role={narrow ? 'dialog' : undefined}
+      aria-label={narrow ? 'Thread navigation' : undefined}
+      onKeyDown={event => {
+        if (narrow && event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          toggleCollapsed();
+        }
+      }}
       style={{
         width: SIDEBAR_WIDTH_EXPANDED,
         flex: `0 0 ${SIDEBAR_WIDTH_EXPANDED}px`,
+        ...(narrow ? { position: 'absolute', left: 0, top: 0, bottom: 0, maxWidth: '100%', zIndex: 20 } as const : {}),
         height: '100%',
         background: BG,
         borderRight: `1px solid ${BORDER}`,
@@ -951,10 +1008,11 @@ export function ThreadSidebar({ initialCollapsed, onThreadSelected, activeThread
       {/* Header: collapse toggle + new chat. */}
       <div style={{ flex: '0 0 auto', padding: '8px 10px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 6 }}>
         <button
+          ref={toggleRef}
           type="button"
           data-testid="sidebar-collapse-toggle"
           aria-label="Collapse sidebar"
-          onClick={() => setCollapsed(true)}
+          onClick={toggleCollapsed}
           style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 4 }}
         >
           <GlyphChevron collapsed={false} />

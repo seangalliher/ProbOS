@@ -321,10 +321,43 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     expect(rail.style.width).toBe('100%');
     vi.stubGlobal('innerWidth', 1440);
     act(() => onResize([{ target: observed, contentRect: { width: 420 } } as ResizeObserverEntry], {} as ResizeObserver));
+    // A narrow parent still needs an overlay on a wide desktop.
+    expect(rail).toHaveAttribute('data-compact', 'true');
+    expect(localStorage.getItem('probos.workspaceFiles.collapsed')).toBe('0');
+    act(() => onResize([{ target: observed, contentRect: { width: 900 } } as ResizeObserverEntry], {} as ResizeObserver));
     expect(rail).toHaveAttribute('data-compact', 'false');
     expect(rail.style.position).toBe('relative');
+    expect(localStorage.getItem('probos.workspaceFiles.collapsed')).toBe('0');
     view.unmount();
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('accounts for the selected preview width and measures without ResizeObserver', async () => {
+    localStorage.setItem('probos.workspaceFiles.collapsed', '0');
+    localStorage.setItem('probos.workspaceFiles.previewW', '620');
+    vi.stubGlobal('innerWidth', 1440);
+    vi.stubGlobal('ResizeObserver', undefined);
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800);
+    try {
+      render(<WorkspaceFilesRail threadId="t1" />);
+      const row = await screen.findByTestId('artifact-row-art1');
+      const rail = screen.getByTestId('workspace-files-rail');
+      expect(rail).toHaveAttribute('data-compact', 'false');
+      fireEvent.click(row);
+      expect(await screen.findByTestId('workspace-files-preview')).toBeInTheDocument();
+      expect(rail).toHaveAttribute('data-compact', 'true');
+      expect(rail.style.width).toBe('100%');
+      width.mockReturnValue(1000);
+      fireEvent(window, new Event('resize'));
+      expect(rail).toHaveAttribute('data-compact', 'false');
+      expect(rail.style.width).toBe('620px');
+      expect(localStorage.getItem('probos.workspaceFiles.previewW')).toBe('620');
+      expect(localStorage.getItem('probos.workspaceFiles.collapsed')).toBe('0');
+      fireEvent.click(screen.getByTestId('workspace-files-preview-close'));
+      expect(screen.queryByTestId('workspace-files-preview')).not.toBeInTheDocument();
+    } finally {
+      width.mockRestore();
+    }
   });
 
   it('refreshes legacy task upload results into verified Ready inputs', async () => {
@@ -455,8 +488,14 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     const preview = await screen.findByTestId('workspace-files-preview');
     expect(preview).toBeTruthy();
     expect(preview.textContent).toContain('report.md');
+    expect(screen.getByTestId('workspace-files-preview-close')).toHaveFocus();
     fireEvent.click(screen.getByTestId('workspace-files-preview-close'));
     expect(screen.queryByTestId('workspace-files-preview')).toBeNull();
+    expect(row).toHaveFocus();
+    fireEvent.click(row);
+    fireEvent.keyDown(screen.getByTestId('workspace-files-preview-close'), { key: 'Escape' });
+    expect(screen.queryByTestId('workspace-files-preview')).toBeNull();
+    expect(row).toHaveFocus();
   });
 
   it('collapse toggle persists "1" to localStorage and renders data-collapsed="true"', async () => {
@@ -467,6 +506,9 @@ describe('WorkspaceFilesRail (AD-929)', () => {
     fireEvent.click(screen.getByTestId('workspace-files-collapse'));
     expect(localStorage.getItem('probos.workspaceFiles.collapsed')).toBe('1');
     expect(screen.getByTestId('workspace-files-rail').getAttribute('data-collapsed')).toBe('true');
+    expect(screen.getByTestId('workspace-files-expand')).toHaveFocus();
+    fireEvent.click(screen.getByTestId('workspace-files-expand'));
+    expect(screen.getByTestId('workspace-files-collapse')).toHaveFocus();
   });
 
   it('mounts expanded when localStorage is "0" and collapsed by default on first run', () => {

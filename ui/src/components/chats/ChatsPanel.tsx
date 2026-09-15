@@ -18,7 +18,7 @@
  * amber `#f0b060`, dim `#666680`. Per HXI Design Principle #9: agent-created
  * chats the Captain has not yet joined float to the top (alert-driven ordering).
  */
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, type ReactElement } from 'react';
 import { useStore, type AD791aChatThreadView } from '../../store/useStore';
 import type { Agent } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
@@ -77,7 +77,7 @@ function GlyphGroup({ color }: { color: string }) {
   );
 }
 
-export default function ChatsPanel() {
+export default function ChatsPanel(): ReactElement | null {
   const open = useStore((s) => s.chatsOpen);
   const close = useStore((s) => s.closeChats);
   const agents = useStore((s) => s.agents);
@@ -104,6 +104,16 @@ export default function ChatsPanel() {
 
   const [threads, setThreads] = useState<AD791aChatThreadView[]>([]);
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const launcherOpenerRef = useRef<HTMLElement | null>(null);
+  const newChatButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (open) launcherOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }, [open]);
+  const dismissLauncher = (): void => {
+    const opener = launcherOpenerRef.current;
+    close();
+    queueMicrotask(() => { if (opener?.isConnected) opener.focus(); });
+  };
   // AD-1088: room list controls — search + sort (recent | name).
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<'recent' | 'name'>('recent');
@@ -118,18 +128,36 @@ export default function ChatsPanel() {
   const [size, setSize] = useState<{ w: number; h: number }>(() => {
     try {
       const s = JSON.parse(localStorage.getItem('probos.chatsPanel.size') || '');
-      if (typeof s?.w === 'number' && typeof s?.h === 'number') return s;
+      if (Number.isFinite(s?.w) && Number.isFinite(s?.h) && s.w >= 320 && s.h >= 360) {
+        return { w: s.w, h: s.h };
+      }
     } catch { /* default */ }
     return { w: 440, h: 600 };
   });
+  const [viewport, setViewport] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  useEffect(() => {
+    const measure = (): void => setViewport({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+  const renderedSize = {
+    w: Math.min(size.w, Math.max(1, viewport.w - 16)),
+    h: Math.min(size.h, Math.max(1, viewport.h - 16)),
+  };
+  const renderedPos = {
+    x: Math.min(Math.max(8, Number.isFinite(pos.x) ? pos.x : 60), Math.max(8, viewport.w - renderedSize.w - 8)),
+    y: Math.min(Math.max(8, Number.isFinite(pos.y) ? pos.y : 60), Math.max(8, viewport.h - renderedSize.h - 8)),
+  };
   const resizeRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   const startResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault(); e.stopPropagation();
-    resizeRef.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h };
+    resizeRef.current = { x: e.clientX, y: e.clientY, w: renderedSize.w, h: renderedSize.h };
     const move = (ev: MouseEvent) => {
       if (!resizeRef.current) return;
-      const w = Math.max(320, Math.min(900, resizeRef.current.w + (ev.clientX - resizeRef.current.x)));
-      const h = Math.max(360, Math.min(window.innerHeight - 80, resizeRef.current.h + (ev.clientY - resizeRef.current.y)));
+      const maxWidth = Math.max(1, Math.min(900, window.innerWidth - renderedPos.x - 8));
+      const maxHeight = Math.max(1, window.innerHeight - renderedPos.y - 8);
+      const w = Math.min(maxWidth, Math.max(Math.min(320, maxWidth), resizeRef.current.w + (ev.clientX - resizeRef.current.x)));
+      const h = Math.min(maxHeight, Math.max(Math.min(360, maxHeight), resizeRef.current.h + (ev.clientY - resizeRef.current.y)));
       setSize({ w, h });
     };
     const up = () => {
@@ -138,7 +166,7 @@ export default function ChatsPanel() {
     };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
-  }, [size]);
+  }, [renderedSize.w, renderedSize.h, renderedPos.x, renderedPos.y]);
   useEffect(() => {
     try { localStorage.setItem('probos.chatsPanel.size', JSON.stringify(size)); } catch { /* best-effort */ }
   }, [size]);
@@ -212,12 +240,12 @@ export default function ChatsPanel() {
   // The New-chat / Close controls stopPropagation so a click never starts a drag.
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
-    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: renderedPos.x, origY: renderedPos.y };
     const onMove = (ev: MouseEvent) => {
       if (!dragRef.current) return;
       setPos({
-        x: dragRef.current.origX + (ev.clientX - dragRef.current.startX),
-        y: dragRef.current.origY + (ev.clientY - dragRef.current.startY),
+        x: Math.min(Math.max(8, dragRef.current.origX + (ev.clientX - dragRef.current.startX)), Math.max(8, window.innerWidth - renderedSize.w - 8)),
+        y: Math.min(Math.max(8, dragRef.current.origY + (ev.clientY - dragRef.current.startY)), Math.max(8, window.innerHeight - renderedSize.h - 8)),
       });
     };
     const onUp = () => {
@@ -227,7 +255,7 @@ export default function ChatsPanel() {
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [pos, setPos]);
+  }, [renderedPos.x, renderedPos.y, renderedSize.w, renderedSize.h, setPos]);
 
   if (!open) return null;
 
@@ -340,6 +368,7 @@ export default function ChatsPanel() {
     // resolve and ProfileChatTab can load the real transcript for this thread.
     setChatThread(fresh);
     openGroupChatThread(host, fresh.id);
+    close();
   }
 
   async function handleJoin(thread: AD791aChatThreadView): Promise<void> {
@@ -355,10 +384,14 @@ export default function ChatsPanel() {
       data-testid="chats-panel"
       style={{
         position: 'fixed',
-        left: pos.x,
-        top: pos.y,
-        width: size.w,
-        height: size.h,
+        left: renderedPos.x,
+        top: renderedPos.y,
+        width: renderedSize.w,
+        height: renderedSize.h,
+        boxSizing: 'border-box',
+        minWidth: 0,
+        minHeight: 0,
+        overflow: 'hidden',
         zIndex: 30,
         background: 'rgba(10, 10, 18, 0.95)',
         backdropFilter: 'blur(12px)',
@@ -378,6 +411,8 @@ export default function ChatsPanel() {
         style={{
           display: 'flex',
           alignItems: 'center',
+          flexWrap: 'wrap',
+          flexShrink: 0,
           gap: 8,
           padding: '12px 14px',
           borderBottom: '1px solid rgba(240, 176, 96, 0.15)',
@@ -386,12 +421,13 @@ export default function ChatsPanel() {
         }}
       >
         <GlyphGroup color={COLOR_ACTIVE} />
-        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: COLOR_ACTIVE }}>
+        <span style={{ minWidth: 0, overflowWrap: 'anywhere', fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: COLOR_ACTIVE }}>
           CREW COLLABORATION
         </span>
         <span style={{ fontSize: 10, color: COLOR_INACTIVE }}>({chats.length})</span>
         <div style={{ flex: 1 }} />
         <button
+          ref={newChatButtonRef}
           data-testid="new-chat-button"
           onClick={() => setNewChatOpen(true)}
           onMouseDown={(e) => e.stopPropagation()}
@@ -415,15 +451,16 @@ export default function ChatsPanel() {
           <UserPlus size={12} />
           New chat
         </button>
-        <div
+        <button
+          type="button"
           data-testid="chats-close"
-          onClick={close}
+          onClick={dismissLauncher}
           onMouseDown={(e) => e.stopPropagation()}
-          style={{ cursor: 'pointer', color: COLOR_INACTIVE, display: 'inline-flex' }}
+          style={{ cursor: 'pointer', color: COLOR_INACTIVE, display: 'inline-flex', background: 'transparent', border: 0, padding: 4 }}
           aria-label="Close chats"
         >
           <Close size={14} />
-        </div>
+        </button>
       </div>
 
       {/* Body */}
@@ -780,7 +817,10 @@ export default function ChatsPanel() {
         )}
       </div>
 
-      {newChatOpen && <NewChatModal onClose={() => setNewChatOpen(false)} />}
+      {newChatOpen && <NewChatModal onClose={() => {
+        setNewChatOpen(false);
+        newChatButtonRef.current?.focus();
+      }} />}
       {/* AD-1093: resize handle (bottom-right) */}
       <div
         data-testid="chats-resize"

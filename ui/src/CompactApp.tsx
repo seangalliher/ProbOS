@@ -9,7 +9,7 @@
  * Electron host loads `${RUNTIME_URL}/#compact` by default; the in-page
  * "Open full HXI" link clears the hash and reloads.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useStore } from './store/useStore';
 import { ProfileChatTab } from './components/profile/ProfileChatTab';
@@ -17,6 +17,9 @@ import { YeoStarterChips } from './components/YeoStarterChips';
 import { YeoEmptyGreeting } from './components/YeoEmptyGreeting';
 import { ThreadSidebar, loadSidebarCollapsed } from './components/sidebar/ThreadSidebar';
 import { ArtifactDrawer } from './components/artifacts/ArtifactDrawer';
+import type { ArtifactOpenRequest } from './components/artifacts/ArtifactCard';
+import { isWorkspaceRoom } from './components/workspace/isWorkspaceRoom';
+import { resolveProfileThreadId } from './components/profile/profileThreadResolution';
 import { stopCameraStream } from './hooks/useCameraStream';
 import { startVoiceActivity, stopVoiceActivity } from './audio/voiceActivity';
 import { useSettingsStore } from './store/useSettingsStore';
@@ -45,9 +48,10 @@ function switchToFull(): void {
   window.location.replace(url.toString());
 }
 
-export default function CompactApp() {
+export default function CompactApp(): ReactElement {
   useWebSocket();
 
+  const conversationRef = useRef<HTMLDivElement>(null);
   const agents = useStore((s) => s.agents);
   const markAgentRead = useStore((s) => s.markAgentRead);
 
@@ -75,6 +79,27 @@ export default function CompactApp() {
     }
     return yeoId;
   }, [activeThreadId, chatThreads, yeoId]);
+
+  const artifactThreadId = useStore(state => derivedAgentId
+    ? resolveProfileThreadId(activeThreadId ?? undefined, state.activeProfileThreadId, state.threadIdByAgent, derivedAgentId)
+    : undefined);
+  const isWorkspaceFilesRoom = isWorkspaceRoom(artifactThreadId ? chatThreads.get(artifactThreadId) : undefined, agents);
+  const artifactDrawerAvailable = !!derivedAgentId && !isWorkspaceFilesRoom;
+  const [artifactOwner, setArtifactOwner] = useState({ agentId: derivedAgentId, threadId: artifactThreadId, available: artifactDrawerAvailable });
+  const [pendingArtifactOpen, setPendingArtifactOpen] = useState<ArtifactOpenRequest | null>(null);
+  if (artifactOwner.agentId !== derivedAgentId || artifactOwner.threadId !== artifactThreadId
+    || artifactOwner.available !== artifactDrawerAvailable) {
+    setArtifactOwner({ agentId: derivedAgentId, threadId: artifactThreadId, available: artifactDrawerAvailable });
+    setPendingArtifactOpen(null);
+  }
+  const handleArtifactOpen = (request: ArtifactOpenRequest): void => {
+    if (artifactDrawerAvailable && request.threadId === artifactThreadId) {
+      setPendingArtifactOpen({ ...request });
+    }
+  };
+  const handleArtifactOpenConsumed = (request: ArtifactOpenRequest): void => {
+    setPendingArtifactOpen(current => current === request ? null : current);
+  };
 
   // AD-795/796: render starter chips + greeting only on the empty-thread
   // state. Subscribe directly to the message count so we re-render when
@@ -181,23 +206,27 @@ export default function CompactApp() {
       </div>
 
       {/* Chat surface — sidebar (left) + chat (right) fill the rest of the window. */}
-      <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex' }}>
+      <div style={{ flex: '1 1 auto', minHeight: 0, minWidth: 0, display: 'flex', position: 'relative' }}>
         <ThreadSidebar
           initialCollapsed={loadSidebarCollapsed()}
-          onThreadSelected={(tid) => useStore.getState().setActiveThread(tid)}
+          onThreadSelected={(threadId) => {
+            useStore.getState().setActiveThread(threadId);
+            queueMicrotask(() => conversationRef.current?.querySelector<HTMLInputElement>('input[placeholder="Message..."]')?.focus());
+          }}
           activeThreadId={activeThreadId}
         />
+        <div ref={conversationRef} data-testid="compact-conversation" style={{ flex: '1 1 auto', minWidth: 0, minHeight: 0, display: 'flex', position: 'relative' }}>
         <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         {derivedAgentId ? (
           <>
             {isEmptyThread && (
-              <div style={{ flex: '0 0 auto' }}>
+              <div style={{ flex: '0 1 auto', minHeight: 0, maxHeight: '25%', overflowY: 'auto' }}>
                 <YeoEmptyGreeting />
                 <YeoStarterChips agentId={derivedAgentId} />
               </div>
             )}
             <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <ProfileChatTab agentId={derivedAgentId} threadId={activeThreadId ?? undefined} />
+              <ProfileChatTab agentId={derivedAgentId} threadId={activeThreadId ?? undefined} onArtifactOpen={handleArtifactOpen} />
             </div>
           </>
         ) : (
@@ -219,7 +248,13 @@ export default function CompactApp() {
           </div>
         )}
         </div>
-        <ArtifactDrawer />
+        {!isWorkspaceFilesRoom && <ArtifactDrawer
+          threadId={artifactThreadId ?? null}
+          conversationKey={artifactOwner}
+          openRequest={pendingArtifactOpen}
+          onOpenConsumed={handleArtifactOpenConsumed}
+        />}
+        </div>
       </div>
     </div>
   );

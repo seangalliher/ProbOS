@@ -7,7 +7,7 @@ import { denialNotice, policyDenialOf } from '../../chat/policyDenial';
 import { useMeetingVoice } from '../../audio/useMeetingVoice';
 import type { PerAgentReply } from '../../audio/meetingVoice';
 import { startListening, isSpeechRecognitionSupported, type ListeningHandle } from '../../audio/speechInput';
-import { ArtifactCard } from '../artifacts/ArtifactCard';
+import { ArtifactCard, type ArtifactOpenCallback } from '../artifacts/ArtifactCard';
 import { parseArtifactStub } from '../artifacts/artifactApi';
 import { A2UIChoiceCard } from '../a2ui/A2UIChoiceCard';
 import { A2UIMultiSelectCard } from '../a2ui/A2UIMultiSelectCard';
@@ -93,6 +93,7 @@ interface Props {
    * invariant that the store reflects the latest server-confirmed
    * thread. When unset, behavior is unchanged. */
   threadId?: string;
+  onArtifactOpen?: ArtifactOpenCallback;
 }
 
 type ScreenMode = 'once' | 'live';
@@ -136,6 +137,7 @@ function loadMicMode(agentId: string): MicMode {
 function renderMessageBodyWithArtifacts(
   text: string, threadId: string | undefined,
   onA2UIChoice?: (option: string) => void,
+  onArtifactOpen?: ArtifactOpenCallback,
 ): React.ReactNode {
   if (!text) return text;
   const lines = text.split('\n');
@@ -188,6 +190,7 @@ function renderMessageBodyWithArtifacts(
             version={stub.version}
             lineCount={stub.lineCount}
             mime={stub.mime}
+            onArtifactOpen={onArtifactOpen}
           />
           {!isLast && '\n'}
         </span>
@@ -245,7 +248,7 @@ let _speechOwnerSeq = 0;
 
 const EMPTY_COMPOSER_ATTACHMENTS: ChatAttachment[] = [];
 
-export function ProfileChatTab({ agentId, threadId }: Props) {
+export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
   const activeThreadId = useStore((state) =>
     resolveProfileThreadId(threadId, state.activeProfileThreadId, state.threadIdByAgent, agentId),
@@ -949,6 +952,11 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   const handleSessionBound = useCallback((result: StartWorkResult) => {
     const token = roomTokenRef.current;
     if (token.threadId !== result.thread_id) return;
+    const current = useStore.getState();
+    const room = current.chatThreads.get(result.thread_id);
+    if (!room || room.id !== result.thread_id
+      || (room.task_id != null && room.task_id !== result.parent_id)) return;
+    if (room.task_id == null) current.setChatThread({ ...room, task_id: result.parent_id });
     setBoundCrewSession({
       threadId: result.thread_id,
       parentId: result.parent_id,
@@ -1414,6 +1422,13 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
   // only fires when this agent's draft changes. The store action clears
   // the draft once we've consumed it so navigating away and back doesn't
   // re-populate the field.
+  const launcherOpen = useStore(state => state.chatsOpen);
+  useEffect(() => {
+    if (!launcherOpen && (!document.activeElement || document.activeElement === document.body)) {
+      textInputRef.current?.focus();
+    }
+  }, [agentId, activeThreadId, launcherOpen]);
+
   const pendingDraft = useStore((s) => s.chatDrafts[agentId] ?? '');
   const consumeChatDraft = useStore((s) => s.consumeChatDraft);
   useEffect(() => {
@@ -2192,6 +2207,12 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           so the header (+ its picker) takes over on the next render. */}
       {!activeThreadId && <EmptyChatAddPeople agentId={agentId} />}
       {activeThreadId && crewPanelParentId && (
+        <div
+          role="region"
+          aria-label="Task status"
+          tabIndex={0}
+          style={{ flexShrink: 1, minHeight: 0, maxHeight: 'min(180px, 25%)', overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
         <CrewCollaborationPanel
           threadId={activeThreadId}
           parentId={crewPanelParentId}
@@ -2199,6 +2220,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           onRetryBlockedWork={handleCrewRetry}
           onOpenResultArtifact={handleCrewArtifact}
         />
+        </div>
       )}
       {/* AD-920: meeting-mode avatar gallery — mounted below the controls when
           the thread is in a meeting (metadata.meeting_active). The thread
@@ -2271,7 +2293,7 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
             // prop gated every A2UI + AD-797 artifact card off to plain stub
             // text (1:1 AND group). activeThreadId is the same id the send path
             // and transcript selection already use.
-            body={renderMessageBodyWithArtifacts(item.msg.text, activeThreadId, (opt) => sendText(opt))}
+            body={renderMessageBodyWithArtifacts(item.msg.text, activeThreadId, (opt) => sendText(opt), onArtifactOpen)}
           />
           )
         ))}
@@ -2330,6 +2352,9 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
       {/* Input */}
       <div style={{
         display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        minWidth: 0,
         gap: 6,
         padding: '8px 12px',
         borderTop: '1px solid rgba(255,255,255,0.06)',
@@ -2475,7 +2500,10 @@ export function ProfileChatTab({ agentId, threadId }: Props) {
           placeholder="Message..."
           disabled={sending}
           style={{
-            flex: 1,
+            flex: '1 1 160px',
+            minWidth: 120,
+            maxWidth: '100%',
+            boxSizing: 'border-box',
             background: 'rgba(255,255,255,0.04)',
             border: '1px solid rgba(255,255,255,0.08)',
             borderRadius: 6,

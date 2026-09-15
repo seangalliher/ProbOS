@@ -9,7 +9,7 @@
 // `Map`s cannot cross `page.evaluate` as Maps, so every helper passes plain
 // arrays and rebuilds the `Map` INSIDE the evaluate (useStore stores `agents`
 // and `chatThreads` as `Map`s). No live backend (:18900); no real-data mutation.
-import type { Page } from '@playwright/test';
+import type { BrowserContext, Page, Request } from '@playwright/test';
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -97,6 +97,180 @@ export function mkMessage(
   createdAt = 1000,
 ): MessageFixture {
   return { id, thread_id: threadId, author_id: authorId, role, body, created_at: createdAt, metadata: {} };
+}
+
+export interface Issue1369IsolationOptions {
+  baseURL: string;
+  agents: AgentFixture[];
+  generation: string;
+  assetPaths: () => Set<string>;
+  fixtures: ReadonlyMap<string, (request: Request) => unknown | Promise<unknown>>;
+}
+
+export interface Issue1369IsolationEvidence {
+  continued: string[];
+  deliveries: { key: string; body: unknown; response: unknown }[];
+  deniedHttp: { key: string; url: string; body: unknown }[];
+  deniedSockets: string[];
+  expectedDeniedSockets: string[];
+  escapedHttp: string[];
+  escapedSockets: string[];
+  snapshots: unknown[];
+  browserErrors: string[];
+}
+
+export async function installIssue1369Isolation(
+  context: BrowserContext, options: Issue1369IsolationOptions,
+): Promise<Issue1369IsolationEvidence> {
+  const base = new URL(options.baseURL);
+  if (base.protocol !== 'http:' || base.hostname !== '127.0.0.1' || !base.port) {
+    throw new Error('Issue1369 isolation requires an explicit loopback HTTP port');
+  }
+  const origin = base.origin;
+  const socketOrigin = origin.replace('http:', 'ws:');
+  const evidence: Issue1369IsolationEvidence = {
+    continued: [], deliveries: [], deniedHttp: [], deniedSockets: [], expectedDeniedSockets: [],
+    escapedHttp: [], escapedSockets: [], snapshots: [], browserErrors: [],
+  };
+  const allowedRequests = new Set<Request>();
+  const routedSockets = new Set<string>();
+  const assets = options.assetPaths();
+  await context.addInitScript(() => {
+    const browser = window as unknown as {
+      __issue1369: { initialStorage: string[]; blockedCapabilities: string[]; installed: boolean };
+    };
+    browser.__issue1369 = { initialStorage: Object.keys(localStorage), blockedCapabilities: [], installed: false };
+    const deny = (name: string): never => {
+      browser.__issue1369.blockedCapabilities.push(name);
+      throw new DOMException(`${name} disabled by issue1369 isolation`, 'NotAllowedError');
+    };
+    if (navigator.mediaDevices) {
+      for (const name of ['getUserMedia', 'getDisplayMedia']) {
+        Object.defineProperty(navigator.mediaDevices, name, { configurable: true, value: async () => deny(name) });
+      }
+      Object.defineProperty(navigator.mediaDevices, 'enumerateDevices', { configurable: true, value: async () => [] });
+    }
+    for (const name of ['getUserMedia', 'webkitGetUserMedia', 'mozGetUserMedia']) {
+      Object.defineProperty(navigator, name, { configurable: true, value: () => deny(name) });
+    }
+    for (const name of ['Worker', 'SharedWorker', 'AudioContext', 'webkitAudioContext', 'RTCPeerConnection']) {
+      Object.defineProperty(window, name, { configurable: true, value: class { constructor() { deny(name); } } });
+    }
+    class DeniedRecognition extends EventTarget {
+      onerror: ((event: Event) => void) | null = null;
+      start(): void {
+        browser.__issue1369.blockedCapabilities.push('SpeechRecognition.start');
+        const event = new Event('error');
+        Object.defineProperty(event, 'error', { value: 'not-allowed' });
+        queueMicrotask(() => { this.onerror?.(event); this.dispatchEvent(event); });
+      }
+      stop(): void {}
+      abort(): void {}
+    }
+    for (const name of ['SpeechRecognition', 'webkitSpeechRecognition']) {
+      Object.defineProperty(window, name, { configurable: true, value: DeniedRecognition });
+    }
+    if (window.speechSynthesis) {
+      Object.defineProperty(window.speechSynthesis, 'speak', {
+        configurable: true, value: () => { browser.__issue1369.blockedCapabilities.push('speechSynthesis.speak'); },
+      });
+    }
+    Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+      configurable: true, value: async () => deny('HTMLMediaElement.play'),
+    });
+    if (navigator.serviceWorker) {
+      Object.defineProperty(navigator.serviceWorker, 'register', {
+        configurable: true, value: async () => deny('serviceWorker.register'),
+      });
+    }
+    browser.__issue1369.installed = true;
+  });
+  await context.route('**/*', async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const key = `${request.method()} ${url.pathname}${url.search}`;
+    let body: unknown = null;
+    try { body = request.postDataJSON(); } catch { body = request.postData(); }
+    if (url.origin === origin && request.resourceType() !== 'media') {
+      const fixture = options.fixtures.get(key);
+      if (fixture) {
+        const response = await fixture(request);
+        const textResponse = response instanceof Response;
+        if (response !== undefined && (!textResponse || (request.method() === 'GET'
+          && response.status === 200 && response.headers.get('content-type') === 'text/plain'))) {
+          allowedRequests.add(request);
+          if (textResponse) {
+            const text = await response.text();
+            await route.fulfill({ contentType: 'text/plain', body: text });
+            evidence.deliveries.push({ key, body, response: { contentType: 'text/plain', text } });
+          } else {
+            await route.fulfill({ json: response });
+            evidence.deliveries.push({ key, body, response });
+          }
+          return;
+        }
+      }
+      if (request.method() === 'GET' && !url.pathname.startsWith('/api/')) {
+        if (!assets.has(url.pathname) && url.pathname.startsWith('/node_modules/.vite/deps/')) {
+          for (const path of options.assetPaths()) assets.add(path);
+        }
+        if (assets.has(url.pathname)
+          && [...url.searchParams.keys()].every(key => ['v', 't', 'import', 'url'].includes(key))) {
+          allowedRequests.add(request);
+          evidence.continued.push(request.url());
+          await route.continue();
+          return;
+        }
+      }
+    }
+    evidence.deniedHttp.push({ key, url: request.url(), body });
+    await route.abort('blockedbyclient');
+  });
+  await context.routeWebSocket(/.*/, socket => {
+    const url = new URL(socket.url());
+    routedSockets.add(socket.url());
+    if (url.origin === socketOrigin && url.pathname === '/ws/events' && !url.search) {
+      const frame = {
+        type: 'state_snapshot', timestamp: 1_789_437_344,
+        stream: { generation: options.generation, sequence: 1 },
+        data: {
+          agents: options.agents.map(agent => ({
+            id: agent.id, agent_type: agent.agentType, callsign: agent.callsign,
+            display_name: agent.displayName, pool: agent.pool, state: agent.state,
+            confidence: agent.confidence, trust: agent.trust, tier: agent.tier,
+            isCrew: agent.isCrew, department: agent.department,
+          })),
+          connections: [], pools: [], system_mode: 'active', tc_n: 0, routing_entropy: 0, fresh_boot: false,
+        },
+      };
+      socket.onMessage(() => {});
+      socket.send(JSON.stringify(frame));
+      evidence.snapshots.push(frame);
+    } else if (url.origin === socketOrigin && url.pathname === '/'
+      && [...url.searchParams.keys()].every(key => key === 'token')) {
+      socket.onMessage(() => {});
+      socket.send(JSON.stringify({ type: 'connected' }));
+    } else {
+      const expected = url.origin === socketOrigin && !url.search
+        && url.pathname === '/api/agent/avatar-telemetry/stream';
+      (expected ? evidence.expectedDeniedSockets : evidence.deniedSockets).push(socket.url());
+      socket.close({ code: 1008, reason: 'Denied by issue1369 isolation' });
+    }
+  });
+  context.on('response', response => {
+    if (!allowedRequests.has(response.request())) evidence.escapedHttp.push(response.url());
+  });
+  const observePage = (page: Page): void => {
+    page.on('websocket', socket => {
+      socket.on('framereceived', () => {
+        if (!routedSockets.has(socket.url())) evidence.escapedSockets.push(socket.url());
+      });
+    });
+    page.on('pageerror', error => { evidence.browserErrors.push(error.message); });
+  };
+  context.pages().forEach(observePage);
+  context.on('page', observePage);
+  return evidence;
 }
 
 // ── REST mock ────────────────────────────────────────────────────────────────

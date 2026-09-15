@@ -4,7 +4,7 @@
 // action, the panel rendering at the store position, the header drag affordance
 // (cursor:move + a mousedown->move->up sequence updating chatsPanelPos), and
 // the HXI no-emoji guard.
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useStore } from '../../../store/useStore';
 
@@ -19,6 +19,12 @@ vi.mock('../../sidebar/threadApi', () => ({
 import { listThreads } from '../../sidebar/threadApi';
 import ChatsPanel from '../ChatsPanel';
 
+beforeEach(() => {
+  localStorage.clear();
+  vi.stubGlobal('innerWidth', 1440);
+  vi.stubGlobal('innerHeight', 1000);
+});
+
 async function renderOpen(pos: { x: number; y: number } = { x: 60, y: 60 }) {
   vi.mocked(listThreads).mockResolvedValue([]);
   useStore.setState({ agents: new Map(), chatsOpen: true, chatsPanelPos: pos });
@@ -32,6 +38,8 @@ afterEach(() => {
   cleanup();
   useStore.setState({ agents: new Map(), chatsOpen: false, chatsPanelPos: { x: 60, y: 60 } });
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
 describe('AD-940 draggable CHATS panel', () => {
@@ -75,6 +83,45 @@ describe('AD-940 draggable CHATS panel', () => {
     fireEvent.mouseMove(window, { clientX: 280, clientY: 280 });
     fireEvent.mouseUp(window);
     expect(useStore.getState().chatsPanelPos).toEqual({ x: 60, y: 60 });
+  });
+
+  it('clamps oversized offscreen preferences without losing their desktop values', async () => {
+    const savedSize = { w: 800, h: 800 };
+    const savedPos = { x: 1000, y: 300 };
+    localStorage.setItem('probos.chatsPanel.size', JSON.stringify(savedSize));
+    vi.stubGlobal('innerWidth', 390);
+    vi.stubGlobal('innerHeight', 844);
+    await renderOpen(savedPos);
+    const panel = screen.getByTestId('chats-panel');
+    expect(panel).toHaveStyle({ left: '8px', top: '36px', width: '374px', height: '800px' });
+    expect(JSON.parse(localStorage.getItem('probos.chatsPanel.size')!)).toEqual(savedSize);
+    expect(useStore.getState().chatsPanelPos).toEqual(savedPos);
+    vi.stubGlobal('innerWidth', 1920);
+    vi.stubGlobal('innerHeight', 1200);
+    fireEvent(window, new Event('resize'));
+    expect(panel).toHaveStyle({ left: '1000px', top: '300px', width: '800px', height: '800px' });
+    expect(JSON.parse(localStorage.getItem('probos.chatsPanel.size')!)).toEqual(savedSize);
+    expect(useStore.getState().chatsPanelPos).toEqual(savedPos);
+  });
+
+  it.each(['null', '{}', '{"w":-1,"h":600}', '{"w":440,"h":1}', '{"w":1e999,"h":600}'])('rejects invalid saved dimensions %s', async (saved) => {
+    localStorage.setItem('probos.chatsPanel.size', saved);
+    await renderOpen({ x: Number.NaN, y: Number.POSITIVE_INFINITY });
+    expect(screen.getByTestId('chats-panel')).toHaveStyle({ width: '440px', height: '600px', left: '60px', top: '60px' });
+    expect(JSON.parse(localStorage.getItem('probos.chatsPanel.size')!)).toEqual({ w: 440, h: 600 });
+  });
+
+  it('starts dragging from visible geometry and bounds the result', async () => {
+    vi.stubGlobal('innerWidth', 390);
+    vi.stubGlobal('innerHeight', 500);
+    await renderOpen({ x: 9000, y: -100 });
+    const panel = screen.getByTestId('chats-panel');
+    expect(panel).toHaveStyle({ left: '8px', top: '8px', width: '374px', height: '484px' });
+    fireEvent.mouseDown(screen.getByTestId('chats-drag-handle'), { clientX: 20, clientY: 20 });
+    fireEvent.mouseMove(window, { clientX: 1000, clientY: -1000 });
+    fireEvent.mouseUp(window);
+    expect(useStore.getState().chatsPanelPos).toEqual({ x: 8, y: 8 });
+    expect(panel).toHaveStyle({ left: '8px', top: '8px' });
   });
 
   it('no-emoji guard', async () => {

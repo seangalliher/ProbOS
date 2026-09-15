@@ -86,8 +86,9 @@ describe('AD-811a ProfileChatTab A2UI wiring (source contract)', () => {
   });
 
   it('passes (opt) => sendText(opt) into renderMessageBodyWithArtifacts at the call site', () => {
+    // Explicit artifact opening adds a fourth argument; resolved-thread and A2UI send routing stay intact.
     expect(profileChatSource).toContain(
-      'renderMessageBodyWithArtifacts(item.msg.text, activeThreadId, (opt) => sendText(opt))',
+      'renderMessageBodyWithArtifacts(item.msg.text, activeThreadId, (opt) => sendText(opt), onArtifactOpen)',
     );
   });
 

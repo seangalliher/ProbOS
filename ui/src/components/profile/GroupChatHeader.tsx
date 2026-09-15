@@ -4,7 +4,7 @@
 // 2nd crew participant is what turns a 1:1 into a group (see ProfileChatTab's
 // send-routing branch). HXI #3 — inline-SVG glyphs only (UserPlus / Close),
 // amber/dim palette, no emoji.
-import { useState } from 'react';
+import { useState, type ReactElement } from 'react';
 import { useStore } from '../../store/useStore';
 import type { Agent } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
@@ -20,7 +20,7 @@ interface GroupChatHeaderProps {
   threadId: string;
 }
 
-export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
+export function GroupChatHeader({ threadId }: GroupChatHeaderProps): ReactElement | null {
   const thread = useStore((s) => s.chatThreads.get(threadId));
   const agents = useStore((s) => s.agents);
   const setChatThread = useStore((s) => s.setChatThread);
@@ -126,6 +126,9 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
       style={{
         display: 'flex',
         alignItems: 'center',
+        flexWrap: 'wrap',
+        flexShrink: 0,
+        minWidth: 0,
         gap: 8,
         padding: '6px 12px',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
@@ -167,15 +170,16 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
           }}
           title="Rename room"
           style={{
-            flex: 1,
+            flex: '1 1 120px',
             minWidth: 0,
             color: '#e0dcd4',
             fontSize: 13,
             fontWeight: 600,
             cursor: 'pointer',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
+            maxHeight: '3em',
+            overflowY: 'auto',
+            overflowWrap: 'anywhere',
+            whiteSpace: 'normal',
           }}
         >
           {chatDisplayName(thread, agents)}
@@ -185,15 +189,23 @@ export function GroupChatHeader({ threadId }: GroupChatHeaderProps) {
       {/* Participant avatar strip (crew only; hover reveals remove-x) */}
       <div
         data-testid="participant-strip"
-        style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+        style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', minWidth: 0, maxWidth: '100%', maxHeight: 64, overflowY: 'auto', padding: 4, gap: 4 }}
       >
         {crewParticipants.map(({ id, agent }) => {
           const dept = (agent as Agent & { department?: string }).department ?? '';
           return (
             <span
               key={id}
+              role="group"
+              aria-label={`Participant ${agent.callsign}`}
+              tabIndex={0}
               onMouseEnter={() => setHoveredId(id)}
               onMouseLeave={() => setHoveredId((h) => (h === id ? null : h))}
+              onFocus={() => setHoveredId(id)}
+              onBlur={event => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setHoveredId(current => current === id ? null : current);
+              }}
+              onTouchStart={() => setHoveredId(id)}
               style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
             >
               <AgentAvatarBadge
