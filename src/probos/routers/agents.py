@@ -7,7 +7,7 @@ import logging
 import math
 import re
 import time
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -32,6 +32,13 @@ from probos.api_models import (
     WorkspaceSuggestionCreate,
 )
 from probos.config import format_trust
+from probos.cognitive.introspective_telemetry import (
+    IntrospectiveTelemetryService,
+    MEMORY_POPULATION,
+    MEMORY_SOURCE,
+    UPTIME_POPULATION,
+    UPTIME_SOURCE,
+)
 from probos.crew_utils import is_crew_agent
 from probos.mesh.intent import IntentAuthorizationDenied
 from probos.cognitive.commands.personality_command import (
@@ -44,6 +51,64 @@ from probos.routers.auth import require_crew_scope, verify_ws_token
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agent", tags=["agents"])
+
+
+class _ProfileTelemetry(Protocol):
+    async def get_memory_state(self, agent_id: str) -> dict[str, Any]: ...
+
+    async def get_temporal_state(self, agent_id: str) -> dict[str, Any]: ...
+
+
+async def _profile_measurements(runtime: Any, agent_id: str) -> dict[str, Any]:
+    result: dict[str, Any] = {"memoryCount": None, "uptime": None}
+    for field, subject, population, unit, source in (
+        ("memoryCount", None, MEMORY_POPULATION, "episodes", MEMORY_SOURCE),
+        ("uptime", "system", UPTIME_POPULATION, "seconds", UPTIME_SOURCE),
+    ):
+        result[f"{field}Metadata"] = {
+            "subjectId": subject, "population": population, "unit": unit,
+            "source": source, "sampleStartedAt": None, "sampleCompletedAt": None,
+            "status": "failed",
+        }
+    try:
+        telemetry: _ProfileTelemetry | None = getattr(runtime, "introspective_telemetry", None)
+        if telemetry is None:
+            telemetry = IntrospectiveTelemetryService(runtime=runtime)
+    except Exception:
+        logger.warning(
+            "Profile telemetry accessor failed; measurements are unknown, "
+            "returning remaining profile fields"
+        )
+        return result
+    for field, getter_name, value_key, metadata_key in (
+        ("memoryCount", "get_memory_state", "episode_count", "measurement"),
+        ("uptime", "get_temporal_state", "system_uptime_seconds", "uptime_measurement"),
+    ):
+        try:
+            domain = await getattr(telemetry, getter_name)(agent_id)
+            metadata = domain[metadata_key]
+            projected = {
+                "subjectId": metadata["subject_id"],
+                "population": metadata["population"],
+                "unit": metadata["unit"],
+                "source": metadata["source"],
+                "sampleStartedAt": metadata["sample_started_at"],
+                "sampleCompletedAt": metadata["sample_completed_at"],
+                "status": metadata["status"],
+            }
+            value = domain.get(value_key)
+            if metadata["status"] == "available":
+                valid_type = type(value) is int if field == "memoryCount" else type(value) in (int, float)
+                if not valid_type or not math.isfinite(value) or value < 0:
+                    raise ValueError("Invalid profile measurement")
+                result[field] = value
+            result[f"{field}Metadata"] = projected
+        except Exception:
+            logger.warning(
+                "Profile %s measurement failed; value is unknown, "
+                "preserving other measurements and profile fields", field,
+            )
+    return result
 
 
 @router.get("/{agent_id}/identity")
@@ -122,13 +187,7 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
         hebbian_connections.sort(key=lambda c: c["weight"], reverse=True)
         hebbian_connections = hebbian_connections[:10]
 
-    # Memory count
-    memory_count = 0
-    if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
-        if hasattr(runtime.episodic_memory, 'count_for_agent'):
-            memory_count = await runtime.episodic_memory.count_for_agent(
-                getattr(agent, 'sovereign_id', '') or agent.id
-            )
+    measurements = await _profile_measurements(runtime, agent.id)
 
     # BF-017: Only crew agents get personality and proactive controls
     is_crew = is_crew_agent(agent, runtime.ontology)
@@ -241,10 +300,9 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
         "tier": agent.tier if hasattr(agent, 'tier') else "domain",
         "pool": agent.pool,
         "hebbianConnections": hebbian_connections,
-        "memoryCount": memory_count,
+        **measurements,
         "voiceProfile": voice_profile_dict,
         "appearance": appearance_dict,
-        "uptime": round(time.monotonic() - runtime._start_time, 1),
         "isCrew": is_crew,
         "proactiveCooldown": runtime.proactive_loop.get_agent_cooldown(agent.id) if is_crew and hasattr(runtime, 'proactive_loop') and runtime.proactive_loop else None,
     }

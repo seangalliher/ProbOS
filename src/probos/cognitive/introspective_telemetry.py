@@ -13,13 +13,31 @@ own cognitive architecture, but they CAN read their own telemetry.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Protocol, cast
 
+from probos.cognitive.episodic import resolve_sovereign_id, resolve_sovereign_id_from_slot
 from probos.config import format_trust
 
 logger = logging.getLogger(__name__)
+
+MEMORY_POPULATION = "stored_agent_membership"
+MEMORY_SOURCE = "episodic_memory.count_for_agent"
+UPTIME_POPULATION = "system_runtime"
+UPTIME_SOURCE = "runtime.get_uptime_seconds"
+
+
+class _EpisodicCount(Protocol):
+    @property
+    def is_available(self) -> bool: ...
+
+    async def count_for_agent(self, agent_id: str) -> int: ...
+
+
+class _RuntimeUptime(Protocol):
+    def get_uptime_seconds(self) -> float | None: ...
 
 
 class IntrospectiveTelemetryService:
@@ -36,14 +54,51 @@ class IntrospectiveTelemetryService:
         return None
 
     async def get_memory_state(self, agent_id: str) -> dict[str, Any]:
-        """Episode count, lifecycle, retrieval mechanism, capacity."""
+        """Stored membership total, including shared and self-contradicted episodes."""
         result: dict[str, Any] = {}
         rt = self._runtime
-        if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
-            try:
-                result["episode_count"] = await rt.episodic_memory.count_for_agent(agent_id)
-            except Exception:
+        measurement: dict[str, Any] = {
+            "subject_id": None,
+            "population": MEMORY_POPULATION,
+            "unit": "episodes",
+            "source": MEMORY_SOURCE,
+            "sample_started_at": datetime.now(timezone.utc).isoformat(),
+            "sample_completed_at": None,
+            "status": "unavailable",
+        }
+        try:
+            if type(agent_id) is str and agent_id:
+                agent = self._resolve_agent(agent_id)
+                subject = (
+                    resolve_sovereign_id(agent) if agent is not None
+                    else resolve_sovereign_id_from_slot(
+                        agent_id, getattr(rt, "identity_registry", None),
+                    )
+                )
+                if type(subject) is not str or not subject:
+                    raise ValueError("Invalid memory subject")
+                measurement["subject_id"] = subject
+                memory = cast(_EpisodicCount | None, getattr(rt, "episodic_memory", None))
+                if memory is not None:
+                    result["episode_count"] = "unknown"
+                    if getattr(memory, "is_available", None) is True:
+                        count = await memory.count_for_agent(subject)
+                        if type(count) is not int or count < 0:
+                            raise ValueError("Invalid memory count")
+                        if memory.is_available is True:
+                            result["episode_count"] = count
+                            measurement["status"] = "available"
+            else:
                 result["episode_count"] = "unknown"
+        except Exception:
+            result["episode_count"] = "unknown"
+            measurement["status"] = "failed"
+            logger.warning(
+                "Memory measurement failed; episode count is unknown, "
+                "returning remaining telemetry"
+            )
+        measurement["sample_completed_at"] = datetime.now(timezone.utc).isoformat()
+        result["measurement"] = measurement
         result["retrieval"] = "cosine_similarity"
         result["capacity"] = "unbounded"
         result["offline_processing"] = False
@@ -101,19 +156,49 @@ class IntrospectiveTelemetryService:
         """Uptime, birth age, last action, lifecycle state."""
         result: dict[str, Any] = {}
         rt = self._runtime
-        now = time.time()
-        result["system_uptime_hours"] = round(
-            (now - getattr(rt, '_start_time_wall', now)) / 3600, 1
-        )
-        agent = self._resolve_agent(agent_id)
-        if agent:
-            birth = getattr(agent, '_birth_timestamp', None)
-            if birth:
-                result["agent_age_hours"] = round((now - birth) / 3600, 1)
-            if hasattr(agent, 'meta') and agent.meta.last_active:
-                last_active = agent.meta.last_active
-                delta = (datetime.now(timezone.utc) - last_active).total_seconds()
-                result["last_action_minutes"] = round(delta / 60, 1)
+        measurement: dict[str, Any] = {
+            "subject_id": "system",
+            "population": UPTIME_POPULATION,
+            "unit": "seconds",
+            "source": UPTIME_SOURCE,
+            "sample_started_at": datetime.now(timezone.utc).isoformat(),
+            "sample_completed_at": None,
+            "status": "unavailable",
+        }
+        try:
+            clock = cast(_RuntimeUptime, rt)
+            if callable(getattr(clock, "get_uptime_seconds", None)):
+                seconds = clock.get_uptime_seconds()
+                if seconds is not None:
+                    if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0:
+                        raise ValueError("Invalid runtime uptime")
+                    result["system_uptime_seconds"] = round(seconds, 1)
+                    result["system_uptime_hours"] = round(result["system_uptime_seconds"] / 3600, 1)
+                    measurement["status"] = "available"
+        except Exception:
+            measurement["status"] = "failed"
+            logger.warning(
+                "Runtime uptime measurement failed; duration is unknown, "
+                "returning remaining temporal signals"
+            )
+        measurement["sample_completed_at"] = datetime.now(timezone.utc).isoformat()
+        result["uptime_measurement"] = measurement
+        try:
+            now = time.time()
+            agent = self._resolve_agent(agent_id)
+            if agent:
+                birth = getattr(agent, '_birth_timestamp', None)
+                if birth:
+                    result["agent_age_hours"] = round((now - birth) / 3600, 1)
+                if hasattr(agent, 'meta') and agent.meta.last_active:
+                    last_active = agent.meta.last_active
+                    delta = (datetime.now(timezone.utc) - last_active).total_seconds()
+                    result["last_action_minutes"] = round(delta / 60, 1)
+        except Exception:
+            logger.warning(
+                "Agent temporal signals failed; age or last action is unknown, "
+                "preserving the runtime uptime measurement"
+            )
         result["lifecycle"] = getattr(rt, '_lifecycle_state', 'unknown')
         return result
 
@@ -235,12 +320,27 @@ class IntrospectiveTelemetryService:
             time_parts = []
             if "system_uptime_hours" in temp:
                 time_parts.append(f"Uptime: {temp['system_uptime_hours']}h")
+            elif "uptime_measurement" in temp:
+                time_parts.append(f"Uptime: unknown ({temp['uptime_measurement']['status']})")
             if "agent_age_hours" in temp:
                 time_parts.append(f"Age: {temp['agent_age_hours']}h")
             if "last_action_minutes" in temp:
                 time_parts.append(f"Last action: {temp['last_action_minutes']}m ago")
             if time_parts:
                 lines.append(" | ".join(time_parts))
+
+        for domain, key, label in (
+            ("memory", "measurement", "Memory measurement"),
+            ("temporal", "uptime_measurement", "System uptime measurement"),
+        ):
+            measurement = snapshot.get(domain, {}).get(key)
+            if measurement:
+                lines.append(
+                    f"{label}: {measurement['status']}; "
+                    f"subject={measurement['subject_id'] or 'unknown'}; "
+                    f"population={measurement['population']}; "
+                    f"unit={measurement['unit']}; source={measurement['source']}"
+                )
 
         social = snapshot.get("social") or {}
         social_parts: list[str] = []

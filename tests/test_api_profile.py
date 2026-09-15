@@ -2,12 +2,16 @@
 
 import pytest
 import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
 from unittest.mock import MagicMock, AsyncMock, patch
 from types import SimpleNamespace
 
 from probos.runtime import ProbOSRuntime
 from probos.substrate.agent import BaseAgent
 from probos.cognitive.episodic import EpisodicMemory
+from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
 
 
 @pytest.fixture
@@ -15,6 +19,7 @@ def mock_agent():
     """Create a mock agent for testing."""
     agent = MagicMock(spec=BaseAgent)
     agent.id = "agent-123"
+    agent.sovereign_id = ""
     agent.agent_type = "scout"
     agent.confidence = 0.85
     agent.state = MagicMock()
@@ -38,6 +43,9 @@ def mock_runtime(mock_agent):
     runtime.hebbian_router = MagicMock()
     runtime.intent_bus = MagicMock()
     runtime._start_time = 0.0
+    runtime.get_uptime_seconds.return_value = 3600.0
+    runtime.identity_registry = None
+    runtime.introspective_telemetry = IntrospectiveTelemetryService(runtime=runtime)
 
     runtime.registry.get.return_value = mock_agent
     runtime.registry.all.return_value = [mock_agent]
@@ -109,6 +117,94 @@ def test_agent_profile_404_unknown(client, mock_runtime):
     mock_runtime.registry.get.return_value = None
     resp = client.get("/api/agent/unknown-id/profile")
     assert resp.status_code == 404
+
+
+@dataclass
+class _Issue1370ProfileMemory:
+    count: int = 196
+    is_available: bool = True
+    calls: list[str] = field(default_factory=list)
+    failure: Exception | None = None
+
+    async def count_for_agent(self, agent_id: str) -> int:
+        self.calls.append(agent_id)
+        if self.failure is not None:
+            raise self.failure
+        return self.count
+
+
+@pytest.mark.parametrize("count", [0, 196])
+def test_issue1370_profile_success_retains_values_and_producer_metadata(client: Any, mock_runtime: Any, mock_agent: Any, count: int) -> None:
+    memory = _Issue1370ProfileMemory(count=count)
+    mock_runtime.episodic_memory = memory
+    mock_agent.sovereign_id = "sovereign-subject"
+    response = client.get("/api/agent/agent-123/profile")
+    assert response.status_code == 200
+    data = response.json()
+    assert memory.calls == ["sovereign-subject"]
+    assert data["memoryCount"] == count
+    assert data["uptime"] == 3600.0
+    assert data["trust"] == 0.82
+    assert data["confidence"] == 0.85
+    assert "voiceProfile" in data and "appearance" in data
+    for field, subject, population, unit, source in (
+        ("memoryCountMetadata", "sovereign-subject", "stored_agent_membership", "episodes", "episodic_memory.count_for_agent"),
+        ("uptimeMetadata", "system", "system_runtime", "seconds", "runtime.get_uptime_seconds"),
+    ):
+        metadata = data[field]
+        assert set(metadata) == {"subjectId", "population", "unit", "source", "sampleStartedAt", "sampleCompletedAt", "status"}
+        assert metadata["subjectId"] == subject
+        assert metadata["population"] == population
+        assert metadata["unit"] == unit
+        assert metadata["source"] == source
+        assert metadata["status"] == "available"
+        assert datetime.fromisoformat(metadata["sampleStartedAt"]) <= datetime.fromisoformat(metadata["sampleCompletedAt"])
+
+
+@pytest.mark.parametrize("failure", ["absent", "legacy", "stopped", "count-error", "uptime-error", "missing-clock", "service-error", "fallback"])
+def test_issue1370_profile_degrades_measurements_without_losing_profile(client: Any, mock_runtime: Any, failure: str, caplog: pytest.LogCaptureFixture) -> None:
+    baseline = client.get("/api/agent/agent-123/profile").json()
+    memory = _Issue1370ProfileMemory()
+    mock_runtime.episodic_memory = memory
+    if failure == "absent":
+        mock_runtime.episodic_memory = None
+    elif failure == "legacy":
+        mock_runtime.episodic_memory = SimpleNamespace(count_for_agent=memory.count_for_agent)
+    elif failure == "stopped":
+        memory.is_available = False
+    elif failure == "count-error":
+        memory.failure = RuntimeError("private-profile-payload")
+    elif failure == "uptime-error":
+        mock_runtime.get_uptime_seconds.side_effect = RuntimeError("private-profile-payload")
+    elif failure == "missing-clock":
+        mock_runtime.get_uptime_seconds = None
+    elif failure == "service-error":
+        class _FailedMemoryTelemetry:
+            async def get_memory_state(self, agent_id: str) -> dict[str, Any]:
+                raise RuntimeError("private-profile-payload")
+
+            async def get_temporal_state(self, agent_id: str) -> dict[str, Any]:
+                return await IntrospectiveTelemetryService(runtime=mock_runtime).get_temporal_state(agent_id)
+        mock_runtime.introspective_telemetry = _FailedMemoryTelemetry()
+    elif failure == "fallback":
+        mock_runtime.introspective_telemetry = None
+    response = client.get("/api/agent/agent-123/profile")
+    assert response.status_code == 200
+    data = response.json()
+    for field in ("voiceProfile", "appearance", "trust", "trustHistory", "confidence", "hebbianConnections"):
+        assert data[field] == baseline[field]
+    if failure in {"uptime-error", "missing-clock", "fallback"}:
+        assert data["memoryCount"] == 196
+        assert memory.calls == ["agent-123"]
+    else:
+        assert data["memoryCount"] is None
+        assert data["memoryCountMetadata"]["status"] == ("failed" if failure in {"count-error", "service-error"} else "unavailable")
+    if failure in {"uptime-error", "missing-clock"}:
+        assert data["uptime"] is None
+        assert data["uptimeMetadata"]["status"] == ("failed" if failure == "uptime-error" else "unavailable")
+    else:
+        assert data["uptime"] == 3600.0
+    assert "private-profile-payload" not in repr(data) + caplog.text
 
 
 def test_agent_chat_sends_message(client, mock_runtime):

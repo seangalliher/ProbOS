@@ -5,6 +5,7 @@ import dataclasses
 import logging
 import re
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -60,6 +61,46 @@ def _store_start_barrier(expected: int):
 # ---------------------------------------------------------------------------
 # Unit tests — MockEpisodicMemory (fast, in-memory)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_issue1370_mock_availability_preserves_immediate_use_and_restart() -> None:
+    from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
+    memory = MockEpisodicMemory()
+    service = IntrospectiveTelemetryService(runtime=SimpleNamespace(episodic_memory=memory))
+    assert memory.is_available is True
+    assert (await service.get_memory_state("subject"))["episode_count"] == 0
+    await memory.store(Episode(id="stored", user_input="synthetic", agent_ids=["subject"]))
+    assert (await service.get_memory_state("subject"))["episode_count"] == 1
+    await memory.stop()
+    assert memory.is_available is False
+    assert (await service.get_memory_state("subject"))["episode_count"] == "unknown"
+    await memory.start()
+    try:
+        assert memory.is_available is True
+        assert (await service.get_memory_state("subject"))["episode_count"] == 1
+    finally:
+        await memory.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_issue1370_mock_stop_failure_still_marks_unavailable(cancelled: bool) -> None:
+    calls: list[str] = []
+
+    class _ParticipantIndex:
+        async def stop(self) -> None:
+            calls.append("stop")
+            if cancelled:
+                raise asyncio.CancelledError()
+            raise RuntimeError("synthetic close failure")
+
+    memory = MockEpisodicMemory()
+    memory.set_participant_index(_ParticipantIndex())
+    with pytest.raises(asyncio.CancelledError if cancelled else RuntimeError):
+        await memory.stop()
+    assert calls == ["stop"]
+    assert memory.is_available is False
 
 
 class TestMockEpisodicMemory:

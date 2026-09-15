@@ -103,18 +103,15 @@ export function ProfileInfoTab({ profileData, agent }: Props) {
     })();
     return () => { cancelled = true; };
   }, []);
-  // Re-sync when profileData arrives or agent changes.
+  const serverVoiceName = profileData?.voiceProfile?.voice_name ?? '';
+  const serverPitch = profileData?.voiceProfile?.pitch ?? 0.9;
+  const serverRate = profileData?.voiceProfile?.rate ?? 0.95;
+  const serverVolume = profileData?.voiceProfile?.volume ?? 0.8;
+  const serverWakePhrase = profileData?.voiceProfile?.wake_phrase ?? '';
   useEffect(() => {
-    if (profileData?.voiceProfile) {
-      setCurrentProfile({
-        voice_name: profileData.voiceProfile.voice_name ?? '',
-        pitch: profileData.voiceProfile.pitch ?? 0.9,
-        rate: profileData.voiceProfile.rate ?? 0.95,
-        volume: profileData.voiceProfile.volume ?? 0.8,
-        wake_phrase: profileData.voiceProfile.wake_phrase ?? '',
-      });
-    }
-  }, [profileData?.voiceProfile, agent.id]);
+    setCurrentProfile({ voice_name: serverVoiceName, pitch: serverPitch, rate: serverRate,
+      volume: serverVolume, wake_phrase: serverWakePhrase });
+  }, [serverVoiceName, serverPitch, serverRate, serverVolume, serverWakePhrase, agent.id]);
 
   const persistVoiceProfile = (next: VoiceProfile, rationale: string = ''): void => {
     fetch(`/api/agent/${agent.id}/voice-profile`, {

@@ -23,6 +23,7 @@ vi.mock('../components/profile/ParametricAvatar', () => ({
 vi.mock('../audio/voice', () => ({
   flushSpeechQueue: vi.fn(),
   getServerPiperVoices: vi.fn(async () => null),
+  getAvailableVoices: vi.fn(() => []),
   onSpeechEvent: () => () => {},
   speakResponse: vi.fn(),
   stripMarkdownForSpeech: (s: string) => s,
@@ -82,6 +83,7 @@ function _profileFetchCalls(): string[] {
 }
 
 beforeEach(() => {
+  useStore.setState({ connected: true, liveGeneration: 'thread-keyed-test', liveRepairEpoch: 0 });
   if (!(Element.prototype as any).scrollIntoView) {
     (Element.prototype as any).scrollIntoView = vi.fn();
   }
@@ -97,8 +99,10 @@ beforeEach(() => {
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({
-          id: HOST, isCrew: true, department: 'medical', displayName: 'Ezri',
-          specialization: [], hebbianConnections: [],
+          id: HOST, agentType: 'counselor', callsign: 'Ezri', isCrew: true, department: 'medical', displayName: 'Ezri',
+          rank: 'ensign', agencyLevel: 'reactive', state: 'active', tier: 'domain', pool: 'medical',
+          trust: 0.7, confidence: 0.7, trustHistory: [], personality: {},
+          specialization: [], hebbianConnections: [], memoryCount: 0, uptime: 0, proactiveCooldown: null,
         }),
       }) as any;
     }

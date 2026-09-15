@@ -12,7 +12,9 @@ import { CrewAvatarPopout } from './CrewAvatarPopout';
 import { deriveAgentSignals } from './avatarSignals';
 import { isGroupChat, chatDisplayName, hostAgentId } from '../chats/chatFilters';
 import { isWorkspaceRoom } from '../workspace/isWorkspaceRoom';
-import type { AgentProfileData, AvatarDSLDict } from '../../store/types';
+import { profileSampleTime, useProfileResource, validProfile } from '../../hooks/useProfileResource';
+import { RESOURCE_TIMEOUT_MS } from '../../utils/resourceState';
+import type { AvatarDSLDict } from '../../store/types';
 
 type ProfileTab = 'chat' | 'work' | 'profile' | 'health' | 'memory' | 'self_image' | 'service';
 
@@ -99,6 +101,8 @@ export function AgentProfilePanel() {
   const [activeTab, setActiveTab] = useState<ProfileTab>('chat');
   const notificationNavigation = useStore(state => state.notificationNavigation);
   const liveGeneration = useStore(state => state.liveGeneration);
+  const liveRepairEpoch = useStore(state => state.liveRepairEpoch);
+  const connected = useStore(state => state.connected);
   useEffect(() => {
     const destination = notificationNavigation?.destination;
     if (destination && notificationNavigation.generation === liveGeneration
@@ -113,7 +117,6 @@ export function AgentProfilePanel() {
     activeProfileOwner.current = profileOwner;
     return () => { activeProfileOwner.current = null; };
   }, [profileOwner]);
-  const [profileData, setProfileData] = useParticipantState<AgentProfileData | null>(profileOwner, activeProfileOwner, null);
   const [isDragging, setIsDragging] = useState(false);
   // Resizable panel state — persisted in localStorage so the captain's
   // preferred chat-window size survives reloads.
@@ -171,22 +174,93 @@ export function AgentProfilePanel() {
   const dragOffset = useRef({ x: 0, y: 0 });
 
   const agent = agentId ? agents.get(agentId) : null;
-
-  useEffect(() => {
-    // Group chat omits host-profile tabs; an open avatar still needs its resolved participant's appearance.
-    if (!agentId || (isGroupSurface && !avatarOpen)) {
-      setProfileData(null);
-      return;
+  const profileResource = useProfileResource({
+    identity: agentId ?? '',
+    url: `/api/agent/${encodeURIComponent(agentId ?? '')}/profile`,
+    eligible: Boolean(agent && agentId && (!isGroupSurface || avatarOpen)),
+    independentReads: true,
+    pollWhen: payload => avatarOpen && avatarsEnabled || !isGroupSurface && (
+      activeTab === 'profile' || activeTab === 'health'
+      || payload?.isCrew === false && ['chat', 'memory', 'self_image', 'service'].includes(activeTab)
+    ),
+    validate: (payload): payload is import('../../store/types').AgentProfileData => validProfile(payload, agentId ?? ''),
+    isEmpty: () => false,
+    sampleTime: profileSampleTime,
+  });
+  const profileData = profileResource.state.data;
+  const [visionOwner, setVisionOwner] = useState({ profileOwner, liveGeneration, liveRepairEpoch, connected });
+  if (visionOwner.profileOwner !== profileOwner || visionOwner.liveGeneration !== liveGeneration
+    || visionOwner.liveRepairEpoch !== liveRepairEpoch || visionOwner.connected !== connected) {
+    setVisionOwner({ profileOwner, liveGeneration, liveRepairEpoch, connected });
+  }
+  const activeVisionOwner = useRef<object | null>(null);
+  const visionPending = useRef(false);
+  const visionController = useRef<AbortController | null>(null);
+  const [visionAction, setVisionAction] = useState<{
+    owner: typeof visionOwner; phase: 'idle' | 'writing' | 'reconciling' | 'unknown'; error: string | null;
+  }>({ owner: visionOwner, phase: 'idle', error: null });
+  const visionPhase = visionAction.owner === visionOwner ? visionAction.phase
+    : visionAction.owner.profileOwner.agentId === agentId && visionAction.phase !== 'idle' ? 'unknown' : 'idle';
+  const visionError = visionAction.owner === visionOwner ? visionAction.error : null;
+  const visionKnown = typeof profileData?.visionCapable === 'boolean'
+    && !['unavailable', 'failed', 'unauthorized', 'disabled'].includes(profileResource.state.status)
+    && visionPhase === 'idle';
+  const visionBusy = visionPhase === 'writing' || visionPhase === 'reconciling';
+  useLayoutEffect(() => {
+    activeVisionOwner.current = visionOwner;
+    visionPending.current = false;
+    return () => {
+      activeVisionOwner.current = null;
+      visionController.current?.abort();
+      visionController.current = null;
+    };
+  }, [visionOwner]);
+  const reconcileVision = async (error: string | null): Promise<void> => {
+    if (activeVisionOwner.current !== visionOwner) return;
+    visionPending.current = true;
+    setVisionAction({ owner: visionOwner, phase: 'reconciling', error });
+    const refreshed = await profileResource.refresh();
+    if (activeVisionOwner.current !== visionOwner) return;
+    const known = typeof refreshed?.visionCapable === 'boolean';
+    setVisionAction({ owner: visionOwner, phase: known ? 'idle' : 'unknown',
+      error: known ? error : 'Ambient vision state could not be verified. Refresh the state before changing access.' });
+    visionPending.current = false;
+  };
+  const toggleVision = async (): Promise<void> => {
+    if (!visionKnown || visionPending.current || activeVisionOwner.current !== visionOwner) return;
+    visionPending.current = true;
+    setVisionAction({ owner: visionOwner, phase: 'writing', error: null });
+    const next = !profileData!.visionCapable;
+    const controller = new AbortController();
+    visionController.current = controller;
+    const timeout = setTimeout(() => controller.abort(), RESOURCE_TIMEOUT_MS);
+    let error: string | null = null;
+    try {
+      const response = await fetch(`/api/agent/${agentId}/vision-capability/set`, {
+        method: 'POST', signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next,
+          reason: next ? 'Captain granted ambient vision' : 'Captain revoked ambient vision' }),
+      });
+      if (!response.ok) error = 'Ambient vision update failed. The current state has been requested.';
+    } catch {
+      error = 'Ambient vision update outcome is uncertain. The current state has been requested.';
+    } finally {
+      clearTimeout(timeout);
+      if (visionController.current === controller) visionController.current = null;
     }
-    let cancelled = false;
-    fetch(`/api/agent/${agentId}/profile`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (!cancelled) setProfileData(data ?? null);
-      })
-      .catch(() => { if (!cancelled) setProfileData(null); });
-    return () => { cancelled = true; };
-  }, [agentId, isGroupSurface, avatarOpen, setProfileData]);
+    if (activeVisionOwner.current === visionOwner) await reconcileVision(error);
+  };
+  const refreshProfile = useCallback((): void => {
+    if (activeProfileOwner.current === profileOwner) profileResource.refresh();
+  }, [profileOwner, profileResource.refresh]);
+  useEffect(() => {
+    const onVoiceUpdated = (event: Event): void => {
+      if ((event as CustomEvent<{ agentId: string }>).detail?.agentId === agentId) refreshProfile();
+    };
+    window.addEventListener('voice-profile-updated', onVoiceUpdated);
+    return () => window.removeEventListener('voice-profile-updated', onVoiceUpdated);
+  }, [agentId, refreshProfile]);
 
   // Mark messages read when opening — AD-954a: only a 1:1. A group surface is a
   // room, not the host's DM, so opening it must not mark the derived anchor
@@ -434,10 +508,7 @@ export function AgentProfilePanel() {
                       return;
                     }
                     // Refresh profile so the new vrm_url is picked up.
-                    fetch(`/api/agent/${agentId}/profile`)
-                      .then(rr => rr.ok ? rr.json() : null)
-                      .then(d => { if (d) setProfileData(d); })
-                      .catch(() => {});
+                    refreshProfile();
                   } catch (err: any) {
                     setVrmUploadError(String(err?.message || err));
                   } finally {
@@ -502,38 +573,28 @@ export function AgentProfilePanel() {
               persists across restart (data-dir override). Eye glyph = on,
               eye-off = off. */}
           {isCrew && (
+            <>
             <button
-              onClick={async () => {
-                const next = !profileData?.visionCapable;
-                try {
-                  await fetch(`/api/agent/${agentId}/vision-capability/set`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      enabled: next,
-                      reason: next ? 'Captain granted ambient vision' : 'Captain revoked ambient vision',
-                    }),
-                  });
-                  // Optimistic local update + authoritative re-fetch.
-                  setProfileData(p => (p ? { ...p, visionCapable: next } : p));
-                  fetch(`/api/agent/${agentId}/profile`)
-                    .then(r => r.json())
-                    .then(d => { if (d) setProfileData(d); })
-                    .catch(() => { /* keep optimistic value */ });
-                } catch { /* Tier-2: leave prior state */ }
-              }}
-              aria-label={profileData?.visionCapable ? 'Disable ambient vision' : 'Enable ambient vision'}
-              title={profileData?.visionCapable
+              onClick={() => { void toggleVision(); }}
+              disabled={!visionKnown || visionBusy}
+              aria-label={!visionKnown ? 'Ambient vision state unknown' : profileData?.visionCapable ? 'Disable ambient vision' : 'Enable ambient vision'}
+              title={visionBusy ? 'Verifying ambient vision state' : !visionKnown ? 'Ambient vision state unknown. Refresh status.' : profileData?.visionCapable
                 ? 'Ambient vision ON — click to revoke camera/screen access'
                 : 'Ambient vision OFF — click to grant camera/screen access'}
               data-testid="vision-toggle"
               style={{
                 background: 'none', border: 'none',
-                color: profileData?.visionCapable ? '#f0b060' : '#8888a0',
-                cursor: 'pointer', padding: '0 4px',
+                color: visionKnown && profileData?.visionCapable ? '#f0b060' : '#8888a0',
+                cursor: visionKnown ? 'pointer' : 'default', padding: '0 4px',
               }}
             >
-              {profileData?.visionCapable ? (
+              {!visionKnown ? (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                     stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="8" cy="8" r="5.5" />
+                  <path d="M6.5 6.2a1.5 1.5 0 0 1 3 0c0 1.3-1.5 1.3-1.5 2.6M8 11h.01" />
+                </svg>
+              ) : profileData?.visionCapable ? (
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
                      stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" />
@@ -548,6 +609,16 @@ export function AgentProfilePanel() {
                 </svg>
               )}
             </button>
+            {(!visionKnown || visionError) && (
+              <button aria-label="Refresh ambient vision state" title="Refresh ambient vision state"
+                disabled={visionBusy} onClick={() => { if (!visionPending.current) void reconcileVision(null); }}
+                style={{ background: 'none', border: 'none', color: '#8888a0', cursor: visionBusy ? 'default' : 'pointer', padding: '0 4px' }}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M13 6a5 5 0 1 0 0 4M13 2v4H9" />
+                </svg>
+              </button>
+            )}
+            </>
           )}
           <button
             onClick={() => useStore.getState().minimizeAgentProfile()}
@@ -575,6 +646,7 @@ export function AgentProfilePanel() {
       </div>
 
       {/* Tab bar */}
+      {visionError && <div role="alert" style={{ padding: '6px 14px', fontSize: 11, color: '#f0b060', overflowWrap: 'anywhere' }}>{visionError}</div>}
       <div style={{
         display: 'flex',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
@@ -585,6 +657,8 @@ export function AgentProfilePanel() {
             onClick={() => {
               useStore.getState().setNotificationNavigation(null);
               setActiveTab(key);
+              if ((key === 'profile' || key === 'health')
+                && (effectiveTab === 'profile' || effectiveTab === 'health' || avatarOpen && avatarsEnabled)) refreshProfile();
             }}
             style={{
               flex: 1,
@@ -604,6 +678,18 @@ export function AgentProfilePanel() {
         ))}
       </div>
 
+      {(effectiveTab === 'profile' || effectiveTab === 'health') && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', fontSize: 10, color: '#a0a0b8' }}>
+          <span role="status" style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{profileResource.message}</span>
+          <button onClick={refreshProfile} title="Refresh profile" aria-label="Refresh profile"
+            style={{ background: 'none', border: 'none', color: '#f0b060', cursor: 'pointer', width: 24, height: 24, flexShrink: 0 }}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M13 6a5 5 0 1 0 0 4M13 2v4H9" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {/* Tab content */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
         {effectiveTab === 'chat' && isCrew && (
@@ -619,10 +705,10 @@ export function AgentProfilePanel() {
           </div>
         )}
         {effectiveTab === 'work' && <ProfileWorkTab agentId={agentId} />}
-        {effectiveTab === 'profile' && <ProfileInfoTab profileData={profileData} agent={agent} />}
+        {effectiveTab === 'profile' && profileData && <ProfileInfoTab key={agentId} profileData={profileData} agent={agent} />}
         {effectiveTab === 'service' && isCrew && <ProfileServiceTab agentId={agentId} />}
-        {effectiveTab === 'health' && <ProfileHealthTab profileData={profileData} agent={agent} />}
-        {effectiveTab === 'memory' && <ProfileMemoryTab agentId={agentId} />}
+        {effectiveTab === 'health' && <ProfileHealthTab profileData={profileData} agent={agent} onRefresh={refreshProfile} />}
+        {effectiveTab === 'memory' && <ProfileMemoryTab key={agentId} agentId={agentId} subjectId={profileData?.sovereignId || profileData?.memoryCountMetadata?.subjectId || undefined} />}
         {effectiveTab === 'self_image' && isCrew && (
           <SelfImageTab agentId={agentId} isActive={effectiveTab === 'self_image'} />
         )}
@@ -684,10 +770,7 @@ export function AgentProfilePanel() {
               setPreviewVrmUrl(null);
               setPreviewError(null);
               // Refresh profile so any cached vrm_url is picked up.
-              fetch(`/api/agent/${agentId}/profile`)
-                .then(rr => rr.ok ? rr.json() : null)
-                .then(d => { if (d) setProfileData(d); })
-                .catch(() => {});
+              refreshProfile();
             }
           }}
           onRejectDsl={() => {

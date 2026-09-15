@@ -159,4 +159,29 @@ describe('ProfileInfoTab volume slider (AD-735)', () => {
     const slider = screen.getByRole('slider', { name: 'Volume' });
     expect(slider).toBeDefined();
   });
+
+  it('preserves an uncommitted volume through equivalent profile polls without writes', () => {
+    const { rerender } = render(<ProfileInfoTab profileData={_profileData()} agent={_agent} />);
+    const slider = screen.getByRole('slider', { name: 'Volume' });
+    fireEvent.change(slider, { target: { value: '0.35' } });
+    rerender(<ProfileInfoTab profileData={_profileData()} agent={_agent} />);
+    expect(slider).toHaveValue('0.35');
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.mouseUp(slider);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith('/api/agent/a1/voice-profile', expect.objectContaining({
+      method: 'PUT', body: expect.stringContaining('"volume":0.35'),
+    }));
+  });
+
+  it('accepts an actual server voice change and resets on agent change without writes', () => {
+    const { rerender } = render(<ProfileInfoTab profileData={_profileData()} agent={_agent} />);
+    fireEvent.change(screen.getByRole('slider', { name: 'Volume' }), { target: { value: '0.35' } });
+    rerender(<ProfileInfoTab profileData={_profileData({ volume: 0.6 })} agent={_agent} />);
+    expect(screen.getByRole('slider', { name: 'Volume' })).toHaveValue('0.6');
+    fireEvent.change(screen.getByRole('slider', { name: 'Volume' }), { target: { value: '0.2' } });
+    rerender(<ProfileInfoTab profileData={_profileData({ volume: 0.6 })} agent={{ ..._agent, id: 'a2' }} />);
+    expect(screen.getByRole('slider', { name: 'Volume' })).toHaveValue('0.6');
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });
