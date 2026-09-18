@@ -146,16 +146,10 @@ export function ApprovalsCenterPanel() {
     controls[nextIndex].focus();
   }, [close]);
 
-  /* The hosted panels drop a decided request from their own list immediately.
-   * Re-reading the shared slice keeps the Bridge section and the BRIDGE badge
-   * in step instead of showing a stale count until the next 10s poll.
-   *
-   * BF-723: record the decision centrally BEFORE re-reading. The refresh alone
-   * was not enough — a failed or late GET could hand back the row that was just
-   * decided, and the shared slice had no way to know it should not believe it.
-   * The tombstone is what makes the refresh result reconcilable. */
+  /* Capability outcomes have already reconciled approval versus fulfilment.
+   * Skill decisions retain the existing terminal callback contract. */
   const onDecided = useCallback((decided: DecidedApproval) => {
-    recordDecision(decided.queue, decided.id);
+    if (decided.queue === 'skill') recordDecision(decided.queue, decided.id);
     void refresh();
   }, [recordDecision, refresh]);
 

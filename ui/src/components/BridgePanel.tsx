@@ -296,6 +296,9 @@ function ApprovalRow({ approval, onOpen }: { approval: PendingApproval; onOpen: 
       >
         {ask || approval.agent_id || 'unknown request'}
       </span>
+      {approval.awaiting_fulfilment && (
+        <span style={{ fontSize: 10, color: '#f0b060' }}>Approved - awaiting fulfilment</span>
+      )}
     </button>
   );
 }
@@ -333,7 +336,15 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
         }, Math.max(0, Math.min(...due) - Date.now()));
       }
     };
-    const unsubscribe = useStore.subscribe(arm);
+    let capabilityEpoch = useStore.getState().capabilityApprovalEpoch;
+    let repairEpoch = useStore.getState().liveRepairEpoch;
+    const unsubscribe = useStore.subscribe(state => {
+      const invalidated = capabilityEpoch !== state.capabilityApprovalEpoch || repairEpoch !== state.liveRepairEpoch;
+      capabilityEpoch = state.capabilityApprovalEpoch;
+      repairEpoch = state.liveRepairEpoch;
+      if (invalidated) void refreshApprovals({ queues: ['capability'], signal: owner.signal });
+      arm();
+    });
     void refreshApprovals({ signal: owner.signal });
     arm();
     return () => {

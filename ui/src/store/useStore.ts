@@ -32,7 +32,7 @@ import type {
   CrewSessionSummaryProjection, LiveArtifactRefreshCommand,
   LiveDropGate, LiveDropRecord,
   LiveRailOwner, LiveThreadRefreshCommand, LiveTodoRefreshCommand,
-  RoomSummary, SkillRequestView, CapabilityApprovalView, ApprovalQueue, ApprovalPayload, ApprovalRefreshOptions,
+  RoomSummary, SkillRequestView, CapabilityDecisionOutcome, ApprovalQueue, ApprovalPayload, ApprovalRefreshOptions,
 } from './types';
 
 // AD-562: Knowledge Browser types
@@ -43,6 +43,10 @@ import type {
 import { DEFAULT_KNOWLEDGE_BROWSER_FILTERS } from '../components/knowledge/types';
 import { idleResource, loadingResource, requestResource, nextResourcePoll } from '../utils/resourceState';
 import type { ResourceState, ResourcePoll } from '../utils/resourceState';
+import {
+  approvalKey, applyCapabilityDecision, isActionableCapabilityPayload, reconcileCapabilityRead,
+} from './capabilityApprovals';
+export { approvalKey, isCapabilityRequestView } from './capabilityApprovals';
 
 export function isSkillRequestView(value: unknown): value is SkillRequestView {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -55,21 +59,10 @@ export function isSkillRequestView(value: unknown): value is SkillRequestView {
       || (typeof row[key] === 'number' && Number.isFinite(row[key])));
 }
 
-export function isCapabilityRequestView(value: unknown): value is CapabilityApprovalView {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
-  return ['id', 'agent_id', 'kind', 'target'].every(key => typeof row[key] === 'string')
-    && Boolean(row.id) && typeof row.created_at === 'number' && Number.isFinite(row.created_at)
-    && ['rationale', 'status', 'decided_by', 'decision_reason'].every(key => row[key] === undefined || typeof row[key] === 'string')
-    && (row.work_item_id == null || typeof row.work_item_id === 'string')
-    && (row.decided_at == null || (typeof row.decided_at === 'number' && Number.isFinite(row.decided_at)))
-    && (row.payload == null || (typeof row.payload === 'object' && !Array.isArray(row.payload)));
-}
-
 export function isApprovalPayload(queue: ApprovalQueue, value: unknown): value is ApprovalPayload {
+  if (queue === 'capability') return isActionableCapabilityPayload(value);
   if (!value || typeof value !== 'object' || !('requests' in value) || !Array.isArray(value.requests)) return false;
-  return value.requests.every(row => queue === 'skill' ? isSkillRequestView(row)
-    : isCapabilityRequestView(row));
+  return value.requests.every(isSkillRequestView);
 }
 
 export type KnowledgeResource = 'browse' | 'graph' | 'timeline' | 'document' | 'backlinks';
@@ -422,24 +415,21 @@ export interface PendingApproval {
   /** Capability `target`, or the skill label. */
   target: string;
   created_at: number;
+  awaiting_fulfilment?: boolean;
 }
 
 /** What a decided approval reports back to its host (BF-723). */
-export interface DecidedApproval {
-  queue: PendingApproval['queue'];
-  id: string;
-}
+export type DecidedApproval =
+  | { queue: 'skill'; id: string }
+  | { queue: 'capability'; id: string; outcome: CapabilityDecisionOutcome };
 
-/* BF-723: the two queues mint ids independently, so a bare id is not a safe
- * key — a capability request and a skill request can legitimately share one.
- * NUL cannot appear in either queue literal and neither literal is a prefix of
- * the other, so the queue segment is unambiguous both for lookup and for the
- * prefix scan that releases spent tombstones. */
-const APPROVAL_KEY_SEP = '\u0000';
-
-/** Composite tombstone/lookup key for one approval request (BF-723). */
-export function approvalKey(queue: PendingApproval['queue'], id: string): string {
-  return `${queue}${APPROVAL_KEY_SEP}${id}`;
+function approvalRows(queue: ApprovalQueue, resource: ResourceState<ApprovalPayload>): PendingApproval[] {
+  return resource.data?.requests.map(row => ({
+    id: row.id, queue, agent_id: row.agent_id, created_at: row.created_at,
+    kind: 'skill_id' in row ? row.source : row.kind,
+    target: 'skill_id' in row ? row.skill_label || row.skill_id : row.target,
+    ...('can_retry_fulfilment' in row ? { awaiting_fulfilment: row.can_retry_fulfilment } : {}),
+  })) ?? [];
 }
 
 export interface ComposerDraft {
@@ -864,6 +854,10 @@ export interface HXIState {
   approvalAppliedSeq: Record<PendingApproval['queue'], number>;
   /** BF-723: record a decision so every later refresh reconciles against it. */
   recordApprovalDecision: (queue: PendingApproval['queue'], id: string) => void;
+  recordCapabilityDecision: (outcome: CapabilityDecisionOutcome) => void;
+  capabilityDecisionRevision: number;
+  capabilityApprovalEpoch: number;
+  capabilityDecidingIds: Set<string>;
   // Communications settings (AD-485)
   communicationsSettings: { dm_min_rank: string; recreation_min_rank: string };
   refreshCommunicationsSettings: () => void;
@@ -2593,6 +2587,25 @@ export const useStore = create<HXIState>((set, get) => ({
       },
     });
   },
+  capabilityDecisionRevision: 0,
+  capabilityApprovalEpoch: 0,
+  capabilityDecidingIds: new Set<string>(),
+  recordCapabilityDecision: (outcome) => {
+    set(state => {
+      const result = applyCapabilityDecision(
+        state.approvalResources.capability, state.decidedApprovals, outcome,
+      );
+      return {
+        capabilityDecisionRevision: state.capabilityDecisionRevision + 1,
+        decidedApprovals: result.tombstones,
+        approvalResources: { ...state.approvalResources, capability: result.resource },
+        pendingApprovals: [
+          ...state.pendingApprovals.filter(row => row.queue !== 'capability'),
+          ...approvalRows('capability', result.resource),
+        ].sort((first, second) => second.created_at - first.created_at),
+      };
+    });
+  },
   cancelPendingApprovals: () => {
     get().approvalControllers.capability?.abort();
     get().approvalControllers.skill?.abort();
@@ -2621,30 +2634,31 @@ export const useStore = create<HXIState>((set, get) => ({
         approvalPoll: { ...state.approvalPoll, [queue]: { ...previousPoll, nextAt: null } },
       }));
       try {
-        const outcome = await requestResource(`/api/${queue === 'skill' ? 'skill' : 'capability'}-requests?status=pending`,
+        const outcome = await requestResource(queue === 'skill'
+          ? '/api/skill-requests?status=pending' : '/api/capability-requests/actionable',
           previous, (value): value is ApprovalPayload => isApprovalPayload(queue, value),
           value => value.requests.length === 0, controller.signal);
         if (!outcome || controller.signal.aborted || get().approvalIssuedSeq[queue] !== ticket) return;
         set(state => {
           const authoritative = outcome.status === 'ready' || outcome.status === 'empty';
-          const decided = new Set(state.decidedApprovals);
-          if (authoritative) {
+          const capability = queue === 'capability' ? reconcileCapabilityRead(
+            outcome, state.approvalResources.capability, state.decidedApprovals,
+            state.capabilityDecisionRevision !== current.capabilityDecisionRevision,
+          ) : null;
+          const decided = capability?.tombstones ?? new Set(state.decidedApprovals);
+          if (authoritative && queue === 'skill') {
             const reported = new Set(outcome.data!.requests.map(row => approvalKey(queue, row.id)));
             for (const key of decided) {
-              if (key.startsWith(`${queue}${APPROVAL_KEY_SEP}`) && !reported.has(key)) decided.delete(key);
+              if (key.startsWith(approvalKey(queue, '')) && !reported.has(key)) decided.delete(key);
             }
           }
-          const resource = {
+          const resource = capability?.resource ?? {
             ...outcome,
             data: outcome.data === null ? null : {
               requests: outcome.data.requests.filter(row => !state.decidedApprovals.has(approvalKey(queue, row.id))),
             },
           };
-          const rows = resource.data?.requests.map(row => ({
-            id: row.id, queue, agent_id: row.agent_id, created_at: row.created_at,
-            kind: 'skill_id' in row ? row.source : row.kind,
-            target: 'skill_id' in row ? row.skill_label || row.skill_id : row.target,
-          })) ?? [];
+          const rows = approvalRows(queue, resource);
           return {
             approvalResources: { ...state.approvalResources, [queue]: resource },
             approvalPoll: { ...state.approvalPoll, [queue]: nextResourcePoll(previousPoll, outcome.status, startedAt) },
@@ -3066,6 +3080,8 @@ export const useStore = create<HXIState>((set, get) => ({
       }
       set({
         liveSequence: sequence,
+        ...(['capability_request_filed', 'capability_request_decided', 'capability_request_fulfilled'].includes(type)
+          ? { capabilityApprovalEpoch: authority.capabilityApprovalEpoch + 1 } : {}),
         ...(sequence > authority.liveSequence + 1
           ? { liveRepairEpoch: authority.liveRepairEpoch + 1 }
           : {}),

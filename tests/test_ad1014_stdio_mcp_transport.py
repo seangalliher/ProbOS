@@ -13,6 +13,7 @@ not duplicated here.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -32,6 +33,7 @@ from probos.integrations.mcp_bridge import (
     StdioTransport,
     Transport,
 )
+from probos.integrations.mcp_bridge.transport import TransportLiveness
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "echo_mcp_server.py")
 
@@ -172,6 +174,61 @@ def test_stdio_transport_conforms_to_transport_protocol():
     assert isinstance(t, Transport)
 
 
+@pytest.mark.asyncio
+async def test_stdio_is_alive_before_start_and_repeated_close_is_false() -> None:
+    transport = StdioTransport(command="x", args=[], env={}, cwd="", timeout=1.0)
+    assert isinstance(transport, TransportLiveness)
+    assert transport.is_alive is False
+    await transport.close()
+    assert transport.is_alive is False
+    await transport.close()
+    assert transport.is_alive is False
+
+
+@pytest.mark.asyncio
+async def test_stdio_is_alive_failed_spawn_is_false(tmp_path: Path) -> None:
+    missing = tmp_path / "missing-mcp-executable"
+    assert not missing.exists()
+    transport = StdioTransport(
+        command=str(missing), args=[], env={}, cwd="", timeout=1.0,
+    )
+    try:
+        with pytest.raises(MCPProtocolError) as caught:
+            await transport.start()
+        assert caught.value.reason == "spawn_failed"
+        assert transport.is_alive is False
+    finally:
+        await transport.close()
+    assert transport.is_alive is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("observed_exit", [False, True])
+async def test_stdio_is_alive_tracks_real_start_call_exit_and_close(observed_exit: bool) -> None:
+    transport = StdioTransport(
+        command=sys.executable, args=[FIXTURE], env={}, cwd="", timeout=5.0,
+    )
+    client = MCPClient(session=MCPSession(server_url="stdio:liveness"), transport=transport)
+    try:
+        assert transport.is_alive is False and client.is_alive is False
+        await transport.start()
+        process = transport._proc
+        assert process is not None and process.returncode is None
+        assert transport.is_alive is True and client.is_alive is True
+        result = await client.call_tool("echo", {"q": "alive"})
+        assert json.loads(result["content"][0]["text"]) == {"q": "alive"}
+        if observed_exit:
+            process.terminate()
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+            assert process.returncode is not None
+            assert transport.is_alive is False and client.is_alive is False
+    finally:
+        await client.close()
+    assert transport.is_alive is False and client.is_alive is False
+    await client.close()
+    assert transport.is_alive is False and client.is_alive is False
+
+
 # --------------------------------------------------------------------------- #
 # Client transport delegation (focused _FakeTransport unit tests)
 # --------------------------------------------------------------------------- #
@@ -219,6 +276,76 @@ async def test_client_close_delegates_to_transport():
     client = MCPClient(session=MCPSession(server_url="stdio:fake"), transport=transport)
     await client.close()
     assert transport.closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alive", [False, True])
+async def test_client_is_alive_delegates_current_boolean(alive: bool) -> None:
+    class _LiveTransport(_FakeTransport):
+        state = alive
+
+        @property
+        def is_alive(self) -> bool:
+            return self.state
+
+    transport = _LiveTransport()
+    client = MCPClient(session=MCPSession(server_url="stdio:live"), transport=transport)
+    try:
+        assert isinstance(transport, Transport) and isinstance(transport, TransportLiveness)
+        assert client.is_alive is alive
+        transport.state = not alive
+        assert client.is_alive is not alive
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_client_is_alive_legacy_transport_is_unknown_and_still_works() -> None:
+    transport = _FakeTransport(
+        envelope={"jsonrpc": "2.0", "id": "x", "result": {"tools": [{"name": "legacy"}]}},
+    )
+    client = MCPClient(session=MCPSession(server_url="stdio:legacy"), transport=transport)
+    try:
+        assert isinstance(transport, Transport)
+        assert not isinstance(transport, TransportLiveness)
+        assert client.is_alive is None
+        await transport.start()
+        assert await client.list_tools() == [{"name": "legacy"}]
+        assert transport.started is True and client.is_alive is None
+    finally:
+        await client.close()
+    assert transport.closed is True and client.is_alive is None
+
+
+@pytest.mark.asyncio
+async def test_client_is_alive_default_http_is_unknown_before_and_after_close() -> None:
+    client = MCPClient(session=MCPSession(server_url="https://example.test/liveness"))
+    try:
+        assert client.is_alive is None
+    finally:
+        await client.close()
+    assert client.is_alive is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [OSError, AttributeError, asyncio.CancelledError])
+async def test_client_is_alive_property_errors_propagate(error_type: type[BaseException]) -> None:
+    failure = error_type("liveness unavailable")
+
+    class _RaisingTransport(_FakeTransport):
+        @property
+        def is_alive(self) -> bool:
+            raise failure
+
+    client = MCPClient(
+        session=MCPSession(server_url="stdio:raising"), transport=_RaisingTransport(),
+    )
+    try:
+        with pytest.raises(error_type) as caught:
+            _ = client.is_alive
+        assert caught.value is failure
+    finally:
+        await client.close()
 
 
 # --------------------------------------------------------------------------- #

@@ -35,6 +35,97 @@ from tests.test_ad1131_crew_session_delivery_metrics import (
 # ------------------------------------------------------------------
 
 @pytest.fixture
+async def actionable_capability_api(tmp_path):
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+
+    from probos.capability_request import CapabilityRequestStore
+    from probos.routers.capability_requests import router
+    from probos.routers.deps import get_runtime
+
+    store = CapabilityRequestStore(db_path=str(tmp_path / "actionable.db"))
+    await store.start()
+    app = FastAPI()
+    app.include_router(router)
+    runtime = SimpleNamespace(capability_request_store=store)
+    app.dependency_overrides[get_runtime] = lambda: runtime
+    try:
+        yield app, runtime, store
+    finally:
+        await store.stop()
+
+
+async def test_actionable_api_happy_path(actionable_capability_api):
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, store = actionable_capability_api
+    req = await store.file_request("agent", "install", "numpy")
+    await store.decide(req.id, True)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/capability-requests/actionable")
+    assert response.status_code == 200
+    assert response.json()["view"] == "actionable"
+    assert [row["id"] for row in response.json()["requests"]] == [req.id]
+    assert response.json()["requests"][0]["can_retry_fulfilment"] is True
+
+
+async def test_actionable_api_empty_is_authoritative(actionable_capability_api):
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, _store = actionable_capability_api
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/capability-requests/actionable")
+    assert response.status_code == 200
+    assert response.json() == {"view": "actionable", "requests": []}
+
+
+async def test_actionable_api_without_store_returns_503(actionable_capability_api):
+    from httpx import ASGITransport, AsyncClient
+
+    app, runtime, _store = actionable_capability_api
+    runtime.capability_request_store = None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/capability-requests/actionable")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "capability request store not available"}
+
+
+async def test_actionable_api_store_error_is_not_empty(actionable_capability_api, monkeypatch):
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, store = actionable_capability_api
+
+    async def failed_read():
+        raise RuntimeError("controlled actionable read failure")
+
+    monkeypatch.setattr(store, "list_actionable", failed_read)
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/capability-requests/actionable")
+    assert response.status_code == 500
+
+
+async def test_actionable_api_input_cannot_mutate_or_widen_view(actionable_capability_api):
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, store = actionable_capability_api
+    req = await store.file_request("agent", "action", "browser.navigate")
+    await store.decide(req.id, True)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        mutation = await client.post(
+            "/api/capability-requests/actionable", json={"approve": True},
+        )
+        observation = await client.get(
+            "/api/capability-requests/actionable?status=approved&view=pending",
+        )
+    assert mutation.status_code == 405
+    assert observation.status_code == 200
+    assert observation.json() == {"view": "actionable", "requests": []}
+    assert (await store.get(req.id)).status == "approved"
+
+
+@pytest.fixture
 async def runtime(tmp_path):
     """Runtime with MockLLMClient and utility agents enabled."""
     llm = MockLLMClient()

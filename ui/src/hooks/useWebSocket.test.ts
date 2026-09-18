@@ -50,6 +50,7 @@ beforeEach(() => {
     liveGeneration: null,
     liveSequence: 0,
     liveRepairEpoch: 0,
+    capabilityApprovalEpoch: 0,
   });
 });
 
@@ -151,5 +152,47 @@ describe('AD-1133 useWebSocket', () => {
       socket.message({ type: 'ping', timestamp: 1 });
     });
     expect(useStore.getState().liveGeneration).toBeNull();
+  });
+
+  it.each(['filed', 'decided', 'fulfilled'])('invalidates capability reads only for accepted %s frames', suffix => {
+    renderHook(() => useWebSocket());
+    const socket = FakeWebSocket.instances[0];
+    const frame = {
+      type: `capability_request_${suffix}`, data: { id: 'cap-1' }, timestamp: 2,
+      stream: { generation: GENERATION, sequence: 1 },
+    };
+    act(() => socket.message(frame));
+    expect(useStore.getState().capabilityApprovalEpoch).toBe(0);
+    act(() => socket.message(snapshot()));
+    const repair = useStore.getState().liveRepairEpoch;
+    act(() => socket.message(frame));
+    expect(useStore.getState().capabilityApprovalEpoch).toBe(1);
+    expect(useStore.getState().liveRepairEpoch).toBe(repair);
+    act(() => {
+      socket.message(frame);
+      socket.message({ ...frame, stream: { generation: 'b'.repeat(32), sequence: 2 } });
+      socket.message({ ...frame, stream: { generation: GENERATION, sequence: -1 } });
+      socket.message({ ...frame, data: null, stream: { generation: GENERATION, sequence: 2 } });
+    });
+    expect(useStore.getState().capabilityApprovalEpoch).toBe(1);
+    expect(useStore.getState().liveSequence).toBe(1);
+    act(() => socket.message({ ...frame, stream: { generation: GENERATION, sequence: 3 } }));
+    expect(useStore.getState().capabilityApprovalEpoch).toBe(2);
+    expect(useStore.getState().liveRepairEpoch).toBe(repair + 1);
+  });
+
+  it('uses the existing snapshot and resync repair epoch without capability mutations', () => {
+    renderHook(() => useWebSocket());
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket.message(snapshot(4)));
+    expect(useStore.getState().liveRepairEpoch).toBe(1);
+    act(() => socket.message({
+      type: 'resync_required', data: {}, timestamp: 2,
+      stream: { generation: GENERATION, sequence: 5 },
+    }));
+    expect(useStore.getState().liveRepairEpoch).toBe(2);
+    expect(useStore.getState().capabilityApprovalEpoch).toBe(0);
+    act(() => socket.message(snapshot(5)));
+    expect(useStore.getState().liveRepairEpoch).toBe(3);
   });
 });

@@ -95,6 +95,15 @@ class MCPClient:
         return self._session
 
     @property
+    def is_alive(self) -> bool | None:
+        """Delegate optional transport liveness; unsupported transports are unknown."""
+        from probos.integrations.mcp_bridge.transport import TransportLiveness
+
+        if isinstance(self._transport, TransportLiveness):
+            return self._transport.is_alive
+        return None
+
+    @property
     def _http(self) -> Any:
         """AD-1014 back-compat shim: the pre-AD-1014 HTTP body lived on
         ``client._http``; the existing AD-449 tests still set it to a mock. Proxy

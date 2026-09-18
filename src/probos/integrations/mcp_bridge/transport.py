@@ -59,6 +59,16 @@ class Transport(Protocol):
         ...
 
 
+@runtime_checkable
+class TransportLiveness(Protocol):
+    """Optional local liveness observation, not a handshake or lifetime guarantee."""
+
+    @property
+    def is_alive(self) -> bool:
+        """Whether the transport currently owns a live connection."""
+        ...
+
+
 # BF-746: an SSE answer to a single JSON-RPC request is short by construction --
 # the server sends the response and closes. The cap exists so a server that
 # streams indefinitely cannot make this loop the thing that hangs.
@@ -237,6 +247,11 @@ class StdioTransport:
         self._proc: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self.last_metadata: dict[str, str] = {}
+
+    @property
+    def is_alive(self) -> bool:
+        """Whether the owned subprocess exists without an observed exit."""
+        return self._proc is not None and self._proc.returncode is None
 
     async def start(self) -> None:
         env = {**os.environ, **self._env} if self._env else None

@@ -37,6 +37,8 @@ const CAPABILITY_ROW = {
   decided_at: null,
   decided_by: '',
   decision_reason: '',
+  payload: null,
+  can_retry_fulfilment: false,
 };
 
 const SKILL_ROW = {
@@ -60,6 +62,18 @@ function okJson(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200 });
 }
 
+function capabilityJson(requests: unknown[]): Response {
+  return okJson({ view: 'actionable', requests });
+}
+
+function fulfilledCapability(): Response {
+  // Keep the terminal-removal assertions, but require the actual decision shape.
+  return okJson({
+    request: { ...CAPABILITY_ROW, status: 'fulfilled', decided_at: NOW_S, decided_by: 'captain' },
+    fulfilled: true,
+  });
+}
+
 function errorResponse(status: number): Response {
   return new Response(JSON.stringify({ detail: 'queue unavailable' }), { status });
 }
@@ -76,6 +90,9 @@ function resetApprovalState(): void {
     pendingApprovals: [],
     decidedApprovals: new Set<string>(),
     approvalRequestSeq: 0,
+    capabilityDecisionRevision: 0,
+    capabilityApprovalEpoch: 0,
+    liveRepairEpoch: 0,
     approvalAppliedSeq: { capability: 0, skill: 0 },
     approvalsCenterOpen: false,
   });
@@ -96,7 +113,7 @@ describe('BF-723 a decided request is reconciled centrally, not just locally', (
   it('records both failed queues and filters decided rows from every cached payload', async () => {
     let down = false;
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async input => down ? errorResponse(503)
-      : okJson({ requests: String(input).startsWith('/api/skill-requests') ? [SKILL_ROW] : [CAPABILITY_ROW] })));
+      : String(input).startsWith('/api/skill-requests') ? okJson({ requests: [SKILL_ROW] }) : capabilityJson([CAPABILITY_ROW])));
     await useStore.getState().refreshPendingApprovals();
     expect(useStore.getState().pendingApprovals).toHaveLength(2);
     const observations = useStore.getState().approvalResources;
@@ -126,7 +143,7 @@ describe('BF-723 a decided request is reconciled centrally, not just locally', (
     await useStore.getState().refreshPendingApprovals();
     const issued = { ...useStore.getState().approvalIssuedSeq };
     expect(useStore.getState().approvalResources.skill.status).toBe('unavailable');
-    releases[0](okJson({ requests: [CAPABILITY_ROW] }));
+    releases[0](capabilityJson([CAPABILITY_ROW]));
     releases[1](okJson({ requests: [SKILL_ROW] }));
     await old;
     expect(useStore.getState().approvalIssuedSeq).toEqual(issued);
@@ -150,7 +167,7 @@ describe('BF-723 a decided request is reconciled centrally, not just locally', (
     expect(useStore.getState().approvalResources.capability.status).toBe('loading');
     expect(useStore.getState().approvalResources.skill.status).toBe('loading');
     expect(useStore.getState().approvalIssuedSeq).toEqual(issued);
-    releases[2](okJson({ requests: [] }));
+    releases[2](capabilityJson([]));
     releases[3](okJson({ requests: [SKILL_ROW] }));
     await current;
     expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual(['sk-1']);
@@ -195,7 +212,7 @@ describe('BF-723 a decided request is reconciled centrally, not just locally', (
     const transport = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
       if (init?.method === 'POST') { down = true; return okJson({ request: {} }); }
       if (down) return errorResponse(503);
-      return okJson({ requests: String(input).startsWith('/api/skill-requests') ? [SKILL_ROW] : [] });
+      return String(input).startsWith('/api/skill-requests') ? okJson({ requests: [SKILL_ROW] }) : capabilityJson([]);
     });
     vi.stubGlobal('fetch', transport);
     useStore.setState({ approvalsCenterOpen: true });
@@ -223,10 +240,10 @@ describe('BF-723 a decided request is reconciled centrally, not just locally', (
       const url = String(input);
       if (url.includes('/decide')) {
         capabilityDown = true;
-        return okJson({ ok: true });
+        return fulfilledCapability();
       }
       if (url.startsWith('/api/capability-requests')) {
-        return capabilityDown ? errorResponse(503) : okJson({ requests: [CAPABILITY_ROW] });
+        return capabilityDown ? errorResponse(503) : capabilityJson([CAPABILITY_ROW]);
       }
       if (url.startsWith('/api/skill-requests')) return okJson({ requests: [SKILL_ROW] });
       return okJson([]);
@@ -265,9 +282,9 @@ describe('BF-723 a decided request is reconciled centrally, not just locally', (
       if (url.startsWith('/api/capability-requests') && !url.includes('/decide')) {
         capabilityCalls += 1;
         if (capabilityCalls === 2) await held;
-        return okJson({ requests: [CAPABILITY_ROW] });
+        return capabilityJson([CAPABILITY_ROW]);
       }
-      if (url.includes('/decide')) return okJson({ ok: true });
+      if (url.includes('/decide')) return fulfilledCapability();
       if (url.startsWith('/api/skill-requests')) return okJson({ requests: [] });
       return okJson([]);
     });
@@ -303,9 +320,9 @@ describe('BF-723 a decided request is reconciled centrally, not just locally', (
         capabilityCalls += 1;
         if (capabilityCalls === 1) {
           await held;
-          return okJson({ requests: [CAPABILITY_ROW] });
+          return capabilityJson([CAPABILITY_ROW]);
         }
-        return okJson({ requests: [] });
+        return capabilityJson([]);
       }
       if (url.startsWith('/api/skill-requests')) return okJson({ requests: [SKILL_ROW] });
       return okJson([]);
@@ -331,7 +348,7 @@ describe('BF-723 a decided request is reconciled centrally, not just locally', (
     let pending: unknown[] = [CAPABILITY_ROW];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.startsWith('/api/capability-requests')) return okJson({ requests: pending });
+      if (url.startsWith('/api/capability-requests')) return capabilityJson(pending);
       if (url.startsWith('/api/skill-requests')) return okJson({ requests: [] });
       return okJson([]);
     });
@@ -361,7 +378,7 @@ describe('BF-723 a decided request is reconciled centrally, not just locally', (
     let pending: Record<string, unknown>[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.startsWith('/api/capability-requests')) return okJson({ requests: pending });
+      if (url.startsWith('/api/capability-requests')) return capabilityJson(pending);
       if (url.startsWith('/api/skill-requests')) return okJson({ requests: [] });
       return okJson([]);
     });
@@ -387,7 +404,7 @@ describe('BF-723 a decided request is reconciled centrally, not just locally', (
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith('/api/capability-requests')) {
-        return okJson({ requests: [{ ...CAPABILITY_ROW, id: SHARED }] });
+        return capabilityJson([{ ...CAPABILITY_ROW, id: SHARED }]);
       }
       if (url.startsWith('/api/skill-requests')) {
         return okJson({ requests: [{ ...SKILL_ROW, id: SHARED }] });
@@ -412,8 +429,8 @@ describe('BF-723 onDecided carries what was decided', () => {
   it('the capability panel reports its queue and the decided id', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes('/decide')) return okJson({ ok: true });
-      if (url.startsWith('/api/capability-requests')) return okJson({ requests: [CAPABILITY_ROW] });
+      if (url.includes('/decide')) return fulfilledCapability();
+      if (url.startsWith('/api/capability-requests')) return capabilityJson([CAPABILITY_ROW]);
       if (url.startsWith('/api/skill-requests')) return okJson({ requests: [] });
       return okJson([]);
     });
@@ -437,7 +454,7 @@ describe('BF-723 onDecided carries what was decided', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/decide')) return okJson({ ok: true });
-      if (url.startsWith('/api/capability-requests')) return okJson({ requests: [] });
+      if (url.startsWith('/api/capability-requests')) return capabilityJson([]);
       if (url.startsWith('/api/skill-requests')) return okJson({ requests: [SKILL_ROW] });
       return okJson([]);
     });

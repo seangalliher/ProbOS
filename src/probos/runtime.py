@@ -301,9 +301,10 @@ async def file_dependency_install_requests(
     best-effort on a decline path: losing the ask is bad, losing the agent's
     partial work because the ask failed to write would be worse.
 
-    Deduplicates against the pending queue by ``(agent_id, target)``. A script
+    Deduplicates validated Python asks by ``(agent_id, target)``. MCP and legacy
+    approvals cannot authorize a package install and do not suppress its ask. A script
     that fails the same import on every run must not bury the Captain under
-    identical cards — the one pending request already IS the ask. Keyed by
+    identical cards — the pending or approved-unfulfilled request already IS the ask. Keyed by
     agent as well as target so two agents blocked on the same library remain
     two visible facts.
 
@@ -312,40 +313,73 @@ async def file_dependency_install_requests(
     unattributed request cannot. With no requester the ask is skipped and the
     previous decline-only behaviour stands exactly.
     """
-    if not requested_by or not packages:
+    from probos.capability_request import validate_install_payload, validate_python_install_target
+
+    if type(packages) is not list:
+        logger.warning(
+            "Python install requests received a non-list package container; "
+            "no asks filed, the caller must supply individual import targets"
+        )
+        return []
+    if not packages:
+        return []
+    if type(requested_by) is not str or not requested_by:
+        logger.warning(
+            "Python install requests have no valid requesting agent; no asks "
+            "filed, the caller must provide attribution before approval"
+        )
+        return []
+    valid_packages: list[str] = []
+    for value in packages:
+        package = validate_python_install_target(value)
+        if package is None:
+            logger.warning(
+                "Python install target for agent %s is not one canonical import; "
+                "skipping that ask and continuing with valid neighboring targets",
+                requested_by[:12],
+            )
+            continue
+        valid_packages.append(package)
+    if not valid_packages:
         return []
     if store is None:
         logger.warning(
             "AD-1220: %d package(s) need Captain approval for agent %s but no "
             "capability-request store is wired, so the ask cannot be filed; "
             "the script still runs and reports the import error",
-            len(packages), requested_by[:12],
+            len(valid_packages), requested_by[:12],
         )
         return []
     try:
-        pending = await store.list_pending()
+        actionable = await store.list_actionable()
     except Exception:
         logger.warning(
-            "AD-1220: could not read the pending queue to deduplicate install "
+            "AD-1220: could not read the actionable queue to deduplicate install "
             "requests for agent %s; filing none rather than risking duplicate "
             "cards on the Captain's approval queue",
             requested_by[:12], exc_info=True,
         )
         return []
     already = {
-        (getattr(r, "agent_id", ""), getattr(r, "target", ""))
-        for r in pending
+        target
+        for r in actionable
         if getattr(r, "kind", "") == "install"
+        and getattr(r, "agent_id", "") == requested_by
+        and getattr(r, "status", "") in {"pending", "approved"}
+        and validate_install_payload(getattr(r, "payload", None)) == {"install_kind": "python"}
+        for target in [validate_python_install_target(getattr(r, "target", None))]
+        if target is not None
     }
     filed: list[str] = []
-    for package in packages:
-        if (requested_by, package) in already:
+    for package in valid_packages:
+        if package in already:
             continue
         try:
             await store.file_request(
                 agent_id=requested_by,
                 kind="install",
                 target=package,
+                payload={"install_kind": "python"},
                 rationale=(
                     f"A script needs the {package} library, which is not "
                     "installed. Approving installs it into the environment the "
@@ -360,6 +394,7 @@ async def file_dependency_install_requests(
             )
             continue
         filed.append(package)
+        already.add(package)
     return filed
 
 

@@ -21,20 +21,23 @@ the ask on a surface nobody polls.
 
 The ``payload`` column carries the action shape (``tool_id`` / ``action`` /
 ``params`` / ``scope_key`` / ``session_id`` / ``thread_id``) because ``target``
-is a bare string. It is NULL for every ``grant`` / ``install`` / ``build`` row,
-so those paths are byte-identical.
+is a bare string. Install requests additionally carry typed package or MCP
+identity provenance. Legacy install NULLs remain distinguishable from invalid
+non-null payloads; grant and build decoding is unchanged.
 
 **Approval of an ``action`` request does NOT replay the parked action** — see
 :meth:`file_action_request`. The recorded ``session_id`` is forensic only.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import logging
 import math
 import re
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
@@ -87,8 +90,12 @@ CREATE INDEX IF NOT EXISTS idx_caprequests_status ON capability_requests(status)
 CREATE INDEX IF NOT EXISTS idx_caprequests_agent ON capability_requests(agent_id);
 """
 
-RequestKind = Literal["grant", "install", "build", "action"]
+RequestKind = Literal["grant", "install", "build", "action", "continue"]
 RequestStatus = Literal["pending", "approved", "denied", "fulfilled", "failed"]
+
+FULFILMENT_KINDS: frozenset[RequestKind] = frozenset(
+    {"grant", "install", "build", "continue"}
+)
 
 
 def _canonical_json(value: Any) -> str:
@@ -170,10 +177,60 @@ def validate_action_payload(payload: Any) -> dict[str, Any] | None:
     return payload
 
 
-def _decode_payload(raw: Any) -> dict[str, Any] | None:
+def validate_install_payload(payload: Any) -> dict[str, str] | None:
+    """Accept only exact, bounded install provenance, without configuration."""
+    if type(payload) is not dict or any(type(key) is not str for key in payload):
+        return None
+    install_kind = payload.get("install_kind")
+    if type(install_kind) is not str:
+        return None
+    if install_kind == "python":
+        return payload if set(payload) == {"install_kind"} else None
+    if install_kind != "mcp" or set(payload) != {"install_kind", "mcp_server_id"}:
+        return None
+    server_id = payload["mcp_server_id"]
+    if (
+        type(server_id) is not str
+        or not 1 <= len(server_id) <= 128
+        or server_id != server_id.strip()
+        or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in server_id)
+    ):
+        return None
+    return payload
+
+
+def validate_python_install_target(value: object) -> str | None:
+    """Accept exactly one canonical import name, including legal dotted names."""
+    if type(value) is not str:
+        return None
+    try:
+        tree = ast.parse(f"import {value}")
+    except (SyntaxError, ValueError, UnicodeError):
+        return None
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Import):
+        return None
+    aliases = tree.body[0].names
+    if len(aliases) != 1 or aliases[0].asname is not None or aliases[0].name != value:
+        return None
+    return value
+
+
+def _decode_payload(raw: Any, kind: str = "action") -> dict[str, Any] | None:
     """Decode + re-validate a stored ``payload`` column. Never raises."""
     if raw is None:
         return None
+    if kind == "install":
+        try:
+            validated = validate_install_payload(json.loads(raw)) if type(raw) is str else None
+        except (ValueError, TypeError):
+            validated = None
+        if validated is None:
+            logger.warning(
+                "Install request payload is invalid; loading an invalid sentinel "
+                "so fulfilment refuses rather than treating it as legacy approval"
+            )
+            return {}
+        return validated
     if type(raw) is not str:
         logger.warning(
             "AD-1154: capability_requests.payload is %s, not TEXT; "
@@ -266,8 +323,26 @@ class CapabilityRequest:
     decided_by: str = ""
     decision_reason: str = ""
     # AD-1154 / DD-1: appended LAST so no existing positional index shifts.
-    # NULL for kind in (grant, install, build).
+    # NULL for grant/build and legacy install rows; typed installs carry identity.
     payload: dict[str, Any] | None = None
+
+
+def _row_to_request(row: tuple[Any, ...]) -> CapabilityRequest:
+    return CapabilityRequest(
+        id=row[0],
+        agent_id=row[1],
+        kind=row[2],
+        target=row[3],
+        rationale=row[4],
+        work_item_id=row[5],
+        status=row[6],
+        created_at=row[7],
+        decided_at=row[8],
+        decided_by=row[9],
+        decision_reason=row[10],
+        # AD-1154: appended LAST, matching the schema / dataclass / SELECT.
+        payload=_decode_payload(row[11], kind=row[2]),
+    )
 
 
 class CapabilityRequestStore(EventEmitterMixin):
@@ -351,7 +426,7 @@ class CapabilityRequestStore(EventEmitterMixin):
             "FROM capability_requests"
         ) as cursor:
             async for row in cursor:
-                req = self._row_to_request(row)
+                req = _row_to_request(row)
                 self._cache[req.id] = req
 
     async def file_request(
@@ -365,10 +440,17 @@ class CapabilityRequestStore(EventEmitterMixin):
     ) -> CapabilityRequest:
         """File a new pending capability request. Writes DB + cache, emits FILED.
 
-        ``payload`` (AD-1154) is the ``kind="action"`` action shape; existing
-        callers pass nothing and the column is written NULL.
+        ``payload`` carries action data or validated install provenance. Legacy
+        callers passing nothing still write NULL, not an invalid install sentinel.
         """
         encoded_payload: str | None = None
+        if kind == "install" and payload is not None:
+            validated = validate_install_payload(payload)
+            if validated is None:
+                raise ValueError("Invalid install request payload; request not filed")
+            if validated["install_kind"] == "python" and validate_python_install_target(target) is None:
+                raise ValueError("Invalid Python install target; request not filed")
+            payload = dict(validated)
         if payload is not None:
             encoded_payload = _canonical_json(payload)
         req = CapabilityRequest(
@@ -692,24 +774,14 @@ class CapabilityRequestStore(EventEmitterMixin):
         """Return all requests still awaiting a decision."""
         return [r for r in self._cache.values() if r.status == "pending"]
 
+    async def list_actionable(self) -> list[CapabilityRequest]:
+        """Return pending decisions and approved requests with fulfilment actors."""
+        return [
+            req for req in self._cache.values()
+            if req.status == "pending"
+            or (req.status == "approved" and req.kind in FULFILMENT_KINDS)
+        ]
+
     async def get(self, request_id: str) -> CapabilityRequest | None:
         """Return a request by id, or None if unknown."""
         return self._cache.get(request_id)
-
-    @staticmethod
-    def _row_to_request(row: tuple) -> CapabilityRequest:
-        return CapabilityRequest(
-            id=row[0],
-            agent_id=row[1],
-            kind=row[2],
-            target=row[3],
-            rationale=row[4],
-            work_item_id=row[5],
-            status=row[6],
-            created_at=row[7],
-            decided_at=row[8],
-            decided_by=row[9],
-            decision_reason=row[10],
-            # AD-1154: appended LAST, matching the schema / dataclass / SELECT.
-            payload=_decode_payload(row[11]),
-        )

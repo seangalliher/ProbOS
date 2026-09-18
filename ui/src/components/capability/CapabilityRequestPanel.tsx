@@ -14,6 +14,7 @@ import { useStore, isApprovalPayload, isCapabilityRequestView, type DecidedAppro
 import type { ApprovalPayload, CapabilityApprovalView } from '../../store/types';
 import { idleResource, loadingResource, requestResource, resourceMessage, nextResourcePoll } from '../../utils/resourceState';
 import type { ResourceState, ResourcePoll } from '../../utils/resourceState';
+import { applyCapabilityDecision, parseCapabilityDecision, reconcileCapabilityRead } from '../../store/capabilityApprovals';
 import { ApprovalRefreshGlyph } from '../skill/SkillRequestPanel';
 
 // ── Capability request shape (mirrors the GET serializer) ──────────
@@ -73,23 +74,29 @@ function RequestCard({ req, onDecide }: {
 }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const deciding = useRef(false);
+  const sharedBusy = useStore(state => state.capabilityDecidingIds.has(req.id));
   const [error, setError] = useState<string | null>(null);
   const accent = departmentColor(req.kind);
 
   const decide = useCallback(async (approve: boolean) => {
+    if (deciding.current) return;
     if (!approve && !reason.trim()) {
       setError('A reason is required to deny.');
       return;
     }
+    deciding.current = true;
     setBusy(true);
     setError(null);
     try {
-      await onDecide(req.id, approve, reason.trim());
+      await onDecide(req.id, approve, req.can_retry_fulfilment ? '' : reason.trim());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Decision failed.');
+    } finally {
+      deciding.current = false;
       setBusy(false);
     }
-  }, [onDecide, req.id, reason]);
+  }, [onDecide, req.id, req.can_retry_fulfilment, reason]);
 
   return (
     <div
@@ -122,20 +129,25 @@ function RequestCard({ req, onDecide }: {
             : <span>unlinked</span>}
         </div>
 
-        <input
+        {req.can_retry_fulfilment && (
+          <div role="status" style={{ fontSize: 11, color: ACTIVE_AMBER, marginBottom: 7 }}>
+            Approved - awaiting fulfilment
+          </div>
+        )}
+        {!req.can_retry_fulfilment && <input
           type="text"
           value={reason}
           onChange={e => setReason(e.target.value)}
           placeholder="Reason (required to deny)"
           aria-label="decision reason"
-          disabled={busy}
+          disabled={busy || sharedBusy}
           style={{
             width: '100%', boxSizing: 'border-box', marginBottom: 7,
             padding: '5px 7px', fontSize: 11, borderRadius: 4,
             background: 'rgba(0,0,0,0.25)', color: '#c8d0e0',
             border: '1px solid rgba(255,255,255,0.1)',
           }}
-        />
+        />}
 
         {error && (
           <div role="alert" style={{ fontSize: 10, color: DENY_RED, marginBottom: 6 }}>
@@ -146,7 +158,7 @@ function RequestCard({ req, onDecide }: {
         <div style={{ display: 'flex', gap: 6 }}>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || sharedBusy}
             onClick={() => decide(true)}
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
@@ -155,11 +167,11 @@ function RequestCard({ req, onDecide }: {
               border: `1px solid ${ACTIVE_AMBER}55`,
             }}
           >
-            <CheckGlyph color={ACTIVE_AMBER} /> Approve
+            <CheckGlyph color={ACTIVE_AMBER} /> {req.can_retry_fulfilment ? 'Retry fulfilment' : 'Approve'}
           </button>
-          <button
+          {!req.can_retry_fulfilment && <button
             type="button"
-            disabled={busy}
+            disabled={busy || sharedBusy}
             onClick={() => decide(false)}
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
@@ -169,7 +181,7 @@ function RequestCard({ req, onDecide }: {
             }}
           >
             <CrossGlyph color={DENY_RED} /> Deny
-          </button>
+          </button>}
         </div>
       </div>
     </div>
@@ -177,17 +189,7 @@ function RequestCard({ req, onDecide }: {
 }
 
 // ── Panel ──────────────────────────────────────────────────────────
-/* AD-1201: `onDecided` lets the host (the approvals centre) re-read the shared
- * pending-approvals slice the moment a decision lands, so the Bridge section and
- * the BRIDGE badge do not show a stale count until the next poll. Optional —
- * omitted, this panel behaves exactly as before.
- *
- * BF-723: it now says WHAT was decided. It used to take no arguments, so the
- * decision existed only in this component's `requests` state and the shared
- * slice could only be told "refresh" — leaving a failing or late GET free to
- * put the decided row straight back while the card stayed gone from here. The
- * queue is this panel's own identity: it is the panel that talks to
- * /api/capability-requests, so it is the one that knows. */
+/* The host receives the validated outcome, not an HTTP-success tombstone. */
 export default function CapabilityRequestPanel(
   { onDecided, hosted = false }: { onDecided?: (decided: DecidedApproval) => void; hosted?: boolean } = {},
 ) {
@@ -200,6 +202,7 @@ export default function CapabilityRequestPanel(
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const generation = useRef(0);
   const decidedIds = useRef(new Set<string>());
+  const decisionRevision = useRef(0);
   const mounted = useRef(false);
 
   const load = useCallback(async (automatic = false): Promise<void> => {
@@ -219,21 +222,23 @@ export default function CapabilityRequestPanel(
     }
     if (!automatic) poll.current = { failures: 0, failedAt: null, nextAt: null };
     const startedAt = Date.now();
+    const revision = decisionRevision.current;
     const previous = localRef.current;
-    setLocal(loadingResource(previous, 'capability'));
-    const outcome = await requestResource('/api/capability-requests?status=pending', previous,
+    localRef.current = loadingResource(previous, 'capability');
+    setLocal(localRef.current);
+    const outcome = await requestResource('/api/capability-requests/actionable', previous,
       (value): value is ApprovalPayload => isApprovalPayload('capability', value),
       value => value.requests.length === 0, request.signal);
     if (!outcome || request.signal.aborted || ticket !== generation.current || !mounted.current) return;
-    if (outcome.status === 'ready' || outcome.status === 'empty') {
-      const reported = new Set(outcome.data!.requests.map(row => row.id));
-      for (const id of decidedIds.current) if (!reported.has(id)) decidedIds.current.delete(id);
+    const result = reconcileCapabilityRead(
+      outcome, localRef.current, decidedIds.current, revision !== decisionRevision.current,
+    );
+    decidedIds.current = result.tombstones;
+    localRef.current = result.resource;
+    setLocal(result.resource);
+    if (outcome.status === 'failed' || outcome.status === 'unavailable') {
+      console.warn('Capability queue read failed; retaining last-known rows and bounding retries');
     }
-    const result = { ...outcome, data: outcome.data === null ? null : {
-      requests: outcome.data.requests.filter(row => !decidedIds.current.has(row.id)),
-    } };
-    localRef.current = result;
-    setLocal(result);
     controller.current = null;
     poll.current = nextResourcePoll(poll.current, outcome.status, startedAt);
     if (poll.current.nextAt !== null) {
@@ -244,7 +249,12 @@ export default function CapabilityRequestPanel(
   useEffect(() => {
     mounted.current = true;
     if (!hosted) void load();
+    const unsubscribe = hosted ? () => {} : useStore.subscribe((state, previous) => {
+      if (state.capabilityApprovalEpoch !== previous.capabilityApprovalEpoch
+        || state.liveRepairEpoch !== previous.liveRepairEpoch) void load();
+    });
     return () => {
+      unsubscribe();
       mounted.current = false;
       generation.current += 1;
       clearTimeout(timer.current);
@@ -254,23 +264,37 @@ export default function CapabilityRequestPanel(
   }, [load, hosted]);
 
   const onDecide = useCallback(async (id: string, approve: boolean, reason: string) => {
-    const resp = await fetch(`/api/capability-requests/${id}/decide`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approve, reason }),
-    });
-    if (!resp.ok) {
-      throw new Error(`decision failed (${resp.status})`);
+    const current = hosted ? useStore.getState().approvalResources.capability : localRef.current;
+    const expected = current.data?.requests.filter(isCapabilityRequestView).find(row => row.id === id);
+    if (!expected) throw new Error('Capability request is no longer actionable; refresh before deciding.');
+    const inFlight = useStore.getState().capabilityDecidingIds;
+    if (inFlight.has(id)) throw new Error('Capability decision is already in progress; wait for its result.');
+    useStore.setState({ capabilityDecidingIds: new Set(inFlight).add(id) });
+    try {
+      const resp = await fetch(`/api/capability-requests/${id}/decide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approve, reason }),
+      });
+      if (!resp.ok) {
+        throw new Error(`decision failed (${resp.status})`);
+      }
+      const outcome = parseCapabilityDecision(await resp.json(), expected, approve);
+      const result = applyCapabilityDecision(localRef.current, decidedIds.current, outcome);
+      decisionRevision.current += 1;
+      decidedIds.current = result.tombstones;
+      localRef.current = result.resource;
+      if (mounted.current) setLocal(localRef.current);
+      useStore.getState().recordCapabilityDecision(outcome);
+      onDecided?.({ queue: 'capability', id, outcome });
+    } finally {
+      useStore.setState(state => {
+        const remaining = new Set(state.capabilityDecidingIds);
+        remaining.delete(id);
+        return { capabilityDecidingIds: remaining };
+      });
     }
-    decidedIds.current.add(id);
-    const previous = localRef.current;
-    localRef.current = { ...previous, data: previous.data === null ? null : {
-      requests: previous.data.requests.filter(row => row.id !== id),
-    } };
-    if (mounted.current) setLocal(localRef.current);
-    useStore.getState().recordApprovalDecision('capability', id);
-    onDecided?.({ queue: 'capability', id });
-  }, [onDecided]);
+  }, [onDecided, hosted]);
 
   const resource = hosted ? shared : local;
   const requests = resource.data?.requests.filter(isCapabilityRequestView)

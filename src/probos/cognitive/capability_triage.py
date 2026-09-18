@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
+from probos.capability_request import validate_install_payload, validate_python_install_target
+from probos.integrations.mcp_bridge.registration import register_record
 from probos.tools.protocol import ToolPermission, permission_includes
 
 if TYPE_CHECKING:
@@ -169,10 +171,18 @@ def resolve_installable_mcp_server(
             exc_info=True,
         )
         return None
-    by_id = [r for r in records if getattr(r, "id", None) == gap_target]
-    matched = by_id or [r for r in records if getattr(r, "name", None) == gap_target]
+    return _match_mcp_server(records, gap_target, disabled_only=True)
+
+
+def _match_mcp_server(
+    records: list[Any], gap_target: str, *, disabled_only: bool
+) -> Any | None:
+    by_id = [record for record in records if getattr(record, "id", None) == gap_target]
+    matched = by_id or [
+        record for record in records if getattr(record, "name", None) == gap_target
+    ]
     for rec in matched:
-        if not getattr(rec, "enabled", False):
+        if not disabled_only or not getattr(rec, "enabled", False):
             return rec
     return None
 
@@ -235,7 +245,8 @@ async def triage_and_file(
     # AD-1215: the install rung means "enable a registered MCP server". It used to
     # ask an ``extension_registry`` that no runtime ever assigned, so skill_known
     # was unconditionally False and this rung could never be selected.
-    skill_known = resolve_installable_mcp_server(mcp_server_store, gap_target) is not None
+    selected_server = resolve_installable_mcp_server(mcp_server_store, gap_target)
+    skill_known = selected_server is not None
 
     if tool_registry is None and mcp_server_store is None:
         logger.warning(
@@ -261,7 +272,11 @@ async def triage_and_file(
         # properties as one built at file time. Without it, approving a pending
         # build produced an agent with requires_consensus=False regardless of
         # what the gap actually asked for.
-        payload=_build_payload(design_context) if kind == "build" else None,
+        payload=(
+            {"install_kind": "mcp", "mcp_server_id": selected_server.id}
+            if kind == "install"
+            else _build_payload(design_context) if kind == "build" else None
+        ),
     )
     logger.info(
         "AD-854: triaged %r for %s -> %s (request %s)",
@@ -502,17 +517,12 @@ async def fulfil_install(
 ) -> CapabilityRequest | None:
     """Install what an approved ``install`` request asked for, then fulfil it.
 
-    Two targets, resolved in that order:
-
-    1. **A registered-but-disabled MCP server** (AD-1215 / #1205) — the rung's
-       actual meaning. Enabled in place via ``McpServerStore.set_enabled``, which
-       persists the flip. Selection and fulfilment now agree; before AD-1215 the
-       rung was *selected* on an extension manifest and *satisfied* by a pip
-       install of the same name, so approving one would have installed something
-       unrelated.
-    2. **A Python dependency** — delegated to ``runtime.ensure_dependency``
-       (AD-838c) with ``pre_approved=True``, because the Captain has just approved
-       this exact request and must not be asked for it a second time.
+    Typed provenance selects either the recorded MCP ID or a Python dependency.
+    MCP registration (with exact-client reuse) precedes durable enablement and
+    fulfilment. Python installs use ``ensure_dependency(pre_approved=True)``
+    independently of the MCP store. Legacy approvals only permit dependency
+    fallback when a readable or absent MCP store proves no identity collision;
+    ambiguity needs a newly typed request and fresh approval.
 
     Returns ``None`` without marking fulfilled when neither actor can satisfy the
     target or the install did not succeed.
@@ -521,32 +531,90 @@ async def fulfil_install(
     for the Captain, so unlike ``fulfil_grant`` / ``fulfil_build`` this one is
     reached from the approval path alone.
     """
-    server = resolve_installable_mcp_server(
-        getattr(runtime, "mcp_server_store", None), target
-    )
-    if server is not None:
-        enabled = await runtime.mcp_server_store.set_enabled(server.id, True)
-        if enabled is None:
+    request = await store.get(request_id)
+    if (
+        request is None
+        or request.kind != "install"
+        or request.status != "approved"
+        or request.target != target
+    ):
+        logger.warning(
+            "Install request %s is not an approved install for this target; "
+            "no installation attempted and fulfilment refused", request_id[:12],
+        )
+        return None
+    if type(target) is not str or not target.strip():
+        logger.warning(
+            "AD-1236: install request %s has an empty target; no installation "
+            "attempted and the request remains unfulfilled", request_id[:12],
+        )
+        return None
+    payload = validate_install_payload(request.payload)
+    if request.payload is not None and payload is None:
+        logger.warning(
+            "Install request %s has invalid provenance; no installation "
+            "attempted, a newly typed request requires fresh approval", request_id[:12],
+        )
+        return None
+    if payload is None or payload["install_kind"] == "mcp":
+        mcp_server_store = getattr(runtime, "mcp_server_store", None)
+        try:
+            records = mcp_server_store.list_sync() if mcp_server_store is not None else []
+        except Exception:
             logger.warning(
-                "AD-1215: enabling MCP server %r for request %s returned no record; "
-                "the approval stands, the request is not fulfilled and can be retried",
-                target, request_id[:12],
+                "MCP store unreadable for install request %s; leaving unfulfilled "
+                "without dependency installation. Legacy requests need a newly "
+                "typed request through the producer and fresh approval", request_id[:12],
             )
             return None
-        # The bridge registration that makes it callable without a restart is
-        # #1205's shared register_record() helper; until that lands the boot
-        # seed loop picks this up on the next start.
-        logger.info(
-            "AD-1215: enabled MCP server %s (%s) for approved install request %s",
-            enabled.id, enabled.name, request_id[:12],
-        )
-        return await store.mark_fulfilled(request_id)
+        if payload is None:
+            if any(record.id == target or record.name == target for record in records):
+                logger.warning(
+                    "Legacy install request %s collides with an MCP identity; "
+                    "neither action is authorized. A newly typed request through "
+                    "the producer requires fresh approval", request_id[:12],
+                )
+                return None
+        else:
+            server = next(
+                (record for record in records if record.id == payload["mcp_server_id"]),
+                None,
+            )
+            if server is None:
+                logger.warning(
+                    "Recorded MCP server for install request %s is unavailable; "
+                    "leaving approved and unfulfilled without dependency installation",
+                    request_id[:12],
+                )
+                return None
+            if not await register_record(runtime, server, require_ready=True):
+                return None
+            enabled = await mcp_server_store.set_enabled(server.id, True)
+            if enabled is None or enabled.id != server.id or not enabled.enabled:
+                logger.warning(
+                    "MCP enablement for request %s returned no enabled record; "
+                    "keeping the registered client for retry without fulfilment",
+                    request_id[:12],
+                )
+                return None
+            logger.info(
+                "MCP server %s registered and enabled for approved install request "
+                "%s; marking fulfilled", server.id, request_id[:12],
+            )
+            return await store.mark_fulfilled(request_id)
 
+    if validate_python_install_target(target) is None:
+        logger.warning(
+            "Python install request %s does not name one canonical import; "
+            "no dependency installation attempted and the approval stays unfulfilled",
+            request_id[:12],
+        )
+        return None
     ensure = getattr(runtime, "ensure_dependency", None)
     if not callable(ensure):
         logger.warning(
-            "AD-1211: cannot fulfil install request %s for %r — no registered "
-            "MCP server matched and the runtime exposes no ensure_dependency; "
+            "AD-1211: cannot fulfil install request %s for %r — no "
+            "dependency fulfiller is available via runtime.ensure_dependency; "
             "the approval is recorded but nothing was installed and any blocked "
             "work item stays blocked",
             request_id[:12], target,

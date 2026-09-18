@@ -23,17 +23,24 @@ export interface CapabilityApprovalView {
   kind: string;
   target: string;
   created_at: number;
-  rationale?: string;
-  work_item_id?: string | null;
-  status?: string;
-  decided_at?: number | null;
-  decided_by?: string;
-  decision_reason?: string;
-  payload?: Record<string, unknown> | null;
+  rationale: string;
+  work_item_id: string | null;
+  status: 'pending' | 'approved' | 'denied' | 'fulfilled' | 'failed';
+  decided_at: number | null;
+  decided_by: string;
+  decision_reason: string;
+  payload: Record<string, unknown> | null;
+  can_retry_fulfilment: boolean;
+}
+
+export interface CapabilityDecisionOutcome {
+  request: CapabilityApprovalView;
+  fulfilled: boolean;
 }
 
 export type ApprovalQueue = 'capability' | 'skill';
 export interface ApprovalPayload {
+  view?: 'actionable';
   requests: (CapabilityApprovalView | SkillRequestView)[];
 }
 

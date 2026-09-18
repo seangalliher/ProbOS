@@ -45,6 +45,8 @@ const CAPABILITY_ROW = {
   decided_at: null,
   decided_by: '',
   decision_reason: '',
+  payload: null,
+  can_retry_fulfilment: false,
 };
 
 /** Flipped by the decide POST so later polls stop re-serving the decided row. */
@@ -56,11 +58,19 @@ function okJson(body: unknown): Response {
 
 /** Routes the capability queue to one pending row; everything else is empty. */
 function approvalsFetch() {
-  return vi.fn(async (input: RequestInfo | URL) => {
+  return vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
     const url = String(input);
-    if (url.includes('/decide')) { decided = true; return okJson({ ok: true }); }
+    if (url.includes('/decide')) {
+      decided = true;
+      // The unchanged removal assertion requires real terminal decision evidence.
+      const approve = JSON.parse(String(options?.body)).approve === true;
+      return okJson({
+        request: { ...CAPABILITY_ROW, status: approve ? 'fulfilled' : 'denied', decided_at: NOW_S, decided_by: 'captain' },
+        fulfilled: approve,
+      });
+    }
     if (url.startsWith('/api/capability-requests')) {
-      return okJson({ requests: decided ? [] : [CAPABILITY_ROW] });
+      return okJson({ view: 'actionable', requests: decided ? [] : [CAPABILITY_ROW] });
     }
     if (url.startsWith('/api/skill-requests')) return okJson({ requests: [] });
     return okJson([]);
@@ -79,6 +89,9 @@ function resetApprovalState(): void {
     pendingApprovals: [],
     decidedApprovals: new Set<string>(),
     approvalRequestSeq: 0,
+    capabilityDecisionRevision: 0,
+    capabilityApprovalEpoch: 0,
+    liveRepairEpoch: 0,
     approvalAppliedSeq: { capability: 0, skill: 0 },
     approvalsCenterOpen: false,
     bridgeOpen: false,
@@ -357,7 +370,8 @@ describe('BF-724 the centre is a modal dialog', () => {
       if (String(input).startsWith('/api/skill-requests') && down) {
         return new Response(JSON.stringify({ detail: 'skill request store not available' }), { status: 503 });
       }
-      return okJson({ requests: [] });
+      return okJson(String(input).startsWith('/api/capability-requests')
+        ? { view: 'actionable', requests: [] } : { requests: [] });
     });
     vi.stubGlobal('fetch', transport);
     useStore.setState({ approvalsCenterOpen: true });

@@ -21,7 +21,8 @@ have repeated BF-744, where two routes to one outcome drifted apart.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+import re
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 if TYPE_CHECKING:
     from probos.integrations.mcp_bridge.store import McpServerRecord
@@ -53,7 +54,7 @@ async def resolve_secret_value(
     ``static`` -> the stored token; ``oauth`` -> the bundle's ``access_token``.
     Returns ``None`` (honest-degrade, warning, **no secret logged**) when there
     is no vault, no ``credential_ref``, a vault miss, or a corrupt bundle -- the
-    server then registers unauthenticated.
+    legacy registrar then registers unauthenticated; strict installation refuses.
     """
     vault = getattr(runtime, "credential_vault", None)
     if vault is None or not record.credential_ref:
@@ -72,7 +73,7 @@ async def resolve_secret_value(
         # the secret.
         logger.warning(
             "AD-1017: credential vault read FAILED for MCP server %s "
-            "(auth_kind=%s); registering unauthenticated so boot continues "
+            "(auth_kind=%s); credentials unavailable to the registrar "
             "(no secret logged)",
             record.name,
             record.auth_kind,
@@ -81,7 +82,8 @@ async def resolve_secret_value(
     if raw is None:
         logger.warning(
             "AD-1017: credential vault miss for MCP server %s (auth_kind=%s, ref "
-            "present, value absent); registering unauthenticated (no secret logged)",
+            "present, value absent); credentials unavailable to the registrar "
+            "(no secret logged)",
             record.name,
             record.auth_kind,
         )
@@ -106,6 +108,10 @@ async def resolve_auth_headers(
     if record.auth_kind == "none":
         return {}
     value = await resolve_secret_value(record, runtime)
+    return _auth_headers(record, value)
+
+
+def _auth_headers(record: McpServerRecord, value: str | None) -> dict[str, str]:
     if value is None:
         return {}
     if record.auth_kind == "oauth":
@@ -126,22 +132,119 @@ async def resolve_auth_env(
     if record.auth_kind == "none" or not record.auth_env_var:
         return {}
     value = await resolve_secret_value(record, runtime)
+    return _auth_env(record, value)
+
+
+def _auth_env(record: McpServerRecord, value: str | None) -> dict[str, str]:
     if value is None:
         return {}
     return {record.auth_env_var: value}
 
 
-async def register_record(runtime: Any, record: "McpServerRecord") -> None:
+@overload
+async def register_record(
+    runtime: Any, record: McpServerRecord, *, require_ready: Literal[True]
+) -> bool: ...
+
+
+@overload
+async def register_record(
+    runtime: Any, record: McpServerRecord, *, require_ready: Literal[False] = False
+) -> None: ...
+
+
+@overload
+async def register_record(
+    runtime: Any, record: McpServerRecord, *, require_ready: bool
+) -> bool | None: ...
+
+
+async def register_record(
+    runtime: Any, record: McpServerRecord, *, require_ready: bool = False
+) -> bool | None:
     """Put *record* on the bridge with its credentials resolved.
 
     Every path that registers a stored record goes through here, so an
     authenticated server behaves the same on boot as it does when enabled from
     the HXI. ``auth_kind=="none"`` resolves to ``{}``, making the merged
-    ``headers``/``env`` byte-identical to the AD-1015 behaviour.
+    ``headers``/``env`` byte-identical to the AD-1015 behaviour. Legacy callers
+    return None and retain duplicate precedence and credential-miss degradation.
+    Strict callers require configured credentials and exact configuration reuse
+    or a newly registered client; stdio also requires positive process liveness.
+    Mismatches and unknown liveness leave existing clients untouched.
+    HTTP success proves local client configuration, not a remote handshake or
+    acceptance of credentials. The bridge alone owns candidate cleanup.
     """
     bridge = getattr(runtime, "mcp_bridge", None)
     if bridge is None:
-        return
+        if require_ready:
+            logger.warning(
+                "AD-1236: MCP bridge unavailable; strict registration failed, "
+                "leaving the install request retryable"
+            )
+            return False
+        return None
+    if require_ready:
+        try:
+            if record.type not in ("http", "stdio") or record.auth_kind not in (
+                "none", "static", "oauth"
+            ):
+                raise ValueError("unsupported MCP registration configuration")
+            secret = None
+            if record.auth_kind != "none":
+                secret = await resolve_secret_value(record, runtime)
+                if not isinstance(secret, str) or not secret.strip() or any(
+                    character in secret for character in ("\r", "\n", "\x00")
+                ):
+                    raise ValueError("required MCP credential unavailable")
+                if record.type == "stdio":
+                    if not record.auth_env_var.strip() or any(
+                        character in record.auth_env_var
+                        for character in ("=", "\x00")
+                    ):
+                        raise ValueError("unusable MCP auth environment variable")
+                elif record.auth_kind == "static" and (not re.fullmatch(
+                    r"[!#$%&'*+.^_`|~0-9A-Za-z-]+",
+                    record.auth_header_name or "Authorization",
+                ) or any(
+                    character in record.auth_scheme
+                    for character in ("\r", "\n", "\x00")
+                )):
+                    raise ValueError("unusable MCP auth header")
+            auth_headers = _auth_headers(record, secret)
+            auth_env = _auth_env(record, secret)
+            key = record.url if record.type == "http" else record.name
+            if record.type == "http":
+                registered = bridge.register_server(
+                    record.url, headers={**record.headers, **auth_headers},
+                    reuse_if_matching=True,
+                )
+            else:
+                registered = await bridge.register_stdio_server(
+                    name=record.name,
+                    command=record.command,
+                    args=list(record.args),
+                    env={**record.env, **auth_env},
+                    cwd=record.cwd,
+                    timeout=record.timeout_seconds,
+                    reuse_if_matching=True,
+                )
+            if registered is True:
+                client = bridge.get_client(key)
+                if client is not None and (record.type == "http" or client.is_alive is True):
+                    return True
+        except Exception:
+            logger.warning(
+                "AD-1236: strict MCP registration failed; configured credentials "
+                "or client readiness unavailable, leaving the request retryable "
+                "(no exception payload logged)"
+            )
+            return False
+        logger.warning(
+            "AD-1236: MCP bridge rejected registration or exposed no ready client; "
+            "leaving the install request retryable"
+        )
+        return False
     if record.type == "http":
         auth_headers = await resolve_auth_headers(record, runtime)
         bridge.register_server(
