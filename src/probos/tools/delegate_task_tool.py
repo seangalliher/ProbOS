@@ -28,6 +28,12 @@ import logging
 import time
 from typing import Any
 
+from probos.tools.delegation_evidence import (
+    DelegatedToolResult,
+    DelegationEvidence,
+    delegation_status,
+    unobserved_delegation_evidence,
+)
 from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 
 logger = logging.getLogger(__name__)
@@ -118,7 +124,11 @@ class DelegateTaskTool:
         # "depth reached" would send the caller to fix the wrong thing.
         refusal = refuse_undeclared_params(self, params)
         if refusal is not None:
-            return refusal
+            return DelegatedToolResult(
+                output=refusal.output, error=refusal.error,
+                duration_ms=refusal.duration_ms, metadata=refusal.metadata,
+                evidence=unobserved_delegation_evidence(status="not_started"),
+            )
 
         # 1. Depth guard FIRST — refuse before constructing any nested executor
         #    so A→B→A recursion / fan-out can't blow up. The nested run carries
@@ -129,29 +139,34 @@ class DelegateTaskTool:
         except (TypeError, ValueError):
             depth = 0
         if depth >= self._max_depth:
-            return ToolResult(
+            return DelegatedToolResult(
                 output={"delegated": False, "reason": "max_delegation_depth_reached"},
                 duration_ms=(time.monotonic() - t0) * 1000.0,
+                evidence=unobserved_delegation_evidence(status="not_started"),
             )
 
         # 2. Validate inputs (honest-degrade, not an error).
         task = str((params or {}).get("task") or "").strip()
         to = str((params or {}).get("to") or "").strip()
         if not task or not to:
-            return ToolResult(
+            return DelegatedToolResult(
                 output={"delegated": False, "reason": "task_and_to_required"},
                 duration_ms=(time.monotonic() - t0) * 1000.0,
+                evidence=unobserved_delegation_evidence(status="not_started"),
             )
 
+        agent_id = None
+        thread_id = None
         try:
             # 3. Resolve the target crew agent by callsign. The callsign
             #    registry only knows crew callsigns, so a non-crew name → None.
             cs = getattr(self._runtime, "callsign_registry", None)
             resolved = cs.resolve(to) if cs is not None else None
             if not resolved:
-                return ToolResult(
+                return DelegatedToolResult(
                     output={"delegated": False, "reason": "target_not_found"},
                     duration_ms=(time.monotonic() - t0) * 1000.0,
+                    evidence=unobserved_delegation_evidence(status="not_started"),
                 )
 
             # AD-1076: do NOT gate on momentary liveness. resolve() fills
@@ -165,22 +180,25 @@ class DelegateTaskTool:
                 (a for a in agents if a.id == resolved.get("agent_id")), None,
             ) or (agents[0] if agents else None)
             if target is None:
-                return ToolResult(
+                return DelegatedToolResult(
                     output={"delegated": False, "reason": "target_not_found"},
                     duration_ms=(time.monotonic() - t0) * 1000.0,
+                    evidence=unobserved_delegation_evidence(status="not_started"),
                 )
 
             # Self-guard: an agent must not delegate to itself.
             if target.id == ctx.get("agent_id"):
-                return ToolResult(
+                return DelegatedToolResult(
                     output={"delegated": False, "reason": "target_not_found"},
                     duration_ms=(time.monotonic() - t0) * 1000.0,
+                    evidence=unobserved_delegation_evidence(status="not_started"),
                 )
 
             # 4. Supply only non-authoritative run inputs. The executor resolves
             #    department and rank from the registered target at the boundary.
             instructions = getattr(target, "instructions", "") or ""
             agent_id = target.id
+            thread_id = str(ctx.get("thread_id", "") or "")
 
             # 5. Run a nested governed executor with the parent's LLM client. The
             #    extra_context threads the incremented depth so the delegate is
@@ -193,14 +211,21 @@ class DelegateTaskTool:
                 instructions=instructions,
                 task_text=task,
                 runtime=self._runtime,
-                thread_id=str(ctx.get("thread_id", "") or ""),
+                thread_id=thread_id,
                 max_iterations=self._max_iterations,
                 tier=self._tier,
                 extra_context={"_delegation_depth": depth + 1},
             )
 
             # 6. Fold the delegate's result back to the caller.
-            return ToolResult(
+            evidence = getattr(outcome, "delegation_evidence", None)
+            if not isinstance(evidence, DelegationEvidence):
+                evidence = unobserved_delegation_evidence(
+                    status=delegation_status(getattr(outcome, "stopped_reason", None)),
+                    agent_id=agent_id, thread_id=thread_id,
+                    final_text=getattr(outcome, "final_text", "") or "",
+                )
+            return DelegatedToolResult(
                 output={
                     "delegated": True,
                     "to": resolved.get("callsign", to),
@@ -208,10 +233,16 @@ class DelegateTaskTool:
                     "stopped_reason": getattr(outcome, "stopped_reason", None),
                 },
                 duration_ms=(time.monotonic() - t0) * 1000.0,
+                evidence=evidence,
             )
         except Exception as exc:
             logger.warning(
                 "AD-1072: delegation failed for agent=%s to=%r: %s",
                 ctx.get("agent_id", "?"), to, exc, exc_info=True,
             )
-            return ToolResult(error=f"delegation_failed: {exc}")
+            return DelegatedToolResult(
+                error=f"delegation_failed: {exc}",
+                evidence=unobserved_delegation_evidence(
+                    status="failed", agent_id=agent_id, thread_id=thread_id,
+                ),
+            )

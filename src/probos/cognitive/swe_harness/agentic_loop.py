@@ -16,6 +16,7 @@ from types import CoroutineType
 from typing import Any, Callable, TYPE_CHECKING
 
 from probos.cognitive.swe_harness.tool_call import (
+    DelegatedToolCallResult,
     TextBlock,
     ToolCallRequest,
     ToolCallResult,
@@ -29,6 +30,7 @@ from probos.crew_execution_usage import (
     merge_token_sources as _token_source_label,
 )
 from probos.fault_report import canonical_tool_id, error_signature
+from probos.tools.delegation_evidence import MESSAGE_OMISSION_MARKER, evidence_frame
 from probos.tools.executor import recording_identity, tool_recording_scope
 from probos.types import LLMRequest
 
@@ -579,6 +581,37 @@ def build_assistant_tool_call_message(
     return {"role": "assistant", "content": content, "tool_calls": tool_calls}
 
 
+def format_tool_result_content(
+    result: ToolCallResult,
+    *,
+    max_chars: int = 0,
+    head_chars: int = TOOL_RESULT_HEAD_CHARS,
+    tail_chars: int = TOOL_RESULT_TAIL_CHARS,
+) -> str:
+    """Render the typed extension only at the message boundary, never in trace output."""
+    if not isinstance(result, DelegatedToolCallResult):
+        return truncate_tool_output(
+            result.output, max_chars=max_chars, head_chars=head_chars, tail_chars=tail_chars,
+        )
+    if 0 < max_chars < len(MESSAGE_OMISSION_MARKER):
+        return "!"
+    if 0 < max_chars < 2 * (len(MESSAGE_OMISSION_MARKER) + 1):
+        return MESSAGE_OMISSION_MARKER
+    frame = evidence_frame(
+        result.evidence, max_chars=max_chars // 2 if max_chars > 0 else 0,
+    )
+    if frame is None:
+        frame = MESSAGE_OMISSION_MARKER + "\n"
+    if max_chars <= 0:
+        return frame + result.output
+    remaining = max_chars - len(frame)
+    # Zero means UNBOUNDED to the legacy truncator, not an empty allowance.
+    legacy = truncate_tool_output(
+        result.output, max_chars=remaining, head_chars=head_chars, tail_chars=tail_chars,
+    ) if remaining > 0 else ""
+    return frame + legacy
+
+
 def build_tool_result_messages(
     result_blocks: list[ToolResultBlock],
     *,
@@ -600,8 +633,8 @@ def build_tool_result_messages(
         {
             "role": "tool",
             "tool_call_id": trb.result.id,
-            "content": truncate_tool_output(
-                trb.result.output,
+            "content": format_tool_result_content(
+                trb.result,
                 max_chars=max_chars,
                 head_chars=head_chars,
                 tail_chars=tail_chars,
@@ -1150,7 +1183,16 @@ class AgenticLoop:
             else:
                 tool_result_text = "\n\n".join(
                     f"[tool_result:{trb.result.id} error={trb.result.is_error}]\n"
-                    f"{self._bound_tool_output(trb.result.output)}"
+                    + (
+                        format_tool_result_content(
+                            trb.result,
+                            max_chars=self._tool_result_max_chars,
+                            head_chars=self._tool_result_head_chars,
+                            tail_chars=self._tool_result_tail_chars,
+                        )
+                        if isinstance(trb.result, DelegatedToolCallResult)
+                        else self._bound_tool_output(trb.result.output)
+                    )
                     for trb in tool_result_blocks
                 )
                 messages.append({"role": "user", "content": tool_result_text})
