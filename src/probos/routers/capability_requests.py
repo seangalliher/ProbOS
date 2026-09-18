@@ -1,6 +1,6 @@
 """ProbOS API — Capability-request decision surface (AD-857).
 
-Thin router exposing the pending capability requests filed by agents (the
+Thin router exposing pending and actionable capability requests filed by agents (the
 BLOCKED -> request -> approve/deny loop) and the Captain's decision endpoint.
 Backed by ``runtime.capability_request_store`` (AD-853). The store owns
 persistence; this router owns the pending-state guard and serialization.
@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from probos.api_models import CapabilityRequestDecideRequest
-from probos.capability_request import CapabilityRequest
+from probos.capability_request import FULFILMENT_KINDS, CapabilityRequest
 
 # AD-1211: the rung fulfillers, shared with the file-time fast path so there is
 # one description of how each kind is fulfilled. ``capability_triage`` imports
@@ -33,14 +33,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/capability-requests", tags=["capability-requests"])
 
 
-def _serialize(req: CapabilityRequest) -> dict[str, Any]:
+def _serialize(
+    req: CapabilityRequest, *, include_retry: bool = False,
+) -> dict[str, Any]:
     """Serialize a CapabilityRequest dataclass to a JSON-safe dict.
 
     The dataclass has no ``to_dict()``; the field set is built explicitly so
     the wire shape is stable and the HXI card can read ``work_item_id`` (the
     DECIDED event omits it — AD-857 correction #3).
     """
-    return {
+    result = {
         "id": req.id,
         "agent_id": req.agent_id,
         "kind": req.kind,
@@ -52,10 +54,14 @@ def _serialize(req: CapabilityRequest) -> dict[str, Any]:
         "decided_at": req.decided_at,
         "decided_by": req.decided_by,
         "decision_reason": req.decision_reason,
-        # AD-1154: the action shape for kind="action"; None for every other
-        # kind. Without it the Captain sees a bare ``target`` and nothing else.
+        # Action/build context or typed install provenance; legacy rows may be NULL.
         "payload": req.payload,
     }
+    if include_retry:
+        result["can_retry_fulfilment"] = (
+            req.status == "approved" and req.kind in FULFILMENT_KINDS
+        )
+    return result
 
 
 @router.get("")
@@ -65,9 +71,9 @@ async def list_capability_requests(
 ) -> dict[str, Any]:
     """AD-857: List capability requests (pending by default).
 
-    Only the pending view is served today; the ``status`` query param is
-    accepted for forward-compatibility but anything other than ``pending``
-    returns an empty list (no other view is built in this AD).
+    This compatibility endpoint serves only pending decisions. Any other
+    ``status`` still returns an empty list; the separate actionable endpoint
+    additionally exposes approved work awaiting fulfilment.
     """
     if not runtime.capability_request_store:
         raise HTTPException(status_code=503, detail="capability request store not available")
@@ -75,6 +81,20 @@ async def list_capability_requests(
         return {"requests": [], "status": status}
     pending = await runtime.capability_request_store.list_pending()
     return {"requests": [_serialize(r) for r in pending], "status": "pending"}
+
+
+@router.get("/actionable")
+async def list_actionable_capability_requests(
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """List pending decisions and approved work still awaiting fulfilment."""
+    if not runtime.capability_request_store:
+        raise HTTPException(status_code=503, detail="capability request store not available")
+    requests = await runtime.capability_request_store.list_actionable()
+    return {
+        "view": "actionable",
+        "requests": [_serialize(req, include_retry=True) for req in requests],
+    }
 
 
 @router.post("/{request_id}/decide")
@@ -144,7 +164,7 @@ async def decide_capability_request(
     # instance, so a successful ``mark_fulfilled`` no longer shows through it.
     current = await store.get(request_id) or decided
     return {
-        "request": _serialize(current),
+        "request": _serialize(current, include_retry=True),
         "standing_rule": standing,
         # BF-722: lets a caller tell "approved and fulfilled" from "approved,
         # fulfilment pending". The route still returns 200 when this is False:
@@ -178,7 +198,8 @@ async def decide_capability_request(
 #               is permission to carry on, so once permission is given there is
 #               nothing left to do.
 #   grant    -> issue the tool grant, then mark fulfilled.
-#   install  -> install the dependency, then mark fulfilled.
+#   install  -> install the Python dependency or register/enable the MCP server,
+#               then mark fulfilled.
 #   build    -> run the self-mod pipeline, then mark fulfilled if it produced
 #               an active agent.
 #   action   -> DELIBERATELY ABSENT. An approved action is authorised by a

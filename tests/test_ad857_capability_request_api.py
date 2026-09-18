@@ -65,6 +65,30 @@ async def test_list_non_pending_status_returns_empty(store: CapabilityRequestSto
     assert body == {"requests": [], "status": "approved"}
 
 
+async def test_actionable_api_preserves_pending_contract(store: CapabilityRequestStore) -> None:
+    pending = await store.file_request("agent", "action", "browser.navigate")
+    approved = await store.file_request("agent", "install", "numpy")
+    await store.decide(approved.id, True)
+    client = _client_for(_FakeRuntime(store))
+
+    default = client.get("/api/capability-requests").json()
+    explicit = client.get("/api/capability-requests?status=pending").json()
+    actionable = client.get("/api/capability-requests/actionable").json()
+
+    assert default == explicit
+    assert default["status"] == "pending"
+    assert [row["id"] for row in default["requests"]] == [pending.id]
+    assert "can_retry_fulfilment" not in default["requests"][0]
+    assert actionable["view"] == "actionable"
+    assert {row["id"]: row["can_retry_fulfilment"] for row in actionable["requests"]} == {
+        pending.id: False, approved.id: True,
+    }
+    for status in ("actionable", "approved", "fulfilled", "bogus"):
+        assert client.get(f"/api/capability-requests?status={status}").json() == {
+            "requests": [], "status": status,
+        }
+
+
 def test_list_without_store_returns_503() -> None:
     client = _client_for(_FakeRuntime(None))
 
@@ -86,6 +110,7 @@ async def test_decide_approve_updates_status(store: CapabilityRequestStore) -> N
     decided = resp.json()["request"]
     assert decided["status"] == "approved"
     assert decided["decided_by"] == "captain"
+    assert decided["can_retry_fulfilment"] is True
 
 
 async def test_decide_deny_records_reason(store: CapabilityRequestStore) -> None:
@@ -101,6 +126,7 @@ async def test_decide_deny_records_reason(store: CapabilityRequestStore) -> None
     decided = resp.json()["request"]
     assert decided["status"] == "denied"
     assert decided["decision_reason"] == "too broad"
+    assert decided["can_retry_fulfilment"] is False
 
 
 async def test_decide_deny_without_reason_is_422(store: CapabilityRequestStore) -> None:
@@ -165,6 +191,24 @@ async def test_decide_already_approved_retries_fulfilment_with_200(
     # ``install`` has no fulfiller, so the honest answer is "not fulfilled".
     assert body["fulfilled"] is False
     assert body["request"]["status"] == "approved"
+    assert body["request"]["can_retry_fulfilment"] is True
+
+
+async def test_decide_action_has_no_retry_eligibility(store: CapabilityRequestStore) -> None:
+    req = await store.file_request("agent", "action", "browser.navigate")
+    client = _client_for(_FakeRuntime(store))
+
+    response = client.post(
+        f"/api/capability-requests/{req.id}/decide", json={"approve": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["request"]["status"] == "approved"
+    assert response.json()["request"]["can_retry_fulfilment"] is False
+    assert response.json()["fulfilled"] is False
+    assert client.get("/api/capability-requests/actionable").json() == {
+        "view": "actionable", "requests": [],
+    }
 
 
 async def test_decide_already_approved_then_denied_is_400(

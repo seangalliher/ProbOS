@@ -14,11 +14,12 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
 import CapabilityRequestPanel from '../components/capability/CapabilityRequestPanel';
 import SkillRequestPanel from '../components/skill/SkillRequestPanel';
+import type { CapabilityApprovalView } from '../store/types';
 
 /** Must match POLL_INTERVAL_MS in both panels. */
 const POLL_MS = 10000;
 
-const CAPABILITY_REQUEST = {
+const CAPABILITY_REQUEST: CapabilityApprovalView = {
   id: 'req-filed-after-mount',
   agent_id: 'agent-1',
   kind: 'continue',
@@ -30,6 +31,8 @@ const CAPABILITY_REQUEST = {
   decided_at: null,
   decided_by: '',
   decision_reason: '',
+  payload: null,
+  can_retry_fulfilment: false,
 };
 
 const SKILL_REQUEST = {
@@ -54,11 +57,14 @@ function okJson(body: unknown) {
 }
 
 /** Empty first, then one pending request — a request filed after mount. */
-function filedAfterMount(request: unknown) {
+function filedAfterMount(request: unknown, view?: 'actionable') {
   let calls = 0;
   return vi.fn(async () => {
     calls += 1;
-    return okJson({ requests: calls === 1 ? [] : [request] });
+    return okJson({
+      ...(view ? { view } : {}),
+      requests: calls === 1 ? [] : [request],
+    });
   });
 }
 
@@ -79,12 +85,17 @@ describe('approval panel polling (BF-710)', () => {
   });
 
   it('capability panel shows a request filed after mount on the next poll', async () => {
-    const fetchMock = filedAfterMount(CAPABILITY_REQUEST);
+    // Capability reads require this discriminator; without it, polling exercises failure backoff.
+    const fetchMock = filedAfterMount(CAPABILITY_REQUEST, 'actionable');
     vi.stubGlobal('fetch', fetchMock);
 
     render(<CapabilityRequestPanel />);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/capability-requests/actionable',
+      expect.anything(),
+    );
     expect(screen.queryByTestId('capability-request-card')).toBeNull();
 
     await tick(POLL_MS);
@@ -112,7 +123,7 @@ describe('approval panel polling (BF-710)', () => {
   });
 
   it('capability panel clears its interval on unmount', async () => {
-    const fetchMock = vi.fn(async () => okJson({ requests: [] }));
+    const fetchMock = vi.fn(async () => okJson({ view: 'actionable', requests: [] }));
     vi.stubGlobal('fetch', fetchMock);
 
     const view = render(<CapabilityRequestPanel />);
@@ -142,7 +153,8 @@ describe('approval panel polling (BF-710)', () => {
     /* BF-710: an unstable effect dependency would re-arm the interval on every
      * render and turn a poll into a fetch storm. Three intervals => four calls
      * (the mount call plus one per interval). */
-    const fetchMock = vi.fn(async () => okJson({ requests: [CAPABILITY_REQUEST] }));
+    const fetchMock = vi.fn(async () =>
+      okJson({ view: 'actionable', requests: [CAPABILITY_REQUEST] }));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<CapabilityRequestPanel />);
@@ -171,7 +183,7 @@ describe('approval panel polling (BF-710)', () => {
 
   it('both panels report successful empty reads without rendering request cards', async () => {
     const capabilityFetch = vi.fn(async () =>
-      new Response(JSON.stringify({ requests: [] }), { status: 200 }));
+      new Response(JSON.stringify({ view: 'actionable', requests: [] }), { status: 200 }));
     vi.stubGlobal('fetch', capabilityFetch);
     const skillFetch = vi.fn(async () =>
       new Response(JSON.stringify({ requests: [] }), { status: 200 }));

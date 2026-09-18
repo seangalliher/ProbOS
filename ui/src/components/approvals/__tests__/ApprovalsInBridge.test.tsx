@@ -42,6 +42,8 @@ const CAPABILITY_ROW = {
   decided_at: null,
   decided_by: '',
   decision_reason: '',
+  payload: null,
+  can_retry_fulfilment: false,
 };
 
 const SKILL_ROW = {
@@ -65,11 +67,15 @@ function okJson(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
+function capabilityJson(requests: unknown[]): Response {
+  return okJson({ view: 'actionable', requests });
+}
+
 /** Routes each approvals endpoint to its own rows; everything else is empty. */
 function approvalsFetch(capability: unknown[], skill: unknown[]) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.startsWith('/api/capability-requests')) return okJson({ requests: capability });
+    if (url.startsWith('/api/capability-requests')) return capabilityJson(capability);
     if (url.startsWith('/api/skill-requests')) return okJson({ requests: skill });
     return okJson([]);
   });
@@ -92,6 +98,9 @@ function resetBridgeState() {
     approvalControllers: { capability: null, skill: null },
     approvalIssuedSeq: { capability: 0, skill: 0 },
     approvalRequestSeq: 0,
+    capabilityDecisionRevision: 0,
+    capabilityApprovalEpoch: 0,
+    liveRepairEpoch: 0,
     approvalAppliedSeq: { capability: 0, skill: 0 },
     decidedApprovals: new Set<string>(),
     pendingApprovals: [],
@@ -130,6 +139,49 @@ afterEach(() => {
 });
 
 describe('AD-1201 Bridge APPROVALS section', () => {
+  it('keeps the Bridge row and badge through failed fulfilment and removes them after explicit retry', async () => {
+    let status = 'pending';
+    let posts = 0;
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
+      if (options?.method === 'POST') {
+        posts += 1;
+        status = posts === 1 ? 'approved' : 'fulfilled';
+        return okJson({
+          request: { ...CAPABILITY_ROW, status, decided_at: NOW_S, decided_by: 'captain', can_retry_fulfilment: status === 'approved' },
+          fulfilled: status === 'fulfilled',
+        });
+      }
+      if (String(input).startsWith('/api/capability-requests')) {
+        return capabilityJson(status === 'fulfilled' ? [] : [{
+          ...CAPABILITY_ROW, status, can_retry_fulfilment: status === 'approved',
+          decided_at: status === 'approved' ? NOW_S : null,
+          decided_by: status === 'approved' ? 'captain' : '',
+        }]);
+      }
+      return String(input).startsWith('/api/skill-requests') ? okJson({ requests: [] }) : okJson([]);
+    });
+    vi.stubGlobal('fetch', transport);
+    render(<><IntentSurface /><ApprovalsCenterPanel /></>);
+    await waitFor(() => expect(useStore.getState().pendingApprovals).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: /^BRIDGE/ }));
+    const row = await screen.findByTestId('bridge-approval-row');
+    fireEvent.click(row);
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    await screen.findByRole('button', { name: 'Retry fulfilment' });
+    expect(screen.getByTestId('bridge-approval-row')).toHaveTextContent('Approved - awaiting fulfilment');
+    expect(screen.getByRole('button', { name: /^BRIDGE/ })).toHaveTextContent('1');
+    expect(useStore.getState().decidedApprovals.size).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Close Approvals' }));
+    fireEvent.click(screen.getByTestId('bridge-approval-row'));
+    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
+    expect(posts).toBe(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry fulfilment' }));
+    await waitFor(() => expect(useStore.getState().pendingApprovals).toEqual([]));
+    expect(screen.queryByTestId('bridge-approval-row')).toBeNull();
+    expect(screen.getByRole('button', { name: /^BRIDGE/ })).not.toHaveTextContent('1');
+    expect(posts).toBe(2);
+  });
+
   it('renders the section with a count when requests are pending', async () => {
     await mountBridge([CAPABILITY_ROW], [SKILL_ROW]);
 
@@ -263,8 +315,12 @@ describe('AD-1201 expand opens the approvals centre', () => {
     let pending: unknown[] = [CAPABILITY_ROW];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes('/decide')) { pending = []; return okJson({ ok: true }); }
-      if (url.startsWith('/api/capability-requests')) return okJson({ requests: pending });
+      if (url.includes('/decide')) {
+        pending = [];
+        // Complete terminal evidence replaces the old success-only fixture.
+        return okJson({ request: { ...CAPABILITY_ROW, status: 'fulfilled', decided_at: NOW_S, decided_by: 'captain' }, fulfilled: true });
+      }
+      if (url.startsWith('/api/capability-requests')) return capabilityJson(pending);
       if (url.startsWith('/api/skill-requests')) return okJson({ requests: [] });
       return okJson([]);
     });
@@ -383,7 +439,7 @@ describe('AD-1201 the approvals poll', () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith('/api/skill-requests')) throw new Error('skills down');
-      if (url.startsWith('/api/capability-requests')) return okJson({ requests: [CAPABILITY_ROW] });
+      if (url.startsWith('/api/capability-requests')) return capabilityJson([CAPABILITY_ROW]);
       return okJson([]);
     });
 
@@ -408,7 +464,7 @@ describe('issue #1368 shared approval availability', () => {
     const transport = vi.fn<typeof fetch>().mockImplementation(async input => {
       const url = String(input);
       if (url.startsWith('/api/skill-requests')) return down ? unavailable() : okJson({ requests: [SKILL_ROW], status: 'pending' });
-      if (url.startsWith('/api/capability-requests')) return okJson({ requests: [] });
+      if (url.startsWith('/api/capability-requests')) return capabilityJson([]);
       return okJson([]);
     });
     vi.stubGlobal('fetch', transport);
@@ -432,7 +488,7 @@ describe('issue #1368 shared approval availability', () => {
     let down = false;
     const transport = vi.fn<typeof fetch>().mockImplementation(async input => {
       if (String(input).startsWith('/api/skill-requests')) return down ? unavailable() : okJson({ requests: [SKILL_ROW] });
-      if (String(input).startsWith('/api/capability-requests')) return okJson({ requests: [] });
+      if (String(input).startsWith('/api/capability-requests')) return capabilityJson([]);
       return okJson([]);
     });
     vi.stubGlobal('fetch', transport);
@@ -451,7 +507,7 @@ describe('issue #1368 shared approval availability', () => {
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async input => {
       if (String(input).startsWith('/api/skill-requests')) return denied
         ? okJson({ detail: 'denied' }, httpStatus) : okJson({ requests: [SKILL_ROW] });
-      if (String(input).startsWith('/api/capability-requests')) return okJson({ requests: [] });
+      if (String(input).startsWith('/api/capability-requests')) return capabilityJson([]);
       return okJson([]);
     }));
     useStore.setState({ approvalsCenterOpen: true });
@@ -476,7 +532,7 @@ describe('issue #1368 shared approval availability', () => {
         return new Promise<Response>(resolve => { release = resolve; });
       }
       if (String(input).startsWith('/api/skill-requests')) return Promise.resolve(okJson({ requests: [SKILL_ROW] }));
-      if (String(input).startsWith('/api/capability-requests')) return Promise.resolve(okJson({ requests: [] }));
+      if (String(input).startsWith('/api/capability-requests')) return Promise.resolve(capabilityJson([]));
       return Promise.resolve(okJson([]));
     });
     vi.stubGlobal('fetch', transport);
@@ -496,7 +552,7 @@ describe('issue #1368 shared approval availability', () => {
     let denied = false;
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async input => {
       if (String(input).startsWith('/api/capability-requests')) return denied
-        ? okJson({ detail: 'denied' }, httpStatus) : okJson({ requests: [CAPABILITY_ROW] });
+        ? okJson({ detail: 'denied' }, httpStatus) : capabilityJson([CAPABILITY_ROW]);
       return okJson({ requests: [] });
     }));
     useStore.setState({ approvalsCenterOpen: true });
@@ -526,7 +582,8 @@ describe('issue #1368 independent Bridge retry ownership', () => {
         : String(input).startsWith('/api/capability-requests') ? 'capability' : null;
       if (!queue) return okJson([]);
       calls[queue] += 1;
-      return down && queue === failedQueue ? okJson({ detail: 'queue unavailable' }, 503) : okJson({ requests: [] });
+      return down && queue === failedQueue ? okJson({ detail: 'queue unavailable' }, 503)
+        : queue === 'capability' ? capabilityJson([]) : okJson({ requests: [] });
     });
     vi.stubGlobal('fetch', transport);
     const view = render(<BridgePanel open={false} onClose={() => {}} />);
@@ -566,7 +623,7 @@ describe('issue #1368 independent Bridge retry ownership', () => {
       }
       if (String(input).startsWith('/api/capability-requests')) {
         calls.capability += 1;
-        return okJson({ requests: [] });
+        return capabilityJson([]);
       }
       return okJson([]);
     }));
@@ -588,7 +645,7 @@ describe('issue #1368 independent Bridge retry ownership', () => {
       }
       if (String(input).startsWith('/api/capability-requests')) {
         capabilityCalls += 1;
-        return Promise.resolve(okJson({ requests: [CAPABILITY_ROW] }));
+        return Promise.resolve(capabilityJson([CAPABILITY_ROW]));
       }
       return Promise.resolve(okJson([]));
     });
@@ -637,7 +694,7 @@ describe('issue #1368 independent Bridge retry ownership', () => {
         }
         return Promise.resolve(okJson({ requests: skillReads > 2 ? [SKILL_ROW] : [] }));
       }
-      if (String(input).startsWith('/api/capability-requests')) return Promise.resolve(okJson({ requests: [] }));
+      if (String(input).startsWith('/api/capability-requests')) return Promise.resolve(capabilityJson([]));
       return Promise.resolve(okJson([]));
     }));
     render(<><BridgePanel open={false} onClose={() => {}} /><ApprovalsCenterPanel /></>);

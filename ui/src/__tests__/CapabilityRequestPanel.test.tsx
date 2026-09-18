@@ -8,8 +8,12 @@ import { ApprovalsCenterPanel } from '../components/approvals/ApprovalsCenterPan
 import { BridgePanel } from '../components/BridgePanel';
 import { useStore, isCapabilityRequestView, isApprovalPayload } from '../store/useStore';
 import { RESOURCE_TIMEOUT_MS } from '../utils/resourceState';
+import type { CapabilityApprovalView, CapabilityDecisionOutcome } from '../store/types';
+import { applyCapabilityDecision, parseCapabilityDecision } from '../store/capabilityApprovals';
+import { idleResource } from '../utils/resourceState';
 
-const PENDING = {
+const PENDING: { view: 'actionable'; requests: CapabilityApprovalView[] } = {
+  view: 'actionable',
   requests: [
     {
       id: 'req-1',
@@ -24,6 +28,7 @@ const PENDING = {
       decided_by: '',
       decision_reason: '',
       payload: null,
+      can_retry_fulfilment: false,
     },
   ],
 };
@@ -31,6 +36,7 @@ const PENDING = {
 describe('CapabilityRequestPanel (AD-857)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    resetApprovals();
   });
   afterEach(() => {
     cleanup();
@@ -59,7 +65,8 @@ describe('CapabilityRequestPanel (AD-857)', () => {
   it('approve_click_posts_to_decide_endpoint', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => PENDING })
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ request: {} }) });
+      // The endpoint returns durable fulfilment evidence, not an empty request.
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => decision('fulfilled') });
     vi.stubGlobal('fetch', fetchMock);
 
     render(<CapabilityRequestPanel />);
@@ -84,6 +91,18 @@ function response(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), { status });
 }
 
+function decision(
+  status: 'approved' | 'fulfilled' | 'denied', row = PENDING.requests[0],
+): CapabilityDecisionOutcome {
+  return {
+    request: {
+      ...row, status, decided_at: 2, decided_by: 'captain',
+      can_retry_fulfilment: status === 'approved' && row.kind !== 'action',
+    },
+    fulfilled: status === 'fulfilled',
+  };
+}
+
 function deferredResponse(): { promise: Promise<Response>; resolve: (value: Response) => void } {
   let resolve!: (value: Response) => void;
   const promise = new Promise<Response>(complete => { resolve = complete; });
@@ -100,6 +119,9 @@ function resetApprovals(): void {
     approvalIssuedSeq: { capability: 0, skill: 0 },
     approvalAppliedSeq: { capability: 0, skill: 0 },
     approvalRequestSeq: 0,
+    capabilityDecisionRevision: 0,
+    capabilityApprovalEpoch: 0,
+    liveRepairEpoch: 0,
     decidedApprovals: new Set<string>(),
     pendingApprovals: [],
     approvalsCenterOpen: false,
@@ -152,7 +174,7 @@ describe('issue #1368 capability resource lifecycle', () => {
   });
 
   it('shows genuine empty and retains healthy ten-second polling', async () => {
-    const transport = vi.fn<typeof fetch>().mockImplementation(async () => response({ requests: [] }));
+    const transport = vi.fn<typeof fetch>().mockImplementation(async () => response({ view: 'actionable', requests: [] }));
     vi.stubGlobal('fetch', transport);
     render(<CapabilityRequestPanel />);
     await tick();
@@ -249,7 +271,7 @@ describe('issue #1368 capability resource lifecycle', () => {
   it('ignores an older read after a newer manual refresh', async () => {
     const late = deferredResponse();
     const transport = vi.fn<typeof fetch>().mockReturnValueOnce(late.promise)
-      .mockResolvedValueOnce(response({ requests: [] }));
+      .mockResolvedValueOnce(response({ view: 'actionable', requests: [] }));
     vi.stubGlobal('fetch', transport);
     render(<CapabilityRequestPanel />);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh capability requests' }));
@@ -290,10 +312,11 @@ describe('issue #1368 capability resource lifecycle', () => {
     expect(capabilityCalls()).toBe(5);
   });
 
-  it.each([false, true])('removes central and panel rows with both queues failing (hosted=%s)', async hosted => {
+  it.each([false, true])('retains approved unfulfilled central and panel rows with both queues failing (hosted=%s)', async hosted => {
     let down = false;
     const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
-      if (options?.method === 'POST') { down = true; return response({ fulfilled: false }); }
+      // This previously pinned removal on fulfilled=false, hiding the only retry.
+      if (options?.method === 'POST') { down = true; return response(decision('approved')); }
       if (down) return response({ detail: 'unavailable' }, 503);
       return response(String(input).startsWith('/api/capability-requests') ? PENDING : { requests: [] });
     });
@@ -307,11 +330,15 @@ describe('issue #1368 capability resource lifecycle', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'decision reason' }), { target: { value: '  approved scope  ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await tick();
-    expect(decided).toHaveBeenCalledExactlyOnceWith({ queue: 'capability', id: 'req-1' });
-    expect(useStore.getState().pendingApprovals).toEqual([]);
+    expect(decided).toHaveBeenCalledExactlyOnceWith({ queue: 'capability', id: 'req-1', outcome: decision('approved') });
+    expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual(['req-1']);
     expect(useStore.getState().approvalResources.capability.status).toBe('unavailable');
     expect(useStore.getState().approvalResources.skill.status).toBe('unavailable');
-    expect(screen.queryByTestId('capability-request-card')).toBeNull();
+    expect(screen.getByTestId('capability-request-card')).toHaveTextContent('Approved - awaiting fulfilment');
+    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'decision reason' })).toBeNull();
+    expect(useStore.getState().decidedApprovals.size).toBe(0);
     const mutations = transport.mock.calls.filter(([, options]) => options?.method === 'POST');
     expect(mutations).toHaveLength(1);
     expect(JSON.parse(String(mutations[0][1]?.body))).toEqual({ approve: true, reason: 'approved scope' });
@@ -320,7 +347,8 @@ describe('issue #1368 capability resource lifecycle', () => {
   it('decides through the actual approvals center even when both subsequent queue reads fail', async () => {
     let down = false;
     const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
-      if (options?.method === 'POST') { down = true; return response({ fulfilled: false }); }
+      // HTTP 200 with unfulfilled work must retain the centre's actionable row.
+      if (options?.method === 'POST') { down = true; return response(decision('approved')); }
       if (down) return response({ detail: 'unavailable' }, 503);
       return response(String(input).startsWith('/api/capability-requests') ? PENDING : { requests: [] });
     });
@@ -331,10 +359,10 @@ describe('issue #1368 capability resource lifecycle', () => {
     expect(useStore.getState().pendingApprovals).toHaveLength(1);
     fireEvent.click(within(screen.getByTestId('capability-request-card')).getByRole('button', { name: 'Approve' }));
     await tick();
-    expect(useStore.getState().pendingApprovals).toEqual([]);
+    expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual(['req-1']);
     expect(useStore.getState().approvalResources.capability.status).toBe('unavailable');
     expect(useStore.getState().approvalResources.skill.status).toBe('unavailable');
-    expect(screen.queryByTestId('capability-request-card')).toBeNull();
+    expect(screen.getByTestId('capability-request-card')).toHaveTextContent('Approved - awaiting fulfilment');
     expect(screen.queryByTestId('approvals-center-empty')).toBeNull();
     expect(transport.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
   });
@@ -358,11 +386,12 @@ describe('issue #1368 capability resource lifecycle', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.each([false, true])('blocks a pre-decision pending response from resurrecting a row (hosted=%s)', async hosted => {
+  it.each([false, true])('blocks a pre-decision pending response from downgrading an approval (hosted=%s)', async hosted => {
     const late = deferredResponse();
     let defer = false;
     const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
-      if (options?.method === 'POST') return response({ fulfilled: false });
+      // The former removal assertion encoded the unfulfilled-as-terminal defect.
+      if (options?.method === 'POST') return response(decision('approved'));
       if (!String(input).startsWith('/api/capability-requests')) return response({ requests: [] });
       return defer ? late.promise : response(PENDING);
     });
@@ -378,13 +407,13 @@ describe('issue #1368 capability resource lifecycle', () => {
     expect(transport.mock.calls.length).toBe(before + 1);
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await tick();
-    expect(useStore.getState().pendingApprovals).toEqual([]);
-    expect(screen.queryByTestId('capability-request-card')).toBeNull();
+    expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual(['req-1']);
+    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
     await act(async () => { late.resolve(response(PENDING)); });
     await tick();
-    expect(screen.queryByTestId('capability-request-card')).toBeNull();
-    expect(useStore.getState().pendingApprovals).toEqual([]);
-    expect(useStore.getState().decidedApprovals.size).toBe(1);
+    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
+    expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual(['req-1']);
+    expect(useStore.getState().decidedApprovals.size).toBe(0);
   });
 
   it('requires a denial reason and never automatically retries a failed POST', async () => {
@@ -409,7 +438,7 @@ describe('issue #1368 capability resource lifecycle', () => {
 
   it('accepts numeric serializer fields and preserves an action payload unchanged', async () => {
     const row = { ...PENDING.requests[0], kind: 'action', payload: { tool: 'browser', arguments: { url: 'https://example.org' } } };
-    const payload = { requests: [row], status: 'pending' };
+    const payload = { view: 'actionable', requests: [row] };
     expect(isCapabilityRequestView(row)).toBe(true);
     expect(isApprovalPayload('capability', payload)).toBe(true);
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async input => response(
@@ -427,9 +456,249 @@ describe('issue #1368 capability resource lifecycle', () => {
     expect(isCapabilityRequestView(value)).toBe(false);
   });
 
-  it('accepts the minimal compatible row and nullable optional serializer fields', () => {
-    expect(isCapabilityRequestView({ id: 'minimal', agent_id: 'agent', kind: 'install', target: 'numpy', created_at: 1 })).toBe(true);
+  it('requires actionable decision evidence and accepts nullable serializer fields', () => {
+    // Pending-only minimal rows cannot establish whether fulfilment is retryable.
+    expect(isCapabilityRequestView({ id: 'minimal', agent_id: 'agent', kind: 'install', target: 'numpy', created_at: 1 })).toBe(false);
     expect(isCapabilityRequestView(PENDING.requests[0])).toBe(true);
-    expect(isApprovalPayload('capability', { requests: [] })).toBe(true);
+    expect(isApprovalPayload('capability', { requests: [] })).toBe(false);
+    expect(isApprovalPayload('capability', { view: 'actionable', requests: [] })).toBe(true);
+  });
+
+  it.each([false, true])('reloads approved work after remount and explicitly retries once (hosted=%s)', async hosted => {
+    let row = PENDING.requests[0];
+    let fulfilled = false;
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
+      if (options?.method === 'POST') {
+        const status = row.status === 'pending' ? 'approved' : 'fulfilled';
+        const result = decision(status, row);
+        row = result.request;
+        fulfilled = result.fulfilled;
+        return response(result);
+      }
+      return response(String(input).startsWith('/api/capability-requests')
+        ? { view: 'actionable', requests: fulfilled ? [] : [row] } : { requests: [] });
+    });
+    vi.stubGlobal('fetch', transport);
+    await useStore.getState().refreshPendingApprovals();
+    let view = render(<CapabilityRequestPanel hosted={hosted} />);
+    await tick();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await tick();
+    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
+    view.unmount();
+    resetApprovals();
+    await useStore.getState().refreshPendingApprovals();
+    view = render(<CapabilityRequestPanel hosted={hosted} />);
+    await tick();
+    expect(screen.getByTestId('capability-request-card')).toHaveTextContent('Approved - awaiting fulfilment');
+    expect(transport.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry fulfilment' }));
+    await tick();
+    expect(screen.queryByTestId('capability-request-card')).toBeNull();
+    expect(useStore.getState().pendingApprovals).toEqual([]);
+    expect(useStore.getState().decidedApprovals.has('capability\u0000req-1')).toBe(true);
+    const posts = transport.mock.calls.filter(([, options]) => options?.method === 'POST');
+    expect(posts).toHaveLength(2);
+    expect(JSON.parse(String(posts[1][1]?.body))).toEqual({ approve: true, reason: '' });
+    view.unmount();
+  });
+
+  it.each([false, true])('removes terminal outcomes even when the next reads fail (hosted=%s)', async hosted => {
+    for (const status of ['fulfilled', 'denied', 'action'] as const) {
+      resetApprovals();
+      const row = status === 'action' ? { ...PENDING.requests[0], kind: 'action' } : PENDING.requests[0];
+      let down = false;
+      const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
+        if (options?.method === 'POST') {
+          down = true;
+          return response(decision(status === 'action' ? 'approved' : status, row));
+        }
+        if (down) return response({}, 503);
+        return response(String(input).startsWith('/api/capability-requests')
+          ? { view: 'actionable', requests: [row] } : { requests: [] });
+      });
+      vi.stubGlobal('fetch', transport);
+      await useStore.getState().refreshPendingApprovals();
+      const view = render(<CapabilityRequestPanel hosted={hosted} onDecided={() => {
+        void useStore.getState().refreshPendingApprovals();
+      }} />);
+      await tick();
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'not authorized' } });
+      fireEvent.click(screen.getByRole('button', { name: status === 'denied' ? 'Deny' : 'Approve' }));
+      await tick();
+      expect(screen.queryByTestId('capability-request-card')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry fulfilment' })).toBeNull();
+      expect(useStore.getState().pendingApprovals).toEqual([]);
+      expect(useStore.getState().decidedApprovals.has('capability\u0000req-1')).toBe(true);
+      expect(useStore.getState().approvalResources.capability.status).toBe('unavailable');
+      view.unmount();
+    }
+  });
+
+  it.each([false, true])('rejects malformed or mismatched decisions without hiding work (hosted=%s)', async hosted => {
+    const valid = decision('approved');
+    const badBodies: unknown[] = [
+      null, {}, { ok: true }, { request: {} }, { fulfilled: false },
+      { ...valid, fulfilled: undefined }, { ...valid, fulfilled: 'false' },
+      { ...valid, request: { ...valid.request, id: 'other' } },
+      { ...valid, request: { ...valid.request, kind: 'build' } },
+      { ...valid, request: { ...valid.request, agent_id: 'other' } },
+      { ...valid, request: { ...valid.request, target: 'other' } },
+      { ...valid, request: { ...valid.request, work_item_id: null } },
+      { ...valid, request: { ...valid.request, created_at: 99 } },
+      { ...valid, request: { ...valid.request, can_retry_fulfilment: false } },
+      { ...valid, request: { ...valid.request, decided_at: null } },
+      { ...valid, request: { ...valid.request, decided_by: '' } },
+      { ...valid, request: PENDING.requests[0] }, { ...valid, fulfilled: true },
+      decision('denied'), { ...decision('fulfilled'), fulfilled: false },
+    ];
+    const transport = vi.fn<typeof fetch>().mockImplementation(async input => response(
+      String(input).startsWith('/api/capability-requests') ? PENDING : { requests: [] }));
+    vi.stubGlobal('fetch', transport);
+    await useStore.getState().refreshPendingApprovals();
+    render(<CapabilityRequestPanel hosted={hosted} />);
+    await tick();
+    for (const payload of badBodies) {
+      transport.mockImplementation(async (_input, options) => response(options?.method === 'POST' ? payload : PENDING));
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+      await tick();
+      expect(screen.getByRole('alert')).toHaveTextContent(/capability decision response/);
+      expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
+      expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual(['req-1']);
+      expect(useStore.getState().decidedApprovals.size).toBe(0);
+    }
+    transport.mockImplementation(async () => new Response('{', { status: 200 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await tick();
+    expect(screen.getByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
+  });
+
+  it.each([false, true])('preserves an approval across a pre-decision empty read, then accepts a fresh empty read (hosted=%s)', async hosted => {
+    const late = deferredResponse();
+    let defer = false;
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
+      if (options?.method === 'POST') return response(decision('approved'));
+      if (!String(input).startsWith('/api/capability-requests')) return response({ requests: [] });
+      return defer ? late.promise : response(PENDING);
+    });
+    vi.stubGlobal('fetch', transport);
+    await useStore.getState().refreshPendingApprovals();
+    render(<CapabilityRequestPanel hosted={hosted} />);
+    await tick();
+    defer = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh capability requests' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await tick();
+    await act(async () => { late.resolve(response({ view: 'actionable', requests: [] })); });
+    await tick();
+    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
+    transport.mockImplementation(async () => response({ view: 'actionable', requests: [] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh capability requests' }));
+    await tick();
+    expect(screen.queryByTestId('capability-request-card')).toBeNull();
+  });
+
+  it.each([false, true])('does not resurrect completed work from a delayed approval response (hosted=%s)', async hosted => {
+    const late = deferredResponse();
+    let completed = false;
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
+      if (options?.method === 'POST') return late.promise;
+      return response(String(input).startsWith('/api/capability-requests')
+        ? { view: 'actionable', requests: completed ? [] : PENDING.requests } : { requests: [] });
+    });
+    vi.stubGlobal('fetch', transport);
+    await useStore.getState().refreshPendingApprovals();
+    render(<CapabilityRequestPanel hosted={hosted} />);
+    await tick();
+    const button = screen.getByRole('button', { name: 'Approve' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(transport.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
+    completed = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh capability requests' }));
+    await tick();
+    expect(screen.queryByTestId('capability-request-card')).toBeNull();
+    await act(async () => { late.resolve(response(decision('approved'))); });
+    await tick();
+    expect(screen.queryByTestId('capability-request-card')).toBeNull();
+    if (hosted) expect(useStore.getState().pendingApprovals).toEqual([]);
+  });
+
+  it.each([false, true])('prevents another POST across remount while a decision is in flight (hosted=%s)', async hosted => {
+    const late = deferredResponse();
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
+      if (options?.method === 'POST') return late.promise;
+      return response(String(input).startsWith('/api/capability-requests') ? PENDING : { requests: [] });
+    });
+    vi.stubGlobal('fetch', transport);
+    await useStore.getState().refreshPendingApprovals();
+    const first = render(<CapabilityRequestPanel hosted={hosted} />);
+    await tick();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(useStore.getState().capabilityDecidingIds.has('req-1')).toBe(true);
+    first.unmount();
+    render(<CapabilityRequestPanel hosted={hosted} />);
+    await tick();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(transport.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
+    await act(async () => { late.resolve(response({}, 503)); });
+    await tick();
+    expect(useStore.getState().capabilityDecidingIds.size).toBe(0);
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
+  });
+
+  it.each([false, true])('replaces an in-flight read after accepted capability events and repairs (hosted=%s)', async hosted => {
+    const late = deferredResponse();
+    let reads = 0;
+    const transport = vi.fn<typeof fetch>().mockImplementation(async input => {
+      if (!String(input).startsWith('/api/capability-requests')) return response({ requests: [] });
+      reads += 1;
+      return reads === 1 ? late.promise : response({
+        view: 'actionable', requests: [decision('approved').request],
+      });
+    });
+    vi.stubGlobal('fetch', transport);
+    useStore.setState({ liveGeneration: 'a'.repeat(32), liveSequence: 0 });
+    if (hosted) render(<BridgePanel open={false} onClose={() => {}} />);
+    render(<CapabilityRequestPanel hosted={hosted} />);
+    await tick();
+    expect(reads).toBe(1);
+    act(() => useStore.getState().handleEvent({
+      type: 'capability_request_decided', data: { id: 'req-1', status: 'approved' }, timestamp: 2,
+      stream: { generation: 'a'.repeat(32), sequence: 1 },
+    }));
+    await tick();
+    expect(reads).toBe(2);
+    expect(transport.mock.calls.find(([url]) => String(url).startsWith('/api/capability-requests'))?.[1]?.signal?.aborted).toBe(true);
+    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
+    await act(async () => { late.resolve(response(PENDING)); });
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    act(() => { useStore.setState({ liveRepairEpoch: 1 }); });
+    await tick();
+    expect(reads).toBe(3);
+    expect(transport.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('rejects non-actionable rows, inconsistent retry flags and duplicate identities', () => {
+    for (const row of [
+      decision('fulfilled').request, decision('denied').request,
+      decision('approved', { ...PENDING.requests[0], kind: 'action' }).request,
+      { ...PENDING.requests[0], can_retry_fulfilment: true },
+      { ...PENDING.requests[0], status: { toString: () => 'pending' } },
+    ]) expect(isApprovalPayload('capability', { view: 'actionable', requests: [row] })).toBe(false);
+    expect(isApprovalPayload('capability', { view: 'actionable', requests: [PENDING.requests[0], PENDING.requests[0]] })).toBe(false);
+    expect(isApprovalPayload('capability', { view: 'pending', requests: [] })).toBe(false);
+    expect(() => parseCapabilityDecision(decision('approved'), PENDING.requests[0], false)).toThrow();
+    const action = { ...PENDING.requests[0], kind: 'action' };
+    expect(() => parseCapabilityDecision(decision('fulfilled', action), action, true)).toThrow();
+    const empty = idleResource<import('../store/types').ApprovalPayload>('capability');
+    const terminal = applyCapabilityDecision(empty, new Set(), decision('fulfilled'));
+    expect(terminal.resource.data).toBeNull();
+    expect(terminal.tombstones.has('capability\u0000req-1')).toBe(true);
+    const stale = applyCapabilityDecision(empty, terminal.tombstones, decision('approved'));
+    expect(stale.resource.data).toBeNull();
+    expect(stale.tombstones).toEqual(terminal.tombstones);
   });
 });
