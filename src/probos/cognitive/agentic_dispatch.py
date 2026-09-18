@@ -1862,6 +1862,7 @@ class WorkItemAgenticExecutor:
             TOKEN_SOURCE_MEASURED,
             AgenticLoop,
             resolve_parallel_tool_settings,
+            resolve_event_correlation_settings,
             resolve_tool_result_bounds,
         )
         from probos.cognitive.swe_harness.tool_call import (
@@ -2525,6 +2526,7 @@ class WorkItemAgenticExecutor:
             # out concurrently, bounded. Default-OFF — the sequential AD-545
             # path runs verbatim until an operator opts in.
             **resolve_parallel_tool_settings(_agentic_loop_cfg),
+            **resolve_event_correlation_settings(_agentic_loop_cfg),
             **_loop_kwargs,
         )
         # AD-1129: accepted compatibility extras are copied first; the run's
@@ -2639,12 +2641,26 @@ class WorkItemAgenticExecutor:
             )
         # BF-680: the loop substitutes a client-side estimate when the provider
         # reports no usage. Surface that here, correlated to the agent and
-        # thread, because the ``crew_execution`` record this total lands in is a
-        # frozen 14-key set with nowhere to say it.
+        # thread. AD-1152 optionally preserves it beside the frozen execution
+        # record; other callers still need the in-memory qualifier.
         token_source = getattr(
             agentic_result, "token_source", TOKEN_SOURCE_MEASURED
         )
-        if token_source != TOKEN_SOURCE_MEASURED:
+        if (
+            token_source != TOKEN_SOURCE_MEASURED
+            and getattr(_agentic_loop_cfg, "event_correlation_enabled", False) is True
+        ):
+            logger.warning(
+                "BF-680: token total %d for agent %s in thread %s is %s, not a "
+                "provider measurement; returning the original-execution "
+                "qualifier on the outcome for crew persistence, not for "
+                "later verification totals or billing",
+                total_tokens,
+                agent_id,
+                thread_id or "<none>",
+                token_source,
+            )
+        elif token_source != TOKEN_SOURCE_MEASURED:
             logger.warning(
                 "BF-680: token total %d for agent %s in thread %s is %s, not a "
                 "provider measurement; downstream cost evidence records it as "

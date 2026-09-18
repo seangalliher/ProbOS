@@ -1756,6 +1756,7 @@ def _wire_native_swe_harness(
         from probos.cognitive.swe_harness.native_builder import NativeBuilderHarness
         from probos.cognitive.swe_harness.session_compactor import SessionCompactor
         from probos.cognitive.swe_harness.agentic_loop import (
+            resolve_event_correlation_settings,
             resolve_parallel_tool_settings,
             resolve_tool_result_bounds,
         )
@@ -1805,6 +1806,7 @@ def _wire_native_swe_harness(
             **resolve_tool_result_bounds(getattr(config, "agentic_loop", None)),
             # AD-1147: shared parallel-tool settings (default-OFF).
             **resolve_parallel_tool_settings(getattr(config, "agentic_loop", None)),
+            **resolve_event_correlation_settings(getattr(config, "agentic_loop", None)),
         )
         runtime.native_builder_harness = harness
         logger.info(
@@ -2099,6 +2101,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
     from probos.cognitive.crew_synth import CrewSynthesizer
     from probos.cognitive.crew_trust import CrewSessionTrustRecorder
     from probos.cognitive.crew_verifier import SubtaskVerifier
+    from probos.cognitive.swe_harness.agentic_loop import resolve_event_correlation_settings
 
     emit_fn = getattr(runtime, "emit_event", None)
     order_manager = getattr(runtime, "order_manager", None)
@@ -2165,6 +2168,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         crew_loop_until_done_completion_marker=getattr(
             cfg, "crew_loop_until_done_completion_marker", "TASK COMPLETE"
         ),
+        **resolve_event_correlation_settings(getattr(config, "agentic_loop", None)),
     )
     verifier = SubtaskVerifier(
         llm_client=llm_client,

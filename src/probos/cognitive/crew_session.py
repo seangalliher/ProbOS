@@ -18,6 +18,10 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from probos.cognitive.crew_assignment import CrewWorkerEligibilityResolver
+from probos.crew_execution_usage import (
+    CREW_EXECUTION_TOKEN_USAGE_KEY,
+    read_crew_execution_token_usage,
+)
 from probos.crew_session_delivery import (
     CrewSessionDeliveryOutcome,
     CrewSessionDeliveryRecord,
@@ -129,6 +133,7 @@ _PLAN_RESERVED_METADATA_KEYS = frozenset({
     "assigned_capability",
     "assigned_department",
     "crew_execution",
+    CREW_EXECUTION_TOKEN_USAGE_KEY,
     "crew_execution_output",
     "crew_verification_recovery",
 })
@@ -1308,6 +1313,10 @@ def _validate_assignment_metadata(row: Any, metadata: dict[str, Any]) -> None:
 
 
 def _validate_execution_metadata(row: Any, metadata: dict[str, Any]) -> None:
+    try:
+        read_crew_execution_token_usage(metadata)
+    except ValueError as exc:
+        raise ValueError("crew_recovery_plan_runtime_invalid") from exc
     execution = metadata.get("crew_execution", _MISSING)
     output = metadata.get("crew_execution_output", _MISSING)
     if execution is _MISSING:
@@ -1423,7 +1432,7 @@ def _row_semantic_projection(
     if require_new_metadata and not required_semantic_keys.issubset(metadata):
         raise ValueError("crew_recovery_plan_integrity_invalid")
     _validate_assignment_metadata(row, metadata)
-    if not require_new_metadata:
+    if not require_new_metadata or CREW_EXECUTION_TOKEN_USAGE_KEY in metadata:
         _validate_execution_metadata(row, metadata)
     spec_id = _normalize_id(metadata.get("spec_id"))
     if child_to_spec.get(child_id) != spec_id:

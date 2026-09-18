@@ -2876,6 +2876,18 @@ class AgenticLoopConfig(BaseModel):
     )
 
 
+    event_correlation_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1152: correlate agentic events by fresh run identity and original "
+            "tool-call index, and persist qualified crew execution token usage. "
+            "Default-OFF preserves legacy payloads and evidence bytes. Restart "
+            "to activate across startup-owned consumers; disabling keeps the "
+            "compatible reader for already-written provenance."
+        ),
+    )
+
+
 class NativeSWEHarnessConfig(BaseModel):
     """AD-549: Configuration for the native SWE agentic harness.
 

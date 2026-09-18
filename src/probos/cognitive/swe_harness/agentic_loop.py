@@ -22,6 +22,12 @@ from probos.cognitive.swe_harness.tool_call import (
     ToolResultBlock,
     ToolUseBlock,
 )
+from probos.crew_execution_usage import (
+    TOKEN_SOURCE_ESTIMATED,
+    TOKEN_SOURCE_MEASURED,
+    TOKEN_SOURCE_MIXED,
+    merge_token_sources as _token_source_label,
+)
 from probos.fault_report import canonical_tool_id, error_signature
 from probos.tools.executor import recording_identity, tool_recording_scope
 from probos.types import LLMRequest
@@ -668,12 +674,11 @@ def _largest_group_tokens(messages: list[dict]) -> int:
     return max(largest, current)
 
 
-# BF-680: provenance labels for ``AgenticResult.total_tokens``. The label
-# answers exactly one question — "does this total contain any client-side
-# estimate?" — so no reader can mistake an estimate for a provider measurement.
-TOKEN_SOURCE_MEASURED = "measured"
-TOKEN_SOURCE_ESTIMATED = "estimated"
-TOKEN_SOURCE_MIXED = "mixed"
+def resolve_event_correlation_settings(cfg: Any) -> dict[str, bool]:
+    """Forward the shared setting only when armed, preserving legacy call shapes."""
+    if getattr(cfg, "event_correlation_enabled", False) is True:
+        return {"event_correlation_enabled": True}
+    return {}
 
 
 def _completion_is_non_empty(response: Any) -> bool:
@@ -748,20 +753,6 @@ def _estimate_call_tokens(outbound: list[dict], response: Any) -> int:
     )
 
 
-def _token_source_label(sources: set[str]) -> str:
-    """BF-680: collapse one run's per-iteration sources into a single label.
-
-    An empty set means nothing was ever accumulated (the first LLM call
-    failed), which reports as ``measured`` — the label states that no estimate
-    contaminates the total, not that a provider was successfully consulted.
-    """
-    if TOKEN_SOURCE_ESTIMATED not in sources:
-        return TOKEN_SOURCE_MEASURED
-    if TOKEN_SOURCE_MEASURED in sources:
-        return TOKEN_SOURCE_MIXED
-    return TOKEN_SOURCE_ESTIMATED
-
-
 @dataclass
 class AgenticResult:
     """AD-545: Outcome of an agentic loop run."""
@@ -817,6 +808,7 @@ class AgenticLoop:
         max_parallel_tool_calls: int = PARALLEL_TOOL_CALLS_DEFAULT,
         priority: Any | None = None,
         refresh_tools: Callable[[], list[dict] | None] | None = None,
+        event_correlation_enabled: bool = False,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -863,6 +855,7 @@ class AgenticLoop:
         # existing caller) means the offer is assembled once and never touched,
         # which is the AD-545 behaviour verbatim.
         self._refresh_tools = refresh_tools
+        self._event_correlation_enabled = event_correlation_enabled
         self._tasks: set[asyncio.Task] = set()
 
     async def run(
@@ -875,15 +868,19 @@ class AgenticLoop:
         on_run_started: Callable[[str], None] | None = None,
     ) -> AgenticResult:
         """Run with one recording budget, restoring the parent scope on every exit."""
+        run_id = uuid.uuid4().hex if self._event_correlation_enabled else None
         run_context = {
             **context,
-            "_agentic_run_id": context.get("_agentic_run_id") or uuid.uuid4().hex,
+            "_agentic_run_id": (
+                run_id if run_id is not None
+                else context.get("_agentic_run_id") or uuid.uuid4().hex
+            ),
         }
         if on_run_started is not None:
-            run_id = recording_identity(run_context["_agentic_run_id"])
-            if run_id is not None:
+            observer_run_id = recording_identity(run_context["_agentic_run_id"])
+            if observer_run_id is not None:
                 try:
-                    observed = on_run_started(run_id)
+                    observed = on_run_started(observer_run_id)
                     if observed is not None:
                         if type(observed) is CoroutineType:
                             observed.close()
@@ -900,6 +897,7 @@ class AgenticLoop:
             return await self._run_scoped(
                 system_prompt=system_prompt, user_message=user_message,
                 tools=tools, context=run_context,
+                **({"run_id": run_id} if run_id is not None else {}),
             )
 
     async def _run_scoped(
@@ -909,6 +907,7 @@ class AgenticLoop:
         user_message: str,
         tools: list[dict[str, Any]],
         context: dict[str, Any],
+        run_id: str | None = None,
     ) -> AgenticResult:
         """Run the agentic loop until completion or limit reached.
 
@@ -953,6 +952,10 @@ class AgenticLoop:
                     "iteration": iteration,
                     "tools_used_so_far": list(tool_id_history),
                     "total_tokens": result.total_tokens,
+                    **(
+                        {"run_id": run_id, "token_source": result.token_source}
+                        if run_id is not None else {}
+                    ),
                 },
             )
 
@@ -1110,6 +1113,7 @@ class AgenticLoop:
                 agent_id=agent_id,
                 iteration=iteration,
                 context=context,
+                **({"run_id": run_id} if run_id is not None else {}),
             )
             # DD-2: ``_execute_tool_uses`` returns results in REQUEST order
             # regardless of completion order, so these three lists stay aligned
@@ -1289,6 +1293,7 @@ class AgenticLoop:
         agent_id: str,
         iteration: int,
         context: dict[str, Any],
+        run_id: str | None = None,
     ) -> list[ToolCallResult]:
         """Execute one response's tool calls, returning results in REQUEST order.
 
@@ -1308,9 +1313,13 @@ class AgenticLoop:
         if not self._parallel_tool_calls_enabled:
             return [
                 await self._execute_one_tool(
-                    use, agent_id=agent_id, iteration=iteration, context=context
+                    use, agent_id=agent_id, iteration=iteration, context=context,
+                    **(
+                        {"run_id": run_id, "tool_call_index": index}
+                        if run_id is not None else {}
+                    ),
                 )
-                for use in tool_uses
+                for index, use in enumerate(tool_uses)
             ]
 
         parallel_indices, sequential_indices = partition_tool_uses(tool_uses)
@@ -1326,6 +1335,10 @@ class AgenticLoop:
                         agent_id=agent_id,
                         iteration=iteration,
                         context=context,
+                        **(
+                            {"run_id": run_id, "tool_call_index": index}
+                            if run_id is not None else {}
+                        ),
                     )
 
             # DD-4: ``return_exceptions=True`` so one failing call cannot cancel
@@ -1373,6 +1386,10 @@ class AgenticLoop:
                 agent_id=agent_id,
                 iteration=iteration,
                 context=context,
+                **(
+                    {"run_id": run_id, "tool_call_index": index}
+                    if run_id is not None else {}
+                ),
             )
 
         # DD-2: reassemble by request index. ``partition_tool_uses`` covers every
@@ -1386,6 +1403,8 @@ class AgenticLoop:
         agent_id: str,
         iteration: int,
         context: dict[str, Any],
+        run_id: str | None = None,
+        tool_call_index: int | None = None,
     ) -> ToolCallResult:
         """AD-545: run one tool call, translating any failure into an error result.
 
@@ -1394,12 +1413,21 @@ class AgenticLoop:
         identically. ``asyncio.CancelledError`` is a ``BaseException`` and so is
         deliberately not caught here (DD-5).
         """
+        correlation = (
+            {
+                "run_id": run_id,
+                "tool_call_id": use.tool_call.id,
+                "tool_call_index": tool_call_index,
+            }
+            if run_id is not None else {}
+        )
         self._fire_event(
             "AGENTIC_TOOL_CALL_STARTED",
             {
                 "agent_id": agent_id,
                 "tool_id": use.tool_call.name,
                 "iteration": iteration,
+                **correlation,
             },
         )
         start = time.perf_counter()
@@ -1445,6 +1473,7 @@ class AgenticLoop:
                 "iteration": iteration,
                 "is_error": tcr.is_error,
                 "duration_ms": tcr.duration_ms,
+                **correlation,
             },
         )
         return tcr
