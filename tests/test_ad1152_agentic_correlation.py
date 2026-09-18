@@ -8,10 +8,11 @@ import hashlib
 import itertools
 import json
 import sqlite3
+import sys
 import time
 import uuid
 from contextlib import closing
-from dataclasses import asdict, fields, is_dataclass
+from dataclasses import FrozenInstanceError, asdict, fields, is_dataclass
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any
@@ -42,6 +43,7 @@ from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
 from probos.workforce import WorkItemStore
 from tests import test_ad1125_room_bound_execution as room
+from tests.test_ad1258_self_knowledge import _OfferSysProxy
 
 
 BASE_COMMIT = "7dd9542289fbe3b574b09f4e9b5fe934c35f424c"
@@ -184,7 +186,10 @@ async def _off_observation(
     from probos.cognitive.builder import BuildSpec
     from probos.startup.finalize import _wire_crew_orchestrator, _wire_native_swe_harness
     from probos.threads import ChatThreadStore
+    from probos.tools import code_execution_tool
 
+    # Reproduce the Windows capture at the descriptor input, not in observed output.
+    monkeypatch.setattr(code_execution_tool, "sys", _OfferSysProxy("win32"))
     sequence = itertools.count(1)
     monkeypatch.setenv("PROBOS_DATA_DIR", str(tmp_path / "local-data"))
     monkeypatch.setenv("PROBOS_NATS_ENABLED", "false")
@@ -361,6 +366,61 @@ async def test_default_off_matches_pinned_base(
         assert actual[key] == expected, key
     assert _json_bytes(actual) == _json_bytes(golden["observation"])
     assert hashlib.sha256(_json_bytes(actual)).hexdigest() == golden["observation_sha256"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ambient_platform", ["linux", "win32"])
+async def test_default_off_golden_pins_only_descriptor_owner_platform(
+    tmp_path: Path, ambient_platform: str,
+) -> None:
+    from probos.tools import code_execution_tool
+
+    process_platform = sys.platform
+    original_owner = code_execution_tool.sys
+    assert original_owner is sys
+    golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+    captured_tool = golden["observation"]["persisted"]["requests"][0]["request"]["tools"][0]
+    assert captured_tool["function"]["name"] == "run_python"
+    captured_description = captured_tool["function"]["description"]
+    assert ", 512 MB memory" not in captured_description
+    tool = code_execution_tool.CodeExecutionTool(
+        runtime=SimpleNamespace(config=SystemConfig()),
+    )
+
+    with pytest.MonkeyPatch.context() as ambient:
+        owner_view = _OfferSysProxy(ambient_platform)
+        ambient.setattr(code_execution_tool, "sys", owner_view)
+        assert code_execution_tool.sys.platform == ambient_platform
+        assert sys.platform == process_platform
+        unpinned_description = tool.description
+        if ambient_platform == "linux":
+            prefix, separator, suffix = captured_description.partition(". Work that will not fit ")
+            assert separator, "The captured limit clause must discriminate the POSIX control"
+            assert unpinned_description == prefix + ", 512 MB memory" + separator + suffix
+            assert unpinned_description != captured_description
+        else:
+            assert unpinned_description == captured_description
+
+        with pytest.MonkeyPatch.context() as captured:
+            actual = await _off_observation(tmp_path, captured)
+            captured_platform = code_execution_tool.sys.platform
+            assert code_execution_tool.sys is not sys
+            assert all(
+                getattr(code_execution_tool.sys, name) is getattr(sys, name)
+                for name in ("executable", "version_info", "modules", "path")
+            )
+            with pytest.raises(FrozenInstanceError):
+                code_execution_tool.sys.platform = "not-a-platform"
+            assert sys.platform == process_platform
+        assert code_execution_tool.sys is owner_view
+        assert tool.description == unpinned_description
+        assert sys.platform == process_platform
+    assert code_execution_tool.sys is original_owner
+    assert sys.platform == process_platform
+
+    assert _json_bytes(actual) == _json_bytes(golden["observation"])
+    assert hashlib.sha256(_json_bytes(actual)).hexdigest() == golden["observation_sha256"]
+    assert captured_platform == "win32"
 
 
 @pytest.mark.parametrize("path_type", [PurePosixPath, PureWindowsPath])

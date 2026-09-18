@@ -220,3 +220,52 @@ case and immutable-artifact checks are recorded in
 All 64 pre-existing artifact/fixture hashes are unchanged. The earlier
 stdin-launcher run, which failed a Windows multiprocessing test because its
 child could not reopen `<stdin>`, remains separate historical evidence.
+
+### Hosted CI descriptor-input repair
+
+Hosted Python run `35319567936`, job `105518823531`, failed only
+`test_default_off_matches_pinned_base` on the unmerged #1400 candidate
+`b29dd37a9bbd26cbc57c6af3dc113d7f02a955af`; its UI job passed.
+The mismatch was
+`persisted.requests[0].request.tools[0].function.description`: the existing
+`CodeExecutionTool.description` adds exactly `, 512 MB memory` on POSIX,
+whereas the independent Windows capture omits it. This is the intended
+BF-781 platform distinction, not an event-correlation production defect.
+
+The OFF observation now pins only that descriptor owner's module-local `sys`
+binding to the captured Windows input. It reuses the frozen
+[`_OfferSysProxy`](../../tests/test_ad1258_self_knowledge.py), which delegates
+other attributes to the real `sys`; it does not change global `sys.platform`
+or use the other fixture's library overrides. No production description,
+request, observation or golden output is rewritten or normalized. The
+original complete observation byte equality, tool-description comparison and
+observation digest assertions remain intact.
+
+Two new regression cases simulate POSIX and Win32 at the real descriptor
+owner, not at the process or dependency level. Their setup first proves the
+exact unpinned POSIX addition and Windows omission against the independent
+golden. They then check the complete pinned observation, read-only delegation,
+unchanged process platform, and restoration of both nested and original owner
+bindings. Before the fixture pin, the same tests on this Windows host produced
+**1 failed, 64 passed**: only the POSIX case failed exact observation byte
+equality, after its premise and restoration assertions. Evidence:
+`logs/gates/ordinary-1079-ci-descriptor-red-20260918-020833-991.{log,xml}`.
+
+After the pin, the event-correlation file and the unchanged BF-781 and
+AD-1217/AD-1218 descriptor files passed together: **65 passed, 0 failed,
+0 skipped**. The same previous 21-file owner/consumer/config selection then
+passed **1,779 tests, 0 failed, 0 skipped**, with 11 warnings. Commands and
+worktree import provenance are retained in
+`logs/gates/ordinary-1079-ci-descriptor-targeted-20260918-021006-535.{log,xml}`
+and `logs/gates/ordinary-1079-ci-descriptor-focus-20260918-021119-852.{log,xml}`.
+The fixture SHA-256 remains
+`29f3cde2d8b16f995c6193af0552e2410d0bdd8fdd16ec4bb1443a8fa3bc591b`,
+and the observation SHA-256 remains
+`3a95dbc861da39ef946143029abaeb431820b237747ce95a984c55ce732497f3`.
+
+This is local Windows evidence with owner-scoped platform simulation, not a
+Linux execution, fresh hosted CI result, release or closure claim. No commit,
+push or full gate was run for this repair. Parent-owned independent review,
+preflight, a new local commit, a **new canonical full gate**, normal PR update
+and hosted CI remain required. The old `b29dd37a` gate cannot authorize this
+changed test tree.
