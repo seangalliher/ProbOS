@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Protoco
 
 import aiosqlite
 
+from probos.crew_execution_usage import CREW_EXECUTION_TOKEN_USAGE_KEY
 from probos.events import EventType
 from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
 from probos.types import Priority
@@ -3813,6 +3814,7 @@ class WorkItemStore(EventEmitterMixin):
                         or not _json_values_exactly_equal(child.verification, {})
                         or any(key in child.metadata for key in (
                             "crew_execution", "crew_execution_output", "crew_verification_recovery",
+                            CREW_EXECUTION_TOKEN_USAGE_KEY,
                         ))
                     ):
                         raise WorkItemRetryConflict()

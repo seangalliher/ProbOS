@@ -23,6 +23,7 @@ from pydantic import (
 )
 
 from probos.cognitive.crew_session import CrewSynthesisMetadata
+from probos.crew_execution_usage import read_crew_execution_token_usage
 from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.cognitive.crew_trust import (
     MAX_CREW_TRUST_EFFECTS,
@@ -1199,6 +1200,7 @@ class CrewSessionFinalizer:
         child: WorkItem,
         result: SubtaskResult,
     ) -> None:
+        read_crew_execution_token_usage(child.metadata or {})
         execution = (child.metadata or {}).get("crew_execution")
         output_ref = (child.metadata or {}).get("crew_execution_output")
         if (
@@ -1251,6 +1253,7 @@ class CrewSessionFinalizer:
             child = by_id.get(commitment.child_id)
             if child is None:
                 raise ValueError("child_result_invalid")
+            read_crew_execution_token_usage(child.metadata or {})
             execution = (child.metadata or {}).get("crew_execution")
             output_ref = (child.metadata or {}).get("crew_execution_output")
             if (
@@ -2439,6 +2442,7 @@ class CrewSessionFinalizer:
         child: WorkItem,
         result: SubtaskResult,
     ) -> None:
+        read_crew_execution_token_usage(child.metadata or {})
         producer_id = _id(getattr(result, "agent_id", None))
         if getattr(result, "work_item_id", None) != child.id:
             raise ValueError("child_result_invalid")

@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1792
-  field_definitions: 1785
+  canonical_dump_leaves: 1793
+  field_definitions: 1786
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: ab89c78e37711b7a9e559233a2194d571da0883a0ce8cc040fbf1eca1ffb759d
+canonical_dump_sha256: 849145176421a305eda897337e3ca2d695ca471bb65732e6c75b1779834fda05
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -493,7 +493,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 10846ecb2fc44b17abcd2c503b4de8c1ae8190c108d3614b3d716814304f8abc
+    schema_sha256: f5c58f49bb806073e880d6660f3a0d53a332b4e882b59e55964ceb33082fec25
     fields:
     - {default: 'False', name: structured_tool_messages}
     - {default: '0', name: tool_result_max_chars}
@@ -503,6 +503,7 @@ models:
     - {default: '3', name: max_parallel_tool_calls}
     - {default: '8192', name: tool_trace_output_max_chars}
     - {default: '262144', name: tool_trace_max_bytes}
+    - {default: 'False', name: event_correlation_enabled}
   AgenticToolsConfig:
     qualname: AgenticToolsConfig
     bases:
@@ -3287,7 +3288,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 421e4333881ab34812818f045f42cf0a45b6d7a0c3a8ac48bd8c257c99f4d99d
+    schema_sha256: 75185dc6d2c2b3d1506df90be0677706deb6b89c090f740713622f1488fc50ae
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

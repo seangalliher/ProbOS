@@ -60,6 +60,7 @@ class NativeBuilderHarness:
         tool_result_tail_chars: int = TOOL_RESULT_TAIL_CHARS,
         parallel_tool_calls_enabled: bool = False,
         max_parallel_tool_calls: int = PARALLEL_TOOL_CALLS_DEFAULT,
+        event_correlation_enabled: bool = False,
     ) -> None:
         self._runtime = runtime
         self._llm = llm_client
@@ -82,6 +83,7 @@ class NativeBuilderHarness:
         # read-only allowlist, so the build path stays sequential either way.
         self._parallel_tool_calls_enabled = parallel_tool_calls_enabled
         self._max_parallel_tool_calls = max_parallel_tool_calls
+        self._event_correlation_enabled = event_correlation_enabled
 
     async def run_build(
         self,
@@ -111,6 +113,10 @@ class NativeBuilderHarness:
             tool_result_tail_chars=self._tool_result_tail_chars,
             parallel_tool_calls_enabled=self._parallel_tool_calls_enabled,
             max_parallel_tool_calls=self._max_parallel_tool_calls,
+            **(
+                {"event_correlation_enabled": True}
+                if self._event_correlation_enabled else {}
+            ),
         )
 
         agentic_result: AgenticResult = await loop.run(

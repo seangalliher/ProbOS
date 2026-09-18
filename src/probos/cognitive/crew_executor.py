@@ -32,6 +32,12 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable
 
 from probos.cognitive.agentic_dispatch import AgenticIdentityUnresolved
+from probos.crew_execution_usage import (
+    CREW_EXECUTION_TOKEN_USAGE_KEY,
+    build_crew_execution_token_usage,
+    merge_token_sources,
+    read_crew_execution_token_usage,
+)
 from probos.crew_utils import CREW_EXECUTION_KEYS, is_crew_agent
 from probos.events import EventType
 
@@ -1107,6 +1113,7 @@ def is_untouched_crew_child(child: WorkItem, *, initial_status: str) -> bool:
             key in child.metadata
             for key in (
                 "crew_execution", "crew_execution_output", "crew_verification_recovery",
+                CREW_EXECUTION_TOKEN_USAGE_KEY,
             )
         )
     )
@@ -1139,6 +1146,7 @@ class CrewTaskExecutor:
         crew_loop_until_done_max_iterations: int = _LOOP_UNTIL_DONE_MAX_ITERATIONS,
         crew_loop_until_done_predicate: str = _LOOP_PREDICATE_STOP_REASON,
         crew_loop_until_done_completion_marker: str = _DEFAULT_COMPLETION_MARKER,
+        event_correlation_enabled: bool = False,
     ) -> None:
         self._store = work_item_store
         self._registry = agent_registry
@@ -1148,6 +1156,7 @@ class CrewTaskExecutor:
         # Honest-degrade: if no emit fn is wired, the executor still runs; it
         # just cannot publish lifecycle events.
         self._emit_fn = emit_fn
+        self._event_correlation_enabled = event_correlation_enabled
         self._crew_session_service = crew_session_service
         self._eligibility_resolver = (
             eligibility_resolver
@@ -1466,6 +1475,7 @@ class CrewTaskExecutor:
         thread_id: str,
     ) -> SubtaskResult:
         metadata = child.metadata
+        read_crew_execution_token_usage(metadata)
         execution = metadata.get("crew_execution")
         if type(execution) is not dict or set(execution) != CREW_EXECUTION_KEYS:
             raise ValueError("crew_execution_evidence_invalid")
@@ -1803,6 +1813,7 @@ class CrewTaskExecutor:
 
         outcome: Any = None
         spent = 0
+        token_sources: set[str] = set()
         previous_text_hash: str | None = None
         previous_actionable: int | None = None
         no_progress_streak = 0
@@ -1838,9 +1849,15 @@ class CrewTaskExecutor:
                     tool_trace_ref=getattr(outcome, "tool_trace_ref", None),
                     total_tokens=spent,
                     artifact_refs=list(getattr(outcome, "artifact_refs", [])),
+                    **(
+                        {"token_source": merge_token_sources(token_sources)}
+                        if self._event_correlation_enabled else {}
+                    ),
                 )
             outcome = next_outcome
             spent += _bounded_spend(getattr(outcome, "total_tokens", 0))
+            if self._event_correlation_enabled:
+                token_sources.add(merge_token_sources((outcome.token_source,)))
 
             if iteration >= max_outer:
                 break
@@ -2007,7 +2024,10 @@ class CrewTaskExecutor:
                 {},
                 expected=dict(child.metadata),
                 expected_absent_keys=(
-                    frozenset({"crew_execution", "crew_execution_output", "crew_verification_recovery"})
+                    frozenset({
+                        "crew_execution", "crew_execution_output", "crew_verification_recovery",
+                        CREW_EXECUTION_TOKEN_USAGE_KEY,
+                    })
                     if self._eligibility_resolver is not None else frozenset()
                 ),
                 expected_work_type=child.work_type,
@@ -2054,6 +2074,19 @@ class CrewTaskExecutor:
                 else:
                     if reloaded_child is not None:
                         child = reloaded_child
+                        if (
+                            self._eligibility_resolver is not None
+                            and CREW_EXECUTION_TOKEN_USAGE_KEY in child.metadata
+                        ):
+                            logger.error(
+                                "Crew child %s has token usage on the reloaded "
+                                "row after admission failed; no agent or "
+                                "terminal-evidence writer will run, leaving "
+                                "the authoritative row unchanged",
+                                child.id,
+                                exc_info=True,
+                            )
+                            raise ValueError("crew_session_child_not_untouched") from exc
         if active_child is None:
             failure_reason = (
                 "unassigned"
@@ -2206,6 +2239,10 @@ class CrewTaskExecutor:
             tool_trace_ref=outcome.tool_trace_ref,
             actual_tokens=outcome.total_tokens,
             artifact_refs=outcome.artifact_refs,
+            **(
+                {"token_source": outcome.token_source}
+                if self._event_correlation_enabled else {}
+            ),
             started_at=started_at,
             finished_at=max(started_at, time.time()),
             blocked_dependency_ids=[],
@@ -2364,10 +2401,15 @@ class CrewTaskExecutor:
         blocked_dependency_ids: list[str],
         expected_status: str,
         dependency_input_invalid: bool = False,
+        token_source: str | None = None,
     ) -> SubtaskResult:
         spec_id = str(child.metadata.get("spec_id", child.id))
         normalized_reason = (
             stopped_reason if stopped_reason in _STOPPED_REASONS else "error"
+        )
+        guard_admission_fallback = (
+            self._eligibility_resolver is not None
+            and normalized_reason in {"start_transition_failed", "unassigned"}
         )
         assigned_to: str | None = None
         tokens = 0
@@ -2401,6 +2443,10 @@ class CrewTaskExecutor:
                     else _exact_dependency_ids(child.depends_on)
                 ),
             }
+            if guard_admission_fallback:
+                state_preconditions["expected_absent_keys"] = frozenset({
+                    CREW_EXECUTION_TOKEN_USAGE_KEY,
+                })
             if not dependency_input_invalid:
                 state_preconditions["expected_unresolved_dependency_ids"] = (
                     exact_unresolved_dependency_ids
@@ -2427,6 +2473,12 @@ class CrewTaskExecutor:
                 blocked_dependency_ids=blocked_dependency_ids,
             )
             metadata_patch: dict[str, Any] = {"crew_execution": evidence}
+            if self._event_correlation_enabled and token_source is not None:
+                metadata_patch[CREW_EXECUTION_TOKEN_USAGE_KEY] = (
+                    build_crew_execution_token_usage(
+                        execution=evidence, token_source=token_source,
+                    )
+                )
             if status == "done":
                 parent = await self._store.get_work_item(parent_key)
                 if parent is not None and parent.work_type == "crew_session":
@@ -2509,6 +2561,19 @@ class CrewTaskExecutor:
                     finished_at=evidence["finished_at"],
                 )
         except Exception as exc:
+            if (
+                guard_admission_fallback
+                and isinstance(exc, ValueError)
+                and str(exc) == "work_item_metadata_conflict"
+            ):
+                logger.error(
+                    "Crew child %s gained token usage before admission fallback "
+                    "evidence could commit; the authoritative row is unchanged "
+                    "and no further terminal writer will run",
+                    child.id,
+                    exc_info=True,
+                )
+                raise ValueError("crew_session_child_not_untouched") from exc
             state_conflict = (
                 isinstance(exc, ValueError)
                 and str(exc) in {
@@ -2560,6 +2625,22 @@ class CrewTaskExecutor:
                     if fallback is None:
                         raise ValueError("crew_execution_fallback_failed")
                 except Exception as fallback_exc:
+                    if (
+                        guard_admission_fallback
+                        and isinstance(fallback_exc, ValueError)
+                        and str(fallback_exc) == "work_item_metadata_conflict"
+                    ):
+                        logger.error(
+                            "Crew child %s gained token usage before admission "
+                            "fallback status could commit; the authoritative "
+                            "row remains unchanged and the caller receives "
+                            "the integrity error or its pending cancellation",
+                            child.id,
+                            exc_info=True,
+                        )
+                        if deferred_cancellation is not None:
+                            raise deferred_cancellation
+                        raise ValueError("crew_session_child_not_untouched") from fallback_exc
                     fallback_conflict = (
                         isinstance(fallback_exc, ValueError)
                         and str(fallback_exc) in {
