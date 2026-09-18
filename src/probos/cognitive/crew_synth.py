@@ -46,6 +46,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from probos.cognitive.crew_verdict import criteria_to_json
 from probos.cognitive.crew_verifier import SubtaskVerifier
 from probos.consensus.shapley import compute_shapley_values
 from probos.events import EventType
@@ -409,6 +410,10 @@ class CrewSynthesizer:
                         "status": oc.status,
                         "rounds": oc.rounds,
                         "critique": oc.verdict.critique,
+                        **(
+                            {"criteria": criteria_to_json(oc.verdict.criteria)}
+                            if oc.verdict.criteria is not None else {}
+                        ),
                     }
                     for oc in outcomes
                 ],
@@ -601,6 +606,10 @@ class CrewSynthesizer:
                     "accepted": oc.verdict.accepted,
                     "verification_defect": oc.verdict.verification_defect,
                     "status": oc.status,
+                    **(
+                        {"criteria": criteria_to_json(oc.verdict.criteria)}
+                        if oc.verdict.criteria is not None else {}
+                    ),
                 }
                 for oc in outcomes
             ]
