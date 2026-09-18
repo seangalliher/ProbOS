@@ -18,6 +18,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from probos.repository_instructions import (
+    append_repository_instructions,
+    discover_repository_instructions,
+    instruction_read_policy,
+    repository_instruction_directory,
+)
 if TYPE_CHECKING:
     from probos.cognitive.builder import BuildSpec
     from probos.cognitive.codebase_index import CodebaseIndex
@@ -479,6 +485,20 @@ class CopilotBuilderAdapter:
 
         try:
             system_message = self._compose_system_message()
+            repository_instructions = discover_repository_instructions(
+                self._cwd,
+                target_paths=(
+                    *(spec.target_files or ()), *(spec.reference_files or ()),
+                    *(spec.test_files or ()),
+                ),
+                global_directory=repository_instruction_directory(
+                    getattr(self._runtime, "data_dir", None),
+                ),
+                policy=instruction_read_policy(self._runtime),
+            )
+            system_message["content"] = append_repository_instructions(
+                system_message["content"], repository_instructions,
+            )
             tools = self._build_mcp_tools()
             prompt = self._build_prompt(spec, file_contents)
 

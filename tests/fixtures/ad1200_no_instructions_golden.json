@@ -1,0 +1,86 @@
+{
+  "base": "3df0f351520605effdbc2be9a49a72ad1a201127",
+  "normalization": "fixture and source-repository paths only",
+  "tool_result_fields": ["output", "error", "duration_ms", "metadata"],
+  "tool_call_result_fields": ["id", "output", "is_error", "duration_ms", "source_chars"],
+  "cases": {
+    "native/repository/legacy": {
+      "requests": [
+        {"bytes": 63085, "sha256": "2e8a47daa02b7ead4bfae7c8fac2711bfe31f1ad473ed3a974b6fc0cd0ff325d"},
+        {"bytes": 63165, "sha256": "e358fc6a9a56f4d1b719977189628e8fc0adb11a2ae2181befa7a88529b16234"}
+      ],
+      "result": {"bytes": 248, "sha256": "86433ca64a8965572777a92881ce0576f891f36201b5e6f722d0506dd7e99898"}
+    },
+    "native/missing/legacy": {
+      "requests": [
+        {"bytes": 63037, "sha256": "757835567ebe49aad159ce455c8a74ddeb1b0472778a8c6817c238ac10fa4dae"}
+      ],
+      "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
+    },
+    "native/unscoped/legacy": {
+      "requests": [
+        {"bytes": 63019, "sha256": "8c4d2944bedfd075e65fdafcffb049dd26a498debaa068bec9e888306011730b"}
+      ],
+      "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
+    },
+    "native/installed/legacy": {
+      "requests": [
+        {"bytes": 63038, "sha256": "37ea09e207b00863c0a8a81595759aa8079af42ba55d34adf859701ed9275720"}
+      ],
+      "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
+    },
+    "work_item/read_file/legacy": {
+      "requests": [
+        {"bytes": 565, "sha256": "f2eff12098890e660e211cd0c28ad580f8afcf3de8c9940ab4c8b8e2b1d1783f"},
+        {"bytes": 645, "sha256": "288c08fe10cd5480f97c35c8e5a0686e3c89a71e1ac13892325dfd4a99cad16e"}
+      ],
+      "trace": {"bytes": 255, "sha256": "1bc8c4ac4d02374834dfb5db509a2dc18b4ce3399a31ddd85d22f6c9ee892514"}
+    },
+    "work_item/codebase_read_source/legacy": {
+      "requests": [
+        {"bytes": 532, "sha256": "7b1291a34062b632b9a519915ec5a5fc0e8c517d6d42061684f3fe77d69d56e6"},
+        {"bytes": 612, "sha256": "3d41bb8ab76711b6c2a1bd08b4968748c3a9ed10f45d103521cbf1ca2efb391d"}
+      ],
+      "trace": {"bytes": 271, "sha256": "33b7e937f8a9577685e3a75acb32ef301ed52b7386d54bf39d45e7f4c20d97a5"}
+    },
+    "native/repository/structured": {
+      "requests": [
+        {"bytes": 63104, "sha256": "542432c06b7f969cfdf94f47971c008a8fb136b10f819dc81e9c6d6757105063"},
+        {"bytes": 63368, "sha256": "c230f92c16d2e2d60b9a6f4d5182be6a2db0a961a0893e4b6d7cc3bc45fc6685"}
+      ],
+      "result": {"bytes": 248, "sha256": "86433ca64a8965572777a92881ce0576f891f36201b5e6f722d0506dd7e99898"}
+    },
+    "native/missing/structured": {
+      "requests": [
+        {"bytes": 63056, "sha256": "a381791849fd3fc9509038dcb7340793033cb78e070d3af2b383dd6e881e46df"}
+      ],
+      "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
+    },
+    "native/unscoped/structured": {
+      "requests": [
+        {"bytes": 63038, "sha256": "446400c00d008db46bc612640eca0cfa2e9707dff56a5876d720d8254c120824"}
+      ],
+      "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
+    },
+    "native/installed/structured": {
+      "requests": [
+        {"bytes": 63057, "sha256": "09982f1b889b362bf11d39e6c5df89fb5cc1f51c9ff65b93aaef13a5d6616e1d"}
+      ],
+      "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
+    },
+    "work_item/read_file/structured": {
+      "requests": [
+        {"bytes": 584, "sha256": "500cad9789ea72cabdcd934e0a1b51fefa2eb0e5b9ac3fbb72e4e96517c2f78a"},
+        {"bytes": 848, "sha256": "b2d0668c89cdaa525121ddadeee77070611cba779db99e6af55bb308460320b5"}
+      ],
+      "trace": {"bytes": 255, "sha256": "1bc8c4ac4d02374834dfb5db509a2dc18b4ce3399a31ddd85d22f6c9ee892514"}
+    },
+    "work_item/codebase_read_source/structured": {
+      "requests": [
+        {"bytes": 551, "sha256": "0c6302ba8f8955d54e9aedfe9f58d1165b3cb8e9622f9f7726a7fecab0531882"},
+        {"bytes": 831, "sha256": "9c5a7767d0fb48cc2210fad61accd95e2222f0a2d01f986092d57d245b91dcdd"}
+      ],
+      "trace": {"bytes": 271, "sha256": "33b7e937f8a9577685e3a75acb32ef301ed52b7386d54bf39d45e7f4c20d97a5"}
+    }
+  }
+}

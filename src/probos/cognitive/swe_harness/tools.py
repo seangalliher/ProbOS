@@ -11,9 +11,16 @@ AD-423b's permission ladder.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from probos.repository_instructions import (
+    InstructionObservation,
+    discover_repository_instructions,
+    instruction_read_policy,
+    repository_instruction_directory,
+)
 from probos.tools.protocol import (
     Tool,
     ToolResult,
@@ -35,6 +42,26 @@ def _resolve_path(path: str) -> Path:
     """Resolve a user-supplied path against project root if relative."""
     p = Path(path)
     return p if p.is_absolute() else (_PROJECT_ROOT / p)
+
+
+@dataclass(frozen=True)
+class InstructionToolResult(ToolResult):
+    repository_instructions: InstructionObservation = field(kw_only=True, repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.repository_instructions) is not InstructionObservation:
+            raise TypeError("file guidance requires a typed instruction observation")
+
+
+def _file_read_result(text: str, target: Path, runtime: object) -> ToolResult:
+    observation = discover_repository_instructions(
+        target.parent,
+        global_directory=repository_instruction_directory(getattr(runtime, "data_dir", None)),
+        policy=instruction_read_policy(runtime),
+    )
+    if not observation.targets and not observation.notices:
+        return ToolResult(output=text)
+    return InstructionToolResult(output=text, repository_instructions=observation)
 
 
 # --------------------------------------------------------------------------
@@ -102,7 +129,7 @@ class ReadFileTool:
                 start = int(offset or 0)
                 end = start + int(limit) if limit is not None else len(lines)
                 text = "\n".join(lines[start:end])
-            return ToolResult(output=text)
+            return _file_read_result(text, target, self._runtime)
         except FileNotFoundError:
             return ToolResult(error=f"File not found: {path}")
         except Exception as exc:
@@ -355,7 +382,11 @@ class CodebaseReadSourceTool:
         if not path:
             return ToolResult(error="file_path is required")
         try:
-            target = _resolve_path(str(path))
+            from probos.security.file_access import resolve_for_runtime
+
+            target = resolve_for_runtime(
+                str(path), self._runtime, relative_base=_PROJECT_ROOT,
+            )
             text = target.read_text(encoding="utf-8")
             start = params.get("start_line")
             end = params.get("end_line")
@@ -364,7 +395,7 @@ class CodebaseReadSourceTool:
                 s = max(0, int(start or 1) - 1)
                 e = int(end) if end is not None else len(lines)
                 text = "\n".join(lines[s:e])
-            return ToolResult(output=text)
+            return _file_read_result(text, target, self._runtime)
         except FileNotFoundError:
             return ToolResult(error=f"File not found: {path}")
         except Exception as exc:

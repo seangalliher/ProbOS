@@ -17,6 +17,7 @@ from typing import Any, Callable, TYPE_CHECKING
 
 from probos.cognitive.swe_harness.tool_call import (
     DelegatedToolCallResult,
+    InstructionToolCallResult,
     TextBlock,
     ToolCallRequest,
     ToolCallResult,
@@ -30,6 +31,11 @@ from probos.crew_execution_usage import (
     merge_token_sources as _token_source_label,
 )
 from probos.fault_report import canonical_tool_id, error_signature
+from probos.repository_instructions import (
+    InstructionObservation,
+    append_repository_instructions,
+    merge_instruction_observations,
+)
 from probos.tools.delegation_evidence import MESSAGE_OMISSION_MARKER, evidence_frame
 from probos.tools.executor import recording_identity, tool_recording_scope
 from probos.types import LLMRequest
@@ -899,8 +905,11 @@ class AgenticLoop:
         tools: list[dict[str, Any]],
         context: dict[str, Any],
         on_run_started: Callable[[str], None] | None = None,
+        repository_instructions: InstructionObservation | None = None,
     ) -> AgenticResult:
         """Run with one recording budget, restoring the parent scope on every exit."""
+        if repository_instructions is not None and type(repository_instructions) is not InstructionObservation:
+            raise TypeError("agentic repository guidance requires a typed observation")
         run_id = uuid.uuid4().hex if self._event_correlation_enabled else None
         run_context = {
             **context,
@@ -931,6 +940,10 @@ class AgenticLoop:
                 system_prompt=system_prompt, user_message=user_message,
                 tools=tools, context=run_context,
                 **({"run_id": run_id} if run_id is not None else {}),
+                **(
+                    {"repository_instructions": repository_instructions}
+                    if repository_instructions is not None else {}
+                ),
             )
 
     async def _run_scoped(
@@ -941,6 +954,7 @@ class AgenticLoop:
         tools: list[dict[str, Any]],
         context: dict[str, Any],
         run_id: str | None = None,
+        repository_instructions: InstructionObservation | None = None,
     ) -> AgenticResult:
         """Run the agentic loop until completion or limit reached.
 
@@ -957,6 +971,7 @@ class AgenticLoop:
     and other lifecycle exceptions propagate to the run owner.
         """
         result = AgenticResult()
+        instruction_state = repository_instructions or InstructionObservation()
         messages: list[dict] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
@@ -992,6 +1007,9 @@ class AgenticLoop:
                 },
             )
 
+            effective_system_prompt = append_repository_instructions(system_prompt, instruction_state)
+            messages[0] = {"role": "system", "content": effective_system_prompt}
+
             # Optional compaction (AD-547) before LLM call.
             #
             # AD-1142 / DD-3 — the trigger measures the WORKING-CONTEXT
@@ -1011,8 +1029,17 @@ class AgenticLoop:
                 >= self._compaction_threshold
             ):
                 messages = await self._compact_messages(
-                    messages, iteration=iteration, agent_id=agent_id
+                    messages, iteration=iteration, agent_id=agent_id,
+                    **(
+                        {"repository_system_prompt": effective_system_prompt}
+                        if effective_system_prompt != system_prompt else {}
+                    ),
                 )
+                # Guidance belongs to this run, not to a compactor summary.
+                if messages and messages[0].get("role") == "system":
+                    messages[0] = {"role": "system", "content": effective_system_prompt}
+                else:
+                    messages.insert(0, {"role": "system", "content": effective_system_prompt})
 
             # AD-1146: when structured tool messages are enabled, hand the real
             # multi-turn array to the client (which posts it verbatim). The
@@ -1028,7 +1055,7 @@ class AgenticLoop:
                 req = LLMRequest(
                     prompt="",
                     messages=outbound,
-                    system_prompt=system_prompt,
+                    system_prompt=effective_system_prompt,
                     tier=self._tier,
                     tools=tools,
                     tool_choice="auto",
@@ -1042,7 +1069,7 @@ class AgenticLoop:
                 )
                 req = LLMRequest(
                     prompt=assembled_user_prompt,
-                    system_prompt=system_prompt,
+                    system_prompt=effective_system_prompt,
                     tier=self._tier,
                     tools=tools,
                     tool_choice="auto",
@@ -1148,6 +1175,11 @@ class AgenticLoop:
                 context=context,
                 **({"run_id": run_id} if run_id is not None else {}),
             )
+            for tool_result in tool_results:
+                if isinstance(tool_result, InstructionToolCallResult) and not tool_result.is_error:
+                    instruction_state = merge_instruction_observations(
+                        instruction_state, tool_result.repository_instructions,
+                    )
             # DD-2: ``_execute_tool_uses`` returns results in REQUEST order
             # regardless of completion order, so these three lists stay aligned
             # with the assistant turn's ``tool_calls`` array (AD-1146).
@@ -1251,6 +1283,7 @@ class AgenticLoop:
         *,
         iteration: int,
         agent_id: str,
+        repository_system_prompt: str | None = None,
     ) -> list[dict]:
         """AD-547 / AD-1142 (DD-4): compact the history — best-effort.
 
@@ -1303,6 +1336,12 @@ class AgenticLoop:
             )
             return messages
 
+        if repository_system_prompt is not None:
+            system_entry = {"role": "system", "content": repository_system_prompt}
+            if compacted[0].get("role") == "system":
+                compacted[0] = system_entry
+            else:
+                compacted.insert(0, system_entry)
         occupancy = _estimate_context_tokens(compacted)
         logger.info(
             "AD-547: Compacted message list at iteration=%d messages=%d->%d "

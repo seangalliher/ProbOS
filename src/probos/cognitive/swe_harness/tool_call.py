@@ -17,6 +17,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from probos.cognitive.swe_harness.tools import InstructionToolResult
+from probos.repository_instructions import InstructionObservation
 from probos.tools.delegation_evidence import DelegatedToolResult, DelegationEvidence
 
 if TYPE_CHECKING:
@@ -716,6 +718,9 @@ class ToolCallResult:
         if isinstance(tool_result, DelegatedToolResult):
             result_type = DelegatedToolCallResult
             extension["evidence"] = tool_result.evidence
+        elif isinstance(tool_result, InstructionToolResult) and tool_result.error is None:
+            result_type = InstructionToolCallResult
+            extension["repository_instructions"] = tool_result.repository_instructions
         if tool_result.error is not None:
             return result_type(
                 id=request_id,
@@ -740,6 +745,15 @@ class ToolCallResult:
             source_chars=source_chars,
             **extension,
         )
+
+
+@dataclass(frozen=True)
+class InstructionToolCallResult(ToolCallResult):
+    repository_instructions: InstructionObservation = field(kw_only=True, repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.repository_instructions) is not InstructionObservation:
+            raise TypeError("file call guidance requires a typed instruction observation")
 
 
 @dataclass(frozen=True)
