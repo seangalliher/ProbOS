@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import random
@@ -214,7 +215,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         self._close_lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
 
-        # Simple response cache keyed by (tier, prompt_hash)
+        # Ephemeral fallback cache; nonempty system instructions are isolated.
         self._cache: OrderedDict[str, LLMResponse] = OrderedDict()  # AD-617: LRU eviction
         self._cache_max_entries: int = 500  # AD-617: default, overridden by rate_config
 
@@ -857,8 +858,13 @@ class OpenAICompatibleClient(BaseLLMClient):
             )
             return None
 
-    def _cache_key(self, tier: str, prompt: str) -> str:
-        return f"{tier}:{hash(prompt)}"
+    def _cache_key(
+        self, tier: str, prompt: str, system_prompt: str | None = None,
+    ) -> str:
+        if not system_prompt:
+            return f"{tier}:{hash(prompt)}"
+        material = json.dumps([prompt, system_prompt], separators=(",", ":"))
+        return f"{tier}:system-v1:{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
 
     async def _wait_for_rate_limit(self, tier: str, rpm_limits: dict[str, int], max_wait: float = 30.0) -> bool:
         """AD-617: Token bucket rate limiter. Returns True if allowed, False if budget exhausted.
@@ -1224,7 +1230,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                 # Budget exhausted — try cache (text-only), then return error.
                 # BF-272: multimodal requests bypass the cache (degenerate key).
                 if request.messages is None:
-                    cache_key = self._cache_key(tier, request.prompt)
+                    cache_key = self._cache_key(tier, request.prompt, request.system_prompt)
                     if cache_key in self._cache:
                         cached = self._cache[cache_key]
                         return LLMResponse(
@@ -1365,11 +1371,16 @@ class OpenAICompatibleClient(BaseLLMClient):
                             )
                             if refresh_budget not in _refreshed_generations:
                                 _refreshed_generations.add(refresh_budget)
+                                prompt_tokens_valid = (
+                                    type(response.prompt_tokens) is int and response.prompt_tokens >= 0
+                                )
                                 logger.warning(
                                     "BF-612: empty content from tier=%s (model=%s, "
-                                    "prompt_tokens=%d) — recycling connection pool and "
+                                    "prompt_tokens=%d, prompt_tokens_valid=%s) — recycling connection pool and "
                                     "retrying once on a fresh socket",
-                                    attempt_tier, model, response.prompt_tokens,
+                                    attempt_tier, model,
+                                    response.prompt_tokens if prompt_tokens_valid else 0,
+                                    prompt_tokens_valid,
                                 )
                                 # BF-654: de-sync a synchronized empty-200 herd so
                                 # retries do not hit the proxy in lockstep. E remains
@@ -1450,15 +1461,15 @@ class OpenAICompatibleClient(BaseLLMClient):
                             self._consecutive_successes[attempt_tier] = 0
                             self._last_failure[attempt_tier] = time.monotonic()
                             logger.warning(
-                                "%s (consecutive_failures=%d/%d); attempting "
+                                "LLM response error (tier=%s, model=%s, consecutive_failures=%d/%d); attempting "
                                 "the existing fallback chain",
-                                last_error,
+                                attempt_tier, model,
                                 self._consecutive_failures[attempt_tier],
                                 self._UNREACHABLE_THRESHOLD,
                             )
                             break
                         # Cache successful non-empty responses (keyed by original
-                        # tier + prompt). BF-272 (2026-05-12): empty content is
+                        # tier + prompt + system instructions). BF-272: empty content is
                         # never cached — it poisons all future calls with the same
                         # cache key. Multimodal requests carry their content in
                         # ``messages`` not ``prompt``, so they share a degenerate
@@ -1466,7 +1477,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                         # The multimodal-skip below handles that lookup-side; this
                         # write-side guard catches any tier that returns empty.
                         if request.messages is None and response.content:
-                            cache_key = self._cache_key(tier, request.prompt)
+                            cache_key = self._cache_key(tier, request.prompt, request.system_prompt)
                             self._cache[cache_key] = response
                             self._cache.move_to_end(cache_key)  # AD-617: LRU
                             # AD-617: Evict oldest if over limit
@@ -1561,8 +1572,8 @@ class OpenAICompatibleClient(BaseLLMClient):
                                 wait = min(2 ** c429, 8.0)  # 2s, 4s, 8s, cap at 8
 
                             logger.warning(
-                                "LLM endpoint returned 429 (tier=%s, wait=%.1fs, retry_after=%s)",
-                                attempt_tier, wait, retry_after,
+                                "LLM endpoint returned 429 (tier=%s, wait=%.1fs); retrying within the existing limit",
+                                attempt_tier, wait,
                             )
                             await asyncio.sleep(wait)
                             if _429_attempt == _max_429_retries - 1:
@@ -1593,11 +1604,11 @@ class OpenAICompatibleClient(BaseLLMClient):
                             self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                             self._last_failure[attempt_tier] = time.monotonic()
                             logger.warning(
-                                "%s (tier=%s, model=%s, consecutive_failures=%d/%d): %s",
+                                "%s (tier=%s, model=%s, consecutive_failures=%d/%d); "
+                                "attempting the existing fallback chain",
                                 last_error, attempt_tier, model,
                                 self._consecutive_failures[attempt_tier],
                                 self._UNREACHABLE_THRESHOLD,
-                                e.response.text[:200],
                             )
                             break  # Move to next tier
                     except Exception as e:
@@ -1613,11 +1624,12 @@ class OpenAICompatibleClient(BaseLLMClient):
                         self._consecutive_successes[attempt_tier] = 0  # BF-240: Reset dwell counter
                         self._last_failure[attempt_tier] = time.monotonic()
                         logger.warning(
-                            "LLM call failed (tier=%s, model=%s, consecutive_failures=%d/%d): %s",
+                            "LLM call failed (tier=%s, model=%s, consecutive_failures=%d/%d, exception_type=%s); "
+                            "attempting the existing fallback chain",
                             attempt_tier, model,
                             self._consecutive_failures[attempt_tier],
                             self._UNREACHABLE_THRESHOLD,
-                            last_error,
+                            type(e).__name__,
                         )
                         break  # Move to next tier
 
@@ -1630,7 +1642,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         # degenerate ('vision:hash("")') and collisions cause cross-image
         # response poisoning.
         if request.messages is None:
-            cache_key = self._cache_key(tier, request.prompt)
+            cache_key = self._cache_key(tier, request.prompt, request.system_prompt)
             if cache_key in self._cache:
                 cached = self._cache[cache_key]
                 logger.debug("Using cached LLM response for request %s", request.id[:8])
@@ -1931,13 +1943,16 @@ class OpenAICompatibleClient(BaseLLMClient):
             payload["tools"] = request.tools
             payload["tool_choice"] = request.tool_choice
 
-        logger.debug("LLM request payload (openai): %s", json.dumps(payload, indent=2))
+        logger.debug(
+            "LLM request (openai): model=%s messages=%d tools=%d; sending completion request",
+            model, len(messages), len(request.tools or ()),
+        )
 
         resp = await client.post("chat/completions", json=payload, timeout=timeout)
         resp.raise_for_status()
         data = resp.json()
 
-        logger.debug("Raw HTTP response body: %s", data)
+        logger.debug("LLM response (openai): model=%s; parsing completion", model)
 
         message = data["choices"][0]["message"]
         content = message.get("content") or ""
@@ -1972,9 +1987,8 @@ class OpenAICompatibleClient(BaseLLMClient):
                     )
                 except (ValueError, TypeError):
                     logger.warning(
-                        "AD-543: Failed to parse tool_call.function.arguments for tool=%s; "
+                        "AD-543: Failed to parse tool_call.function.arguments; "
                         "treating as empty dict",
-                        fn.get("name", "<unknown>"),
                     )
                     args_parsed = {}
                 content_blocks_list.append(
@@ -2035,13 +2049,16 @@ class OpenAICompatibleClient(BaseLLMClient):
         if effective_top_p is not None:
             payload.setdefault("options", {})["top_p"] = effective_top_p
 
-        logger.debug("LLM request payload (ollama): %s", json.dumps(payload, indent=2))
+        logger.debug(
+            "LLM request (ollama): model=%s messages=%d; sending completion request",
+            model, len(messages),
+        )
 
         resp = await client.post("api/chat", json=payload, timeout=timeout)
         resp.raise_for_status()
         data = resp.json()
 
-        logger.debug("Raw HTTP response body: %s", data)
+        logger.debug("LLM response (ollama): model=%s; parsing completion", model)
 
         message = data.get("message", {})
         content = message.get("content") or ""

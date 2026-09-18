@@ -16,6 +16,11 @@ from probos.cognitive.swe_harness.tool_call import (
     dedupe_llm_definitions,
     tool_registration_to_llm_definition,
 )
+from probos.repository_instructions import (
+    discover_build_repository_instructions,
+    instruction_read_policy,
+    repository_instruction_directory,
+)
 
 if TYPE_CHECKING:
     from probos.cognitive.builder import BuildSpec
@@ -98,6 +103,17 @@ class NativeBuilderHarness:
         tools_definitions = self._select_build_tools()
         system_prompt = self._compose_system_prompt(spec)
         user_message = self._format_build_message(spec, work_dir)
+        repository_instructions = discover_build_repository_instructions(
+            work_dir,
+            target_paths=(
+                *(spec.target_files or ()), *(spec.reference_files or ()),
+                *(spec.test_files or ()),
+            ),
+            global_directory=repository_instruction_directory(
+                getattr(self._runtime, "data_dir", None),
+            ),
+            policy=instruction_read_policy(self._runtime),
+        )
 
         loop = AgenticLoop(
             llm_client=self._llm,
@@ -128,6 +144,10 @@ class NativeBuilderHarness:
                 "department": department,
                 "rank": rank,
             },
+            **(
+                {"repository_instructions": repository_instructions}
+                if repository_instructions.targets or repository_instructions.notices else {}
+            ),
         )
 
         from probos.build_pipeline import BuildPipeline
