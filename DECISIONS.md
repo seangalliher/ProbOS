@@ -10,6 +10,32 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1244 -- Structured criterion verdicts (ordinary implementation candidate)
+
+**Date:** 2026-09-18. **Existing issue:** #1237. **Status:** Implemented and focused-tested; independent review and release validation remain pending.
+
+The approved Option 1 gives both crew judge parsers a shared, immutable criterion-schema leaf rather than replacing their verdict envelopes. Passing criteria carry an exact JSON boolean and no gap key; failing criteria require a named, nonblank gap. An explicit pre-validation boolean guard rejects integer and float lookalikes that Pydantic literal discrimination otherwise accepts. Both parsers reject inconsistent summary/criterion combinations. Missing or empty criteria remain valid, but a new refusal without a failing criterion must supply a real nonblank top-level critique. Existing extraction, confidence, strict-JSON, token and trace-transport differences remain intact.
+
+Failed criterion gaps are rendered into effective critique at judgement time so existing correction and reporting consumers receive them. The session's 2,048-codepoint / 8,192-byte feedback budget rejects oversized feedback rather than dropping gaps. The shared judge prompt requires conservative evidence-backed assessment; the independent AD-1242 expected system-prompt literal is updated with an explanation, while its user-prompt and trace assertions are unchanged.
+
+Both verdict dataclasses append optional typed criteria. Absence remains distinct from an explicit empty array. Nested checkpoint serialization omits only the absent extension, retaining historical bytes, hashes and blank refusal critiques. Both restart reconstruction sites restore frozen criterion models; provenance and episodes carry JSON objects, and supplied trust evidence is validated without normalizing the evidence being hashed. No database migration, root-envelope version change, execution-evidence expansion or plan/effect identity change is introduced.
+
+**Rollback:** Once new criterion metadata has been persisted, retain this compatible reader when rolling back judgement behavior. Reverting to the prior extra-forbidding reader would reject those records. The tests exercise that rejection and the compatible reader's exact old/new round trips, including an actual store restart and correction history without duplicated gaps.
+
+**Measured implementation evidence:** The paired focused selection passed 1,065 cases, comprising the 843 unchanged existing selectors and 222 new cases (158 AD-1244, 64 AD-1245). Real isolated stores and scripted providers exercise named-gap correction, once-only resolved-refusal attribution, checkpoint restart, API projection and persisted episode reconstruction. These results establish deterministic contracts, not external-model judgement quality. They do not attest a canonical full gate, commit, push or issue closure.
+
+### AD-1245 -- Structural assessment maps to explicit abstention (ordinary implementation candidate)
+
+**Date:** 2026-09-18. **Existing issue:** #1238. **Status:** Implemented and focused-tested; independent review and release validation remain pending.
+
+Reuse the existing legacy `verification_defect` flag and session verdict status; do not add a parallel mutable assessment state. The compatible verdict-to-ballot adapter accepts either verdict class. A structural machinery/schema failure produces a non-approving abstention, while a genuine refusal remains a substantive negative ballot even at zero confidence or with error-like critique text.
+
+`Vote.abstained` is appended after the existing positional timestamp. The typed `QuorumEngine.evaluate_votes` entry point retains ballot evidence while excluding abstentions from weights and minimum-vote participation; the result-based API reuses the tally and retains its prior insufficient-result shape. Shapley removes abstentions before agent aggregation, singleton, exact, approximate and equal-share paths, preserving a participant's genuine ballot alongside its abstention. There is no new crew admission quorum or threshold change.
+
+The existing convergence/finalization owners retain trust and outbox authority. Unassessed child and final verdicts create no producer/verifier trust effects or receipts; existing terminal notifications and failure codes remain visible. Genuine correction, acceptance and attribution behavior is unchanged. The API retains its five-field verdict projection and the execution evidence remains the same 14-key contract.
+
+**Measured implementation evidence:** The paired 1,065-case focused run passed after exact mutation restoration. Before the required everything-abstains mutation, all six genuine-verdict controls passed. A discriminating probe then confirmed a substantive refusal became an abstention on each public verifier path; all six controls failed specifically at the non-abstention assertion. The original source bytes were restored in `finally` and the `.mutbak` removed. This is implementation-stage evidence only; parent-owned independent review, canonical validation and release/closure work are not attested here.
+
 ### Issue #1374 -- Authoritative native crew admission and untouched-work retry
 
 **Date:** 2026-09-10. **Issue:** #1374; no new AD allocation.

@@ -222,6 +222,7 @@ class Vote:
     confidence: float = 0.0
     reason: str = ""
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    abstained: bool = False
 
 
 @dataclass

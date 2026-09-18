@@ -222,14 +222,28 @@ async def test_public_verifier_stored_trace_transport(
 
 _NARRATION = "I queried target/A and verified its repository documentation."
 _CRITERION = "Verify the repository documentation by querying target/A."
+# AD-1244 extends only the system verdict contract; the AD-1242 user prompts
+# below still pin the original trace-free bytes, independently of production.
 _PRE_CHANGE_SYSTEM_PROMPT = (
     "You are an adversarial verifier on a crew of collaborating agents. "
     "Your job is to find flaws, missing requirements, or unsupported "
     "claims in another agent's work \u2014 NOT to be agreeable. Respond ONLY "
     "with a single JSON object of the form "
     '{"accepted": <bool>, "confidence": <0..1 float>, "critique": '
-    '"<short reason>"}. Set "accepted" to true only if the work is correct '
-    "and complete; otherwise false with a concrete critique."
+    '"<short reason>", "criteria": [<criterion>, ...]}. '
+    'A passing criterion is exactly {"name": "<requirement>", "passed": true}; '
+    'a failing criterion is exactly {"name": "<requirement>", "passed": false, '
+    '"gap": "<missing requirement or evidence>"}. '
+    "Use nonblank names and gaps, real JSON booleans, and no extra criterion "
+    "fields; a passing criterion must have no gap field. "
+    "The criteria field may be omitted or an empty array, but never null. "
+    "Accept only correct and complete work with no failed criteria. "
+    "A refusal with a nonempty criteria array must contain a failed criterion. "
+    "A refusal with missing or empty criteria requires a nonblank critique "
+    "naming the missing requirement or evidence. "
+    "Be conservative: mark every criterion that the supplied evidence does "
+    "not positively confirm as failed, with a gap naming the missing "
+    "requirement or evidence needed to verify it."
 )
 _PRE_CHANGE_PROMPTS = {
     ("verify", True): (

@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from probos.cognitive.crew_verdict import parse_verdict_criteria
 from probos.consensus.crew_trust_effect import CrewTrustEffect, CrewTrustRole
 from probos.consensus.shapley import MAX_EXACT_SHAPLEY, compute_shapley_values
 from probos.types import Vote
@@ -180,6 +181,11 @@ def _child_evidence(payload: dict[str, Any]) -> _ChildEvidence:
             or not 0.0 <= float(verdict["confidence"]) <= 1.0
         ):
             raise ValueError("crew_trust_evidence_invalid")
+        if "criteria" in verdict:
+            try:
+                parse_verdict_criteria(verdict)
+            except ValueError as exc:
+                raise ValueError("crew_trust_evidence_invalid") from exc
         verifier_id = verdict.get("verifier_agent_id")
         if verdict["status"] in {"accepted", "refuted"}:
             _required_id(verifier_id, error="crew_trust_evidence_invalid")

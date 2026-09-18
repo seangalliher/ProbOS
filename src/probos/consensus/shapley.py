@@ -100,6 +100,8 @@ def _summarise_players(
     """
     ballots: dict[str, list[Vote]] = {}
     for v in votes:
+        if v.abstained:
+            continue
         ballots.setdefault(v.agent_id, []).append(v)
 
     players: dict[str, _PlayerWeight] = {}
@@ -135,6 +137,8 @@ def _evaluate_coalition(
     weighted_approval = 0.0
     total_weight = 0.0
     for v in coalition_votes:
+        if v.abstained:
+            continue
         weight = v.confidence if use_confidence_weights else 1.0
         total_weight += weight
         if v.approved:
@@ -173,6 +177,8 @@ def compute_shapley_values(
     # outright, which left the grand coalition failing votes the quorum engine
     # had passed.
     players = _summarise_players(votes, use_confidence_weights)
+    if not players:
+        return {}
     agent_ids = list(players.keys())
 
     # The game is played over players. ``n`` measures the set that actually gets

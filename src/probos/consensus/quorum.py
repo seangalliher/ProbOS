@@ -68,23 +68,45 @@ class QuorumEngine:
                 policy=policy,
             )
 
-        votes: list[Vote] = []
-        weighted_approval = 0.0
-        weighted_rejection = 0.0
-        total_weight = 0.0
-
-        for r in results:
-            weight = r.confidence if policy.use_confidence_weights else 1.0
-            vote = Vote(
+        votes = [
+            Vote(
                 agent_id=r.agent_id,
                 approved=r.success,
                 confidence=r.confidence,
                 reason=r.error or "",
             )
-            votes.append(vote)
+            for r in results
+        ]
+        return self.evaluate_votes(
+            votes, policy, proposal_id=results[0].intent_id if results else "",
+        )
+
+    def evaluate_votes(
+        self,
+        votes: list[Vote],
+        policy: QuorumPolicy | None = None,
+        *,
+        proposal_id: str = "",
+    ) -> ConsensusResult:
+        """Evaluate substantive ballots while retaining abstentions as evidence."""
+        policy = policy or self.policy
+        participating = [vote for vote in votes if not vote.abstained]
+        if len(participating) < policy.min_votes:
+            return ConsensusResult(
+                proposal_id=proposal_id,
+                outcome=ConsensusOutcome.INSUFFICIENT,
+                votes=list(votes),
+                policy=policy,
+            )
+
+        weighted_approval = 0.0
+        weighted_rejection = 0.0
+        total_weight = 0.0
+        for vote in participating:
+            weight = vote.confidence if policy.use_confidence_weights else 1.0
             total_weight += weight
 
-            if r.success:
+            if vote.approved:
                 weighted_approval += weight
             else:
                 weighted_rejection += weight
@@ -97,12 +119,10 @@ class QuorumEngine:
         else:
             outcome = ConsensusOutcome.REJECTED
 
-        proposal_id = results[0].intent_id if results else ""
-
         result = ConsensusResult(
             proposal_id=proposal_id,
             outcome=outcome,
-            votes=votes,
+            votes=list(votes),
             weighted_approval=weighted_approval,
             weighted_rejection=weighted_rejection,
             total_weight=total_weight,
@@ -124,7 +144,7 @@ class QuorumEngine:
             outcome.value,
             weighted_approval,
             total_weight,
-            len(votes),
+            len(participating),
             policy.approval_threshold * 100,
         )
 

@@ -55,6 +55,11 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
+from probos.cognitive.crew_verdict import (
+    CriterionVerdict,
+    parse_verdict_criteria,
+    render_critique,
+)
 from probos.cognitive.trace_analysis import quote_for_prose, summarise_trace_ref
 from probos.security.pii_redaction import PIIRedactor
 from probos.tools.protocol import (
@@ -169,6 +174,7 @@ class VerificationVerdict:
     critique: str
     verifier_agent_id: str
     verification_defect: bool = False
+    criteria: tuple[CriterionVerdict, ...] | None = None
 
 
 @dataclass
@@ -196,6 +202,7 @@ class SessionVerificationPass:
     verifier_agent_id: str
     tokens_used: int
     failure_code: SessionVerificationFailureCode | None
+    criteria: tuple[CriterionVerdict, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -1727,17 +1734,23 @@ class SubtaskVerifier:
         )
 
     @staticmethod
-    def verdict_to_vote(verdict: VerificationVerdict) -> Vote:
+    def verdict_to_vote(verdict: VerificationVerdict | SessionVerificationPass) -> Vote:
         """Map a verdict to the real :class:`Vote` shape for AD-861 attribution.
 
         AD-861 builds the Shapley input from these votes; this module does NOT
         call ``compute_shapley_values`` itself.
         """
+        abstained = (
+            verdict.verification_defect
+            if isinstance(verdict, VerificationVerdict)
+            else verdict.status not in {"accepted", "refuted"}
+        )
         return Vote(
             agent_id=verdict.verifier_agent_id,
-            approved=verdict.accepted,
+            approved=verdict.accepted and not abstained,
             confidence=verdict.confidence,
             reason=verdict.critique,
+            abstained=abstained,
         )
 
     async def verify_for_session(
@@ -2045,8 +2058,20 @@ class SubtaskVerifier:
         "claims in another agent's work — NOT to be agreeable. Respond ONLY "
         "with a single JSON object of the form "
         '{"accepted": <bool>, "confidence": <0..1 float>, "critique": '
-        '"<short reason>"}. Set "accepted" to true only if the work is correct '
-        "and complete; otherwise false with a concrete critique."
+        '"<short reason>", "criteria": [<criterion>, ...]}. '
+        'A passing criterion is exactly {"name": "<requirement>", "passed": true}; '
+        'a failing criterion is exactly {"name": "<requirement>", "passed": false, '
+        '"gap": "<missing requirement or evidence>"}. '
+        "Use nonblank names and gaps, real JSON booleans, and no extra criterion "
+        "fields; a passing criterion must have no gap field. "
+        "The criteria field may be omitted or an empty array, but never null. "
+        "Accept only correct and complete work with no failed criteria. "
+        "A refusal with a nonempty criteria array must contain a failed criterion. "
+        "A refusal with missing or empty criteria requires a nonblank critique "
+        "naming the missing requirement or evidence. "
+        "Be conservative: mark every criterion that the supplied evidence does "
+        "not positively confirm as failed, with a gap naming the missing "
+        "requirement or evidence needed to verify it."
     )
 
     def _pick_live_session_verifier(
@@ -2242,11 +2267,10 @@ class SubtaskVerifier:
             )
         except (TypeError, ValueError) as exc:
             raise ValueError("session_verdict_invalid") from exc
-        if type(payload) is not dict or set(payload) != {
-            "accepted",
-            "confidence",
-            "critique",
-        }:
+        required_fields = {"accepted", "confidence", "critique"}
+        if type(payload) is not dict or set(payload) not in (
+            required_fields, required_fields | {"criteria"},
+        ):
             raise ValueError("session_verdict_invalid")
         accepted = payload["accepted"]
         confidence = payload["confidence"]
@@ -2260,7 +2284,11 @@ class SubtaskVerifier:
             or "\x00" in critique
         ):
             raise ValueError("session_verdict_invalid")
-        normalized_critique = critique.strip()
+        try:
+            criteria = parse_verdict_criteria(payload)
+        except ValueError as exc:
+            raise ValueError("session_verdict_invalid") from exc
+        normalized_critique = render_critique(critique.strip(), criteria)
         if (
             accepted and not normalized_critique
             or len(normalized_critique) > _MAX_SESSION_CRITIQUE_CODEPOINTS
@@ -2275,6 +2303,7 @@ class SubtaskVerifier:
             verifier_agent_id=verifier_id,
             tokens_used=tokens,
             failure_code=None,
+            criteria=criteria,
         )
 
     @staticmethod
@@ -2721,12 +2750,29 @@ class SubtaskVerifier:
         except (TypeError, ValueError):
             confidence = 0.0
         confidence = min(1.0, max(0.0, confidence))
-        critique = str(payload.get("critique", "")).strip()
+        try:
+            criteria = parse_verdict_criteria(payload)
+        except ValueError:
+            logger.warning(
+                "AD-1244: judge criteria or required refusal gap were invalid "
+                "(verifier=%s); recording a verification defect without treating "
+                "the malformed reply as a judgement of the producer",
+                verifier_id,
+            )
+            return VerificationVerdict(
+                accepted=False,
+                confidence=0.0,
+                critique="Malformed judge verdict: criteria or refusal gap were invalid.",
+                verifier_agent_id=verifier_id,
+                verification_defect=True,
+            )
+        critique = render_critique(str(payload.get("critique", "")).strip(), criteria)
         return VerificationVerdict(
             accepted=accepted,
             confidence=confidence,
             critique=critique,
             verifier_agent_id=verifier_id,
+            criteria=criteria,
         )
 
     @staticmethod

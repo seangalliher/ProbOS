@@ -12,7 +12,15 @@ from dataclasses import dataclass, replace
 from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    SerializerFunctionWrapHandler,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from probos.cognitive.crew_session import CrewSynthesisMetadata
 from probos.crew_utils import CREW_EXECUTION_KEYS
@@ -23,6 +31,12 @@ from probos.cognitive.crew_trust import (
     derive_completed_crew_trust_effects,
     derive_convergence_exhausted_effects,
     derive_final_refutation_effects,
+)
+from probos.cognitive.crew_verdict import (
+    CriterionVerdict,
+    criteria_to_json,
+    parse_criteria,
+    validate_criteria,
 )
 from probos.cognitive.crew_verifier import (
     SessionConvergenceOutcome,
@@ -222,6 +236,32 @@ class _VerdictRecord(BaseModel):
     verifier_agent_id: str
     tokens_used: int
     failure_code: SessionVerificationFailureCode | None
+    criteria: tuple[CriterionVerdict, ...] | None = None
+
+    @field_validator("criteria", mode="before")
+    @classmethod
+    def _validate_criteria(cls, value: object) -> tuple[CriterionVerdict, ...]:
+        return parse_criteria(value)
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        document = handler(self)
+        if self.criteria is None:
+            # Absence is part of historical checkpoint bytes and trust identity.
+            document.pop("criteria", None)
+        return document
+
+    def to_verdict(self) -> SessionVerificationPass:
+        return SessionVerificationPass(
+            status=self.status,
+            accepted=self.accepted,
+            confidence=self.confidence,
+            critique=self.critique,
+            verifier_agent_id=self.verifier_agent_id,
+            tokens_used=self.tokens_used,
+            failure_code=self.failure_code,
+            criteria=self.criteria,
+        )
 
     @field_validator("accepted", mode="before")
     @classmethod
@@ -264,6 +304,8 @@ class _VerdictRecord(BaseModel):
 
     @model_validator(mode="after")
     def _validate_consistency(self) -> _VerdictRecord:
+        if self.criteria is not None:
+            validate_criteria(self.accepted, self.critique, self.criteria)
         if self.accepted != (self.status == "accepted"):
             raise ValueError("crew_finalization_verdict_invalid")
         if self.status in {"accepted", "refuted"}:
@@ -1526,7 +1568,7 @@ class CrewSessionFinalizer:
             ):
                 raise ValueError("crew_finalization_verdict_recovery_invalid")
             verdict_record = _VerdictRecord.model_validate(document["verdict"])
-            verdict = SessionVerificationPass(**verdict_record.model_dump(mode="json"))
+            verdict = verdict_record.to_verdict()
             self._validate_verifier_identity(
                 verdict,
                 excluded_agent_ids=frozenset({
@@ -1928,7 +1970,7 @@ class CrewSessionFinalizer:
                     value.model_dump(mode="json")
                     for value in round_record.artifact_refs
                 ),
-                verdict=SessionVerificationPass(**verdict.model_dump(mode="json")),
+                verdict=verdict.to_verdict(),
             ))
         terminal = None
         if raw["terminal_attempt"] is not None:
@@ -2738,6 +2780,10 @@ class CrewSessionFinalizer:
                 "verifier_agent_id": item.verifier_agent_id,
                 "tokens_used": item.tokens_used,
                 "failure_code": item.failure_code,
+                **(
+                    {"criteria": criteria_to_json(item.criteria)}
+                    if item.criteria is not None else {}
+                ),
             })
         except (AttributeError, ValidationError) as exc:
             raise ValueError("crew_finalization_verdict_invalid") from exc
