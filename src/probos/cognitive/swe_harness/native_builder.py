@@ -17,7 +17,7 @@ from probos.cognitive.swe_harness.tool_call import (
     tool_registration_to_llm_definition,
 )
 from probos.repository_instructions import (
-    discover_repository_instructions,
+    discover_build_repository_instructions,
     instruction_read_policy,
     repository_instruction_directory,
 )
@@ -103,7 +103,7 @@ class NativeBuilderHarness:
         tools_definitions = self._select_build_tools()
         system_prompt = self._compose_system_prompt(spec)
         user_message = self._format_build_message(spec, work_dir)
-        repository_instructions = discover_repository_instructions(
+        repository_instructions = discover_build_repository_instructions(
             work_dir,
             target_paths=(
                 *(spec.target_files or ()), *(spec.reference_files or ()),

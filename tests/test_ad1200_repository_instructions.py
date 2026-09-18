@@ -19,6 +19,7 @@ from probos.repository_instructions import (
     InstructionReadPolicy,
     TargetInstructions,
     append_repository_instructions,
+    discover_build_repository_instructions,
     discover_repository_instructions,
     instruction_read_policy,
     merge_instruction_observations,
@@ -65,6 +66,69 @@ def _frames(text: str) -> list[dict[str, Any]]:
 
 def _body(observation: InstructionObservation) -> str:
     return "\n".join(frame["content"] for frame in _frames(render_repository_instructions(observation)))
+
+
+@pytest.mark.parametrize("cwd", [None, "", "<work>", "ordinary-relative", "bad\x00path", "C:relative"])
+def test_build_seed_without_absolute_authority_preserves_empty_context(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, cwd: str | None,
+) -> None:
+    def unexpected(*args: Any, **kwargs: Any) -> InstructionObservation:
+        pytest.fail("Unusable build cwd must not start instruction discovery")
+
+    monkeypatch.setattr(instructions, "discover_repository_instructions", unexpected)
+    assert discover_build_repository_instructions(cwd) == InstructionObservation()
+    assert "no usable absolute authority" in caplog.text
+    assert "preserving existing build instructions" in caplog.text
+
+
+def test_build_seed_absolute_context_preserves_guidance_and_invalid_target_notice(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    _write(root, "AGENTS.md", "ROOT")
+    policy = InstructionReadPolicy(permitted_roots=(tmp_path,))
+    targets = ("bad\x00target",)
+    expected = discover_repository_instructions(root, target_paths=targets, policy=policy)
+    observed = discover_build_repository_instructions(root, target_paths=targets, policy=policy)
+    assert observed == expected and _body(observed) == "ROOT"
+    assert "invalid_target" in render_repository_instructions(observed)
+    assert discover_build_repository_instructions(tmp_path / "missing") == InstructionObservation()
+
+
+@pytest.mark.parametrize("failure", ["directory", "denied", "unreadable"])
+def test_build_seed_keeps_applicable_directory_and_instruction_failures_visible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    root = _repo(tmp_path)
+    _write(root, "AGENTS.md", "PRIVATE")
+    policy = InstructionReadPolicy(protected_roots=(root,)) if failure == "denied" else InstructionReadPolicy()
+    if failure == "directory":
+        original = Path.lstat
+
+        def lstat(path: Path) -> Any:
+            if path == root:
+                raise PermissionError("owned fixture denial")
+            return original(path)
+
+        monkeypatch.setattr(Path, "lstat", lstat)
+    elif failure == "unreadable":
+        monkeypatch.setattr(
+            instructions, "read_bounded_utf8",
+            lambda *args, **kwargs: BoundedTextRead(Status.IO_ERROR),
+        )
+    observed = discover_build_repository_instructions(root, policy=policy)
+    rendered = render_repository_instructions(observed)
+    assert "PRIVATE" not in rendered
+    assert {"directory": "invalid_target", "denied": "denied", "unreadable": "io_error"}[failure] in rendered
+
+
+def test_build_seed_does_not_swallow_discovery_contract_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*args: Any, **kwargs: Any) -> InstructionObservation:
+        raise ValueError("discovery contract failure")
+
+    monkeypatch.setattr(instructions, "discover_repository_instructions", broken)
+    with pytest.raises(ValueError, match="discovery contract failure"):
+        discover_build_repository_instructions(tmp_path)
 
 
 @pytest.mark.parametrize(

@@ -269,6 +269,27 @@ def _select_directory(
     return DirectoryInstructions(directory, repository)
 
 
+def discover_build_repository_instructions(
+    work_dir: str | Path | None,
+    *,
+    target_paths: Sequence[str | Path] = (),
+    global_directory: Path | None = None,
+    policy: InstructionReadPolicy = InstructionReadPolicy(),
+) -> InstructionObservation:
+    """Seed builds only when their existing cwd supplies explicit authority."""
+    try:
+        validate_read_location("" if work_dir is None else work_dir)
+    except ValueError:
+        logger.warning(
+            "AD-1200: build working directory supplies no usable absolute authority; "
+            "skipping repository guidance and preserving existing build instructions",
+        )
+        return InstructionObservation()
+    return discover_repository_instructions(
+        work_dir, target_paths=target_paths, global_directory=global_directory, policy=policy,
+    )
+
+
 def discover_repository_instructions(
     work_dir: str | Path | None,
     *,

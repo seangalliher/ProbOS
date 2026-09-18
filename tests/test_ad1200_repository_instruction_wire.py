@@ -315,6 +315,43 @@ async def test_no_instructions_actual_requests_match_pinned_base(
     assert observed == json.loads(_GOLDEN.read_text(encoding="utf-8"))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("cwd", ["<work>", "ordinary-relative", "bad\x00path", "", None])
+async def test_native_unusable_workdir_preserves_existing_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, structured: bool, cwd: str | None,
+) -> None:
+    from probos.cognitive.swe_harness import native_builder
+
+    seed_calls: list[str | Path | None] = []
+    original = native_builder.discover_build_repository_instructions
+
+    def seed(work_dir: str | Path | None, **kwargs: Any) -> InstructionObservation:
+        seed_calls.append(work_dir)
+        return original(work_dir, **kwargs)
+
+    monkeypatch.setattr(native_builder, "discover_build_repository_instructions", seed)
+    runtime = _runtime(tmp_path, structured=structured)
+    llm = _FakeLLM([_text()])
+    harness = NativeBuilderHarness(
+        runtime=runtime, llm_client=llm,
+        tool_executor=ToolExecutor(registry=runtime.tool_registry),
+        tool_registry=runtime.tool_registry, structured_tool_messages=structured,
+    )
+    spec = BuildSpec(title="Legacy context", description="Report.")
+    expected = harness._compose_system_prompt(spec)
+    await harness.run_build(spec, cwd)
+    assert len(llm.requests) == 1
+    assert seed_calls == [cwd]
+    assert llm.requests[0].system_prompt == expected
+    if structured:
+        assert llm.requests[0].messages
+        user_message = llm.requests[0].messages[0]["content"]
+    else:
+        user_message = llm.requests[0].prompt
+    assert str(cwd) in user_message
+
+
 @pytest.mark.parametrize("encoding", ["plain", "json", "nested_json"])
 def test_golden_fixture_path_normalization_is_portable_without_weakening_data(
     encoding: str,
@@ -824,3 +861,61 @@ async def test_fake_sdk_session_receives_bounded_scoped_guidance_without_permiss
     ]
     assert result.raw_output == "done"
     assert result.file_blocks == [] and "MARKER" not in repr(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cwd", ["<work>", "ordinary-relative", "bad\x00path", "", None])
+async def test_fake_sdk_unusable_seed_keeps_session_instructions_and_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cwd: str | None,
+) -> None:
+    from probos import repository_instructions as instructions
+    from probos.cognitive import copilot_adapter as sdk
+
+    configs: list[dict[str, Any]] = []
+    options: list[dict[str, Any]] = []
+    lifecycle: list[str] = []
+    approved = object()
+
+    def unexpected(*args: Any, **kwargs: Any) -> InstructionObservation:
+        pytest.fail("SDK caller supplied no usable authority; generic discovery must not run")
+
+    monkeypatch.setattr(instructions, "discover_repository_instructions", unexpected)
+
+    class _FakeSession:
+        async def send_and_wait(self, prompt: dict[str, str], *, timeout: float) -> None:
+            raise RuntimeError("captured session configuration")
+
+        async def disconnect(self) -> None:
+            lifecycle.append("disconnect")
+
+    class _FakeClient:
+        def __init__(self, values: dict[str, Any]) -> None:
+            options.append(values)
+
+        async def start(self) -> None:
+            lifecycle.append("start")
+
+        async def create_session(self, config: dict[str, Any]) -> _FakeSession:
+            configs.append(config)
+            return _FakeSession()
+
+        async def stop(self) -> None:
+            lifecycle.append("stop")
+
+    monkeypatch.setattr(sdk, "_SDK_AVAILABLE", True)
+    monkeypatch.setattr(sdk, "CopilotClient", _FakeClient, raising=False)
+    monkeypatch.setattr(sdk, "PermissionHandler", SimpleNamespace(approve_all=approved), raising=False)
+    monkeypatch.setattr(sdk, "Tool", lambda **kwargs: SimpleNamespace(**kwargs), raising=False)
+    adapter = sdk.CopilotBuilderAdapter(cwd=cwd, runtime=_runtime(tmp_path))
+    expected = adapter._compose_system_message()
+    await adapter.start()
+    try:
+        result = await adapter.execute(BuildSpec(title="Legacy context", description="Report."), {})
+    finally:
+        await adapter.stop()
+    assert len(configs) == len(options) == 1
+    assert configs[0]["system_message"] == expected
+    assert configs[0]["working_directory"] == options[0]["cwd"] == (cwd or str(sdk._PROJECT_ROOT))
+    assert configs[0]["on_permission_request"] is approved
+    assert lifecycle == ["start", "disconnect", "stop"]
+    assert result.error == "captured session configuration"

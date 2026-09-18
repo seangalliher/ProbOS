@@ -30,6 +30,17 @@ With no applicable context/files, request bytes remain unchanged. The installed
 ProbOS source repository retains its existing behavior by filesystem identity,
 not by matching the directory name `ProbOS`.
 
+Build seeding uses `discover_build_repository_instructions`: absent, empty,
+relative or lexically invalid working directories provide no repository authority,
+so the adapter logs a contextual warning and preserves the existing request.
+It never substitutes the process cwd or recognizes special placeholder strings.
+Valid absolute directories delegate to generic discovery unchanged, including
+denied/unreadable directory or instruction results and malformed target notices.
+Registered file readers continue using generic discovery directly.
+The SDK retains its established operational-directory default separately from
+the caller-supplied instruction authority; choosing an SDK default does not
+manufacture an instruction seed.
+
 ## Discovery and precedence
 
 Global instructions exist only in the explicitly supplied
@@ -274,3 +285,25 @@ cases**. Log/JUnit: `logs/gates/ordinary-1137-r3-final-focused-20260918T15164036
 JUnit SHA-256 `09ff668d1d178316c4fcf076ec19776e88a1d84c1cafb2158324deeac841f246`.
 The original golden is unchanged. Independent replacement-candidate approval
 and canonical/hosted release gates remain required.
+
+The first canonical committed-tree gate exposed three existing AD-1152 golden
+failures: the legacy build cwd `<work>` acquired an invalid-target addendum.
+The shared build-only applicability adapter repairs that compatibility gap;
+neither existing golden nor its tests changed. All 272 targeted AD-1200/AD-1152
+cases passed afterward, including the three former failures and real native/fake
+SDK request-boundary controls. Evidence:
+`logs/gates/ordinary-1137-compatibility-20260918T161303364.*`.
+The failed canonical gate is retained as failure evidence and cannot authorize
+release; a new reviewed commit and fresh canonical receipt are required.
+
+The complete 26-selector compatibility focus passed **715 tests, 4 existing
+skips**, retaining all original tests and both goldens. Log/JUnit:
+`logs/gates/ordinary-1137-compatibility-final-20260918T161520156.*`;
+JUnit SHA-256 `cb5c48837cece960b36b4f40b4f2431aec5264a72714be39e6db3ee91d34bf0e`.
+
+Independent delta review caught the SDK constructor's prior empty-cwd fallback
+masking raw authority. After separating those values and adding direct discovery/
+call-site spies, final focus passed **716 tests, 4 existing skips**.
+`logs/gates/ordinary-1137-final-seeding-20260918T163045424.*`;
+JUnit SHA-256 `0bb8fa34ab8a3fe948fa6419df9e242ded0f1ef23f75aa13e90e71446b4b12c3`.
+Both prior goldens remain unchanged.

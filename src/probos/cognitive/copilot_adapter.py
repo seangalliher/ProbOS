@@ -20,7 +20,7 @@ from typing import Any, TYPE_CHECKING
 
 from probos.repository_instructions import (
     append_repository_instructions,
-    discover_repository_instructions,
+    discover_build_repository_instructions,
     instruction_read_policy,
     repository_instruction_directory,
 )
@@ -170,6 +170,7 @@ class CopilotBuilderAdapter:
         self._codebase_index = codebase_index
         self._runtime = runtime
         self._model = model
+        self._instruction_work_dir = cwd
         self._cwd = cwd or str(_PROJECT_ROOT)
         self._github_token = github_token
         self._client: Any | None = None
@@ -485,8 +486,8 @@ class CopilotBuilderAdapter:
 
         try:
             system_message = self._compose_system_message()
-            repository_instructions = discover_repository_instructions(
-                self._cwd,
+            repository_instructions = discover_build_repository_instructions(
+                self._instruction_work_dir,
                 target_paths=(
                     *(spec.target_files or ()), *(spec.reference_files or ()),
                     *(spec.test_files or ()),
