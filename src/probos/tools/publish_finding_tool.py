@@ -59,14 +59,23 @@ resolver, its bounds and a node id, and nothing else.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import re
 import time
 from collections import deque
+from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import ValidationError
+
+from probos.knowledge.claims import (
+    MAX_BASIS_CHARS as _MAX_BASIS_CHARS,
+    MAX_TITLE_CHARS as _MAX_TITLE_CHARS,
+    FindingClaim,
+    FindingPublication,
+    compute_claim_id,
+    finding_slug as _slugify,
+)
 from probos.knowledge.records_store import _CLASSIFICATION_LEVELS
 from probos.tools.protocol import ToolResult, ToolType
 
@@ -104,11 +113,8 @@ _FLEET_CLASSIFICATION = "fleet"
 _FLEET_WRITE_CLASSIFICATION = "ship"
 
 # DD-7 bounds.
-_MAX_TITLE_CHARS = 200
-_MAX_BASIS_CHARS = 1000
 _MAX_TAGS = 8
 _MAX_TAG_CHARS = 32
-_MAX_SLUG_CHARS = 48
 # The rate-limiter deque is hard-capped so a flood cannot grow it without
 # bound; the per-author budget is checked against the pruned window.
 _RATE_WINDOW_SECONDS = 3600.0
@@ -123,29 +129,15 @@ _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # would fall out of both curation guards while still being written.
 # ``_safe_path`` blocks traversal but not nesting, so this fails closed.
 _CALLSIGN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
-def _slugify(title: str) -> str:
-    """Reduce a title to the slug charset, mirroring ``skill_framework._slugify``."""
-    slug = re.sub(r"[^a-z0-9]+", "-", (title or "").strip().lower()).strip("-")
-    return slug[:_MAX_SLUG_CHARS]
+@dataclass(frozen=True)
+class FindingToolResult(ToolResult):
+    publication: FindingPublication = field(kw_only=True)
 
-
-def compute_claim_id(title: str, claim: str, basis: str) -> str:
-    """DD-3: content-addressed identity over the canonical claim triple.
-
-    Canonical JSON with sorted keys, so the same ``{title, claim, basis}``
-    always hashes to the same id regardless of parameter order, and any change
-    to any of the three produces a different one.
-    """
-    canonical = json.dumps(
-        {"title": title, "claim": claim, "basis": basis},
-        sort_keys=True,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    def __post_init__(self) -> None:
+        if not isinstance(self.publication, FindingPublication):
+            raise TypeError("finding result requires a typed publication observation")
 
 
 # ── DD-2: authored strings. All checked against the real gap regex in tests. ──
@@ -464,38 +456,18 @@ class PublishFindingTool:
         a ``bool`` is an ``int`` in Python, and an ``isinstance`` check on
         ``confidence`` would silently accept ``True`` as ``1.0``.
         """
-        title = raw.get("title")
-        if type(title) is not str:
-            return "title"
-        title = title.strip()
-        if not title or len(title) > _MAX_TITLE_CHARS:
-            return "title"
-        if not _SLUG_RE.fullmatch(_slugify(title)):
-            # DD-6: a title of pure punctuation slugifies to empty and would
-            # produce an unaddressable path.
-            return "title"
-
-        claim = raw.get("claim")
-        if type(claim) is not str:
-            return "claim"
-        claim = claim.strip()
-        if not claim or len(claim) > self._max_content_chars:
-            return "claim"
-
-        basis = raw.get("basis")
-        if type(basis) is not str:
-            return "basis"
-        basis = basis.strip()
-        if not basis or len(basis) > _MAX_BASIS_CHARS:
-            return "basis"
-
-        confidence = raw.get("confidence", 0.5)
-        if type(confidence) is int:
-            confidence = float(confidence)
-        if type(confidence) is not float:
-            return "confidence"
-        if not (0.0 <= confidence <= 1.0):
-            return "confidence"
+        try:
+            core = FindingClaim.model_validate(
+                {
+                    "title": raw.get("title"),
+                    "claim": raw.get("claim"),
+                    "basis": raw.get("basis"),
+                    "confidence": raw.get("confidence", 0.5),
+                },
+                context={"max_content_chars": self._max_content_chars},
+            )
+        except ValidationError as exc:
+            return str(exc.errors()[0]["loc"][0])
 
         classification = raw.get("classification", _DEFAULT_CLASSIFICATION)
         if type(classification) is not str:
@@ -520,10 +492,7 @@ class PublishFindingTool:
                 tags.append(tag)
 
         return {
-            "title": title,
-            "claim": claim,
-            "basis": basis,
-            "confidence": confidence,
+            **core.model_dump(),
             "classification": classification,
             "tags": [FINDING_TAG, *tags],
         }
@@ -746,7 +715,7 @@ class PublishFindingTool:
             if requested == _FLEET_CLASSIFICATION
             else _SUCCESS_DISPOSITION.format(classification=written)
         )
-        return ToolResult(
+        return FindingToolResult(
             output=self._bounded(f"{_HEADER}\n\n{disposition}\n"),
             duration_ms=(time.monotonic() - started) * 1000.0,
             metadata={
@@ -756,6 +725,18 @@ class PublishFindingTool:
                 "classification": written,
                 "requested_scope": requested,
             },
+            publication=FindingPublication(
+                claim=FindingClaim(
+                    title=fields["title"],
+                    claim=fields["claim"],
+                    basis=fields["basis"],
+                    confidence=fields["confidence"],
+                ),
+                claim_id=claim_id,
+                path=path,
+                classification=written,
+                requested_scope=requested,
+            ),
         )
 
     async def _check_similarity(

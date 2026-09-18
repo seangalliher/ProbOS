@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 
+from probos.artifacts.refs import validate_artifact_ref
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.dm.reply_value import correlate_tool_outcomes  # AD-1248
 from probos.dm_reply import (  # AD-1248 / AD-1295
@@ -41,6 +42,11 @@ from probos.integrations.mcp_bridge.risk import (
 )
 from probos.tools.browser.lifecycle import BrowserUse
 from probos.tools.browser.tool import BrowserTool
+from probos.tools.delegation_evidence import (
+    DelegationEvidence,
+    DelegationEvidenceCollector,
+    delegation_status,
+)
 from probos.tools.executor import ToolExecutor, wire_durable_tool_records
 from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolPermissionDenied
@@ -53,23 +59,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_ARTIFACT_REF_KEYS = frozenset(
-    {
-        "artifact_id",
-        "content_hash",
-        "thread_id",
-        "name",
-        "mime",
-        "size_bytes",
-        "version",
-    }
-)
-_ARTIFACT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
-_ARTIFACT_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _MAX_ARTIFACT_CANDIDATES_PER_RESULT = 64
 _MAX_ARTIFACT_REFS = 32
-_MAX_ARTIFACT_SIZE_BYTES = 26_214_400
-_MAX_ARTIFACT_VERSION = 2_147_483_647
 _AGENTIC_EXTRA_CONTEXT_KEYS = frozenset(
     {
         "agent_id",
@@ -441,58 +432,16 @@ def _extract_artifact_refs(
         if len(candidates) > _MAX_ARTIFACT_CANDIDATES_PER_RESULT:
             ignored += len(candidates) - _MAX_ARTIFACT_CANDIDATES_PER_RESULT
         for candidate in candidates[:_MAX_ARTIFACT_CANDIDATES_PER_RESULT]:
-            if type(candidate) is not dict:
+            try:
+                ref = validate_artifact_ref(candidate, thread_id=thread_id)
+            except ValueError:
                 ignored += 1
                 continue
-            if (
-                len(candidate) != len(_ARTIFACT_REF_KEYS)
-                or any(type(key) is not str for key in candidate)
-                or set(candidate) != _ARTIFACT_REF_KEYS
-            ):
+            if ref.artifact_id in seen_ids or len(refs) >= _MAX_ARTIFACT_REFS:
                 ignored += 1
                 continue
-            artifact_id = candidate["artifact_id"]
-            content_hash = candidate["content_hash"]
-            candidate_thread_id = candidate["thread_id"]
-            name = candidate["name"]
-            mime = candidate["mime"]
-            size_bytes = candidate["size_bytes"]
-            version = candidate["version"]
-            valid = (
-                type(artifact_id) is str
-                and _ARTIFACT_ID_RE.fullmatch(artifact_id) is not None
-                and type(content_hash) is str
-                and _ARTIFACT_SHA_RE.fullmatch(content_hash) is not None
-                and type(candidate_thread_id) is str
-                and bool(candidate_thread_id)
-                and candidate_thread_id == thread_id
-                and type(name) is str
-                and 1 <= len(name) <= 255
-                and "/" not in name
-                and "\\" not in name
-                and "\x00" not in name
-                and type(mime) is str
-                and 1 <= len(mime) <= 255
-                and type(size_bytes) is int
-                and 1 <= size_bytes <= _MAX_ARTIFACT_SIZE_BYTES
-                and type(version) is int
-                and 1 <= version <= _MAX_ARTIFACT_VERSION
-            )
-            if not valid or artifact_id in seen_ids or len(refs) >= _MAX_ARTIFACT_REFS:
-                ignored += 1
-                continue
-            seen_ids.add(artifact_id)
-            refs.append(
-                {
-                    "artifact_id": artifact_id,
-                    "content_hash": content_hash,
-                    "thread_id": candidate_thread_id,
-                    "name": name,
-                    "mime": mime,
-                    "size_bytes": size_bytes,
-                    "version": version,
-                }
-            )
+            seen_ids.add(ref.artifact_id)
+            refs.append(ref.model_dump())
     return refs, ignored
 
 
@@ -1726,6 +1675,7 @@ class WorkItemAgenticOutcome:
     # Appended last and defaulted, so every existing construction site is
     # untouched.
     tool_invocations: ToolInvocations | None = None
+    delegation_evidence: DelegationEvidence | None = None
 
 
 class WorkItemAgenticExecutor:
@@ -1898,11 +1848,22 @@ class WorkItemAgenticExecutor:
 
         executor = DispatchToolExecutor(registry=registry)
         observed_tool_results: list[tuple[Any, Any]] = []
+        from probos.tools.publish_finding_tool import FindingToolResult
+
+        delegation_evidence = DelegationEvidenceCollector(
+            agent_id=agent_id, thread_id=thread_id,
+        )
 
         def _record_tool_result(context: dict[str, Any], result: ToolResult) -> None:
             tool_id = context.get("tool_id") if type(context) is dict else None
             if tool_id == "run_python":
                 observed_tool_results.append((tool_id, result))
+            elif (
+                tool_id == "publish_finding"
+                and isinstance(result, FindingToolResult)
+                and result.error is None
+            ):
+                delegation_evidence.observe_publication(result.publication)
 
         executor.add_post_hook(_record_tool_result)
 
@@ -2705,6 +2666,14 @@ class WorkItemAgenticExecutor:
             # this the DM write-claim guard cannot tell a turn that never tried
             # to save from a turn whose save failed, and abstains on both.
             tool_invocations=_project_tool_invocations(agentic_result),
+            delegation_evidence=delegation_evidence.finish(
+                status=delegation_status(agentic_result.stopped_reason),
+                final_text=agentic_result.final_text or "",
+                trace_ref=tool_trace_ref,
+                trace_expected=bool(getattr(agentic_result, "tool_calls", None)),
+                artifact_refs=artifact_refs,
+                artifact_omissions=ignored_artifact_entries,
+            ),
         )
 
     async def _persist_tool_trace(

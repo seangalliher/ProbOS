@@ -17,6 +17,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from probos.tools.delegation_evidence import DelegatedToolResult, DelegationEvidence
+
 if TYPE_CHECKING:
     from probos.tools.protocol import ToolRegistration, ToolResult
 
@@ -709,12 +711,18 @@ class ToolCallResult:
         This records the LENGTH only. Keeping the value itself is AD-1240's
         question (#1239, open), and deliberately not answered here.
         """
+        result_type = cls
+        extension: dict[str, Any] = {}
+        if isinstance(tool_result, DelegatedToolResult):
+            result_type = DelegatedToolCallResult
+            extension["evidence"] = tool_result.evidence
         if tool_result.error is not None:
-            return cls(
+            return result_type(
                 id=request_id,
                 output=str(tool_result.error),
                 is_error=True,
                 duration_ms=duration_ms,
+                **extension,
             )
         raw = tool_result.output
         source_chars: int | None = None
@@ -724,13 +732,23 @@ class ToolCallResult:
             out = ""
         else:
             out, source_chars = render_tool_output_sourced(raw, max_chars=max_chars)
-        return cls(
+        return result_type(
             id=request_id,
             output=out,
             is_error=False,
             duration_ms=duration_ms,
             source_chars=source_chars,
+            **extension,
         )
+
+
+@dataclass(frozen=True)
+class DelegatedToolCallResult(ToolCallResult):
+    evidence: DelegationEvidence = field(kw_only=True)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.evidence, DelegationEvidence):
+            raise TypeError("delegated call result requires typed evidence")
 
 
 @dataclass(frozen=True)
