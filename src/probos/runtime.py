@@ -13,11 +13,11 @@ import time
 import uuid as _uuid
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from itertools import islice
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from probos.events import BaseEvent, EventType
 from probos.agents.directory_list import DirectoryListAgent
@@ -199,7 +199,7 @@ if TYPE_CHECKING:
     from probos.tools.registry import ToolRegistry
     from probos.ward_room import WardRoomService
     from probos.watch_rotation import NightOrdersManager, WatchManager
-    from probos.workforce import WorkItemStore
+    from probos.workforce import BookableResource, WorkItemStore
 
 logger = logging.getLogger(__name__)
 
@@ -2998,6 +2998,7 @@ class ProbOSRuntime:
             oracle=self.oracle,  # AD-1139: read-only Oracle consult tool
             records_store=self._records_store,  # AD-1140: commons-write tool
             notebook_quality_engine=self._notebook_quality_engine,  # AD-1140
+            pull_resource_resolver=self.resolve_workforce_pull_resource,
         )
         self.persistent_task_store = comm.persistent_task_store
         self.work_item_store = comm.work_item_store
@@ -3932,6 +3933,87 @@ class ProbOSRuntime:
             trust = self.trust_network.get_score(agent.id)
             characteristics.append({"skill": "trust", "proficiency": trust})
         return characteristics
+
+    def resolve_workforce_pull_resource(
+        self,
+        resource_id: str,
+        action: Literal["discover", "claim", "assign", "resume"],
+        agent_pull: bool,
+    ) -> BookableResource | None:
+        """Resolve current workforce authority without accepting caller attributes."""
+        from probos.cognitive.agentic_dispatch import (
+            AgenticIdentityUnresolved,
+            resolve_agentic_identity,
+        )
+        from probos.tools.protocol import ToolPermission
+
+        if (
+            type(resource_id) is not str or not resource_id
+            or action not in ("discover", "claim", "assign", "resume")
+            or type(agent_pull) is not bool
+        ):
+            return None
+        store = self.work_item_store
+        if store is None:
+            return None
+        resource = store.get_resource(resource_id)
+        if (
+            resource is None or resource.resource_id != resource_id
+            or resource.active is not True
+            or type(resource.capacity) is not int or resource.capacity < 1
+        ):
+            return None
+        candidates = [
+            agent for agent in self.registry.all()
+            if (getattr(agent, "agent_uuid", "") or agent.id) == resource_id
+        ]
+        if len(candidates) != 1:
+            return None
+        agent = candidates[0]
+        if (
+            getattr(agent, "is_alive", None) is not True
+            or self.registry.get(agent.id) is not agent
+            or (agent_pull and agent.id != resource_id)
+        ):
+            return None
+        try:
+            identity = resolve_agentic_identity(
+                agent_id=agent.id, agent_registry=self.registry,
+                ontology=self.ontology, trust_network=self.trust_network,
+            )
+        except AgenticIdentityUnresolved:
+            return None
+        characteristics = self._build_resource_characteristics(agent)
+        trust = [entry for entry in characteristics if entry.get("skill") == "trust"]
+        if len(trust) != 1:
+            return None
+        score = trust[0].get("proficiency")
+        if type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1:
+            return None
+        if agent_pull:
+            if action not in ("discover", "claim"):
+                return None
+            tool_id = "discover_work_items" if action == "discover" else "claim_work_item"
+            required = ToolPermission.READ if action == "discover" else ToolPermission.WRITE
+            registry = self.tool_registry
+            if registry is None or not registry.check_permission(
+                identity.agent_id, tool_id, required,
+                agent_department=identity.department, agent_rank=identity.rank,
+                agent_types=[identity.agent_type],
+            ):
+                return None
+            lock = registry.get_lock(tool_id)
+            if lock is not None and lock["holder"] != identity.agent_id:
+                return None
+        return replace(
+            resource,
+            agent_type=identity.agent_type,
+            department=identity.department,
+            characteristics=[
+                entry for entry in characteristics
+                if entry.get("skill") in (identity.agent_type, "trust")
+            ] + [{"skill": identity.department, "proficiency": 1.0}],
+        )
 
     async def submit_intent(
         self,

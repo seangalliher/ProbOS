@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 
 class ToolType(str, Enum):
@@ -63,6 +63,18 @@ class ToolConcurrency(str, Enum):
 
     CONCURRENT = "concurrent"  # Multiple agents can use simultaneously
     EXCLUSIVE = "exclusive"    # Only one agent at a time (LOTO)
+
+
+@dataclass(frozen=True)
+class ToolResultPresentation:
+    """Trusted invocation-bound admission for a complete rendered tool result.
+
+    The callable returns the unchanged plain rendering, or ``None`` when that
+    rendering exceeds the caller's actual bounds. Invalid bounds and rendering
+    failures raise; neither is successful emptiness.
+    """
+
+    render_complete: Callable[[Any], str | None]
 
 
 @dataclass(frozen=True)

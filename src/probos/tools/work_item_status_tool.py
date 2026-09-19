@@ -110,24 +110,27 @@ class WorkItemStatusTool:
             return refusal
         ctx = context or {}
         agent_id = str(ctx.get("agent_id") or "")
-        wanted = str((params or {}).get("work_item_id") or "").strip()
+        wanted = (params or {}).get("work_item_id")
 
         def _done(output: dict[str, Any]) -> ToolResult:
             return ToolResult(
                 output=output, error=None, duration_ms=(time.monotonic() - t0) * 1000.0,
             )
 
-        if len(wanted) < 8:
-            return _done({
-                "found": False,
-                "reason": (
-                    "a task id of at least 8 characters is needed to identify "
-                    "one task"
-                ),
-            })
+        short_id = {
+            "found": False,
+            "reason": (
+                "a task id of at least 8 characters is needed to identify "
+                "one task"
+            ),
+        }
+        if not isinstance(wanted, str) or not wanted:
+            return _done(short_id)
 
         store = getattr(self._runtime, "work_item_store", None)
         if store is None:
+            if len(wanted.strip()) < 8:
+                return _done(short_id)
             return _done({
                 "found": False,
                 "reason": "task records are not available on this ship",
@@ -147,6 +150,9 @@ class WorkItemStatusTool:
             })
 
         if item is None:
+            wanted = wanted.strip()
+            if len(wanted) < 8:
+                return _done(short_id)
             return _done({
                 "found": False,
                 "work_item_id": wanted,
@@ -162,15 +168,24 @@ class WorkItemStatusTool:
     async def _resolve(self, store: Any, wanted: str, agent_id: str) -> Any:
         """Find an item by id or id-prefix, scoped to this agent's work.
 
-        Exact id first (the common case, and cheap). Prefix matching exists
-        because an agent quoting an id from the transcript sees the shortened
-        form the acknowledgement printed.
+        Raw exact id first, preserving short and whitespace-bearing identities.
+        Only then trim for the existing exact/prefix fallback of at least eight
+        characters, as acknowledgements may quote shortened IDs.
         """
         get = getattr(store, "get_work_item", None)
         if callable(get):
             exact = await get(wanted)
             if exact is not None and self._owned_by(exact, agent_id):
                 return exact
+
+        trimmed = wanted.strip()
+        if len(trimmed) < 8:
+            return None
+        if trimmed != wanted and callable(get):
+            exact = await get(trimmed)
+            if exact is not None and self._owned_by(exact, agent_id):
+                return exact
+        wanted = trimmed
 
         listing = getattr(store, "list_work_items", None)
         if not callable(listing):

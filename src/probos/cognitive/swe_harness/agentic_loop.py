@@ -23,6 +23,7 @@ from probos.cognitive.swe_harness.tool_call import (
     ToolCallResult,
     ToolResultBlock,
     ToolUseBlock,
+    render_tool_output,
 )
 from probos.crew_execution_usage import (
     TOKEN_SOURCE_ESTIMATED,
@@ -38,6 +39,7 @@ from probos.repository_instructions import (
 )
 from probos.tools.delegation_evidence import MESSAGE_OMISSION_MARKER, evidence_frame
 from probos.tools.executor import recording_identity, tool_recording_scope
+from probos.tools.protocol import ToolResultPresentation
 from probos.types import LLMRequest
 
 if TYPE_CHECKING:
@@ -1513,13 +1515,37 @@ class AgenticLoop:
         )
         start = time.perf_counter()
         try:
+            invocation_context = {**context, "iteration": iteration}
+            if use.tool_call.name in ("discover_work_items", "claim_work_item"):
+                max_chars = self._tool_result_max_chars
+                head_chars = self._tool_result_head_chars
+                tail_chars = self._tool_result_tail_chars
+
+                def render_complete(value: Any) -> str | None:
+                    if any(
+                        type(bound) is not int or bound < 0
+                        for bound in (max_chars, head_chars, tail_chars)
+                    ):
+                        raise ValueError("work_pull_presentation_invalid")
+                    plain = render_tool_output(value, max_chars=0)
+                    if not plain and type(value) is not str:
+                        raise ValueError("work_pull_presentation_render_failed")
+                    bounded = truncate_tool_output(
+                        plain, max_chars=max_chars,
+                        head_chars=head_chars, tail_chars=tail_chars,
+                    )
+                    return plain if bounded == plain else None
+
+                invocation_context["_tool_result_presentation"] = ToolResultPresentation(
+                    render_complete=render_complete,
+                )
             raw_result = await self._executor.invoke(
                 agent_id=str(context.get("agent_id", "")),
                 tool_id=use.tool_call.name,
                 params=use.tool_call.arguments,
                 agent_department=context.get("department", "engineering"),
                 agent_rank=context.get("rank", "ensign"),
-                context={**context, "iteration": iteration},
+                context=invocation_context,
             )
             duration_ms = (time.perf_counter() - start) * 1000.0
             # BF-728: hand the bound down so a big structured result is
