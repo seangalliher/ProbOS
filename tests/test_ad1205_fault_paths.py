@@ -1247,9 +1247,11 @@ async def test_real_dm_keeps_only_raw_attempted_text_and_no_pending_rows(faults)
         await _dm(agent, raw=f"raw-captain-{index}")
         with sqlite3.connect(store.db_path) as db:
             assert db.execute("SELECT COUNT(*) FROM fault_reports").fetchone() == (int(index == 2),)
-            assert db.execute(
+            # AD-1206 adds filing metadata, not durable candidate observations.
+            assert set(db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall() == [("fault_reports",)]
+            ).fetchall()) == {("fault_reports",), ("fault_issue_filings",)}
+            assert db.execute("SELECT COUNT(*) FROM fault_issue_filings").fetchone() == (0,)
     report = store.list_open()[0]
     assert report.attempted == "raw-captain-2"
     persisted = json.dumps(report.to_dict())
@@ -2085,9 +2087,11 @@ async def test_real_closure_then_restart_needs_fresh_qualification(tmp_path: Pat
             assert db.execute(
                 "SELECT status, occurrences FROM fault_reports ORDER BY first_seen_at"
             ).fetchall() == [(status, 1), ("open", 1)]
-            assert db.execute(
+            # AD-1206 adds filing metadata, not durable candidate observations.
+            assert set(db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall() == [("fault_reports",)]
+            ).fetchall()) == {("fault_reports",), ("fault_issue_filings",)}
+            assert db.execute("SELECT COUNT(*) FROM fault_issue_filings").fetchone() == (0,)
     finally:
         await reopened.stop()
 

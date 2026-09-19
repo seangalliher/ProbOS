@@ -2,17 +2,13 @@
 
 Subscribes to ``FAULT_REPORTED`` (AD-1169) and, once a fault has recurred often
 enough to be the tool rather than the caller, files ONE approval carrying the
-repair brief and the list of harnesses this instance offers.
+repair brief and asking whether to file a GitHub issue.
 
-The Captain approves the dispatch and picks the target. That is gate 1, and it
-exists because an Architect run spends deep-tier tokens: a tool failing in a
-loop must not be able to spend them on its own. Gate 2 — approving the resulting
-change — belongs to whichever harness does the work, and for the internal crew
-that is the existing BuilderAgent review path.
-
-Nothing here runs a harness. It prepares the decision and records it. That
-separation is what lets ``copilot`` be a target without ProbOS knowing anything
-about Copilot.
+AD-1206 consumes that existing action-shaped approval only after a durable
+Captain decision and a qualifying persisted fault authorize issue creation.
+The legacy target list stays in the immutable payload for compatibility; it
+never selects an internal harness or assigns Copilot. Nothing here runs a
+repair or closes a fault.
 """
 
 from __future__ import annotations
@@ -20,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from probos.capability_request import THREAD_ID_MAX_CHARS
+from probos.capability_request import REPAIR_ACTION, REPAIR_TOOL_ID, THREAD_ID_MAX_CHARS
 from probos.cognitive.trace_analysis import render_token
 from probos.cognitive.repair_brief import (
     RepairBrief,
@@ -29,12 +25,6 @@ from probos.cognitive.repair_brief import (
 )
 
 logger = logging.getLogger(__name__)
-
-# The AD-1154 action-payload vocabulary for a repair dispatch. The payload has
-# EXACTLY six keys and each is bound-checked by ``validate_action_payload``, so
-# these are chosen to fit that contract rather than invented freely.
-REPAIR_TOOL_ID: str = "repair"
-REPAIR_ACTION: str = "dispatch"
 
 # Bound on the brief carried in the approval's params. The full brief is
 # rebuildable from the fault; this is what the Captain reads when deciding.
@@ -219,9 +209,9 @@ class RepairDispatcher:
         request = await self._file_dispatch_request(brief)
         if request is not None:
             logger.info(
-                "AD-1172: proposed a repair for fault %s against tool %r; "
-                "awaiting the Captain's choice of target from %s",
-                brief.fault_id, brief.tool_id, ", ".join(self.targets),
+                "AD-1206: proposed issue filing for fault %s against tool %r; "
+                "awaiting Captain approval, with no repair execution",
+                brief.fault_id, brief.tool_id,
             )
         return request
 
@@ -296,9 +286,9 @@ class RepairDispatcher:
                     # was already approved. Measured; the helper leaves an
                     # ordinary name bare and quotes that one.
                     f"The {render_token(brief.tool_id)} tool has failed the "
-                    f"same way {brief.occurrences} times. Approving dispatches "
-                    f"a repair brief to the harness you choose: "
-                    f"{', '.join(render_token(t) for t in self.targets)}."
+                    f"same way {brief.occurrences} times. Approving files a "
+                    "GitHub issue with a repair brief. It does not run a repair "
+                    "or close the fault."
                 ),
             )
         except Exception:

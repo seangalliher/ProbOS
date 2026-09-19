@@ -38,4 +38,28 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "consolidation proposal must answer this note first."
         ),
     ),
+    StoreDeclaration(
+        id="fault.issue-filings",
+        title="Fault issue-filing duplicate-suppression journal",
+        owner_module="probos.fault_issue_filings",
+        owner_symbol="FaultIssueFilings",
+        canonical_path="fault_reports.db",
+        criticality=StoreCriticality.REQUIRED,
+        lifecycle_owner="probos.fault_report.FaultReportStore",
+        retention=StoreRetention.UNBOUNDED,
+        retention_note=(
+            "Retain signature rows indefinitely for durable duplicate "
+            "suppression across restarts."
+        ),
+        backup="included",
+        restore="unknown",
+        reconstruction="",
+        notes=(
+            "Companion table co-located with fault_reports in fault_reports.db, "
+            "sharing FaultReportStore's connection and persistence lock. "
+            "FaultReportStore start/stop own lifecycle; no independent companion "
+            "lifecycle. Retention describes journal only. Backup inclusion is "
+            "conditional on enabled snapshots; restore behavior is unverified."
+        ),
+    ),
 )

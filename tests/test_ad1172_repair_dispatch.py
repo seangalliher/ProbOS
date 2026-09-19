@@ -195,7 +195,8 @@ async def test_a_repeated_fault_proposes_one_decision() -> None:
     assert payload["action"] == REPAIR_ACTION
     assert payload["params"]["targets"] == "architect,copilot"
     assert "key_type" in payload["params"]["brief"]
-    assert "choose" in requests.filed[0]["rationale"]
+    # AD-1206: "choose" pinned an unimplemented harness dispatch, not issue filing.
+    assert "GitHub issue" in requests.filed[0]["rationale"]
 
 
 async def test_a_recurring_fault_does_not_re_ask() -> None:

@@ -31,6 +31,7 @@ non-null payloads; grant and build decoding is unchanged.
 from __future__ import annotations
 
 import ast
+import asyncio
 import hashlib
 import json
 import logging
@@ -96,6 +97,41 @@ RequestStatus = Literal["pending", "approved", "denied", "fulfilled", "failed"]
 FULFILMENT_KINDS: frozenset[RequestKind] = frozenset(
     {"grant", "install", "build", "continue"}
 )
+REPAIR_TOOL_ID = "repair"
+REPAIR_ACTION = "dispatch"
+
+
+@dataclass(frozen=True)
+class RepairAction:
+    fault_id: str
+    signature: str
+    tool_id: str
+    thread_id: str
+
+
+def repair_action(req: CapabilityRequest) -> RepairAction | None:
+    """Recognize the reserved, validated repair action, not arbitrary actions."""
+    payload = validate_action_payload(req.payload)
+    if (
+        req.kind != "action" or payload is None
+        or payload["tool_id"] != REPAIR_TOOL_ID
+        or payload["action"] != REPAIR_ACTION
+        or payload["session_id"] is not None
+    ):
+        return None
+    fault_id = payload["params"].get("fault_id")
+    signature = payload["params"].get("signature")
+    if (
+        type(fault_id) is not str or not 1 <= len(fault_id) <= 128
+        or type(signature) is not str or re.fullmatch(r"[0-9a-f]{64}", signature) is None
+        or not payload["scope_key"] or len(payload["scope_key"]) > 128
+    ):
+        return None
+    return RepairAction(fault_id, signature, payload["scope_key"], payload["thread_id"])
+
+
+def can_fulfil_request(req: CapabilityRequest) -> bool:
+    return req.kind in FULFILMENT_KINDS or repair_action(req) is not None
 
 
 def _canonical_json(value: Any) -> str:
@@ -371,6 +407,7 @@ class CapabilityRequestStore(EventEmitterMixin):
         self._db: Any = None
         # In-memory cache: request_id -> CapabilityRequest
         self._cache: dict[str, CapabilityRequest] = {}
+        self.repair_decision_lock = asyncio.Lock()
 
     async def start(self) -> None:
         if self.db_path:
@@ -779,9 +816,27 @@ class CapabilityRequestStore(EventEmitterMixin):
         return [
             req for req in self._cache.values()
             if req.status == "pending"
-            or (req.status == "approved" and req.kind in FULFILMENT_KINDS)
+            or (req.status == "approved" and can_fulfil_request(req))
         ]
 
-    async def get(self, request_id: str) -> CapabilityRequest | None:
-        """Return a request by id, or None if unknown."""
+    async def get(
+        self, request_id: str, *, durable: bool = False,
+    ) -> CapabilityRequest | None:
+        """Read the cache, or independently read committed authority for repair."""
+        if durable:
+            if not self.db_path or self._db is None:
+                return None
+            # A separate reader cannot mistake an uncommitted/failed decision
+            # on the writer connection for Captain authority.
+            db = await self._connection_factory.connect(self.db_path)
+            try:
+                cursor = await db.execute(
+                    "SELECT id, agent_id, kind, target, rationale, work_item_id, "
+                    "status, created_at, decided_at, decided_by, decision_reason, "
+                    "payload FROM capability_requests WHERE id = ?", (request_id,),
+                )
+                row = await cursor.fetchone()
+                return _row_to_request(row) if row is not None else None
+            finally:
+                await db.close()
         return self._cache.get(request_id)

@@ -9,6 +9,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function validText(value: unknown, max = Infinity): value is string {
+  return typeof value === 'string' && [...value].length <= max && !/[\uD800-\uDFFF]/u.test(value);
+}
+
+function canFulfil(kind: unknown, payload: unknown): boolean {
+  if (FULFILMENT_KINDS.has(String(kind))) return true;
+  if (kind !== 'action' || !isRecord(payload)) return false;
+  const keys = ['tool_id', 'action', 'params', 'scope_key', 'session_id', 'thread_id'];
+  if (Object.keys(payload).length !== keys.length || !keys.every(key => key in payload)
+    || payload.tool_id !== 'repair' || payload.action !== 'dispatch'
+    || payload.session_id !== null || !isRecord(payload.params)
+    || Object.keys(payload.params).length > 20
+    || !validText(payload.scope_key, 128) || !payload.scope_key
+    || !validText(payload.thread_id, 64)
+    || !validText(payload.params.fault_id, 128) || !payload.params.fault_id
+    || typeof payload.params.signature !== 'string' || !/^[0-9a-f]{64}$/.test(payload.params.signature)) {
+    return false;
+  }
+  try {
+    // Match the backend's JSON/UTF-8 and code-point bound before granting the
+    // reserved subtype eligibility; ordinary actions remain non-replayed.
+    const encoded = JSON.stringify(payload, (key, item: unknown) => {
+      if (!validText(key) || (typeof item === 'string' && !validText(item))
+        || (typeof item === 'number' && !Number.isFinite(item))
+        || ['undefined', 'function', 'symbol', 'bigint'].includes(typeof item)) {
+        throw new Error('Invalid repair payload');
+      }
+      return item;
+    });
+    return typeof encoded === 'string' && [...encoded].length <= 4000;
+  } catch {
+    return false;
+  }
+}
+
 /** Composite keys keep capability and skill tombstones independent. */
 export function approvalKey(queue: ApprovalQueue, id: string): string {
   return `${queue}\u0000${id}`;
@@ -26,7 +61,7 @@ export function isCapabilityRequestView(value: unknown): value is CapabilityAppr
     && typeof value.status === 'string'
     && ['pending', 'approved', 'denied', 'fulfilled', 'failed'].includes(value.status)
     && typeof value.can_retry_fulfilment === 'boolean'
-    && value.can_retry_fulfilment === (value.status === 'approved' && FULFILMENT_KINDS.has(String(value.kind)));
+    && value.can_retry_fulfilment === (value.status === 'approved' && canFulfil(value.kind, value.payload));
 }
 
 export function isActionableCapabilityPayload(value: unknown): value is ApprovalPayload {
@@ -49,7 +84,8 @@ export function parseCapabilityDecision(
     || request.decided_at === null || !request.decided_by
     || (approve ? !['approved', 'fulfilled'].includes(request.status) : request.status !== 'denied')
     || value.fulfilled !== (request.status === 'fulfilled')
-    || (value.fulfilled && !FULFILMENT_KINDS.has(request.kind))) {
+    || (request.can_retry_fulfilment && !canFulfil(expected.kind, expected.payload))
+    || (value.fulfilled && (!canFulfil(request.kind, request.payload) || !canFulfil(expected.kind, expected.payload)))) {
     throw new Error('Inconsistent capability decision response; request state was not confirmed.');
   }
   return { request, fulfilled: value.fulfilled };

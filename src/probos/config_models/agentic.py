@@ -435,49 +435,54 @@ class WriteClaimGuardConfig(BaseModel):  # AD-1285 (#1087 / BF-687)
 
 
 class RepairConfig(BaseModel):  # AD-1172
-    """Dispatching a reported fault to a harness of the Captain's choosing.
-
-    A fault report (AD-1169) plus its trace summary (AD-1171) becomes a
-    harness-neutral repair brief. The Captain approves the dispatch AND picks
-    the target; nothing is spent and nothing is written without that.
-
-    Targets are declared here rather than registered in code because dispatching
-    to an external harness means rendering the brief and saying so — adding
-    ``copilot`` to this list is the whole integration.
-    """
+    """Propose fault reports for Captain-approved GitHub issue filing."""
 
     enabled: bool = Field(
         default=False,
         description=(
             "AD-1172: propose a repair when a fault is reported. Off by "
             "default. When on, a fault that reaches propose_after_occurrences "
-            "raises an approval asking the Captain whether to dispatch it and "
-            "to which harness. Approval is required before anything is spent: "
-            "an Architect run costs deep-tier tokens, and a tool failing in a "
-            "loop must not be able to spend them on its own."
+            "raises an approval asking the Captain whether to file a GitHub "
+            "issue. Approval never executes a repair or closes the fault."
         ),
     )
     targets: list[str] = Field(
         default_factory=lambda: ["architect"],
         description=(
-            "AD-1172: harnesses this instance can dispatch a repair brief to, "
-            "in the order they are offered. 'architect' is the internal crew "
-            "(ArchitectAgent then BuilderAgent). Any other name is an external "
-            "harness — GitHub Copilot, Claude Code, a person — reached by "
-            "rendering the brief for the Captain to carry across. External "
-            "targets need no code: the brief IS the interface, which is what "
-            "keeps them first-class rather than a degraded path."
+            "AD-1172: legacy ordered target names retained in repair approval "
+            "payloads for compatibility. AD-1206 files a GitHub issue only; "
+            "these names never select an in-process harness or Copilot assignment."
         ),
     )
     propose_after_occurrences: int = Field(
         default=2,
+        strict=True,
         ge=1,
+        le=2**63 - 1,
         description=(
             "AD-1172: how many times a fault must recur before a repair is "
             "proposed. Matches the AD-1168/1170/1171 threshold: once is a "
-            "transient, twice is the tool."
+            "transient, twice is the tool. AD-1206 also uses this strict positive "
+            "signed-64-bit integer as the durable minimum for approved issue filing."
         ),
     )
+    github_repository: str = Field(
+        default="",
+        description=(
+            "AD-1206: owner/repo destination for Captain-approved fault issues. "
+            "Empty boots normally but prevents filing; credentials use the "
+            "existing GitHub credential store. No model-supplied destination."
+        ),
+    )
+
+    @field_validator("github_repository")
+    @classmethod
+    def validate_github_repository(cls, value: str) -> str:
+        from probos.fault_issue_filings import valid_github_repository
+
+        if value and not valid_github_repository(value):
+            raise ValueError("github_repository must be empty or owner/repo")
+        return value
 
 
 class AgenticToolsConfig(BaseModel):  # AD-1072

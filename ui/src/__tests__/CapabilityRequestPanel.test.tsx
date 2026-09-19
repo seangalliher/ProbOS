@@ -11,6 +11,7 @@ import { RESOURCE_TIMEOUT_MS } from '../utils/resourceState';
 import type { CapabilityApprovalView, CapabilityDecisionOutcome } from '../store/types';
 import { applyCapabilityDecision, parseCapabilityDecision } from '../store/capabilityApprovals';
 import { idleResource } from '../utils/resourceState';
+import repairWire from '../../e2e/fixtures/ad1206-repair-approvals.json';
 
 const PENDING: { view: 'actionable'; requests: CapabilityApprovalView[] } = {
   view: 'actionable',
@@ -32,6 +33,99 @@ const PENDING: { view: 'actionable'; requests: CapabilityApprovalView[] } = {
     },
   ],
 };
+
+describe('AD-1206 real repair approval wire consumer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetApprovals();
+  });
+  afterEach(() => {
+    cleanup();
+    resetApprovals();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('consumes Python-verified pending -> approved Retry -> fulfilled through the actual component', async () => {
+    let posts = 0;
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
+      if (options?.method === 'POST') {
+        posts += 1;
+        return response(posts === 1 ? repairWire.approved : repairWire.fulfilled);
+      }
+      return response(String(input).startsWith('/api/capability-requests')
+        ? repairWire.pending : { requests: [] });
+    });
+    vi.stubGlobal('fetch', transport);
+    await useStore.getState().refreshPendingApprovals();
+    render(<CapabilityRequestPanel hosted />);
+    expect(screen.getByTestId('capability-request-card')).toHaveTextContent('repair.dispatch');
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await tick();
+    expect(posts).toBe(1);
+    expect(screen.getByTestId('capability-request-card')).toHaveTextContent('Approved - awaiting fulfilment');
+    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
+    expect(useStore.getState().approvalResources.capability.data?.requests).toEqual([repairWire.approved.request]);
+    expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual([repairWire.approved.request.id]);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry fulfilment' }));
+    await tick();
+    expect(posts).toBe(2);
+    expect(screen.queryByTestId('capability-request-card')).toBeNull();
+    expect(useStore.getState().pendingApprovals).toEqual([]);
+    expect(useStore.getState().approvalResources.capability.data).toEqual(repairWire.empty);
+    for (const [input, options] of transport.mock.calls.filter(([, options]) => options?.method === 'POST')) {
+      expect(input).toBe(`/api/capability-requests/${repairWire.approved.request.id}/decide`);
+      expect(JSON.parse(String(options?.body))).toEqual({ approve: true, reason: '' });
+    }
+  });
+
+  it('keeps the Python-verified ordinary action non-replayed and non-retryable', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async (input, options) => response(
+      options?.method === 'POST' ? repairWire.ordinary_approved
+        : String(input).startsWith('/api/capability-requests') ? repairWire.ordinary_pending : { requests: [] },
+    )));
+    await useStore.getState().refreshPendingApprovals();
+    render(<CapabilityRequestPanel hosted />);
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await tick();
+    expect(screen.queryByTestId('capability-request-card')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry fulfilment' })).toBeNull();
+    expect(useStore.getState().pendingApprovals).toEqual([]);
+    const ordinary = repairWire.ordinary_pending.requests[0];
+    if (!isCapabilityRequestView(ordinary)) throw new Error('Invalid Python ordinary fixture');
+    expect(isCapabilityRequestView({
+      ...repairWire.ordinary_approved.request, can_retry_fulfilment: true,
+    })).toBe(false);
+    expect(() => parseCapabilityDecision({
+      ...repairWire.ordinary_approved, fulfilled: true,
+      request: { ...repairWire.ordinary_approved.request, status: 'fulfilled' },
+    }, ordinary, true)).toThrow();
+    expect(() => parseCapabilityDecision({
+      ...repairWire.ordinary_approved,
+      request: { ...repairWire.ordinary_approved.request, payload: repairWire.approved.request.payload, can_retry_fulfilment: true },
+    }, ordinary, true)).toThrow();
+  });
+
+  it('requires the exact reserved payload rather than repair-looking prose or parameters', () => {
+    const row = repairWire.approved.request;
+    for (const payload of [
+      null, {}, { ...row.payload, tool_id: 'browser' },
+      { ...row.payload, action: 'click' }, { ...row.payload, extra: true },
+      { ...row.payload, params: {} }, { ...row.payload, session_id: 'old-session' },
+      { ...row.payload, scope_key: '' }, { ...row.payload, thread_id: '\ud800' },
+      { ...row.payload, params: { ...row.payload.params, signature: 'short' } },
+      { ...row.payload, params: { ...row.payload.params, brief: 'x'.repeat(4000) } },
+      { ...row.payload, params: { ...row.payload.params, brief: '\ud800' } },
+      { ...row.payload, params: { ...row.payload.params, value: Infinity } },
+    ]) {
+      expect(isCapabilityRequestView({ ...row, payload })).toBe(false);
+    }
+    expect(isCapabilityRequestView({
+      ...row, payload: { ...row.payload, thread_id: '😀'.repeat(64) },
+    })).toBe(true);
+  });
+});
 
 describe('CapabilityRequestPanel (AD-857)', () => {
   beforeEach(() => {
