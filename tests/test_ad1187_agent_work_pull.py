@@ -2863,8 +2863,12 @@ def test_status_id_domain_schema_describes_exact_and_prefix_without_claim_cap() 
     declaration = schema["properties"]["work_item_id"]
     assert declaration["type"] == "string"
     assert "minLength" not in declaration and "maxLength" not in declaration
-    assert "exact" in declaration["description"].lower()
-    assert "whitespace" in declaration["description"].lower()
+    # The original wire description remains true; exact-ID details are covered
+    # by behavior tests and docs, not by changing the immutable AD-1179 offer.
+    assert declaration["description"] == (
+        "The task id to look up. A prefix of at least 8 characters is accepted, "
+        "so an id quoted from the conversation works."
+    )
     assert "prefix" in declaration["description"].lower() and "8" in declaration["description"]
 
 

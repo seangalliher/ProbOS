@@ -85,10 +85,9 @@ class WorkItemStatusTool:
                 "work_item_id": {
                     "type": "string",
                     "description": (
-                        "An exact owned task id of any nonzero length. Whitespace "
-                        "is part of the exact id. Otherwise surrounding whitespace "
-                        "is removed and an owned exact id or prefix of at least 8 "
-                        "characters is accepted."
+                        "The task id to look up. A prefix of at least 8 "
+                        "characters is accepted, so an id quoted from the "
+                        "conversation works."
                     ),
                 },
             },
