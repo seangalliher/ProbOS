@@ -168,6 +168,12 @@ async def _file_pass_defect(
     turn must finish even when the reporting channel is broken.
     """
     try:
+        from probos.cognitive.agentic_dispatch import handled_fault_observation
+
+        handled = handled_fault_observation(outcome)
+        if handled is not None:
+            filed.update(handled.attempts)
+            return
         # Through the SHARED resolver, not a raw attribute read. Review
         # measured the raw read filing durable rows for a count below the
         # threshold, an empty tool_id, and a duck-typed 1 MB look-alike --
@@ -806,6 +812,13 @@ def _effective_promotion_budget(
         return configured
     floor = min(_MIN_PROMOTION_BUDGET_SECONDS, configured)
     return max(min(configured, ttl - elapsed - _PROMOTION_MARGIN_SECONDS), floor)
+
+
+def _fault_request_text(observation: dict[str, Any]) -> str:
+    """Only the router's exact raw Captain field may enter a fault report."""
+    params = observation.get("params")
+    raw = params.get("captain_message") if type(params) is dict else None
+    return raw if type(raw) is str else ""
 
 
 def _promotion_request_text(observation: dict[str, Any], fallback: str) -> str:
@@ -4469,6 +4482,16 @@ class CognitiveAgent(BaseAgent):
             # Cross-turn coalescing is unchanged and belongs to the store.
             _filed_faults: dict[str, str] = {}
 
+            from probos.fault_detection import ToolFaultTurn, fault_observer_for
+
+            _fault_attempted = _fault_request_text(observation)
+            _fault_kwargs: dict[str, Any] = {}
+            if fault_observer_for(runtime) is not None:
+                _fault_kwargs = {
+                    "fault_turn": ToolFaultTurn(),
+                    "fault_attempted": _fault_attempted,
+                }
+
             def _record_promotion(work_item_id: str) -> None:
                 _promoted["work_item_id"] = work_item_id
 
@@ -4543,6 +4566,7 @@ class CognitiveAgent(BaseAgent):
                     # sibling's failures stay untouched.
                     failure_scope=str(observation.get("correlation_id", "") or ""),
                     **_diagnostic_kwargs,
+                    **_fault_kwargs,
                 )
                 _last_stop["reason"] = str(
                     getattr(outcome, "stopped_reason", "") or ""
@@ -4572,7 +4596,7 @@ class CognitiveAgent(BaseAgent):
                     runtime=runtime,
                     agent_id=self.id,
                     thread_id=thread_id,
-                    attempted=_promotion_request_text(observation, user_message),
+                    attempted=_fault_attempted,
                 )
                 return outcome
 
@@ -4611,6 +4635,7 @@ class CognitiveAgent(BaseAgent):
                         # incrementing its occurrence count a second time.
                         already_filed=_filed_faults,
                         config=cfg,
+                        fault_attempted=_fault_attempted,
                     )
                 return turn_text
 

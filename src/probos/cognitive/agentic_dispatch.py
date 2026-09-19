@@ -36,6 +36,15 @@ from probos.dm_reply import (  # AD-1248 / AD-1295
     scope_from_source,
 )
 from probos.fault_report import ToolDefect, detect_tool_defect  # AD-1257
+from probos.fault_detection import (
+    FaultObservationResult,
+    ToolFaultAdapterKind,
+    ToolFaultAdapterQuery,
+    ToolFaultCapture,
+    ToolFaultTurn,
+    fault_observer_for,
+    observe_completed_tool_run,
+)
 from probos.integrations.mcp_bridge.risk import (
     McpToolRisk,
     resolve_tool_risk,
@@ -47,7 +56,7 @@ from probos.tools.delegation_evidence import (
     DelegationEvidenceCollector,
     delegation_status,
 )
-from probos.tools.executor import ToolExecutor, wire_durable_tool_records
+from probos.tools.executor import ToolExecutor, classify_tool_error, wire_durable_tool_records
 from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolPermissionDenied
 from probos.types import IntentMessage
@@ -1512,6 +1521,54 @@ def _tool_id_resolver(registry: Any) -> Callable[[str], str] | None:
     return _resolve
 
 
+def tool_fault_id_resolver(registry: Any) -> Callable[[str], str] | None:
+    """Share the trace writer's memoized identity resolver with native runs."""
+    return _tool_id_resolver(registry)
+
+
+def tool_fault_adapter_kind(registry: Any, tool_id: str) -> ToolFaultAdapterKind | None:
+    """Query current registered adapter identity, including a restricted projection."""
+    if isinstance(registry, ToolFaultAdapterQuery):
+        return registry.tool_fault_adapter_kind(tool_id)
+    registration = registry.get(tool_id) if registry is not None else None
+    if registration is None or registration.enabled is not True:
+        return None
+    tool = registration.tool
+    if type(tool) is _McpTool and tool.tool_id == tool_id:
+        return ToolFaultAdapterKind.MCP
+    if type(tool) is BrowserTool and tool.tool_id == tool_id:
+        return ToolFaultAdapterKind.BROWSER
+    return None
+
+
+def tool_fault_capture(
+    registry: Any, *, resolve_tool_id: Callable[[str], str] | None,
+) -> ToolFaultCapture:
+    """Bind raw disposition lookup to the trace/detector's run-local identity."""
+    def adapter_kind(observed: str) -> ToolFaultAdapterKind | None:
+        canonical = resolve_tool_id(observed) if resolve_tool_id is not None else observed
+        return tool_fault_adapter_kind(registry, canonical)
+
+    return ToolFaultCapture(adapter_kind=adapter_kind)
+
+
+def classify_tool_fault_error(error: Any) -> str | None:
+    """Distinguish policy refusals from host-generated launch faults for observation."""
+    if type(error) is str and (
+        error in (
+            _BROWSER_READ_ONLY_REFUSAL, _APPROVAL_PARKED_REFUSAL_NO_ID,
+            _APPROVAL_INBOX_FULL_REFUSAL, _APPROVAL_CREDENTIAL_REFUSAL,
+            "consensus_blocked", "requires_confirmation",
+        )
+        or error.startswith(_APPROVAL_PARKED_REFUSAL.split("{request_id}", 1)[0])
+    ):
+        return "permission_denied"
+    # Configured path components are not governance outcomes.
+    if type(error) is str and error.startswith("generated entry pre-launch check failed:"):
+        return "other"
+    return classify_tool_error(error)
+
+
 def _duplicate_tool_ids(items: Any) -> set[str]:
     """AD-1295: ids appearing more than once in ``items``, by ``.id``.
 
@@ -1681,6 +1738,35 @@ class WorkItemAgenticOutcome:
     delegation_evidence: DelegationEvidence | None = None
 
 
+@dataclass(kw_only=True)
+class ObservedWorkItemAgenticOutcome(WorkItemAgenticOutcome):
+    fault_observation: FaultObservationResult
+
+    def __post_init__(self) -> None:
+        if type(self.fault_observation) is not FaultObservationResult:
+            raise ValueError("fault_observation_result_invalid")
+        self.fault_observation.validate()
+
+
+def handled_fault_observation(outcome: Any) -> FaultObservationResult | None:
+    """Only the exact observed carrier suppresses legacy filing, even if damaged."""
+    if type(outcome) is not ObservedWorkItemAgenticOutcome:
+        return None
+    try:
+        result = outcome.fault_observation
+        if type(result) is not FaultObservationResult:
+            raise ValueError("fault_observation_result_invalid")
+        result.validate()
+        return result
+    except (AttributeError, TypeError, ValueError):
+        logger.warning(
+            "AD-1205: observed outcome carries an invalid diagnostic result; "
+            "not claiming a fault ID and not retrying legacy publication",
+            exc_info=True,
+        )
+        return FaultObservationResult(failed=True)
+
+
 class WorkItemAgenticExecutor:
     """AD-859a: reusable executor that runs a dispatched work item through the
     AgenticLoop (AD-545) and returns a structured :class:`WorkItemAgenticOutcome`.
@@ -1728,6 +1814,8 @@ class WorkItemAgenticExecutor:
         failure_scope: str | None = None,
         work_item_id_provider: Callable[[], str | None] | None = None,
         on_run_started: Callable[[str], None] | None = None,
+        fault_turn: ToolFaultTurn | None = None,
+        fault_attempted: str = "",
     ) -> WorkItemAgenticOutcome:
         """Reserve browser use across offer construction, execution and finalization."""
         arguments = {
@@ -1740,6 +1828,8 @@ class WorkItemAgenticExecutor:
             "failure_scope": failure_scope, "work_item_id_provider": work_item_id_provider,
             "on_run_started": on_run_started,
         }
+        if fault_observer_for(runtime) is not None:
+            arguments.update(fault_turn=fault_turn, fault_attempted=fault_attempted)
         registry = getattr(runtime, "tool_registry", None)
         registration = registry.get("browser") if registry is not None else None
         browser = getattr(registration, "tool", None)
@@ -1798,6 +1888,8 @@ class WorkItemAgenticExecutor:
         work_item_id_provider: Callable[[], str | None] | None = None,
         on_run_started: Callable[[str], None] | None = None,
         browser_use: BrowserUse | None = None,
+        fault_turn: ToolFaultTurn | None = None,
+        fault_attempted: str = "",
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -1826,6 +1918,9 @@ class WorkItemAgenticExecutor:
         registry = getattr(runtime, "tool_registry", None)
         perm_store = getattr(runtime, "tool_permission_store", None)
         intent_bus = getattr(runtime, "intent_bus", None)
+        fault_observer = fault_observer_for(runtime)
+        if fault_observer is not None and fault_turn is None:
+            fault_turn = ToolFaultTurn()
 
         if extra_context is None:
             _context: dict[str, Any] = {}
@@ -2581,6 +2676,15 @@ class WorkItemAgenticExecutor:
         if recording_enabled and on_run_started is not None:
             diagnostic_kwargs["on_run_started"] = on_run_started
 
+        # One resolver freezes the first answer for capture, trace and detection.
+        _fault_tool_id_resolver = _tool_id_resolver(registry)
+        fault_capture = None
+        if fault_observer is not None:
+            fault_capture = tool_fault_capture(
+                registry, resolve_tool_id=_fault_tool_id_resolver,
+            )
+            diagnostic_kwargs["fault_capture"] = fault_capture
+
         agentic_result = await loop.run(
             system_prompt=_system_prompt,
             user_message=task_text,
@@ -2588,14 +2692,6 @@ class WorkItemAgenticExecutor:
             context=_context,
             **diagnostic_kwargs,
         )
-
-        # AD-1279: built ONCE and handed to both the trace writer below and
-        # the detector at the end of this method. Two calls would close over
-        # the same registry and answer identically today, but one object makes
-        # "the writer and the detector cannot disagree" structural rather than
-        # incidental -- and the whole point of signing the trace is that a
-        # reader can trust the digest it finds there.
-        _fault_tool_id_resolver = _tool_id_resolver(registry)
 
         tool_trace_ref = await self._persist_tool_trace(
             agentic_result, runtime, agent_id,
@@ -2659,7 +2755,7 @@ class WorkItemAgenticExecutor:
                 token_source,
             )
 
-        return WorkItemAgenticOutcome(
+        outcome_fields: dict[str, Any] = dict(
             final_text=agentic_result.final_text or "",
             stopped_reason=agentic_result.stopped_reason,
             denied_tools=list(executor.denied_tools),
@@ -2701,6 +2797,20 @@ class WorkItemAgenticExecutor:
                 artifact_refs=artifact_refs,
                 artifact_omissions=ignored_artifact_entries,
             ),
+        )
+        if fault_observer is None:
+            return WorkItemAgenticOutcome(**outcome_fields)
+        assert fault_turn is not None
+        observation = await observe_completed_tool_run(
+            fault_observer, outcome=agentic_result, turn=fault_turn,
+            classify_error=classify_tool_fault_error, agent_id=agent_id,
+            resolve_tool_id=_fault_tool_id_resolver,
+            denied_tools=executor.denied_tools, thread_id=thread_id,
+            attempted=fault_attempted, tool_trace_ref=tool_trace_ref,
+            fault_capture=fault_capture,
+        )
+        return ObservedWorkItemAgenticOutcome(
+            **outcome_fields, fault_observation=observation,
         )
 
     async def _persist_tool_trace(

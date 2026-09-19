@@ -596,6 +596,7 @@ async def resolve_exhausted_turn(
     work_item_id: str | None = None,
     already_filed: Mapping[str, str] | None = None,
     config: Any,
+    fault_attempted: str | None = None,
 ) -> str:
     """Turn a step-limit stop into a continuation or an honest, durable ask.
 
@@ -609,10 +610,12 @@ async def resolve_exhausted_turn(
     BF-709: ``base_task_text`` is the ASSEMBLED prompt and stays that way —
     every re-invocation below is built from it, and a pass that continued from
     the raw message alone would lose working memory, episodic recall and session
-    history. ``display_task_text`` is the Captain's raw ask, used at the two
-    Captain-facing sites (the fault report's ``attempted``, the filed request's
-    ``target``) and nowhere else. Omitted or blank falls back to
+    history. ``display_task_text`` supplies the Captain-facing request target
+    and the legacy fault-attempted default. Omitted or blank falls back to
     ``base_task_text``, so an older caller's behaviour is unchanged.
+    ``fault_attempted`` overrides only fault filing: an explicit empty string
+    stays empty, and malformed supplied values cannot fall back to private
+    context. Omitted/None preserves the legacy external-call default.
     AD-1204: ``work_item_id`` is the AD-1165 work item this turn was promoted
     to, if it was. Supplied, the filed ask is LINKED to it and the item is
     parked ``blocked``, so approving the ask resumes and re-dispatches the item
@@ -731,7 +734,13 @@ async def resolve_exhausted_turn(
         # would produce a different key than the hook stored, and the reuse
         # would silently miss.
         signature = defect.signature
-        reused = (already_filed or {}).get(signature)
+        from probos.cognitive.agentic_dispatch import handled_fault_observation
+
+        handled = handled_fault_observation(current)
+        reused = (
+            handled.fault_id(signature) if handled is not None
+            else (already_filed or {}).get(signature)
+        )
         if reused is not None:
             fault_id = reused
         else:
@@ -741,7 +750,11 @@ async def resolve_exhausted_turn(
                 thread_id=thread_id,
                 tool_id=tool_id,
                 error_text=error_text,
-                attempted=_display_task_text(display_task_text, base_task_text),
+                attempted=(
+                    _display_task_text(display_task_text, base_task_text)
+                    if fault_attempted is None
+                    else fault_attempted if type(fault_attempted) is str else ""
+                ),
                 tool_trace_ref=str(
                     getattr(current, "tool_trace_ref", "") or ""
                 ),
