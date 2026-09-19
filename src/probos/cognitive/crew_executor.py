@@ -40,6 +40,7 @@ from probos.crew_execution_usage import (
 )
 from probos.crew_utils import CREW_EXECUTION_KEYS, is_crew_agent
 from probos.events import EventType
+from probos.fault_detection import ToolFaultTurn, fault_observer_for
 
 if TYPE_CHECKING:
     from probos.attachments.store import AttachmentStore
@@ -1796,6 +1797,8 @@ class CrewTaskExecutor:
                 "_crew_work_item_id": child_id,
             },
         }
+        if fault_observer_for(self._runtime) is not None:
+            base_kwargs["fault_turn"] = ToolFaultTurn()
         gate = self._loop_until_done
         max_outer = gate.max_iterations if gate.enabled else 1
         # DD-3: the budget is SHARED across iterations and carried forward as a

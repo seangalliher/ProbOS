@@ -775,6 +775,17 @@ class SubprocessSandbox:
                     error="ExecutionRequest needs either code or argv",
                     workdir=str(workdir),
                 )
+            entry_error = self._generated_entry_error(request, workdir, argv)
+            if entry_error is not None:
+                logger.warning(
+                    "AD-1205: %s; generated code was not launched and normal "
+                    "scratch cleanup remains with its existing owner",
+                    entry_error,
+                )
+                return ExecutionResult(
+                    success=False, error=entry_error, workdir=str(workdir),
+                    duration_ms=(time.monotonic() - started) * 1000.0,
+                )
             env = self._build_env(request)
             popen_kwargs = self._platform_kwargs(request)
 
@@ -888,6 +899,30 @@ class SubprocessSandbox:
                 remove_workdir(workdir)
 
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _generated_entry_error(
+        request: ExecutionRequest, workdir: Path, argv: list[str],
+    ) -> str | None:
+        if request.argv or request.code is None:
+            return None
+        prefix = "generated entry pre-launch check failed"
+        if (
+            len(argv) != 4
+            or argv[:3] != [request.python_executable or sys.executable, "-I", "-B"]
+            or type(argv[3]) is not str or not argv[3]
+        ):
+            return f"{prefix}: unexpected generated Python command"
+        entry_name = "_probos_launch.py" if request.import_workdir else "script.py"
+        expected = workdir / entry_name
+        actual = (workdir / argv[3]).resolve()
+        if actual != expected:
+            return f"{prefix}: argv entry resolves to {actual}, expected {expected}"
+        required = ("script.py", "_probos_launch.py") if request.import_workdir else ("script.py",)
+        for name in required:
+            if not (workdir / name).is_file():
+                return f"{prefix}: required generated file is missing: {workdir / name}"
+        return None
 
     @staticmethod
     def _build_argv(request: ExecutionRequest, workdir: Path) -> list[str] | None:

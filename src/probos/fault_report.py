@@ -43,6 +43,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 if TYPE_CHECKING:
+    from probos.fault_detection import (
+        FaultObservationResult,
+        ToolFaultBatch,
+        ToolFaultTurn,
+    )
     from probos.storage.sqlite_factory import ConnectionFactory
 
 logger = logging.getLogger(__name__)
@@ -534,6 +539,27 @@ class FaultReport:
         }
 
 
+def _row_to_report(row: Any) -> FaultReport:
+    return FaultReport(
+        id=row[0],
+        signature=row[1],
+        tool_id=row[2],
+        error_text=row[3],
+        attempted=row[4],
+        agent_id=row[5],
+        thread_id=row[6],
+        work_item_id=row[7],
+        tool_trace_ref=row[8],
+        status=row[9],
+        occurrences=int(row[10]),
+        first_seen_at=float(row[11]),
+        last_seen_at=float(row[12]),
+        resolved_at=None if row[13] is None else float(row[13]),
+        resolution=row[14] or "",
+        observed_as=row[15] or "",
+    )
+
+
 class FaultReportStore:
     """Durable, coalescing store of fault reports.
 
@@ -560,6 +586,19 @@ class FaultReportStore:
         # Signature -> report. The cache is authoritative for reads so a fault
         # filed mid-turn is visible to the next one without a round trip.
         self._cache: dict[str, FaultReport] = {}
+        from probos.fault_detection import ToolFaultObserver
+
+        self._fault_observer = ToolFaultObserver(publish=self.file_fault)
+
+    async def observe_tool_run(
+        self, *, turn: ToolFaultTurn, batch: ToolFaultBatch, agent_id: str,
+        thread_id: str = "", attempted: str = "",
+        tool_trace_ref: str | None = None,
+    ) -> FaultObservationResult:
+        return await self._fault_observer.observe_tool_run(
+            turn=turn, batch=batch, agent_id=agent_id, thread_id=thread_id,
+            attempted=attempted, tool_trace_ref=tool_trace_ref,
+        )
 
     async def start(self) -> None:
         """Open the store, or leave nothing behind.
@@ -648,29 +687,8 @@ class FaultReportStore:
             "FROM fault_reports"
         ) as cursor:
             async for row in cursor:
-                report = self._row_to_report(row)
+                report = _row_to_report(row)
                 self._cache[report.signature] = report
-
-    @staticmethod
-    def _row_to_report(row: Any) -> FaultReport:
-        return FaultReport(
-            id=row[0],
-            signature=row[1],
-            tool_id=row[2],
-            error_text=row[3],
-            attempted=row[4],
-            agent_id=row[5],
-            thread_id=row[6],
-            work_item_id=row[7],
-            tool_trace_ref=row[8],
-            status=row[9],
-            occurrences=int(row[10]),
-            first_seen_at=float(row[11]),
-            last_seen_at=float(row[12]),
-            resolved_at=None if row[13] is None else float(row[13]),
-            resolution=row[14] or "",
-            observed_as=row[15] or "",
-        )
 
     async def file_fault(
         self,
@@ -879,32 +897,35 @@ class FaultReportStore:
         self, signature_or_id: str, *, status: FaultStatus, resolution: str = "",
     ) -> FaultReport | None:
         """Move a fault out of ``open``. Returns None when nothing matched."""
-        report = self._cache.get(signature_or_id)
-        if report is None:
-            report = next(
-                (r for r in self._cache.values() if r.id == signature_or_id),
-                None,
-            )
-        if report is None:
-            return None
-        report.status = status
-        report.resolution = str(resolution or "")[:_ERROR_MAX]
-        report.resolved_at = time.time() if status in ("repaired", "dismissed") else None
-        if self._db:
-            try:
-                await self._db.execute(
-                    "UPDATE fault_reports SET status = ?, resolution = ?, "
-                    "resolved_at = ? WHERE id = ?",
-                    (report.status, report.resolution, report.resolved_at, report.id),
+        async with self._fault_observer.transition():
+            report = self._cache.get(signature_or_id)
+            if report is None:
+                report = next(
+                    (r for r in self._cache.values() if r.id == signature_or_id),
+                    None,
                 )
-                await self._db.commit()
-            except Exception:
-                logger.warning(
-                    "AD-1169: could not persist resolution of fault %s",
-                    report.id, exc_info=True,
-                )
-        self._emit_fault("FAULT_RESOLVED", report)
-        return report
+            if report is None:
+                return None
+            report.status = status
+            report.resolution = str(resolution or "")[:_ERROR_MAX]
+            report.resolved_at = time.time() if status in ("repaired", "dismissed") else None
+            if status in ("repaired", "dismissed"):
+                self._fault_observer.forget(report.signature)
+            if self._db:
+                try:
+                    await self._db.execute(
+                        "UPDATE fault_reports SET status = ?, resolution = ?, "
+                        "resolved_at = ? WHERE id = ?",
+                        (report.status, report.resolution, report.resolved_at, report.id),
+                    )
+                    await self._db.commit()
+                except Exception:
+                    logger.warning(
+                        "AD-1169: could not persist resolution of fault %s",
+                        report.id, exc_info=True,
+                    )
+            self._emit_fault("FAULT_RESOLVED", report)
+            return report
 
     def list_open(self) -> list[FaultReport]:
         """Open faults, most recently seen first."""

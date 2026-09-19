@@ -61,6 +61,12 @@ from probos.cognitive.crew_verdict import (
     render_critique,
 )
 from probos.cognitive.trace_analysis import quote_for_prose, summarise_trace_ref
+from probos.fault_detection import (
+    ToolFaultAdapterKind,
+    ToolFaultObservationPort,
+    ToolFaultTurn,
+    fault_observer_for,
+)
 from probos.security.pii_redaction import PIIRedactor
 from probos.tools.protocol import (
     ToolAccessGrant,
@@ -445,6 +451,19 @@ class _SessionProjectedToolRegistry(ToolRegistry):
         self._source_backed_ids = source_backed_ids
         self._explicit_denial_ids = explicit_denial_ids
 
+    def tool_fault_adapter_kind(self, tool_id: str) -> ToolFaultAdapterKind | None:
+        """Reveal only the kind of an enabled, permitted source-backed adapter."""
+        from probos.cognitive.agentic_dispatch import tool_fault_adapter_kind
+
+        registration = self.get(tool_id)
+        if (
+            tool_id in self._explicit_denial_ids
+            or tool_id not in self._source_backed_ids
+            or registration is None or registration.enabled is not True
+        ):
+            return None
+        return tool_fault_adapter_kind(self._source_registry, tool_id)
+
     def synchronize_mcp_definitions(self, tool_ids: Sequence[str]) -> list[str]:
         """Install bounded detached metadata for freshly selected source MCP IDs."""
         candidates = _session_mcp_projection_ids(tool_ids)
@@ -587,6 +606,7 @@ class _SessionCorrectionRuntime:
     cognitive_skill_catalog: Any
     emit_event: None = None
     event_emit_fn: None = None
+    fault_observer: ToolFaultObservationPort | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1212,6 +1232,7 @@ def _session_correction_runtime(
             intent_bus,
             provider="crew_session_projection",
         )
+    observer = fault_observer_for(runtime)
     return _SessionCorrectionRuntime(
         config=projected_config,
         tool_registry=registry,
@@ -1231,6 +1252,10 @@ def _session_correction_runtime(
         ),
         cognitive_skill_catalog=(
             object() if "use_skill" in selected else None
+        ),
+        fault_observer=(
+            ToolFaultObservationPort(observer.observe_tool_run)
+            if observer is not None else None
         ),
     )
 
@@ -1647,6 +1672,10 @@ class SubtaskVerifier:
             return self._defective_outcome(result, verdict, rounds=0)
 
         rounds = 0
+        fault_kwargs = (
+            {"fault_turn": ToolFaultTurn()}
+            if fault_observer_for(self._runtime) is not None else {}
+        )
         while rounds < self._max_rounds:
             rounds += 1
             critiqued_task = f"{task_text}\n\nCRITIQUE:\n{verdict.critique}"
@@ -1656,6 +1685,7 @@ class SubtaskVerifier:
                     instructions=instructions,
                     task_text=critiqued_task,
                     runtime=self._runtime,
+                    **fault_kwargs,
                 )
                 final_text = outcome.final_text
                 if final_text:
@@ -1906,6 +1936,10 @@ class SubtaskVerifier:
             return terminal
 
         max_rounds = min(self._max_rounds, 8)
+        fault_kwargs = (
+            {"fault_turn": ToolFaultTurn()}
+            if fault_observer_for(self._runtime) is not None else {}
+        )
         for attempt_index in range(1, max_rounds + 1):
             critiqued_task = (
                 f"{normalized_task}\n\nCRITIQUE:\n{verdict.critique}"
@@ -1950,6 +1984,7 @@ class SubtaskVerifier:
                         "_crew_session_id": parent_id,
                         "_crew_work_item_id": current.work_item_id,
                     },
+                    **fault_kwargs,
                 )
             except asyncio.CancelledError:
                 raise
