@@ -405,8 +405,14 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
 
     AD-1224 adds optional diagnostic-only callbacks without changing execution
     or continuation policy.
+
+    AD-1205 appends diagnostic identity/raw-attempted context only. These are
+    not continuation controls or routing changes; the earlier drift guard
+    remains intact.
     """
     from typing import Callable, get_type_hints
+
+    from probos.fault_detection import ToolFaultTurn
 
     params = inspect.signature(WorkItemAgenticExecutor.run).parameters
     assert list(params) == [
@@ -429,6 +435,8 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
         "failure_scope",  # AD-1248
         "work_item_id_provider",
         "on_run_started",
+        "fault_turn",
+        "fault_attempted",
     ]
     assert not any(
         "loop_until_done" in name or "continuation" in name for name in params
@@ -440,6 +448,12 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
     annotations = get_type_hints(WorkItemAgenticExecutor.run)
     assert annotations["work_item_id_provider"] == Callable[[], str | None] | None
     assert annotations["on_run_started"] == Callable[[str], None] | None
+    assert params["fault_turn"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params["fault_turn"].default is None
+    assert params["fault_attempted"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params["fault_attempted"].default == ""
+    assert annotations["fault_turn"] == ToolFaultTurn | None
+    assert annotations["fault_attempted"] == str
 
 
 async def test_converge_for_session_still_passes_no_token_budget() -> None:

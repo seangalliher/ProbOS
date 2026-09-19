@@ -31,6 +31,7 @@ from probos.crew_execution_usage import (
     TOKEN_SOURCE_MIXED,
     merge_token_sources as _token_source_label,
 )
+from probos.fault_detection import ToolFaultCapture
 from probos.fault_report import canonical_tool_id, error_signature
 from probos.repository_instructions import (
     InstructionObservation,
@@ -908,6 +909,7 @@ class AgenticLoop:
         context: dict[str, Any],
         on_run_started: Callable[[str], None] | None = None,
         repository_instructions: InstructionObservation | None = None,
+        fault_capture: ToolFaultCapture | None = None,
     ) -> AgenticResult:
         """Run with one recording budget, restoring the parent scope on every exit."""
         if repository_instructions is not None and type(repository_instructions) is not InstructionObservation:
@@ -946,6 +948,7 @@ class AgenticLoop:
                     {"repository_instructions": repository_instructions}
                     if repository_instructions is not None else {}
                 ),
+                **({"fault_capture": fault_capture} if fault_capture is not None else {}),
             )
 
     async def _run_scoped(
@@ -957,6 +960,7 @@ class AgenticLoop:
         context: dict[str, Any],
         run_id: str | None = None,
         repository_instructions: InstructionObservation | None = None,
+        fault_capture: ToolFaultCapture | None = None,
     ) -> AgenticResult:
         """Run the agentic loop until completion or limit reached.
 
@@ -1176,6 +1180,7 @@ class AgenticLoop:
                 iteration=iteration,
                 context=context,
                 **({"run_id": run_id} if run_id is not None else {}),
+                **({"fault_capture": fault_capture} if fault_capture is not None else {}),
             )
             for tool_result in tool_results:
                 if isinstance(tool_result, InstructionToolCallResult) and not tool_result.is_error:
@@ -1377,6 +1382,7 @@ class AgenticLoop:
         iteration: int,
         context: dict[str, Any],
         run_id: str | None = None,
+        fault_capture: ToolFaultCapture | None = None,
     ) -> list[ToolCallResult]:
         """Execute one response's tool calls, returning results in REQUEST order.
 
@@ -1397,6 +1403,7 @@ class AgenticLoop:
             return [
                 await self._execute_one_tool(
                     use, agent_id=agent_id, iteration=iteration, context=context,
+                    **({"fault_capture": fault_capture} if fault_capture is not None else {}),
                     **(
                         {"run_id": run_id, "tool_call_index": index}
                         if run_id is not None else {}
@@ -1418,6 +1425,7 @@ class AgenticLoop:
                         agent_id=agent_id,
                         iteration=iteration,
                         context=context,
+                        **({"fault_capture": fault_capture} if fault_capture is not None else {}),
                         **(
                             {"run_id": run_id, "tool_call_index": index}
                             if run_id is not None else {}
@@ -1469,6 +1477,7 @@ class AgenticLoop:
                 agent_id=agent_id,
                 iteration=iteration,
                 context=context,
+                **({"fault_capture": fault_capture} if fault_capture is not None else {}),
                 **(
                     {"run_id": run_id, "tool_call_index": index}
                     if run_id is not None else {}
@@ -1488,6 +1497,7 @@ class AgenticLoop:
         context: dict[str, Any],
         run_id: str | None = None,
         tool_call_index: int | None = None,
+        fault_capture: ToolFaultCapture | None = None,
     ) -> ToolCallResult:
         """AD-545: run one tool call, translating any failure into an error result.
 
@@ -1548,6 +1558,11 @@ class AgenticLoop:
                 context=invocation_context,
             )
             duration_ms = (time.perf_counter() - start) * 1000.0
+            if fault_capture is not None:
+                try:
+                    fault_capture.record(use.tool_call.id, use.tool_call.name, raw_result)
+                except Exception:
+                    fault_capture.fail()
             # BF-728: hand the bound down so a big structured result is
             # flattened shape-first. This is the last point where the value is
             # still a structure; `truncate_tool_output` below only sees text.

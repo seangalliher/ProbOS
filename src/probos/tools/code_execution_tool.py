@@ -23,6 +23,7 @@ import asyncio
 import hashlib
 import importlib.util
 import logging
+import re
 import shutil
 import sys
 import time
@@ -42,6 +43,7 @@ from probos.execution.fetch_broker import (
 from probos.execution.isolation import (
     CancelCleanup,
     ExecutionRequest,
+    ExecutionResult,
     LaunchOutcome,
     SubprocessSandbox,
     _remove_workdir,
@@ -54,6 +56,13 @@ logger = logging.getLogger(__name__)
 # The sandbox writes the submitted source to ``script.py`` (see
 # execution/isolation.py ExecutionRequest docstring) — never surface it.
 _SCRIPT_NAME = "script.py"
+
+
+def _execution_error(result: ExecutionResult) -> str | None:
+    """Forward sandbox-owned errors; stderr alone cannot establish launch origin."""
+    return result.error or None
+
+
 # AD-1221: the ship also generates the fetch helper and, when the workdir must
 # be importable, a launcher. Both are machinery, not work products — without
 # this the Captain would be handed `ship.py` as a "file the agent produced".
@@ -795,7 +804,7 @@ class CodeExecutionTool:
                     output["dependencies"] = unimportable
             return ToolResult(
                 output=output,
-                error=(res.error or None),
+                error=_execution_error(res),
                 duration_ms=(time.monotonic() - t0) * 1000.0,
             )
         except Exception as exc:

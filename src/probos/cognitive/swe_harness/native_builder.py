@@ -5,6 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any, TYPE_CHECKING
 
+from probos.cognitive.agentic_dispatch import (
+    classify_tool_fault_error,
+    tool_fault_capture,
+    tool_fault_id_resolver,
+)
 from probos.cognitive.swe_harness.agentic_loop import (
     PARALLEL_TOOL_CALLS_DEFAULT,
     TOOL_RESULT_HEAD_CHARS,
@@ -15,6 +20,11 @@ from probos.cognitive.swe_harness.agentic_loop import (
 from probos.cognitive.swe_harness.tool_call import (
     dedupe_llm_definitions,
     tool_registration_to_llm_definition,
+)
+from probos.fault_detection import (
+    ToolFaultTurn,
+    fault_observer_for,
+    observe_completed_tool_run,
 )
 from probos.repository_instructions import (
     discover_build_repository_instructions,
@@ -100,6 +110,15 @@ class NativeBuilderHarness:
         rank: str = "lieutenant",
     ) -> dict[str, Any]:
         """Run an agentic build. Returns a dict with ``file_changes`` + metadata."""
+        fault_observer = fault_observer_for(self._runtime)
+        fault_turn = ToolFaultTurn() if fault_observer is not None else None
+        fault_id_resolver = (
+            tool_fault_id_resolver(self._registry) if fault_observer is not None else None
+        )
+        fault_capture = (
+            tool_fault_capture(self._registry, resolve_tool_id=fault_id_resolver)
+            if fault_observer is not None else None
+        )
         tools_definitions = self._select_build_tools()
         system_prompt = self._compose_system_prompt(spec)
         user_message = self._format_build_message(spec, work_dir)
@@ -148,7 +167,15 @@ class NativeBuilderHarness:
                 {"repository_instructions": repository_instructions}
                 if repository_instructions.targets or repository_instructions.notices else {}
             ),
+            **({"fault_capture": fault_capture} if fault_capture is not None else {}),
         )
+        if fault_observer is not None:
+            assert fault_turn is not None
+            await observe_completed_tool_run(
+                fault_observer, outcome=agentic_result, turn=fault_turn,
+                classify_error=classify_tool_fault_error, agent_id=agent_id,
+                resolve_tool_id=fault_id_resolver, fault_capture=fault_capture,
+            )
 
         from probos.build_pipeline import BuildPipeline
 
