@@ -1,0 +1,187 @@
+# AD-1256 store inventory baseline: every module that creates a table
+# and does not yet have a declaration. Frozen so a NEW undeclared
+# store fails on day one while the pre-existing ones do not.
+#
+# Regenerate the row set with:
+#   python scripts/check_store_registry.py --update-baseline
+# A blank review.owner/rationale/review_by fails --check on purpose.
+# Declaring a store means DELETING its row here in the same commit.
+schema_version: 1
+baseline_id: ad-1256-store-inventory-v1
+tracking_issue: 1302
+review:
+  owner: AD-1256
+  rationale: Every row is a module that creates a table and predates the store registry. AD-1256 (#1302) ships the declaration layer and seeds nine declarations; declaring the remaining stores requires reading each one's retention, lifecycle owner and backup disposition, which is per-store review work rather than a mechanical edit. Freezing them here buys the property the platform-maturity program asks for -- a NEW store fails on day one -- without demanding fifty reviewed declarations in one slice. The rows carry no per-row rationale because every row means the same thing; a field that is always the same sentence stops being read.
+  review_by: This file is empty, or every remaining row has a declaration.
+undeclared_stores:
+- module: probos.acm
+  tables:
+  - identity_mapping
+  - lifecycle
+  - lifecycle_transitions
+- module: probos.artifacts
+  tables:
+  - artifacts
+- module: probos.assignment
+  tables:
+  - assignment_members
+  - assignments
+- module: probos.capability_request
+  tables:
+  - capability_requests
+- module: probos.clearance_grants
+  tables:
+  - clearance_grants
+- module: probos.cognitive.circuit_breaker_history_store
+  tables:
+  - circuit_breaker_history
+- module: probos.cognitive.clinical_audit_store
+  tables:
+  - clinical_audit
+- module: probos.cognitive.clinical_notes_store
+  tables:
+  - clinical_notes
+- module: probos.cognitive.counselor
+  tables:
+  - assessments
+  - cognitive_profiles
+- module: probos.cognitive.intent_grants
+  tables:
+  - intent_access_grants
+- module: probos.cognitive.participant_index
+  tables:
+  - episode_participants
+- module: probos.cognitive.procedure_store
+  tables:
+  - procedure_lineage_parents
+  - procedure_records
+- module: probos.cognitive.qualification
+  tables:
+  - qualification_results
+- module: probos.cognitive.retrieval_practice
+  tables:
+  - retrieval_schedules
+- module: probos.cognitive.schema_versions
+  tables:
+  - schema_versions
+- module: probos.cognitive.self_distillation.prober
+  tables:
+  - agent_probes
+- module: probos.cognitive.skill_catalog
+  tables:
+  - cognitive_skill_catalog
+- module: probos.cognitive.skill_grants
+  tables:
+  - skill_access_grants
+- module: probos.cognitive.workflow_cron
+  tables:
+  - workflow_cron_triggers
+- module: probos.cognitive.working_memory_store
+  tables:
+  - working_memory
+- module: probos.consensus.trust
+  tables:
+  - trust_outcome_receipts
+  - trust_scores
+- module: probos.crew_profile
+  tables:
+  - crew_profiles
+- module: probos.directive_store
+  tables:
+  - directives
+- module: probos.fault_report
+  tables:
+  - fault_reports
+- module: probos.federation.hebbian_map
+  tables:
+  - federation_hebbian_weights
+- module: probos.holodeck.scenarios
+  tables:
+  - scenario_gap_links
+- module: probos.holodeck.team_simulations
+  tables:
+  - team_simulation_debriefs
+  - team_simulation_records
+- module: probos.identity
+  tables:
+  - asset_tags
+  - birth_certificates
+  - foreign_birth_certificates
+  - foreign_chains
+  - identity_ledger
+  - ship_birth_certificate
+  - slot_mappings
+  - transfer_certificates
+- module: probos.integrations.mcp_bridge.department_grants
+  tables:
+  - department_tool_grants
+- module: probos.integrations.mcp_bridge.risk
+  tables:
+  - mcp_tool_risk
+- module: probos.integrations.mcp_bridge.store
+  tables:
+  - mcp_servers
+- module: probos.knowledge.archive_store
+  tables:
+  - archive
+- module: probos.knowledge.edges
+  tables:
+  - knowledge_edges
+- module: probos.knowledge.rejection_cache
+  tables:
+  - dream_step10_rejections
+- module: probos.knowledge.semantic_store
+  tables:
+  - entities
+  - entities_fts
+  - entity_links
+- module: probos.mesh.routing
+  tables:
+  - hebbian_weights
+- module: probos.perception.wm_store
+  tables:
+  - vision_observations
+- module: probos.persistent_tasks
+  tables:
+  - scheduled_tasks
+- module: probos.security.audit
+  tables:
+  - audit_log
+- module: probos.security.pairing.store
+  tables:
+  - paired_users
+  - pending_pairings
+- module: probos.service_profile
+  tables:
+  - service_profiles
+- module: probos.skill_framework
+  tables:
+  - agent_development_goals
+  - agent_skills
+  - qualification_records
+  - skill_definitions
+- module: probos.skill_request
+  tables:
+  - skill_requests
+- module: probos.substrate.event_log
+  tables:
+  - events
+- module: probos.task_sessions
+  tables:
+  - task_session_runs
+  - task_sessions
+- module: probos.tools.permissions
+  tables:
+  - tool_access_grants
+- module: probos.tools.work_permits
+  tables:
+  - work_permits
+- module: probos.ward_room.models
+  tables:
+  - channels
+  - credibility
+  - endorsements
+  - memberships
+  - mod_actions
+  - posts
+  - threads
