@@ -82,7 +82,10 @@ _AGENTIC_RANKS = frozenset(
 # out-of-scope department *before* grants are ever considered. Each id is
 # re-offered below through an explicit ``check_permission`` call.
 _GATED_TOOL_IDS = frozenset(
-    {"event_log_query", "oracle_query", "publish_finding"}
+    {
+        "event_log_query", "oracle_query", "publish_finding",
+        "discover_work_items", "claim_work_item",
+    }
 )
 
 # AD-1153 / DD-1: the ONLY browser actions the agentic loop may invoke.
@@ -2237,6 +2240,30 @@ class WorkItemAgenticExecutor:
             ):
                 publish_ids = ["publish_finding"]
 
+        from probos.tools.work_item_pull_tool import WORK_PULL_ROOM_CONTEXT_KEYS
+
+        work_pull_ids: list[str] = []
+        pull_resolver = getattr(runtime, "resolve_workforce_pull_resource", None)
+        if (
+            registry is not None
+            and getattr(runtime, "work_item_store", None) is not None
+            and callable(pull_resolver)
+            and not any(key in _context for key in WORK_PULL_ROOM_CONTEXT_KEYS)
+        ):
+            for tool_id, action, permission in (
+                ("discover_work_items", "discover", ToolPermission.READ),
+                ("claim_work_item", "claim", ToolPermission.WRITE),
+            ):
+                if registry.get(tool_id) is None:
+                    continue
+                resource = pull_resolver(agent_id, action, True)
+                if resource is not None and registry.check_permission(
+                    agent_id, tool_id, permission,
+                    agent_department=department, agent_rank=rank,
+                    agent_types=[resource.agent_type],
+                ):
+                    work_pull_ids.append(tool_id)
+
         # AD-1153: offer the browser READ-ONLY (default-OFF via
         # config.agentic_tools.browser_enabled). Two flags, one AND: the config
         # gate plus ``registry.get("browser")``, which already carries
@@ -2314,7 +2341,7 @@ class WorkItemAgenticExecutor:
                 *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
                 *status_ids, *recall_ids,
                 *search_ids, *delegate_ids, *event_log_ids, *oracle_ids,
-                *publish_ids, *browser_ids, *self_query_ids,
+                *publish_ids, *work_pull_ids, *browser_ids, *self_query_ids,
             ])
         )
         # BF-755: the non-MCP half, so a mid-turn refresh can REBUILD the MCP

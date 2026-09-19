@@ -650,16 +650,23 @@ class TestWorkItemAssignment:
         await store.assign_work_item(item.id, "agent-eng")
 
     @pytest.mark.asyncio
-    async def test_work_item_claim_no_taskevent(self, store):
-        """claim_work_item() does NOT emit TaskEvent (agent already knows)."""
+    async def test_work_item_legacy_claim_emits_taskevent(self, store):
+        """Legacy Captain pull keeps its assignment notification."""
         disp = _make_dispatcher()
         store.attach_dispatcher(disp)
 
         item = await store.create_work_item(title="Task", work_type="task")
         self._register(store, "agent-eng")
-        await store.claim_work_item(item.id, "agent-eng")
+        # The old reversed arguments selected no resource, so assert_not_called
+        # pinned a failed claim rather than governed self-claim suppression.
+        result = await store.claim_work_item("agent-eng", "task")
 
-        disp.dispatch.assert_not_called()
+        assert result is not None and result[0].id == item.id
+        assert result[1].resource_id == "agent-eng"
+        disp.dispatch.assert_called_once()
+        event: TaskEvent = disp.dispatch.call_args[0][0]
+        assert event.event_type == "work_item_assigned"
+        assert event.target.agent_id == "agent-eng"
 
 
 # ───────────────────────────────────────────────────────────────────────────

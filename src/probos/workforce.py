@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import json
 import logging
 import math
@@ -686,6 +687,13 @@ class WorkItem:
             "ttl_seconds": self.ttl_seconds,
             "template_id": self.template_id,
         }
+
+
+@dataclass(frozen=True)
+class ReadyWorkPage:
+    items: tuple[WorkItem, ...]
+    next_offset: int | None
+    item_offsets: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2162,12 +2170,17 @@ class WorkItemStore(EventEmitterMixin):
         tick_interval: float = 10.0,
         config: dict | None = None,
         connection_factory: ConnectionFactory | None = None,
-    ):
+        pull_resource_resolver: Callable[
+            [str, Literal["discover", "claim", "assign", "resume"], bool],
+            BookableResource | None,
+        ] | None = None,
+    ) -> None:
         self.db_path = db_path
         self._db: DatabaseConnection | None = None
         self._emit_event = emit_event
         self._tick_interval = tick_interval
         self._connection_factory = connection_factory
+        self._pull_resource_resolver = pull_resource_resolver
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
             self._connection_factory = default_factory
@@ -4966,6 +4979,291 @@ class WorkItemStore(EventEmitterMixin):
     # Assignment Engine
     # ======================================================================
 
+    @asynccontextmanager
+    async def _booking_transaction(self) -> AsyncIterator[None]:
+        async with self._work_item_row_write_lock:
+            assert self._db is not None
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                yield
+                await self._db.commit()
+            except BaseException:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    logger.error(
+                        "Workforce admission rollback failed; durable state is "
+                        "uncertain and the original failure is propagated",
+                    )
+                raise
+
+    def _resolve_pull_resource(
+        self,
+        resource_id: str,
+        action: Literal["discover", "claim", "assign", "resume"],
+        agent_pull: bool,
+    ) -> BookableResource | None:
+        resource = self.get_resource(resource_id)
+        if self._pull_resource_resolver is not None:
+            resolved = self._pull_resource_resolver(resource_id, action, agent_pull)
+            if resolved is None or resource is None:
+                resource = None
+            elif resolved.resource_id != resource_id:
+                resource = None
+            else:
+                resource = dataclasses.replace(
+                    resolved, capacity=resource.capacity, active=resource.active,
+                )
+        elif agent_pull:
+            resource = None
+        if resource is not None and (
+            resource.resource_id != resource_id
+            or resource.active is not True
+            or type(resource.capacity) is not int
+            or resource.capacity < 1
+            or type(resource.department) is not str
+            or type(resource.agent_type) is not str
+            or type(resource.characteristics) is not list
+            or any(
+                type(characteristic) is not dict
+                or type(characteristic.get("skill")) is not str
+                or type(characteristic.get("proficiency")) not in (int, float)
+                or not math.isfinite(characteristic["proficiency"])
+                or not 0 <= characteristic["proficiency"] <= 1
+                for characteristic in resource.characteristics
+            )
+        ):
+            resource = None
+        if resource is None and agent_pull:
+            raise PermissionError("work_pull_authority_denied")
+        return resource
+
+    async def _has_booking_capacity(self, resource: BookableResource) -> bool:
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM bookings WHERE resource_id = ? "
+            "AND status IN ('scheduled', 'active')",
+            (resource.resource_id,),
+        )
+        row = await cursor.fetchone()
+        return row[0] < resource.capacity
+
+    @staticmethod
+    def _standalone_pull_item(item: WorkItem) -> bool:
+        return (
+            item.work_type != "crew_session"
+            and item.parent_id is None
+            and type(item.metadata) is dict
+            and not any(
+                key in item.metadata
+                for key in (
+                    SCAFFOLD_METADATA_FLAG, "crew_session", "crew_execution",
+                    "thread_id", "room_id", "session_id",
+                )
+            )
+        )
+
+    @staticmethod
+    def _pull_visible(item: WorkItem, resource: BookableResource) -> bool:
+        publication = item.metadata.get("agent_pull")
+        if type(publication) is not dict or type(publication.get("version")) is not int:
+            return False
+        if publication["version"] != 1:
+            return False
+        if publication.get("scope") == "ship":
+            return set(publication) == {"version", "scope"}
+        return (
+            publication.get("scope") == "department"
+            and set(publication) == {"version", "scope", "department"}
+            and type(publication.get("department")) is str
+            and bool(publication["department"])
+            and publication["department"] == resource.department
+        )
+
+    async def _requirements_allow(
+        self, item: WorkItem, resource: BookableResource,
+    ) -> bool:
+        assert self._db is not None
+        cursor = await self._db.execute(
+            "SELECT department_constraint FROM resource_requirements "
+            "WHERE work_item_id = ?",
+            (item.id,),
+        )
+        return all(
+            not row[0] or row[0] == resource.department
+            for row in await cursor.fetchall()
+        )
+
+    async def _ready_for_pull(
+        self, item: WorkItem, resource: BookableResource, *, agent_pull: bool,
+    ) -> bool:
+        if agent_pull and (type(item.id) is not str or not 1 <= len(item.id) <= 128):
+            return False
+        if (
+            item.status != "open"
+            or item.assigned_to is not None
+            or not self._standalone_pull_item(item)
+            or (agent_pull and not self._pull_visible(item, resource))
+            or not self._check_eligibility(resource, item)
+            or (
+                item.ttl_seconds is not None
+                and time.time() >= item.created_at + item.ttl_seconds
+            )
+            or not await self._requirements_allow(item, resource)
+        ):
+            return False
+        for dependency_id in item.depends_on:
+            dependency = await self.get_work_item(dependency_id)
+            if dependency is None or dependency.status != "done":
+                return False
+        return True
+
+    async def _pull_candidates(
+        self,
+        resource: BookableResource,
+        *,
+        work_type: str | None,
+        agent_pull: bool,
+        limit: int,
+        offset: int = 0,
+    ) -> list[WorkItem]:
+        assert self._db is not None
+        conditions = [
+            "status = 'open'", "assigned_to IS NULL",
+            "work_type != 'crew_session'", "parent_id IS NULL",
+        ]
+        params: list[Any] = []
+        if work_type is not None:
+            conditions.append("work_type = ?")
+            params.append(work_type)
+        if agent_pull:
+            # Hidden rows do not consume or reveal positions in a peer's page.
+            conditions.append(
+                "CASE WHEN json_valid(metadata) THEN "
+                "json_type(metadata, '$.agent_pull') = 'object' "
+                "AND json_type(metadata, '$.agent_pull.version') = 'integer' "
+                "AND json_extract(metadata, '$.agent_pull.version') = 1 "
+                "AND ((json_extract(metadata, '$.agent_pull.scope') = 'ship' "
+                "AND (SELECT COUNT(*) FROM json_each(metadata, '$.agent_pull')) = 2) "
+                "OR (json_extract(metadata, '$.agent_pull.scope') = 'department' "
+                "AND json_type(metadata, '$.agent_pull.department') = 'text' "
+                "AND json_extract(metadata, '$.agent_pull.department') = ? "
+                "AND (SELECT COUNT(*) FROM json_each(metadata, '$.agent_pull')) = 3)) "
+                "ELSE 0 END"
+            )
+            params.append(resource.department)
+        cursor = await self._db.execute(
+            f"SELECT * FROM work_items WHERE {' AND '.join(conditions)} "
+            "ORDER BY priority ASC, created_at ASC, id ASC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        )
+        return [self._row_to_work_item(row) for row in await cursor.fetchall()]
+
+    async def list_claimable_work_items(
+        self, resource_id: str, *, work_type: str | None = None,
+        limit: int = 20, offset: int = 0,
+    ) -> ReadyWorkPage:
+        if (
+            type(resource_id) is not str or not resource_id
+            or type(limit) is not int or not 1 <= limit <= 50
+            or type(offset) is not int or offset < 0
+            or (
+                work_type is not None
+                and (type(work_type) is not str or not 1 <= len(work_type) <= 64)
+            )
+        ):
+            raise ValueError("work_pull_query_invalid")
+        if self._db is None:
+            raise RuntimeError("work_pull_store_unavailable")
+        async with self._work_item_row_write_lock:
+            resource = self._resolve_pull_resource(resource_id, "discover", True)
+            assert resource is not None
+            if not await self._has_booking_capacity(resource):
+                return ReadyWorkPage((), None)
+            candidates = await self._pull_candidates(
+                resource, work_type=work_type, agent_pull=True, limit=200, offset=offset,
+            )
+            items: list[WorkItem] = []
+            item_offsets: list[int] = []
+            examined = 0
+            for item in candidates:
+                examined += 1
+                if await self._ready_for_pull(item, resource, agent_pull=True):
+                    items.append(item)
+                    item_offsets.append(offset + examined - 1)
+                    if len(items) == limit:
+                        break
+            more = examined < len(candidates) or len(candidates) == 200
+            return ReadyWorkPage(
+                tuple(items), offset + examined if more else None, tuple(item_offsets),
+            )
+
+    @staticmethod
+    def _prepare_claim(
+        item: WorkItem, booking: Booking,
+        prepare_claim: Callable[[WorkItem, Booking], None] | None,
+    ) -> None:
+        if prepare_claim is None:
+            return
+        before = (dataclasses.asdict(item), dataclasses.asdict(booking))
+        result = prepare_claim(item, booking)
+        if inspect.iscoroutine(result):
+            result.close()
+        if result is not None or before != (
+            dataclasses.asdict(item), dataclasses.asdict(booking),
+        ):
+            raise ValueError("work_pull_preparation_invalid")
+
+    async def _assign_work_item(
+        self, item: WorkItem, resource: BookableResource, source: str,
+        *,
+        prepare_claim: Callable[[WorkItem, Booking], None] | None = None,
+    ) -> Booking | None:
+        assert self._db is not None
+        now = time.time()
+        booking = Booking(
+            resource_id=resource.resource_id, work_item_id=item.id,
+            status="scheduled", start_time=now,
+        )
+        cursor = await self._db.execute(
+            "SELECT id FROM resource_requirements WHERE work_item_id = ? "
+            "AND fulfilled = 0 ORDER BY id LIMIT 1",
+            (item.id,),
+        )
+        requirement = await cursor.fetchone()
+        if requirement:
+            booking.requirement_id = requirement["id"]
+        planned_item = dataclasses.replace(
+            item, assigned_to=resource.resource_id, status="scheduled", updated_at=now,
+        )
+        self._prepare_claim(planned_item, booking, prepare_claim)
+        cursor = await self._db.execute(
+            "UPDATE work_items SET assigned_to = ?, status = 'scheduled', "
+            "updated_at = ? WHERE id = ? AND assigned_to IS NULL AND status = ?",
+            (planned_item.assigned_to, planned_item.updated_at, item.id, item.status),
+        )
+        if cursor.rowcount != 1:
+            return None
+        if requirement:
+            await self._db.execute(
+                "UPDATE resource_requirements SET fulfilled = 1 WHERE id = ?",
+                (booking.requirement_id,),
+            )
+        await self._db.execute(
+            """INSERT INTO bookings (
+                id, resource_id, work_item_id, requirement_id, status,
+                start_time, end_time, actual_start, actual_end, total_tokens_consumed
+            ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                booking.id, booking.resource_id, booking.work_item_id,
+                booking.requirement_id, booking.status, booking.start_time,
+                booking.end_time, booking.actual_start, booking.actual_end,
+                booking.total_tokens_consumed,
+            ),
+        )
+        await self._record_timestamp(booking.id, "scheduled", source)
+        return booking
+
     async def assign_work_item(
         self,
         work_item_id: str,
@@ -4973,79 +5271,70 @@ class WorkItemStore(EventEmitterMixin):
         source: str = "captain",
     ) -> Booking | None:
         """Push assignment: Captain assigns work directly to an agent."""
-        async with self._work_item_row_write_lock:
+        if self._db is None:
+            return None
+        async with self._booking_transaction():
             item = await self.get_work_item(work_item_id)
             if not item:
                 return None
             if item.work_type == "crew_session":
                 raise ValueError("crew_session_write_reserved")
-            resource = self.get_resource(resource_id)
-            if not resource:
+            resource = self._resolve_pull_resource(resource_id, "assign", False)
+            if resource is None:
                 return None
-            if not self._check_eligibility(resource, item):
+            if (
+                item.assigned_to is not None or item.status in _TERMINAL_STATUSES
+                or not self._check_eligibility(resource, item)
+                or not await self._requirements_allow(item, resource)
+                or not await self._has_booking_capacity(resource)
+            ):
                 return None
-            now = time.time()
-            booking = Booking(
-                resource_id=resource_id,
-                work_item_id=work_item_id,
-                status="scheduled",
-                start_time=now,
-            )
-            # Find requirement to mark fulfilled
-            req_id = None
-            if self._db:
-                cursor = await self._db.execute(
-                    "SELECT id FROM resource_requirements WHERE work_item_id = ? AND fulfilled = 0 LIMIT 1",
-                    (work_item_id,),
-                )
-                req_row = await cursor.fetchone()
-                if req_row:
-                    req_id = req_row["id"]
-                    await self._db.execute(
-                        "UPDATE resource_requirements SET fulfilled = 1 WHERE id = ?",
-                        (req_id,),
-                    )
-                booking.requirement_id = req_id
-                await self._db.execute(
-                    """INSERT INTO bookings (
-                        id, resource_id, work_item_id, requirement_id, status,
-                        start_time, end_time, actual_start, actual_end, total_tokens_consumed
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        booking.id, booking.resource_id, booking.work_item_id,
-                        booking.requirement_id, booking.status, booking.start_time,
-                        booking.end_time, booking.actual_start, booking.actual_end,
-                        booking.total_tokens_consumed,
-                    ),
-                )
-                # Record timestamp
-                await self._record_timestamp(booking.id, "scheduled", source)
-                # Update work item
-                await self._db.execute(
-                    "UPDATE work_items SET assigned_to = ?, status = ?, updated_at = ? WHERE id = ?",
-                    (resource_id, "scheduled", now, work_item_id),
-                )
-                await self._db.commit()
+            booking = await self._assign_work_item(item, resource, source)
+            if booking is None:
+                return None
             updated_item = await self.get_work_item(work_item_id) or item
-        await self._refresh_snapshot_cache()
-        self._emit(EventType.WORK_ITEM_ASSIGNED, {
-            "work_item": updated_item.to_dict(),
-            "booking": booking.to_dict(),
-            "resource": resource.to_dict(),
-        })
+        await self._publish_assignment(updated_item, booking, resource, source=source)
+        return booking
 
-        # AD-654d: Emit TaskEvent to notify the assigned agent
-        if self._dispatcher and resource_id:
+    async def _publish_assignment(
+        self, item: WorkItem, booking: Booking, resource: BookableResource, *,
+        source: str, claimed: bool = False, agent_pull: bool = False,
+    ) -> None:
+        try:
+            await self._refresh_snapshot_cache()
+        except Exception:
+            logger.warning(
+                "Workforce snapshot refresh failed after assignment; the booking "
+                "is committed and event delivery continues",
+                exc_info=True,
+            )
+        events = [EventType.WORK_ITEM_ASSIGNED]
+        if claimed:
+            events.append(EventType.WORK_ITEM_CLAIMED)
+        for event_type in events:
+            try:
+                self._emit(event_type, {
+                    "work_item": item.to_dict(),
+                    "booking": booking.to_dict(),
+                    "resource": resource.to_dict(),
+                })
+            except Exception:
+                logger.warning(
+                    "Workforce assignment event delivery failed after commit; "
+                    "the booking stands and is not re-created",
+                    exc_info=True,
+                )
+        if self._dispatcher and not agent_pull:
             try:
                 from probos.activation import task_event_for_agent
                 event = task_event_for_agent(
-                    agent_id=resource_id,
+                    agent_id=resource.resource_id,
                     source_type="workforce",
-                    source_id=work_item_id,
+                    source_id=item.id,
                     event_type="work_item_assigned",
                     priority=Priority.NORMAL,
                     payload={
-                        "work_item_id": work_item_id,
+                        "work_item_id": item.id,
                         "title": item.title,
                         "description": item.description,
                         "work_type": item.work_type,
@@ -5053,71 +5342,123 @@ class WorkItemStore(EventEmitterMixin):
                         "assigned_by": source,
                     },
                 )
-                _res = await self._dispatcher.dispatch(event)
+                _res = await asyncio.wait_for(self._dispatcher.dispatch(event), timeout=5)
                 if not _res.accepted:
                     # BF-810: the booking is durable and stands; only the
                     # notification failed. Say so rather than dropping it.
                     logger.warning(
                         "AD-654d: work_item_assigned for %s reached no agent "
                         "(rejected=%d unroutable=%d); booking still stands",
-                        work_item_id, _res.rejected, _res.unroutable,
+                        item.id, _res.rejected, _res.unroutable,
                     )
             except Exception:
-                logger.debug("AD-654d: work_item_assigned TaskEvent emission failed", exc_info=True)
-
-        return booking
+                logger.warning(
+                    "Workforce assignment notification failed after commit; "
+                    "the booking stands and the committed result is returned",
+                    exc_info=True,
+                )
 
     async def claim_work_item(
         self,
         resource_id: str,
         work_type: str | None = None,
         department: str | None = None,
+        *,
+        work_item_id: str | None = None,
+        agent_pull: bool = False,
+        prepare_claim: Callable[[WorkItem, Booking], None] | None = None,
     ) -> tuple[WorkItem, Booking] | None:
-        """Pull assignment: Agent claims highest-priority eligible unassigned work."""
+        """Claim selected work, or the highest-priority eligible legacy candidate.
+
+        ``prepare_claim`` is synchronous, read-only validation of the actual
+        planned outcome. It must not perform I/O or reenter the store. A prepared
+        result is usable only after this method successfully returns ownership.
+        """
+        if (
+            type(agent_pull) is not bool
+            or type(resource_id) is not str or not resource_id
+            or (
+                prepare_claim is not None
+                and (not callable(prepare_claim) or inspect.iscoroutinefunction(prepare_claim))
+            )
+            or (
+                work_item_id is not None
+                and (type(work_item_id) is not str or not 1 <= len(work_item_id) <= 128)
+            )
+            or (
+                agent_pull
+                and (work_item_id is None or department is not None or work_type is not None)
+            )
+        ):
+            raise ValueError("work_pull_claim_invalid")
         if work_type == "crew_session":
             raise ValueError("crew_session_write_reserved")
-        resource = self.get_resource(resource_id)
-        if not resource:
-            return None
         if not self._db:
+            if agent_pull:
+                raise RuntimeError("work_pull_store_unavailable")
             return None
-        # Find eligible unassigned work
-        conditions = [
-            "status = 'open'",
-            "assigned_to IS NULL",
-            "work_type != 'crew_session'",
-        ]
-        params: list[Any] = []
-        if work_type:
-            conditions.append("work_type = ?")
-            params.append(work_type)
-        where = " AND ".join(conditions)
-        cursor = await self._db.execute(
-            f"SELECT * FROM work_items WHERE {where} ORDER BY priority ASC, created_at ASC LIMIT 50",
-            params,
+        async with self._booking_transaction():
+            resource = self._resolve_pull_resource(resource_id, "claim", agent_pull)
+            if resource is None:
+                return None
+            if work_item_id is not None:
+                item = await self.get_work_item(work_item_id)
+                if item is None or (agent_pull and not self._standalone_pull_item(item)):
+                    return None
+                cursor = await self._db.execute(
+                    "SELECT * FROM bookings WHERE work_item_id = ?", (item.id,),
+                )
+                bookings = [self._row_to_booking(row) for row in await cursor.fetchall()]
+                live = [b for b in bookings if b.status not in ("completed", "cancelled")]
+                if len(live) > 1:
+                    raise RuntimeError("work_pull_booking_integrity")
+                owned_before = any(b.resource_id == resource_id for b in bookings)
+                if item.assigned_to is not None or owned_before:
+                    if (
+                        item.assigned_to == resource_id
+                        and item.status not in _TERMINAL_STATUSES
+                        and len(live) == 1
+                        and live[0].resource_id == resource_id
+                    ):
+                        self._prepare_claim(item, live[0], prepare_claim)
+                        return item, live[0]
+                    return None
+                if live:
+                    raise RuntimeError("work_pull_booking_integrity")
+                candidates = [item]
+            else:
+                candidates = await self._pull_candidates(
+                    resource, work_type=work_type, agent_pull=False, limit=50,
+                )
+            if (
+                (department and resource.department != department)
+                or not await self._has_booking_capacity(resource)
+            ):
+                return None
+            booking = None
+            for item in candidates:
+                if await self._ready_for_pull(item, resource, agent_pull=agent_pull):
+                    booking = await self._assign_work_item(
+                        item, resource, "agent", prepare_claim=prepare_claim,
+                    )
+                    if booking is not None:
+                        break
+            if booking is None:
+                return None
+            updated_item = await self.get_work_item(booking.work_item_id)
+            assert updated_item is not None
+        await self._publish_assignment(
+            updated_item, booking, resource,
+            source="agent", claimed=True, agent_pull=agent_pull,
         )
-        rows = await cursor.fetchall()
-        for row in rows:
-            item = self._row_to_work_item(row)
-            if department and hasattr(resource, 'department') and resource.department != department:
-                continue
-            if self._check_eligibility(resource, item):
-                booking = await self.assign_work_item(item.id, resource_id, source="agent")
-                if booking:
-                    updated_item = await self.get_work_item(item.id) or item
-                    self._emit(EventType.WORK_ITEM_CLAIMED, {
-                        "work_item": updated_item.to_dict(),
-                        "booking": booking.to_dict(),
-                        "resource": resource.to_dict(),
-                    })
-                    return (updated_item, booking)
-        return None
+        return updated_item, booking
 
     async def unassign_work_item(self, work_item_id: str, reason: str = "") -> bool:
         """Remove assignment. Cancels active booking. Resets assigned_to to NULL."""
         if not self._db:
             return False
-        async with self._work_item_row_write_lock:
+        cancelled: list[Booking] = []
+        async with self._booking_transaction():
             item = await self.get_work_item(work_item_id)
             if not item:
                 return False
@@ -5125,25 +5466,20 @@ class WorkItemStore(EventEmitterMixin):
                 raise ValueError("crew_session_write_reserved")
             if not item.assigned_to:
                 return False
-        # Cancel active bookings
-        cursor = await self._db.execute(
-            "SELECT id FROM bookings WHERE work_item_id = ? AND status NOT IN ('completed', 'cancelled')",
-            (work_item_id,),
-        )
-        booking_rows = await cursor.fetchall()
-        for row in booking_rows:
-            await self.cancel_booking(row["id"])
-        # Reset assignment
-        async with self._work_item_row_write_lock:
-            item = await self.get_work_item(work_item_id)
-            if not item or not item.assigned_to:
-                return False
+            cursor = await self._db.execute(
+                "SELECT * FROM bookings WHERE work_item_id = ? "
+                "AND status NOT IN ('completed', 'cancelled')",
+                (work_item_id,),
+            )
+            for row in await cursor.fetchall():
+                cancelled.append(await self._cancel_booking(self._row_to_booking(row)))
             await self._db.execute(
                 "UPDATE work_items SET assigned_to = NULL, status = 'open', updated_at = ? WHERE id = ?",
                 (time.time(), work_item_id),
             )
-            await self._db.commit()
         await self._refresh_snapshot_cache()
+        for booking in cancelled:
+            self._emit(EventType.BOOKING_CANCELLED, {"booking": booking.to_dict()})
         return True
 
     # ======================================================================
@@ -5154,7 +5490,7 @@ class WorkItemStore(EventEmitterMixin):
         """Transition booking: scheduled → active."""
         if not self._db:
             return None
-        async with self._work_item_row_write_lock:
+        async with self._booking_transaction():
             booking = await self.get_booking(booking_id)
             if not booking or booking.status != "scheduled":
                 return None
@@ -5167,15 +5503,13 @@ class WorkItemStore(EventEmitterMixin):
                 (now, booking_id),
             )
             await self._record_timestamp(booking_id, "active", "system")
-            await self._db.commit()
             if item is not None:
                 await self._db.execute(
                     "UPDATE work_items SET status = 'in_progress', updated_at = ? WHERE id = ?",
                     (now, booking.work_item_id),
                 )
-                await self._db.commit()
+            updated = await self.get_booking(booking_id)
         await self._refresh_snapshot_cache()
-        updated = await self.get_booking(booking_id)
         self._emit(EventType.BOOKING_STARTED, {"booking": updated.to_dict() if updated else {}})
         return updated
 
@@ -5183,29 +5517,36 @@ class WorkItemStore(EventEmitterMixin):
         """Transition booking: active → on_break."""
         if not self._db:
             return None
-        booking = await self.get_booking(booking_id)
-        if not booking or booking.status != "active":
-            return None
-        await self._db.execute(
-            "UPDATE bookings SET status = 'on_break' WHERE id = ?", (booking_id,),
-        )
-        await self._record_timestamp(booking_id, "on_break", "system")
-        await self._db.commit()
-        return await self.get_booking(booking_id)
+        async with self._booking_transaction():
+            booking = await self.get_booking(booking_id)
+            if not booking or booking.status != "active":
+                return None
+            await self._db.execute(
+                "UPDATE bookings SET status = 'on_break' WHERE id = ?", (booking_id,),
+            )
+            await self._record_timestamp(booking_id, "on_break", "system")
+            updated = await self.get_booking(booking_id)
+        await self._refresh_snapshot_cache()
+        return updated
 
     async def resume_booking(self, booking_id: str) -> Booking | None:
         """Transition booking: on_break → active."""
         if not self._db:
             return None
-        booking = await self.get_booking(booking_id)
-        if not booking or booking.status != "on_break":
-            return None
-        await self._db.execute(
-            "UPDATE bookings SET status = 'active' WHERE id = ?", (booking_id,),
-        )
-        await self._record_timestamp(booking_id, "active", "system")
-        await self._db.commit()
-        return await self.get_booking(booking_id)
+        async with self._booking_transaction():
+            booking = await self.get_booking(booking_id)
+            if not booking or booking.status != "on_break":
+                return None
+            resource = self._resolve_pull_resource(booking.resource_id, "resume", False)
+            if resource is None or not await self._has_booking_capacity(resource):
+                return None
+            await self._db.execute(
+                "UPDATE bookings SET status = 'active' WHERE id = ?", (booking_id,),
+            )
+            await self._record_timestamp(booking_id, "active", "system")
+            updated = await self.get_booking(booking_id)
+        await self._refresh_snapshot_cache()
+        return updated
 
     async def complete_booking(self, booking_id: str, tokens_consumed: int = 0) -> Booking | None:
         """Transition booking: active → completed. Generates journal entries."""
@@ -5216,7 +5557,7 @@ class WorkItemStore(EventEmitterMixin):
             or not 0 <= tokens_consumed <= _MAX_WORK_ITEM_ACTUAL_TOKENS
         ):
             raise ValueError("work_item_actual_tokens_delta_invalid")
-        async with self._work_item_row_write_lock:
+        async with self._booking_transaction():
             booking = await self.get_booking(booking_id)
             if not booking or booking.status not in ("active", "scheduled"):
                 return None
@@ -5241,29 +5582,21 @@ class WorkItemStore(EventEmitterMixin):
                 ):
                     raise ValueError("work_item_actual_tokens_overflow")
             now = time.time()
-            try:
+            await self._db.execute(
+                "UPDATE bookings SET status = 'completed', actual_end = ?, "
+                "total_tokens_consumed = ? WHERE id = ?",
+                (now, tokens_consumed, booking_id),
+            )
+            await self._record_timestamp(booking_id, "completed", "system")
+            if item is not None and tokens_consumed:
                 await self._db.execute(
-                    "UPDATE bookings SET status = 'completed', actual_end = ?, "
-                    "total_tokens_consumed = ? WHERE id = ?",
-                    (now, tokens_consumed, booking_id),
+                    "UPDATE work_items SET actual_tokens = actual_tokens + ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (tokens_consumed, now, item.id),
                 )
-                await self._record_timestamp(booking_id, "completed", "system")
-                if item is not None and tokens_consumed:
-                    await self._db.execute(
-                        "UPDATE work_items SET actual_tokens = actual_tokens + ?, "
-                        "updated_at = ? WHERE id = ?",
-                        (tokens_consumed, now, item.id),
-                    )
-                await self._db.commit()
-            except BaseException:
-                try:
-                    await self._db.execute("ROLLBACK")
-                except Exception:
-                    pass
-                raise
-        journal = await self.generate_journal(booking_id)
+            journal = await self._generate_journal(booking_id)
+            updated = await self.get_booking(booking_id)
         await self._refresh_snapshot_cache()
-        updated = await self.get_booking(booking_id)
         self._emit(EventType.BOOKING_COMPLETED, {
             "booking": updated.to_dict() if updated else {},
             "journal": [j.to_dict() for j in journal],
@@ -5274,18 +5607,22 @@ class WorkItemStore(EventEmitterMixin):
         """Cancel a booking."""
         if not self._db:
             return None
-        booking = await self.get_booking(booking_id)
-        if not booking or booking.status in ("completed", "cancelled"):
-            return None
-        await self._db.execute(
-            "UPDATE bookings SET status = 'cancelled' WHERE id = ?", (booking_id,),
-        )
-        await self._record_timestamp(booking_id, "cancelled", "system")
-        await self._db.commit()
+        async with self._booking_transaction():
+            booking = await self.get_booking(booking_id)
+            if not booking or booking.status in ("completed", "cancelled"):
+                return None
+            updated = await self._cancel_booking(booking)
         await self._refresh_snapshot_cache()
-        updated = await self.get_booking(booking_id)
-        self._emit(EventType.BOOKING_CANCELLED, {"booking": updated.to_dict() if updated else {}})
+        self._emit(EventType.BOOKING_CANCELLED, {"booking": updated.to_dict()})
         return updated
+
+    async def _cancel_booking(self, booking: Booking) -> Booking:
+        assert self._db is not None
+        await self._db.execute(
+            "UPDATE bookings SET status = 'cancelled' WHERE id = ?", (booking.id,),
+        )
+        await self._record_timestamp(booking.id, "cancelled", "system")
+        return dataclasses.replace(booking, status="cancelled")
 
     async def get_booking(self, booking_id: str) -> Booking | None:
         """Fetch a single booking."""
@@ -5344,6 +5681,11 @@ class WorkItemStore(EventEmitterMixin):
         """Generate journal entries from BookingTimestamp pairs."""
         if not self._db:
             return []
+        async with self._booking_transaction():
+            return await self._generate_journal(booking_id)
+
+    async def _generate_journal(self, booking_id: str) -> list[BookingJournal]:
+        assert self._db is not None
         cursor = await self._db.execute(
             "SELECT * FROM booking_timestamps WHERE booking_id = ? ORDER BY timestamp ASC",
             (booking_id,),
@@ -5384,7 +5726,6 @@ class WorkItemStore(EventEmitterMixin):
                 ),
             )
             entries.append(entry)
-        await self._db.commit()
         return entries
 
     # ======================================================================
@@ -5457,9 +5798,11 @@ class WorkItemStore(EventEmitterMixin):
         # 1. Resource must be active
         if not resource.active:
             return False
-        # 2. Available capacity
-        avail = self.get_resource_availability(resource.resource_id)
-        if avail and avail["available_capacity"] <= 0:
+        if (
+            type(work_item.trust_requirement) not in (int, float)
+            or not math.isfinite(work_item.trust_requirement)
+            or not 0 <= work_item.trust_requirement <= 1
+        ):
             return False
         # 3. Trust requirement
         if work_item.trust_requirement > 0:

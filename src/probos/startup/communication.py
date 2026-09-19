@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from probos.events import EventType
 from probos.startup.results import CommunicationResult
@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from probos.protocols import EventLogQueryAuditSink, EventLogReaderProtocol
     from probos.substrate.registry import AgentRegistry
     from probos.tools.registry import ToolRegistry
+    from probos.tools.work_item_pull_tool import PullResourceResolver
+    from probos.workforce import BookableResource, WorkItemStore
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +208,40 @@ def _register_publish_finding_tool(
     )
 
 
+def _register_work_item_pull_tools(
+    *,
+    tool_registry: ToolRegistry,
+    work_item_store: WorkItemStore | None,
+    pull_resource_resolver: PullResourceResolver | None,
+) -> None:
+    if work_item_store is None or not callable(pull_resource_resolver):
+        return
+    from probos.tools.work_item_pull_tool import ClaimWorkItemTool, DiscoverWorkItemsTool
+
+    for tool_class, permission in (
+        (DiscoverWorkItemsTool, "read"), (ClaimWorkItemTool, "write"),
+    ):
+        tool = tool_class(
+            store=work_item_store, pull_resource_resolver=pull_resource_resolver,
+        )
+        if tool_registry.get(tool.tool_id) is not None:
+            continue
+        tool_registry.register(
+            tool,
+            provider="workforce",
+            tags=[tool.tool_id, "workforce", permission],
+            allowed_departments=(
+                "engineering", "science", "medical", "security", "operations", "bridge",
+            ),
+            default_permissions={
+                "ensign": permission,
+                "lieutenant": permission,
+                "commander": permission,
+                "senior_officer": permission,
+            },
+        )
+
+
 async def init_communication(
     *,
     config: "SystemConfig",
@@ -226,6 +262,10 @@ async def init_communication(
     oracle: Any = None,  # AD-1139: OracleService for the read-only consult tool
     records_store: Any = None,  # AD-1140: RecordsStore for the commons-write tool
     notebook_quality_engine: Any = None,  # AD-1140: AD-555 quality metrics sink
+    pull_resource_resolver: Callable[
+        [str, Literal["discover", "claim", "assign", "resume"], bool],
+        BookableResource | None,
+    ] | None = None,
 ) -> CommunicationResult:
     """Start communication services, scheduling, and identity commissioning.
 
@@ -281,6 +321,7 @@ async def init_communication(
                 "custom_work_types": config.workforce.custom_work_types,
                 "custom_templates": config.workforce.custom_templates,
             },
+            pull_resource_resolver=pull_resource_resolver,
         )
         await work_item_store.start()
         await register_workforce_resources_fn(work_item_store)
@@ -714,6 +755,11 @@ async def init_communication(
         similarity_threshold=config.records.notebook_similarity_threshold,
         staleness_hours=config.records.notebook_staleness_hours,
         max_scan_entries=config.records.notebook_max_scan_entries,
+    )
+    _register_work_item_pull_tools(
+        tool_registry=tool_registry,
+        work_item_store=work_item_store,
+        pull_resource_resolver=pull_resource_resolver,
     )
     logger.info("tool-permission-store started")
 
