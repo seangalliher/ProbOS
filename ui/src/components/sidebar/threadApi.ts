@@ -570,9 +570,11 @@ export async function patchThread(
  */
 export async function getThread(
   threadId: string,
+  signal?: AbortSignal,
 ): Promise<AD791aChatThreadView | null> {
   try {
-    const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}`);
+    const url = `/api/threads/${encodeURIComponent(threadId)}`;
+    const res = signal === undefined ? await fetch(url) : await fetch(url, { signal });
     if (!res.ok) return null;
     const data = (await res.json()) as AD791aChatThreadView;
     return data && typeof data.id === 'string' ? data : null;
@@ -590,11 +592,13 @@ export async function getThread(
  */
 export async function getOrCreateAgentThread(
   agentId: string,
+  signal?: AbortSignal,
 ): Promise<AD791aChatThreadView | null> {
   try {
     const res = await fetch(`/api/agent/${encodeURIComponent(agentId)}/thread`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      ...(signal === undefined ? {} : { signal }),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as AD791aChatThreadView;

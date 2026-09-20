@@ -526,7 +526,10 @@ async def test_concurrent_same_instance_duplicate_ids_reach_runtime_listener() -
         client, tools, parallel_tool_calls_enabled=True, max_parallel_tool_calls=2,
     )
     callbacks: dict[str, list[str]] = {"alpha": [], "beta": []}
-    incoming = {"agent_id": "same-agent", "_agentic_run_id": "f" * 32}
+    incoming = {
+        "agent_id": "same-agent", "_agentic_run_id": "f" * 32,
+        "thread_id": "correlated-thread",
+    }
     unrelated: list[Any] = []
     runtime.add_event_listener(unrelated.append, ["irrelevant"])
     tasks = [
@@ -549,8 +552,15 @@ async def test_concurrent_same_instance_duplicate_ids_reach_runtime_listener() -
     assert tools.active == 0 and len(events) == 12 and not unrelated
     ids = {value[0] for value in callbacks.values()}
     assert len(ids) == 2 and "f" * 32 not in ids
-    assert incoming == {"agent_id": "same-agent", "_agentic_run_id": "f" * 32}
+    assert incoming == {
+        "agent_id": "same-agent", "_agentic_run_id": "f" * 32,
+        "thread_id": "correlated-thread",
+    }
     assert {event["data"]["run_id"] for event in events} == ids
+    assert all(
+        event["data"]["thread_id"] == "correlated-thread"
+        for event in events if event["type"] in LOOP_EVENTS[1:]
+    )
     for name, result in zip(callbacks, results):
         assert result.final_text == f"done:{name}"
         assert [item.output for item in result.tool_results] == [

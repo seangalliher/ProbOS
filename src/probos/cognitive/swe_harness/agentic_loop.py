@@ -1515,6 +1515,15 @@ class AgenticLoop:
             }
             if run_id is not None else {}
         )
+        if run_id is not None:
+            thread_id = context.get("thread_id")
+            if type(thread_id) is str and thread_id.strip() and len(thread_id) <= 128:
+                try:
+                    thread_bytes = thread_id.encode("utf-8", errors="strict")
+                except UnicodeError:
+                    thread_bytes = b""
+                if 1 <= len(thread_bytes) <= 128:
+                    correlation["thread_id"] = thread_id
         self._fire_event(
             "AGENTIC_TOOL_CALL_STARTED",
             {

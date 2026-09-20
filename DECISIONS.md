@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1174 -- Observed tool progress through the existing HXI stream
+
+**Date:** 2026-09-20. **Existing issue:** #1105. Reuse one stream projection and shared ProfileChatTab consumer for all three shells. Correlation remains an explicit existing configuration/restart prerequisite; only ON tool-start/completion frames gain the exact authoritative thread ID, captured once per invocation. No new event, terminal outcome, raw result exposure or default enablement.
+
+Retain at most 32 runs with 64 calls each, keyed by stream generation, thread, participant, run, iteration and index while validating emitted call/tool identity. Lost, malformed, disconnected or incomplete delivery is visible; an old start does not reverse completion, and a 30-second absence means completion unconfirmed, not cancelled or idle. A tool completion never implies task success or delivery.
+
+Use server thread participants, not synthetic profile seeds. Existing thread helpers gain optional abort signals without changing omitted-argument calls. First-send association has one 1,500 ms deadline race plus abort; failure preserves normal chat once with its captured destination, and late/context-switched results cannot rebind or resend. No empty thread is created merely by viewing. Existing settings snapshot ownership is unchanged and stale config cannot suppress observed correlated facts.
+
+Parent-retained producer/transport tests (444), UI tests (113), and isolated browser tests (12) passed, including real producer/runtime/hub delivery before completion, inline/promotion, context/roster transitions, failure, reconnect and unknown readiness. Counts are milestone evidence, not release receipts. No #1375 task-state redesign or live-vessel operation is included; review and canonical/hosted release gates remain separate.
+
 ### AD-1260 -- Explicit first-person wellness telemetry
 
 **Date:** 2026-09-20. **Existing issue:** #1310. Implement the versioned subject-boundary design with a thin service facade and shared optional-domain helpers. Wellness is never a default, passive or third-person domain. `self_query` rejects subject parameters and reads only its authoritative caller's existing profile/assessment; it does not commission clinical work. Preserve the exact whitelist, assessment age, bounded concerns and omission evidence. Captain-only recommendations/notes and unlisted clinical fields remain excluded. Existing clinical and MESH surfaces are unchanged.
