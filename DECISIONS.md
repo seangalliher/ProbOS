@@ -10,6 +10,20 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1260 -- Explicit first-person wellness telemetry
+
+**Date:** 2026-09-20. **Existing issue:** #1310. Implement the versioned subject-boundary design with a thin service facade and shared optional-domain helpers. Wellness is never a default, passive or third-person domain. `self_query` rejects subject parameters and reads only its authoritative caller's existing profile/assessment; it does not commission clinical work. Preserve the exact whitelist, assessment age, bounded concerns and omission evidence. Captain-only recommendations/notes and unlisted clinical fields remain excluded. Existing clinical and MESH surfaces are unchanged.
+
+### AD-1261 -- Explicit first-person authority telemetry
+
+**Date:** 2026-09-20. **Existing issue:** #1311. Reuse the public execution identity resolver and the trust sample it actually consumed, then inspect registered enabled tools through their effective permission API. Report identity, held/withheld entries, whole-catalog coverage, uncertainty and a real same-department authorizing route or Captain fallback. This is guidance, not a grant or execution promise. Missing authoritative services produce unknown state, not an empty withholding claim.
+
+Both domains remain opt-in extras to the original five-domain snapshot. The existing invocation-local presentation contract admits the entire dictionary/rendered envelope, bounded to 6,000 characters; whole optional entries may be removed only with updated coverage, and a minimum result that cannot fit becomes an explicit neutral error. The tool input enum intentionally gains the two optional domains; there is no new subject, paging, output or persistence schema, and no generic truncator, offload, permission, routing or configuration change. M1/M2 milestone selections passed (62/592), with 405 parent-retained owner/consumer cases and actual next-request assertions. Counts overlap; review and release gates are separate evidence. Existing versioned prompts remain the design history; current subject rejection and public-resolver behavior supersede their older fallback examples.
+
+**R1 presentation correction:** valid concern text and registered IDs can themselves match the existing gap classifier. A shared non-mutating policy now removes only matching optional entries whole, records exact omissions/incomplete coverage, and keeps retained identities unchanged. Direct rendering and the complete final envelope reject unsafe residual values with a neutral error; old-only data, stored assessments, permissions and the classifier are unchanged. This intentionally loses those valid values from the projection, without promising another retrieval path. Parent-retained affected validation: **453 passed**; final review and release gates remain separate.
+
+**R2 delivery correction:** the loop retains the exact admitted string and a strong output-object reference per invocation, clearing both before every presentation attempt. Successful optional queries use that text through a shallow temporary result replacement into the existing converter, without a third raw serialization. Original result/hook/metadata identity is preserved; invalid retention fails explicitly and old-only/other-tool paths stay unchanged. The omission notice now states the retrieval limitation to the model. Parent-retained affected and existing-presentation validation: **354 passed**.
+
 ### AD-1207 OPEN -- Read-only Bridge fault visibility (ordinary implementation candidate)
 
 **Date:** 2026-09-19. **Existing issue:** #1152; #1153 acceptance verification. **Decision:** Implement parent-ratified Option 1 (comment 5746274610): authenticated list/detail router, component-owned bounded polling and the existing BridgeSection. No allocation or new service/event/config/store. The reviewed #1151 commit is retained; its interrupted standalone gate is not wave validation.
