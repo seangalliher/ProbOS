@@ -11,6 +11,7 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -21,6 +22,7 @@ import probos.capability_request as request_module
 import probos.fault_report as fault_module
 from probos.api_models import CapabilityRequestDecideRequest
 from probos.capability_request import (
+    RATIONALE_MAX_CHARS, action_dedup_key,
     CapabilityRequest, CapabilityRequestStore, can_fulfil_request, repair_action,
 )
 from probos.routers.capability_requests import (
@@ -28,6 +30,7 @@ from probos.routers.capability_requests import (
     list_actionable_capability_requests,
 )
 from probos.cognitive.repair_dispatch import RepairDispatcher
+from probos.cognitive.trace_analysis import render_token
 from probos.cognitive.repair_issue import (
     GitHubIssueClient, RepairIssueFulfiller, build_issue_report, issue_marker,
 )
@@ -384,6 +387,32 @@ def _payload(**changes):
     }
 
 
+@pytest.mark.parametrize("kind", ["grant", "install", "build", "continue", "no_such_kind"])
+def test_repair_action_non_action_does_not_access_payload(kind: str) -> None:
+    class _NonActionRequest(SimpleNamespace):
+        @property
+        def payload(self) -> object:
+            pytest.fail("Non-action recognition must not access payload")
+
+    req = _NonActionRequest(kind=kind)
+    assert repair_action(req) is None
+    assert can_fulfil_request(req) is (kind in request_module.FULFILMENT_KINDS)
+
+
+def test_repair_action_missing_payload_is_not_fulfillable() -> None:
+    req = SimpleNamespace(kind="action")
+    assert not hasattr(req, "payload")
+    assert repair_action(req) is None
+    assert not can_fulfil_request(req)
+
+
+@pytest.mark.parametrize("payload", [None, {}, [], "invalid", 42])
+def test_repair_action_minimal_request_invalid_payload_is_not_fulfillable(payload: object) -> None:
+    req = SimpleNamespace(kind="action", payload=payload)
+    assert repair_action(req) is None
+    assert not can_fulfil_request(req)
+
+
 @pytest.mark.parametrize("payload", [
     None, {}, _payload(tool_id="browser"), _payload(action="click"),
     _payload(params={}), _payload(params={"fault_id": "f", "signature": "short"}),
@@ -405,6 +434,44 @@ def test_repair_action_legacy_payload_retains_exact_identity():
     )
     assert can_fulfil_request(req)
     assert not repair_action(replace(req, kind="grant"))
+
+
+@pytest.mark.parametrize(("label", "rendered"), [
+    ("a, b", '"a, b"'),
+    ('x", "y', r'"x\", \"y"'),
+    ("tool(arg=1)", '"tool(arg=1)"'),
+])
+async def test_dispatcher_quotes_legacy_labels_without_changing_payload_or_dedup(
+    rig: SimpleNamespace, label: str, rendered: str,
+) -> None:
+    targets = ["architect", label]
+    dispatcher = RepairDispatcher(
+        runtime=SimpleNamespace(attachment_store=rig.trace),
+        fault_report_store=rig.faults, capability_request_store=rig.requests,
+        config=RepairConfig(enabled=True, targets=targets),
+    )
+    assert rig.request.payload is not None
+    expected_payload = {
+        **rig.request.payload,
+        "params": {**rig.request.payload["params"], "targets": ",".join(targets)},
+    }
+
+    request = await dispatcher.propose(rig.fault.signature)
+    repeated = await dispatcher.propose(rig.fault.signature)
+
+    assert request is not None and repeated is not None
+    assert dispatcher.targets == tuple(targets)
+    assert request.payload == expected_payload
+    assert request.target == rig.request.target
+    assert request.rationale == (
+        "The browser tool has failed the same way 2 times. Approving files a "
+        "GitHub issue with a repair brief. It does not run a repair or close the fault."
+        f" Legacy configured labels (not executors): architect, {rendered}"
+    )
+    assert repeated.id == request.id
+    assert len(await rig.requests.list_pending()) == 2
+    assert request.status == "pending" and rig.fault.status == "open"
+    assert rig.credentials.calls == rig.http.requests == []
 
 
 async def test_actionable_only_reserved_repair_projects_retry():
@@ -1002,6 +1069,13 @@ async def test_redaction_precedes_fault_and_trace_summary_clipping(rig, caplog):
     assert "Useful context" in report["body"] and "useful-trace-context" in report["body"]
 
 
+def test_repository_validator_is_the_reexported_config_leaf_helper() -> None:
+    from probos.config_models.agentic import valid_github_repository
+    from probos.fault_issue_filings import valid_github_repository as filing_validator
+
+    assert filing_validator is valid_github_repository
+
+
 @pytest.mark.parametrize("value", [
     "https://github.com/owner/repo", "owner/repo/issues", "owner", " owner/repo",
     "owner/repo?token=secret", "../repo", "owner/..", "owner/repo\n",
@@ -1305,3 +1379,176 @@ async def test_cancelled_presend_with_failed_status_commit_retains_uncertain_not
         assert [request.method for request in rig.http.requests] == ["GET"]
     finally:
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("rationale", ["", "x" * 280, "x" * 281])
+async def test_rationale_public_bound_preserves_existing_store_slicing(rationale: str) -> None:
+    assert type(RATIONALE_MAX_CHARS) is int and RATIONALE_MAX_CHARS == 280
+    store = CapabilityRequestStore()
+
+    grant = await store.file_request("agent", "grant", "example", rationale=rationale)
+    action = await store.file_action_request("agent", _payload(), rationale=rationale)
+
+    assert action is not None
+    assert grant.rationale == action.rationale == rationale[:280]
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "configured_targets", "included_count", "name_omitted", "legacy_length"),
+    [
+        pytest.param("browser", None, 1, False, 198, id="default"),
+        pytest.param("browser", (), 1, False, 198, id="empty-targets-default"),
+        pytest.param("browser", ("architect", 'x", "y'), 2, False, None, id="quoted-label"),
+        pytest.param("browser", ('"' * 64,), 0, False, 319, id="expanded-64-label"),
+        pytest.param(
+            "browser", tuple(chr(97 + i) * 64 for i in range(8)),
+            0, False, 715, id="eight-64-labels",
+        ),
+        pytest.param("browser", ("a" * 64, "b" * 24), 2, False, 279, id="fits-279"),
+        pytest.param("browser", ("a" * 64, "b" * 25), 2, False, 280, id="fits-280"),
+        pytest.param("browser", ("a" * 64, "b" * 26), 0, False, 281, id="over-281"),
+        pytest.param(
+            "browser", ("a, b", '"' * 64, "c" * 64),
+            1, False, None, id="whole-quoted-prefix",
+        ),
+        pytest.param(
+            "browser", ("a" * 47, "b" * 64), 1, False, 302, id="notice-fits-280",
+        ),
+        pytest.param(
+            "browser", ("a" * 48, "b" * 64), 0, False, 303, id="notice-over-281",
+        ),
+        pytest.param('x", "y', None, 1, False, None, id="quoted-tool-fits"),
+        pytest.param("\x01" * 64, None, 1, True, 577, id="escaped-tool-omitted"),
+        pytest.param(
+            "\x01" * 64, tuple(chr(97 + i) * 64 for i in range(8)),
+            0, True, None, id="escaped-tool-and-labels-omitted",
+        ),
+    ],
+)
+async def test_dispatcher_rationale_real_store_wire_preserves_tokens_payload_and_dedup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tool_id: str,
+    configured_targets: tuple[str, ...] | None,
+    included_count: int,
+    name_omitted: bool,
+    legacy_length: int | None,
+) -> None:
+    faults = FaultReportStore(str(tmp_path / "rationale-faults.db"))
+    events: list[tuple[Any, ...]] = []
+    requests = CapabilityRequestStore(
+        str(tmp_path / "rationale-requests.db"),
+        emit_event=lambda *args: events.append(args),
+    )
+    producer: list[dict[str, Any]] = []
+    file_action_request = requests.file_action_request
+
+    async def capture_request(
+        agent_id: str,
+        payload: dict[str, Any],
+        *,
+        rationale: str = "",
+        work_item_id: str | None = None,
+    ) -> CapabilityRequest | None:
+        producer.append({
+            "agent_id": agent_id, "payload": json.loads(json.dumps(payload)),
+            "rationale": rationale, "work_item_id": work_item_id,
+        })
+        return await file_action_request(
+            agent_id, payload, rationale=rationale, work_item_id=work_item_id,
+        )
+
+    monkeypatch.setattr(requests, "file_action_request", capture_request)
+    config = (
+        RepairConfig(enabled=True) if configured_targets is None
+        else RepairConfig(enabled=True, targets=list(configured_targets))
+    )
+    dispatcher = RepairDispatcher(
+        runtime=SimpleNamespace(), fault_report_store=faults,
+        capability_request_store=requests, config=config,
+    )
+    targets = configured_targets or ("architect",)
+    assert dispatcher.targets == targets
+    assert RATIONALE_MAX_CHARS == 280
+    try:
+        await faults.start()
+        await requests.start()
+        for _ in range(2):
+            fault = await faults.file_fault(
+                tool_id=tool_id, error_text="unknown action: key_type",
+                attempted="Enter a value", agent_id="agent", thread_id="thread",
+            )
+        assert fault.occurrences == 2 and fault.tool_id == tool_id
+        brief = await dispatcher.build_brief(fault)
+        expected_payload = {
+            "tool_id": "repair", "action": "dispatch",
+            "params": {
+                "fault_id": fault.id, "signature": fault.signature,
+                "targets": ",".join(targets), "brief": brief.render_for_payload()[:1200],
+            },
+            "scope_key": tool_id, "session_id": None, "thread_id": "thread",
+        }
+        tokens = [render_token(target) for target in targets]
+        summary = (
+            " has failed the same way 2 times. Approving files a GitHub issue "
+            "with a repair brief. It does not run a repair or close the fault."
+            " Legacy configured labels (not executors): "
+        )
+        original_head = f"The {render_token(tool_id)} tool"
+        legacy_rationale = original_head + summary + ", ".join(tokens)
+        if legacy_length is not None:
+            assert len(legacy_rationale) == legacy_length
+        if name_omitted:
+            assert len(render_token(tool_id)) > RATIONALE_MAX_CHARS
+        head = (
+            "The tool (name omitted; full name in payload)" if name_omitted
+            else original_head
+        )
+        omitted = len(targets) - included_count
+        expected = head + summary + ", ".join(tokens[:included_count])
+        if omitted:
+            expected += "; " if included_count else ""
+            expected += f"Labels omitted: {omitted}; full values in payload."
+        if omitted or name_omitted:
+            assert len(legacy_rationale) > RATIONALE_MAX_CHARS
+        else:
+            assert expected == legacy_rationale
+        assert len(expected) <= RATIONALE_MAX_CHARS
+
+        request = await dispatcher.propose(fault.signature)
+
+        assert request is not None and len(producer) == 1
+        stored = await requests.get(request.id, durable=True)
+        assert stored is not None
+        wire = json.loads(json.dumps(_serialize(stored, include_retry=True)))
+        assert producer[0]["rationale"] == request.rationale == stored.rationale == wire["rationale"]
+        assert stored.rationale == expected
+        assert len(stored.rationale) <= RATIONALE_MAX_CHARS
+        assert producer[0]["payload"] == stored.payload == wire["payload"] == expected_payload
+        assert request.target == stored.target == wire["target"] == f"repair.dispatch @ {tool_id}"
+        assert stored.status == "pending" and fault.status == "open"
+        expected_key = action_dedup_key(
+            agent_id="agent", payload=expected_payload, work_item_id=None,
+        )
+        assert action_dedup_key(
+            agent_id=stored.agent_id, payload=stored.payload, work_item_id=stored.work_item_id,
+        ) == expected_key
+
+        recurrence = await faults.file_fault(
+            tool_id=tool_id, error_text="unknown action: key_type",
+            attempted="Enter a value", agent_id="agent", thread_id="thread",
+        )
+        assert recurrence.id == fault.id and recurrence.occurrences == 3
+        repeated = await dispatcher.propose(recurrence.signature)
+
+        assert repeated is not None and repeated.id == request.id and len(producer) == 2
+        assert producer[1]["payload"] == producer[0]["payload"] == expected_payload
+        assert producer[1]["rationale"] == expected.replace("same way 2 times", "same way 3 times")
+        assert repeated.rationale == expected
+        assert repeated.payload == expected_payload
+        assert len(await requests.list_pending()) == len(events) == 1
+        assert (await requests.get(request.id, durable=True)) == stored
+        assert recurrence.status == "open"
+    finally:
+        await requests.stop()
+        await faults.stop()

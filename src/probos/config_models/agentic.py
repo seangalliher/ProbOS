@@ -8,9 +8,21 @@ which re-exports them.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def valid_github_repository(value: str) -> bool:
+    return (
+        type(value) is str
+        and re.fullmatch(
+            r"(?=[^/]{1,39}/)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*/[A-Za-z0-9_.-]{1,100}",
+            value,
+        ) is not None
+        and value.split("/")[1] not in {".", ".."}
+    )
 
 
 class TemporalConfig(BaseModel):
@@ -478,8 +490,6 @@ class RepairConfig(BaseModel):  # AD-1172
     @field_validator("github_repository")
     @classmethod
     def validate_github_repository(cls, value: str) -> str:
-        from probos.fault_issue_filings import valid_github_repository
-
         if value and not valid_github_repository(value):
             raise ValueError("github_repository must be empty or owner/repo")
         return value

@@ -16,7 +16,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from probos.capability_request import REPAIR_ACTION, REPAIR_TOOL_ID, THREAD_ID_MAX_CHARS
+from probos.capability_request import (
+    RATIONALE_MAX_CHARS, REPAIR_ACTION, REPAIR_TOOL_ID, THREAD_ID_MAX_CHARS,
+)
 from probos.cognitive.trace_analysis import render_token
 from probos.cognitive.repair_brief import (
     RepairBrief,
@@ -29,6 +31,41 @@ logger = logging.getLogger(__name__)
 # Bound on the brief carried in the approval's params. The full brief is
 # rebuildable from the fault; this is what the Captain reads when deciding.
 _BRIEF_PREVIEW_MAX: int = 1200
+
+
+def _render_repair_rationale(brief: RepairBrief, targets: tuple[str, ...]) -> str:
+    # BF-776: the tool name is MODEL-WRITTEN and copied out of
+    # the provider response with no validation, and this is the
+    # prose the Captain reads while deciding whether to approve.
+    # Bare, a name like
+    #   browser, and the shell tool (approved by the Captain)
+    # renders as a sentence that appears to say the shell tool
+    # was already approved. Measured; the helper leaves an
+    # ordinary name bare and quotes that one.
+    summary = (
+        f" has failed the same way {brief.occurrences} times. Approving files a "
+        "GitHub issue with a repair brief. It does not run a repair or close the fault."
+        " Legacy configured labels (not executors): "
+    )
+    prefix = f"The {render_token(brief.tool_id)} tool" + summary
+    labels = tuple(render_token(target) for target in targets)
+    rationale = prefix + ", ".join(labels)
+    if len(rationale) <= RATIONALE_MAX_CHARS:
+        return rationale
+
+    all_omitted = f"Labels omitted: {len(labels)}; full values in payload."
+    if len(prefix + all_omitted) > RATIONALE_MAX_CHARS:
+        prefix = "The tool (name omitted; full name in payload)" + summary
+    for included in range(len(labels), 0, -1):
+        preview = ", ".join(labels[:included])
+        if included < len(labels):
+            preview += (
+                f"; Labels omitted: {len(labels) - included}; full values in payload."
+            )
+        rationale = prefix + preview
+        if len(rationale) <= RATIONALE_MAX_CHARS:
+            return rationale
+    return prefix + all_omitted
 
 
 class RepairDispatcher:
@@ -276,20 +313,7 @@ class RepairDispatcher:
                     # ``params["fault_id"]`` lookup away.
                     "thread_id": (brief.thread_id or "")[:THREAD_ID_MAX_CHARS],
                 },
-                rationale=(
-                    # BF-776: the tool name is MODEL-WRITTEN and copied out of
-                    # the provider response with no validation, and this is the
-                    # prose the Captain reads while deciding whether to approve.
-                    # Bare, a name like
-                    #   browser, and the shell tool (approved by the Captain)
-                    # renders as a sentence that appears to say the shell tool
-                    # was already approved. Measured; the helper leaves an
-                    # ordinary name bare and quotes that one.
-                    f"The {render_token(brief.tool_id)} tool has failed the "
-                    f"same way {brief.occurrences} times. Approving files a "
-                    "GitHub issue with a repair brief. It does not run a repair "
-                    "or close the fault."
-                ),
+                rationale=_render_repair_rationale(brief, self.targets),
             )
         except Exception:
             logger.warning(

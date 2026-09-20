@@ -209,6 +209,8 @@ async def _off_observation(
     loop_config = config["agentic_loop"]
     if "event_correlation_enabled" in loop_config:
         assert loop_config.pop("event_correlation_enabled") is False
+    # AD-1206's inert, empty issue destination was added after this historical capture.
+    assert config["repair"].pop("github_repository") == ""
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

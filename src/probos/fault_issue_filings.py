@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from probos.config_models.agentic import valid_github_repository
 from probos.protocols import DatabaseConnection
 
 if TYPE_CHECKING:
@@ -48,17 +49,6 @@ _FAULT_COLUMNS = (
     "work_item_id", "tool_trace_ref", "status", "occurrences", "first_seen_at",
     "last_seen_at", "resolved_at", "resolution", "observed_as",
 )
-
-
-def valid_github_repository(value: str) -> bool:
-    return (
-        type(value) is str
-        and re.fullmatch(
-            r"(?=[^/]{1,39}/)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*/[A-Za-z0-9_.-]{1,100}",
-            value,
-        ) is not None
-        and value.split("/")[1] not in {".", ".."}
-    )
 
 
 def _valid_github_url(

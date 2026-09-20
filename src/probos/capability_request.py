@@ -51,7 +51,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_RATIONALE_MAX = 280
+RATIONALE_MAX_CHARS: int = 280
+_RATIONALE_MAX = RATIONALE_MAX_CHARS
 
 # AD-1154 / DD-1: exact-key validation for a ``kind="action"`` payload, applied
 # on write AND on read. A hand-edited DB row is an untrusted input, so the read
@@ -111,9 +112,11 @@ class RepairAction:
 
 def repair_action(req: CapabilityRequest) -> RepairAction | None:
     """Recognize the reserved, validated repair action, not arbitrary actions."""
-    payload = validate_action_payload(req.payload)
+    if req.kind != "action":
+        return None
+    payload = validate_action_payload(getattr(req, "payload", None))
     if (
-        req.kind != "action" or payload is None
+        payload is None
         or payload["tool_id"] != REPAIR_TOOL_ID
         or payload["action"] != REPAIR_ACTION
         or payload["session_id"] is not None
