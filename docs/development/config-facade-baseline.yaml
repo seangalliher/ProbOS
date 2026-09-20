@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1793
-  field_definitions: 1786
+  canonical_dump_leaves: 1794
+  field_definitions: 1787
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 849145176421a305eda897337e3ca2d695ca471bb65732e6c75b1779834fda05
+canonical_dump_sha256: e61d25eb33199ec5a9f0ef61fae0650b967e75c60ffd5f755cbcfbfe65d65a0d
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -2926,11 +2926,12 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 9c0854f94adeab7957325ad569ce015ca4859e492649343cfb12fa56af7ff6db
+    schema_sha256: e4d69ce8569ce85544adfa588030fdf2c478eea709fc69564109c888de933f11
     fields:
     - {default: 'False', name: enabled}
     - {default: <required>, has_default_factory: true, name: targets}
     - {default: '2', name: propose_after_occurrences}
+    - {default: '''''', name: github_repository}
   RetroactiveConfig:
     qualname: RetroactiveConfig
     bases:
@@ -3288,7 +3289,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 75185dc6d2c2b3d1506df90be0677706deb6b89c090f740713622f1488fc50ae
+    schema_sha256: 6ee639666e7b6b0f02980a75a27eaac1d81f22dbc46f4a4a3d2cd0839c8747ed
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

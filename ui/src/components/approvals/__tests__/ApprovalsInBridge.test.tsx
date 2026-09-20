@@ -71,13 +71,18 @@ function capabilityJson(requests: unknown[]): Response {
   return okJson({ view: 'actionable', requests });
 }
 
+function emptyTransport(input: RequestInfo | URL): Response {
+  return okJson(String(input).startsWith('/api/faults')
+    ? { faults: [], total: 0, limit: 50, offset: 0 } : []);
+}
+
 /** Routes each approvals endpoint to its own rows; everything else is empty. */
 function approvalsFetch(capability: unknown[], skill: unknown[]) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.startsWith('/api/capability-requests')) return capabilityJson(capability);
     if (url.startsWith('/api/skill-requests')) return okJson({ requests: skill });
-    return okJson([]);
+    return emptyTransport(input);
   });
 }
 
@@ -158,7 +163,7 @@ describe('AD-1201 Bridge APPROVALS section', () => {
           decided_by: status === 'approved' ? 'captain' : '',
         }]);
       }
-      return String(input).startsWith('/api/skill-requests') ? okJson({ requests: [] }) : okJson([]);
+      return String(input).startsWith('/api/skill-requests') ? okJson({ requests: [] }) : emptyTransport(input);
     });
     vi.stubGlobal('fetch', transport);
     render(<><IntentSurface /><ApprovalsCenterPanel /></>);
@@ -322,7 +327,7 @@ describe('AD-1201 expand opens the approvals centre', () => {
       }
       if (url.startsWith('/api/capability-requests')) return capabilityJson(pending);
       if (url.startsWith('/api/skill-requests')) return okJson({ requests: [] });
-      return okJson([]);
+      return emptyTransport(input);
     });
     vi.stubGlobal('fetch', fetchMock);
     useStore.setState({ approvalsCenterOpen: true });
@@ -421,7 +426,7 @@ describe('AD-1201 the approvals poll', () => {
       if (url.startsWith('/api/capability-requests') || url.startsWith('/api/skill-requests')) {
         throw new Error('network down');
       }
-      return okJson([]);
+      return emptyTransport(input);
     });
 
     await tick(POLL_MS);
@@ -440,7 +445,7 @@ describe('AD-1201 the approvals poll', () => {
       const url = String(input);
       if (url.startsWith('/api/skill-requests')) throw new Error('skills down');
       if (url.startsWith('/api/capability-requests')) return capabilityJson([CAPABILITY_ROW]);
-      return okJson([]);
+      return emptyTransport(input);
     });
 
     await tick(POLL_MS);
@@ -465,7 +470,7 @@ describe('issue #1368 shared approval availability', () => {
       const url = String(input);
       if (url.startsWith('/api/skill-requests')) return down ? unavailable() : okJson({ requests: [SKILL_ROW], status: 'pending' });
       if (url.startsWith('/api/capability-requests')) return capabilityJson([]);
-      return okJson([]);
+      return emptyTransport(input);
     });
     vi.stubGlobal('fetch', transport);
     useStore.setState({ approvalsCenterOpen: true });
@@ -489,7 +494,7 @@ describe('issue #1368 shared approval availability', () => {
     const transport = vi.fn<typeof fetch>().mockImplementation(async input => {
       if (String(input).startsWith('/api/skill-requests')) return down ? unavailable() : okJson({ requests: [SKILL_ROW] });
       if (String(input).startsWith('/api/capability-requests')) return capabilityJson([]);
-      return okJson([]);
+      return emptyTransport(input);
     });
     vi.stubGlobal('fetch', transport);
     render(<IntentSurface />);
@@ -508,7 +513,7 @@ describe('issue #1368 shared approval availability', () => {
       if (String(input).startsWith('/api/skill-requests')) return denied
         ? okJson({ detail: 'denied' }, httpStatus) : okJson({ requests: [SKILL_ROW] });
       if (String(input).startsWith('/api/capability-requests')) return capabilityJson([]);
-      return okJson([]);
+      return emptyTransport(input);
     }));
     useStore.setState({ approvalsCenterOpen: true });
     render(<ApprovalsCenterPanel />);
@@ -533,7 +538,7 @@ describe('issue #1368 shared approval availability', () => {
       }
       if (String(input).startsWith('/api/skill-requests')) return Promise.resolve(okJson({ requests: [SKILL_ROW] }));
       if (String(input).startsWith('/api/capability-requests')) return Promise.resolve(capabilityJson([]));
-      return Promise.resolve(okJson([]));
+      return Promise.resolve(emptyTransport(input));
     });
     vi.stubGlobal('fetch', transport);
     useStore.setState({ approvalsCenterOpen: true });
@@ -580,7 +585,7 @@ describe('issue #1368 independent Bridge retry ownership', () => {
     const transport = vi.fn<typeof fetch>().mockImplementation(async input => {
       const queue = String(input).startsWith('/api/skill-requests') ? 'skill'
         : String(input).startsWith('/api/capability-requests') ? 'capability' : null;
-      if (!queue) return okJson([]);
+      if (!queue) return emptyTransport(input);
       calls[queue] += 1;
       return down && queue === failedQueue ? okJson({ detail: 'queue unavailable' }, 503)
         : queue === 'capability' ? capabilityJson([]) : okJson({ requests: [] });
@@ -625,7 +630,7 @@ describe('issue #1368 independent Bridge retry ownership', () => {
         calls.capability += 1;
         return capabilityJson([]);
       }
-      return okJson([]);
+      return emptyTransport(input);
     }));
     render(<BridgePanel open onClose={() => {}} />);
     await tick(60_000);
@@ -647,7 +652,7 @@ describe('issue #1368 independent Bridge retry ownership', () => {
         capabilityCalls += 1;
         return Promise.resolve(capabilityJson([CAPABILITY_ROW]));
       }
-      return Promise.resolve(okJson([]));
+      return Promise.resolve(emptyTransport(input));
     });
     vi.stubGlobal('fetch', transport);
     const view = render(<BridgePanel open={false} onClose={() => {}} />);
@@ -695,7 +700,7 @@ describe('issue #1368 independent Bridge retry ownership', () => {
         return Promise.resolve(okJson({ requests: skillReads > 2 ? [SKILL_ROW] : [] }));
       }
       if (String(input).startsWith('/api/capability-requests')) return Promise.resolve(capabilityJson([]));
-      return Promise.resolve(okJson([]));
+      return Promise.resolve(emptyTransport(input));
     }));
     render(<><BridgePanel open={false} onClose={() => {}} /><ApprovalsCenterPanel /></>);
     await tick(0);

@@ -33,6 +33,7 @@ fault, which is what makes it safe to file without a Captain round-trip.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -41,6 +42,10 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Literal
+
+from probos.fault_issue_filings import (
+    ISSUE_FILING_SCHEMA, FaultIssueFilings, fault_transaction,
+)
 
 if TYPE_CHECKING:
     from probos.fault_detection import (
@@ -583,6 +588,8 @@ class FaultReportStore:
             self._connection_factory = default_factory
         self._emit_event = emit_event
         self._db: Any = None
+        self._persistence_lock = asyncio.Lock()
+        self.issue_filings: FaultIssueFilings = FaultIssueFilings(self._persistence_lock)
         # Signature -> report. The cache is authoritative for reads so a fault
         # filed mid-turn is visible to the next one without a round trip.
         self._cache: dict[str, FaultReport] = {}
@@ -613,15 +620,19 @@ class FaultReportStore:
         coalescing -- the reason this store exists -- would break while looking
         healthy.
         """
+        self.issue_filings.bind(None)
         if not self.db_path:
             return
         self._db = await self._connection_factory.connect(self.db_path)
         try:
-            await self._db.executescript(_SCHEMA)
-            await self._db.commit()
-            await self._migrate_observed_as_column()
-            await self._load_cache()
-        except Exception:
+            async with self._persistence_lock:
+                await self._db.executescript(_SCHEMA + ISSUE_FILING_SCHEMA)
+                await self._db.commit()
+                await self._migrate_observed_as_column()
+                await self._load_cache()
+                self.issue_filings.bind(self._db)
+        except (Exception, asyncio.CancelledError):
+            self.issue_filings.bind(None)
             logger.error(
                 "AD-1279: opening the fault report store at %s failed after "
                 "connecting; closing the connection and re-raising, because a "
@@ -671,11 +682,13 @@ class FaultReportStore:
         )
 
     async def stop(self) -> None:
-        if self._db is not None:
-            try:
-                await self._db.close()
-            finally:
-                self._db = None
+        self.issue_filings.bind(None)
+        async with self._persistence_lock:
+            if self._db is not None:
+                try:
+                    await self._db.close()
+                finally:
+                    self._db = None
 
     async def _load_cache(self) -> None:
         if not self._db:
@@ -787,9 +800,9 @@ class FaultReportStore:
         await self._persist_new(report)
         self._emit_fault("FAULT_REPORTED", report)
         logger.warning(
-            "AD-1169: fault reported against tool %r by agent %s: %s",
-            report.tool_id, report.agent_id or "<unknown>",
-            report.error_text[:200],
+            "AD-1169: fault %s reported; diagnostic evidence stays in the "
+            "fault store for review, and reporting does not repair the fault",
+            report.id,
         )
         return report
 
@@ -852,21 +865,21 @@ class FaultReportStore:
         if not self._db:
             return
         try:
-            await self._db.execute(
-                "INSERT INTO fault_reports (id, signature, tool_id, error_text, "
-                "attempted, agent_id, thread_id, work_item_id, tool_trace_ref, "
-                "status, occurrences, first_seen_at, last_seen_at, resolved_at, "
-                "resolution, observed_as) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    report.id, report.signature, report.tool_id,
-                    report.error_text, report.attempted, report.agent_id,
-                    report.thread_id, report.work_item_id,
-                    report.tool_trace_ref, report.status, report.occurrences,
-                    report.first_seen_at, report.last_seen_at,
-                    report.resolved_at, report.resolution, report.observed_as,
-                ),
-            )
-            await self._db.commit()
+            async with fault_transaction(self._db, self._persistence_lock) as db:
+                await db.execute(
+                    "INSERT INTO fault_reports (id, signature, tool_id, error_text, "
+                    "attempted, agent_id, thread_id, work_item_id, tool_trace_ref, "
+                    "status, occurrences, first_seen_at, last_seen_at, resolved_at, "
+                    "resolution, observed_as) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        report.id, report.signature, report.tool_id,
+                        report.error_text, report.attempted, report.agent_id,
+                        report.thread_id, report.work_item_id,
+                        report.tool_trace_ref, report.status, report.occurrences,
+                        report.first_seen_at, report.last_seen_at,
+                        report.resolved_at, report.resolution, report.observed_as,
+                    ),
+                )
         except Exception:
             logger.warning(
                 "AD-1169: could not persist fault %s against %r; it is held in "
@@ -878,15 +891,15 @@ class FaultReportStore:
         if not self._db:
             return
         try:
-            await self._db.execute(
-                "UPDATE fault_reports SET occurrences = ?, last_seen_at = ?, "
-                "tool_trace_ref = ?, observed_as = ? WHERE id = ?",
-                (
-                    report.occurrences, report.last_seen_at,
-                    report.tool_trace_ref, report.observed_as, report.id,
-                ),
-            )
-            await self._db.commit()
+            async with fault_transaction(self._db, self._persistence_lock) as db:
+                await db.execute(
+                    "UPDATE fault_reports SET occurrences = ?, last_seen_at = ?, "
+                    "tool_trace_ref = ?, observed_as = ? WHERE id = ?",
+                    (
+                        report.occurrences, report.last_seen_at,
+                        report.tool_trace_ref, report.observed_as, report.id,
+                    ),
+                )
         except Exception:
             logger.warning(
                 "AD-1169: could not persist occurrence %d of fault %s",
@@ -913,12 +926,12 @@ class FaultReportStore:
                 self._fault_observer.forget(report.signature)
             if self._db:
                 try:
-                    await self._db.execute(
-                        "UPDATE fault_reports SET status = ?, resolution = ?, "
-                        "resolved_at = ? WHERE id = ?",
-                        (report.status, report.resolution, report.resolved_at, report.id),
-                    )
-                    await self._db.commit()
+                    async with fault_transaction(self._db, self._persistence_lock) as db:
+                        await db.execute(
+                            "UPDATE fault_reports SET status = ?, resolution = ?, "
+                            "resolved_at = ? WHERE id = ?",
+                            (report.status, report.resolution, report.resolved_at, report.id),
+                        )
                 except Exception:
                     logger.warning(
                         "AD-1169: could not persist resolution of fault %s",

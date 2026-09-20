@@ -192,7 +192,7 @@ EXPECTED_BOUND_COUNTS: dict[str, int] = {
     "GapPipelineExtensionsConfig": 0,
     "GroundingConfig": 0,
     "OSActivityConfig": 2,
-    "RepairConfig": 1,
+    "RepairConfig": 2,  # AD-1206 R2 adds the signed64 ceiling to the existing lower bound.
     "ScopedCognitionConfig": 0,
     "TemporalConfig": 0,
     "WorkspaceOntologyConfig": 0,
@@ -298,7 +298,8 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
     'OSActivityConfig': {'enabled': False, 'poll_interval_seconds': 5},
     'RepairConfig': {   'enabled': False,
                         'targets': ['architect'],
-                        'propose_after_occurrences': 2},
+                        'propose_after_occurrences': 2,
+                        'github_repository': ''},  # AD-1206 post-extraction contract addition.
     'ScopedCognitionConfig': {'enabled': True},
     'TemporalConfig': {   'enabled': True,
                           'include_birth_time': True,
@@ -629,7 +630,8 @@ def test_every_declared_bound_is_still_enforced(name: str) -> None:
 def test_the_bound_table_is_exhaustive_and_not_all_zero() -> None:
     """Premise on both halves: exhaustive, and not trivially satisfiable."""
     assert set(EXPECTED_BOUND_COUNTS) == set(MOVED_MODELS)
-    assert sum(EXPECTED_BOUND_COUNTS.values()) == 59
+    # AD-1206 R2: the old 59 excluded RepairConfig's now-required signed64 ceiling.
+    assert sum(EXPECTED_BOUND_COUNTS.values()) == 60
     assert sorted(n for n, c in EXPECTED_BOUND_COUNTS.items() if c) == [
         "AgenticDispatchConfig",
         "AgenticToolsConfig",

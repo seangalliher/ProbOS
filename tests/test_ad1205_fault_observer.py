@@ -321,9 +321,11 @@ async def test_restart_discards_subthreshold_candidates_not_durable_reports(tmp_
     try:
         assert len(reopened.list_open()) == 1
         with sqlite3.connect(path) as connection:
-            assert connection.execute(
+            # AD-1206 adds filing metadata, not durable candidate observations.
+            assert set(connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall() == [("fault_reports",)]
+            ).fetchall()) == {("fault_reports",), ("fault_issue_filings",)}
+            assert connection.execute("SELECT COUNT(*) FROM fault_issue_filings").fetchone() == (0,)
             assert len(connection.execute("PRAGMA table_info(fault_reports)").fetchall()) == 16
     finally:
         await reopened.stop()

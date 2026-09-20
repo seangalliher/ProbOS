@@ -15,7 +15,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from probos.api_models import CapabilityRequestDecideRequest
-from probos.capability_request import FULFILMENT_KINDS, CapabilityRequest
+from probos.capability_request import (
+    FULFILMENT_KINDS, REPAIR_TOOL_ID, CapabilityRequest, can_fulfil_request, repair_action,
+)
 
 # AD-1211: the rung fulfillers, shared with the file-time fast path so there is
 # one description of how each kind is fulfilled. ``capability_triage`` imports
@@ -59,7 +61,7 @@ def _serialize(
     }
     if include_retry:
         result["can_retry_fulfilment"] = (
-            req.status == "approved" and req.kind in FULFILMENT_KINDS
+            req.status == "approved" and can_fulfil_request(req)
         )
     return result
 
@@ -129,6 +131,18 @@ async def decide_capability_request(
     if existing is None:
         raise HTTPException(status_code=404, detail="capability request not found")
 
+    if repair_action(existing) is not None:
+        async with store.repair_decision_lock:
+            return await _decide_request(request_id, req, runtime, store)
+    return await _decide_request(request_id, req, runtime, store)
+
+
+async def _decide_request(
+    request_id: str, req: CapabilityRequestDecideRequest, runtime: Any, store: Any,
+) -> dict[str, Any]:
+    existing = await store.get(request_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="capability request not found")
     standing: dict[str, Any] | None = None
     if existing.status == "pending":
         decided = await store.decide(
@@ -202,7 +216,9 @@ async def decide_capability_request(
 #               then mark fulfilled.
 #   build    -> run the self-mod pipeline, then mark fulfilled if it produced
 #               an active agent.
-#   action   -> DELIBERATELY ABSENT. An approved action is authorised by a
+#   action   -> Ordinary actions are DELIBERATELY ABSENT. The validated
+#               repair/dispatch subtype is handled before this map (AD-1206).
+#               An ordinary approved action is authorised by a
 #               standing grant for NEXT time; the parked action is not replayed
 #               from here. The recorded browser session is almost certainly
 #               reaped by the time a human answers, and re-running an agentic
@@ -310,6 +326,18 @@ async def _maybe_fulfil_on_approval(
     by ``CapabilityGapDriver._cancel`` off the DECIDED event that ``decide()``
     already emitted, so a denied request leaves nothing stranded.
     """
+    if repair_action(decided) is not None:
+        consumer = getattr(runtime, "repair_issue_fulfiller", None)
+        if consumer is None:
+            logger.warning(
+                "AD-1206: repair issue consumer is unavailable; approval stays "
+                "outstanding and no external filing is attempted"
+            )
+            return False
+        if not approve:
+            await consumer.decline(decided.id)
+            return False
+        return await consumer.fulfil(decided.id) is not None
     if not approve:
         return False
     fulfiller = _APPROVAL_FULFILLERS.get(decided.kind)
@@ -401,6 +429,13 @@ async def _maybe_issue_standing_rule(
     from a REST handler would put an unbudgeted LLM run behind a button.
     """
     if not req.grant_standing:
+        return None
+    if isinstance(decided.payload, dict) and decided.payload.get("tool_id") == REPAIR_TOOL_ID:
+        logger.info(
+            "AD-1206: repair request %s cannot grant standing authority; "
+            "only the recorded Captain decision authorizes this issue filing",
+            decided.id[:12],
+        )
         return None
     if decided.kind not in _STANDING_RULE_KINDS:
         logger.info(

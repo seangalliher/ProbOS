@@ -1,0 +1,159 @@
+{
+  "pending": {
+    "view": "actionable",
+    "requests": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "agent_id": "agent",
+        "kind": "action",
+        "target": "repair.dispatch @ browser",
+        "rationale": "The browser tool has failed the same way 2 times. Approving files a GitHub issue with a repair brief. It does not run a repair or close the fault. Legacy configured labels (not executors): architect",
+        "work_item_id": null,
+        "status": "pending",
+        "created_at": 1000.0,
+        "decided_at": null,
+        "decided_by": "",
+        "decision_reason": "",
+        "payload": {
+          "tool_id": "repair",
+          "action": "dispatch",
+          "params": {
+            "fault_id": "000000000001",
+            "signature": "5a4badf0bbb32ed17d8ac19d8d63145d60fabcd4105d846fdd8c3affdc705f8f",
+            "targets": "architect",
+            "brief": "# Repair brief: browser\n\n## What is wrong\n\nThe browser tool returned the same error on more than one occasion:\n\n```\nunknown action: key_type\n```\n\n## What was being attempted\n\nEnter a value\n\n## Done means\n\n- The browser tool no longer returns: \"unknown action: key_type\"\n- The original failing operation succeeds when retried.\n- A regression test fails against the current code and passes after the fix.\n- Verify compliance with the Engineering Principles in `.github/copilot-instructions.md`.\n\n## Provenance\n\n- Fault report: `000000000001`\n- Error signature: `5a4badf0bbb32ed1`\n- Reported by: `agent`"
+          },
+          "scope_key": "browser",
+          "session_id": null,
+          "thread_id": "thread"
+        },
+        "can_retry_fulfilment": false
+      }
+    ]
+  },
+  "approved": {
+    "request": {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "agent_id": "agent",
+      "kind": "action",
+      "target": "repair.dispatch @ browser",
+      "rationale": "The browser tool has failed the same way 2 times. Approving files a GitHub issue with a repair brief. It does not run a repair or close the fault. Legacy configured labels (not executors): architect",
+      "work_item_id": null,
+      "status": "approved",
+      "created_at": 1000.0,
+      "decided_at": 2000.0,
+      "decided_by": "captain",
+      "decision_reason": "",
+      "payload": {
+        "tool_id": "repair",
+        "action": "dispatch",
+        "params": {
+          "fault_id": "000000000001",
+          "signature": "5a4badf0bbb32ed17d8ac19d8d63145d60fabcd4105d846fdd8c3affdc705f8f",
+          "targets": "architect",
+          "brief": "# Repair brief: browser\n\n## What is wrong\n\nThe browser tool returned the same error on more than one occasion:\n\n```\nunknown action: key_type\n```\n\n## What was being attempted\n\nEnter a value\n\n## Done means\n\n- The browser tool no longer returns: \"unknown action: key_type\"\n- The original failing operation succeeds when retried.\n- A regression test fails against the current code and passes after the fix.\n- Verify compliance with the Engineering Principles in `.github/copilot-instructions.md`.\n\n## Provenance\n\n- Fault report: `000000000001`\n- Error signature: `5a4badf0bbb32ed1`\n- Reported by: `agent`"
+        },
+        "scope_key": "browser",
+        "session_id": null,
+        "thread_id": "thread"
+      },
+      "can_retry_fulfilment": true
+    },
+    "standing_rule": null,
+    "fulfilled": false
+  },
+  "fulfilled": {
+    "request": {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "agent_id": "agent",
+      "kind": "action",
+      "target": "repair.dispatch @ browser",
+      "rationale": "The browser tool has failed the same way 2 times. Approving files a GitHub issue with a repair brief. It does not run a repair or close the fault. Legacy configured labels (not executors): architect",
+      "work_item_id": null,
+      "status": "fulfilled",
+      "created_at": 1000.0,
+      "decided_at": 2000.0,
+      "decided_by": "captain",
+      "decision_reason": "",
+      "payload": {
+        "tool_id": "repair",
+        "action": "dispatch",
+        "params": {
+          "fault_id": "000000000001",
+          "signature": "5a4badf0bbb32ed17d8ac19d8d63145d60fabcd4105d846fdd8c3affdc705f8f",
+          "targets": "architect",
+          "brief": "# Repair brief: browser\n\n## What is wrong\n\nThe browser tool returned the same error on more than one occasion:\n\n```\nunknown action: key_type\n```\n\n## What was being attempted\n\nEnter a value\n\n## Done means\n\n- The browser tool no longer returns: \"unknown action: key_type\"\n- The original failing operation succeeds when retried.\n- A regression test fails against the current code and passes after the fix.\n- Verify compliance with the Engineering Principles in `.github/copilot-instructions.md`.\n\n## Provenance\n\n- Fault report: `000000000001`\n- Error signature: `5a4badf0bbb32ed1`\n- Reported by: `agent`"
+        },
+        "scope_key": "browser",
+        "session_id": null,
+        "thread_id": "thread"
+      },
+      "can_retry_fulfilment": false
+    },
+    "standing_rule": null,
+    "fulfilled": true
+  },
+  "empty": {
+    "view": "actionable",
+    "requests": []
+  },
+  "ordinary_pending": {
+    "view": "actionable",
+    "requests": [
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "agent_id": "agent",
+        "kind": "action",
+        "target": "browser.click @ browser",
+        "rationale": "",
+        "work_item_id": null,
+        "status": "pending",
+        "created_at": 2000.0,
+        "decided_at": null,
+        "decided_by": "",
+        "decision_reason": "",
+        "payload": {
+          "tool_id": "browser",
+          "action": "click",
+          "params": {
+            "fault_id": "a123456789ab",
+            "signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "scope_key": "browser",
+          "session_id": null,
+          "thread_id": "thread"
+        },
+        "can_retry_fulfilment": false
+      }
+    ]
+  },
+  "ordinary_approved": {
+    "request": {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "agent_id": "agent",
+      "kind": "action",
+      "target": "browser.click @ browser",
+      "rationale": "",
+      "work_item_id": null,
+      "status": "approved",
+      "created_at": 2000.0,
+      "decided_at": 2000.0,
+      "decided_by": "captain",
+      "decision_reason": "",
+      "payload": {
+        "tool_id": "browser",
+        "action": "click",
+        "params": {
+          "fault_id": "a123456789ab",
+          "signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "scope_key": "browser",
+        "session_id": null,
+        "thread_id": "thread"
+      },
+      "can_retry_fulfilment": false
+    },
+    "standing_rule": null,
+    "fulfilled": false
+  }
+}

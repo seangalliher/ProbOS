@@ -2977,27 +2977,36 @@ def _wire_capability_gap_driver(*, runtime: Any, config: "SystemConfig") -> bool
 
 
 def _wire_repair_dispatcher(*, runtime: Any, config: "SystemConfig") -> bool:
-    """AD-1172: let a reported fault reach a repair harness the Captain picks.
+    """Wire proposals and their inline issue consumer; no new worker or lifecycle."""
+    import httpx
 
-    ArchitectAgent and BuilderAgent have always been reachable only by the
-    Captain typing ``/design`` — no system signal could summon them. This is the
-    path from a fault (AD-1169) to a decision about repairing it.
-
-    The dispatcher only ever PROPOSES. It builds a harness-neutral brief and
-    files one approval; the Captain approves the dispatch and chooses the
-    target. Nothing is spent and nothing is written without that, which is why
-    it is safe to wire unconditionally — with ``repair.enabled`` false (the
-    default) the listener returns on its first branch.
-
-    The dispatcher is retained on the runtime because listener removal is
-    identity-based: dropping the reference would strand the subscription.
-    """
     from probos.cognitive.repair_dispatch import wire_repair_dispatcher
+    from probos.cognitive.repair_issue import GitHubIssueClient, RepairIssueFulfiller
+    from probos.fault_issue_filings import valid_occurrence_count
 
+    repair_config = getattr(config, "repair", None)
+    if repair_config is None or getattr(runtime, "fault_report_store", None) is None:
+        return False
+    minimum_occurrences = getattr(repair_config, "propose_after_occurrences", None)
+    if not valid_occurrence_count(minimum_occurrences):
+        raise ValueError("invalid_minimum_occurrences")
     dispatcher = wire_repair_dispatcher(runtime, config)
     if dispatcher is None:
         return False
     runtime.repair_dispatcher = dispatcher  # public attr; holds the listener
+    requests = getattr(runtime, "capability_request_store", None)
+    if requests is not None:
+        runtime.repair_issue_fulfiller = RepairIssueFulfiller(
+            requests=requests, filings=runtime.fault_report_store.issue_filings,
+            client=GitHubIssueClient(
+                credential_store=getattr(runtime, "credential_store", None),
+                attachment_store=getattr(runtime, "attachment_store", None),
+                http_client_factory=lambda: httpx.AsyncClient(timeout=20.0, follow_redirects=False),
+            ),
+            repository=config.repair.github_repository, enabled=config.repair.enabled,
+            minimum_occurrences=minimum_occurrences,
+            notify=runtime.notify,
+        )
     logger.info(
         "AD-1172: repair dispatcher wired (enabled=%s, targets=%s)",
         getattr(getattr(config, "repair", None), "enabled", False),
@@ -5073,10 +5082,10 @@ async def finalize_startup(
             if _wire_capability_gap_driver(runtime=runtime, config=config):
                 logger.info("AD-855: CapabilityGapDriver wired during finalization")
 
-            # AD-1172: repair dispatcher -- a reported fault (AD-1169) becomes a
-            # harness-neutral brief and ONE approval asking the Captain whether
-            # to dispatch it and to which harness. Proposes only; spends nothing
-            # and writes nothing without that approval. Tier-2 log-and-degrade.
+            # AD-1172 / AD-1206: a reported fault becomes a brief and ONE approval
+            # to file a GitHub issue. The inline consumer requires durable Captain
+            # authority and qualifying persisted evidence before external creation.
+            # Filing never runs a repair or changes the fault's lifecycle.
             if _wire_repair_dispatcher(runtime=runtime, config=config):
                 logger.info("AD-1172: repair dispatcher wired during finalization")
 

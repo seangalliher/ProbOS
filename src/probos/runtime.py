@@ -169,6 +169,7 @@ if TYPE_CHECKING:
     from probos.cognitive.feedback import FeedbackEngine
     from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
     from probos.cognitive.journal import CognitiveJournal
+    from probos.cognitive.repair_issue import RepairIssueFulfiller
     from probos.cognitive.self_mod import SelfModificationPipeline
     from probos.cognitive.strategy_advisor import StrategyAdvisor
     from probos.conn import ConnManager
@@ -448,6 +449,7 @@ class ProbOSRuntime:
     clearance_grant_store: ClearanceGrantStore | None
     clinical_notes_store: ClinicalNotesStore | None
     capability_request_store: CapabilityRequestStore | None
+    repair_issue_fulfiller: RepairIssueFulfiller | None
     skill_request_store: SkillRequestStore | None
     tool_registry: ToolRegistry | None
     dream_scheduler: DreamScheduler | None
@@ -1004,6 +1006,7 @@ class ProbOSRuntime:
 
         # --- Capability Requests (AD-853) ---
         self.capability_request_store: CapabilityRequestStore | None = None
+        self.repair_issue_fulfiller: RepairIssueFulfiller | None = None
 
         # --- Skill Requests (AD-906) ---
         self.skill_request_store: SkillRequestStore | None = None
