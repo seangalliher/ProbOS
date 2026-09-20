@@ -6591,6 +6591,9 @@ async def test_final_publication_child_barrier_is_atomic_with_parent_done(
         persisted = await _commit_test_verification(work, children[0])
         expected_children = (_work_item_semantic_snapshot(persisted),)
         connection_factory.connection.arm()
+        # The old lifetime count also included startup's schema-migration BEGIN.
+        # Measure publication alone, which must still use exactly one BEGIN.
+        begin_immediate_before = connection_factory.connection.begin_immediate_count
         publication = asyncio.create_task(service.publish_verified_result(
             parent.id,
             expected_revision=verifying.revision,
@@ -6619,7 +6622,9 @@ async def test_final_publication_child_barrier_is_atomic_with_parent_done(
 
         assert published.state == "done"
         assert changed_child is not None and changed_child.priority == 5
-        assert connection_factory.connection.begin_immediate_count == 1
+        assert (
+            connection_factory.connection.begin_immediate_count - begin_immediate_before
+        ) == 1
     finally:
         await work.stop()
 
