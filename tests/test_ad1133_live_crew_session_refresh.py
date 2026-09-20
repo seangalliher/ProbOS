@@ -438,6 +438,90 @@ async def _wait_until(predicate: Callable[[], bool]) -> None:
     raise AssertionError("condition did not become true")
 
 
+@pytest.mark.parametrize("event_type", [
+    EventType.AGENTIC_TOOL_CALL_STARTED, EventType.AGENTIC_TOOL_CALL_COMPLETED,
+    "agentic_tool_call_started", "agentic_tool_call_completed",
+])
+@pytest.mark.parametrize("final_envelope", [False, True])
+async def test_correlated_tool_finalization_drop_requests_existing_empty_resync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    event_type: str | EventType, final_envelope: bool,
+) -> None:
+    import probos.ws_event_stream as wire
+
+    original = wire._finalize_frame
+
+    def finalize(**kwargs: Any) -> Any:
+        if final_envelope and kwargs["event_type"] in {
+            "agentic_tool_call_started", "agentic_tool_call_completed",
+        }:
+            raise WireValueError("test_final_envelope")
+        return original(**kwargs)
+
+    monkeypatch.setattr(wire, "_finalize_frame", finalize)
+    runtime = _Runtime(tmp_path)
+    hub = WSEventStreamHub(runtime)
+    await hub.start()
+    runtime.add_event_listener(hub.ingress)
+    socket = _FakeWebSocket()
+    connection = asyncio.create_task(hub.serve(socket))
+    try:
+        await _wait_until(lambda: len(socket.sent) == 1)
+        runtime.emit(event_type, {
+            "run_id": "a" * 32, "thread_id": "thread", "agent_id": "agent",
+            "tool_id": "read_file", "tool_call_id": "call", "iteration": 1,
+            "tool_call_index": 0, "invalid": None if final_envelope else object(),
+        })
+        await _wait_until(lambda: len(socket.sent) == 2)
+        marker = json.loads(socket.sent[1])
+        assert marker["type"] == "resync_required" and marker["data"] == {}
+        assert marker["stream"] == {"generation": hub.generation, "sequence": 1}
+        runtime.emit("system_mode", {"mode": "active"})
+        await _wait_until(lambda: len(socket.sent) == 3)
+        assert json.loads(socket.sent[2])["stream"]["sequence"] == 2
+    finally:
+        await hub.stop()
+        await asyncio.gather(connection, return_exceptions=True)
+
+
+@pytest.mark.parametrize("variant", ["off", "unidentified", "uppercase", "hostile"])
+async def test_unidentifiable_tool_drop_does_not_add_resync(
+    tmp_path: Path, variant: str,
+) -> None:
+    class _HostileStr(str):
+        pass
+
+    runtime = _Runtime(tmp_path)
+    hub = WSEventStreamHub(runtime)
+    await hub.start()
+    runtime.add_event_listener(hub.ingress)
+    socket = _FakeWebSocket()
+    connection = asyncio.create_task(hub.serve(socket))
+    try:
+        await _wait_until(lambda: len(socket.sent) == 1)
+        data: dict[str, Any] = {
+            "agent_id": "agent", "tool_id": "read_file", "iteration": 1,
+            "invalid": object(),
+        }
+        if variant != "off":
+            data.update(run_id="a" * 32, tool_call_id="call", tool_call_index=0)
+        if variant == "unidentified":
+            data["run_id"] = None
+        event_type = (
+            "AGENTIC_TOOL_CALL_STARTED" if variant == "uppercase"
+            else _HostileStr("agentic_tool_call_started") if variant == "hostile"
+            else "agentic_tool_call_started"
+        )
+        runtime.emit(event_type, data)
+        runtime.emit("system_mode", {"mode": "active"})
+        await _wait_until(lambda: len(socket.sent) == 2)
+        assert json.loads(socket.sent[1])["type"] == "system_mode"
+        assert hub.sequence == 1
+    finally:
+        await hub.stop()
+        await asyncio.gather(connection, return_exceptions=True)
+
+
 def _session(parent_id: str, thread_id: str, *, state: str = "executing") -> CrewSessionContract:
     return CrewSessionContract.model_validate({
         "version": 1,

@@ -66,6 +66,23 @@ class WireValueError(ValueError):
     pass
 
 
+def _is_correlated_tool_event(event_type: object, data: object) -> bool:
+    if type(event_type) is EventType:
+        event_type = event_type.value
+    if type(event_type) is not str or event_type not in {
+        "agentic_tool_call_started", "agentic_tool_call_completed",
+    } or type(data) is not dict:
+        return False
+    for key in ("run_id", "tool_call_id", "agent_id", "tool_id"):
+        value = data.get(key)
+        if type(value) is not str or not value.strip() or len(value) > 128:
+            return False
+    return all(
+        type(data.get(key)) is int and data[key] >= 0
+        for key in ("iteration", "tool_call_index")
+    )
+
+
 @dataclass(slots=True)
 class _DetachBudget:
     remaining_nodes: int
@@ -252,6 +269,25 @@ class _ClientState:
     close_code: int | None = None
 
 
+def _frame_fits(client: _ClientState, frame: _QueuedFrame) -> bool:
+    return (
+        len(client.queue) < MAX_CLIENT_FRAMES
+        and client.queued_bytes + frame.size_bytes <= MAX_CLIENT_BYTES
+    )
+
+
+def _discard_pending_deltas(client: _ClientState) -> None:
+    retained = deque(frame for frame in client.queue if frame.control is not None)
+    client.queue = retained
+    client.queued_bytes = sum(frame.size_bytes for frame in retained)
+
+
+def _request_client_close(client: _ClientState, code: int) -> None:
+    if client.close_code is None:
+        client.close_code = code
+        client.wake.set()
+
+
 class WSEventStreamHub:
     """Sole ordered runtime-listener and bounded client fanout owner."""
 
@@ -341,6 +377,17 @@ class WSEventStreamHub:
                 event_name = raw_event_type
             else:
                 event_name = "invalid"
+            if _is_correlated_tool_event(
+                raw_event_type, event.get("data") if type(event) is dict else None,
+            ):
+                logger.warning(
+                    "Dropped correlated tool event type %s because bounded wire "
+                    "finalization failed; progress delivery is incomplete and "
+                    "the existing resync marker is requested",
+                    event_name,
+                )
+                self.request_resync()
+                return
             logger.warning(
                 "Dropped runtime event type %s because bounded wire "
                 "finalization failed; clients retain their prior state",
@@ -522,6 +569,15 @@ class WSEventStreamHub:
                 sequence=next_sequence,
             )
         except WireValueError:
+            if _is_correlated_tool_event(event_type, data):
+                logger.warning(
+                    "Dropped correlated tool event type %s because its final bounded "
+                    "envelope was invalid; progress delivery is incomplete and "
+                    "the existing resync marker is requested",
+                    event_type,
+                )
+                self.request_resync()
+                return
             logger.warning(
                 "Dropped runtime event type %s because its final bounded "
                 "envelope was invalid; clients retain their prior state",
@@ -548,60 +604,41 @@ class WSEventStreamHub:
             marker = self._resync_frame(sequence=next_sequence)
         except WireValueError:
             for client in tuple(self._clients.values()):
-                self._request_client_close(client, 1013)
+                _request_client_close(client, 1013)
             return
         self._sequence = next_sequence
         for client in tuple(self._clients.values()):
             if client.resync_pending:
                 continue
-            self._discard_pending_deltas(client)
-            if not self._frame_fits(client, marker):
-                self._request_client_close(client, 1013)
+            _discard_pending_deltas(client)
+            if not _frame_fits(client, marker):
+                _request_client_close(client, 1013)
                 continue
             client.queue.append(marker)
             client.queued_bytes += marker.size_bytes
             client.resync_pending = True
             client.wake.set()
 
-    @staticmethod
-    def _frame_fits(client: _ClientState, frame: _QueuedFrame) -> bool:
-        return (
-            len(client.queue) < MAX_CLIENT_FRAMES
-            and client.queued_bytes + frame.size_bytes <= MAX_CLIENT_BYTES
-        )
-
-    @staticmethod
-    def _discard_pending_deltas(client: _ClientState) -> None:
-        retained = deque(frame for frame in client.queue if frame.control is not None)
-        client.queue = retained
-        client.queued_bytes = sum(frame.size_bytes for frame in retained)
-
     def _enqueue_delta(self, client: _ClientState, frame: _QueuedFrame) -> None:
         if client.close_code is not None:
             return
-        if self._frame_fits(client, frame):
+        if _frame_fits(client, frame):
             client.queue.append(frame)
             client.queued_bytes += frame.size_bytes
             client.wake.set()
             return
         if client.resync_pending:
-            self._request_client_close(client, 1013)
+            _request_client_close(client, 1013)
             return
-        self._discard_pending_deltas(client)
+        _discard_pending_deltas(client)
         marker = self._resync_frame()
-        if not self._frame_fits(client, marker):
-            self._request_client_close(client, 1013)
+        if not _frame_fits(client, marker):
+            _request_client_close(client, 1013)
             return
         client.queue.append(marker)
         client.queued_bytes += marker.size_bytes
         client.resync_pending = True
         client.wake.set()
-
-    @staticmethod
-    def _request_client_close(client: _ClientState, code: int) -> None:
-        if client.close_code is None:
-            client.close_code = code
-            client.wake.set()
 
     async def serve(self, websocket: WebSocket) -> None:
         if not self._admission_open or len(self._clients) >= MAX_CLIENTS:
@@ -646,7 +683,7 @@ class WSEventStreamHub:
         try:
             await websocket.accept()
             if not self._admission_open:
-                self._request_client_close(client, 1001)
+                _request_client_close(client, 1001)
             client.sender_task = asyncio.create_task(
                 self._send_client(key, client),
                 name=f"ws-event-sender:{key}",
@@ -660,7 +697,7 @@ class WSEventStreamHub:
                 except asyncio.TimeoutError:
                     if not client.queue:
                         ping = _finalize_ping()
-                        if self._frame_fits(client, ping):
+                        if _frame_fits(client, ping):
                             client.queue.append(ping)
                             client.queued_bytes += ping.size_bytes
                             client.wake.set()
@@ -688,7 +725,7 @@ class WSEventStreamHub:
                             timeout=SEND_TIMEOUT_SECONDS,
                         )
                     except Exception:
-                        self._request_client_close(client, 1013)
+                        _request_client_close(client, 1013)
                         break
                     if frame.control == "resync_required":
                         client.resync_pending = False

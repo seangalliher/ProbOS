@@ -2,6 +2,10 @@
 
 import { create } from 'zustand';
 import { soundEngine } from '../audio/soundEngine';
+import {
+  initialToolProgress, isToolProgressType, parseToolProgress, reduceToolProgress,
+} from './liveToolProgress';
+import type { ToolProgressState } from './liveToolProgress';
 import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
   BuildProposal, BuildFailureReport, ArchitectProposalView, BuildQueueItem, MissionControlTask,
@@ -539,6 +543,7 @@ export interface HXIState {
   roomSummariesByThread: ReadonlyMap<string, RoomSummary>;
   liveGeneration: string | null;
   liveSequence: number;
+  toolProgress: ToolProgressState;
   liveRepairEpoch: number;
   liveThreadRefresh: LiveThreadRefreshCommand | null;
   liveArtifactRefresh: LiveArtifactRefreshCommand | null;
@@ -1410,6 +1415,7 @@ function parseLiveFrame(event: WSEvent): ParsedLiveFrame | null {
     raw.type === 'crew_session_projection'
     && parseCrewSessionProjection(raw.data) === null
   ) return null;
+  if (parseToolProgress(raw.type, raw.data) === 'malformed') return null;
   return {
     type: raw.type,
     data: raw.data,
@@ -1650,6 +1656,7 @@ export const useStore = create<HXIState>((set, get) => ({
   roomSummariesByThread: new Map(),
   liveGeneration: null,
   liveSequence: 0,
+  toolProgress: initialToolProgress(),
   liveRepairEpoch: 0,
   liveThreadRefresh: null,
   liveArtifactRefresh: null,
@@ -1834,6 +1841,7 @@ export const useStore = create<HXIState>((set, get) => ({
       set(state => ({ connected: v, gameConnectionGeneration: state.gameConnectionGeneration + 1,
         gameRequestGeneration: state.gameRequestGeneration + 1,
         gameHydrationGeneration: state.gameHydrationGeneration + 1,
+        ...(!v ? { toolProgress: reduceToolProgress(state.toolProgress, { kind: 'loss' }) } : {}),
         gamePending: null, gameChallengeAgentId: null, gameSyncing: v }));
     }
   },
@@ -3044,7 +3052,14 @@ export const useStore = create<HXIState>((set, get) => ({
       const unparsedType = isLiveRecord(event) && typeof event.type === 'string'
         ? event.type.slice(0, 128)
         : '<unparsed>';
-      get().recordLiveDrop('frame_shape', unparsedType, liveFrameThreadId(event));
+      const toolFrame = isToolProgressType(unparsedType);
+      get().recordLiveDrop(
+        'frame_shape', unparsedType, liveFrameThreadId(event),
+        toolFrame ? 'tool_progress_shape' : null,
+      );
+      if (toolFrame) {
+        set(s => ({ toolProgress: reduceToolProgress(s.toolProgress, { kind: 'loss', malformed: true }) }));
+      }
       return;
     }
     const { type, data, generation, sequence } = frame;
@@ -3053,6 +3068,7 @@ export const useStore = create<HXIState>((set, get) => ({
       set({
         liveGeneration: generation,
         liveSequence: sequence,
+        toolProgress: reduceToolProgress(authority.toolProgress, { kind: 'snapshot', generation }),
         liveRepairEpoch: authority.liveRepairEpoch + 1,
         liveThreadRefresh: null,
         liveArtifactRefresh: null,
@@ -3070,6 +3086,7 @@ export const useStore = create<HXIState>((set, get) => ({
         set({
           liveSequence: Math.max(authority.liveSequence, sequence),
           liveRepairEpoch: authority.liveRepairEpoch + 1,
+          toolProgress: reduceToolProgress(authority.toolProgress, { kind: 'loss' }),
         });
         void get().refreshActiveGame();
         return;
@@ -3083,9 +3100,22 @@ export const useStore = create<HXIState>((set, get) => ({
         ...(['capability_request_filed', 'capability_request_decided', 'capability_request_fulfilled'].includes(type)
           ? { capabilityApprovalEpoch: authority.capabilityApprovalEpoch + 1 } : {}),
         ...(sequence > authority.liveSequence + 1
-          ? { liveRepairEpoch: authority.liveRepairEpoch + 1 }
+          ? {
+            liveRepairEpoch: authority.liveRepairEpoch + 1,
+            toolProgress: reduceToolProgress(authority.toolProgress, { kind: 'loss' }),
+          }
           : {}),
       });
+    }
+
+    const observation = parseToolProgress(type, data);
+    if (typeof observation !== 'string') {
+      const before = get().toolProgress;
+      const after = reduceToolProgress(before, { kind: 'observation', generation, observation, now: Date.now() });
+      set({ toolProgress: after });
+      if (after.malformed !== before.malformed) {
+        get().recordLiveDrop('frame_shape', type, observation.threadId, 'tool_progress_identity');
+      }
     }
 
     switch (type) {

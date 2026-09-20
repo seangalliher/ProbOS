@@ -1,5 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useStore } from '../../store/useStore';
+import { useStore, type AD791aChatThreadView } from '../../store/useStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
+import { isProgressIdentity } from '../../store/liveToolProgress';
+import { RESOURCE_TIMEOUT_MS } from '../../utils/resourceState';
+import { LiveToolProgress } from './LiveToolProgress';
 import {
   speakResponse, stripMarkdownForSpeech, flushSpeechQueue, type VoiceProfile,
 } from '../../audio/voice';
@@ -64,7 +68,7 @@ import { MeetingView } from './MeetingView';
 // AD-1058: Teams-style call control + the get-or-create-1:1-thread helper that
 // lets a call start from a fresh chat (no message first), and the shared camera.
 import { CallMenu } from './CallMenu';
-import { repairThreadMessages, setMeetingActive, getOrCreateAgentThread } from '../sidebar/threadApi';
+import { repairThreadMessages, setMeetingActive, getOrCreateAgentThread, getThread } from '../sidebar/threadApi';
 import { startCameraStream, stopCameraStream } from '../../hooks/useCameraStream';
 // AD-936: per-message avatar + timestamp row (extracted; keeps the heavy
 // bubble JSX out of this audio-dep-laden module and independently testable).
@@ -247,6 +251,41 @@ const PTT_TTS_WATCHDOG_MS = 45000;
 let _speechOwnerSeq = 0;
 
 const EMPTY_COMPOSER_ATTACHMENTS: ChatAttachment[] = [];
+
+function isProgressThread(thread: AD791aChatThreadView | null): thread is AD791aChatThreadView {
+  return thread !== null && isProgressIdentity(thread.id)
+    && Array.isArray(thread.participants) && thread.participants.length > 0
+    && thread.participants.every(isProgressIdentity);
+}
+
+function progressContextKey(agentId: string, threadId: string | undefined, roster: string): string {
+  return JSON.stringify([agentId, threadId ?? null, roster]);
+}
+
+async function requestProgressThread(
+  load: (signal: AbortSignal) => Promise<AD791aChatThreadView | null>,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<AD791aChatThreadView | null> {
+  if (signal.aborted) return null;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancel = (): void => {};
+  const interrupted = new Promise<null>(resolve => {
+    cancel = () => { controller.abort(); resolve(null); };
+    signal.addEventListener('abort', cancel, { once: true });
+    timer = setTimeout(cancel, timeoutMs);
+  });
+  try {
+    // Racing, not just aborting: a transport that ignores abort cannot delay chat.
+    return await Promise.race([load(controller.signal), interrupted]);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', cancel);
+  }
+}
 
 export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
@@ -653,6 +692,42 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
   // group opened via the override is addressed without touching threadIdByAgent.
   const liveThreadRefresh = useStore((s) => s.liveThreadRefresh);
   const liveRepairEpoch = useStore((s) => s.liveRepairEpoch);
+  const progressRoster = useStore(s => JSON.stringify(
+    activeThreadId ? s.chatThreads.get(activeThreadId)?.participants ?? null : null,
+  ));
+  const progressKey = progressContextKey(agentId, activeThreadId, progressRoster);
+  const progressOwnerRef = useRef({ key: progressKey, revision: 0 });
+  if (progressOwnerRef.current.key !== progressKey) {
+    progressOwnerRef.current = { key: progressKey, revision: progressOwnerRef.current.revision + 1 };
+  }
+  const progressSendRef = useRef<{
+    owner: typeof progressOwnerRef.current; controller: AbortController;
+  } | null>(null);
+  const [progressBinding, setProgressBinding] = useState<{
+    key: string; repairEpoch: number; participants: readonly string[];
+  } | null>(null);
+  useEffect(() => {
+    const owner = progressOwnerRef.current;
+    const controller = new AbortController();
+    if (isProgressIdentity(activeThreadId)
+      && !(progressBinding?.key === progressKey && progressBinding.repairEpoch === liveRepairEpoch)) {
+      void requestProgressThread(
+        signal => getThread(activeThreadId, signal), controller.signal, RESOURCE_TIMEOUT_MS,
+      ).then(serverThread => {
+        if (controller.signal.aborted || progressOwnerRef.current !== owner
+          || !isProgressThread(serverThread) || serverThread.id !== activeThreadId) return;
+        const currentRoster = JSON.stringify(useStore.getState().chatThreads.get(activeThreadId)?.participants ?? null);
+        if (currentRoster !== progressRoster) return;
+        setProgressBinding({
+          key: progressKey, repairEpoch: liveRepairEpoch, participants: [...serverThread.participants],
+        });
+      });
+    }
+    return () => {
+      controller.abort();
+      if (progressSendRef.current?.owner === owner) progressSendRef.current.controller.abort();
+    };
+  }, [activeThreadId, progressKey, progressRoster, liveRepairEpoch, progressBinding?.key, progressBinding?.repairEpoch]);
   const transcriptRequestRef = useRef(0);
   const transcriptInFlightRef = useRef(new Set<string>());
   const transcriptPendingRef = useRef(new Map<string, string | null>());
@@ -1478,7 +1553,16 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
   const sendText = useCallback(async (textArg: string) => {
     const requestAgentId = agentId;
     const text = textArg.trim();
-    if ((!text && pendingAttachments.length === 0) || sending) return;
+    if ((!text && pendingAttachments.length === 0) || sending || progressSendRef.current) return;
+    const destinationState = useStore.getState();
+    let requestThreadId = resolveProfileThreadId(
+      threadId, destinationState.activeProfileThreadId, destinationState.threadIdByAgent, requestAgentId,
+    );
+    const groupThreadId = requestThreadId;
+    const destinationThread = groupThreadId ? destinationState.chatThreads.get(groupThreadId) : undefined;
+    let associationOwner: typeof progressOwnerRef.current | null = null;
+    let associationKey: string | null = null;
+    let associationRevision = 0;
     setInput('');
     setSending(true);
     // AD-1062: the Captain spoke — invalidate any in-flight call-open greeting so
@@ -1523,6 +1607,34 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
     }));
     setPendingAttachments([]);
 
+    if (!requestThreadId
+      && useSettingsStore.getState().snapshot?.config?.agentic_loop?.event_correlation_enabled === true) {
+      const attempt = { owner: progressOwnerRef.current, controller: new AbortController() };
+      progressSendRef.current = attempt;
+      associationOwner = attempt.owner;
+      associationKey = attempt.owner.key;
+      associationRevision = attempt.owner.revision;
+      try {
+        const serverThread = await requestProgressThread(
+          signal => getOrCreateAgentThread(requestAgentId, signal), attempt.controller.signal, 1500,
+        );
+        if (!attempt.controller.signal.aborted && progressOwnerRef.current === attempt.owner
+          && isProgressThread(serverThread) && serverThread.participants.includes(requestAgentId)) {
+          requestThreadId = serverThread.id;
+          associationKey = progressContextKey(requestAgentId, serverThread.id, JSON.stringify(serverThread.participants));
+          associationRevision += 1;
+          setProgressBinding({
+            key: associationKey, repairEpoch: useStore.getState().liveRepairEpoch,
+            participants: [...serverThread.participants],
+          });
+          useStore.getState().setChatThread(serverThread);
+          useStore.getState().setThreadForAgent(requestAgentId, serverThread.id);
+        }
+      } finally {
+        if (progressSendRef.current === attempt) progressSendRef.current = null;
+      }
+    }
+
     // AD-917: route Captain sends to the group fan-out path once the active
     // thread has >=2 crew participants. AD-914 fan-out fires ONLY on
     // POST /api/threads/{id}/messages with role=="captain"; the 1:1
@@ -1530,16 +1642,9 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
     // AD-937: resolve via the same 3-way precedence as the reactive selector
     // so a group opened via the override routes the send to the group, not the
     // host's 1:1 (the override no longer lives in threadIdByAgent).
-    const _groupState = useStore.getState();
-    const groupThreadId = resolveProfileThreadId(
-      threadId,
-      _groupState.activeProfileThreadId,
-      _groupState.threadIdByAgent,
-      requestAgentId,
-    );
     if (groupThreadId) {
-      const _thread = useStore.getState().chatThreads.get(groupThreadId);
-      const _agents = useStore.getState().agents;
+      const _thread = destinationThread;
+      const _agents = destinationState.agents;
       const crewParticipantCount = (_thread?.participants ?? []).filter(
         (id) => id !== 'captain' && _agents.get(id)?.isCrew,
       ).length;
@@ -1742,8 +1847,8 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
     }
 
     useStore.getState().addAgentMessage(requestAgentId, 'user', displayText);
-    if (activeThreadId) {
-      useStore.getState().appendThreadMessage(activeThreadId, {
+    if (requestThreadId) {
+      useStore.getState().appendThreadMessage(requestThreadId, {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         role: 'user',
         text: displayText,
@@ -1761,13 +1866,7 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
       // unset, behavior is unchanged from AD-791a.
       // AD-937: include the group override in the precedence (prop > override
       // > per-agent 1:1) so a send while viewing a group routes correctly.
-      const _knownState = useStore.getState();
-      const knownThreadId = resolveProfileThreadId(
-        threadId,
-        _knownState.activeProfileThreadId,
-        _knownState.threadIdByAgent,
-        requestAgentId,
-      );
+      const knownThreadId = requestThreadId;
       const requestBody: Record<string, unknown> = {
         message: text || '(attachment)',
         history: fullHistory,
@@ -1787,7 +1886,10 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
       // implicit default created on first turn or the same one echoed
       // back on subsequent turns). Tolerate missing field so older
       // backends keep working.
-      if (typeof data?.thread_id === 'string' && data.thread_id.length > 0) {
+      const associationStillCurrent = associationOwner === null
+        || (progressOwnerRef.current.key === associationKey
+          && progressOwnerRef.current.revision === associationRevision);
+      if (associationStillCurrent && typeof data?.thread_id === 'string' && data.thread_id.length > 0) {
         useStore.getState().setThreadForAgent(requestAgentId, data.thread_id);
         // AD-794: when the response carries an updated thread title
         // (first-turn auto-name fired) or any other thread fields,
@@ -1831,8 +1933,8 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
       // AD-938: mirror the 1:1 reply into the thread transcript (a warm 1:1 with
       // a server thread). authorId=agentId so ChatMessageRow shows the agent's
       // avatar; the callsign falls back to hostCallsign in the row.
-      if (activeThreadId) {
-        useStore.getState().appendThreadMessage(activeThreadId, {
+      if (requestThreadId) {
+        useStore.getState().appendThreadMessage(requestThreadId, {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           role: 'agent',
           text: reply,
@@ -2196,6 +2298,11 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
       {/* AD-917: in-chat group controls (rename / participants / add). Renders
           nothing until a thread exists. Mounted above the message list. */}
       {activeThreadId && <GroupChatHeader threadId={activeThreadId} />}
+      <LiveToolProgress
+        threadId={activeThreadId ?? null}
+        participantIds={progressBinding?.key === progressKey && progressBinding.repairEpoch === liveRepairEpoch
+          ? progressBinding.participants : null}
+      />
       {notificationAnnouncement && notificationAnnouncement.threadId === activeThreadId
         && notificationAnnouncement.generation === notificationGeneration && (
         <div role="status" style={{ padding: '6px 12px', color: '#bbb', fontSize: 11, overflowWrap: 'anywhere' }}>
