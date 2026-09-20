@@ -29,11 +29,13 @@ and mutate nothing.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Protocol
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from probos.cognitive.trace_analysis import (
@@ -41,6 +43,8 @@ from probos.cognitive.trace_analysis import (
     load_trace,
     sanitise_for_transport,
 )
+from probos.cognitive.trace_evidence import build_consulted_receipt
+from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -61,6 +65,45 @@ _LIST_LIMIT_MAX = 100
 # At the full 40 per row and limit=100 a measured response reached ~5 MB, so
 # index rows carry only what a summary would render.
 _LIST_REQUESTS_MAX = 6
+
+
+class _TraceReader(Protocol):
+    async def read(self, content_hash: str) -> bytes | bytearray | str | None: ...
+
+
+class _ConsultedTraceReader:
+    """Keep the legacy loader's exception diagnostics off this safe surface."""
+
+    def __init__(self, reader: _TraceReader) -> None:
+        self._reader = reader
+
+    async def read(self, content_hash: str) -> bytes | bytearray | str | None:
+        try:
+            blob = await self._reader.read(content_hash)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "AD-1243: consulted trace storage read failed; the receipt is "
+                "unavailable and this request returns a safe unreadable response",
+            )
+            return None
+        if blob is None:
+            return None
+        try:
+            if type(blob) not in (bytes, bytearray, str):
+                raise ValueError("trace_bytes_invalid")
+            # Preserve bytes, not a parse/reserialize approximation. Checking
+            # them here prevents load_trace's legacy exc_info logging without
+            # changing that loader's behavior for the verifier or raw routes.
+            json.loads(blob.decode("utf-8") if isinstance(blob, (bytes, bytearray)) else blob)
+        except Exception:
+            logger.warning(
+                "AD-1243: stored consulted trace is unreadable; no evidence can "
+                "be projected and this request returns a safe unreadable response",
+            )
+            return None
+        return blob
 
 
 def _store(runtime: Any):
@@ -183,3 +226,76 @@ async def get_trace(ref: str, runtime: Any = Depends(get_runtime)) -> JSONRespon
         )
         payload["calls_sanitised"] = True
     return JSONResponse(content=payload)
+
+
+@router.get("/{ref}/consulted")
+async def get_consulted(
+    ref: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    runtime: Any = Depends(get_runtime),
+) -> JSONResponse:
+    """AD-1243: a bounded, redacted "what was consulted" projection.
+
+    A second, unrelated consumer of a stored trace needs to show that
+    something was consulted without ever receiving raw tool arguments,
+    outputs, or error bodies -- the ``/{ref}`` route above is explicitly a
+    verbatim echo and is not safe for that purpose. This route runs the
+    stored trace back through the AD-1242 sanitisation policy (now shared via
+    :mod:`probos.cognitive.trace_evidence`) and bounds the whole response to
+    16 KiB.
+
+    Auth is checked before any storage access -- a request that fails the
+    (default-off) crew-scope check learns nothing about whether the store is
+    configured or the ref exists. Every response, success or error, carries
+    ``Cache-Control: no-store``: this is evidence about what an agent did,
+    not something a shared cache should ever retain.
+    """
+    no_store = {"Cache-Control": "no-store"}
+    try:
+        try:
+            await require_crew_scope(request, authorization, runtime)
+        except HTTPException as exc:
+            if exc.status_code not in (401, 403):
+                raise
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": "Crew authorization required"},
+                headers=no_store,
+            )
+        try:
+            clean = _clean_ref(ref)
+        except HTTPException:
+            return JSONResponse(
+                status_code=400, content={"detail": "Invalid trace reference"},
+                headers=no_store,
+            )
+        try:
+            store = _store(runtime)
+        except HTTPException as exc:
+            if exc.status_code != 503:
+                raise
+            return JSONResponse(
+                status_code=503, content={"detail": "Attachment store not available"},
+                headers=no_store,
+            )
+        entries = await load_trace(_ConsultedTraceReader(store), clean)
+        if entries is None:
+            return JSONResponse(
+                status_code=404, content={"detail": "Trace not found or unreadable"},
+                headers=no_store,
+            )
+        payload = build_consulted_receipt(entries, clean)
+        return JSONResponse(status_code=200, content=payload, headers=no_store)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning(
+            "AD-1243: consulted-evidence projection failed for a trace ref; "
+            "returning a sanitised 500 rather than leaking exception detail",
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Could not build consulted evidence"},
+            headers=no_store,
+        )

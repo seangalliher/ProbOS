@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,30 @@ logger = logging.getLogger(__name__)
 DEFAULT_PROMOTED_REPORT_DRAIN_LIMIT = 25
 
 PROMOTED_REPORT_SOURCE_KEY = "source"
+
+
+def promoted_report_metadata(
+    work_item_id: str,
+    tool_trace_ref: str | None = None,
+) -> dict[str, str]:
+    """Build the identical metadata for a first append and durable replay."""
+    metadata = {
+        "work_item_id": work_item_id,
+        PROMOTED_REPORT_SOURCE_KEY: _promotion_source(),
+    }
+    if tool_trace_ref is None or (type(tool_trace_ref) is str and not tool_trace_ref):
+        return metadata
+    if (
+        type(tool_trace_ref) is str
+        and re.fullmatch(r"[0-9a-f]{64}", tool_trace_ref) is not None
+    ):
+        metadata["tool_trace_ref"] = tool_trace_ref
+    else:
+        logger.warning(
+            "AD-1243: report trace reference is invalid; optional consulted "
+            "evidence is omitted and the report is delivered without a receipt",
+        )
+    return metadata
 
 
 class PromotedReportDeliveryService:
@@ -85,10 +110,9 @@ class PromotedReportDeliveryService:
                     role="agent",
                     body=entry.body,
                     created_at=entry.created_at,
-                    metadata={
-                        "work_item_id": entry.work_item_id,
-                        PROMOTED_REPORT_SOURCE_KEY: _promotion_source(),
-                    },
+                    metadata=promoted_report_metadata(
+                        entry.work_item_id, getattr(entry, "tool_trace_ref", None),
+                    ),
                 )
             except asyncio.CancelledError:
                 raise

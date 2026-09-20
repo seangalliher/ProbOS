@@ -53,21 +53,20 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from probos.cognitive.crew_verdict import (
     CriterionVerdict,
     parse_verdict_criteria,
     render_critique,
 )
-from probos.cognitive.trace_analysis import quote_for_prose, summarise_trace_ref
+from probos.cognitive.trace_analysis import summarise_trace_ref
+from probos.cognitive.trace_evidence import sanitize_trace_render
 from probos.fault_detection import (
     ToolFaultAdapterKind,
     ToolFaultObservationPort,
     ToolFaultTurn,
     fault_observer_for,
 )
-from probos.security.pii_redaction import PIIRedactor
 from probos.tools.protocol import (
     ToolAccessGrant,
     ToolPermission,
@@ -1260,237 +1259,18 @@ def _session_correction_runtime(
     )
 
 
-def _trace_key_policy(name: str) -> str:
-    normalized = name.casefold().replace("_", "").replace("-", "")
-    if (
-        any(part in normalized for part in (
-            "password", "secret", "credential", "authorization",
-        ))
-        or normalized.endswith("token")
-        or normalized == "apikey"
-        or normalized in {"docid", "fileid", "itemid"}
-    ):
-        return "protected"
-    if normalized in {
-        "phone", "mobile", "telephone", "fax", "msisdn", "contactnumber",
-    }:
-        return "protected"
-    if normalized in {
-        "recordid", "timestamp", "epoch", "page", "offset", "limit", "count", "index",
-    }:
-        return "numeric"
-    return "ordinary"
-
-
-def _trace_redact_text(text: str, *, urls: bool = True) -> str:
-    for assignment in re.finditer(
-        r"[\"']?([A-Za-z_][A-Za-z0-9_.-]*)[\"']?\s*[:=]", text,
-    ):
-        if _trace_key_policy(assignment.group(1)) == "protected":
-            return "[REDACTED]"
-    text = PIIRedactor.redact_email(text)
-    text = PIIRedactor.redact_phone(text)
-    text = PIIRedactor.redact_doc_ids(text)
-    text = PIIRedactor.redact_tokens(text)
-    return PIIRedactor.redact_url(text) if urls else text
-
-
-def _trace_url_component(component: str) -> tuple[str, bool]:
-    decoded = component
-    for _pass in range(3):
-        if "%" not in decoded:
-            break
-        if re.search(r"%(?![0-9A-Fa-f]{2})", decoded):
-            return "[REDACTED]", True
-        expanded = unquote(decoded, encoding="utf-8", errors="strict")
-        if any(character in expanded for character in "/?#@\\:"):
-            return "[REDACTED]", True
-        decoded = expanded
-    if "%" in decoded or any(
-        ord(character) < 32 or ord(character) == 127 for character in decoded
-    ):
-        return "[REDACTED]", True
-    return _trace_redact_text(decoded, urls=False), (
-        _trace_key_policy(decoded) == "protected"
-    )
-
-
-def _trace_sanitize_url(value: str) -> str:
-    try:
-        if (
-            any(character.isspace() or ord(character) < 32 or ord(character) == 127
-                for character in value)
-            or "\\" in value
-            or re.search(r"%(?![0-9A-Fa-f]{2})", value)
-        ):
-            return "[REDACTED_URL]"
-        parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
-            return "[REDACTED_URL]"
-        port = parsed.port
-        authority = parsed.netloc.rsplit("@", 1)[-1]
-        if authority.endswith(":"):
-            return "[REDACTED_URL]"
-        host, _protected = _trace_url_component(parsed.hostname)
-        if ":" in parsed.hostname:
-            if not authority.startswith("[") or host != parsed.hostname:
-                return "[REDACTED_URL]"
-            host = "[" + host + "]"
-        else:
-            if any(character in parsed.hostname for character in "/?#@[]"):
-                return "[REDACTED_URL]"
-            host = quote(host, safe=".-")
-        if port is not None:
-            host += f":{port}"
-        components: list[str] = []
-        mask_next = False
-        for component in parsed.path.split("/"):
-            sanitized, protects_next = _trace_url_component(component)
-            components.append(quote("[REDACTED]" if mask_next else sanitized, safe=""))
-            mask_next = protects_next
-        return urlunsplit((parsed.scheme, host, "/".join(components), "", ""))
-    except (ValueError, UnicodeError):
-        return "[REDACTED_URL]"
-
-
-def _trace_read_name(text: str, position: int) -> tuple[str, str, int]:
-    if text[position:position + 1] == '"':
-        decoded, end = json.JSONDecoder().raw_decode(text, position)
-        return decoded, quote_for_prose(_trace_redact_text(decoded)), end
-    match = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*|<unnamed>").match(text, position)
-    if match is None:
-        raise ValueError("trace_name_unrecognized")
-    name = match.group()
-    sanitized = _trace_redact_text(name)
-    return name, name if sanitized == name else quote_for_prose(sanitized), match.end()
-
-
-def _trace_sanitize_call(text: str) -> str | None:
-    try:
-        _name, tool, position = _trace_read_name(text, 0)
-        if text[position:position + 1] != "(":
-            return None
-        position += 1
-        parts: list[str] = []
-        if re.fullmatch(
-            r"<(?:unreadable arguments|invalid arguments: [A-Za-z_][A-Za-z0-9_]*)>\)",
-            text[position:],
-        ):
-            return tool + "(" + text[position:]
-        while text[position:position + 1] != ")":
-            if len(parts) >= 7:
-                return None
-            if text[position:] == "\u2026)":
-                parts.append("\u2026")
-                position += 1
-                break
-            key, display_key, position = _trace_read_name(text, position)
-            if text[position:position + 1] != "=":
-                return None
-            position += 1
-            policy = _trace_key_policy(key)
-            if text[position:position + 1] == '"':
-                value, position = json.JSONDecoder().raw_decode(text, position)
-                if policy == "protected":
-                    sanitized = "[REDACTED]"
-                elif re.match(r"(?i)^https?:|^[A-Za-z][A-Za-z0-9+.-]*://", value):
-                    sanitized = _trace_sanitize_url(value)
-                else:
-                    sanitized = _trace_redact_text(value)
-                rendered_value = quote_for_prose(sanitized)
-            else:
-                scalar = re.compile(
-                    r"None|True|False|<[A-Za-z_][A-Za-z0-9_]*>|"
-                    r"-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|nan|-?inf"
-                ).match(text, position)
-                if scalar is None:
-                    return None
-                value = scalar.group()
-                position = scalar.end()
-                if policy == "protected":
-                    rendered_value = quote_for_prose("[REDACTED]")
-                elif value in {"None", "True", "False"} or value.startswith("<"):
-                    rendered_value = value
-                elif not math.isfinite(float(value)):
-                    rendered_value = quote_for_prose("[REDACTED]")
-                elif policy == "numeric":
-                    rendered_value = value
-                else:
-                    sanitized = _trace_redact_text(value)
-                    rendered_value = (
-                        value if sanitized == value else quote_for_prose(sanitized)
-                    )
-            parts.append(display_key + "=" + rendered_value)
-            if text[position:position + 1] == ")":
-                break
-            if text[position:position + 2] != ", ":
-                return None
-            position += 2
-        if text[position:] != ")":
-            return None
-        return tool + "(" + ", ".join(parts) + ")"
-    except (ValueError, OverflowError):
-        return None
-
-
-def _trace_sanitize_prose(text: str) -> str:
-    position = 0
-    skeleton: list[str] = []
-    sanitized: list[str] = []
-    try:
-        while position < len(text):
-            if text[position] == '"':
-                value, position = json.JSONDecoder().raw_decode(text, position)
-                skeleton.append("QUOTED")
-                sanitized.append(quote_for_prose(_trace_redact_text(value)))
-            else:
-                end = text.find('"', position)
-                end = len(text) if end == -1 else end
-                fragment = text[position:end]
-                skeleton.append(fragment)
-                sanitized.append(_trace_redact_text(fragment))
-                position = end
-    except ValueError:
-        return "[Unrecognized trace fragment] " + quote_for_prose(_trace_redact_text(text))
-    name = r"(?:[A-Za-z_][A-Za-z0-9_.-]*|QUOTED)"
-    grammar = (
-        r"No tool calls were recorded for this run\.|What it asked:|"
-        rf"The {name} tool failed the same way \d+ times: QUOTED|"
-        r"First at call \d+, again at call \d+ of \d+\.|"
-        rf"\d+ tool calls, \d+ failed, across \d+ tool\(s\): {name}(?:, {name})*\.|"
-        r"  \u2026and \d+ more\.|"
-        r"The run ended on \d+ consecutive failures, so it stopped making progress "
-        r"before it stopped\."
-    )
-    if re.fullmatch(grammar, "".join(skeleton)):
-        return "".join(sanitized)
-    return "[Unrecognized trace fragment] " + quote_for_prose(_trace_redact_text(text))
-
-
 def _trace_sanitize_render(rendered: str, payload_limit: int) -> str:
-    marker = "\n[Trace evidence truncated]"
-    fragments: list[str] = []
-    source_chars = 0
-    for line in rendered.split("\n"):
-        source_chars += len(line) + 1
-        if source_chars > 65_536:
-            fragments.append("[Unrecognized trace fragment omitted: size limit]")
-            fragments.append(marker.lstrip("\n"))
-            break
-        call = _trace_sanitize_call(line[2:]) if line.startswith("  ") else None
-        fragments.append("  " + call if call is not None else _trace_sanitize_prose(line))
-    payload = "\n".join(fragments)
-    if len(payload) <= payload_limit:
-        return payload
-    retained: list[str] = []
-    remaining = payload_limit - len(marker)
-    for fragment in fragments:
-        needed = len(fragment) + bool(retained)
-        if needed > remaining:
-            break
-        retained.append(fragment)
-        remaining -= needed
-    return "\n".join(retained) + marker
+    """AD-1242 compatibility wrapper.
+
+    AD-1243 moved the sanitisation policy to
+    :func:`probos.cognitive.trace_evidence.sanitize_trace_render` so a second
+    consumer (the ``/api/traces/{ref}/consulted`` read-only projection) could
+    share it rather than duplicate it. This wrapper is kept, at this name, so
+    :meth:`_build_trace_section` below and any test that patches
+    ``crew_verifier._trace_sanitize_render`` continue to observe the same
+    seam they did before the move.
+    """
+    return sanitize_trace_render(rendered, payload_limit)
 
 
 class SubtaskVerifier:

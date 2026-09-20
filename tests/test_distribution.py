@@ -942,3 +942,286 @@ class TestFastAPIEndpoints:
         data = resp.json()
         assert data["enriched"] == "My raw guidance text"
         assert data["status"] == "no_llm"
+
+
+# ------------------------------------------------------------------
+# AD-1243: GET /api/traces/{ref}/consulted -- bounded, redacted evidence
+# ------------------------------------------------------------------
+
+@pytest.fixture
+async def consulted_api(tmp_path):
+    """The traces router over a real ``FilesystemAttachmentStore``.
+
+    Mirrors ``notification_context_api``'s shape (``SimpleNamespace`` runtime
+    + dependency override) rather than ``app_and_runtime``'s full
+    ``ProbOSRuntime`` -- this route only reads ``attachment_store`` and
+    ``config.auth``, and a real store lets the happy-path round-trip an
+    actual persisted trace instead of a hand-built fake.
+    """
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+
+    from probos.attachments.filesystem_store import FilesystemAttachmentStore
+    from probos.routers import traces
+    from probos.routers.deps import get_runtime
+
+    store = FilesystemAttachmentStore(tmp_path / "attachments")
+    app = FastAPI()
+    app.include_router(traces.router)
+    runtime = SimpleNamespace(config=SystemConfig(), attachment_store=store)
+    app.dependency_overrides[get_runtime] = lambda: runtime
+    return app, runtime, store
+
+
+async def _persist_trace(store: Any, entries: list) -> str:
+    import hashlib
+
+    blob = json.dumps(entries).encode("utf-8")
+    trace_ref = hashlib.sha256(blob).hexdigest()
+    await store.write(trace_ref, blob, "application/json", origin="crew_trace")
+    return trace_ref
+
+
+@pytest.mark.parametrize("authorized", [False, True])
+async def test_consulted_happy_path_returns_bounded_redacted_shape(consulted_api, authorized):
+    from httpx import ASGITransport, AsyncClient
+
+    app, runtime, store = consulted_api
+    runtime.config.auth.crew_scope_token = "synthetic-consulted-auth" if authorized else ""
+    ref = await _persist_trace(store, [
+        {"name": "clone_repo", "arguments": {"repoName": "langchain-ai/langchain"}},
+        {"name": "http_fetch", "arguments": {"password": "hunter2"}},
+        "not-a-dict",
+    ])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            f"/api/traces/{ref}/consulted",
+            headers={"Authorization": "Bearer synthetic-consulted-auth"} if authorized else {},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert set(body) == {
+        "ref", "requests", "requests_total", "requests_omitted",
+        "invalid_entries", "redacted", "truncated", "notice",
+    }
+    assert body["ref"] == ref
+    assert body["invalid_entries"] == 1
+    assert body["requests_total"] == 2
+    assert body["requests_omitted"] == 0
+    assert body["truncated"] is False
+    assert body["redacted"] is True
+    assert len(body["requests"]) == 2
+    assert "langchain-ai/langchain" in body["requests"][0]
+    raw_bytes = response.content
+    assert b"hunter2" not in raw_bytes
+    assert b"REDACTED" in raw_bytes
+    # BF-775-style guarantee: no raw tool output ever appears in this route.
+    assert b'"output"' not in raw_bytes
+
+
+async def test_consulted_response_never_exceeds_16kib_on_the_wire(consulted_api):
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, store = consulted_api
+    entries = [
+        {
+            "name": "clone_repo",
+            "arguments": {f"argument_{j}": ("x" * 80) + f"-{i}-{j}" for j in range(6)},
+        }
+        for i in range(40)
+    ]
+    ref = await _persist_trace(store, entries)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/traces/{ref}/consulted")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert len(response.content) <= 16 * 1024
+    body = response.json()
+    assert body["truncated"] is True
+    assert body["requests_omitted"] > 0
+    assert body["requests_total"] == len(body["requests"]) + body["requests_omitted"]
+
+
+async def test_consulted_missing_or_unreadable_trace_is_404(consulted_api):
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, _store = consulted_api
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/traces/{'a' * 64}/consulted")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Trace not found or unreadable"}
+    assert response.headers["cache-control"] == "no-store"
+
+
+async def test_consulted_missing_store_is_503(consulted_api):
+    from httpx import ASGITransport, AsyncClient
+
+    app, runtime, _store = consulted_api
+    runtime.attachment_store = None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/traces/{'a' * 64}/consulted")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Attachment store not available"}
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("ref", ["short", "z" * 64, "g" * 12, "a" * 65])
+async def test_consulted_invalid_ref_is_400(consulted_api, ref):
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, _store = consulted_api
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/traces/{ref}/consulted")
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid trace reference"}
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("authorization", [None, "Bearer wrong", "Bearer correct"])
+async def test_consulted_auth_checked_before_storage_access(consulted_api, authorization):
+    """Auth is enforced before the ref is even looked at: a bad token with a
+    ref that does not exist still comes back 401, never 404, and every
+    branch -- success included -- carries ``Cache-Control: no-store``."""
+    from httpx import ASGITransport, AsyncClient
+
+    app, runtime, _store = consulted_api
+    runtime.config.auth.crew_scope_token = "correct"
+    headers = {} if authorization is None else {"Authorization": authorization}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/traces/{'a' * 64}/consulted", headers=headers)
+
+    assert response.status_code == (404 if authorization == "Bearer correct" else 401)
+    assert set(response.json()) == {"detail"}
+    assert response.headers["cache-control"] == "no-store"
+
+
+async def test_consulted_default_off_auth_allows_unauthenticated_success(consulted_api):
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, store = consulted_api
+    ref = await _persist_trace(store, [{"name": "recall_artifact", "arguments": {}}])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/traces/{ref}/consulted")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
+async def test_consulted_unexpected_failure_is_sanitised_500(consulted_api, monkeypatch, caplog):
+    from httpx import ASGITransport, AsyncClient
+
+    from probos.routers import traces
+
+    app, _runtime, store = consulted_api
+    ref = await _persist_trace(store, [{"name": "recall_artifact", "arguments": {}}])
+
+    def _boom(entries, ref):
+        raise RuntimeError("controlled consulted-projection failure")
+
+    monkeypatch.setattr(traces, "build_consulted_receipt", _boom)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/traces/{ref}/consulted")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Could not build consulted evidence"}
+    assert response.headers["cache-control"] == "no-store"
+    assert b"controlled consulted-projection failure" not in response.content
+    assert "controlled consulted-projection failure" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+async def test_consulted_read_failure_is_404_without_exception_text_in_logs(
+    consulted_api, monkeypatch, caplog,
+):
+    import logging
+
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, store = consulted_api
+
+    async def _fail_read(content_hash: str) -> bytes:
+        raise RuntimeError("synthetic-sensitive-read-detail")
+
+    monkeypatch.setattr(store, "read", _fail_read)
+    caplog.set_level(logging.DEBUG, logger="probos.cognitive.trace_analysis")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/traces/{'a' * 64}/consulted")
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+    assert b"synthetic-sensitive-read-detail" not in response.content
+    assert "synthetic-sensitive-read-detail" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+@pytest.mark.parametrize("blob", [b"{unreadable", b"\xffsynthetic-sensitive-read-detail", b'{"not": "a list"}'])
+async def test_consulted_unreadable_storage_is_safe_404(consulted_api, blob, caplog):
+    import hashlib
+    import logging
+
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, store = consulted_api
+    ref = hashlib.sha256(blob).hexdigest()
+    await store.write(ref, blob, "application/json", origin="crew_trace")
+    caplog.set_level(logging.DEBUG, logger="probos.cognitive.trace_analysis")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/traces/{ref}/consulted")
+    assert response.status_code == 404
+    assert response.headers["cache-control"] == "no-store"
+    assert b"synthetic-sensitive-read-detail" not in response.content
+    assert "synthetic-sensitive-read-detail" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+async def test_consulted_serialization_failure_is_safe_no_store_500(consulted_api, monkeypatch, caplog):
+    from httpx import ASGITransport, AsyncClient
+
+    from probos.routers import traces
+
+    app, _runtime, store = consulted_api
+    ref = await _persist_trace(store, [{"name": "lookup", "arguments": {}}])
+    monkeypatch.setattr(traces, "build_consulted_receipt", lambda entries, ref: {"requests": [object()]})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(f"/api/traces/{ref}/consulted")
+    assert response.status_code == 500
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"detail": "Could not build consulted evidence"}
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+async def test_consulted_cancelled_read_propagates_and_cleans_up(consulted_api, monkeypatch):
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+
+    app, _runtime, store = consulted_api
+    entered, cleaned = asyncio.Event(), asyncio.Event()
+
+    async def _blocked(content_hash: str) -> bytes:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(store, "read", _blocked)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        task = asyncio.create_task(client.get(f"/api/traces/{'a' * 64}/consulted"))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert cleaned.is_set()
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

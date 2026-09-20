@@ -1144,7 +1144,8 @@ CREATE TABLE IF NOT EXISTS promoted_report_outbox (
     created_at   REAL NOT NULL,
     delivered    INTEGER NOT NULL DEFAULT 0,
     queued_at    REAL NOT NULL,
-    delivered_at REAL
+    delivered_at REAL,
+    tool_trace_ref TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status);
@@ -1604,11 +1605,13 @@ class PromotedReportOutboxEntry:
     delivered: bool
     queued_at: float
     delivered_at: float | None
+    tool_trace_ref: str | None = None
 
 
 def _promoted_report_entry_from_row(row: Any) -> PromotedReportOutboxEntry:
     if (
-        type(row[0]) is not str
+        len(row) != 10
+        or type(row[0]) is not str
         or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(row[0]) is None
         or type(row[1]) is not str
         or _WORK_ITEM_PUBLICATION_ID_RE.fullmatch(row[1]) is None
@@ -1625,6 +1628,13 @@ def _promoted_report_entry_from_row(row: Any) -> PromotedReportOutboxEntry:
         or row[6] not in (0, 1)
         or type(row[7]) is not float
         or (row[8] is not None and type(row[8]) is not float)
+        or (
+            row[9] is not None
+            and (
+                type(row[9]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", row[9]) is None
+            )
+        )
     ):
         raise ValueError("promoted_report_outbox_corrupt")
     return PromotedReportOutboxEntry(
@@ -1637,6 +1647,7 @@ def _promoted_report_entry_from_row(row: Any) -> PromotedReportOutboxEntry:
         delivered=bool(row[6]),
         queued_at=row[7],
         delivered_at=row[8],
+        tool_trace_ref=row[9],
     )
 
 
@@ -2232,27 +2243,87 @@ class WorkItemStore(EventEmitterMixin):
 
     async def start(self) -> None:
         """Open DB, create schema, start tick loop."""
-        if self.db_path:
-            self._db = await self._connection_factory.connect(self.db_path)
-            await self._db.execute("PRAGMA foreign_keys = ON")
-            self._db.row_factory = aiosqlite.Row
-            await self._db.executescript(_SCHEMA)
-            await self._db.commit()
-
-            # AD-1176: Migrate project_id column onto pre-AD-1176 databases.
-            # A fresh DB already has it from _SCHEMA; an existing one gets it
-            # here. Both end up with project_id as the trailing column.
-            try:
-                await self._db.execute(
-                    "ALTER TABLE work_items ADD COLUMN project_id TEXT",
-                )
+        if self._running:
+            return
+        try:
+            if self.db_path:
+                self._db = await self._connection_factory.connect(self.db_path)
+                await self._db.execute("PRAGMA foreign_keys = ON")
+                self._db.row_factory = aiosqlite.Row
+                await self._db.executescript(_SCHEMA)
                 await self._db.commit()
-            except sqlite3.OperationalError:
-                pass  # Column already exists — migration idempotency
-        await self._refresh_snapshot_cache()
-        self._running = True
-        self._tick_task = asyncio.create_task(self._tick_loop())
+
+                # AD-1176: Migrate project_id column onto pre-AD-1176 databases.
+                # A fresh DB already has it from _SCHEMA; an existing one gets it
+                # here. Both end up with project_id as the trailing column.
+                try:
+                    await self._db.execute(
+                        "ALTER TABLE work_items ADD COLUMN project_id TEXT",
+                    )
+                    await self._db.commit()
+                except sqlite3.OperationalError:
+                    pass  # Column already exists — migration idempotency
+                await self._migrate_promoted_report_trace()
+            await self._refresh_snapshot_cache()
+            self._running = True
+            self._tick_task = asyncio.create_task(self._tick_loop())
+        except BaseException:
+            await self.stop()
+            raise
         logger.info("WorkItemStore started (tick=%.1fs)", self._tick_interval)
+
+    async def _migrate_promoted_report_trace(self) -> None:
+        """Append the nullable carrier without changing legacy row positions.
+
+        Rollback retains this column. Before using an older drainer, producers
+        must be quiescent and the newer drainer must resolve pending traced
+        reports: an older metadata replay can conflict after acknowledgement loss.
+        """
+        assert self._db is not None
+        async with self._work_item_row_write_lock:
+            await self._db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = await self._db.execute(
+                    "PRAGMA table_info(promoted_report_outbox)",
+                )
+                columns = await cursor.fetchall()
+                existing = next(
+                    (column for column in columns if column[1] == "tool_trace_ref"),
+                    None,
+                )
+                if existing is None:
+                    await self._db.execute(
+                        "ALTER TABLE promoted_report_outbox "
+                        "ADD COLUMN tool_trace_ref TEXT",
+                    )
+                elif (
+                    existing[0] != len(columns) - 1
+                    or existing[2].upper() != "TEXT"
+                    or existing[3] != 0
+                    or (
+                        existing[4] is not None
+                        and (
+                            type(existing[4]) is not str
+                            or existing[4].strip().upper() != "NULL"
+                        )
+                    )
+                    or existing[5] != 0
+                ):
+                    raise ValueError("promoted_report_trace_column_incompatible")
+                await self._db.commit()
+            except BaseException:
+                logger.error(
+                    "AD-1243: report trace migration failed; the schema is "
+                    "unverified so startup stops and the owned connection closes",
+                )
+                try:
+                    await self._db.execute("ROLLBACK")
+                except Exception:
+                    logger.error(
+                        "AD-1243: report trace migration rollback failed; startup "
+                        "cannot safely continue and the owned connection is closed",
+                    )
+                raise
 
     async def stop(self) -> None:
         """Stop tick loop and close DB."""
@@ -4610,6 +4681,7 @@ class WorkItemStore(EventEmitterMixin):
         agent_id: str,
         body: str,
         created_at: float,
+        tool_trace_ref: str | None = None,
     ) -> bool:
         """Record one undeliverable promoted report as durably pending.
 
@@ -4630,6 +4702,13 @@ class WorkItemStore(EventEmitterMixin):
             or type(created_at) not in {int, float}
             or not math.isfinite(float(created_at))
             or not 0.0 <= float(created_at) <= _MAX_WORK_ITEM_TIMESTAMP
+            or (
+                tool_trace_ref is not None
+                and (
+                    type(tool_trace_ref) is not str
+                    or re.fullmatch(r"[0-9a-f]{64}", tool_trace_ref) is None
+                )
+            )
         ):
             raise ValueError("promoted_report_outbox_invalid")
         if not self._db:
@@ -4638,8 +4717,8 @@ class WorkItemStore(EventEmitterMixin):
             cursor = await self._db.execute(
                 "INSERT OR IGNORE INTO promoted_report_outbox "
                 "(message_id, work_item_id, thread_id, agent_id, body, "
-                "created_at, delivered, queued_at, delivered_at) "
-                "VALUES (?,?,?,?,?,?,0,?,NULL)",
+                "created_at, delivered, queued_at, delivered_at, tool_trace_ref) "
+                "VALUES (?,?,?,?,?,?,0,?,NULL,?)",
                 (
                     message_id,
                     work_item_id,
@@ -4648,6 +4727,7 @@ class WorkItemStore(EventEmitterMixin):
                     body,
                     float(created_at),
                     time.time(),
+                    tool_trace_ref,
                 ),
             )
             await self._db.commit()
@@ -4669,7 +4749,7 @@ class WorkItemStore(EventEmitterMixin):
         async with self._work_item_row_write_lock:
             cursor = await self._db.execute(
                 "SELECT message_id, work_item_id, thread_id, agent_id, body, "
-                "created_at, delivered, queued_at, delivered_at "
+                "created_at, delivered, queued_at, delivered_at, tool_trace_ref "
                 "FROM promoted_report_outbox WHERE delivered = 0 "
                 "ORDER BY queued_at ASC, message_id ASC LIMIT ?",
                 (limit,),

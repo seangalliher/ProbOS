@@ -5,8 +5,10 @@
 // seeded with the crew roster (jsdom deletes WebSocket in setup.ts, so
 // useWebSocket MUST be mocked).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { useStore } from '../store/useStore';
+import type { Agent } from '../store/types';
 
 // Mock heavy subsystems MobileShell transitively imports.
 vi.mock('../hooks/useWebSocket', () => ({ useWebSocket: () => {} }));
@@ -26,13 +28,31 @@ vi.mock('../components/profile/ProfileChatTab', () => ({
 
 import MobileShell from '../MobileShell';
 
+function resetMobileState(): void {
+  useStore.setState({
+    agents: new Map(),
+    activeThreadId: null,
+    activeProfileAgent: null,
+    activeProfileThreadId: null,
+    threadIdByAgent: new Map(),
+    chatThreads: new Map(),
+    threadMessages: new Map(),
+    liveThreadRefresh: null,
+    liveDrops: [],
+    liveDropCount: 0,
+  });
+}
+
 beforeEach(() => {
   localStorage.clear();
-  useStore.setState({ agents: new Map() });
+  resetMobileState();
 });
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
+  resetMobileState();
+  localStorage.clear();
 });
 
 describe('AD-708b MobileShell', () => {
@@ -151,5 +171,267 @@ describe('AD-708d MobileShell swipe gestures', () => {
     fireEvent.click(screen.getByTestId('mobile-toggle-chat'));
     expect(screen.getByTestId('mobile-shell-chat')).toBeInTheDocument();
     expect(screen.queryByTestId('mobile-mesh')).not.toBeInTheDocument();
+  });
+});
+
+function yeoAgent(id = 'yeo-id'): Agent {
+  return {
+    id, callsign: 'Yeo', displayName: 'Yeo', agentType: 'yeoman', pool: 'yeoman',
+    state: 'active', confidence: 1, trust: 0.5, tier: 'domain', isCrew: true,
+    position: [0, 0, 0],
+  };
+}
+
+function seedMobileChat(threadId = 'yeo-thread', agentId = 'yeo-id'): void {
+  useStore.setState({
+    agents: new Map([[agentId, yeoAgent(agentId)]]),
+    threadIdByAgent: new Map([[agentId, threadId]]),
+  });
+}
+
+describe('AD-1243 Mobile displayed-thread ownership', () => {
+  it('registers the exact displayed thread without setting Desktop profile ownership', () => {
+    seedMobileChat();
+    render(<MobileShell />);
+
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-thread-id', 'yeo-thread');
+    expect(useStore.getState().activeThreadId).toBe('yeo-thread');
+    expect(useStore.getState().activeProfileAgent).toBeNull();
+    expect(useStore.getState().activeProfileThreadId).toBeNull();
+  });
+
+  it('registers synchronous agent and thread arrival after a cold start', () => {
+    render(<MobileShell />);
+    expect(screen.getByText(/Connecting to Yeo/i)).toBeInTheDocument();
+    expect(useStore.getState().activeThreadId).toBeNull();
+
+    act(() => {
+      seedMobileChat();
+      // The next live frame can arrive before React renders this store update.
+      expect(useStore.getState().activeThreadId).toBe('yeo-thread');
+    });
+
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-thread-id', 'yeo-thread');
+  });
+
+  it('registers a newly associated thread before the store update returns', () => {
+    useStore.setState({ agents: new Map([['yeo-id', yeoAgent()]]) });
+    render(<MobileShell />);
+    expect(useStore.getState().activeThreadId).toBeNull();
+
+    act(() => {
+      useStore.getState().setThreadForAgent('yeo-id', 'arrived-thread');
+      expect(useStore.getState().activeThreadId).toBe('arrived-thread');
+    });
+
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-thread-id', 'arrived-thread');
+  });
+
+  it('releases on mesh and claims only the current displayed thread on returning to chat', () => {
+    seedMobileChat();
+    useStore.getState().setActiveThread('older-selection');
+    render(<MobileShell />);
+    expect(useStore.getState().activeThreadId).toBe('yeo-thread');
+
+    fireEvent.click(screen.getByTestId('mobile-toggle-mesh'));
+    expect(useStore.getState().activeThreadId).toBeNull();
+    act(() => useStore.getState().setThreadForAgent('yeo-id', 'next-thread'));
+    expect(useStore.getState().activeThreadId).toBeNull();
+
+    fireEvent.click(screen.getByTestId('mobile-toggle-chat'));
+    expect(useStore.getState().activeThreadId).toBe('next-thread');
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-thread-id', 'next-thread');
+  });
+
+  it.each(['removed', 'renamed'] as const)('releases when the displayed Yeo agent is %s', (change) => {
+    seedMobileChat();
+    render(<MobileShell />);
+
+    act(() => {
+      useStore.setState({
+        agents: change === 'removed'
+          ? new Map()
+          : new Map([['yeo-id', { ...yeoAgent(), callsign: 'Other' }]]),
+      });
+      expect(useStore.getState().activeThreadId).toBeNull();
+    });
+
+    expect(screen.queryByTestId('profile-chat-stub')).not.toBeInTheDocument();
+    act(() => useStore.getState().setThreadForAgent('yeo-id', 'not-visible'));
+    expect(useStore.getState().activeThreadId).toBeNull();
+  });
+
+  it('rebinds agent switches to the new Yeo thread, never the old selection', () => {
+    seedMobileChat();
+    render(<MobileShell />);
+
+    act(() => {
+      seedMobileChat('replacement-thread', 'replacement-yeo');
+      expect(useStore.getState().activeThreadId).toBe('replacement-thread');
+    });
+
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-agent-id', 'replacement-yeo');
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-thread-id', 'replacement-thread');
+  });
+
+  it.each([undefined, ''])('releases when the resolved thread becomes %s', (thread) => {
+    seedMobileChat();
+    render(<MobileShell />);
+
+    act(() => {
+      useStore.setState({ threadIdByAgent: thread === undefined ? new Map() : new Map([['yeo-id', thread]]) });
+      expect(useStore.getState().activeThreadId).toBeNull();
+    });
+
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-thread-id', '');
+    act(() => useStore.getState().setThreadForAgent('yeo-id', 'returned-thread'));
+    expect(useStore.getState().activeThreadId).toBe('returned-thread');
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-thread-id', 'returned-thread');
+  });
+
+  it('switches displayed threads without feeding its active selection back into resolution', () => {
+    seedMobileChat();
+    render(<MobileShell />);
+
+    act(() => useStore.getState().setThreadForAgent('yeo-id', 'switched-thread'));
+
+    expect(useStore.getState().activeThreadId).toBe('switched-thread');
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-thread-id', 'switched-thread');
+  });
+
+  it('clears its still-current claim on unmount instead of restoring an older selection', () => {
+    seedMobileChat();
+    useStore.getState().setActiveThread('older-selection');
+    const mounted = render(<MobileShell />);
+    expect(useStore.getState().activeThreadId).toBe('yeo-thread');
+
+    mounted.unmount();
+
+    expect(useStore.getState().activeThreadId).toBeNull();
+  });
+
+  it('does not claim or clear a pre-existing equal selection on mesh or unmount', () => {
+    seedMobileChat();
+    useStore.getState().setActiveThread('yeo-thread');
+    const mounted = render(<MobileShell />);
+
+    fireEvent.click(screen.getByTestId('mobile-toggle-mesh'));
+    expect(useStore.getState().activeThreadId).toBe('yeo-thread');
+    fireEvent.click(screen.getByTestId('mobile-toggle-chat'));
+    mounted.unmount();
+
+    expect(useStore.getState().activeThreadId).toBe('yeo-thread');
+  });
+
+  it.each(['foreign-thread', null])('yields to a newer %s selection across unrelated updates and cleanup', (selection) => {
+    seedMobileChat();
+    const mounted = render(<MobileShell />);
+
+    act(() => useStore.getState().setActiveThread(selection));
+    act(() => {
+      useStore.getState().setThreadForAgent('unrelated-agent', 'unrelated-thread');
+      useStore.setState({ agents: new Map(useStore.getState().agents) });
+    });
+
+    expect(useStore.getState().activeThreadId).toBe(selection);
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-thread-id', 'yeo-thread');
+    mounted.unmount();
+    expect(useStore.getState().activeThreadId).toBe(selection);
+  });
+
+  it.each(['thread', 'agent'] as const)('keeps a foreign selection arriving in the same update as %s disappearance', (missing) => {
+    seedMobileChat();
+    const mounted = render(<MobileShell />);
+
+    act(() => {
+      useStore.setState({
+        activeThreadId: 'foreign-thread',
+        ...(missing === 'thread' ? { threadIdByAgent: new Map() } : { agents: new Map() }),
+      });
+      expect(useStore.getState().activeThreadId).toBe('foreign-thread');
+    });
+    mounted.unmount();
+
+    expect(useStore.getState().activeThreadId).toBe('foreign-thread');
+  });
+
+  it('does not resume a relinquished claim when a foreign selector later returns to the same ID', () => {
+    seedMobileChat();
+    const mounted = render(<MobileShell />);
+    act(() => useStore.getState().setActiveThread('foreign-thread'));
+    act(() => useStore.getState().setActiveThread('yeo-thread'));
+
+    mounted.unmount();
+
+    expect(useStore.getState().activeThreadId).toBe('yeo-thread');
+  });
+
+  it('reacquires after yielding only when a new thread binding becomes visible', () => {
+    seedMobileChat();
+    render(<MobileShell />);
+    act(() => useStore.getState().setActiveThread('foreign-thread'));
+
+    act(() => useStore.getState().setThreadForAgent('yeo-id', 'new-visible-thread'));
+
+    expect(useStore.getState().activeThreadId).toBe('new-visible-thread');
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-thread-id', 'new-visible-thread');
+  });
+
+  it('reacquires the same thread for a new visible agent binding after yielding', () => {
+    seedMobileChat();
+    render(<MobileShell />);
+    act(() => useStore.getState().setActiveThread('foreign-thread'));
+
+    act(() => seedMobileChat('yeo-thread', 'replacement-yeo'));
+
+    expect(useStore.getState().activeThreadId).toBe('yeo-thread');
+    expect(screen.getByTestId('profile-chat-stub')).toHaveAttribute('data-agent-id', 'replacement-yeo');
+  });
+
+  it('preserves a foreign selection on mesh and treats returning to chat as a new visible binding', () => {
+    seedMobileChat();
+    const mounted = render(<MobileShell />);
+    act(() => useStore.getState().setActiveThread('foreign-thread'));
+
+    fireEvent.click(screen.getByTestId('mobile-toggle-mesh'));
+    expect(useStore.getState().activeThreadId).toBe('foreign-thread');
+    fireEvent.click(screen.getByTestId('mobile-toggle-chat'));
+    expect(useStore.getState().activeThreadId).toBe('yeo-thread');
+    mounted.unmount();
+    expect(useStore.getState().activeThreadId).toBeNull();
+  });
+
+  it('owns one layout subscription per chat mount and removes it on mesh and unmount', () => {
+    const originalSubscribe = useStore.subscribe;
+    const unsubscribers: ReturnType<typeof vi.fn>[] = [];
+    const subscribe = vi.spyOn(useStore, 'subscribe').mockImplementation((listener) => {
+      const unsubscribe = vi.fn(originalSubscribe(listener));
+      unsubscribers.push(unsubscribe);
+      return unsubscribe;
+    });
+    seedMobileChat();
+    const mounted = render(<MobileShell />);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    act(() => useStore.getState().setThreadForAgent('yeo-id', 'changed-thread'));
+    expect(subscribe).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId('mobile-toggle-mesh'));
+    expect(unsubscribers[0]).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId('mobile-toggle-chat'));
+    expect(subscribe).toHaveBeenCalledTimes(2);
+    mounted.unmount();
+    expect(unsubscribers[1]).toHaveBeenCalledTimes(1);
+    act(() => useStore.getState().setThreadForAgent('yeo-id', 'after-unmount'));
+    expect(useStore.getState().activeThreadId).toBeNull();
+  });
+
+  it('registers and releases correctly through StrictMode layout cleanup', () => {
+    seedMobileChat();
+    const mounted = render(<StrictMode><MobileShell /></StrictMode>);
+    expect(useStore.getState().activeThreadId).toBe('yeo-thread');
+
+    mounted.unmount();
+
+    expect(useStore.getState().activeThreadId).toBeNull();
   });
 });

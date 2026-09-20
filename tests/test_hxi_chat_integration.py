@@ -7,6 +7,7 @@ the /api/chat endpoint with common user queries to catch regressions.
 import asyncio
 import contextlib
 import copy
+import hashlib
 import json
 import os
 import sys
@@ -34,6 +35,174 @@ _CALCULATOR_SCENARIOS = {
         ("17*23", "391"), ("17*23", "391"),
     ],
 }
+
+
+@pytest.mark.parametrize("mode", ["inline", "promoted", "outbox", "lost_ack"])
+async def test_consulted_real_turn_persists_own_ref_and_safe_http_without_body_changes(
+    tmp_path: Path, mode: str,
+) -> None:
+    from tests.fixtures.consulted_evidence_bridge import (
+        ConsultedEvidenceFixture, OUTPUT_SENTINEL, REPLY_BODY, REPOSITORY,
+        SENSITIVE_SENTINEL, fixture_origins,
+    )
+
+    origins = fixture_origins(Path(__file__).resolve().parents[1])
+    assert Path(origins["agent"]).is_relative_to(Path(origins["root"]) / "src")
+    fixture = ConsultedEvidenceFixture(tmp_path)
+    try:
+        await fixture.start()
+        snapshot = await fixture.start_turn(mode=mode)
+        if mode != "inline":
+            assert snapshot["llm_calls"] == 1 and not snapshot["released"]
+            acknowledgement = snapshot["messages"][-1]
+            assert acknowledgement["body"] == snapshot["reply"]["response"]
+            assert "tool_trace_ref" not in acknowledgement["metadata"]
+            snapshot = await fixture.release_turn(snapshot["turn"])
+        if mode in {"outbox", "lost_ack"}:
+            assert len(snapshot["pending"]) == 1
+            pending = snapshot["pending"][0]
+            assert pending["tool_trace_ref"] is not None
+            attempts = snapshot["attempts"]
+            assert len(attempts) == 3 and attempts[0] == attempts[1] == attempts[2]
+            assert attempts[0]["message_id"] == pending["message_id"]
+            assert attempts[0]["metadata"]["tool_trace_ref"] == pending["tool_trace_ref"]
+            snapshot = await fixture.recover(snapshot["turn"])
+            assert snapshot["pending"] == []
+            assert snapshot["recovered"] == pending
+        replies = [message for message in snapshot["messages"] if message["body"] == REPLY_BODY]
+        assert len(replies) == 1
+        message = replies[0]
+        assert message["thread_id"] == snapshot["thread"]["id"]
+        assert message["author_id"] == snapshot["agent"] == "yeo"
+        ref = message["metadata"]["tool_trace_ref"]
+        raw_trace = await fixture.attachments.read(ref)
+        assert hashlib.sha256(raw_trace).hexdigest() == ref
+        entries = json.loads(raw_trace)
+        assert len(entries) == 1
+        assert entries[0]["arguments"]["repoName"] == REPOSITORY
+        assert entries[0]["arguments"]["query"] == snapshot["query"]
+        assert SENSITIVE_SENTINEL.encode() in raw_trace
+        assert OUTPUT_SENTINEL.encode() in raw_trace
+        before = copy.deepcopy(snapshot["messages"])
+        for _ in range(2):
+            response = await fixture.client.get(f"/api/traces/{ref}/consulted")
+            assert response.status_code == 200
+            wire = response.content
+            assert len(wire) <= 16 * 1024
+            assert SENSITIVE_SENTINEL.encode() not in wire
+            assert OUTPUT_SENTINEL.encode() not in wire
+            assert b"fixture-user" not in wire
+            assert b'"output"' not in wire and b'"calls"' not in wire
+            assert response.headers["cache-control"] == "no-store"
+            receipt = response.json()
+            assert set(receipt) == {
+                "ref", "requests", "requests_total", "requests_omitted",
+                "invalid_entries", "redacted", "truncated", "notice",
+            }
+            assert receipt["ref"] == ref
+            assert receipt["requests_total"] == len(receipt["requests"]) + receipt["requests_omitted"] == 1
+            assert receipt["invalid_entries"] == 0 and receipt["redacted"] is True
+            assert REPOSITORY in "\n".join(receipt["requests"])
+            assert snapshot["query"] in "\n".join(receipt["requests"])
+            assert "https://example.test/repos/langchain" in "\n".join(receipt["requests"])
+        transcript = await fixture.client.get(f"/api/threads/{message['thread_id']}/messages")
+        assert transcript.status_code == 200
+        assert transcript.json()["messages"] == before
+        after = await fixture.snapshot(snapshot["turn"])
+        assert after["messages"] == before
+        assert after["llm_calls"] == 2 and after["tool_calls"] == 1
+        if mode == "inline":
+            assert after["reply"]["response"] == REPLY_BODY
+        else:
+            assert after["messages"][1]["body"] == acknowledgement["body"]
+            assert after["messages"][1]["metadata"] == acknowledgement["metadata"]
+    finally:
+        await fixture.stop()
+
+
+async def test_consulted_create_app_authorizes_before_storage_and_default_off_works(tmp_path: Path) -> None:
+    from probos.attachments.filesystem_store import FilesystemAttachmentStore
+    from tests.fixtures.consulted_evidence_bridge import ConsultedEvidenceFixture
+
+    class _CountingStore(FilesystemAttachmentStore):
+        reads = 0
+
+        async def read(self, content_hash: str) -> bytes:
+            self.reads += 1
+            return await super().read(content_hash)
+
+    fixture = ConsultedEvidenceFixture(tmp_path)
+    try:
+        await fixture.start()
+        turn = await fixture.start_turn(mode="inline")
+        ref = turn["messages"][-1]["metadata"]["tool_trace_ref"]
+        store = _CountingStore(tmp_path / "attachments")
+        fixture.runtime.attachments = store
+        fixture.runtime.config.auth.crew_scope_token = "synthetic-consulted-auth"
+        for headers in ({}, {"Authorization": "Bearer incorrect"}):
+            denied = await fixture.client.get(f"/api/traces/{ref}/consulted", headers=headers)
+            assert denied.status_code == 401
+            assert denied.headers["cache-control"] == "no-store"
+            assert b"synthetic-consulted-auth" not in denied.content
+            assert store.reads == 0
+        authorized = await fixture.client.get(
+            f"/api/traces/{ref}/consulted",
+            headers={"Authorization": "Bearer synthetic-consulted-auth"},
+        )
+        assert authorized.status_code == 200
+        assert authorized.headers["cache-control"] == "no-store"
+        assert store.reads == 1
+        fixture.runtime.config.auth.crew_scope_token = ""
+        default_off = await fixture.client.get(f"/api/traces/{ref}/consulted")
+        assert default_off.status_code == 200 and store.reads == 2
+        invalid = await fixture.client.get("/api/traces/not-a-trace/consulted")
+        assert invalid.status_code == 400 and store.reads == 2
+        assert invalid.headers["cache-control"] == "no-store"
+    finally:
+        await fixture.stop()
+
+
+async def test_consulted_real_promoted_commit_reaches_live_http_event_consumer(tmp_path: Path) -> None:
+    from websockets.asyncio.client import connect
+
+    from tests.fixtures.consulted_evidence_bridge import ConsultedEvidenceFixture, REPLY_BODY
+
+    fixture = ConsultedEvidenceFixture(tmp_path)
+    try:
+        await fixture.start()
+        async with connect(fixture.origin.replace("http://", "ws://") + "/ws/events") as socket:
+            initial = json.loads(await asyncio.wait_for(socket.recv(), timeout=5))
+            assert initial["type"] == "state_snapshot"
+
+            async def _committed(message_id: str) -> dict[str, Any]:
+                async with asyncio.timeout(5):
+                    while True:
+                        frame = json.loads(await socket.recv())
+                        if (
+                            frame.get("type") == "chat_thread_message_appended"
+                            and frame["data"].get("message_id") == message_id
+                        ):
+                            return frame
+
+            acknowledged = await fixture.start_turn(mode="promoted")
+            acknowledgement = acknowledged["messages"][-1]
+            first = await _committed(acknowledgement["id"])
+            assert first["data"]["thread_id"] == acknowledged["thread"]["id"]
+            assert not acknowledged["released"]
+            assert "tool_trace_ref" not in acknowledgement["metadata"]
+            completed = await fixture.release_turn(acknowledged["turn"])
+            report = completed["messages"][-1]
+            final = await _committed(report["id"])
+            assert final["data"]["thread_id"] == report["thread_id"]
+            assert final["data"]["author_id"] == report["author_id"] == "yeo"
+            assert "body" not in final["data"] and "metadata" not in final["data"]
+            assert report["body"] == REPLY_BODY
+            ref = report["metadata"]["tool_trace_ref"]
+            receipt = await fixture.client.get(f"/api/traces/{ref}/consulted")
+            assert receipt.status_code == 200 and receipt.json()["ref"] == ref
+            assert completed["llm_calls"] == 2 and completed["tool_calls"] == 1
+    finally:
+        await fixture.stop()
 
 
 class _CalculatorDAGClient(MockLLMClient):

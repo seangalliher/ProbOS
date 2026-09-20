@@ -18,6 +18,7 @@ import { useStore } from '../../store/useStore';
 import type { Agent, AgentProfileMessage } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
 import { InlineCapabilityApproval } from './InlineCapabilityApproval';
+import { ConsultedEvidence } from './ConsultedEvidence';
 
 // `department` is a runtime cast on the base Agent (ChatsPanel precedent),
 // not a declared field — read it defensively for the avatar color.
@@ -114,6 +115,7 @@ export function ChatMessageRow({ msg, hostAgentId, hostCallsign, body, activeThr
         {body ?? msg.text}
       </div>
       <InlineCapabilityApproval msg={msg} activeThreadId={activeThreadId} />
+      <ConsultedEvidence msg={msg} activeThreadId={activeThreadId} />
     </div>
   );
 }

@@ -4,11 +4,13 @@
    the same default CompactApp uses, but WITHOUT Electron-tray semantics.
    Progressive disclosure (HXI #5): chat is the minimal viable mobile surface;
    2D mesh (AD-708c) + gestures (AD-708d) are later increments. NO emoji (HXI #3). */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactElement } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useStore } from './store/useStore';
+import type { Agent } from './store/types';
 import { useSettingsStore } from './store/useSettingsStore';
 import { ProfileChatTab } from './components/profile/ProfileChatTab';
+import { resolveProfileThreadId } from './components/profile/profileThreadResolution';
 import MobileMesh from './components/mesh/MobileMesh';
 import type { MeshViewport } from './mesh2d/meshProjection';
 import { useSwipe } from './hooks/useSwipe';
@@ -30,18 +32,23 @@ function switchToFullHxi(): void {
   window.location.replace(url.toString());
 }
 
-export default function MobileShell() {
+function findYeoId(agents: ReadonlyMap<string, Agent>): string | null {
+  for (const agent of agents.values()) {
+    if (agent.callsign === 'Yeo') return agent.id;
+  }
+  return null;
+}
+
+export default function MobileShell(): ReactElement {
   useWebSocket();
 
   const agents = useStore((s) => s.agents);
   const loadSnapshot = useSettingsStore((s) => s.loadSnapshot);
 
-  const yeoId = useMemo(() => {
-    for (const agent of agents.values()) {
-      if (agent.callsign === 'Yeo') return agent.id;
-    }
-    return null;
-  }, [agents]);
+  const yeoId = useMemo(() => findYeoId(agents), [agents]);
+  const chatThreadId = useStore((state) => yeoId
+    ? resolveProfileThreadId(undefined, state.activeProfileThreadId, state.threadIdByAgent, yeoId)
+    : undefined);
 
   useEffect(() => { void loadSnapshot(); }, [loadSnapshot]);
 
@@ -55,6 +62,50 @@ export default function MobileShell() {
   // AD-708c-3: chat<->mesh body toggle. Default 'chat' -> the phone lands on the
   // AD-708b chat surface; the 2D mesh is opt-in via the header toggle.
   const [view, setView] = useState<'chat' | 'mesh'>('chat');
+
+  useLayoutEffect(() => {
+    if (view !== 'chat') return;
+    let boundAgent: string | null = null;
+    let boundThread: string | undefined;
+    let claimedThread: string | null = null;
+
+    const release = (): void => {
+      const claim = claimedThread;
+      claimedThread = null;
+      const state = useStore.getState();
+      // The value-only API cannot distinguish a later same-ID handoff.
+      if (claim !== null && state.activeThreadId === claim) state.setActiveThread(null);
+    };
+    const syncVisibleThread = (): void => {
+      const state = useStore.getState();
+      const agentId = findYeoId(state.agents);
+      const threadId = agentId
+        ? resolveProfileThreadId(undefined, state.activeProfileThreadId, state.threadIdByAgent, agentId)
+        : undefined;
+      if (agentId === boundAgent && threadId === boundThread) {
+        // A foreign selection relinquishes this binding until it changes.
+        if (claimedThread !== null && state.activeThreadId !== claimedThread) claimedThread = null;
+        return;
+      }
+      // Publish the binding before release/write notifications re-enter.
+      boundAgent = agentId;
+      boundThread = threadId;
+      release();
+      if (!agentId || !threadId) return;
+      const current = useStore.getState();
+      if (current.activeThreadId !== threadId) {
+        claimedThread = threadId;
+        current.setActiveThread(threadId);
+      }
+    };
+
+    const unsubscribe = useStore.subscribe(syncVisibleThread);
+    syncVisibleThread();
+    return () => {
+      unsubscribe();
+      release();
+    };
+  }, [view]);
 
   // AD-708d: swipe left -> mesh, swipe right -> chat. The header tap toggle
   // (above) stays the accessible primary; swipe is a touch-only enhancement.
@@ -121,7 +172,7 @@ export default function MobileShell() {
           <div data-testid="mobile-shell-chat" style={{ flex: '1 1 auto', minHeight: 0,
             display: 'flex', flexDirection: 'column' }}>
             {yeoId ? (
-              <ProfileChatTab agentId={yeoId} />
+              <ProfileChatTab agentId={yeoId} threadId={chatThreadId} />
             ) : (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: DIM, fontSize: 12, padding: 24, textAlign: 'center' }}>
