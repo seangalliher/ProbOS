@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
 from typing import Any, Final, Protocol
 
-from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
+from probos.tools.protocol import (
+    ToolResult, ToolResultPresentation, ToolType, refuse_undeclared_params,
+)
 
 logger = logging.getLogger(__name__)
 
 SELF_QUERY_DOMAINS: Final[tuple[str, ...]] = (
     "memory", "trust", "cognitive", "temporal", "social",
 )
+SELF_QUERY_OPTIONAL_DOMAINS: Final[tuple[str, ...]] = ("wellness", "authority")
 
 
 class SelfQueryTelemetry(Protocol):
@@ -28,10 +30,65 @@ class SelfQueryTelemetry(Protocol):
 
     async def get_social_state(self, agent_id: str) -> dict[str, Any]: ...
 
-    async def get_full_snapshot(self, agent_id: str) -> dict[str, Any]: ...
+    async def get_wellness_state(self, agent_id: str) -> dict[str, Any]: ...
+
+    async def get_authority_state(self, agent_id: str) -> dict[str, Any]: ...
+
+    async def get_full_snapshot(
+        self, agent_id: str, *, extra_domains: tuple[str, ...] = (),
+    ) -> dict[str, Any]: ...
 
     @staticmethod
     def render_telemetry_context(snapshot: dict[str, Any]) -> str: ...
+
+
+def _fit_optional_output(
+    output: dict[str, Any], telemetry: SelfQueryTelemetry,
+    presentation: ToolResultPresentation | None,
+) -> ToolResult:
+    from probos.cognitive.decomposer import is_capability_gap
+    from probos.cognitive.self_telemetry_domains import (
+        filter_optional_domains, prune_optional_entry,
+    )
+    from probos.cognitive.swe_harness.tool_call import render_tool_output
+
+    try:
+        snapshot = filter_optional_domains(output["domains"])
+        output["domains"] = snapshot
+        entries = sum(
+            len(snapshot.get(domain, {}).get(key, []))
+            for domain, key in (
+                ("authority", "held"), ("authority", "withheld"),
+                ("wellness", "concerns"),
+            )
+        )
+        for _ in range(entries + 1):
+            output["rendered"] = telemetry.render_telemetry_context(snapshot)
+            plain = render_tool_output(output, max_chars=0)
+            if not plain:
+                raise ValueError("Invalid telemetry rendering")
+            if is_capability_gap(plain):
+                raise ValueError("Unsafe telemetry presentation")
+            if len(plain) <= 6000:
+                admitted = plain if presentation is None else presentation.render_complete(output)
+                if (
+                    type(admitted) is str
+                    and len(admitted) <= 6000
+                    and not is_capability_gap(admitted)
+                    and admitted == plain
+                ):
+                    return ToolResult(output=output)
+                if admitted is not None:
+                    raise ValueError("Invalid telemetry presentation admission")
+            if not prune_optional_entry(snapshot):
+                break
+    except Exception:
+        logger.warning(
+            "self_query presentation check failed; complete delivery is unverified, "
+            "returning an error without telemetry payloads"
+        )
+        return ToolResult(error="self_query: presentation check failed.")
+    return ToolResult(error="self_query: result exceeds the presentation budget.")
 
 
 class SelfQueryTool:
@@ -58,7 +115,10 @@ class SelfQueryTool:
             "Read your own current telemetry before describing yourself or your "
             "capabilities. Ground first-person claims in the returned metrics. "
             f"Select domains from {', '.join(SELF_QUERY_DOMAINS)}, or omit "
-            "domains for a full snapshot."
+            "domains for the five operational domains. Explicitly select wellness "
+            "to read the Counselor's latest stored assessment of you. Select authority "
+            "to read your own effective permissions and escalation route before "
+            "reporting a task boundary."
         )
 
     @property
@@ -68,8 +128,14 @@ class SelfQueryTool:
             "properties": {
                 "domains": {
                     "type": "array",
-                    "items": {"type": "string", "enum": list(SELF_QUERY_DOMAINS)},
-                    "description": "Telemetry domains to read; omit for all domains.",
+                    "items": {
+                        "type": "string",
+                        "enum": list(SELF_QUERY_DOMAINS + SELF_QUERY_OPTIONAL_DOMAINS),
+                    },
+                    "description": (
+                        "Telemetry domains to read; omit for five operational domains. "
+                        "Wellness and authority require explicit selection."
+                    ),
                 },
             },
             "additionalProperties": False,
@@ -110,6 +176,7 @@ class SelfQueryTool:
             )
 
         selected = SELF_QUERY_DOMAINS
+        supported = SELF_QUERY_DOMAINS + SELF_QUERY_OPTIONAL_DOMAINS
         unknown_domains: list[str] = []
         if "domains" in params:
             requested = params["domains"]
@@ -120,10 +187,10 @@ class SelfQueryTool:
                     error="self_query: domains must be an array of strings.",
                 )
             selected = tuple(
-                domain for domain in SELF_QUERY_DOMAINS if domain in requested
+                domain for domain in supported if domain in requested
             )
             unknown_domains = list(dict.fromkeys(
-                domain for domain in requested if domain not in SELF_QUERY_DOMAINS
+                domain for domain in requested if domain not in supported
             ))
 
         output: dict[str, Any] = {
@@ -137,6 +204,15 @@ class SelfQueryTool:
                 output=output,
                 error="self_query: select at least one recognized domain.",
             )
+
+        optional = any(domain in SELF_QUERY_OPTIONAL_DOMAINS for domain in selected)
+        presentation = None
+        if optional and "_tool_result_presentation" in context:
+            presentation = context["_tool_result_presentation"]
+            if type(presentation) is not ToolResultPresentation or not callable(
+                presentation.render_complete,
+            ):
+                return ToolResult(error="self_query: presentation check failed.")
 
         telemetry = self._telemetry
         if telemetry is None:
@@ -152,17 +228,9 @@ class SelfQueryTool:
             if selected == SELF_QUERY_DOMAINS:
                 snapshot = await telemetry.get_full_snapshot(agent_id)
             else:
-                getters: dict[str, Callable[[str], Awaitable[dict[str, Any]]]] = dict(
-                    zip(SELF_QUERY_DOMAINS, (
-                        telemetry.get_memory_state,
-                        telemetry.get_trust_state,
-                        telemetry.get_cognitive_state,
-                        telemetry.get_temporal_state,
-                        telemetry.get_social_state,
-                    )),
-                )
                 snapshot = {
-                    domain: await getters[domain](agent_id) for domain in selected
+                    domain: await getattr(telemetry, f"get_{domain}_state")(agent_id)
+                    for domain in selected
                 }
             snapshot = dict(snapshot)
             social = snapshot.get("social")
@@ -172,7 +240,7 @@ class SelfQueryTool:
                     for key, value in social.items()
                     if key in ("routing_affinities", "interaction_breadth")
                 }
-            rendered = telemetry.render_telemetry_context(snapshot)
+            rendered = "" if optional else telemetry.render_telemetry_context(snapshot)
         except Exception:
             logger.warning(
                 "AD-1258: self_query collection or rendering failed for domains "
@@ -186,4 +254,6 @@ class SelfQueryTool:
 
         output["domains"] = snapshot
         output["rendered"] = rendered
+        if optional:
+            return _fit_optional_output(output, telemetry, presentation)
         return ToolResult(output=output)

@@ -409,8 +409,22 @@ class _FakeSelfQueryTelemetry:
     async def get_social_state(self, agent_id: str) -> dict[str, Any]:
         return self._read("social", agent_id)
 
-    async def get_full_snapshot(self, agent_id: str) -> dict[str, Any]:
-        return self._read("full", agent_id)
+    async def get_wellness_state(self, agent_id: str) -> dict[str, Any]:
+        return self._read("wellness", agent_id)
+
+    async def get_authority_state(self, agent_id: str) -> dict[str, Any]:
+        return self._read("authority", agent_id)
+
+    async def get_full_snapshot(
+        self, agent_id: str, *, extra_domains: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        snapshot = self._read("full", agent_id)
+        if not extra_domains:
+            return snapshot
+        return {
+            **snapshot,
+            **{domain: self._read(domain, agent_id) for domain in extra_domains},
+        }
 
     @staticmethod
     def render_telemetry_context(snapshot: dict[str, Any]) -> str:
@@ -521,13 +535,14 @@ def test_self_query_protocol_schema_and_description(
     assert schema.get("required", []) == []
     assert schema["additionalProperties"] is False
     assert schema["properties"]["domains"]["type"] == "array"
+    # AD-1260/1261 extend the selectable enum, not the original five defaults.
     assert schema["properties"]["domains"]["items"] == {
-        "type": "string", "enum": list(SELF_QUERY_DOMAINS),
+        "type": "string", "enum": [*SELF_QUERY_DOMAINS, "wellness", "authority"],
     }
     schema["properties"]["domains"]["items"]["enum"].append("peer")
-    assert tool.input_schema["properties"]["domains"]["items"]["enum"] == list(
-        SELF_QUERY_DOMAINS,
-    )
+    assert tool.input_schema["properties"]["domains"]["items"]["enum"] == [
+        *SELF_QUERY_DOMAINS, "wellness", "authority",
+    ]
     output_schema = json.loads(json.dumps(tool.output_schema))
     assert output_schema["type"] == "object"
     assert output_schema["required"] == [
@@ -1293,9 +1308,10 @@ async def test_self_query_offer_preserves_independent_baseline_and_appends_last(
         assert registration is not None
         assert isinstance(registration.tool, SelfQueryTool)
         assert definitions[-1]["function"]["parameters"] == registration.tool.input_schema
+        # The independent offer baseline stays fixed; only explicit opt-ins join this enum.
         assert definitions[-1]["function"]["parameters"]["properties"]["domains"]["items"][
             "enum"
-        ] == list(SELF_QUERY_DOMAINS)
+        ] == [*SELF_QUERY_DOMAINS, "wellness", "authority"]
         assert registration.provider == "AD-1258"
         assert registration.tags == ["self_query", "introspection"]
         assert registration.default_permissions == {}

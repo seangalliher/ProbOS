@@ -19,6 +19,11 @@ from datetime import datetime, timezone
 from typing import Any, Protocol, cast
 
 from probos.cognitive.episodic import resolve_sovereign_id, resolve_sovereign_id_from_slot
+from probos.cognitive.self_telemetry_domains import (
+    collect_authority_state,
+    collect_wellness_state,
+    render_optional_domains,
+)
 from probos.config import format_trust
 
 logger = logging.getLogger(__name__)
@@ -257,20 +262,52 @@ class IntrospectiveTelemetryService:
                 pass
         return result
 
-    async def get_full_snapshot(self, agent_id: str) -> dict[str, Any]:
-        """All five telemetry domains combined. Best-effort — each domain independent."""
+    async def get_wellness_state(self, agent_id: str) -> dict[str, Any]:
+        """Explicit first-person read of the Counselor's stored assessment."""
+        return collect_wellness_state(
+            agent_id, registry=getattr(self._runtime, "registry", None),
+        )
+
+    async def get_authority_state(self, agent_id: str) -> dict[str, Any]:
+        """Explicit first-person read of effective tool permissions."""
+        return collect_authority_state(
+            agent_id,
+            agent_registry=getattr(self._runtime, "registry", None),
+            ontology=getattr(self._runtime, "ontology", None),
+            trust_network=getattr(self._runtime, "trust_network", None),
+            tool_registry=getattr(self._runtime, "tool_registry", None),
+        )
+
+    async def get_full_snapshot(
+        self, agent_id: str, *, extra_domains: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        """Five operational domains plus explicit extras, independently collected."""
+        if type(extra_domains) is not tuple or any(
+            type(domain) is not str for domain in extra_domains
+        ):
+            raise ValueError("extra_domains must be a tuple of strings")
         snapshot: dict[str, Any] = {}
-        for domain, getter in [
+        getters = [
             ("memory", self.get_memory_state),
             ("trust", self.get_trust_state),
             ("cognitive", self.get_cognitive_state),
             ("temporal", self.get_temporal_state),
             ("social", self.get_social_state),
-        ]:
+        ]
+        for domain in ("wellness", "authority"):
+            if domain in extra_domains:
+                getters.append((domain, getattr(self, f"get_{domain}_state")))
+        for domain, getter in getters:
             try:
                 snapshot[domain] = await getter(agent_id)
             except Exception:
-                logger.debug("AD-588: %s domain failed for %s", domain, agent_id, exc_info=True)
+                if domain in ("wellness", "authority"):
+                    logger.warning(
+                        "Optional %s telemetry failed; this domain is unknown, "
+                        "preserving the remaining snapshot", domain,
+                    )
+                else:
+                    logger.debug("AD-588: %s domain failed for %s", domain, agent_id, exc_info=True)
                 snapshot[domain] = {}
         return snapshot
 
@@ -355,6 +392,8 @@ class IntrospectiveTelemetryService:
             social_parts.append(f"interaction breadth: {social['interaction_breadth']}")
         if social_parts:
             lines.append(f"Collaboration: {' | '.join(social_parts)}")
+
+        lines.extend(render_optional_domains(snapshot))
 
         lines.append("")
         lines.append(

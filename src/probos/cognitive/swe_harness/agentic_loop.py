@@ -11,7 +11,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from types import CoroutineType
 from typing import Any, Callable, TYPE_CHECKING
 
@@ -41,6 +41,7 @@ from probos.repository_instructions import (
 from probos.tools.delegation_evidence import MESSAGE_OMISSION_MARKER, evidence_frame
 from probos.tools.executor import recording_identity, tool_recording_scope
 from probos.tools.protocol import ToolResultPresentation
+from probos.tools.self_query_tool import SELF_QUERY_OPTIONAL_DOMAINS
 from probos.types import LLMRequest
 
 if TYPE_CHECKING:
@@ -1526,12 +1527,27 @@ class AgenticLoop:
         start = time.perf_counter()
         try:
             invocation_context = {**context, "iteration": iteration}
-            if use.tool_call.name in ("discover_work_items", "claim_work_item"):
+            retained_presentation: tuple[Any, str] | None = None
+            requested_domains = (
+                use.tool_call.arguments.get("domains")
+                if type(use.tool_call.arguments) is dict else None
+            )
+            optional_self_query = (
+                use.tool_call.name == "self_query"
+                and type(requested_domains) is list
+                and any(
+                    type(domain) is str and domain in SELF_QUERY_OPTIONAL_DOMAINS
+                    for domain in requested_domains
+                )
+            )
+            if use.tool_call.name in ("discover_work_items", "claim_work_item", "self_query"):
                 max_chars = self._tool_result_max_chars
                 head_chars = self._tool_result_head_chars
                 tail_chars = self._tool_result_tail_chars
 
                 def render_complete(value: Any) -> str | None:
+                    nonlocal retained_presentation
+                    retained_presentation = None
                     if any(
                         type(bound) is not int or bound < 0
                         for bound in (max_chars, head_chars, tail_chars)
@@ -1544,7 +1560,10 @@ class AgenticLoop:
                         plain, max_chars=max_chars,
                         head_chars=head_chars, tail_chars=tail_chars,
                     )
-                    return plain if bounded == plain else None
+                    if bounded != plain:
+                        return None
+                    retained_presentation = (value, plain)
+                    return plain
 
                 invocation_context["_tool_result_presentation"] = ToolResultPresentation(
                     render_complete=render_complete,
@@ -1566,12 +1585,43 @@ class AgenticLoop:
             # BF-728: hand the bound down so a big structured result is
             # flattened shape-first. This is the last point where the value is
             # still a structure; `truncate_tool_output` below only sees text.
-            tcr = ToolCallResult.from_tool_result(
-                use.tool_call.id,
-                raw_result,
-                duration_ms,
-                max_chars=self._tool_result_max_chars,
-            )
+            if optional_self_query and raw_result.error is None:
+                try:
+                    from probos.cognitive.decomposer import is_capability_gap
+
+                    if (
+                        retained_presentation is None
+                        or raw_result.output is not retained_presentation[0]
+                        or type(retained_presentation[1]) is not str
+                        or not retained_presentation[1]
+                        or len(retained_presentation[1]) > 6000
+                        or is_capability_gap(retained_presentation[1])
+                    ):
+                        raise ValueError("Invalid retained telemetry presentation")
+                    tcr = ToolCallResult.from_tool_result(
+                        use.tool_call.id,
+                        replace(raw_result, output=retained_presentation[1]),
+                        duration_ms,
+                        max_chars=self._tool_result_max_chars,
+                    )
+                except Exception:
+                    logger.warning(
+                        "self_query presentation delivery failed; complete model delivery "
+                        "is unverified, returning an error without telemetry payloads"
+                    )
+                    tcr = ToolCallResult(
+                        id=use.tool_call.id,
+                        output="self_query: presentation check failed.",
+                        is_error=True,
+                        duration_ms=duration_ms,
+                    )
+            else:
+                tcr = ToolCallResult.from_tool_result(
+                    use.tool_call.id,
+                    raw_result,
+                    duration_ms,
+                    max_chars=self._tool_result_max_chars,
+                )
         except Exception as exc:
             duration_ms = (time.perf_counter() - start) * 1000.0
             logger.warning(
