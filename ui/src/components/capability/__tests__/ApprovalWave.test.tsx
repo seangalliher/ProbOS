@@ -79,6 +79,29 @@ describe('AD-1212 standing receipts and immutable review identity', () => {
   });
 
   describe('AD-1212 shared inspectable standing card', () => {
+    // Pair AD-1164's relocated source guard with queue ingestion -> panel -> shared-card rendering.
+    it.each([
+      { kind: 'continue', payload: { tool_id: 'dm_agentic', action: 'continue', params: {},
+        scope_key: '', session_id: null, thread_id: 'thread-a' } },
+      { kind: 'future-unknown-kind', payload: null },
+    ])('renders $kind literally through the generic panel card with a neutral fallback', async ({ kind, payload }) => {
+      const request = row({ kind, payload });
+      await load(vi.fn<typeof fetch>(async () => queue([request])));
+      render(<CapabilityRequestPanel hosted />);
+      const card = within(screen.getByTestId('capability-request-panel'))
+        .getByRole('group', { name: `Capability request ${request.id}` });
+      expect(card).toHaveAttribute('data-testid', 'capability-request-card');
+      expect(card).toBeVisible();
+      const label = within(card).getByText(kind, { exact: true });
+      expect(label).toBeVisible();
+      expect(label.textContent).toBe(kind);
+      expect(label).toHaveStyle({ color: '#666680' });
+      expect(card).toHaveStyle({ borderLeft: '3px solid #666680' });
+      expect(within(card).getByText(request.target, { exact: true })).toBeVisible();
+      expect(within(card).getByText(request.rationale, { exact: true })).toBeVisible();
+      expect(within(card).getByRole('button', { name: 'Approve' })).toBeEnabled();
+      expect(within(card).getByRole('button', { name: 'Deny' })).toBeEnabled();
+    });
     it('renders complete inert text, exact scope and an unchecked standing choice', async () => {
       const payload = { ...row().payload, params: { html: '<img src=x onerror="window.pwned=1">', bidi: '\u202e' } };
       const request = row({ payload });
