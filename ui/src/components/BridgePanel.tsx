@@ -6,6 +6,8 @@ import { ChevronDown, ChevronRight, Expand, Close } from './icons/Glyphs';
 import { TaskCard } from './bridge/BridgeCards';
 import { NotificationCard } from './bridge/BridgeNotifications';
 import { BridgeShutdown } from './bridge/BridgeSystem';
+import { BridgeFaults } from './bridge/BridgeFaults';
+import { useFaultReports } from '../hooks/useFaultReports';
 import { buildBridgeStations, isPopulated, type StationId, type StationAction } from './bridge/stations';
 import { timeAgo } from './wardroom/timeAgo';
 import { ApprovalQueueStatus } from './approvals/ApprovalsCenterPanel';
@@ -304,6 +306,9 @@ function ApprovalRow({ approval, onOpen }: { approval: PendingApproval; onOpen: 
 }
 
 export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const faultReports = useFaultReports(open);
+  const faultsKnown = faultReports.resource.status === 'ready' || faultReports.resource.status === 'empty';
+  const faultsEmpty = faultReports.resource.status === 'empty' && faultReports.resource.data?.total === 0;
   const agentTasks = useStore(s => s.agentTasks);
   const notifications = useStore(s => s.notifications);
   const missionControlTasks = useStore(s => s.missionControlTasks);
@@ -410,6 +415,7 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
       position: 'fixed',
       top: 0, right: 0, bottom: 0,
       width: 380,
+      maxWidth: '100vw',
       background: 'rgba(10, 10, 18, 0.92)',
       backdropFilter: 'blur(16px)',
       WebkitBackdropFilter: 'blur(16px)',
@@ -509,6 +515,18 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
           </BridgeSection>
         )}
 
+        {!faultsEmpty && (
+          <BridgeSection
+            title="Faults"
+            count={faultsKnown ? faultReports.resource.data?.total ?? 'unknown'
+              : faultReports.resource.data ? `${faultReports.resource.data.total} last-known; current unknown` : 'unknown'}
+            defaultOpen={true}
+            accentColor="#80b8e0"
+          >
+            <BridgeFaults reports={faultReports} />
+          </BridgeSection>
+        )}
+
         {/* ── COMMAND STATIONS — the Ship's-Computer command layer (AD-943).
             Driven by the typed registry; the 3 existing sections migrate here.
             personnel/science/command are modelled placeholders (no body yet),
@@ -578,7 +596,7 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
         )}
 
         {/* Empty state — the activity feed is empty (stations always render). */}
-        {approvalsEmpty && pendingApprovals.length === 0 && attentionCount === 0 && activeTasks.length === 0 &&
+        {approvalsEmpty && faultsEmpty && pendingApprovals.length === 0 && attentionCount === 0 && activeTasks.length === 0 &&
          infoNotifs.length === 0 && recentTasks.length === 0 && (
           <div style={{
             fontSize: 10, color: '#555', fontStyle: 'italic',

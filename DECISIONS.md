@@ -10,6 +10,18 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1207 OPEN -- Read-only Bridge fault visibility (ordinary implementation candidate)
+
+**Date:** 2026-09-19. **Existing issue:** #1152; #1153 acceptance verification. **Decision:** Implement parent-ratified Option 1 (comment 5746274610): authenticated list/detail router, component-owned bounded polling and the existing BridgeSection. No allocation or new service/event/config/store. The reviewed #1151 commit is retained; its interrupted standalone gate is not wave validation.
+
+Both canonical router registrations use existing crew-scope auth before diagnostic access. Reads detach mutable fault records before awaits, page open/diagnosing records, preserve int64 occurrence counts as decimal strings and honestly return retained closed details. Safe 503/404/422/auth responses do not masquerade as empty data. Successful diagnostics are non-cacheable. Only confirmed valid receipts from the store-owned journal's pinned repository become links; journal failure leaves visible unknown linkage. GETs never retrieve credentials, file, reconcile, resolve or contact GitHub.
+
+Extract #1151's private sanitizer and safe trace reader into public `diagnostic_safety.py` without changing its named policy, report content, thresholds or writes. Preserve `TraceReader` import compatibility. Both consumers sanitize before rendering/clipping; the read router reuses existing trace loading/analysis. Bounded evidence is labeled Recorded agent / Stored trace sample, not an invented aggregate agent history or unabridged record.
+
+Faults follow Approvals and precede command stations, without competing pulse, badge, station identity or actions. Shared resource-state helpers own timeout/backoff/auth pause; the open Bridge owns requests/timers and refreshes selected detail independently of occurrence changes. Authorization purges data, request/selection identities reject obsolete responses, paging survives shrinkage, and No activity requires confirmed fault emptiness. Fault ID, not signature, owns row identity.
+
+**Candidate evidence:** 496 combined Python cases passed; 45 new actual-component cases passed, including interactive executed-backend replay, plus 90 unchanged approval-consumer cases. TypeScript no-emit and four isolated browser checks passed. The continuous replay verifies one fake GitHub POST, durable receipt, unchanged lifecycle, no internal repair and reuse after restart/closure/recurrence; historical BF-715 data is not new launch-origin evidence. Old #1151 tests/fixture and approval assertions are unchanged. Parent owns independent review, staging new files for canonical preflight, freeze/commit, one fresh whole-wave full gate/PRCI and verified closure. [Contract and remaining limits](docs/development/fault-visibility.md).
+
 ### AD-1206 OPEN -- Captain-approved fault reports become GitHub issues (ordinary implementation candidate)
 
 **Date:** 2026-09-19. **Existing issue:** #1151. **Decision:** Implement the parent-ratified inline approval contract, four finalization amendments, bounded R1 corrections, existing-root store declaration and R2 config alignment, without allocating a new AD. **Status:** R1 and R2 corrections implemented with bounded validation passed; independent delta review, final freeze, canonical full gate, normal PR/CI, merge and verified closure remain parent-owned.

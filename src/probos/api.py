@@ -277,6 +277,7 @@ def create_app(runtime: Any) -> FastAPI:
         marketplace as marketplace_router,  # AD-813: read-only skill/pack marketplace BROWSE
         desktop as desktop_router,  # AD-841: read-only desktop integration status console
         traces as traces_router,  # AD-1203: read the persisted tool traces (#1147)
+        faults as faults_router,  # AD-1207: bounded fault observations (#1152)
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -319,6 +320,7 @@ def create_app(runtime: Any) -> FastAPI:
         marketplace_router,  # AD-813: read-only skill/pack marketplace BROWSE
         desktop_router,  # AD-841: read-only desktop integration status console
         traces_router,  # AD-1203: read the persisted tool traces (#1147)
+        faults_router,  # AD-1207: bounded fault observations (#1152)
     ):
         app.include_router(r.router)
 

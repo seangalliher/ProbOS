@@ -15,12 +15,13 @@ import httpx
 from probos.capability_request import CapabilityRequest, repair_action
 from probos.cognitive.repair_brief import build_repair_brief
 from probos.cognitive.trace_analysis import analyse_trace, load_trace, quote_for_prose
+from probos.diagnostic_safety import SanitisedTraceReader, sanitise_diagnostic_value
+from probos.diagnostic_safety import TraceReader as TraceReader
 from probos.fault_issue_filings import (
     FaultIssueFilings, FilingClaim, FilingDisposition, FilingUnavailable, IssueReceipt,
     valid_github_repository, valid_issue_receipt, valid_occurrence_count, valid_repository_url,
 )
 from probos.fault_report import FaultReport
-from probos.security.pii_redaction import PIIRedactor
 
 logger = logging.getLogger(__name__)
 
@@ -28,37 +29,8 @@ _FILING_LIFECYCLE_NOTICE = (
     "Filing this issue is not a fix and does not alter the fault's lifecycle status."
 )
 
-# Named outbound policy, including the repository's relay key/prefix vocabulary.
-# This boundary does not attempt to detect every possible secret format.
-_OUTBOUND_SECRET_FIELDS = (
-    r"(?:headers?|(?:set[-_])?cookie|authorization|password|passwd|passphrase|"
-    r"secret|(?:access[_-]?|refresh[_-]?)?token|credentials?|api.?key|"
-    r"private.?key|client[_-]?secret)"
-)
-_SECRET_FIELD_RE = re.compile(_OUTBOUND_SECRET_FIELDS, re.IGNORECASE)
-_SECRET_VALUE_PATTERN = (
-    r'''(?:"(?:\\.|[^"\\])*(?:"|\Z)|'(?:\\.|[^'\\])*(?:'|\Z)|[^\s,;}\]"']+)'''
-)
-_SECRET_ASSIGNMENT_RE = re.compile(
-    r"""(?P<prefix>(?P<quote>["']?)\b""" + _OUTBOUND_SECRET_FIELDS
-    + r"""\b(?P=quote)\s*[:=]\s*)""" + _SECRET_VALUE_PATTERN,
-    re.IGNORECASE,
-)
-_AUTH_VALUE_RE = re.compile(r"\b(?:Basic|Bearer)\s+" + _SECRET_VALUE_PATTERN, re.IGNORECASE)
-_PRIVATE_KEY_RE = re.compile(
-    r"-----BEGIN (?P<kind>(?:[A-Z0-9]+ )*PRIVATE KEY)-----"
-    r".*?(?:-----END (?P=kind)-----|\Z)",
-    re.IGNORECASE | re.DOTALL,
-)
-_DATA_URI_RE = re.compile(r"""\bdata:[^\s"'<>]+""", re.IGNORECASE)
-
-
 class Credentials(Protocol):
     def get(self, name: str, *, requester: str = "unknown") -> str | None: ...
-
-
-class TraceReader(Protocol):
-    async def read(self, ref: str) -> bytes | str | None: ...
 
 
 class ApprovedRequests(Protocol):
@@ -100,50 +72,11 @@ def issue_marker(signature: str) -> str:
     return f"<!-- probos-fault:{signature} -->"
 
 
-def _sanitise(value: Any, secrets: tuple[str, ...], depth: int = 0) -> Any:
-    if depth > 16:
-        return "[REDACTED]"
-    if isinstance(value, dict):
-        return {
-            _sanitise(str(key), secrets): (
-                "[REDACTED]" if _SECRET_FIELD_RE.search(str(key))
-                else _sanitise(item, secrets, depth + 1)
-            )
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_sanitise(item, secrets, depth + 1) for item in value]
-    if isinstance(value, str):
-        value = _PRIVATE_KEY_RE.sub("[REDACTED]", value)
-        value = _AUTH_VALUE_RE.sub("[REDACTED]", value)
-        value = _DATA_URI_RE.sub("[REDACTED]", value)
-        value = _SECRET_ASSIGNMENT_RE.sub(r"\g<prefix>[REDACTED]", value)
-        for secret in secrets:
-            if secret:
-                value = value.replace(secret, "[REDACTED]")
-        return PIIRedactor.redact_all(value).encode("utf-8", "replace").decode("utf-8")
-    return value if value is None or type(value) in (int, float, bool) else "[unavailable]"
-
-
-class _SafeTraceReader:
-    def __init__(self, reader: TraceReader | None, secrets: tuple[str, ...]) -> None:
-        self._reader, self._secrets = reader, secrets
-
-    async def read(self, ref: str) -> bytes | None:
-        if self._reader is None:
-            return None
-        try:
-            blob = await self._reader.read(ref)
-            if not isinstance(blob, (bytes, str)):
-                return None
-            entries = json.loads(blob)
-            return json.dumps(_sanitise(entries, self._secrets)).encode("utf-8")
-        except Exception:
-            logger.warning(
-                "AD-1206: fault trace could not be read safely; the issue report "
-                "will explicitly identify unavailable trace evidence"
-            )
-            return None
+def _warn_trace_unavailable() -> None:
+    logger.warning(
+        "AD-1206: fault trace could not be read safely; the issue report "
+        "will explicitly identify unavailable trace evidence"
+    )
 
 
 async def build_issue_report(
@@ -151,7 +84,7 @@ async def build_issue_report(
     secrets: tuple[str, ...] = (),
 ) -> IssueReport:
     """Sanitize copies before any summarizer, renderer or length limit runs."""
-    fields = _sanitise(fault.to_dict(), secrets)
+    fields = sanitise_diagnostic_value(fault.to_dict(), secrets)
     safe = replace(fault, **{
         name: fields[name] for name in (
             "tool_id", "error_text", "attempted", "agent_id", "thread_id",
@@ -159,7 +92,8 @@ async def build_issue_report(
         )
     })
     entries = await load_trace(
-        _SafeTraceReader(attachment_store, secrets), fault.tool_trace_ref or "",
+        SanitisedTraceReader(attachment_store, secrets, warn_unavailable=_warn_trace_unavailable),
+        fault.tool_trace_ref or "",
     )
     trace = (
         analyse_trace(entries).render()[:4000] if entries

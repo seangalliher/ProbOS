@@ -1,0 +1,125 @@
+{
+  "empty": {
+    "list": {"faults": [], "total": 0, "limit": 50, "offset": 0}
+  },
+  "pending": {
+    "list": {
+      "faults": [{
+        "id": "000000000001",
+        "signature": "d7e439af0281014e261e38dc45f51aa8927aa2422cc67a82e94f99d5d9c5b577",
+        "tool_id": "run_python",
+        "summary": "python.exe: can't open file 'D:\\ProbOS\\data\\execution\\scratch\\exec-a7710def\\data\\execution\\scratch\\exec-a7710def\\script.py'",
+        "status": "open",
+        "occurrences": "2",
+        "first_seen_at": 1000.0,
+        "last_seen_at": 1000.0,
+        "issue": null,
+        "issue_lookup_available": true
+      }],
+      "total": 1, "limit": 50, "offset": 0
+    },
+    "detail": {
+      "fault": {
+        "id": "000000000001",
+        "signature": "d7e439af0281014e261e38dc45f51aa8927aa2422cc67a82e94f99d5d9c5b577",
+        "tool_id": "run_python",
+        "summary": "python.exe: can't open file 'D:\\ProbOS\\data\\execution\\scratch\\exec-a7710def\\data\\execution\\scratch\\exec-a7710def\\script.py'",
+        "status": "open",
+        "occurrences": "2",
+        "first_seen_at": 1000.0,
+        "last_seen_at": 1000.0,
+        "issue": null,
+        "issue_lookup_available": true,
+        "error_text": "python.exe: can't open file 'D:\\ProbOS\\data\\execution\\scratch\\exec-a7710def\\data\\execution\\scratch\\exec-a7710def\\script.py'",
+        "attempted": "Run the requested Python code",
+        "recorded_agent_id": "counselor-ezri",
+        "thread_id": "owned-thread",
+        "work_item_id": null,
+        "observed_as": "",
+        "trace_summary": "1 tool calls, 1 failed, across 1 tool(s): run_python.\nWhat it asked:\n  run_python(code=\"print('historical identity fixture, not launch evidence')\")\nThe run ended on 1 consecutive failures, so it stopped making progress before it stopped.",
+        "trace_available": true,
+        "clipped_fields": []
+      }
+    }
+  },
+  "filed": {
+    "list": {
+      "faults": [{
+        "id": "000000000001",
+        "signature": "d7e439af0281014e261e38dc45f51aa8927aa2422cc67a82e94f99d5d9c5b577",
+        "tool_id": "run_python",
+        "summary": "python.exe: can't open file 'D:\\ProbOS\\data\\execution\\scratch\\exec-a7710def\\data\\execution\\scratch\\exec-a7710def\\script.py'",
+        "status": "open",
+        "occurrences": "2",
+        "first_seen_at": 1000.0,
+        "last_seen_at": 1000.0,
+        "issue": {"repository": "owner/repo", "number": 37, "url": "https://github.com/owner/repo/issues/37"},
+        "issue_lookup_available": true
+      }],
+      "total": 1, "limit": 50, "offset": 0
+    },
+    "detail": {
+      "fault": {
+        "id": "000000000001",
+        "signature": "d7e439af0281014e261e38dc45f51aa8927aa2422cc67a82e94f99d5d9c5b577",
+        "tool_id": "run_python",
+        "summary": "python.exe: can't open file 'D:\\ProbOS\\data\\execution\\scratch\\exec-a7710def\\data\\execution\\scratch\\exec-a7710def\\script.py'",
+        "status": "open",
+        "occurrences": "2",
+        "first_seen_at": 1000.0,
+        "last_seen_at": 1000.0,
+        "issue": {"repository": "owner/repo", "number": 37, "url": "https://github.com/owner/repo/issues/37"},
+        "issue_lookup_available": true,
+        "error_text": "python.exe: can't open file 'D:\\ProbOS\\data\\execution\\scratch\\exec-a7710def\\data\\execution\\scratch\\exec-a7710def\\script.py'",
+        "attempted": "Run the requested Python code",
+        "recorded_agent_id": "counselor-ezri",
+        "thread_id": "owned-thread",
+        "work_item_id": null,
+        "observed_as": "",
+        "trace_summary": "1 tool calls, 1 failed, across 1 tool(s): run_python.\nWhat it asked:\n  run_python(code=\"print('historical identity fixture, not launch evidence')\")\nThe run ended on 1 consecutive failures, so it stopped making progress before it stopped.",
+        "trace_available": true,
+        "clipped_fields": []
+      }
+    }
+  },
+  "recurrence": {
+    "list": {
+      "faults": [{
+        "id": "000000000002",
+        "signature": "d7e439af0281014e261e38dc45f51aa8927aa2422cc67a82e94f99d5d9c5b577",
+        "tool_id": "run_python",
+        "summary": "python.exe: can't open file 'D:\\ProbOS\\data\\execution\\scratch\\exec-a7710def\\data\\execution\\scratch\\exec-a7710def\\script.py'",
+        "status": "open",
+        "occurrences": "2",
+        "first_seen_at": 3000.0,
+        "last_seen_at": 3000.0,
+        "issue": {"repository": "owner/repo", "number": 37, "url": "https://github.com/owner/repo/issues/37"},
+        "issue_lookup_available": true
+      }],
+      "total": 1, "limit": 50, "offset": 0
+    },
+    "detail": {
+      "fault": {
+        "id": "000000000002",
+        "signature": "d7e439af0281014e261e38dc45f51aa8927aa2422cc67a82e94f99d5d9c5b577",
+        "tool_id": "run_python",
+        "summary": "python.exe: can't open file 'D:\\ProbOS\\data\\execution\\scratch\\exec-a7710def\\data\\execution\\scratch\\exec-a7710def\\script.py'",
+        "status": "open",
+        "occurrences": "2",
+        "first_seen_at": 3000.0,
+        "last_seen_at": 3000.0,
+        "issue": {"repository": "owner/repo", "number": 37, "url": "https://github.com/owner/repo/issues/37"},
+        "issue_lookup_available": true,
+        "error_text": "python.exe: can't open file 'D:\\ProbOS\\data\\execution\\scratch\\exec-a7710def\\data\\execution\\scratch\\exec-a7710def\\script.py'",
+        "attempted": "Run the requested Python code",
+        "recorded_agent_id": "counselor-ezri",
+        "thread_id": "owned-thread",
+        "work_item_id": null,
+        "observed_as": "",
+        "trace_summary": "1 tool calls, 1 failed, across 1 tool(s): run_python.\nWhat it asked:\n  run_python(code=\"print('historical identity fixture, not launch evidence')\")\nThe run ended on 1 consecutive failures, so it stopped making progress before it stopped.",
+        "trace_available": true,
+        "clipped_fields": []
+      }
+    }
+  }
+}

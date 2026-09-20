@@ -28,11 +28,62 @@ from tests.test_ad1131_crew_session_delivery_metrics import (
     _make_outcome,
     harness as notification_delivery_harness,
 )
+from tests.test_ad1207_fault_visibility import fault_visibility_api
 
 
 # ------------------------------------------------------------------
 # Fixtures
 # ------------------------------------------------------------------
+
+async def test_fault_list_canonical_happy_path(fault_visibility_api: Any) -> None:
+    rig = fault_visibility_api
+    fault = await rig.store.file_fault(tool_id="browser", error_text="Page opening failed")
+    response = await rig.client.get("/api/faults")
+    assert response.status_code == 200
+    assert response.json()["faults"][0]["id"] == fault.id
+    assert response.json()["total"] == 1
+    assert response.headers["cache-control"] == "no-store"
+
+
+async def test_fault_list_canonical_empty_and_unavailable_are_distinct(fault_visibility_api: Any) -> None:
+    rig = fault_visibility_api
+    assert (await rig.client.get("/api/faults")).json() == {
+        "faults": [], "total": 0, "limit": 50, "offset": 0,
+    }
+    rig.runtime.fault_report_store = None
+    response = await rig.client.get("/api/faults")
+    assert response.status_code == 503 and response.json() == {"detail": "fault_store_unavailable"}
+
+
+@pytest.mark.parametrize("query", ["limit=0", "limit=101", "limit=bad", "offset=-1", "offset=1.5"])
+async def test_fault_list_canonical_query_validation(fault_visibility_api: Any, query: str) -> None:
+    assert (await fault_visibility_api.client.get(f"/api/faults?{query}")).status_code == 422
+
+
+async def test_fault_detail_canonical_happy_path(fault_visibility_api: Any) -> None:
+    rig = fault_visibility_api
+    fault = await rig.store.file_fault(
+        tool_id="browser", error_text="Page opening failed", agent_id="reporter",
+    )
+    response = await rig.client.get(f"/api/faults/{fault.id}")
+    assert response.status_code == 200
+    assert response.json()["fault"]["recorded_agent_id"] == "reporter"
+    assert response.json()["fault"]["occurrences"] == "1"
+    assert response.headers["cache-control"] == "no-store"
+
+
+async def test_fault_detail_canonical_unknown_and_unavailable(fault_visibility_api: Any) -> None:
+    rig = fault_visibility_api
+    response = await rig.client.get("/api/faults/abcdefabcdef")
+    assert response.status_code == 404 and response.json() == {"detail": "fault_not_found"}
+    rig.runtime.fault_report_store = None
+    assert (await rig.client.get("/api/faults/abcdefabcdef")).status_code == 503
+
+
+@pytest.mark.parametrize("fault_id", ["BAD", "ABCDEFABCDEF", "a" * 11, "a" * 13, "g" * 12])
+async def test_fault_detail_canonical_id_validation(fault_visibility_api: Any, fault_id: str) -> None:
+    assert (await fault_visibility_api.client.get(f"/api/faults/{fault_id}")).status_code == 422
+
 
 @pytest.fixture
 async def actionable_capability_api(tmp_path):
