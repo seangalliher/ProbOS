@@ -4406,6 +4406,7 @@ class CognitiveAgent(BaseAgent):
         default the run is awaited inline exactly as before."""
         if not self._conversational_agentic_will_run(observation):
             return None
+        observation.pop("_tool_trace_ref", None)
         runtime = getattr(self, "_runtime", None)
         cfg = getattr(getattr(runtime, "config", None), "dm_agentic", None)
         try:
@@ -4460,6 +4461,7 @@ class CognitiveAgent(BaseAgent):
             # was exhausted on pass 1 and completed on pass 2 correctly reads
             # as complete.
             _last_stop: dict[str, str] = {"reason": ""}
+            _last_trace_ref: dict[str, str | None] = {"ref": None}
 
             # AD-1204: the promoted work item's id, published back here by
             # ``run_with_promotion`` the moment the item is created. It cannot
@@ -4541,6 +4543,7 @@ class CognitiveAgent(BaseAgent):
                     _compaction_threshold = threshold
 
             async def _run_pass(task_text: str) -> Any:
+                _last_trace_ref["ref"] = None
                 outcome = await executor.run(
                     agent_id=self.id,
                     instructions=system_prompt,
@@ -4571,15 +4574,9 @@ class CognitiveAgent(BaseAgent):
                 _last_stop["reason"] = str(
                     getattr(outcome, "stopped_reason", "") or ""
                 )
-                # AD-1203: carry the run's trace ref out on the observation, the
-                # one mutable object already threaded through decide -> act.
-                # The crew path records this ref; the 1:1 DM path computed it and
-                # dropped it, so a Captain-visible claim could not be resolved to
-                # the calls behind it. Last pass wins: a re-invoked pass (AD-1164)
-                # is the run that produced the text the Captain sees.
-                _ref = str(getattr(outcome, "tool_trace_ref", "") or "")
-                if _ref:
-                    observation["_tool_trace_ref"] = _ref
+                # A pass without a receipt replaces, rather than inherits, the
+                # prior pass. Keep it off the foreground acknowledgement.
+                _last_trace_ref["ref"] = getattr(outcome, "tool_trace_ref", None)
                 _accumulate_pass_failures(observation, outcome)
                 # AD-1295 (#1087): the same fold point, for the record that says
                 # which tools ran. Here rather than after the turn because a
@@ -4691,6 +4688,7 @@ class CognitiveAgent(BaseAgent):
                     # acknowledgement, and the observation is the object those
                     # passes fold into.
                     failures_probe=lambda: observation.get("_dm_tool_failures"),
+                    trace_ref_provider=lambda: _last_trace_ref["ref"],
                     on_promoted=_record_promotion,
                     **_promotion_diagnostic_kwargs,
                     background_slot=_bg_slot,
@@ -4722,7 +4720,17 @@ class CognitiveAgent(BaseAgent):
                         )
                     ),
                 )
-            return text.strip() or None
+            text = text.strip()
+            if text and not _promoted["work_item_id"]:
+                ref = _last_trace_ref["ref"]
+                if type(ref) is str and re.fullmatch(r"[0-9a-f]{64}", ref):
+                    observation["_tool_trace_ref"] = ref
+                elif ref is not None and not (type(ref) is str and not ref):
+                    logger.warning(
+                        "AD-1243: inline trace reference is invalid; the reply "
+                        "is returned without optional consulted evidence",
+                    )
+            return text or None
         except Exception:
             logger.warning(
                 "AD-1065: conversational agentic loop failed for agent=%s; "

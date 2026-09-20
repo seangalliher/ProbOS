@@ -64,6 +64,7 @@ from types import CoroutineType
 from typing import Any, Awaitable, Callable
 
 from probos.cognitive.dm.bypass_egress import compose_bypass_reply
+from probos.cognitive.promoted_report_delivery import promoted_report_metadata
 from probos.tools.executor import recording_identity, sample_recording_identity
 
 logger = logging.getLogger(__name__)
@@ -946,6 +947,7 @@ async def _post_report(
     work_item_id: str,
     body: str,
     tool_failures: Any = None,
+    tool_trace_ref: str | None = None,
 ) -> ReportDelivery:
     """Append a promoted run's report into the thread it came from.
 
@@ -1013,6 +1015,9 @@ async def _post_report(
     # is what makes an at-least-once retry an exactly-once delivery.
     message_id = uuid.uuid4().hex
     created_at = time.time()
+    tool_trace_ref = promoted_report_metadata(
+        work_item_id, tool_trace_ref,
+    ).get("tool_trace_ref")
     attempts = max(1, int(_REPORT_DELIVERY_ATTEMPTS))
     backoff = tuple(_REPORT_RETRY_BACKOFF_SECONDS)
     last_error: BaseException | None = None
@@ -1044,6 +1049,7 @@ async def _post_report(
                     agent_id=agent_id,
                     body=body,
                     created_at=created_at,
+                    tool_trace_ref=tool_trace_ref,
                 ),
                 timeout=_REPORT_CANCEL_QUEUE_SECONDS,
             )
@@ -1066,6 +1072,7 @@ async def _post_report(
                 body=body,
                 created_at=created_at,
                 work_item_id=work_item_id,
+                tool_trace_ref=tool_trace_ref,
             )
         except asyncio.CancelledError:
             await _queue_on_cancel()
@@ -1146,6 +1153,7 @@ async def _post_report(
         agent_id=agent_id,
         body=body,
         created_at=created_at,
+        tool_trace_ref=tool_trace_ref,
     )
     return ReportDelivery(
         body=body,
@@ -1165,6 +1173,7 @@ async def _queue_pending_report(
     agent_id: str,
     body: str,
     created_at: float,
+    tool_trace_ref: str | None = None,
 ) -> bool:
     """AD-1274: hand an undeliverable report to ``workforce.db``.
 
@@ -1197,6 +1206,7 @@ async def _queue_pending_report(
             agent_id=agent_id,
             body=body,
             created_at=created_at,
+            **({"tool_trace_ref": tool_trace_ref} if tool_trace_ref is not None else {}),
         )
     except asyncio.CancelledError:
         raise
@@ -1251,6 +1261,7 @@ def _append_report_message(
     body: str,
     created_at: float,
     work_item_id: str,
+    tool_trace_ref: str | None = None,
 ) -> Any:
     """The synchronous half, run in a worker thread by ``_post_report``.
 
@@ -1264,7 +1275,7 @@ def _append_report_message(
         role="agent",
         body=body,
         created_at=created_at,
-        metadata={"work_item_id": work_item_id, "source": PROMOTION_SOURCE},
+        metadata=promoted_report_metadata(work_item_id, tool_trace_ref),
     )
 
 
@@ -1421,6 +1432,7 @@ async def _finish_promoted_turn(
     request_text: str = "",
     completed_probe: Callable[[], bool] | None = None,
     failures_probe: Callable[[], Any] | None = None,
+    trace_ref_provider: Callable[[], str | None] | None = None,
     supervisor: "_PromotedRunSupervisor | None" = None,
     unconfirmed_grace_seconds: float = 0.0,
     strand_timeout_seconds: float = 0.0,
@@ -1568,6 +1580,22 @@ async def _finish_promoted_turn(
         )
         return
 
+    tool_trace_ref = None
+    if not failed and not abandoned and trace_ref_provider is not None:
+        try:
+            candidate_ref = trace_ref_provider()
+        except Exception:
+            logger.warning(
+                "AD-1243: final report trace provider failed; optional consulted "
+                "evidence is omitted and the report is delivered without a receipt",
+            )
+        else:
+            if type(candidate_ref) is CoroutineType:
+                candidate_ref.close()
+            tool_trace_ref = promoted_report_metadata(
+                work_item_id, candidate_ref,
+            ).get("tool_trace_ref")
+
     if abandoned:
         body = _REPORT_ABANDONED
     elif failed:
@@ -1612,6 +1640,7 @@ async def _finish_promoted_turn(
         work_item_id=work_item_id,
         body=body,
         tool_failures=_failures,
+        tool_trace_ref=tool_trace_ref,
     )
     reported = report.body
 
@@ -1705,6 +1734,7 @@ async def _report_holding_slot(
     request_text: str = "",
     completed_probe: Callable[[], bool] | None = None,
     failures_probe: Callable[[], Any] | None = None,
+    trace_ref_provider: Callable[[], str | None] | None = None,
     background_slot: Callable[[], Any] | None = None,
     deadline_seconds: float = 0.0,
     unconfirmed_grace_seconds: float = 0.0,
@@ -1755,6 +1785,7 @@ async def _report_holding_slot(
             request_text=request_text,
             completed_probe=completed_probe,
             failures_probe=failures_probe,
+            trace_ref_provider=trace_ref_provider,
             background_slot=background_slot,
             unconfirmed_grace_seconds=unconfirmed_grace_seconds,
             strand_timeout_seconds=strand_timeout_seconds,
@@ -1854,6 +1885,7 @@ async def _report_with_supervisor(
     completed_probe: Callable[[], bool] | None,
     failures_probe: Callable[[], Any] | None,
     background_slot: Callable[[], Any] | None,
+    trace_ref_provider: Callable[[], str | None] | None = None,
     unconfirmed_grace_seconds: float = 0.0,
     strand_timeout_seconds: float = 0.0,
 ) -> None:
@@ -1892,6 +1924,7 @@ async def _report_with_supervisor(
             request_text=request_text,
             completed_probe=completed_probe,
             failures_probe=failures_probe,
+            trace_ref_provider=trace_ref_provider,
             supervisor=supervisor,
             unconfirmed_grace_seconds=unconfirmed_grace_seconds,
             strand_timeout_seconds=strand_timeout_seconds,
@@ -1928,6 +1961,7 @@ async def run_with_promotion(
     unconfirmed_grace_seconds: float = 0.0,
     strand_timeout_seconds: float = 0.0,
     run_id_provider: Callable[[], str | None] | None = None,
+    trace_ref_provider: Callable[[], str | None] | None = None,
 ) -> str:
     """Run ``work``; promote it to a background task if it outlives the budget.
 
@@ -1983,6 +2017,11 @@ async def run_with_promotion(
     association never changes execution or rewrites historical tool rows.
     Ordinary diagnostic failures degrade privately; lifecycle cancellation
     propagates, with the run and reporter retained by their existing owner.
+
+    ``trace_ref_provider`` reads only this turn's final pass. It is sampled once
+    after a normally returned promoted result, before delivery awaits, and the
+    validated ref is frozen with the report through retries and durable replay.
+    Acknowledgements and infrastructure-generated notices carry no receipt.
 
     ``background_slot`` (BF-732) returns an async context manager -- normally
     ``ConcurrencyManager.slot`` -- held by the reporter for as long as the
@@ -2100,6 +2139,7 @@ async def run_with_promotion(
             request_text=request_text,
             completed_probe=completed_probe,
             failures_probe=failures_probe,
+            trace_ref_provider=trace_ref_provider,
             background_slot=background_slot,
             deadline_seconds=deadline_seconds,
             unconfirmed_grace_seconds=unconfirmed_grace_seconds,

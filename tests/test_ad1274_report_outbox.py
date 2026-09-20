@@ -19,6 +19,7 @@ import asyncio
 import sqlite3
 import time
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -27,6 +28,16 @@ from probos.cognitive.promoted_report_delivery import (
 )
 from probos.threads import ChatThreadStore
 from probos.workforce import WorkItemStore
+
+
+_LEGACY_OUTBOX_SCHEMA = """
+CREATE TABLE promoted_report_outbox (
+    message_id TEXT PRIMARY KEY, work_item_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL, agent_id TEXT NOT NULL, body TEXT NOT NULL,
+    created_at REAL NOT NULL, delivered INTEGER NOT NULL DEFAULT 0,
+    queued_at REAL NOT NULL, delivered_at REAL
+)
+"""
 
 
 class _AlwaysBusy(ChatThreadStore):
@@ -60,6 +71,374 @@ async def _work_store(tmp_path) -> WorkItemStore:
     store = WorkItemStore(db_path=str(tmp_path / "workforce.db"), tick_interval=1000.0)
     await store.start()
     return store
+
+
+async def test_no_ref_report_preserves_legacy_enqueue_signature(monkeypatch) -> None:
+    import probos.cognitive.turn_promotion as tp
+
+    monkeypatch.setattr(tp, "_REPORT_RETRY_BACKOFF_SECONDS", (0.0,))
+    queued = []
+
+    class _Busy:
+        def append_message_once(self, thread_id: str, **kwargs: Any) -> Any:
+            assert kwargs["metadata"] == {"work_item_id": "legacy-work", "source": tp.PROMOTION_SOURCE}
+            raise OSError("owned legacy append unavailable")
+
+    class _LegacyOutbox:
+        async def enqueue_promoted_report(
+            self, *, message_id: str, work_item_id: str, thread_id: str,
+            agent_id: str, body: str, created_at: float,
+        ) -> bool:
+            queued.append((message_id, work_item_id, thread_id, agent_id, body, created_at))
+            return True
+
+    delivered = await tp._post_report(
+        runtime=SimpleNamespace(chat_thread_store=_Busy(), work_item_store=_LegacyOutbox()),
+        agent_id="agent", thread_id="thread", work_item_id="legacy-work", body="legacy body",
+    )
+    assert delivered.queued and not delivered.delivered
+    assert len(queued) == 1
+    assert queued[0][0] == delivered.message_id
+    assert queued[0][1:5] == ("legacy-work", "thread", "agent", "legacy body")
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_trace_migration_is_nullable_trailing_and_restart_idempotent(tmp_path, legacy) -> None:
+    from probos.workforce import PromotedReportOutboxEntry
+
+    path = tmp_path / "workforce.db"
+    if legacy:
+        with sqlite3.connect(path) as connection:
+            connection.execute(_LEGACY_OUTBOX_SCHEMA)
+            connection.execute(
+                "INSERT INTO promoted_report_outbox VALUES "
+                "('old', 'work', 'thread', 'agent', 'legacy body', 10.0, 0, 11.0, NULL)",
+            )
+    work = WorkItemStore(db_path=str(path), tick_interval=1000.0)
+    try:
+        await work.start()
+        await work.start()
+        with sqlite3.connect(path) as connection:
+            columns = connection.execute("PRAGMA table_info(promoted_report_outbox)").fetchall()
+            assert [column[1] for column in columns] == [
+                "message_id", "work_item_id", "thread_id", "agent_id", "body",
+                "created_at", "delivered", "queued_at", "delivered_at", "tool_trace_ref",
+            ]
+            assert columns[-1][2:6] == ("TEXT", 0, None, 0)
+            connection.execute(
+                "INSERT INTO promoted_report_outbox "
+                "(message_id, work_item_id, thread_id, agent_id, body, created_at, "
+                "delivered, queued_at, delivered_at) VALUES "
+                "('legacy-writer', 'work', 'thread', 'agent', 'body', 12.0, 0, 13.0, NULL)",
+            )
+        before = await work.list_pending_promoted_reports(limit=10)
+        assert all(entry.tool_trace_ref is None for entry in before)
+        if legacy:
+            assert before[0] == PromotedReportOutboxEntry(
+                "old", "work", "thread", "agent", "legacy body", 10.0, False, 11.0, None,
+            )
+        await work.stop()
+        await work.start()
+        assert await work.list_pending_promoted_reports(limit=10) == before
+        assert await work.enqueue_promoted_report(
+            message_id="omitted", work_item_id="work", thread_id="thread",
+            agent_id="agent", body="body", created_at=14.0,
+        )
+        assert (await work.list_pending_promoted_reports(limit=10))[-1].tool_trace_ref is None
+    finally:
+        await work.stop()
+
+
+@pytest.mark.parametrize("column", [
+    "tool_trace_ref INTEGER",
+    "tool_trace_ref TEXT NOT NULL DEFAULT ''",
+    "tool_trace_ref TEXT DEFAULT 'invented'",
+    "tool_trace_ref TEXT, unexpected TEXT",
+])
+async def test_trace_migration_rejects_incompatible_column_and_closes_connection(tmp_path, column) -> None:
+    from probos.storage.sqlite_factory import default_factory
+
+    path = tmp_path / "workforce.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(_LEGACY_OUTBOX_SCHEMA.rstrip().removesuffix(")") + ", " + column + ")")
+
+    class _Factory:
+        connection = None
+
+        async def connect(self, db_path: str) -> Any:
+            self.connection = await default_factory.connect(db_path)
+            return self.connection
+
+    factory = _Factory()
+    work = WorkItemStore(db_path=str(path), connection_factory=factory)
+    with pytest.raises(ValueError, match="promoted_report_trace_column_incompatible"):
+        await work.start()
+    assert await work.list_pending_promoted_reports(limit=10) == ()
+    with pytest.raises(ValueError, match="no active connection"):
+        await factory.connection.execute("SELECT 1")
+    await work.stop()
+
+
+@pytest.mark.parametrize("default", ["NULL", "Null", "(NULL)"])
+async def test_trace_migration_accepts_existing_sql_null_default(tmp_path, default) -> None:
+    from contextlib import closing
+
+    path = tmp_path / "workforce.db"
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute(
+            _LEGACY_OUTBOX_SCHEMA.rstrip().removesuffix(")")
+            + ", tool_trace_ref TEXT DEFAULT " + default + ")",
+        )
+    work = WorkItemStore(db_path=str(path))
+    try:
+        await work.start()
+        assert await work.enqueue_promoted_report(
+            message_id="legacy", work_item_id="work", thread_id="thread",
+            agent_id="agent", body="body", created_at=1.0,
+        )
+        (pending,) = await work.list_pending_promoted_reports(limit=1)
+        assert pending.tool_trace_ref is None
+    finally:
+        await work.stop()
+
+
+@pytest.mark.parametrize("failure", [sqlite3.OperationalError("migration fixture failure"), asyncio.CancelledError()])
+async def test_trace_migration_unexpected_failure_propagates_and_cleans_up(tmp_path, failure) -> None:
+    from probos.storage.sqlite_factory import default_factory
+
+    class _Connection:
+        def __init__(self, connection: Any) -> None:
+            self.connection = connection
+            self.closed = False
+
+        @property
+        def row_factory(self) -> Any:
+            return self.connection.row_factory
+
+        @row_factory.setter
+        def row_factory(self, value: Any) -> None:
+            self.connection.row_factory = value
+
+        async def execute(self, sql: str, parameters: Any = ()) -> Any:
+            if sql == "PRAGMA table_info(promoted_report_outbox)":
+                raise failure
+            return await self.connection.execute(sql, parameters)
+
+        async def executescript(self, sql: str) -> Any:
+            return await self.connection.executescript(sql)
+
+        async def commit(self) -> None:
+            await self.connection.commit()
+
+        async def close(self) -> None:
+            self.closed = True
+            await self.connection.close()
+
+    class _Factory:
+        connection = None
+
+        async def connect(self, db_path: str) -> Any:
+            self.connection = _Connection(await default_factory.connect(db_path))
+            return self.connection
+
+    factory = _Factory()
+    work = WorkItemStore(db_path=str(tmp_path / "workforce.db"), connection_factory=factory)
+    with pytest.raises(type(failure)):
+        await work.start()
+    assert factory.connection.closed
+    assert await work.list_pending_promoted_reports(limit=10) == ()
+    await work.stop()
+
+
+@pytest.mark.parametrize("ref", ["", "A" * 64, "b" * 63, "b" * 65, 1, True, b"a" * 64])
+async def test_enqueue_promoted_report_rejects_noncanonical_refs(tmp_path, ref) -> None:
+    work = await _work_store(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="promoted_report_outbox_invalid"):
+            await work.enqueue_promoted_report(
+                message_id="msg", work_item_id="work", thread_id="thread",
+                agent_id="agent", body="body", created_at=1.0, tool_trace_ref=ref,
+            )
+        assert await work.list_pending_promoted_reports(limit=10) == ()
+    finally:
+        await work.stop()
+
+
+async def test_enqueue_promoted_report_keeps_first_ref_and_all_identity_fields(tmp_path) -> None:
+    work = await _work_store(tmp_path)
+    try:
+        arguments = dict(
+            message_id="msg", work_item_id="work", thread_id="thread",
+            agent_id="agent", body="first", created_at=1.0, tool_trace_ref="a" * 64,
+        )
+        assert await work.enqueue_promoted_report(**arguments)
+        original = (await work.list_pending_promoted_reports(limit=10))[0]
+        assert not await work.enqueue_promoted_report(
+            **{**arguments, "body": "second", "created_at": 2.0, "tool_trace_ref": "b" * 64},
+        )
+        assert (await work.list_pending_promoted_reports(limit=10))[0] == original
+        await work.stop()
+        await work.start()
+        assert (await work.list_pending_promoted_reports(limit=10))[0] == original
+    finally:
+        await work.stop()
+
+
+@pytest.mark.parametrize("corrupt", ["", "A" * 64, "x" * 64, sqlite3.Binary(b"a" * 64)])
+async def test_corrupt_persisted_trace_ref_fails_without_delivery_or_discard(tmp_path, corrupt) -> None:
+    work = await _work_store(tmp_path)
+    threads = ChatThreadStore(tmp_path / "threads.db")
+    thread = threads.create_thread(title="owned", participants=["agent"])
+    try:
+        await work.enqueue_promoted_report(
+            message_id="msg", work_item_id="work", thread_id=thread.id,
+            agent_id="agent", body="body", created_at=1.0,
+        )
+        with sqlite3.connect(tmp_path / "workforce.db") as connection:
+            connection.execute(
+                "UPDATE promoted_report_outbox SET tool_trace_ref = ? WHERE message_id = 'msg'",
+                (corrupt,),
+            )
+        service = PromotedReportDeliveryService(outbox=work, threads=threads)
+        with pytest.raises(ValueError, match="promoted_report_outbox_corrupt"):
+            await service.drain_pending()
+        assert threads.list_messages(thread.id) == []
+        with sqlite3.connect(tmp_path / "workforce.db") as connection:
+            row = connection.execute(
+                "SELECT delivered, tool_trace_ref FROM promoted_report_outbox WHERE message_id = 'msg'",
+            ).fetchone()
+        assert row[0] == 0
+        assert row[1] == (bytes(corrupt) if isinstance(corrupt, memoryview) else corrupt)
+    finally:
+        await work.stop()
+
+
+async def test_rollback_requires_quiescence_and_newer_drain_after_real_ack_loss(tmp_path) -> None:
+    from contextlib import closing
+
+    from probos.cognitive.promoted_report_delivery import promoted_report_metadata
+    from tests.fixtures.consulted_evidence_bridge import ConsultedEvidenceFixture, REPLY_BODY
+
+    fixture = ConsultedEvidenceFixture(tmp_path)
+    try:
+        await fixture.start()
+        acknowledged = await fixture.start_turn(mode="lost_ack")
+        completed = await fixture.release_turn(acknowledged["turn"])
+        assert completed["llm_calls"] == 2 and completed["tool_calls"] == 1
+        (pending,) = await fixture.work.list_pending_promoted_reports(limit=10)
+        (report,) = [
+            message for message in fixture.threads.list_messages(pending.thread_id)
+            if message.body == REPLY_BODY
+        ]
+        assert report.id == pending.message_id
+        assert report.metadata["tool_trace_ref"] == pending.tool_trace_ref
+        fixture.threads.fault_mode = ""
+        # An older drainer replays only these two metadata keys. This must fail:
+        # relaxing append equality would hide the lost provenance on downgrade.
+        with pytest.raises(ValueError, match="chat_thread_message_conflict"):
+            fixture.threads.append_message_once(
+                pending.thread_id, message_id=pending.message_id, author_id=pending.agent_id,
+                role="agent", body=pending.body, created_at=pending.created_at,
+                metadata=promoted_report_metadata(pending.work_item_id),
+            )
+        assert await fixture.work.list_pending_promoted_reports(limit=10) == (pending,)
+        # The producer is quiescent. Restart under the newer schema and resolve
+        # trace-bearing pending reports before an older drainer can be deployed.
+        recovered = await fixture.recover(acknowledged["turn"])
+        assert recovered["pending"] == []
+        assert len([message for message in recovered["messages"] if message["body"] == REPLY_BODY]) == 1
+        with closing(sqlite3.connect(tmp_path / "workforce.db")) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM promoted_report_outbox "
+                "WHERE delivered = 0 AND tool_trace_ref IS NOT NULL",
+            ).fetchone() == (0,)
+            assert connection.execute(
+                "SELECT tool_trace_ref FROM promoted_report_outbox WHERE message_id = ?",
+                (pending.message_id,),
+            ).fetchone() == (pending.tool_trace_ref,)
+            # Rollback retains the column. Old explicit-column SQL can still
+            # enqueue a new legacy-null report without rewriting stored bodies.
+            connection.execute(
+                "INSERT INTO promoted_report_outbox "
+                "(message_id, work_item_id, thread_id, agent_id, body, created_at, "
+                "delivered, queued_at, delivered_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL)",
+                ("legacy-after-quiescence", "legacy-work", pending.thread_id, pending.agent_id,
+                 "legacy body", 123.0, 124.0),
+            )
+            connection.commit()
+        (legacy,) = await fixture.work.list_pending_promoted_reports(limit=10)
+        assert legacy.tool_trace_ref is None
+        replayed = fixture.threads.append_message_once(
+            legacy.thread_id, message_id=legacy.message_id, author_id=legacy.agent_id,
+            role="agent", body=legacy.body, created_at=legacy.created_at,
+            metadata=promoted_report_metadata(legacy.work_item_id),
+        )
+        assert replayed.body == "legacy body"
+        assert replayed.metadata == {"work_item_id": "legacy-work", "source": "dm_agentic_promotion"}
+    finally:
+        await fixture.stop()
+
+
+@pytest.mark.parametrize("cancel_at", ["write", "backoff"])
+async def test_cancelled_real_report_queues_same_frozen_ref_for_recovery(
+    tmp_path, monkeypatch, cancel_at,
+) -> None:
+    import threading
+
+    import probos.cognitive.turn_promotion as tp
+    from tests.fixtures.consulted_evidence_bridge import ConsultedEvidenceFixture, REPLY_BODY
+
+    monkeypatch.setattr(tp, "_REPORT_RETRY_BACKOFF_SECONDS", (30.0,))
+    entered = threading.Event()
+    release_write = threading.Event()
+    committed = threading.Event()
+    attempts = []
+    fixture = ConsultedEvidenceFixture(tmp_path)
+    finishing = None
+
+    class _Gate:
+        def append_message_once(self, thread_id: str, **kwargs: Any) -> Any:
+            attempts.append({"thread_id": thread_id, **kwargs})
+            entered.set()
+            if cancel_at == "backoff":
+                raise OSError("owned fixture append retry")
+            if not release_write.wait(timeout=5):
+                raise TimeoutError("owned fixture write gate timed out")
+            message = fixture.threads.append_message_once(thread_id, **kwargs)
+            committed.set()
+            return message
+
+    try:
+        await fixture.start()
+        acknowledged = await fixture.start_turn(mode="promoted")
+        fixture.runtime.chat_thread_store = _Gate()
+        finishing = asyncio.create_task(fixture.release_turn(acknowledged["turn"]))
+        assert await asyncio.to_thread(entered.wait, 5)
+        await fixture.agents["yeo"].cancel_reports()
+        await asyncio.gather(finishing, return_exceptions=True)
+        (pending,) = await fixture.work.list_pending_promoted_reports(limit=10)
+        assert pending.tool_trace_ref is not None
+        assert pending.tool_trace_ref == attempts[0]["metadata"]["tool_trace_ref"]
+        assert pending.message_id == attempts[0]["message_id"]
+        assert pending.created_at == attempts[0]["created_at"]
+        assert pending.body == attempts[0]["body"] == REPLY_BODY
+        assert len(attempts) == 1
+        if cancel_at == "write":
+            release_write.set()
+            assert await asyncio.to_thread(committed.wait, 5)
+        fixture.runtime.chat_thread_store = fixture.threads
+        recovered = await fixture.recover(acknowledged["turn"])
+        assert recovered["llm_calls"] == 2 and recovered["tool_calls"] == 1
+        assert recovered["pending"] == []
+        (report,) = [message for message in recovered["messages"] if message["body"] == REPLY_BODY]
+        assert report["id"] == pending.message_id
+        assert report["metadata"] == attempts[0]["metadata"]
+    finally:
+        release_write.set()
+        if finishing is not None and not finishing.done():
+            finishing.cancel()
+            await asyncio.gather(finishing, return_exceptions=True)
+        await fixture.stop()
 
 
 # ── 9. the pending row is durable, and on a different resource ─────────────

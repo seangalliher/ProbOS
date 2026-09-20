@@ -29,6 +29,7 @@ import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -1192,3 +1193,306 @@ async def test_the_default_budget_never_touches_the_task_holder(monkeypatch) -> 
 
     assert await _turn(agent) == "Typed Hello World into the document."
     assert store.created == []
+
+
+@pytest.mark.parametrize("ref", [None, "", "a" * 64])
+def test_promoted_report_metadata_preserves_optional_compatibility(ref) -> None:
+    from probos.cognitive.promoted_report_delivery import promoted_report_metadata
+
+    expected = {"work_item_id": "work-1", "source": PROMOTION_SOURCE}
+    if ref:
+        expected["tool_trace_ref"] = ref
+    assert promoted_report_metadata("work-1", ref) == expected
+    assert promoted_report_metadata("work-1") == {
+        "work_item_id": "work-1", "source": PROMOTION_SOURCE,
+    }
+
+
+@pytest.mark.parametrize("ref", ["A" * 64, "a" * 63, "a" * 65, "private-invalid-ref", 1, True, [], {}])
+def test_promoted_report_metadata_invalid_ref_is_safely_omitted(ref, caplog) -> None:
+    from probos.cognitive.promoted_report_delivery import promoted_report_metadata
+
+    with caplog.at_level(logging.WARNING):
+        metadata = promoted_report_metadata("work-1", ref)
+    assert metadata == {"work_item_id": "work-1", "source": PROMOTION_SOURCE}
+    assert "optional consulted evidence is omitted" in caplog.text
+    assert "private-invalid-ref" not in caplog.text
+
+
+def test_promoted_report_metadata_rejects_string_subclasses(caplog) -> None:
+    from probos.cognitive.promoted_report_delivery import promoted_report_metadata
+
+    class _String(str):
+        pass
+
+    assert "tool_trace_ref" not in promoted_report_metadata("work-1", _String("a" * 64))
+    assert "invalid" in caplog.text
+
+
+async def test_report_samples_provider_once_and_freezes_ref_across_retries(monkeypatch) -> None:
+    import probos.cognitive.turn_promotion as tp
+
+    monkeypatch.setattr(tp, "_REPORT_RETRY_BACKOFF_SECONDS", (0.0,))
+    release = asyncio.Event()
+    refs = ["a" * 64, "b" * 64]
+    reads = []
+    attempts = []
+
+    class _RetryThreads(_FakeThreadStore):
+        def append_message_once(self, thread_id: str, **kwargs: Any) -> Any:
+            attempts.append(dict(kwargs))
+            refs[0] = refs[1]
+            if len(attempts) < 3:
+                raise OSError("fixture append busy")
+            return super().append_message_once(thread_id, **kwargs)
+
+    def _provider() -> str:
+        reads.append(refs[0])
+        return refs[0]
+
+    async def _work() -> str:
+        await release.wait()
+        return "unchanged report"
+
+    threads = _RetryThreads()
+    work = _FakeWorkItemStore()
+    hold = set()
+    try:
+        ack = await run_with_promotion(
+            _work, promote_after_seconds=0.001,
+            runtime=_runtime(work_items=work, threads=threads),
+            agent_id="agent-1", thread_id="thread-1", request_text="request",
+            hold=hold, trace_ref_provider=_provider,
+        )
+        assert ack == _ACK_TEMPLATE.format(work_item_id=work.created[0].id)
+        assert reads == [] and attempts == []
+        release.set()
+        await _drain(hold)
+        assert reads == ["a" * 64]
+        assert len(attempts) == 3 and attempts[0] == attempts[1] == attempts[2]
+        assert attempts[0]["metadata"]["tool_trace_ref"] == "a" * 64
+        assert threads.appended[0]["body"] == "unchanged report"
+    finally:
+        release.set()
+        await _drain(hold)
+
+
+@pytest.mark.parametrize("failure", [False, True])
+async def test_report_provider_failure_does_not_lose_normal_report(failure, caplog) -> None:
+    from probos.cognitive.turn_promotion import _finish_promoted_turn
+
+    reads = []
+    threads = _FakeThreadStore()
+
+    def _provider() -> str:
+        reads.append(True)
+        raise RuntimeError("sensitive-provider-secret")
+
+    async def _work() -> str:
+        if failure:
+            raise RuntimeError("fixture run failed")
+        return "unchanged report"
+
+    task = asyncio.create_task(_work())
+    with caplog.at_level(logging.WARNING):
+        await _finish_promoted_turn(
+            task, runtime=_runtime(work_items=_FakeWorkItemStore(), threads=threads),
+            agent_id="agent-1", thread_id="thread-1", work_item_id="work-1",
+            trace_ref_provider=_provider,
+        )
+    assert reads == ([] if failure else [True])
+    assert threads.appended[0]["body"] == (_REPORT_FAILED if failure else "unchanged report")
+    assert threads.appended[0]["metadata"] == {
+        "work_item_id": "work-1", "source": PROMOTION_SOURCE,
+    }
+    assert "sensitive-provider-secret" not in caplog.text
+
+
+async def test_report_provider_cancellation_propagates_without_append() -> None:
+    from probos.cognitive.turn_promotion import _finish_promoted_turn
+
+    threads = _FakeThreadStore()
+
+    def _provider() -> str:
+        raise asyncio.CancelledError()
+
+    async def _work() -> str:
+        return "completed"
+
+    task = asyncio.create_task(_work())
+    with pytest.raises(asyncio.CancelledError):
+        await _finish_promoted_turn(
+            task, runtime=_runtime(work_items=_FakeWorkItemStore(), threads=threads),
+            agent_id="agent-1", thread_id="thread-1", work_item_id="work-1",
+            trace_ref_provider=_provider,
+        )
+    assert threads.appended == []
+    assert task.done()
+
+
+@pytest.mark.parametrize("budget", [0.0, 30.0])
+async def test_inline_turn_never_samples_report_provider(budget) -> None:
+    def _provider() -> str:
+        pytest.fail("A reply is not a promoted report")
+
+    async def _work() -> str:
+        return "inline"
+
+    assert await run_with_promotion(
+        _work, promote_after_seconds=budget, runtime=_runtime(),
+        agent_id="agent-1", thread_id="thread-1", request_text="request",
+        hold=set(), trace_ref_provider=_provider,
+    ) == "inline"
+
+
+async def test_report_closes_invalid_async_provider_and_omits_receipt(caplog) -> None:
+    from probos.cognitive.turn_promotion import _finish_promoted_turn
+
+    threads = _FakeThreadStore()
+    invalid_results = []
+
+    async def _invalid() -> str:
+        return "a" * 64
+
+    def _provider() -> Any:
+        result = _invalid()
+        invalid_results.append(result)
+        return result
+
+    async def _work() -> str:
+        return "unchanged report"
+
+    task = asyncio.create_task(_work())
+    await _finish_promoted_turn(
+        task, runtime=_runtime(work_items=_FakeWorkItemStore(), threads=threads),
+        agent_id="agent", thread_id="thread", work_item_id="work",
+        trace_ref_provider=_provider,
+    )
+    assert len(invalid_results) == 1 and invalid_results[0].cr_frame is None
+    assert threads.appended[0]["body"] == "unchanged report"
+    assert "tool_trace_ref" not in threads.appended[0]["metadata"]
+    assert "report trace reference is invalid" in caplog.text
+
+
+@pytest.mark.parametrize("promoted", [False, True])
+@pytest.mark.parametrize("last_ref", [None, "b" * 64])
+async def test_final_pass_replaces_prior_ref_and_ack_has_none(
+    monkeypatch, promoted, last_ref,
+) -> None:
+    """A focused pass-ownership test; the real producer crossing is separate."""
+    release = asyncio.Event()
+    entered_second = asyncio.Event()
+    calls = []
+
+    class _PassExecutor:
+        def __init__(self, *, llm_client: Any) -> None:
+            pass
+
+        async def run(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return SimpleNamespace(
+                    final_text="first pass", stopped_reason="max_iterations",
+                    tool_trace_ref="a" * 64,
+                )
+            entered_second.set()
+            if promoted:
+                await release.wait()
+            return SimpleNamespace(
+                final_text="final pass", stopped_reason="completed", tool_trace_ref=last_ref,
+            )
+
+    async def _continue(outcome: Any, *, reinvoke: Any, **kwargs: Any) -> str:
+        return (await reinvoke("continue")).final_text
+
+    monkeypatch.setattr("probos.cognitive.agentic_dispatch.WorkItemAgenticExecutor", _PassExecutor)
+    monkeypatch.setattr("probos.cognitive.continue_or_ask.resolve_exhausted_turn", _continue)
+    threads = _FakeThreadStore()
+    work = _FakeWorkItemStore()
+    runtime = _dm_runtime(budget=0.001 if promoted else 0.0, work_items=work, threads=threads)
+    runtime.config.dm_agentic.continue_or_ask_enabled = True
+    agent = _agent(runtime)
+    observation = {
+        "intent": "direct_message", "thread_id": "threadone",
+        "params": {"captain_message": "request"},
+    }
+    try:
+        text = await CognitiveAgent._maybe_run_conversational_agentic(
+            agent, observation, system_prompt="instructions", user_message="request",
+        )
+        assert entered_second.is_set() and len(calls) == 2
+        if promoted:
+            assert text == _ACK_TEMPLATE.format(work_item_id=work.created[0].id)
+            assert "_tool_trace_ref" not in observation
+            release.set()
+            await _drain(agent._promoted_turn_tasks)
+            assert threads.appended[0]["body"] == "final pass"
+            assert threads.appended[0]["metadata"].get("tool_trace_ref") == last_ref
+            assert "_tool_trace_ref" not in observation
+        else:
+            assert text == "final pass"
+            assert observation.get("_tool_trace_ref") == last_ref
+            if last_ref is None:
+                assert "_tool_trace_ref" not in observation
+    finally:
+        release.set()
+        await _drain(agent._promoted_turn_tasks)
+
+
+@pytest.mark.parametrize("returns_after_notice", [False, True])
+async def test_deadline_notices_never_borrow_trace_but_genuine_later_report_can(
+    monkeypatch, returns_after_notice,
+) -> None:
+    import probos.cognitive.turn_promotion as tp
+
+    monkeypatch.setattr(tp, "_ABANDON_GRACE_SECONDS", 0.01)
+    release = asyncio.Event()
+    sampled = []
+    ref = "a" * 64
+    threads = _FakeThreadStore()
+    work = _FakeWorkItemStore()
+    hold = set()
+
+    async def _work() -> str:
+        nonlocal ref
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            if not returns_after_notice:
+                raise
+            await release.wait()
+        ref = "b" * 64
+        return "genuine final report"
+
+    def _provider() -> str:
+        sampled.append(ref)
+        return ref
+
+    try:
+        await run_with_promotion(
+            _work, promote_after_seconds=0.001, deadline_seconds=0.02,
+            runtime=_runtime(work_items=work, threads=threads),
+            agent_id="agent-1", thread_id="thread-1", request_text="request",
+            hold=hold, trace_ref_provider=_provider,
+        )
+        async with asyncio.timeout(2):
+            while not threads.appended:
+                await asyncio.sleep(0.001)
+        assert sampled == []
+        assert threads.appended[0]["body"] == (
+            tp._REPORT_ABANDON_UNCONFIRMED if returns_after_notice else tp._REPORT_ABANDONED
+        )
+        assert threads.appended[0]["metadata"] == {
+            "work_item_id": work.created[0].id, "source": PROMOTION_SOURCE,
+        }
+        release.set()
+        await _drain(hold)
+        if returns_after_notice:
+            assert len(threads.appended) == 2
+            assert sampled == ["b" * 64]
+            assert threads.appended[1]["metadata"]["tool_trace_ref"] == "b" * 64
+        else:
+            assert len(threads.appended) == 1 and sampled == []
+    finally:
+        release.set()
+        await _drain(hold)
